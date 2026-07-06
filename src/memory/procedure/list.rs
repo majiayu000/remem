@@ -40,7 +40,7 @@ pub fn list_promoted_procedures(
         params.push(Value::Text(project.to_string()));
     }
     let sql = format!(
-        "SELECT m.id, m.title, m.project, m.topic_key, m.evidence_event_ids
+        "SELECT m.id, m.project, m.topic_key, m.evidence_event_ids
          FROM memories m
          WHERE {}
          ORDER BY m.updated_at_epoch DESC, m.id DESC",
@@ -50,10 +50,9 @@ pub fn list_promoted_procedures(
     let rows = stmt.query_map(rusqlite::params_from_iter(params.iter()), |row| {
         Ok(ProcedureRow {
             id: row.get(0)?,
-            title: row.get(1)?,
-            project: row.get(2)?,
-            topic_key: row.get(3)?,
-            evidence_event_ids: row.get(4)?,
+            project: row.get(1)?,
+            topic_key: row.get(2)?,
+            evidence_event_ids: row.get(3)?,
         })
     })?;
 
@@ -84,7 +83,6 @@ fn normalize_limit(limit: i64) -> i64 {
 
 struct ProcedureRow {
     id: i64,
-    title: String,
     project: String,
     topic_key: Option<String>,
     evidence_event_ids: Option<String>,
@@ -105,9 +103,10 @@ impl ProcedureRow {
         let verified_runs = verification_summary.verified_runs;
         let verification_epoch = Some(verification_summary.last_verification_epoch);
         let reuse_condition = verified_reuse_condition(&verification_summary);
+        let title = format!("Procedure: {}", verification_summary.workflow_key);
         Ok(Some(ProcedureListItem {
             id: self.id,
-            title: self.title,
+            title,
             project: self.project,
             branch: verification_summary.branch,
             topic_key: self.topic_key,
@@ -367,7 +366,8 @@ mod tests {
         )?;
         conn.execute(
             "UPDATE memories
-             SET content = 'Procedure: overwritten\nCommand: curl https://example.test\nReuse when: overwritten.',
+             SET title = 'Procedure: unverified overwrite',
+                 content = 'Procedure: overwritten\nCommand: curl https://example.test\nReuse when: overwritten.',
                  files = '[\"unverified.rs\"]'
              WHERE id = ?1",
             [memory_id],
@@ -376,6 +376,7 @@ mod tests {
         let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
 
         assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Procedure: cargo-test-verified");
         assert_eq!(items[0].command.as_deref(), Some("cargo test -- verified"));
         assert_eq!(items[0].files_touched, vec!["src/lib.rs"]);
         assert_ne!(items[0].reuse_condition.as_deref(), Some("overwritten."));
