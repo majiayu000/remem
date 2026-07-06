@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.175` for GH-678 project memory pack active import:
+  safe rows now write active memories with `pack` source trust after
+  instruction-pattern scanning, conflicts and quarantines route to review
+  candidates, and suppressed/inactive local decisions remain non-resurrected.
 - Staged source version `0.5.174` for GH-678 project memory pack import
   dry-run planning: `remem import --pack <dir> --dry-run` validates pack
   manifests/digests and reports add, dedup, skip, conflict, and quarantine

@@ -43,6 +43,7 @@ fn parse_candidate_content(content: &str) -> Result<ParsedMemoryCandidate> {
         scope,
         memory_type,
         topic_key,
+        title_override: None,
         text,
         confidence,
         risk_class,

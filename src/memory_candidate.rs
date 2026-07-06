@@ -93,6 +93,7 @@ pub(crate) struct ParsedMemoryCandidate {
     pub(crate) scope: String,
     pub(crate) memory_type: String,
     pub(crate) topic_key: String,
+    pub(crate) title_override: Option<String>,
     pub(crate) text: String,
     pub(crate) confidence: f64,
     pub(crate) risk_class: String,
@@ -677,6 +678,9 @@ fn promote_source_candidate(
 }
 
 fn candidate_title(candidate: &ParsedMemoryCandidate) -> String {
+    if let Some(title) = candidate.title_override.as_deref() {
+        return crate::db::truncate_str(title.trim(), 96).to_string();
+    }
     let first_line = candidate
         .text
         .lines()

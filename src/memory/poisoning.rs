@@ -8,6 +8,7 @@ pub(crate) const DEFAULT_EXISTING_TRUST_CLASS: SourceTrustClass = SourceTrustCla
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum SourceTrustClass {
     ExternalContent,
+    Pack,
     LocalToolOutput,
     RepoFile,
     UserPrompt,
@@ -17,6 +18,7 @@ impl SourceTrustClass {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::ExternalContent => "external_content",
+            Self::Pack => "pack",
             Self::LocalToolOutput => "local_tool_output",
             Self::RepoFile => "repo_file",
             Self::UserPrompt => "user_prompt",
@@ -26,6 +28,7 @@ impl SourceTrustClass {
     pub(crate) fn parse(value: &str) -> Option<Self> {
         match value {
             "external_content" => Some(Self::ExternalContent),
+            "pack" => Some(Self::Pack),
             "local_tool_output" => Some(Self::LocalToolOutput),
             "repo_file" => Some(Self::RepoFile),
             "user_prompt" => Some(Self::UserPrompt),
@@ -311,8 +314,10 @@ mod tests {
     fn source_trust_order_keeps_lowest_class() {
         assert!(SourceTrustClass::UserPrompt > SourceTrustClass::RepoFile);
         assert!(SourceTrustClass::RepoFile > SourceTrustClass::LocalToolOutput);
-        assert!(SourceTrustClass::LocalToolOutput > SourceTrustClass::ExternalContent);
+        assert!(SourceTrustClass::LocalToolOutput > SourceTrustClass::Pack);
+        assert!(SourceTrustClass::Pack > SourceTrustClass::ExternalContent);
         assert!(SourceTrustClass::LocalToolOutput.allows_auto_promote());
+        assert!(!SourceTrustClass::Pack.allows_auto_promote());
         assert!(!SourceTrustClass::ExternalContent.allows_auto_promote());
     }
 

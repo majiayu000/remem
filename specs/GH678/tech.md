@@ -84,8 +84,8 @@ categories without mutating the store.
 | --- | --- | --- |
 | Deterministic export | pack serializer | unchanged export byte equality |
 | Round trip | export/import fixture | export -> import -> export byte equality |
-| Merge safety | import planner | suppressed/inactive resurrection tests |
-| Trust class | active import | #672 `pack` trust-class test |
+| Merge safety | import planner + active import | suppressed/inactive resurrection tests |
+| Trust class | active import | `pack` trust-class and quarantine tests |
 | Redaction gate | export | seeded secret blocks export |
 | Auditability | doctor/why | pack origin visible in reports |
 
@@ -101,9 +101,9 @@ categories without mutating the store.
 
 - [x] Export determinism fixture.
 - [ ] Round-trip export/import fixture.
-- [ ] Import planner dedup, conflict, suppression, and invalidation tests.
+- [x] Import planner dedup, conflict, suppression, and invalidation tests.
 - [x] Redaction failure test.
-- [ ] Active import trust-class tests after #672 dependency lands.
+- [x] Active import trust-class tests after #672 dependency lands.
 - [ ] README walkthrough smoke.
 - [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
       before merge readiness.
