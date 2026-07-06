@@ -267,19 +267,19 @@ fn classify_pack_memory(
 ) -> Result<PackImportEntry> {
     let category;
     let reason;
+    let local_matches = conn
+        .map(|conn| load_local_matches(conn, target_project, &memory))
+        .transpose()?
+        .unwrap_or_default();
 
     if let Some(suppression) = conn
-        .map(|conn| matching_suppression(conn, &memory))
+        .map(|conn| matching_suppression(conn, &memory, &local_matches))
         .transpose()?
         .flatten()
     {
         category = PackImportCategory::Skip;
         reason = format!("suppressed by local {}", suppression.label());
     } else {
-        let local_matches = conn
-            .map(|conn| load_local_matches(conn, target_project, &memory))
-            .transpose()?
-            .unwrap_or_default();
         if let Some(inactive) = local_matches.iter().find(|row| !row.is_current()) {
             category = PackImportCategory::Skip;
             reason = format!(
@@ -325,14 +325,16 @@ fn classify_pack_memory(
 #[derive(Debug, Clone)]
 struct SuppressionMatch {
     target_kind: String,
+    target_id: Option<i64>,
     target_value: Option<String>,
 }
 
 impl SuppressionMatch {
     fn label(&self) -> String {
-        match self.target_value.as_deref() {
-            Some(value) => format!("{}:{value}", self.target_kind),
-            None => self.target_kind.clone(),
+        match (self.target_id, self.target_value.as_deref()) {
+            (Some(id), _) => format!("{}:{id}", self.target_kind),
+            (None, Some(value)) => format!("{}:{value}", self.target_kind),
+            (None, None) => self.target_kind.clone(),
         }
     }
 }
@@ -340,36 +342,50 @@ impl SuppressionMatch {
 fn matching_suppression(
     conn: &Connection,
     memory: &PackMemory,
+    local_matches: &[LocalMemoryMatch],
 ) -> Result<Option<SuppressionMatch>> {
+    let title_lower = memory.title.to_lowercase();
+    let content_lower = memory.content.to_lowercase();
+    let entity_names = crate::retrieval::entity::extract_entities(&memory.title, &memory.content)
+        .into_iter()
+        .map(|entity| entity.to_lowercase())
+        .collect::<Vec<_>>();
     let mut stmt = conn.prepare(
-        "SELECT target_kind, target_value
+        "SELECT target_kind, target_id, target_value
          FROM memory_suppressions
          WHERE status = 'active'
-           AND (
-                (?1 IS NOT NULL AND target_kind = 'topic_key' AND target_value = ?1)
-             OR (target_kind = 'pattern'
-                 AND target_value IS NOT NULL
-                 AND (
-                    instr(lower(?2), lower(target_value)) > 0
-                    OR instr(lower(?3), lower(target_value)) > 0
-                 ))
-           )
-         ORDER BY updated_at_epoch DESC, id DESC
-         LIMIT 1",
+         ORDER BY updated_at_epoch DESC, id DESC",
     )?;
-    let mut rows = stmt.query(params![
-        memory.state_key.as_deref(),
-        memory.title,
-        memory.content
-    ])?;
-    if let Some(row) = rows.next()? {
-        Ok(Some(SuppressionMatch {
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let suppression = SuppressionMatch {
             target_kind: row.get(0)?,
-            target_value: row.get(1)?,
-        }))
-    } else {
-        Ok(None)
+            target_id: row.get(1)?,
+            target_value: row.get(2)?,
+        };
+        let matched = match suppression.target_kind.as_str() {
+            "memory" => suppression
+                .target_id
+                .is_some_and(|id| local_matches.iter().any(|local| local.id == id)),
+            "topic_key" => suppression
+                .target_value
+                .as_deref()
+                .is_some_and(|value| memory.state_key.as_deref() == Some(value)),
+            "entity" => suppression.target_value.as_deref().is_some_and(|value| {
+                let value = value.to_lowercase();
+                entity_names.iter().any(|entity| entity == &value)
+            }),
+            "pattern" => suppression.target_value.as_deref().is_some_and(|value| {
+                let value = value.to_lowercase();
+                title_lower.contains(&value) || content_lower.contains(&value)
+            }),
+            _ => false,
+        };
+        if matched {
+            return Ok(Some(suppression));
+        }
     }
+    Ok(None)
 }
 
 #[derive(Debug, Clone)]

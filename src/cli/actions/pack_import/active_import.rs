@@ -5,6 +5,7 @@ use rusqlite::{params, Connection};
 
 use super::{single_line, LoadedPack, PackImportCategory, PackImportPlan};
 use crate::cli::actions::pack_export::PackMemory;
+use crate::db::{record_captured_event_with_id_and_reference_time, CaptureEventInput};
 
 const PACK_SOURCE_KIND: &str = "pack";
 const PACK_TRUST_CLASS: crate::memory::poisoning::SourceTrustClass =
@@ -222,25 +223,29 @@ fn insert_pack_candidate(
         .state_key
         .as_deref()
         .unwrap_or(memory.content_hash.as_str());
+    let evidence_event_id =
+        record_pack_candidate_evidence(conn, target_project, memory, content_digest, block_reason)?;
+    let evidence_json = serde_json::to_string(&vec![evidence_event_id])?;
     conn.execute(
         "INSERT INTO memory_candidates
          (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
           confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
           auto_promote_block_reason, source_project, target_project, owner_scope, owner_key,
           topic_domain, routing_confidence, routing_reason, context_class, expires_at_epoch,
-          valid_from_epoch, state_key, state_key_confidence, state_key_reason,
-          source_kind, source_trust_class, quarantine_pattern_id, quarantine_pattern_version)
-         VALUES (?1, 'project', ?2, ?3, ?4, '[]',
-                 ?5, ?6, ?7, ?8, ?8,
-                 ?9, ?10, ?10, 'repo', ?10,
-                 ?11, 1.0, 'pack import', 'startup_core', ?12,
-                 ?13, ?14, ?15, ?16,
-                 ?17, ?18, ?19, ?20)",
+         valid_from_epoch, state_key, state_key_confidence, state_key_reason,
+         source_kind, source_trust_class, quarantine_pattern_id, quarantine_pattern_version)
+         VALUES (?1, 'project', ?2, ?3, ?4, ?5,
+                 ?6, ?7, ?8, ?9, ?9,
+                 ?10, ?11, ?11, 'repo', ?11,
+                 ?12, 1.0, 'pack import', 'startup_core', ?13,
+                 ?14, ?15, ?16, ?17,
+                 ?18, ?19, ?20, ?21)",
         params![
             project_id,
             memory.memory_type.as_str(),
             topic_key,
             memory.content.as_str(),
+            evidence_json,
             memory.confidence.unwrap_or(0.5),
             if review_status == "quarantined" {
                 "high"
@@ -264,6 +269,39 @@ fn insert_pack_candidate(
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+fn record_pack_candidate_evidence(
+    conn: &Connection,
+    target_project: &str,
+    memory: &PackMemory,
+    content_digest: &str,
+    block_reason: &str,
+) -> Result<i64> {
+    let digest_prefix = content_digest.chars().take(12).collect::<String>();
+    let content = format!(
+        "pack_import_digest={digest_prefix}\nblock_reason={block_reason}\ntitle={}\ncontent={}",
+        memory.title, memory.content
+    );
+    let event_id = format!("pack-import:{digest_prefix}:{}", memory.content_hash);
+    let reference_time = memory.valid_from_epoch.or(Some(memory.created_at_epoch));
+    let outcome = record_captured_event_with_id_and_reference_time(
+        conn,
+        &CaptureEventInput {
+            host: "codex-cli",
+            session_id: &format!("pack-import:{digest_prefix}"),
+            project: target_project,
+            cwd: None,
+            event_type: "pack_import",
+            role: None,
+            tool_name: Some("remem import"),
+            content: &content,
+            task_kind: None,
+        },
+        Some(&event_id),
+        reference_time,
+    )?;
+    Ok(outcome.event_row_id)
 }
 
 fn pack_topic_domain(digest: &str) -> String {
