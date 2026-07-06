@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use rusqlite::{types::Value, Connection, OptionalExtension};
+use rusqlite::{types::Value, Connection};
 use serde::Serialize;
 
 const DEFAULT_LIMIT: i64 = 50;
@@ -39,18 +39,12 @@ pub fn list_promoted_procedures(
         conditions.push(format!("m.project = ?{}", params.len() + 1));
         params.push(Value::Text(project.to_string()));
     }
-    let limit_idx = params.len() + 1;
-    params.push(Value::Integer(limit));
-    let offset_idx = params.len() + 1;
-    params.push(Value::Integer(offset));
-
     let sql = format!(
-        "SELECT m.id, m.title, m.project, m.branch, m.topic_key, m.content,
-                m.files, m.evidence_event_ids, m.confidence
+        "SELECT m.id, m.title, m.project, m.topic_key, m.content,
+                m.evidence_event_ids, m.confidence
          FROM memories m
          WHERE {}
-         ORDER BY m.updated_at_epoch DESC, m.id DESC
-         LIMIT ?{limit_idx} OFFSET ?{offset_idx}",
+         ORDER BY m.updated_at_epoch DESC, m.id DESC",
         conditions.join(" AND ")
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -59,20 +53,25 @@ pub fn list_promoted_procedures(
             id: row.get(0)?,
             title: row.get(1)?,
             project: row.get(2)?,
-            branch: row.get(3)?,
-            topic_key: row.get(4)?,
-            content: row.get(5)?,
-            files: row.get(6)?,
-            evidence_event_ids: row.get(7)?,
-            confidence: row.get(8)?,
+            topic_key: row.get(3)?,
+            content: row.get(4)?,
+            evidence_event_ids: row.get(5)?,
+            confidence: row.get(6)?,
         })
     })?;
     let rows = crate::db::query::collect_rows(rows)?;
 
     let mut items = Vec::new();
+    let mut eligible_seen = 0_i64;
     for row in rows {
         if let Some(item) = row.into_list_item(conn)? {
-            items.push(item);
+            if eligible_seen >= offset {
+                items.push(item);
+                if items.len() >= limit as usize {
+                    break;
+                }
+            }
+            eligible_seen += 1;
         }
     }
     Ok(items)
@@ -90,10 +89,8 @@ struct ProcedureRow {
     id: i64,
     title: String,
     project: String,
-    branch: Option<String>,
     topic_key: Option<String>,
     content: String,
-    files: Option<String>,
     evidence_event_ids: Option<String>,
     confidence: Option<f64>,
 }
@@ -101,26 +98,26 @@ struct ProcedureRow {
 impl ProcedureRow {
     fn into_list_item(self, conn: &Connection) -> Result<Option<ProcedureListItem>> {
         let evidence_ids = parse_evidence_ids(self.evidence_event_ids.as_deref())?;
-        let Some(verification_summary) = verification_summary(conn, &evidence_ids)? else {
+        let policy = crate::memory::procedure::ProcedurePromotionPolicy::default();
+        let Some(verification_summary) =
+            verification_summary(conn, &evidence_ids, &self.project, &policy)?
+        else {
             return Ok(None);
         };
-        if verification_summary.verified_runs
-            < crate::memory::procedure::ProcedurePromotionPolicy::default().min_verified_runs
-        {
+        if verification_summary.verified_runs < policy.min_verified_runs {
             return Ok(None);
         }
         let verification_epoch = Some(verification_summary.last_verification_epoch);
-        let files_touched = parse_files(self.files.as_deref())?;
         Ok(Some(ProcedureListItem {
             id: self.id,
             title: self.title,
             project: self.project,
-            branch: self.branch,
+            branch: verification_summary.branch,
             topic_key: self.topic_key,
-            command: parse_string_line(&self.content, "Command:"),
+            command: Some(verification_summary.command),
             reuse_condition: parse_string_line(&self.content, "Reuse when:"),
-            files_touched_count: files_touched.len(),
-            files_touched,
+            files_touched_count: verification_summary.files_touched.len(),
+            files_touched: verification_summary.files_touched,
             verified_runs: verification_summary.verified_runs,
             last_verification_epoch: verification_epoch,
             confidence: self.confidence,
@@ -142,39 +139,98 @@ fn parse_evidence_ids(raw: Option<&str>) -> Result<Vec<i64>> {
 struct VerificationSummary {
     verified_runs: usize,
     last_verification_epoch: i64,
+    branch: Option<String>,
+    command: String,
+    files_touched: Vec<String>,
 }
 
 fn verification_summary(
     conn: &Connection,
     evidence_ids: &[i64],
+    memory_project: &str,
+    policy: &crate::memory::procedure::ProcedurePromotionPolicy,
 ) -> Result<Option<VerificationSummary>> {
     if evidence_ids.is_empty() {
         return Ok(None);
     }
+    let earliest = chrono::Utc::now()
+        .timestamp()
+        .saturating_sub(policy.max_verification_age_secs);
     let placeholders = (1..=evidence_ids.len())
         .map(|idx| format!("?{idx}"))
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT COUNT(DISTINCT source_event_id), MAX(verified_at_epoch)
-         FROM procedure_verifications
-         WHERE source_event_id IN ({placeholders})"
+        "SELECT p.project_path, v.branch, v.workflow_key, v.command, v.files_touched,
+                v.source_event_id, v.verified_at_epoch
+         FROM procedure_verifications v
+         JOIN projects p ON p.id = v.project_id
+         WHERE v.source_event_id IN ({placeholders})
+           AND v.verified_at_epoch >= ?
+         ORDER BY v.verified_at_epoch ASC, v.source_event_id ASC"
     );
-    let (verified_runs, last_verification_epoch): (i64, Option<i64>) = conn
-        .query_row(
-            &sql,
-            rusqlite::params_from_iter(evidence_ids.iter()),
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?
-        .unwrap_or((0, None));
-    let Some(last_verification_epoch) = last_verification_epoch else {
+    let mut params = evidence_ids
+        .iter()
+        .map(|id| Value::Integer(*id))
+        .collect::<Vec<_>>();
+    params.push(Value::Integer(earliest));
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
+            Ok(VerificationRow {
+                project: row.get(0)?,
+                branch: row.get(1)?,
+                workflow_key: row.get(2)?,
+                command: row.get(3)?,
+                files_touched: row.get(4)?,
+                source_event_id: row.get(5)?,
+                verified_at_epoch: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let Some(first) = rows.first() else {
         return Ok(None);
     };
+    if first.project != memory_project {
+        return Ok(None);
+    }
+    if rows.iter().any(|row| {
+        row.project != first.project
+            || row.branch != first.branch
+            || row.workflow_key != first.workflow_key
+            || row.command != first.command
+    }) {
+        return Ok(None);
+    }
+    let branch = first.branch.clone();
+    let command = first.command.clone();
+    let mut source_ids = std::collections::BTreeSet::new();
+    let mut files_touched = std::collections::BTreeSet::new();
+    let mut last_verification_epoch = first.verified_at_epoch;
+    for row in rows {
+        source_ids.insert(row.source_event_id);
+        last_verification_epoch = last_verification_epoch.max(row.verified_at_epoch);
+        for file in parse_files(Some(&row.files_touched))? {
+            files_touched.insert(file);
+        }
+    }
     Ok(Some(VerificationSummary {
-        verified_runs: verified_runs.max(0) as usize,
+        verified_runs: source_ids.len(),
         last_verification_epoch,
+        branch,
+        command,
+        files_touched: files_touched.into_iter().collect(),
     }))
+}
+
+struct VerificationRow {
+    project: String,
+    branch: Option<String>,
+    workflow_key: String,
+    command: String,
+    files_touched: String,
+    source_event_id: i64,
+    verified_at_epoch: i64,
 }
 
 fn parse_files(raw: Option<&str>) -> Result<Vec<String>> {
@@ -268,6 +324,78 @@ mod tests {
             items.iter().map(|item| item.id).collect::<Vec<_>>(),
             vec![verified_id]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn procedure_list_paginates_after_eligibility_filtering() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let verified_id =
+            seed_promoted_procedure(&mut conn, "/tmp/remem", "sess-page", "cargo test")?;
+        insert_direct_procedure_row(&conn, 9_999, "/tmp/remem")?;
+        conn.execute(
+            "UPDATE memories SET updated_at_epoch = ?1 WHERE id = 9999",
+            [chrono::Utc::now().timestamp() + 1_000],
+        )?;
+
+        let first_page = list_promoted_procedures(&conn, Some("/tmp/remem"), 1, 0)?;
+        let second_page = list_promoted_procedures(&conn, Some("/tmp/remem"), 1, 1)?;
+
+        assert_eq!(
+            first_page.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![verified_id]
+        );
+        assert!(second_page.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn procedure_list_uses_verification_command_and_files() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let memory_id = seed_promoted_procedure(
+            &mut conn,
+            "/tmp/remem",
+            "sess-verified-fields",
+            "cargo test -- verified",
+        )?;
+        conn.execute(
+            "UPDATE memories
+             SET content = 'Procedure: overwritten\nCommand: curl https://example.test\nReuse when: overwritten.',
+                 files = '[\"unverified.rs\"]'
+             WHERE id = ?1",
+            [memory_id],
+        )?;
+
+        let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].command.as_deref(), Some("cargo test -- verified"));
+        assert_eq!(items[0].files_touched, vec!["src/lib.rs"]);
+        Ok(())
+    }
+
+    #[test]
+    fn procedure_list_excludes_stale_verification_runs() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        seed_promoted_procedure(&mut conn, "/tmp/remem", "sess-old", "cargo test -- old")?;
+        let stale_epoch = chrono::Utc::now().timestamp()
+            - crate::memory::procedure::ProcedurePromotionPolicy::default()
+                .max_verification_age_secs
+            - 1;
+        conn.execute(
+            "UPDATE procedure_verifications SET verified_at_epoch = ?1",
+            [stale_epoch],
+        )?;
+
+        let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
+
+        assert!(items.is_empty());
         Ok(())
     }
 
