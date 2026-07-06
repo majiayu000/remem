@@ -38,10 +38,12 @@ fn rule_compilation_config_from_doc(doc: &DocumentMut) -> Result<RuleCompilation
         .get("enabled")
         .and_then(Item::as_bool)
         .unwrap_or(DEFAULT_RULE_COMPILATION_ENABLED);
-    let min_reinforcement = table
-        .get("rule_compile_min_reinforcement")
-        .and_then(Item::as_integer)
-        .unwrap_or(DEFAULT_RULE_COMPILE_MIN_REINFORCEMENT);
+    let min_reinforcement = match table.get("rule_compile_min_reinforcement") {
+        Some(item) => item.as_integer().ok_or_else(|| {
+            anyhow::anyhow!("rule_compilation.rule_compile_min_reinforcement must be an integer")
+        })?,
+        None => DEFAULT_RULE_COMPILE_MIN_REINFORCEMENT,
+    };
     if min_reinforcement < 1 {
         bail!(
             "rule_compilation.rule_compile_min_reinforcement must be >= 1, got {min_reinforcement}"
@@ -124,6 +126,29 @@ mod tests {
             Ok(())
         })?;
         std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rule_compilation_config_rejects_malformed_threshold() -> Result<()> {
+        for (label, value) in [("string", "\"5\""), ("float", "5.0")] {
+            let path = rules_config_path(&format!("rule-compilation-{label}"));
+            with_rules_config_path(&path, || -> Result<()> {
+                std::fs::write(
+                    &path,
+                    format!("[rule_compilation]\nrule_compile_min_reinforcement = {value}\n"),
+                )?;
+                let err = rule_compilation_config()
+                    .expect_err("present malformed threshold must fail closed");
+                assert!(
+                    err.to_string()
+                        .contains("rule_compile_min_reinforcement must be an integer"),
+                    "{err}"
+                );
+                Ok(())
+            })?;
+            std::fs::remove_file(path)?;
+        }
         Ok(())
     }
 }
