@@ -763,7 +763,11 @@ fn cli_parses_markdown_export_and_import_commands() {
     match export.command {
         Commands::Export(args) => {
             assert!(args.markdown);
-            assert_eq!(args.output, std::path::PathBuf::from("/tmp/remem-md"));
+            assert_eq!(
+                args.output.as_deref(),
+                Some(std::path::Path::new("/tmp/remem-md"))
+            );
+            assert!(args.pack.is_none());
             assert_eq!(args.project.as_deref(), Some("/repo"));
             assert!(args.include_inactive);
             assert_eq!(args.limit, 25);
@@ -791,6 +795,33 @@ fn cli_parses_markdown_export_and_import_commands() {
             assert!(best_effort);
         }
         _ => panic!("expected import markdown command"),
+    }
+}
+
+#[test]
+fn cli_parses_pack_export_command() {
+    let export = Cli::parse_from([
+        "remem",
+        "export",
+        "--pack",
+        "/repo/.remem-pack",
+        "--project",
+        "/repo",
+        "--limit",
+        "50",
+    ]);
+    match export.command {
+        Commands::Export(args) => {
+            assert!(!args.markdown);
+            assert!(args.output.is_none());
+            assert_eq!(
+                args.pack.as_deref(),
+                Some(std::path::Path::new("/repo/.remem-pack"))
+            );
+            assert_eq!(args.project.as_deref(), Some("/repo"));
+            assert_eq!(args.limit, 50);
+        }
+        _ => panic!("expected export command"),
     }
 }
 

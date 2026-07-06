@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.168` for GH-678 project memory pack export:
+  deterministic `pack.json`/`memories.jsonl`/`INDEX.md` generation for active
+  repo-owned startup memories, fail-loud redaction gating, and focused export
+  fixtures.
 - Staged source version `0.5.167` for GH-680 procedure export Phase 1:
   `remem procedures list` exposes promoted procedure memories with maturity
   metadata before any review-gated export writer is introduced.

@@ -48,13 +48,17 @@ backup restore.
 
 ## Acceptance Criteria
 
-- [ ] Exporting twice with unchanged memory state is byte-identical.
+- [x] Exporting twice with unchanged memory state is byte-identical.
 - [ ] Export -> fresh-store import -> export produces identical pack bytes.
 - [ ] Import does not resurrect locally suppressed or invalidated memories.
 - [ ] Imported memories carry a `pack` source trust class consumed by the
       #672 trust vocabulary and gates.
-- [ ] Export re-runs redaction and fails loudly on seeded secret content.
+- [x] Export re-runs redaction and fails loudly on seeded secret content.
 - [ ] README documents the team-onboarding workflow.
+
+Phase 1 implementation note: export-only pack generation is available through
+`remem export --project <p> [--pack <dir>]`. Import and onboarding remain
+incomplete until the merge planner and #672 trust-class wiring land.
 
 ## Edge Cases
 

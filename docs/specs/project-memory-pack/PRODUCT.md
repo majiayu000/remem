@@ -57,6 +57,10 @@ keeps the local-first principle while opening the team/onboarding scenario.
   into higher-trust surfaces, and `remem why` shows the pack origin.
 - Doctor shows imported-pack counts and origins.
 
+Implementation note: Phase 1 implements deterministic pack export and the
+redaction fail-loud gate. Import, round-trip identity, `pack` trust-class
+wiring, and doctor/why attribution remain pending follow-up implementation.
+
 ## Team Onboarding Walkthrough (target README content)
 
 1. Maintainer runs `remem export --project . --pack .remem-pack/` and commits
