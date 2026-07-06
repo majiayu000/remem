@@ -620,7 +620,12 @@ mod tests {
         let _test_dir = ScopedTestDataDir::new("no-migrate-incomplete-schema");
         let setup = crate::db::open_db()?;
         let latest = crate::migrate::latest_schema_version();
-        let missing = latest - 1;
+        let missing = crate::migrate::MIGRATIONS
+            .iter()
+            .rev()
+            .find(|migration| migration.version < latest)
+            .expect("test requires at least two migrations")
+            .version;
         setup.execute(
             "DELETE FROM _schema_migrations WHERE version = ?1",
             [missing],

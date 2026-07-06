@@ -26,6 +26,10 @@ Authoritative contract:
 
 ## Proposed Design
 
+Phase 1 implementation status: `SP671-T1` is implemented as state-only
+foundation. Runtime compilation, artifact writing, CLI rule management, hook
+evaluation, doctor reporting, fixtures, and latency evidence remain pending.
+
 - Add a `rules` module with a versioned artifact schema, closed predicate enum,
   pure evaluator, compiler, and atomic artifact writer.
 - Add a migration for canonical override and diagnostic state, for example

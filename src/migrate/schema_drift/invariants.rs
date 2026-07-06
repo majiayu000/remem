@@ -594,4 +594,36 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "candidate_review_metadata",
         "idx_memory_candidates_review_status_created",
     ),
+    SchemaInvariant::table(
+        62,
+        "preference_rule_state",
+        "memory_preference_reinforcements",
+    ),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_memory_preference_reinforcements_rank",
+    ),
+    SchemaInvariant::table(62, "preference_rule_state", "preference_rule_overrides"),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_overrides_project",
+    ),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_overrides_source",
+    ),
+    SchemaInvariant::table(62, "preference_rule_state", "preference_rule_diagnostics"),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_diagnostics_project_event",
+    ),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_diagnostics_rule",
+    ),
 ];

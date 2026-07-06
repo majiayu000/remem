@@ -300,6 +300,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "candidate_review_metadata",
         sql: include_str!("../migrations/v059_candidate_review_metadata.sql"),
     },
+    Migration {
+        version: 62,
+        name: "preference_rule_state",
+        sql: include_str!("../migrations/v062_preference_rule_state.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
