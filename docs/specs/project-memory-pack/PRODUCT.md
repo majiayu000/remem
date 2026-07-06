@@ -59,9 +59,8 @@ keeps the local-first principle while opening the team/onboarding scenario.
 
 Implementation note: deterministic pack export, the redaction fail-loud gate,
 pack import planning, active import for safe rows, `pack` trust-class wiring,
-and conflict/quarantine review routing are implemented. Round-trip identity,
-README onboarding, and doctor/why attribution remain pending follow-up
-implementation.
+conflict/quarantine review routing, round-trip identity, README onboarding,
+and doctor/why attribution are implemented.
 
 ## Team Onboarding Walkthrough (target README content)
 

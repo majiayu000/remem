@@ -27,6 +27,13 @@ pub(super) struct MemoryCurrentness {
     pub(super) now_epoch: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PackAttribution {
+    pub(super) origin: String,
+    pub(super) source_project: Option<String>,
+    pub(super) routing_reason: Option<String>,
+}
+
 pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&str>) -> Result<()> {
     let conn = db::open_db()?;
     let memories = memory::get_memories_by_ids_with_suppressed_policy(&conn, &[id], None, true)?;
@@ -41,6 +48,7 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
     let gate_project = context_gate_project(memory, current_project.as_deref());
     let gate = load_latest_context_gate_summary(&conn, gate_project)?;
     let currentness = load_memory_currentness(&conn, memory.id)?;
+    let pack_attribution = load_pack_attribution(&conn, memory.id)?;
     let suppressions = memory::suppression::active_suppressions_for_memory(&conn, memory.id)?;
 
     print!(
@@ -51,6 +59,7 @@ pub(in crate::cli) fn run_why(id: i64, project: Option<&str>, branch: Option<&st
             current_branch.as_deref(),
             gate.as_ref(),
             currentness.as_ref(),
+            pack_attribution.as_ref(),
             &suppressions,
         )
     );
@@ -133,12 +142,47 @@ fn load_memory_currentness(
     .map_err(Into::into)
 }
 
+fn load_pack_attribution(conn: &rusqlite::Connection, id: i64) -> Result<Option<PackAttribution>> {
+    let row = conn
+        .query_row(
+            "SELECT source_trust_class, source_project, topic_domain, routing_reason
+             FROM memories
+             WHERE id = ?1",
+            [id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((trust_class, source_project, topic_domain, routing_reason)) = row else {
+        return Ok(None);
+    };
+    if trust_class != "pack"
+        && !topic_domain
+            .as_deref()
+            .is_some_and(|v| v.starts_with("pack:"))
+    {
+        return Ok(None);
+    }
+    Ok(Some(PackAttribution {
+        origin: topic_domain.unwrap_or_else(|| "pack:<unknown>".to_string()),
+        source_project,
+        routing_reason,
+    }))
+}
+
 pub(super) fn render_why_memory(
     memory: &Memory,
     current_project: Option<&str>,
     current_branch: Option<&str>,
     gate: Option<&ContextGateSummary>,
     currentness: Option<&MemoryCurrentness>,
+    pack_attribution: Option<&PackAttribution>,
     suppressions: &[SuppressionRecord],
 ) -> String {
     let mut output = String::new();
@@ -169,6 +213,12 @@ pub(super) fn render_why_memory(
         "  suppression: {}\n",
         suppression_visibility(suppressions)
     ));
+    if let Some(pack_attribution) = pack_attribution {
+        output.push_str(&format!(
+            "  pack attribution: {}\n",
+            pack_attribution_visibility(pack_attribution)
+        ));
+    }
     output.push_str(&format!(
         "  recency: updated {}\n",
         format_memory_timestamp(memory.updated_at_epoch)
@@ -189,6 +239,21 @@ pub(super) fn render_why_memory(
         memory.id
     ));
     output
+}
+
+fn pack_attribution_visibility(pack: &PackAttribution) -> String {
+    let imported_from = pack
+        .routing_reason
+        .as_deref()
+        .and_then(|reason| reason.strip_prefix("pack import from "))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .or(pack.source_project.as_deref())
+        .unwrap_or("unknown");
+    format!(
+        "origin={} imported_from={imported_from} trust=pack",
+        pack.origin
+    )
 }
 
 fn project_visibility(memory: &Memory, current_project: Option<&str>) -> String {

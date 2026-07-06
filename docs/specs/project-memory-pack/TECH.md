@@ -133,7 +133,7 @@ writing active imported memories (`cargo test pack_import`). Phase 2B adds
 active import for safe rows, suppression/invalidation no-resurrection tests,
 `pack` trust-class writes, and conflict/quarantine review routing.
 Phase 3: round-trip identity fixture, doctor probe, README walkthrough, and
-`remem doctor` smoke on a store with an imported pack.
+`remem doctor` smoke on a store with an imported pack are implemented.
 
 No pack row may enter active startup memory without the #672 scan and `pack`
 trust class in place.

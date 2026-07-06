@@ -305,11 +305,15 @@ Remem is meant for the parts that should not depend on manual upkeep:
   ./remem-memory` updates existing rows and rebuilds search, entity, embedding,
   and current-state indexes. Export refuses non-empty directories to avoid
   overwriting manual edits.
-- **A git-diffable project memory pack export**: `remem export --project "$PWD"
-  --pack .remem-pack` writes deterministic `pack.json`, `memories.jsonl`, and
-  `INDEX.md` files for active repo-owned startup memories. Export re-runs the
-  redaction scan and fails loudly on secret-like content; pack import is still
-  pending the explicit merge/trust-class workflow.
+- **A git-diffable project memory pack**: maintainers can run
+  `remem export --project "$PWD" --pack .remem-pack` and commit the generated
+  `pack.json`, `memories.jsonl`, and `INDEX.md` files for active repo-owned
+  startup memories. New contributors run `remem import --pack .remem-pack`
+  from the same checkout to merge safe rows into their local store. Export
+  re-runs the redaction scan and fails loudly on secret-like content; import
+  dedups local rows, skips suppressed or invalidated local decisions, routes
+  conflicts/quarantines to review, and marks imported memories with pack
+  provenance visible in `remem why` and `remem doctor`.
 - **Failure-loop learning**: raw transcripts that contain both concrete
   build/test failure evidence and an explicit "stop and challenge the
   hypothesis" style lesson feed an idempotent `failure` lesson before summary

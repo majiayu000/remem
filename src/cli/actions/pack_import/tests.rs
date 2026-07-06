@@ -1,4 +1,6 @@
-use super::super::pack_export::render_memories_jsonl;
+use super::super::pack_export::{
+    export_pack, pack_import_routing_reason, render_memories_jsonl, PackExportRequest,
+};
 use super::*;
 use crate::cli::types::{Cli, Commands};
 use crate::db::test_support::ScopedTestDataDir;
@@ -395,20 +397,141 @@ fn pack_import_active_writes_pack_trust_and_review_rows_without_resurrection() -
         &mut conn,
         edited_quarantine_id,
         CandidateEdit {
+            scope: Some("global".to_string()),
             text: Some("Edited unsafe conflict content.".to_string()),
             ..CandidateEdit::default()
         },
     )?
     .expect("edited pack candidate approves");
-    let (edited_title, edited_content): (String, String) = conn.query_row(
-        "SELECT title, content FROM memories WHERE id = ?1",
+    let (
+        edited_title,
+        edited_content,
+        edited_scope,
+        edited_owner_scope,
+        edited_owner_key,
+        edited_topic_domain,
+        edited_routing_reason,
+    ): (
+        String,
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<String>,
+    ) = conn.query_row(
+        "SELECT title, content, scope, owner_scope, owner_key, topic_domain, routing_reason
+         FROM memories WHERE id = ?1",
         [edited_memory_id],
-        |row| Ok((row.get(0)?, row.get(1)?)),
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        },
     )?;
     assert_eq!(edited_title, "Unsafe conflict");
     assert_eq!(edited_content, "Edited unsafe conflict content.");
+    assert_eq!(edited_scope, "global");
+    assert_eq!(edited_owner_scope, "user");
+    assert_eq!(edited_owner_key, "user:default");
+    assert!(
+        edited_topic_domain
+            .as_deref()
+            .is_some_and(|value| value.starts_with("pack:")),
+        "edited pack approval should preserve pack topic domain"
+    );
+    assert_eq!(
+        edited_routing_reason.as_deref(),
+        Some(pack_import_routing_reason("repo:/source").as_str())
+    );
 
     let _ = fs::remove_dir_all(&pack);
+    Ok(())
+}
+
+#[test]
+fn pack_import_round_trip_reexports_identical_pack_bytes() -> Result<()> {
+    let source = Connection::open_in_memory()?;
+    source.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    crate::migrate::run_migrations(&source)?;
+    insert_local_pack_memory(
+        &source,
+        LocalMemoryInput {
+            id: 21,
+            project: "/repo",
+            memory_type: "decision",
+            title: "Deployment",
+            content: "Use blue-green deploys for production releases.",
+            status: "active",
+            state_key: Some("deploy-strategy"),
+        },
+    )?;
+    insert_local_pack_memory(
+        &source,
+        LocalMemoryInput {
+            id: 22,
+            project: "/repo",
+            memory_type: "architecture",
+            title: "Runtime",
+            content: "Keep the runtime store local-first and SQLite backed.",
+            status: "active",
+            state_key: Some("runtime-store"),
+        },
+    )?;
+
+    let first_pack = unique_pack_import_dir("pack-import-round-trip-first");
+    let second_pack = unique_pack_import_dir("pack-import-round-trip-second");
+    let _ = fs::remove_dir_all(&first_pack);
+    let _ = fs::remove_dir_all(&second_pack);
+    export_pack(
+        &source,
+        PackExportRequest {
+            output: &first_pack,
+            project: "/repo",
+            limit: 100,
+        },
+    )?;
+    let first_manifest = fs::read_to_string(first_pack.join("pack.json"))?;
+    let first_memories = fs::read_to_string(first_pack.join("memories.jsonl"))?;
+    let first_index = fs::read_to_string(first_pack.join("INDEX.md"))?;
+
+    let mut fresh = Connection::open_in_memory()?;
+    fresh.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+    crate::migrate::run_migrations(&fresh)?;
+    let report = active_import::apply_loaded_pack(&mut fresh, "/repo", load_pack(&first_pack)?)?;
+    assert_eq!(report.applied.added_memories, 2);
+    assert_eq!(report.plan.stats.add, 2);
+
+    export_pack(
+        &fresh,
+        PackExportRequest {
+            output: &second_pack,
+            project: "/repo",
+            limit: 100,
+        },
+    )?;
+
+    assert_eq!(
+        first_manifest,
+        fs::read_to_string(second_pack.join("pack.json"))?
+    );
+    assert_eq!(
+        first_memories,
+        fs::read_to_string(second_pack.join("memories.jsonl"))?
+    );
+    assert_eq!(
+        first_index,
+        fs::read_to_string(second_pack.join("INDEX.md"))?
+    );
+
+    let _ = fs::remove_dir_all(&first_pack);
+    let _ = fs::remove_dir_all(&second_pack);
     Ok(())
 }
 

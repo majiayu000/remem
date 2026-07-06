@@ -98,11 +98,16 @@ pub(super) fn promote_row(
         .or(row.project.as_deref())
         .context("candidate is missing source project path")?;
     let candidate = edited.cloned().unwrap_or_else(|| row.as_candidate());
-    let route = if edited.is_some() {
+    let mut route = if edited.is_some() {
         route_candidate(project, None, &candidate, std::iter::empty())
     } else {
         row.route_for(&candidate)
     };
+    if edited.is_some() && row.source_kind.as_deref() == Some("pack") {
+        let pack_route = row.route_for(&candidate);
+        route.topic_domain = pack_route.topic_domain;
+        route.routing_reason = pack_route.routing_reason;
+    }
     let outcome = promote_candidate_to_memory_with_route(
         conn,
         None,

@@ -22,7 +22,7 @@ use super::{
         render_search_results,
     },
     show::{format_memory_timestamp, ShowJson},
-    why::{render_why_memory, ContextGateSummary},
+    why::{render_why_memory, ContextGateSummary, PackAttribution},
 };
 
 fn sample_memory() -> Memory {
@@ -597,6 +597,7 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
         Some("main"),
         Some(&gate),
         None,
+        None,
         &[],
     );
 
@@ -612,4 +613,27 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
     assert!(output.contains("context gate: latest codex-cli output for proj: mode=suppressed"));
     assert!(output.contains("gate rows are context-output level, not per-memory proof"));
     assert!(output.contains("remem show 1"));
+}
+
+#[test]
+fn cli_why_render_exposes_pack_attribution() {
+    let pack = PackAttribution {
+        origin: "pack:abc123def456".to_string(),
+        source_project: Some("/repo".to_string()),
+        routing_reason: Some("pack import from repo:/source".to_string()),
+    };
+
+    let output = render_why_memory(
+        &sample_memory(),
+        Some("proj"),
+        Some("main"),
+        None,
+        None,
+        Some(&pack),
+        &[],
+    );
+
+    assert!(output.contains(
+        "pack attribution: origin=pack:abc123def456 imported_from=repo:/source trust=pack"
+    ));
 }

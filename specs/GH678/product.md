@@ -49,19 +49,19 @@ backup restore.
 ## Acceptance Criteria
 
 - [x] Exporting twice with unchanged memory state is byte-identical.
-- [ ] Export -> fresh-store import -> export produces identical pack bytes.
+- [x] Export -> fresh-store import -> export produces identical pack bytes.
 - [x] Import does not resurrect locally suppressed or invalidated memories.
 - [x] Imported memories carry a `pack` source trust class consumed by the
       #672 trust vocabulary and gates.
 - [x] Export re-runs redaction and fails loudly on seeded secret content.
-- [ ] README documents the team-onboarding workflow.
+- [x] README documents the team-onboarding workflow.
 
 Implementation note: pack export is available through
 `remem export --project <p> [--pack <dir>]`. Pack import planning is shared by
 dry-run and active import: safe rows are inserted with `pack` trust, conflicts
 and quarantines route to review candidates, and suppressed/inactive local
 decisions are skipped. Round-trip fixtures, onboarding docs, and doctor/why
-attribution remain incomplete.
+attribution are implemented and verified by the final GH-678 tranche.
 
 ## Edge Cases
 

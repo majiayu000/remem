@@ -100,12 +100,12 @@ categories without mutating the store.
 ## Test Plan
 
 - [x] Export determinism fixture.
-- [ ] Round-trip export/import fixture.
+- [x] Round-trip export/import fixture.
 - [x] Import planner dedup, conflict, suppression, and invalidation tests.
 - [x] Redaction failure test.
 - [x] Active import trust-class tests after #672 dependency lands.
-- [ ] README walkthrough smoke.
-- [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
+- [x] README walkthrough smoke.
+- [x] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
       before merge readiness.
 
 ## Rollback Plan
