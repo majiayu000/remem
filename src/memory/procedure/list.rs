@@ -40,8 +40,7 @@ pub fn list_promoted_procedures(
         params.push(Value::Text(project.to_string()));
     }
     let sql = format!(
-        "SELECT m.id, m.title, m.project, m.topic_key, m.content,
-                m.evidence_event_ids
+        "SELECT m.id, m.title, m.project, m.topic_key, m.evidence_event_ids
          FROM memories m
          WHERE {}
          ORDER BY m.updated_at_epoch DESC, m.id DESC",
@@ -54,15 +53,14 @@ pub fn list_promoted_procedures(
             title: row.get(1)?,
             project: row.get(2)?,
             topic_key: row.get(3)?,
-            content: row.get(4)?,
-            evidence_event_ids: row.get(5)?,
+            evidence_event_ids: row.get(4)?,
         })
     })?;
-    let rows = crate::db::query::collect_rows(rows)?;
 
     let mut items = Vec::new();
     let mut eligible_seen = 0_i64;
     for row in rows {
+        let row = row?;
         if let Some(item) = row.into_list_item(conn)? {
             if eligible_seen >= offset {
                 items.push(item);
@@ -89,7 +87,6 @@ struct ProcedureRow {
     title: String,
     project: String,
     topic_key: Option<String>,
-    content: String,
     evidence_event_ids: Option<String>,
 }
 
@@ -107,6 +104,7 @@ impl ProcedureRow {
         }
         let verified_runs = verification_summary.verified_runs;
         let verification_epoch = Some(verification_summary.last_verification_epoch);
+        let reuse_condition = verified_reuse_condition(&verification_summary);
         Ok(Some(ProcedureListItem {
             id: self.id,
             title: self.title,
@@ -114,7 +112,7 @@ impl ProcedureRow {
             branch: verification_summary.branch,
             topic_key: self.topic_key,
             command: Some(verification_summary.command),
-            reuse_condition: parse_string_line(&self.content, "Reuse when:"),
+            reuse_condition: Some(reuse_condition),
             files_touched_count: verification_summary.files_touched.len(),
             files_touched: verification_summary.files_touched,
             verified_runs,
@@ -139,6 +137,7 @@ struct VerificationSummary {
     verified_runs: usize,
     last_verification_epoch: i64,
     branch: Option<String>,
+    workflow_key: String,
     command: String,
     files_touched: Vec<String>,
 }
@@ -202,6 +201,7 @@ fn verification_summary(
         return Ok(None);
     }
     let branch = first.branch.clone();
+    let workflow_key = first.workflow_key.clone();
     let command = first.command.clone();
     let mut source_ids = std::collections::BTreeSet::new();
     let mut files_touched = std::collections::BTreeSet::new();
@@ -217,6 +217,7 @@ fn verification_summary(
         verified_runs: source_ids.len(),
         last_verification_epoch,
         branch,
+        workflow_key,
         command,
         files_touched: files_touched.into_iter().collect(),
     }))
@@ -243,14 +244,17 @@ fn parse_files(raw: Option<&str>) -> Result<Vec<String>> {
     serde_json::from_str(trimmed).with_context(|| "invalid procedure files JSON")
 }
 
-fn parse_string_line(content: &str, prefix: &str) -> Option<String> {
-    content.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix(prefix)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(str::to_string)
-    })
+fn verified_reuse_condition(summary: &VerificationSummary) -> String {
+    match summary.branch.as_deref() {
+        Some(branch) => format!(
+            "the same project and branch '{branch}' need verified workflow '{}'.",
+            summary.workflow_key
+        ),
+        None => format!(
+            "the same project needs verified workflow '{}'.",
+            summary.workflow_key
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +378,11 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].command.as_deref(), Some("cargo test -- verified"));
         assert_eq!(items[0].files_touched, vec!["src/lib.rs"]);
+        assert_ne!(items[0].reuse_condition.as_deref(), Some("overwritten."));
+        assert!(items[0]
+            .reuse_condition
+            .as_deref()
+            .is_some_and(|reuse| reuse.contains("cargo-test-verified")));
         Ok(())
     }
 
