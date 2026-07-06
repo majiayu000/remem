@@ -49,6 +49,221 @@ fn xml_response(summary: &str, segments: &str) -> String {
     format!("<summary>{summary}</summary><segments>{segments}</segments>")
 }
 
+#[derive(Debug)]
+struct SummaryWriterProjection {
+    request: Option<String>,
+    completed: Option<String>,
+    decisions: Option<String>,
+    learned: Option<String>,
+    next_steps: Option<String>,
+    preferences: Option<String>,
+    prompt_number: Option<i64>,
+    discovery_tokens: i64,
+    host_id: Option<i64>,
+    project_id: Option<i64>,
+    session_row_id: Option<i64>,
+    summary_text: Option<String>,
+    covered_from_event_id: Option<i64>,
+    covered_to_event_id: Option<i64>,
+    model: Option<String>,
+    source_project: Option<String>,
+    target_project: Option<String>,
+    owner_scope: Option<String>,
+    owner_key: Option<String>,
+    topic_domain: Option<String>,
+    routing_confidence: Option<f64>,
+    routing_reason: Option<String>,
+    context_class: Option<String>,
+    expires_at_epoch: Option<i64>,
+    valid_from_epoch: Option<i64>,
+    valid_to_epoch: Option<i64>,
+}
+
+fn summary_writer_projection(
+    conn: &Connection,
+    memory_session_id: &str,
+) -> Result<SummaryWriterProjection> {
+    conn.query_row(
+        "SELECT request, completed, decisions, learned, next_steps, preferences,
+                prompt_number, discovery_tokens, host_id, project_id,
+                session_row_id, summary_text, covered_from_event_id,
+                covered_to_event_id, model, source_project, target_project,
+                owner_scope, owner_key, topic_domain, routing_confidence,
+                routing_reason, context_class, expires_at_epoch,
+                valid_from_epoch, valid_to_epoch
+         FROM session_summaries
+         WHERE memory_session_id = ?1",
+        params![memory_session_id],
+        |row| {
+            Ok(SummaryWriterProjection {
+                request: row.get(0)?,
+                completed: row.get(1)?,
+                decisions: row.get(2)?,
+                learned: row.get(3)?,
+                next_steps: row.get(4)?,
+                preferences: row.get(5)?,
+                prompt_number: row.get(6)?,
+                discovery_tokens: row.get(7)?,
+                host_id: row.get(8)?,
+                project_id: row.get(9)?,
+                session_row_id: row.get(10)?,
+                summary_text: row.get(11)?,
+                covered_from_event_id: row.get(12)?,
+                covered_to_event_id: row.get(13)?,
+                model: row.get(14)?,
+                source_project: row.get(15)?,
+                target_project: row.get(16)?,
+                owner_scope: row.get(17)?,
+                owner_key: row.get(18)?,
+                topic_domain: row.get(19)?,
+                routing_confidence: row.get(20)?,
+                routing_reason: row.get(21)?,
+                context_class: row.get(22)?,
+                expires_at_epoch: row.get(23)?,
+                valid_from_epoch: row.get(24)?,
+                valid_to_epoch: row.get(25)?,
+            })
+        },
+    )
+    .map_err(Into::into)
+}
+
+fn assert_ownership_context_fields_unset(summary: &SummaryWriterProjection) {
+    assert_eq!(summary.source_project, None);
+    assert_eq!(summary.target_project, None);
+    assert_eq!(summary.owner_scope, None);
+    assert_eq!(summary.owner_key, None);
+    assert_eq!(summary.topic_domain, None);
+    assert_eq!(summary.routing_confidence, None);
+    assert_eq!(summary.routing_reason, None);
+    assert_eq!(summary.context_class, None);
+    assert_eq!(summary.expires_at_epoch, None);
+    assert_eq!(summary.valid_from_epoch, None);
+    assert_eq!(summary.valid_to_epoch, None);
+}
+
+#[tokio::test]
+async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Result<()> {
+    let mut conn = setup_conn();
+    let project = "/tmp/remem";
+
+    capture(
+        &conn,
+        "sess-summary-writer-equivalence",
+        "session_stop",
+        "User asked to compare summary writers. Agent captured a decision, lesson, next step, and preference.",
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    let session_row_id = task
+        .session_row_id
+        .ok_or_else(|| anyhow::anyhow!("rollup task missing session row id"))?;
+    let rollup_memory_session_id = format!("capture-rollup-{session_row_id}");
+
+    let rollup_result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response(
+            "Captured a decision, lesson, next step, and preference.",
+            "",
+        ))
+    })
+    .await?;
+    assert_eq!(rollup_result, SessionRollupResult::Written);
+
+    let cooldown_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM summarize_cooldown WHERE project = ?1",
+        params![project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(
+        cooldown_rows, 0,
+        "rollup writer must not set legacy cooldown"
+    );
+
+    let deleted = db::finalize_summarize(
+        &mut conn,
+        "legacy-summary-writer-equivalence",
+        project,
+        "legacy-message-hash",
+        Some("Compare summary writers"),
+        Some("Captured a decision, lesson, next step, and preference."),
+        Some("Keep session_summaries until writer fields are proven equivalent."),
+        Some("SessionRollup currently stores range metadata that legacy Summary lacks."),
+        Some("Port load-bearing legacy fields before retiring JobType::Summary."),
+        Some("Do not silently drop structured preferences from summaries."),
+        Some(7),
+        42,
+    )?;
+    assert_eq!(deleted, 0);
+
+    let legacy = summary_writer_projection(&conn, "legacy-summary-writer-equivalence")?;
+    let rollup = summary_writer_projection(&conn, &rollup_memory_session_id)?;
+
+    assert_eq!(legacy.completed, rollup.completed);
+    assert_eq!(legacy.summary_text, None);
+    assert_eq!(rollup.summary_text, rollup.completed);
+
+    assert_eq!(legacy.request.as_deref(), Some("Compare summary writers"));
+    assert_eq!(
+        rollup.request,
+        Some(format!(
+            "Captured event range {}..{}",
+            task.high_watermark_event_id.unwrap_or_default(),
+            task.high_watermark_event_id.unwrap_or_default()
+        ))
+    );
+
+    assert_eq!(
+        legacy.decisions.as_deref(),
+        Some("Keep session_summaries until writer fields are proven equivalent.")
+    );
+    assert_eq!(
+        legacy.learned.as_deref(),
+        Some("SessionRollup currently stores range metadata that legacy Summary lacks.")
+    );
+    assert_eq!(
+        legacy.next_steps.as_deref(),
+        Some("Port load-bearing legacy fields before retiring JobType::Summary.")
+    );
+    assert_eq!(
+        legacy.preferences.as_deref(),
+        Some("Do not silently drop structured preferences from summaries.")
+    );
+    assert_eq!(legacy.prompt_number, Some(7));
+    assert_eq!(rollup.decisions, None);
+    assert_eq!(rollup.learned, None);
+    assert_eq!(rollup.next_steps, None);
+    assert_eq!(rollup.preferences, None);
+    assert_eq!(rollup.prompt_number, None);
+
+    assert_eq!(legacy.discovery_tokens, 42);
+    assert_eq!(
+        rollup.discovery_tokens,
+        ((rollup.completed.as_deref().unwrap_or_default().len() as i64) + 3) / 4
+    );
+
+    assert_eq!(legacy.host_id, None);
+    assert_eq!(legacy.project_id, None);
+    assert_eq!(legacy.session_row_id, None);
+    assert_eq!(legacy.covered_from_event_id, None);
+    assert_eq!(legacy.covered_to_event_id, None);
+    assert_eq!(legacy.model, None);
+    assert!(rollup.host_id.is_some());
+    assert!(rollup.project_id.is_some());
+    assert_eq!(rollup.session_row_id, Some(session_row_id));
+    assert_eq!(rollup.covered_from_event_id, task.high_watermark_event_id);
+    assert_eq!(rollup.covered_to_event_id, task.high_watermark_event_id);
+    assert_eq!(rollup.model, None);
+    assert_ownership_context_fields_unset(&legacy);
+    assert_ownership_context_fields_unset(&rollup);
+
+    let cooldown_hash: String = conn.query_row(
+        "SELECT last_message_hash FROM summarize_cooldown WHERE project = ?1",
+        params![project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(cooldown_hash, "legacy-message-hash");
+    Ok(())
+}
+
 #[tokio::test]
 async fn session_rollup_empty_range_writes_no_summary() -> Result<()> {
     let mut conn = setup_conn();

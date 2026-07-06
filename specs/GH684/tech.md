@@ -81,7 +81,10 @@ needed fields and side effects, then removes only the redundant Summary writer.
 ## Test Plan
 
 - [ ] Doctor/status fixtures for counts, last-write epochs, and frozen writes.
-- [ ] `finalize_summarize` versus `persist_session_rollup` equivalence tests.
+- [x] `finalize_summarize` versus `persist_session_rollup` field-comparison
+      fixture: `summary_writer_equivalence_fixture_documents_field_level_deltas`
+      documents legacy-only structured fields, rollup-only range fields, and
+      the legacy cooldown side-effect delta.
 - [ ] Stop-hook side-effect regression tests.
 - [ ] Pending legacy migration and guarded-drop tests.
 - [x] MCP/docs wording verification.
