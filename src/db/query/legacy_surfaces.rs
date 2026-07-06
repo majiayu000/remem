@@ -15,12 +15,7 @@ pub(super) fn query_legacy_surface_stats(conn: &Connection) -> Result<Vec<Legacy
     let observations_fts =
         legacy_table_surface(conn, "observations_fts", "reclassify-current", &[])?;
     let session_summaries = legacy_table_surface(conn, "session_summaries", "keep", &[])?;
-    let pending_observations = legacy_table_surface(
-        conn,
-        "pending_observations",
-        "retire",
-        &["created_at_epoch"],
-    )?;
+    let pending_observations = legacy_pending_observation_surface(conn)?;
     let summary_jobs = legacy_summary_job_surface(conn)?;
 
     Ok(vec![
@@ -52,6 +47,40 @@ fn legacy_table_surface(
     Ok(LegacySurfaceStats {
         surface: table.to_string(),
         disposition: disposition.to_string(),
+        row_count,
+        last_write_epoch,
+        frozen_write_violations,
+    })
+}
+
+fn legacy_pending_observation_surface(conn: &Connection) -> Result<LegacySurfaceStats> {
+    let table = "pending_observations";
+    let row_count = table_count_or_zero(conn, table)?;
+    let last_write_epoch = max_write_epoch(conn, table)?;
+    let frozen_write_violations = if !table_exists(conn, table)? {
+        0
+    } else if column_exists(conn, table, "status")? {
+        let archived_filter = if column_exists(conn, table, "archived_at_epoch")? {
+            "AND archived_at_epoch IS NULL"
+        } else {
+            ""
+        };
+        conn.query_row(
+            &format!(
+                "SELECT COUNT(*) FROM pending_observations
+                 WHERE status <> 'migrated'
+                 {archived_filter}"
+            ),
+            [],
+            |row| row.get(0),
+        )?
+    } else {
+        row_count
+    };
+
+    Ok(LegacySurfaceStats {
+        surface: table.to_string(),
+        disposition: "retire".to_string(),
         row_count,
         last_write_epoch,
         frozen_write_violations,
@@ -141,8 +170,19 @@ fn max_write_epoch_where(
     }
 
     let expression = match columns.as_slice() {
-        ["updated_at_epoch", "created_at_epoch"] => "COALESCE(updated_at_epoch, created_at_epoch)",
-        [single] => single,
+        ["updated_at_epoch", "created_at_epoch"] => {
+            "CASE
+                WHEN NULLIF(updated_at_epoch, 0) IS NULL THEN NULLIF(created_at_epoch, 0)
+                WHEN NULLIF(created_at_epoch, 0) IS NULL THEN NULLIF(updated_at_epoch, 0)
+                WHEN updated_at_epoch >= created_at_epoch THEN updated_at_epoch
+                ELSE created_at_epoch
+             END"
+        }
+        [single] => match *single {
+            "updated_at_epoch" => "NULLIF(updated_at_epoch, 0)",
+            "created_at_epoch" => "NULLIF(created_at_epoch, 0)",
+            _ => unreachable!("legacy write epoch columns are fixed"),
+        },
         _ => unreachable!("legacy write epoch columns are fixed"),
     };
     let sql = format!(

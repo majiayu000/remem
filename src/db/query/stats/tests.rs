@@ -94,6 +94,7 @@ fn setup_stats_schema(conn: &Connection) {
             id INTEGER PRIMARY KEY,
             status TEXT NOT NULL,
             created_at_epoch INTEGER NOT NULL DEFAULT 0,
+            updated_at_epoch INTEGER NOT NULL DEFAULT 0,
             next_retry_epoch INTEGER,
             lease_owner TEXT,
             lease_expires_epoch INTEGER
@@ -252,32 +253,19 @@ fn query_system_stats_and_related_views_share_one_definition() {
         [],
     )
     .expect("approved graph candidate insert should succeed");
-    conn.execute(
-        "INSERT INTO pending_observations (status, created_at_epoch) VALUES ('pending', 100)",
-        [],
+    conn.execute_batch(
+        "INSERT INTO pending_observations (status, created_at_epoch) VALUES ('pending', 100);
+         INSERT INTO pending_observations (status, created_at_epoch) VALUES ('pending', 120);
+         UPDATE pending_observations
+         SET next_retry_epoch = strftime('%s', 'now') + 3600
+         WHERE id = 2;
+         INSERT INTO pending_observations (status, created_at_epoch, lease_owner, lease_expires_epoch)
+         VALUES ('processing', 130, 'worker-a', strftime('%s', 'now') - 1);
+         INSERT INTO pending_observations (status, created_at_epoch) VALUES ('failed', 140);
+         INSERT INTO pending_observations (status, created_at_epoch, updated_at_epoch)
+         VALUES ('migrated', 500, 0);",
     )
-    .expect("pending insert should succeed");
-    conn.execute(
-        "INSERT INTO pending_observations (status, created_at_epoch) VALUES ('pending', 120)",
-        [],
-    )
-    .expect("second pending insert should succeed");
-    conn.execute(
-        "UPDATE pending_observations SET next_retry_epoch = strftime('%s', 'now') + 3600 WHERE id = 2",
-        [],
-    )
-    .expect("delayed pending update should succeed");
-    conn.execute(
-        "INSERT INTO pending_observations (status, created_at_epoch, lease_owner, lease_expires_epoch)
-         VALUES ('processing', 130, 'worker-a', strftime('%s', 'now') - 1)",
-        [],
-    )
-    .expect("processing pending insert should succeed");
-    conn.execute(
-        "INSERT INTO pending_observations (status, created_at_epoch) VALUES ('failed', 140)",
-        [],
-    )
-    .expect("failed pending insert should succeed");
+    .expect("pending observation fixtures should insert");
     conn.execute(
         "INSERT INTO jobs (job_type, state, lease_expires_epoch, created_at_epoch, updated_at_epoch)
          VALUES ('compress', 'pending', NULL, 150, 150)",

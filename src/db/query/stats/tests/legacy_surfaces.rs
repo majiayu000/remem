@@ -26,8 +26,8 @@ pub(super) fn expected_fixture() -> Vec<LegacySurfaceStats> {
         LegacySurfaceStats {
             surface: "pending_observations".to_string(),
             disposition: "retire".to_string(),
-            row_count: 4,
-            last_write_epoch: Some(140),
+            row_count: 5,
+            last_write_epoch: Some(500),
             frozen_write_violations: 4,
         },
         LegacySurfaceStats {
