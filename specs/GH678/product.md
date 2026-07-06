@@ -56,9 +56,11 @@ backup restore.
 - [x] Export re-runs redaction and fails loudly on seeded secret content.
 - [ ] README documents the team-onboarding workflow.
 
-Phase 1 implementation note: export-only pack generation is available through
-`remem export --project <p> [--pack <dir>]`. Import and onboarding remain
-incomplete until the merge planner and #672 trust-class wiring land.
+Implementation note: pack export is available through
+`remem export --project <p> [--pack <dir>]`. Pack import dry-run planning is
+available through `remem import --pack <dir> --dry-run`; active import,
+round-trip fixtures, onboarding docs, and doctor/why attribution remain
+incomplete until the trust-class write path lands.
 
 ## Edge Cases
 

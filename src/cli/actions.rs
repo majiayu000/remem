@@ -11,6 +11,7 @@ mod markdown_archive;
 mod memory_policy;
 mod model;
 mod pack_export;
+mod pack_import;
 mod pending;
 mod preferences;
 mod procedures;

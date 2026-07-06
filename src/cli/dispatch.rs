@@ -287,7 +287,16 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             run_dream(project.as_deref(), profile.as_deref(), dry_run).await?;
         }
         Commands::Admin { action } => run_admin(action)?,
-        Commands::Import { action } => run_import(action)?,
+        Commands::Import {
+            action,
+            pack,
+            dry_run,
+        } => {
+            let project = pack
+                .as_ref()
+                .map(|_| db::project_from_cwd(&resolve_cwd_arg(None)));
+            run_import(action, pack.as_deref(), dry_run, project.as_deref())?;
+        }
         Commands::IngestSessions { roots, since, json } => {
             let summary = run_ingest_sessions_cli(&roots, since.as_deref(), json)?;
             let code = summary.exit_code();
