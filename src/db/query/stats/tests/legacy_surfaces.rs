@@ -33,8 +33,8 @@ pub(super) fn expected_fixture() -> Vec<LegacySurfaceStats> {
         LegacySurfaceStats {
             surface: "summary_jobs".to_string(),
             disposition: "retire-summary-only".to_string(),
-            row_count: 2,
-            last_write_epoch: Some(285),
+            row_count: 3,
+            last_write_epoch: Some(305),
             frozen_write_violations: 2,
         },
     ]

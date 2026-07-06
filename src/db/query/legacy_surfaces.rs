@@ -106,8 +106,18 @@ fn legacy_summary_job_surface(conn: &Connection) -> Result<LegacySurfaceStats> {
         |row| row.get(0),
     )?;
     let frozen_write_violations = if column_exists(conn, "jobs", "state")? {
+        let archived_filter = if column_exists(conn, "jobs", "archived_at_epoch")? {
+            "AND archived_at_epoch IS NULL"
+        } else {
+            ""
+        };
         conn.query_row(
-            "SELECT COUNT(*) FROM jobs WHERE job_type = 'summary' AND state <> 'done'",
+            &format!(
+                "SELECT COUNT(*) FROM jobs
+                 WHERE job_type = 'summary'
+                   AND state <> 'done'
+                   {archived_filter}"
+            ),
             [],
             |row| row.get(0),
         )?

@@ -95,6 +95,27 @@ fn legacy_surfaces_warn_on_retire_blockers() -> anyhow::Result<()> {
 }
 
 #[test]
+fn legacy_surfaces_ignore_archived_summary_jobs_as_blockers() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    conn.execute(
+        "INSERT INTO jobs
+         (host, job_type, project, session_id, payload_json, state, priority,
+          attempt_count, max_attempts, next_retry_epoch, created_at_epoch, updated_at_epoch,
+          archived_at_epoch)
+         VALUES ('codex-cli', 'summary', '/tmp/remem', 'sess-archived',
+                 '{}', 'failed', 1, 6, 6, 0, 110, 130, 150)",
+        [],
+    )?;
+
+    let check = check_legacy_surfaces(Some(&conn));
+
+    assert!(matches!(check.status, Status::Ok), "{}", check.detail);
+    assert!(check.detail.contains("summary_jobs rows=1"));
+    assert!(check.detail.contains("frozen_write_violations=0"));
+    Ok(())
+}
+
+#[test]
 fn promotion_funnel_warns_when_observations_do_not_create_candidates() -> anyhow::Result<()> {
     let conn = setup_conn()?;
     record_capture(&conn)?;

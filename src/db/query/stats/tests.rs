@@ -105,7 +105,10 @@ fn setup_stats_schema(conn: &Connection) {
             state TEXT NOT NULL,
             lease_expires_epoch INTEGER,
             created_at_epoch INTEGER NOT NULL,
-            updated_at_epoch INTEGER NOT NULL
+            updated_at_epoch INTEGER NOT NULL,
+            failure_class TEXT,
+            failed_at_epoch INTEGER,
+            archived_at_epoch INTEGER
         );
         CREATE TABLE worker_heartbeats (
             owner TEXT PRIMARY KEY,
@@ -285,6 +288,14 @@ fn query_system_stats_and_related_views_share_one_definition() {
     )
     .expect("failed job insert should succeed");
     conn.execute(
+        "INSERT INTO jobs
+         (job_type, state, lease_expires_epoch, created_at_epoch, updated_at_epoch,
+          archived_at_epoch)
+         VALUES ('summary', 'failed', NULL, 300, 305, 400)",
+        [],
+    )
+    .expect("archived summary job insert should succeed");
+    conn.execute(
         "INSERT INTO worker_heartbeats (owner, pid, started_at_epoch, updated_at_epoch)
          VALUES ('worker-a', ?1, strftime('%s', 'now') - 10, strftime('%s', 'now') - 10)",
         [i64::from(std::process::id())],
@@ -362,6 +373,7 @@ fn query_system_stats_and_related_views_share_one_definition() {
                 job: FailureSurfaceStats {
                     actionable_total: 1,
                     transient: 1,
+                    archived: 1,
                     oldest_actionable_epoch: Some(285),
                     ..FailureSurfaceStats::default()
                 },
