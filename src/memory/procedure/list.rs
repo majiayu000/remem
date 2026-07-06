@@ -41,7 +41,7 @@ pub fn list_promoted_procedures(
     }
     let sql = format!(
         "SELECT m.id, m.title, m.project, m.topic_key, m.content,
-                m.evidence_event_ids, m.confidence
+                m.evidence_event_ids
          FROM memories m
          WHERE {}
          ORDER BY m.updated_at_epoch DESC, m.id DESC",
@@ -56,7 +56,6 @@ pub fn list_promoted_procedures(
             topic_key: row.get(3)?,
             content: row.get(4)?,
             evidence_event_ids: row.get(5)?,
-            confidence: row.get(6)?,
         })
     })?;
     let rows = crate::db::query::collect_rows(rows)?;
@@ -92,7 +91,6 @@ struct ProcedureRow {
     topic_key: Option<String>,
     content: String,
     evidence_event_ids: Option<String>,
-    confidence: Option<f64>,
 }
 
 impl ProcedureRow {
@@ -107,6 +105,7 @@ impl ProcedureRow {
         if verification_summary.verified_runs < policy.min_verified_runs {
             return Ok(None);
         }
+        let verified_runs = verification_summary.verified_runs;
         let verification_epoch = Some(verification_summary.last_verification_epoch);
         Ok(Some(ProcedureListItem {
             id: self.id,
@@ -118,9 +117,9 @@ impl ProcedureRow {
             reuse_condition: parse_string_line(&self.content, "Reuse when:"),
             files_touched_count: verification_summary.files_touched.len(),
             files_touched: verification_summary.files_touched,
-            verified_runs: verification_summary.verified_runs,
+            verified_runs,
             last_verification_epoch: verification_epoch,
-            confidence: self.confidence,
+            confidence: Some(super::confidence_for_verified_runs(verified_runs)),
         }))
     }
 }
@@ -399,13 +398,68 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn procedure_list_recomputes_confidence_from_fresh_verification_runs() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let memory_id = seed_promoted_procedure_runs(
+            &mut conn,
+            "/tmp/remem",
+            "sess-confidence",
+            "cargo test -- confidence",
+            3,
+        )?;
+        let stored_confidence: f64 = conn.query_row(
+            "SELECT confidence FROM memories WHERE id = ?1",
+            [memory_id],
+            |row| row.get(0),
+        )?;
+        assert!(stored_confidence > 0.86);
+        let stale_epoch = chrono::Utc::now().timestamp()
+            - crate::memory::procedure::ProcedurePromotionPolicy::default()
+                .max_verification_age_secs
+            - 1;
+        conn.execute(
+            "UPDATE procedure_verifications
+             SET verified_at_epoch = ?1
+             WHERE source_event_id = (
+                 SELECT MIN(source_event_id) FROM procedure_verifications
+             )",
+            [stale_epoch],
+        )?;
+
+        let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, memory_id);
+        assert_eq!(items[0].verified_runs, 2);
+        assert_eq!(
+            items[0]
+                .confidence
+                .map(|confidence| (confidence * 100.0).round() as i64),
+            Some(86)
+        );
+        Ok(())
+    }
+
     fn seed_promoted_procedure(
         conn: &mut Connection,
         project: &str,
         session_id: &str,
         command: &str,
     ) -> Result<i64> {
-        for seq in [1, 2] {
+        seed_promoted_procedure_runs(conn, project, session_id, command, 2)
+    }
+
+    fn seed_promoted_procedure_runs(
+        conn: &mut Connection,
+        project: &str,
+        session_id: &str,
+        command: &str,
+        runs: i64,
+    ) -> Result<i64> {
+        for seq in 1..=runs {
             crate::db::record_captured_event(
                 conn,
                 &crate::db::CaptureEventInput {
