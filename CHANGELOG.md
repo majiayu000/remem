@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.172` for GH-684 summary writer equivalence:
+  field-comparison fixtures now document legacy Summary structured fields,
+  SessionRollup range metadata, ownership/context defaults, and cooldown
+  side-effect deltas before Summary writer retirement.
 - Staged source version `0.5.171` for GH-684 legacy surface visibility:
   status and doctor now report tracked legacy surface row counts, last-write
   epochs, and retire/freeze blockers before later Summary/pending retirement.
