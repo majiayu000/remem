@@ -183,7 +183,7 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ProcedureAction,
     },
-    /// Auditably delete, reject, or stale curated memories by ID.
+    /// Auditably delete, reject, stale, or acknowledge curated memories by ID.
     Govern {
         /// Restrict governance to one project path.
         #[arg(long, short)]
@@ -191,6 +191,9 @@ pub(super) enum Commands {
         /// Governance action to apply.
         #[arg(long, value_enum)]
         action: MemoryGovernanceCliAction,
+        /// Pattern id required when action is acknowledge-pattern.
+        #[arg(long)]
+        acknowledge_pattern: Option<String>,
         /// Required human-readable reason for non-dry-run mutations.
         #[arg(long)]
         reason: Option<String>,
@@ -742,4 +745,5 @@ pub(in crate::cli) enum MemoryGovernanceCliAction {
     Delete,
     Reject,
     Stale,
+    AcknowledgePattern,
 }

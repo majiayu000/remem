@@ -177,6 +177,8 @@ pub(super) struct SaveMemoryRequest {
     pub claim_enabled: Option<bool>,
     #[serde(default)]
     pub claim_source: Option<String>,
+    #[serde(default)]
+    pub acknowledge_pattern: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -361,6 +363,12 @@ pub(super) struct CandidateEditRequest {
     pub topic_key: Option<String>,
     #[serde(default)]
     pub text: Option<String>,
+}
+
+#[derive(Deserialize, Default)]
+pub(super) struct CandidateApproveRequest {
+    #[serde(default)]
+    pub acknowledge_pattern: Option<String>,
 }
 
 #[derive(Serialize)]

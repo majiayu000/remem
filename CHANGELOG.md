@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.170` for GH-672 memory poisoning defense:
+  source trust metadata, deterministic instruction-pattern quarantine, and
+  direct-save trust tagging. The staged line also adds explicit quarantine
+  acknowledgement review, render-time poisoned-memory drops, and doctor
+  reporting for quarantine/drop state.
 - Staged source version `0.5.169` for the GH-671 preference rule
   compilation foundation: disabled-by-default config defaults, canonical
   preference reinforcement state, rule override state, diagnostic state, and

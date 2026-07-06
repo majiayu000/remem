@@ -7,6 +7,7 @@ pub(crate) mod health_action;
 mod hook_validation;
 mod logging;
 mod mcp_processes;
+mod memory_poisoning;
 mod native_memory;
 mod promotion_funnel;
 mod report;

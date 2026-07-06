@@ -15,6 +15,7 @@ mod invocation;
 mod memory_selection;
 mod memory_traits;
 mod ownership;
+mod poisoning;
 mod policy;
 mod prompt_submit;
 mod query;

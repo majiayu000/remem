@@ -11,6 +11,9 @@ use super::types::{LocalCopyResult, SaveMemoryNextStep, SaveMemoryRequest, SaveM
 use crate::memory::claims::{claims_enabled, insert_memory_claim, ClaimWriteRequest};
 use crate::memory::lesson::{save_lesson_with_reference_time, SaveLessonRequest};
 use crate::memory::lifecycle::MemoryLifecycleOp;
+use crate::memory::poisoning::{
+    scan_instruction_pattern, InstructionPatternMatch, DIRECT_SAVE_TRUST_CLASS,
+};
 use crate::memory::{MemoryType, MEMORY_TYPES};
 
 #[derive(Debug)]
@@ -92,6 +95,8 @@ fn save_memory_inner(
 
     let scope = validated.scope.as_str();
     let effective_topic_key = effective_topic_key(req, memory_type);
+    let acknowledgement =
+        direct_save_pattern_acknowledgement(title, &req.text, req.acknowledge_pattern.as_deref())?;
 
     let mut local_copy = prepare_local_copy(project, title, req).map_err(LocalCopyError::from)?;
     write_local_copy(&mut local_copy).map_err(LocalCopyError::from)?;
@@ -145,6 +150,7 @@ fn save_memory_inner(
                 &logged_plan,
                 Some(id),
             )?;
+            mark_direct_save_poisoning_metadata(conn, id, acknowledgement)?;
             Ok((id, logged_plan.op))
         })
     } else {
@@ -174,9 +180,10 @@ fn save_memory_inner(
                     &operation_plan,
                     Some(id),
                 )?;
+                mark_direct_save_poisoning_metadata(conn, id, acknowledgement)?;
                 return Ok((id, MemoryLifecycleOp::Noop));
             }
-            crate::memory::insert_memory_full_with_operation_log(
+            let result = crate::memory::insert_memory_full_with_operation_log(
                 conn,
                 req.session_id.as_deref(),
                 project,
@@ -191,7 +198,9 @@ fn save_memory_inner(
                 reference_time_epoch,
                 &operation_input,
                 &operation_plan,
-            )
+            )?;
+            mark_direct_save_poisoning_metadata(conn, result.0, acknowledgement)?;
+            Ok(result)
         })
     };
 
@@ -241,6 +250,71 @@ fn save_memory_inner(
             ),
         },
     })
+}
+
+fn direct_save_pattern_acknowledgement(
+    title: &str,
+    text: &str,
+    acknowledged_pattern_id: Option<&str>,
+) -> Result<Option<InstructionPatternMatch>> {
+    let scan_text = format!("{title}\n{text}");
+    let matched = scan_instruction_pattern(&scan_text);
+    let acknowledged_pattern_id = acknowledged_pattern_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    match (matched, acknowledged_pattern_id) {
+        (Some(matched), Some(acknowledged)) if acknowledged == matched.pattern_id => {
+            Ok(Some(matched))
+        }
+        (Some(matched), Some(acknowledged)) => {
+            Err(SaveMemoryValidationError::new(format!(
+                "save_memory acknowledged pattern {acknowledged} does not match instruction-pattern {}@v{}",
+                matched.pattern_id, matched.pattern_set_version
+            ))
+            .into())
+        }
+        (Some(matched), None) => Err(SaveMemoryValidationError::new(format!(
+            "save_memory text matched instruction-pattern {}@v{}; review and acknowledge the pattern before saving",
+            matched.pattern_id, matched.pattern_set_version
+        ))
+        .into()),
+        (None, Some(acknowledged)) => Err(SaveMemoryValidationError::new(format!(
+            "save_memory acknowledge_pattern {acknowledged} was provided, but no instruction-pattern matched"
+        ))
+        .into()),
+        (None, None) => Ok(None),
+    }
+}
+
+fn mark_direct_save_poisoning_metadata(
+    conn: &Connection,
+    memory_id: i64,
+    acknowledgement: Option<InstructionPatternMatch>,
+) -> Result<()> {
+    if let Some(acknowledgement) = acknowledgement {
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE memories
+             SET source_trust_class = ?1,
+                 acknowledged_pattern_id = ?2,
+                 acknowledged_pattern_version = ?3,
+                 acknowledged_at_epoch = ?4
+             WHERE id = ?5",
+            rusqlite::params![
+                DIRECT_SAVE_TRUST_CLASS.as_str(),
+                acknowledgement.pattern_id,
+                acknowledgement.pattern_set_version,
+                now,
+                memory_id
+            ],
+        )?;
+    } else {
+        conn.execute(
+            "UPDATE memories SET source_trust_class = ?1 WHERE id = ?2",
+            rusqlite::params![DIRECT_SAVE_TRUST_CLASS.as_str(), memory_id],
+        )?;
+    }
+    Ok(())
 }
 
 struct ValidatedSaveMemoryRequest {

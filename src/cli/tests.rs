@@ -172,6 +172,7 @@ fn cli_parses_governance_delete_options() {
         Commands::Govern {
             project,
             action,
+            acknowledge_pattern,
             reason,
             actor,
             query,
@@ -188,6 +189,7 @@ fn cli_parses_governance_delete_options() {
         } => {
             assert_eq!(project.as_deref(), Some("/tmp/remem"));
             assert!(matches!(action, MemoryGovernanceCliAction::Delete));
+            assert!(acknowledge_pattern.is_none());
             assert_eq!(reason.as_deref(), Some("bad memory"));
             assert_eq!(actor.as_deref(), Some("codex"));
             assert!(query.is_none());
@@ -301,6 +303,7 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
         Commands::Govern {
             project,
             action,
+            acknowledge_pattern,
             reason,
             actor,
             query,
@@ -317,6 +320,7 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
         } => {
             assert_eq!(project.as_deref(), Some("/tmp/remem"));
             assert!(matches!(action, MemoryGovernanceCliAction::Stale));
+            assert!(acknowledge_pattern.is_none());
             assert!(reason.is_none());
             assert!(actor.is_none());
             assert_eq!(query.as_deref(), Some("old migration plan"));

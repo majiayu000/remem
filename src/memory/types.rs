@@ -377,7 +377,11 @@ pub mod tests_helper {
                 expires_at_epoch INTEGER,
                 valid_from_epoch INTEGER,
                 valid_to_epoch INTEGER,
-                state_key_id INTEGER
+                state_key_id INTEGER,
+                source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
+                acknowledged_pattern_id TEXT,
+                acknowledged_pattern_version INTEGER,
+                acknowledged_at_epoch INTEGER
             );
             CREATE TABLE memory_state_keys (
                 id INTEGER PRIMARY KEY,
@@ -433,6 +437,20 @@ pub mod tests_helper {
                 staleness TEXT,
                 injected_at_epoch INTEGER NOT NULL
             );
+            CREATE TABLE memory_poisoning_injection_drops (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL,
+                pattern_id TEXT NOT NULL,
+                pattern_version INTEGER NOT NULL,
+                source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
+                source_project TEXT,
+                title TEXT,
+                created_at_epoch INTEGER NOT NULL
+            );
+            CREATE INDEX idx_memory_poisoning_drops_created
+                ON memory_poisoning_injection_drops(created_at_epoch DESC, id DESC);
+            CREATE INDEX idx_memory_poisoning_drops_pattern
+                ON memory_poisoning_injection_drops(pattern_id, pattern_version, created_at_epoch DESC);
             CREATE TABLE memory_citation_events (
                 id INTEGER PRIMARY KEY,
                 host TEXT NOT NULL,

@@ -604,7 +604,7 @@ fn percent(numerator: i64, denominator: i64) -> f64 {
     }
 }
 
-fn table_count(conn: &Connection, table: &str) -> Result<i64, rusqlite::Error> {
+pub(super) fn table_count(conn: &Connection, table: &str) -> Result<i64, rusqlite::Error> {
     let exists: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",

@@ -273,6 +273,7 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         local_copy_enabled: Some(true),
         claim_enabled: None,
         claim_source: None,
+        acknowledge_pattern: None,
     }));
 
     let err = match outside {
@@ -314,6 +315,7 @@ fn save_memory_local_copy_failures_are_invalid_request() {
         local_copy_enabled: Some(true),
         claim_enabled: None,
         claim_source: None,
+        acknowledge_pattern: None,
     }));
 
     let err = match write_failure {
@@ -349,6 +351,7 @@ fn save_memory_response_reports_durable_feedback_shape() {
             local_copy_enabled: Some(false),
             claim_enabled: None,
             claim_source: None,
+            acknowledge_pattern: None,
         }))
         .expect("save_memory should succeed");
     let json: Value = serde_json::from_str(&response).expect("response should be json");
@@ -388,6 +391,7 @@ fn govern_memory_validation_failures_are_invalid_request() {
                 ids: vec![],
                 project: Some("proj".to_string()),
                 action: "delete".to_string(),
+                acknowledge_pattern: None,
                 reason: Some("cleanup".to_string()),
                 actor: None,
                 dry_run: Some(false),
@@ -400,6 +404,7 @@ fn govern_memory_validation_failures_are_invalid_request() {
                 ids: vec![1],
                 project: Some("proj".to_string()),
                 action: "delete".to_string(),
+                acknowledge_pattern: None,
                 reason: Some("cleanup".to_string()),
                 actor: None,
                 dry_run: Some(false),
@@ -412,6 +417,7 @@ fn govern_memory_validation_failures_are_invalid_request() {
                 ids: vec![1],
                 project: Some("proj".to_string()),
                 action: "delete".to_string(),
+                acknowledge_pattern: None,
                 reason: Some("   ".to_string()),
                 actor: None,
                 dry_run: Some(false),

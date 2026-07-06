@@ -33,6 +33,7 @@ pub(in crate::api) async fn handle_save_memory(
         local_copy_enabled: req.local_copy_enabled,
         claim_enabled: req.claim_enabled,
         claim_source: req.claim_source.or_else(|| Some("api_save".to_string())),
+        acknowledge_pattern: req.acknowledge_pattern,
     };
 
     match service::save_memory_with_reference_time(&conn, &save_req, reference_time_epoch) {
@@ -116,6 +117,7 @@ mod tests {
             local_copy_enabled: Some(false),
             claim_enabled: None,
             claim_source: None,
+            acknowledge_pattern: None,
         }
     }
 

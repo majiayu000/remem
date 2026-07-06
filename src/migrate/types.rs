@@ -301,6 +301,16 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/v059_candidate_review_metadata.sql"),
     },
     Migration {
+        version: 60,
+        name: "memory_poisoning_defense",
+        sql: include_str!("../migrations/v060_memory_poisoning_defense.sql"),
+    },
+    Migration {
+        version: 61,
+        name: "memory_poisoning_injection_drops",
+        sql: include_str!("../migrations/v061_memory_poisoning_injection_drops.sql"),
+    },
+    Migration {
         version: 62,
         name: "preference_rule_state",
         sql: include_str!("../migrations/v062_preference_rule_state.sql"),

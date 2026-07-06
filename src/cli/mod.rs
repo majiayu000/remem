@@ -16,6 +16,8 @@ mod tests_config;
 #[cfg(test)]
 mod tests_eval;
 #[cfg(test)]
+mod tests_governance;
+#[cfg(test)]
 mod tests_maintenance;
 #[cfg(test)]
 mod tests_procedures;

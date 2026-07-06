@@ -17,6 +17,7 @@ use super::embedding::check_embedding_provider;
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::logging::check_log_health;
 use super::mcp_processes::check_mcp_processes;
+use super::memory_poisoning::check_memory_poisoning_defense;
 use super::native_memory::check_native_memory_sync;
 use super::review_queue::check_review_queue;
 use super::runtime_config_check::check_runtime_config;
@@ -113,6 +114,9 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_promotion_funnel(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_memory_poisoning_defense(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_review_queue(shared_db.conn())

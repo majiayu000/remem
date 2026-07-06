@@ -20,15 +20,23 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
             for row in rows {
                 let project = row.project.as_deref().unwrap_or("<unknown project>");
                 println!(
-                    "  [{}] {} {} {} confidence={:.2} risk={} project={}",
+                    "  [{}] {} {} {} status={} confidence={:.2} risk={} project={}",
                     row.id,
                     row.scope,
                     row.memory_type,
                     row.topic_key,
+                    row.review_status,
                     row.confidence,
                     row.risk_class,
                     project
                 );
+                if let Some(pattern) = &row.quarantine_pattern_id {
+                    let version = row
+                        .quarantine_pattern_version
+                        .map(|value| format!("@v{value}"))
+                        .unwrap_or_default();
+                    println!("      quarantine: {pattern}{version}");
+                }
                 println!("      text: {}", db::truncate_str(&row.text, 180));
                 println!("      evidence: {}", row.evidence_event_ids);
                 for evidence in row.evidence_preview {
@@ -36,8 +44,15 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
                 }
             }
         }
-        ReviewAction::Approve { id } => {
-            let Some(memory_id) = review::approve_candidate(&mut conn, id)? else {
+        ReviewAction::Approve {
+            id,
+            acknowledge_pattern,
+        } => {
+            let approved = match acknowledge_pattern.as_deref() {
+                Some(pattern) => review::approve_candidate_with_ack(&mut conn, id, pattern)?,
+                None => review::approve_candidate(&mut conn, id)?,
+            };
+            let Some(memory_id) = approved else {
                 bail!("candidate {} not found", id);
             };
             println!("Approved candidate {}; promoted memory {}.", id, memory_id);
