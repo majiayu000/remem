@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.167` for GH-680 procedure export Phase 1:
+  `remem procedures list` exposes promoted procedure memories with maturity
+  metadata before any review-gated export writer is introduced.
 - Staged source version `0.5.166` for GH-684 observation wording: MCP and
   architecture docs now classify `source='observation'` as a current extracted
   observation source instead of a legacy source.

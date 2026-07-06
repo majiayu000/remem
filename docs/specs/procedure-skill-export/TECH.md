@@ -14,8 +14,8 @@ Tracking:
   (`docs/procedural-memory.md`).
 - Promotion gates: ≥2 successful verified runs, raw source event ids per run,
   verification freshness window, matching project/branch/workflow key/command.
-- No `remem procedures` CLI namespace exists; procedures are reachable only
-  through generic search/timeline surfaces.
+- GH680 Phase 1 adds `remem procedures list`; export remains unimplemented
+  until the later phases below.
 - Memory lifecycle marks superseded/wrong rows `stale`
   (`docs/memory-lifecycle.md`); procedures carry no TTL by default.
 
@@ -147,7 +147,9 @@ re-imported.
 
 ## Phases and Verification
 
-Phase 1: `procedures list` + fixture (`cargo test procedures`).
+Phase 1: `procedures list` + fixture (`cargo test procedures`). Shipped by
+GH680 Phase 1 with read-only listing and maturity metadata; export remains
+future work.
 Phase 2: export command, templates, snapshot tests, write-path guard negative
 test.
 Phase 3: `procedure_exports` migration + doctor probe; docs update replacing
