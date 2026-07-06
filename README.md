@@ -599,6 +599,8 @@ remem review list
 remem review approve <id>
 remem review discard <id>
 remem review edit <id> --text "updated memory"
+remem procedures list
+remem procedures list --project /repo/path --json
 remem preferences list
 remem preferences add "text"
 remem preferences remove 42
@@ -730,6 +732,7 @@ is set:
 | `remem raw search ... --json` | `query`, `project`, `branch`, `role`, `limit`, `offset`, `since_epoch`, `until_epoch`, `count`, `has_more`, `next_offset`, `source_type`, `note`, `results` |
 | `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
+| `remem procedures list --json` | `project`, `limit`, `offset`, `count`, `procedures` |
 | `remem memory suppress <target> --json` | `status`, `suppression` |
 | `remem memory unsuppress <id-or-target> --json` | `status`, `count`, `suppressions` |
 | `remem memory feedback <target> --json` | `status`, `feedback` |

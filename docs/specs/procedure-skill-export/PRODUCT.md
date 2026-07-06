@@ -24,7 +24,8 @@ from passively injected text to actively executable capability.
 ## Goals
 
 - Users can see which procedures are mature enough to externalize
-  (`remem procedures list` with maturity signals).
+  (`remem procedures list` with maturity signals). GH680 Phase 1 ships this
+  read-only listing surface.
 - An explicit CLI command renders a mature procedure into a reviewable draft
   artifact: Claude Code skill, Codex prompt, or Markdown runbook. MCP may
   expose read-only procedure discovery later, but v1 export writes remain
@@ -52,7 +53,7 @@ from passively injected text to actively executable capability.
 
 - `remem procedures list` shows promoted procedures with verified run count,
   last verification time, branch/project binding, files touched, and
-  confidence.
+  confidence. GH680 Phase 1 implements this part of the contract.
 - `remem procedures export <id> --format claude-skill|codex-prompt|runbook-md
   [--out <dir>]` writes a draft file containing the command, reuse condition,
   preconditions (project/branch), and a provenance footer (source procedure

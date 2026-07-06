@@ -3,7 +3,10 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
+mod list;
 mod trace_store;
+
+pub use list::{list_promoted_procedures, ProcedureListItem};
 
 #[cfg(test)]
 mod incremental_tests;
@@ -104,7 +107,7 @@ pub fn build_procedure_candidate(
         .max()
         .unwrap_or(now_epoch);
     let topic_key = procedure_topic_key(first);
-    let confidence = (0.7 + (source_event_ids.len() as f64 * 0.08)).min(0.95);
+    let confidence = confidence_for_verified_runs(source_event_ids.len());
     let content = render_procedure_content(
         first,
         &files,
@@ -126,6 +129,10 @@ pub fn build_procedure_candidate(
         confidence,
         verified_at_epoch,
     })
+}
+
+fn confidence_for_verified_runs(verified_runs: usize) -> f64 {
+    (0.7 + (verified_runs as f64 * 0.08)).min(0.95)
 }
 
 pub fn promote_procedure_memory(conn: &Connection, candidate: &ProcedureCandidate) -> Result<i64> {
