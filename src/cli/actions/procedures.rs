@@ -59,6 +59,13 @@ fn render_procedure_list(procedures: &[ProcedureListItem]) -> String {
             output.push_str(&format!("  Command: {command}\n"));
         }
         output.push_str(&format!(
+            "  Confidence: {}\n",
+            procedure
+                .confidence
+                .map(|confidence| format!("{confidence:.2}"))
+                .unwrap_or_else(|| "unknown".to_string())
+        ));
+        output.push_str(&format!(
             "  Files:   {} touched\n",
             procedure.files_touched_count
         ));
@@ -114,6 +121,7 @@ mod tests {
         assert!(rendered.contains("Project: /tmp/remem"));
         assert!(rendered.contains("Branch:  main"));
         assert!(rendered.contains("Command: cargo test"));
+        assert!(rendered.contains("Confidence: 0.86"));
         assert!(rendered.contains("Files:   1 touched"));
     }
 }

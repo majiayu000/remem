@@ -46,7 +46,7 @@ pub fn list_promoted_procedures(
 
     let sql = format!(
         "SELECT m.id, m.title, m.project, m.branch, m.topic_key, m.content,
-                m.files, m.evidence_event_ids, m.confidence, m.updated_at_epoch
+                m.files, m.evidence_event_ids, m.confidence
          FROM memories m
          WHERE {}
          ORDER BY m.updated_at_epoch DESC, m.id DESC
@@ -65,14 +65,17 @@ pub fn list_promoted_procedures(
             files: row.get(6)?,
             evidence_event_ids: row.get(7)?,
             confidence: row.get(8)?,
-            updated_at_epoch: row.get(9)?,
         })
     })?;
     let rows = crate::db::query::collect_rows(rows)?;
 
-    rows.into_iter()
-        .map(|row| row.into_list_item(conn))
-        .collect()
+    let mut items = Vec::new();
+    for row in rows {
+        if let Some(item) = row.into_list_item(conn)? {
+            items.push(item);
+        }
+    }
+    Ok(items)
 }
 
 fn normalize_limit(limit: i64) -> i64 {
@@ -93,20 +96,22 @@ struct ProcedureRow {
     files: Option<String>,
     evidence_event_ids: Option<String>,
     confidence: Option<f64>,
-    updated_at_epoch: i64,
 }
 
 impl ProcedureRow {
-    fn into_list_item(self, conn: &Connection) -> Result<ProcedureListItem> {
+    fn into_list_item(self, conn: &Connection) -> Result<Option<ProcedureListItem>> {
         let evidence_ids = parse_evidence_ids(self.evidence_event_ids.as_deref())?;
-        let verification_epoch = latest_verification_epoch(conn, &evidence_ids)?
-            .or_else(|| parse_i64_line(&self.content, "Verified at:"))
-            .or(Some(self.updated_at_epoch));
-        let verified_runs = evidence_ids
-            .len()
-            .max(parse_usize_line(&self.content, "Verified runs:").unwrap_or(0));
+        let Some(verification_summary) = verification_summary(conn, &evidence_ids)? else {
+            return Ok(None);
+        };
+        if verification_summary.verified_runs
+            < crate::memory::procedure::ProcedurePromotionPolicy::default().min_verified_runs
+        {
+            return Ok(None);
+        }
+        let verification_epoch = Some(verification_summary.last_verification_epoch);
         let files_touched = parse_files(self.files.as_deref())?;
-        Ok(ProcedureListItem {
+        Ok(Some(ProcedureListItem {
             id: self.id,
             title: self.title,
             project: self.project,
@@ -116,10 +121,10 @@ impl ProcedureRow {
             reuse_condition: parse_string_line(&self.content, "Reuse when:"),
             files_touched_count: files_touched.len(),
             files_touched,
-            verified_runs,
+            verified_runs: verification_summary.verified_runs,
             last_verification_epoch: verification_epoch,
             confidence: self.confidence,
-        })
+        }))
     }
 }
 
@@ -134,7 +139,15 @@ fn parse_evidence_ids(raw: Option<&str>) -> Result<Vec<i64>> {
     serde_json::from_str(trimmed).with_context(|| "invalid procedure evidence_event_ids JSON")
 }
 
-fn latest_verification_epoch(conn: &Connection, evidence_ids: &[i64]) -> Result<Option<i64>> {
+struct VerificationSummary {
+    verified_runs: usize,
+    last_verification_epoch: i64,
+}
+
+fn verification_summary(
+    conn: &Connection,
+    evidence_ids: &[i64],
+) -> Result<Option<VerificationSummary>> {
     if evidence_ids.is_empty() {
         return Ok(None);
     }
@@ -143,19 +156,25 @@ fn latest_verification_epoch(conn: &Connection, evidence_ids: &[i64]) -> Result<
         .collect::<Vec<_>>()
         .join(", ");
     let sql = format!(
-        "SELECT MAX(verified_at_epoch)
+        "SELECT COUNT(DISTINCT source_event_id), MAX(verified_at_epoch)
          FROM procedure_verifications
          WHERE source_event_id IN ({placeholders})"
     );
-    let value = conn
+    let (verified_runs, last_verification_epoch): (i64, Option<i64>) = conn
         .query_row(
             &sql,
             rusqlite::params_from_iter(evidence_ids.iter()),
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?
-        .flatten();
-    Ok(value)
+        .unwrap_or((0, None));
+    let Some(last_verification_epoch) = last_verification_epoch else {
+        return Ok(None);
+    };
+    Ok(Some(VerificationSummary {
+        verified_runs: verified_runs.max(0) as usize,
+        last_verification_epoch,
+    }))
 }
 
 fn parse_files(raw: Option<&str>) -> Result<Vec<String>> {
@@ -179,30 +198,17 @@ fn parse_string_line(content: &str, prefix: &str) -> Option<String> {
     })
 }
 
-fn parse_i64_line(content: &str, prefix: &str) -> Option<i64> {
-    parse_string_line(content, prefix)?.parse().ok()
-}
-
-fn parse_usize_line(content: &str, prefix: &str) -> Option<usize> {
-    parse_string_line(content, prefix)?.parse().ok()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn lists_active_procedure_maturity_fields() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
+        let mut conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         crate::migrate::run_migrations(&conn)?;
-        let candidate = crate::memory::procedure::build_procedure_candidate(
-            &[procedure_trace(10, 1_000), procedure_trace(11, 1_200)],
-            1_300,
-            &crate::memory::procedure::ProcedurePromotionPolicy::default(),
-        )
-        .expect("fixture should promote");
-        let memory_id = crate::memory::procedure::promote_procedure_memory(&conn, &candidate)?;
+        let memory_id =
+            seed_promoted_procedure(&mut conn, "/tmp/remem", "sess-list", "cargo test")?;
 
         let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
 
@@ -214,53 +220,118 @@ mod tests {
         assert_eq!(item.files_touched, vec!["src/lib.rs"]);
         assert_eq!(item.files_touched_count, 1);
         assert_eq!(item.verified_runs, 2);
-        assert_eq!(item.last_verification_epoch, Some(1_200));
+        assert!(item.last_verification_epoch.is_some());
         assert!(item.confidence.is_some());
         Ok(())
     }
 
     #[test]
     fn procedure_list_ignores_inactive_and_other_projects() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
+        let mut conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         crate::migrate::run_migrations(&conn)?;
-        insert_procedure_row(&conn, 1, "/tmp/remem", "active")?;
-        insert_procedure_row(&conn, 2, "/tmp/other", "active")?;
-        insert_procedure_row(&conn, 3, "/tmp/remem", "stale")?;
+        let active_id = seed_promoted_procedure(
+            &mut conn,
+            "/tmp/remem",
+            "sess-active",
+            "cargo test -- active",
+        )?;
+        seed_promoted_procedure(&mut conn, "/tmp/other", "sess-other", "cargo test -- other")?;
+        let stale_id =
+            seed_promoted_procedure(&mut conn, "/tmp/remem", "sess-stale", "cargo test -- stale")?;
+        conn.execute(
+            "UPDATE memories SET status = 'stale' WHERE id = ?1",
+            [stale_id],
+        )?;
 
         let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
 
         assert_eq!(
             items.iter().map(|item| item.id).collect::<Vec<_>>(),
-            vec![1]
+            vec![active_id]
         );
         Ok(())
     }
 
-    fn procedure_trace(
-        event_id: i64,
-        verified_at_epoch: i64,
-    ) -> crate::memory::procedure::ProcedureTrace {
-        crate::memory::procedure::ProcedureTrace {
-            project: "/tmp/remem".to_string(),
-            branch: Some("main".to_string()),
-            workflow_key: "release-check".to_string(),
-            command: "cargo test".to_string(),
-            files_touched: vec!["src/lib.rs".to_string()],
-            succeeded: true,
-            verified_at_epoch,
-            source_event_id: Some(event_id),
-        }
+    #[test]
+    fn procedure_list_excludes_direct_saved_procedure_without_verification() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
+        crate::migrate::run_migrations(&conn)?;
+        let verified_id =
+            seed_promoted_procedure(&mut conn, "/tmp/remem", "sess-verified", "cargo test")?;
+        insert_direct_procedure_row(&conn, 9_999, "/tmp/remem")?;
+
+        let items = list_promoted_procedures(&conn, Some("/tmp/remem"), 10, 0)?;
+
+        assert_eq!(
+            items.iter().map(|item| item.id).collect::<Vec<_>>(),
+            vec![verified_id]
+        );
+        Ok(())
     }
 
-    fn insert_procedure_row(conn: &Connection, id: i64, project: &str, status: &str) -> Result<()> {
+    fn seed_promoted_procedure(
+        conn: &mut Connection,
+        project: &str,
+        session_id: &str,
+        command: &str,
+    ) -> Result<i64> {
+        for seq in [1, 2] {
+            crate::db::record_captured_event(
+                conn,
+                &crate::db::CaptureEventInput {
+                    host: "codex-cli",
+                    session_id,
+                    project,
+                    cwd: None,
+                    event_type: "tool_result",
+                    role: None,
+                    tool_name: Some("Bash"),
+                    content: &serde_json::json!({
+                        "seq": seq,
+                        "event_type": "bash",
+                        "exit_code": 0,
+                        "tool_input": { "command": command },
+                        "files": "[\"src/lib.rs\"]",
+                        "git_branch": "main"
+                    })
+                    .to_string(),
+                    task_kind: Some(crate::db::ExtractionTaskKind::ObservationExtract),
+                },
+            )?;
+        }
+        let task = crate::db::claim_next_extraction_task(conn, "worker-a", 60)?
+            .ok_or_else(|| anyhow::anyhow!("procedure task should be claimed"))?;
+        let promoted = crate::memory::procedure::promote_verified_procedures_for_task(
+            conn,
+            &task,
+            &crate::memory::procedure::ProcedurePromotionPolicy::default(),
+        )?;
+        assert_eq!(promoted, 1);
+        let memory_id = conn.query_row(
+            "SELECT id FROM memories WHERE memory_type = 'procedure' AND project = ?1
+             ORDER BY id DESC LIMIT 1",
+            [project],
+            |row| row.get(0),
+        )?;
+        crate::db::mark_extraction_task_done(
+            conn,
+            task.id,
+            "worker-a",
+            task.high_watermark_event_id,
+        )?;
+        Ok(memory_id)
+    }
+
+    fn insert_direct_procedure_row(conn: &Connection, id: i64, project: &str) -> Result<()> {
         conn.execute(
             "INSERT INTO memories
              (id, project, title, content, memory_type, files, evidence_event_ids,
               created_at_epoch, updated_at_epoch, status, scope)
              VALUES (?1, ?2, 'Procedure', 'Procedure: test\nCommand: cargo test\nVerified runs: 2\nVerified at: 100',
-                     'procedure', '[\"src/lib.rs\"]', '[10,11]', 1, ?1, ?3, 'project')",
-            rusqlite::params![id, project, status],
+                     'procedure', '[\"src/lib.rs\"]', '[10,11]', 1, ?1, 'active', 'project')",
+            rusqlite::params![id, project],
         )?;
         Ok(())
     }
