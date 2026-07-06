@@ -247,6 +247,7 @@ mod tests {
             scope: "project".to_string(),
             memory_type: "decision".to_string(),
             topic_key: "topic".to_string(),
+            title_override: None,
             text: text.to_string(),
             confidence: 0.9,
             risk_class: "low".to_string(),

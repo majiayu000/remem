@@ -153,6 +153,7 @@ struct CandidateRow {
     memory_type: String,
     topic_key: String,
     text: String,
+    source_kind: Option<String>,
     evidence_event_ids: String,
     confidence: f64,
     risk_class: String,
@@ -176,7 +177,7 @@ pub(crate) fn list_pending(
                     c.review_status, c.created_at_epoch, c.source_project,
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
                     c.routing_confidence, c.routing_reason, c.context_class,
-                    c.source_trust_class, c.quarantine_pattern_id,
+                    c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
                     c.quarantine_pattern_version
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
@@ -196,7 +197,7 @@ pub(crate) fn list_pending(
                     c.review_status, c.created_at_epoch, c.source_project,
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
                     c.routing_confidence, c.routing_reason, c.context_class,
-                    c.source_trust_class, c.quarantine_pattern_id,
+                    c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
                     c.quarantine_pattern_version
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
@@ -561,18 +562,27 @@ impl CandidateRow {
             routing_confidence: row.get(16)?,
             routing_reason: row.get(17)?,
             context_class: row.get(18)?,
-            source_trust_class: row.get(19)?,
-            quarantine_pattern_id: row.get(20)?,
-            quarantine_pattern_version: row.get(21)?,
+            source_kind: row.get(19)?,
+            source_trust_class: row.get(20)?,
+            quarantine_pattern_id: row.get(21)?,
+            quarantine_pattern_version: row.get(22)?,
         })
     }
 
     fn as_candidate(&self) -> ParsedMemoryCandidate {
+        let (title_override, text) = if self.source_kind.as_deref() == Some("pack") {
+            decode_pack_review_text(&self.text)
+                .map(|(title, content)| (Some(title), content))
+                .unwrap_or((None, self.text.clone()))
+        } else {
+            (None, self.text.clone())
+        };
         ParsedMemoryCandidate {
             scope: self.scope.clone(),
             memory_type: self.memory_type.clone(),
             topic_key: self.topic_key.clone(),
-            text: self.text.clone(),
+            title_override,
+            text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
         }
@@ -608,6 +618,7 @@ impl CandidateRow {
             scope,
             memory_type,
             topic_key,
+            title_override: None,
             text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
@@ -649,6 +660,17 @@ impl CandidateRow {
     }
 }
 
+fn decode_pack_review_text(text: &str) -> Option<(String, String)> {
+    let mut lines = text.lines();
+    let title_line = lines.next()?;
+    let content_marker = lines.next()?;
+    let title = title_line.strip_prefix("pack_title:")?.trim().to_string();
+    if content_marker.trim() != "pack_content:" || title.is_empty() {
+        return None;
+    }
+    Some((title, lines.collect::<Vec<_>>().join("\n")))
+}
+
 fn load_candidate(conn: &Connection, id: i64) -> Result<Option<CandidateRow>> {
     conn.query_row(
         "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
@@ -656,7 +678,7 @@ fn load_candidate(conn: &Connection, id: i64) -> Result<Option<CandidateRow>> {
                 c.review_status, c.created_at_epoch, c.source_project,
                 c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
                 c.routing_confidence, c.routing_reason, c.context_class,
-                c.source_trust_class, c.quarantine_pattern_id,
+                c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
                 c.quarantine_pattern_version
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id

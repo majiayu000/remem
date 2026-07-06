@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection};
@@ -210,6 +210,7 @@ fn load_pack(pack: &Path) -> Result<LoadedPack> {
         validate_pack_memory(index + 1, &memory)?;
         memories.push(memory);
     }
+    validate_unique_pack_identities(&memories)?;
     if memories.len() != manifest.memory_count {
         bail!(
             "pack memory_count mismatch: manifest={} actual={}",
@@ -260,6 +261,24 @@ fn validate_pack_memory(line_number: usize, memory: &PackMemory) -> Result<()> {
     Ok(())
 }
 
+fn validate_unique_pack_identities(memories: &[PackMemory]) -> Result<()> {
+    let mut seen = HashSet::new();
+    for (idx, memory) in memories.iter().enumerate() {
+        let identity = match memory.state_key.as_deref() {
+            Some(state_key) => format!("state:{}:{state_key}", memory.memory_type),
+            None => format!("content:{}:{}", memory.memory_type, memory.content_hash),
+        };
+        if !seen.insert(identity.clone()) {
+            bail!(
+                "memories.jsonl line {} duplicates pack import identity {}",
+                idx + 1,
+                identity
+            );
+        }
+    }
+    Ok(())
+}
+
 fn classify_pack_memory(
     conn: Option<&Connection>,
     target_project: &str,
@@ -292,11 +311,6 @@ fn classify_pack_memory(
         {
             category = PackImportCategory::Dedup;
             reason = "identical active local memory".to_string();
-        } else if memory.state_key.is_some()
-            && local_matches.iter().any(LocalMemoryMatch::is_current)
-        {
-            category = PackImportCategory::Conflict;
-            reason = "active local state-key memory differs; local wins".to_string();
         } else if let Some(pattern) = crate::memory::poisoning::scan_instruction_pattern(&format!(
             "{}\n{}",
             memory.title, memory.content
@@ -306,6 +320,11 @@ fn classify_pack_memory(
                 "instruction pattern {}@v{}",
                 pattern.pattern_id, pattern.pattern_set_version
             );
+        } else if memory.state_key.is_some()
+            && local_matches.iter().any(LocalMemoryMatch::is_current)
+        {
+            category = PackImportCategory::Conflict;
+            reason = "active local state-key memory differs; local wins".to_string();
         } else {
             category = PackImportCategory::Add;
             reason = "safe to add in active import".to_string();

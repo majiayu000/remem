@@ -41,7 +41,7 @@ pub(super) fn apply_loaded_pack(
                 applied.added_memories += 1;
             }
             PackImportCategory::Conflict => {
-                insert_pack_candidate(
+                let candidate_id = insert_pack_candidate(
                     &tx,
                     project_id,
                     target_project,
@@ -51,7 +51,9 @@ pub(super) fn apply_loaded_pack(
                     "pack_import_conflict",
                     None,
                 )?;
-                applied.pending_review_candidates += 1;
+                if candidate_id != 0 {
+                    applied.pending_review_candidates += 1;
+                }
             }
             PackImportCategory::Quarantine => {
                 let matched = crate::memory::poisoning::scan_instruction_pattern(&format!(
@@ -59,7 +61,7 @@ pub(super) fn apply_loaded_pack(
                     entry.memory.title, entry.memory.content
                 ))
                 .context("quarantine plan row lost instruction-pattern match before apply")?;
-                insert_pack_candidate(
+                let candidate_id = insert_pack_candidate(
                     &tx,
                     project_id,
                     target_project,
@@ -69,7 +71,9 @@ pub(super) fn apply_loaded_pack(
                     "quarantined_instruction_pattern",
                     Some(matched),
                 )?;
-                applied.quarantined_candidates += 1;
+                if candidate_id != 0 {
+                    applied.quarantined_candidates += 1;
+                }
             }
             PackImportCategory::Dedup | PackImportCategory::Skip => {}
         }
@@ -223,9 +227,13 @@ fn insert_pack_candidate(
         .state_key
         .as_deref()
         .unwrap_or(memory.content_hash.as_str());
+    if existing_pack_candidate(conn, target_project, memory, review_status, block_reason)? {
+        return Ok(0);
+    }
     let evidence_event_id =
         record_pack_candidate_evidence(conn, target_project, memory, content_digest, block_reason)?;
     let evidence_json = serde_json::to_string(&vec![evidence_event_id])?;
+    let candidate_text = encode_pack_review_text(&memory.title, &memory.content);
     conn.execute(
         "INSERT INTO memory_candidates
          (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
@@ -244,7 +252,7 @@ fn insert_pack_candidate(
             project_id,
             memory.memory_type.as_str(),
             topic_key,
-            memory.content.as_str(),
+            candidate_text,
             evidence_json,
             memory.confidence.unwrap_or(0.5),
             if review_status == "quarantined" {
@@ -269,6 +277,48 @@ fn insert_pack_candidate(
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+fn existing_pack_candidate(
+    conn: &Connection,
+    target_project: &str,
+    memory: &PackMemory,
+    review_status: &str,
+    block_reason: &str,
+) -> Result<bool> {
+    let topic_key = memory
+        .state_key
+        .as_deref()
+        .unwrap_or(memory.content_hash.as_str());
+    let text = encode_pack_review_text(&memory.title, &memory.content);
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM memory_candidates
+         WHERE source_kind = ?1
+           AND source_trust_class = ?2
+           AND target_project = ?3
+           AND memory_type = ?4
+           AND topic_key = ?5
+           AND text = ?6
+           AND review_status = ?7
+           AND auto_promote_block_reason = ?8",
+        params![
+            PACK_SOURCE_KIND,
+            PACK_TRUST_CLASS.as_str(),
+            target_project,
+            memory.memory_type.as_str(),
+            topic_key,
+            text,
+            review_status,
+            block_reason,
+        ],
+        |row| row.get(0),
+    )?;
+    Ok(count > 0)
+}
+
+fn encode_pack_review_text(title: &str, content: &str) -> String {
+    format!("pack_title: {}\npack_content:\n{}", title.trim(), content)
 }
 
 fn record_pack_candidate_evidence(
