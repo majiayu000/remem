@@ -1,0 +1,88 @@
+name: Memory Capture Bug
+description: Report missing, wrong, or unsafe memory capture/context behavior.
+title: "[Memory capture] "
+labels:
+  - bug
+  - capture
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not paste secrets, private prompts, API keys, tokens, customer data,
+        or unredacted logs. Replace sensitive values with clear placeholders
+        such as `[REDACTED_TOKEN]` before submitting.
+  - type: dropdown
+    id: host
+    attributes:
+      label: Host or surface
+      description: Where did the memory capture or context issue happen?
+      options:
+        - Claude Code
+        - Codex
+        - MCP
+        - Plugin
+        - CLI
+        - Other / unsure
+    validations:
+      required: true
+  - type: input
+    id: command
+    attributes:
+      label: Command or workflow
+      description: Command, hook, plugin action, or workflow that triggered the issue.
+      placeholder: remem status, SessionStart hook, plugin dashboard search, etc.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Minimal steps someone else can follow with sanitized inputs.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected memory/context behavior
+      description: What memory should have been captured, retrieved, injected, or rejected?
+      placeholder: I expected remem to capture the durable decision and show it in startup context.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual context output or memory result
+      description: What actually appeared, disappeared, or looked wrong? Remove private prompts and secrets.
+      placeholder: Startup context was blank, included stale memory, or missed the expected decision.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Sanitized remem doctor output
+      description: Paste relevant `remem doctor` output with paths, tokens, prompts, and private data removed.
+      render: shell
+      placeholder: |
+        remem doctor
+        # paste sanitized output here
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized logs or context snippets
+      description: Include relevant logs, hook output, or context snippets only after redacting secrets and private prompts.
+      render: shell
+      placeholder: |
+        # sanitized logs or context snippets
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety checklist
+      options:
+        - label: I removed secrets, tokens, customer data, and private prompts from this report.
+          required: true
+        - label: I included enough reproduction detail for maintainers to distinguish capture, storage, retrieval, and injection behavior.
+          required: true
