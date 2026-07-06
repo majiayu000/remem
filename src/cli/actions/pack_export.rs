@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub(super) const PACK_FORMAT_VERSION: u32 = 1;
+pub(in crate::cli::actions) const PACK_IMPORT_ROUTING_REASON_PREFIX: &str = "pack import from ";
 const DEFAULT_LIMIT: i64 = 10_000;
 const MAX_LIMIT: i64 = 100_000;
 
@@ -35,13 +36,16 @@ pub(in crate::cli) fn run_export_pack(output: &Path, project: &str, limit: i64) 
     Ok(())
 }
 
-struct PackExportRequest<'a> {
-    output: &'a Path,
-    project: &'a str,
-    limit: i64,
+pub(in crate::cli::actions) struct PackExportRequest<'a> {
+    pub(in crate::cli::actions) output: &'a Path,
+    pub(in crate::cli::actions) project: &'a str,
+    pub(in crate::cli::actions) limit: i64,
 }
 
-fn export_pack(conn: &Connection, request: PackExportRequest<'_>) -> Result<PackExportStats> {
+pub(in crate::cli::actions) fn export_pack(
+    conn: &Connection,
+    request: PackExportRequest<'_>,
+) -> Result<PackExportStats> {
     let rows = load_pack_memories(conn, request.project, normalize_limit(request.limit))?;
     let mut pack_rows = rows
         .into_iter()
@@ -118,7 +122,8 @@ fn load_pack_memories(conn: &Connection, project: &str, limit: i64) -> Result<Ve
         "SELECT m.id, m.title, m.content, m.memory_type, COALESCE(m.scope, 'project'),
                 sk.state_key, m.confidence, m.created_at_epoch,
                 m.valid_from_epoch, m.expires_at_epoch,
-                m.owner_scope, m.owner_key
+                m.owner_scope, m.owner_key, m.source_project,
+                m.source_trust_class, m.routing_reason
          FROM memories m
          LEFT JOIN memory_state_keys sk ON sk.id = m.state_key_id
          WHERE {}
@@ -141,6 +146,9 @@ fn load_pack_memories(conn: &Connection, project: &str, limit: i64) -> Result<Ve
             expires_at_epoch: row.get(9)?,
             owner_scope: row.get(10)?,
             owner_key: row.get(11)?,
+            source_project: row.get(12)?,
+            source_trust_class: row.get(13)?,
+            routing_reason: row.get(14)?,
         })
     })?;
     crate::db::query::collect_rows(rows)
@@ -160,6 +168,9 @@ struct PackMemoryRow {
     expires_at_epoch: Option<i64>,
     owner_scope: String,
     owner_key: String,
+    source_project: Option<String>,
+    source_trust_class: String,
+    routing_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -192,6 +203,7 @@ impl TryFrom<PackMemoryRow> for PackMemory {
             &row.title,
             &row.content,
         );
+        let origin = pack_memory_origin(&row);
         Ok(Self {
             title: row.title,
             content: row.content,
@@ -205,10 +217,46 @@ impl TryFrom<PackMemoryRow> for PackMemory {
             valid_from_epoch: row.valid_from_epoch,
             expires_at_epoch: row.expires_at_epoch,
             owner_intent: row.owner_scope,
-            origin: format!("repo:{}", row.owner_key),
+            origin,
             content_hash,
         })
     }
+}
+
+pub(in crate::cli::actions) fn pack_import_routing_reason(origin: &str) -> String {
+    format!("{PACK_IMPORT_ROUTING_REASON_PREFIX}{}", origin.trim())
+}
+
+fn pack_memory_origin(row: &PackMemoryRow) -> String {
+    if row.source_trust_class == "pack" {
+        if let Some(origin) = row
+            .routing_reason
+            .as_deref()
+            .and_then(pack_origin_from_routing_reason)
+        {
+            return origin;
+        }
+        if let Some(source_project) = row
+            .source_project
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            if source_project.starts_with("repo:") || source_project.starts_with("pack:") {
+                return source_project.to_string();
+            }
+            return format!("repo:{source_project}");
+        }
+    }
+    format!("repo:{}", row.owner_key)
+}
+
+fn pack_origin_from_routing_reason(reason: &str) -> Option<String> {
+    reason
+        .strip_prefix(PACK_IMPORT_ROUTING_REASON_PREFIX)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
 }
 
 fn ensure_no_redaction_hit(memory_id: i64, field: &str, value: &str) -> Result<()> {

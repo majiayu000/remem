@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
 use super::{single_line, LoadedPack, PackImportCategory, PackImportPlan};
-use crate::cli::actions::pack_export::PackMemory;
+use crate::cli::actions::pack_export::{pack_import_routing_reason, PackMemory};
 use crate::db::{record_captured_event_with_id_and_reference_time, CaptureEventInput};
 
 const PACK_SOURCE_KIND: &str = "pack";
@@ -183,7 +183,7 @@ fn insert_pack_memory(
             reference_time,
             memory.confidence,
             pack_topic_domain(content_digest),
-            "pack import",
+            pack_import_routing_reason(&memory.origin),
             memory.expires_at_epoch,
             memory.valid_from_epoch,
             PACK_TRUST_CLASS.as_str(),
@@ -245,9 +245,9 @@ fn insert_pack_candidate(
          VALUES (?1, 'project', ?2, ?3, ?4, ?5,
                  ?6, ?7, ?8, ?9, ?9,
                  ?10, ?11, ?11, 'repo', ?11,
-                 ?12, 1.0, 'pack import', 'startup_core', ?13,
-                 ?14, ?15, ?16, ?17,
-                 ?18, ?19, ?20, ?21)",
+                 ?12, 1.0, ?13, 'startup_core', ?14,
+                 ?15, ?16, ?17, ?18,
+                 ?19, ?20, ?21, ?22)",
         params![
             project_id,
             memory.memory_type.as_str(),
@@ -265,6 +265,7 @@ fn insert_pack_candidate(
             block_reason,
             target_project,
             pack_topic_domain(content_digest),
+            pack_import_routing_reason(&memory.origin),
             memory.expires_at_epoch,
             memory.valid_from_epoch,
             memory.state_key.as_deref(),

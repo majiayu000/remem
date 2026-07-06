@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.176` for GH-678 project memory pack completion:
+  round-trip export/import identity fixture, pack-origin doctor and `remem why`
+  attribution, and README onboarding workflow.
 - Staged source version `0.5.175` for GH-678 project memory pack active import:
   safe rows now write active memories with `pack` source trust after
   instruction-pattern scanning, conflicts and quarantines route to review

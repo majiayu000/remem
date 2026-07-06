@@ -9,6 +9,7 @@ mod logging;
 mod mcp_processes;
 mod memory_poisoning;
 mod native_memory;
+mod pack_imports;
 mod promotion_funnel;
 mod report;
 mod review_queue;

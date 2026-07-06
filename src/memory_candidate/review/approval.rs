@@ -98,7 +98,7 @@ pub(super) fn promote_row(
         .or(row.project.as_deref())
         .context("candidate is missing source project path")?;
     let candidate = edited.cloned().unwrap_or_else(|| row.as_candidate());
-    let route = if edited.is_some() {
+    let route = if edited.is_some() && row.source_kind.as_deref() != Some("pack") {
         route_candidate(project, None, &candidate, std::iter::empty())
     } else {
         row.route_for(&candidate)
