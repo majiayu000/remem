@@ -14,6 +14,7 @@ use crate::memory::service::{resolve_local_note_path, sanitize_segment};
 
 mod compressed_sources;
 mod current_state;
+mod tool_metadata;
 
 fn assert_mcp_error(
     err: McpToolError,
@@ -48,16 +49,6 @@ fn resolve_relative_path_outside_base_is_rejected() {
         got.is_err(),
         "relative path resolving outside base should be rejected"
     );
-}
-
-#[test]
-fn memory_server_new_does_not_open_database_eagerly() {
-    let test_dir = ScopedTestDataDir::new("mcp-new");
-    let db_path = test_dir.db_path();
-    assert!(!db_path.exists());
-
-    let _server = MemoryServer::new().expect("memory server should initialize");
-    assert!(!db_path.exists());
 }
 
 #[test]

@@ -17,9 +17,9 @@ implementation by itself.
 
 remem still carries multiple historical observation-era surfaces. The verified
 inventory reframed the debt: `pending_observations` is a dead queue,
-`observations` is a live current intermediate that was mislabeled as legacy,
-and `session_summaries` is load-bearing but dual-written by both the current
-SessionRollup path and the legacy Summary job chain.
+`observations` is a live current intermediate whose legacy wording is fixed by
+GH684-T8, and `session_summaries` is load-bearing but dual-written by both the
+current SessionRollup path and the legacy Summary job chain.
 
 ## Goals
 
@@ -42,7 +42,8 @@ SessionRollup path and the legacy Summary job chain.
 - `pending_observations`: retire after confirming real databases have no
   unmigrated rows and keeping `remem pending migrate-legacy` as an escape
   hatch.
-- `observations`: reclassify current; fix legacy wording rather than retire.
+- `observations`: reclassify current; keep GH684-T8 wording from regressing
+  rather than retire the table.
 - `observations_fts`: current, trigger-maintained, follows `observations`.
 - `session_summaries` table: keep; it remains load-bearing.
 - Legacy Summary job chain: retire only after field-level output equivalence
@@ -57,7 +58,7 @@ SessionRollup path and the legacy Summary job chain.
 - [ ] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
 - [ ] In-flight `JobType::Summary` upgrade handling is decided and tested.
-- [ ] MCP/docs wording stops calling live `observations` legacy.
+- [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
 
