@@ -397,23 +397,49 @@ fn pack_import_active_writes_pack_trust_and_review_rows_without_resurrection() -
         &mut conn,
         edited_quarantine_id,
         CandidateEdit {
+            scope: Some("global".to_string()),
             text: Some("Edited unsafe conflict content.".to_string()),
             ..CandidateEdit::default()
         },
     )?
     .expect("edited pack candidate approves");
-    let (edited_title, edited_content, edited_topic_domain, edited_routing_reason): (
+    let (
+        edited_title,
+        edited_content,
+        edited_scope,
+        edited_owner_scope,
+        edited_owner_key,
+        edited_topic_domain,
+        edited_routing_reason,
+    ): (
+        String,
+        String,
+        String,
         String,
         String,
         Option<String>,
         Option<String>,
     ) = conn.query_row(
-        "SELECT title, content, topic_domain, routing_reason FROM memories WHERE id = ?1",
+        "SELECT title, content, scope, owner_scope, owner_key, topic_domain, routing_reason
+         FROM memories WHERE id = ?1",
         [edited_memory_id],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        },
     )?;
     assert_eq!(edited_title, "Unsafe conflict");
     assert_eq!(edited_content, "Edited unsafe conflict content.");
+    assert_eq!(edited_scope, "global");
+    assert_eq!(edited_owner_scope, "user");
+    assert_eq!(edited_owner_key, "user:default");
     assert!(
         edited_topic_domain
             .as_deref()
