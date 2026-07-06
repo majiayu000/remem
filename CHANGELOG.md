@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.174` for GH-678 project memory pack import
+  dry-run planning: `remem import --pack <dir> --dry-run` validates pack
+  manifests/digests and reports add, dedup, skip, conflict, and quarantine
+  outcomes without mutating the runtime store.
 - Staged source version `0.5.173` for the GH-672 memory poisoning defense
   closure fixture: captured-event instruction payloads now exercise
   candidate quarantine through render absence, and the SpecRail task plan is

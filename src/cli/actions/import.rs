@@ -1,11 +1,28 @@
 use anyhow::{anyhow, Context, Result};
 use rusqlite::{types::ValueRef, Connection, OpenFlags, Row};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::cli::types::ImportAction;
 
-pub(in crate::cli) fn run_import(action: ImportAction) -> Result<()> {
+pub(in crate::cli) fn run_import(
+    action: Option<ImportAction>,
+    pack: Option<&Path>,
+    dry_run: bool,
+    project: Option<&str>,
+) -> Result<()> {
+    if pack.is_some() || dry_run {
+        if action.is_some() {
+            anyhow::bail!("import accepts either --pack or a backup/markdown subcommand, not both");
+        }
+        let Some(pack) = pack else {
+            anyhow::bail!("import --dry-run requires --pack <dir>");
+        };
+        let project = project.context("resolve current project for pack import")?;
+        return super::pack_import::run_import_pack(pack, project, dry_run);
+    }
+
+    let action = action.context("import requires a subcommand or --pack <dir>")?;
     match action {
         ImportAction::Backup {
             source,

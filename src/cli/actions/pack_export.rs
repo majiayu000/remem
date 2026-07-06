@@ -2,10 +2,10 @@ use std::{fs, path::Path};
 
 use anyhow::{Context, Result};
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const PACK_FORMAT_VERSION: u32 = 1;
+pub(super) const PACK_FORMAT_VERSION: u32 = 1;
 const DEFAULT_LIMIT: i64 = 10_000;
 const MAX_LIMIT: i64 = 100_000;
 
@@ -162,22 +162,22 @@ struct PackMemoryRow {
     owner_key: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
-struct PackMemory {
-    title: String,
-    content: String,
-    memory_type: String,
-    scope: String,
-    state_key: Option<String>,
-    state_key_confidence: Option<f64>,
-    state_key_reason: Option<String>,
-    confidence: Option<f64>,
-    created_at_epoch: i64,
-    valid_from_epoch: Option<i64>,
-    expires_at_epoch: Option<i64>,
-    owner_intent: String,
-    origin: String,
-    content_hash: String,
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(super) struct PackMemory {
+    pub(super) title: String,
+    pub(super) content: String,
+    pub(super) memory_type: String,
+    pub(super) scope: String,
+    pub(super) state_key: Option<String>,
+    pub(super) state_key_confidence: Option<f64>,
+    pub(super) state_key_reason: Option<String>,
+    pub(super) confidence: Option<f64>,
+    pub(super) created_at_epoch: i64,
+    pub(super) valid_from_epoch: Option<i64>,
+    pub(super) expires_at_epoch: Option<i64>,
+    pub(super) owner_intent: String,
+    pub(super) origin: String,
+    pub(super) content_hash: String,
 }
 
 impl TryFrom<PackMemoryRow> for PackMemory {
@@ -186,15 +186,11 @@ impl TryFrom<PackMemoryRow> for PackMemory {
     fn try_from(row: PackMemoryRow) -> Result<Self> {
         ensure_no_redaction_hit(row.id, "title", &row.title)?;
         ensure_no_redaction_hit(row.id, "content", &row.content)?;
-        let content_hash = hex_sha256(
-            format!(
-                "{}\0{}\0{}\0{}",
-                row.memory_type,
-                row.state_key.as_deref().unwrap_or(""),
-                row.title,
-                row.content
-            )
-            .as_bytes(),
+        let content_hash = pack_memory_content_hash(
+            &row.memory_type,
+            row.state_key.as_deref(),
+            &row.title,
+            &row.content,
         );
         Ok(Self {
             title: row.title,
@@ -227,7 +223,7 @@ fn ensure_no_redaction_hit(memory_id: i64, field: &str, value: &str) -> Result<(
     Ok(())
 }
 
-fn render_memories_jsonl(rows: &[PackMemory]) -> Result<String> {
+pub(super) fn render_memories_jsonl(rows: &[PackMemory]) -> Result<String> {
     let mut output = String::new();
     for row in rows {
         output.push_str(&serde_json::to_string(row)?);
@@ -249,22 +245,40 @@ fn render_index(project: &str, rows: &[PackMemory]) -> String {
     output
 }
 
-#[derive(Debug, Serialize)]
-struct PackManifest {
-    format_version: u32,
-    project: String,
-    exporter: String,
-    exporter_version: String,
-    memory_count: usize,
-    content_digest: String,
+#[derive(Debug, Serialize, Deserialize)]
+pub(super) struct PackManifest {
+    pub(super) format_version: u32,
+    pub(super) project: String,
+    pub(super) exporter: String,
+    pub(super) exporter_version: String,
+    pub(super) memory_count: usize,
+    pub(super) content_digest: String,
 }
 
-fn hex_sha256(bytes: &[u8]) -> String {
+pub(super) fn hex_sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
     digest
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>()
+}
+
+pub(super) fn pack_memory_content_hash(
+    memory_type: &str,
+    state_key: Option<&str>,
+    title: &str,
+    content: &str,
+) -> String {
+    hex_sha256(
+        format!(
+            "{}\0{}\0{}\0{}",
+            memory_type,
+            state_key.unwrap_or(""),
+            title,
+            content
+        )
+        .as_bytes(),
+    )
 }
 
 #[cfg(test)]

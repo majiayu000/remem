@@ -790,13 +790,17 @@ fn cli_parses_markdown_export_and_import_commands() {
     match import.command {
         Commands::Import {
             action:
-                ImportAction::Markdown {
+                Some(ImportAction::Markdown {
                     source,
                     best_effort,
-                },
+                }),
+            pack,
+            dry_run,
         } => {
             assert_eq!(source, std::path::PathBuf::from("/tmp/remem-md"));
             assert!(best_effort);
+            assert!(pack.is_none());
+            assert!(!dry_run);
         }
         _ => panic!("expected import markdown command"),
     }

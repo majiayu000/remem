@@ -543,10 +543,16 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: AdminAction,
     },
-    /// Import commands for moving older backup rows into the runtime database.
+    /// Import older backup rows, markdown mirrors, or project memory packs.
     Import {
+        /// Project memory pack directory to validate and plan.
+        #[arg(long)]
+        pack: Option<PathBuf>,
+        /// Plan a pack import without mutating the runtime store.
+        #[arg(long)]
+        dry_run: bool,
         #[command(subcommand)]
-        action: ImportAction,
+        action: Option<ImportAction>,
     },
     /// Batch-ingest Claude Code / Codex session transcripts into the raw archive.
     IngestSessions {
