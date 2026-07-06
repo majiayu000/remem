@@ -3,7 +3,9 @@ use super::*;
 use crate::cli::types::{Cli, Commands};
 use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::state_key::StateKeyDecision;
-use crate::memory_candidate::review::{approve_candidate, approve_candidate_with_ack};
+use crate::memory_candidate::review::{
+    approve_candidate, approve_candidate_with_ack, edit_candidate, CandidateEdit,
+};
 use clap::Parser;
 use rusqlite::params;
 use std::path::PathBuf;
@@ -359,11 +361,23 @@ fn pack_import_active_writes_pack_trust_and_review_rows_without_resurrection() -
     assert_eq!(promoted_title, "Remote wins?");
     assert_eq!(promoted_content, "Replace local content.");
 
-    let quarantined_id = candidates
-        .iter()
-        .find(|row| row.1 == "quarantined")
-        .map(|row| row.0)
-        .expect("quarantined pack candidate");
+    let quarantined_id: i64 = conn.query_row(
+        "SELECT id
+         FROM memory_candidates
+         WHERE review_status = 'quarantined'
+           AND text LIKE 'pack_title: Unsafe%'
+           AND text NOT LIKE 'pack_title: Unsafe conflict%'",
+        [],
+        |row| row.get(0),
+    )?;
+    let edited_quarantine_id: i64 = conn.query_row(
+        "SELECT id
+         FROM memory_candidates
+         WHERE review_status = 'quarantined'
+           AND text LIKE 'pack_title: Unsafe conflict%'",
+        [],
+        |row| row.get(0),
+    )?;
     let ack_error = approve_candidate(&mut conn, quarantined_id)
         .expect_err("quarantined pack candidate requires explicit acknowledgement");
     assert!(ack_error.to_string().contains("acknowledge-pattern"));
@@ -376,6 +390,23 @@ fn pack_import_active_writes_pack_trust_and_review_rows_without_resurrection() -
         |row| row.get(0),
     )?;
     assert_eq!(promoted_quarantine_trust, "pack");
+
+    let edited_memory_id = edit_candidate(
+        &mut conn,
+        edited_quarantine_id,
+        CandidateEdit {
+            text: Some("Edited unsafe conflict content.".to_string()),
+            ..CandidateEdit::default()
+        },
+    )?
+    .expect("edited pack candidate approves");
+    let (edited_title, edited_content): (String, String) = conn.query_row(
+        "SELECT title, content FROM memories WHERE id = ?1",
+        [edited_memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(edited_title, "Unsafe conflict");
+    assert_eq!(edited_content, "Edited unsafe conflict content.");
 
     let _ = fs::remove_dir_all(&pack);
     Ok(())

@@ -589,6 +589,7 @@ impl CandidateRow {
     }
 
     fn apply_edit(&self, edit: CandidateEdit) -> Result<ParsedMemoryCandidate> {
+        let existing = self.as_candidate();
         let scope = edit
             .scope
             .as_deref()
@@ -613,12 +614,12 @@ impl CandidateRow {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| self.text.clone());
+            .unwrap_or(existing.text);
         Ok(ParsedMemoryCandidate {
             scope,
             memory_type,
             topic_key,
-            title_override: None,
+            title_override: existing.title_override,
             text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
