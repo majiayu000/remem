@@ -131,6 +131,20 @@ fn load_status_report() -> Result<StatusReport> {
                 stats.total_memory_candidates,
             ),
         },
+        legacy_surfaces: stats
+            .legacy_surfaces
+            .iter()
+            .map(|surface| LegacySurfaceStatus {
+                surface: surface.surface.clone(),
+                disposition: surface.disposition.clone(),
+                row_count: surface.row_count,
+                last_write_epoch: surface.last_write_epoch,
+                last_write_age_secs: surface
+                    .last_write_epoch
+                    .map(|epoch| now.saturating_sub(epoch)),
+                frozen_write_violations: surface.frozen_write_violations,
+            })
+            .collect(),
         usage_feedback: UsageFeedbackStatus {
             citation_events: usage_feedback.total_events,
             citation_line_present_events: usage_feedback.parsed_events,
@@ -443,6 +457,22 @@ fn print_status_report(report: &StatusReport) {
         report.promotion_funnel.candidates,
         report.promotion_funnel.pending_review_rate_percent
     );
+    println!();
+    println!("Legacy surfaces:");
+    for surface in &report.legacy_surfaces {
+        let age = surface
+            .last_write_age_secs
+            .map(|age_secs| format!("{age_secs}s"))
+            .unwrap_or_else(|| "none".to_string());
+        println!(
+            "  {:<20} rows={:>6} disposition={} last_write={} violations={}",
+            surface.surface,
+            surface.row_count,
+            surface.disposition,
+            age,
+            surface.frozen_write_violations
+        );
+    }
     println!();
     println!("Usage feedback:");
     println!(

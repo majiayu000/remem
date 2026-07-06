@@ -11,6 +11,7 @@ pub(super) struct StatusReport {
     pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
     pub promotion_funnel: PromotionFunnelStatus,
+    pub legacy_surfaces: Vec<LegacySurfaceStatus>,
     pub usage_feedback: UsageFeedbackStatus,
     pub pending_observations: PendingObservationStatus,
     pub review_queue: ReviewQueueStatus,
@@ -105,6 +106,16 @@ pub(super) struct PromotionFunnelStatus {
     pub promoted_rate_percent: f64,
     pub pending_review: i64,
     pub pending_review_rate_percent: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct LegacySurfaceStatus {
+    pub surface: String,
+    pub disposition: String,
+    pub row_count: i64,
+    pub last_write_epoch: Option<i64>,
+    pub last_write_age_secs: Option<i64>,
+    pub frozen_write_violations: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

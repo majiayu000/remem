@@ -75,6 +75,24 @@ fn status_report_fixture() -> StatusReport {
             pending_review: 1,
             pending_review_rate_percent: 33.333333333333336,
         },
+        legacy_surfaces: vec![
+            LegacySurfaceStatus {
+                surface: "pending_observations".to_string(),
+                disposition: "retire".to_string(),
+                row_count: 2,
+                last_write_epoch: Some(120),
+                last_write_age_secs: Some(30),
+                frozen_write_violations: 2,
+            },
+            LegacySurfaceStatus {
+                surface: "summary_jobs".to_string(),
+                disposition: "retire-summary-only".to_string(),
+                row_count: 1,
+                last_write_epoch: Some(130),
+                last_write_age_secs: Some(20),
+                frozen_write_violations: 1,
+            },
+        ],
         usage_feedback: UsageFeedbackStatus {
             citation_events: 7,
             citation_line_present_events: 5,
@@ -207,6 +225,16 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["promotion_funnel"]["candidates"], 3);
     assert_eq!(parsed["promotion_funnel"]["promoted"], 2);
     assert_eq!(parsed["promotion_funnel"]["pending_review"], 1);
+    assert_eq!(
+        parsed["legacy_surfaces"][0]["surface"],
+        "pending_observations"
+    );
+    assert_eq!(parsed["legacy_surfaces"][0]["disposition"], "retire");
+    assert_eq!(parsed["legacy_surfaces"][0]["row_count"], 2);
+    assert_eq!(parsed["legacy_surfaces"][0]["last_write_epoch"], 120);
+    assert_eq!(parsed["legacy_surfaces"][0]["last_write_age_secs"], 30);
+    assert_eq!(parsed["legacy_surfaces"][0]["frozen_write_violations"], 2);
+    assert_eq!(parsed["legacy_surfaces"][1]["surface"], "summary_jobs");
     assert_eq!(parsed["usage_feedback"]["citation_events"], 7);
     assert_eq!(parsed["usage_feedback"]["citation_line_present_events"], 5);
     assert_eq!(parsed["usage_feedback"]["matched_events"], 4);
