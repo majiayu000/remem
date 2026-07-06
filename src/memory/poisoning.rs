@@ -193,9 +193,10 @@ fn event_trust_class(
         return SourceTrustClass::ExternalContent;
     };
     let tool = tool_name.to_ascii_lowercase();
-    if matches!(tool.as_str(), "webfetch" | "websearch") || tool.starts_with("mcp__") {
-        SourceTrustClass::ExternalContent
-    } else if tool == "bash" && bash_content_fetches_external_content(content) {
+    if matches!(tool.as_str(), "webfetch" | "websearch")
+        || tool.starts_with("mcp__")
+        || (tool == "bash" && bash_content_fetches_external_content(content))
+    {
         SourceTrustClass::ExternalContent
     } else if matches!(tool.as_str(), "read" | "grep" | "glob" | "notebookread") {
         SourceTrustClass::RepoFile
