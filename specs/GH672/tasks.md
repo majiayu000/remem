@@ -14,15 +14,15 @@ GH-672
 
 ## Implementation Tasks
 
-- [ ] `SP672-T1` Owner: agent; Dependencies: spec approval; Done when: the trust-class vocabulary is modeled and persisted for candidates and promoted memories with additive migrations; Verify: migration and compatibility tests.
-- [ ] `SP672-T2` Owner: agent; Dependencies: `SP672-T1`; Done when: deterministic instruction-pattern scanning exists with pattern-set version and table-driven positive/negative tests; Verify: pattern module tests.
-- [ ] `SP672-T3` Owner: agent; Dependencies: `SP672-T1` `SP672-T2`; Done when: candidate insertion derives trust from evidence and quarantines pattern matches with durable pattern id; Verify: candidate write tests.
-- [ ] `SP672-T4` Owner: agent; Dependencies: `SP672-T3`; Done when: auto-promote consumes the trust floor and records clear block reasons; Verify: auto-promote boundary tests.
-- [ ] `SP672-T5` Owner: agent; Dependencies: `SP672-T2`; Done when: direct `save_memory` scans content and requires explicit acknowledgement for matched patterns; Verify: save service tests.
-- [ ] `SP672-T6` Owner: agent; Dependencies: `SP672-T2` `SP672-T3`; Done when: render input assembly drops unacknowledged poisoned content and logs error-level diagnostic detail; Verify: context render fixture and log/doctor tests.
-- [ ] `SP672-T7` Owner: agent; Dependencies: `SP672-T3`; Done when: review approval of quarantined candidates requires and records pattern acknowledgement; Verify: review path tests.
-- [ ] `SP672-T8` Owner: agent; Dependencies: `SP672-T1` `SP672-T6`; Done when: doctor reports quarantine counts, pattern-set version, and last injection drop; Verify: doctor tests.
-- [ ] `SP672-T9` Owner: agent; Dependencies: all implementation tasks; Done when: docs and release notes describe the security behavior and verification passes; Verify: `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`.
+- [x] `SP672-T1` Owner: agent; Dependencies: spec approval; Done when: the trust-class vocabulary is modeled and persisted for candidates and promoted memories with additive migrations; Verify: migration and compatibility tests. Completed by PR #742.
+- [x] `SP672-T2` Owner: agent; Dependencies: `SP672-T1`; Done when: deterministic instruction-pattern scanning exists with pattern-set version and table-driven positive/negative tests; Verify: pattern module tests. Completed by PR #742.
+- [x] `SP672-T3` Owner: agent; Dependencies: `SP672-T1` `SP672-T2`; Done when: candidate insertion derives trust from evidence and quarantines pattern matches with durable pattern id; Verify: candidate write tests. Completed by PR #742 and the captured-event fixture in this tranche.
+- [x] `SP672-T4` Owner: agent; Dependencies: `SP672-T3`; Done when: auto-promote consumes the trust floor and records clear block reasons; Verify: auto-promote boundary tests. Completed by PR #742.
+- [x] `SP672-T5` Owner: agent; Dependencies: `SP672-T2`; Done when: direct `save_memory` scans content and requires explicit acknowledgement for matched patterns; Verify: save service tests. Completed by PR #742.
+- [x] `SP672-T6` Owner: agent; Dependencies: `SP672-T2` `SP672-T3`; Done when: render input assembly drops unacknowledged poisoned content and logs error-level diagnostic detail; Verify: context render fixture and log/doctor tests. Completed by PR #742 and the captured-event fixture in this tranche.
+- [x] `SP672-T7` Owner: agent; Dependencies: `SP672-T3`; Done when: review approval of quarantined candidates requires and records pattern acknowledgement; Verify: review path tests. Completed by PR #742.
+- [x] `SP672-T8` Owner: agent; Dependencies: `SP672-T1` `SP672-T6`; Done when: doctor reports quarantine counts, pattern-set version, and last injection drop; Verify: doctor tests. Completed by PR #742.
+- [x] `SP672-T9` Owner: agent; Dependencies: all implementation tasks; Done when: docs and release notes describe the security behavior and verification passes; Verify: `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`. Completed by PR #742 plus this final fixture/status tranche.
 
 ## Parallelization
 
