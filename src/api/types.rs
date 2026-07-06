@@ -177,6 +177,8 @@ pub(super) struct SaveMemoryRequest {
     pub claim_enabled: Option<bool>,
     #[serde(default)]
     pub claim_source: Option<String>,
+    #[serde(default)]
+    pub acknowledge_pattern: Option<String>,
 }
 
 #[derive(Deserialize)]

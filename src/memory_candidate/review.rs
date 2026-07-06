@@ -5,6 +5,7 @@ use super::{
     normalize_memory_type, normalize_scope, normalize_topic_key, route_candidate, CandidateRoute,
     ParsedMemoryCandidate,
 };
+use crate::memory::poisoning::scan_instruction_pattern;
 
 mod approval;
 
@@ -20,6 +21,9 @@ pub(crate) struct ReviewCandidate {
     pub evidence_preview: Vec<String>,
     pub confidence: f64,
     pub risk_class: String,
+    pub review_status: String,
+    pub quarantine_pattern_id: Option<String>,
+    pub quarantine_pattern_version: Option<i64>,
     pub created_at_epoch: i64,
 }
 
@@ -176,7 +180,7 @@ pub(crate) fn list_pending(
                     c.quarantine_pattern_version
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
-             WHERE c.review_status = 'pending_review'
+             WHERE c.review_status IN ('pending_review', 'quarantined')
                AND p.project_path = ?1
              ORDER BY c.created_at_epoch ASC, c.id ASC
              LIMIT ?2",
@@ -196,7 +200,7 @@ pub(crate) fn list_pending(
                     c.quarantine_pattern_version
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
-             WHERE c.review_status = 'pending_review'
+             WHERE c.review_status IN ('pending_review', 'quarantined')
              ORDER BY c.created_at_epoch ASC, c.id ASC
              LIMIT ?1",
         )?;
@@ -220,6 +224,9 @@ pub(crate) fn list_pending(
                 evidence_preview,
                 confidence: row.confidence,
                 risk_class: row.risk_class,
+                review_status: row.review_status,
+                quarantine_pattern_id: row.quarantine_pattern_id,
+                quarantine_pattern_version: row.quarantine_pattern_version,
                 created_at_epoch: row.created_at_epoch,
             })
         })
@@ -266,7 +273,7 @@ pub(crate) fn discard_candidate_with_meta(
          SET review_status = 'discarded', updated_at_epoch = ?1,
              review_actor = ?2, reviewed_at_epoch = ?1,
              review_action_source = ?3, review_batch_id = ?4, review_reason = ?5
-         WHERE id = ?6 AND review_status = 'pending_review'",
+         WHERE id = ?6 AND review_status IN ('pending_review', 'quarantined')",
         params![
             now,
             meta.actor,
@@ -295,8 +302,16 @@ pub(crate) fn edit_candidate(
     let Some(row) = load_candidate(&tx, id)? else {
         return Ok(None);
     };
-    ensure_pending(&row)?;
+    ensure_reviewable(&row)?;
     let edited = row.apply_edit(edit)?;
+    if let Some(matched) = scan_instruction_pattern(&edited.text) {
+        bail!(
+            "edited candidate {} matched instruction-pattern {}@v{}; review and acknowledge the pattern before promotion",
+            row.id,
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
     let meta = ReviewMeta::single(default_review_actor());
     let promotion = approval::promote_row(&tx, &row, "edited", Some(&edited), &meta, None)?;
     tx.commit()?;
@@ -354,7 +369,7 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
                 c.memory_type, c.topic_key, c.text
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
-         WHERE c.review_status = 'pending_review'",
+         WHERE c.review_status IN ('pending_review', 'quarantined')",
     );
     let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(project) = &filter.project {
@@ -657,6 +672,17 @@ fn ensure_pending(row: &CandidateRow) -> Result<()> {
     if row.review_status != "pending_review" {
         bail!(
             "candidate {} is {}, expected pending_review",
+            row.id,
+            row.review_status
+        );
+    }
+    Ok(())
+}
+
+fn ensure_reviewable(row: &CandidateRow) -> Result<()> {
+    if !matches!(row.review_status.as_str(), "pending_review" | "quarantined") {
+        bail!(
+            "candidate {} is {}, expected pending_review or quarantined",
             row.id,
             row.review_status
         );

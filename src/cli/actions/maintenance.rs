@@ -439,6 +439,7 @@ fn print_cleanup_plan(plan: &CleanupPlan) {
 pub(in crate::cli) struct GovernanceCliRequest<'a> {
     pub(in crate::cli) project: Option<&'a str>,
     pub(in crate::cli) action: MemoryGovernanceCliAction,
+    pub(in crate::cli) acknowledge_pattern: Option<&'a str>,
     pub(in crate::cli) reason: Option<&'a str>,
     pub(in crate::cli) actor: Option<&'a str>,
     pub(in crate::cli) query: Option<&'a str>,
@@ -464,6 +465,9 @@ pub(in crate::cli) fn run_governance(req: GovernanceCliRequest<'_>) -> Result<()
         MemoryGovernanceCliAction::Delete => memory::governance::MemoryGovernanceAction::Delete,
         MemoryGovernanceCliAction::Reject => memory::governance::MemoryGovernanceAction::Reject,
         MemoryGovernanceCliAction::Stale => memory::governance::MemoryGovernanceAction::MarkStale,
+        MemoryGovernanceCliAction::AcknowledgePattern => {
+            memory::governance::MemoryGovernanceAction::AcknowledgePattern
+        }
     };
     let conn = db::open_db()?;
     let mut ids = collect_governance_ids(req.ids, req.from_file, req.read_stdin)?;
@@ -525,6 +529,7 @@ pub(in crate::cli) fn run_governance(req: GovernanceCliRequest<'_>) -> Result<()
             actor: req.actor,
             dry_run,
             confirm_destructive: req.confirm_destructive,
+            acknowledge_pattern: req.acknowledge_pattern,
         },
     )?;
     if req.json {

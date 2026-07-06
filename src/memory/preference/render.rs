@@ -1,6 +1,7 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::memory::poisoning::{scan_instruction_pattern, InstructionPatternMatch};
 use crate::memory::Memory;
 
 use super::{
@@ -125,6 +126,7 @@ pub(crate) fn render_preferences_with_context_details(
             }
         }
     }
+    all_prefs = filter_unacknowledged_poisoned_preferences(conn, all_prefs)?;
 
     if all_prefs.is_empty() {
         return Ok(PreferenceRenderDetails::default());
@@ -175,6 +177,97 @@ pub(crate) fn render_preferences_with_context_details(
         summary,
         rendered_ids,
     })
+}
+
+#[derive(Debug, Default)]
+struct PreferencePoisoningState {
+    acknowledged_pattern_id: Option<String>,
+    acknowledged_pattern_version: Option<i64>,
+    source_trust_class: String,
+    source_project: Option<String>,
+}
+
+fn filter_unacknowledged_poisoned_preferences(
+    conn: &Connection,
+    prefs: Vec<(Memory, PreferenceSource)>,
+) -> Result<Vec<(Memory, PreferenceSource)>> {
+    let mut kept = Vec::with_capacity(prefs.len());
+    for (memory, source) in prefs {
+        let Some(pattern_match) =
+            scan_instruction_pattern(&format!("{}\n{}", memory.title, memory.text))
+        else {
+            kept.push((memory, source));
+            continue;
+        };
+        let state = load_preference_poisoning_state(conn, memory.id)?;
+        if state.acknowledged_pattern_id.as_deref() == Some(pattern_match.pattern_id)
+            && state.acknowledged_pattern_version == Some(pattern_match.pattern_set_version)
+        {
+            kept.push((memory, source));
+            continue;
+        }
+        crate::log::error(
+            "context-poisoning",
+            &format!(
+                "dropping unacknowledged poisoned preference memory id={} pattern={}@v{}",
+                memory.id, pattern_match.pattern_id, pattern_match.pattern_set_version
+            ),
+        );
+        record_preference_injection_drop(conn, &memory, &state, pattern_match)?;
+    }
+    Ok(kept)
+}
+
+fn load_preference_poisoning_state(
+    conn: &Connection,
+    memory_id: i64,
+) -> Result<PreferencePoisoningState> {
+    Ok(conn
+        .query_row(
+            "SELECT acknowledged_pattern_id, acknowledged_pattern_version,
+                    source_trust_class, source_project
+             FROM memories WHERE id = ?1",
+            params![memory_id],
+            |row| {
+                Ok(PreferencePoisoningState {
+                    acknowledged_pattern_id: row.get(0)?,
+                    acknowledged_pattern_version: row.get(1)?,
+                    source_trust_class: row.get(2)?,
+                    source_project: row.get(3)?,
+                })
+            },
+        )
+        .optional()?
+        .unwrap_or_else(|| PreferencePoisoningState {
+            acknowledged_pattern_id: None,
+            acknowledged_pattern_version: None,
+            source_trust_class: "external_content".to_string(),
+            source_project: None,
+        }))
+}
+
+fn record_preference_injection_drop(
+    conn: &Connection,
+    memory: &Memory,
+    state: &PreferencePoisoningState,
+    pattern_match: InstructionPatternMatch,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memory_poisoning_injection_drops
+         (memory_id, pattern_id, pattern_version, source_trust_class, source_project,
+          title, created_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            memory.id,
+            pattern_match.pattern_id,
+            pattern_match.pattern_set_version,
+            state.source_trust_class.as_str(),
+            state.source_project.as_deref(),
+            memory.title.as_str(),
+            chrono::Utc::now().timestamp(),
+        ],
+    )?;
+    Ok(())
 }
 
 fn normalize_rendered_preference_text(text: &str) -> String {

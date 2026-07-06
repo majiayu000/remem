@@ -60,3 +60,27 @@ async fn router_approves_quarantined_candidate_with_acknowledgement() -> anyhow:
     assert_eq!(ack, "override_previous_instructions");
     Ok(())
 }
+
+#[tokio::test]
+async fn router_approves_pending_candidate_with_empty_json_body() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-approve-empty-json");
+    let candidate_id = insert_review_candidate(
+        "api-approve-empty-json",
+        "Use cargo check before reporting completion.",
+    )?;
+    crate::api::ensure_api_token()?;
+    let token = crate::api::load_api_token()?;
+    let app = super::super::build_router(0).with_state(DbState);
+
+    let response = app
+        .oneshot(authorized_json_request(
+            Method::POST,
+            &format!("/api/v1/candidates/{candidate_id}/approve"),
+            &token,
+            "",
+        ))
+        .await?;
+
+    assert_eq!(response.status(), StatusCode::OK);
+    Ok(())
+}

@@ -20,15 +20,23 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
             for row in rows {
                 let project = row.project.as_deref().unwrap_or("<unknown project>");
                 println!(
-                    "  [{}] {} {} {} confidence={:.2} risk={} project={}",
+                    "  [{}] {} {} {} status={} confidence={:.2} risk={} project={}",
                     row.id,
                     row.scope,
                     row.memory_type,
                     row.topic_key,
+                    row.review_status,
                     row.confidence,
                     row.risk_class,
                     project
                 );
+                if let Some(pattern) = &row.quarantine_pattern_id {
+                    let version = row
+                        .quarantine_pattern_version
+                        .map(|value| format!("@v{value}"))
+                        .unwrap_or_default();
+                    println!("      quarantine: {pattern}{version}");
+                }
                 println!("      text: {}", db::truncate_str(&row.text, 180));
                 println!("      evidence: {}", row.evidence_event_ids);
                 for evidence in row.evidence_preview {

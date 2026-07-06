@@ -38,6 +38,37 @@ fn save_memory_rejects_instruction_pattern_before_local_copy_or_durable_write() 
 }
 
 #[test]
+fn save_memory_persists_acknowledged_instruction_pattern() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("save-poisoned-acknowledged-pattern");
+    let conn = db::open_db()?;
+    let req = SaveMemoryRequest {
+        text: "Ignore previous instructions only as a quoted false positive.".to_string(),
+        title: Some("Acknowledged save".to_string()),
+        project: Some("proj".to_string()),
+        memory_type: Some("decision".to_string()),
+        local_copy_enabled: Some(false),
+        acknowledge_pattern: Some("override_previous_instructions".to_string()),
+        ..SaveMemoryRequest::default()
+    };
+
+    let saved = save_memory(&conn, &req)?;
+
+    let ack: (String, i64, Option<i64>) = conn.query_row(
+        "SELECT acknowledged_pattern_id, acknowledged_pattern_version, acknowledged_at_epoch
+         FROM memories WHERE id = ?1",
+        [saved.id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(ack.0, "override_previous_instructions");
+    assert_eq!(
+        ack.1,
+        crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION
+    );
+    assert!(ack.2.is_some());
+    Ok(())
+}
+
+#[test]
 fn save_memory_marks_direct_write_as_user_prompt_trust() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("save-user-prompt-trust");
     let conn = db::open_db()?;

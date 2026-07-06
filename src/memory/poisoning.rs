@@ -118,31 +118,48 @@ pub(crate) fn derive_source_trust_class(
 
     let mut lowest = SourceTrustClass::UserPrompt;
     for event_id in evidence_event_ids {
-        let trust = conn
-            .query_row(
-                "SELECT event_type, role, tool_name
-                 FROM captured_events
-                 WHERE id = ?1",
-                params![event_id],
-                |row| {
-                    Ok(event_trust_class(
-                        row.get::<_, String>(0)?.as_str(),
-                        row.get::<_, Option<String>>(1)?.as_deref(),
-                        row.get::<_, Option<String>>(2)?.as_deref(),
-                        source_kind,
-                    ))
-                },
-            )
-            .or_else(|err| {
-                if matches!(err, rusqlite::Error::QueryReturnedNoRows) {
-                    Ok(SourceTrustClass::ExternalContent)
-                } else {
-                    Err(err)
-                }
-            })?;
+        let trust = event_trust_class_for_row(conn, *event_id)?;
         lowest = lowest.min(trust);
     }
     Ok(lowest)
+}
+
+fn event_trust_class_for_row(conn: &Connection, event_id: i64) -> Result<SourceTrustClass> {
+    query_event_trust_class(conn, event_id, true).or_else(|err| {
+        if err.to_string().contains("no such column") {
+            query_event_trust_class(conn, event_id, false)
+        } else {
+            Err(err)
+        }
+    })
+}
+
+fn query_event_trust_class(
+    conn: &Connection,
+    event_id: i64,
+    include_content: bool,
+) -> Result<SourceTrustClass> {
+    let sql = if include_content {
+        "SELECT event_type, role, tool_name, content_text
+         FROM captured_events
+         WHERE id = ?1"
+    } else {
+        "SELECT event_type, role, tool_name, NULL
+         FROM captured_events
+         WHERE id = ?1"
+    };
+    match conn.query_row(sql, params![event_id], |row| {
+        Ok(event_trust_class(
+            row.get::<_, String>(0)?.as_str(),
+            row.get::<_, Option<String>>(1)?.as_deref(),
+            row.get::<_, Option<String>>(2)?.as_deref(),
+            row.get::<_, Option<String>>(3)?.as_deref(),
+        ))
+    }) {
+        Ok(trust) => Ok(trust),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(SourceTrustClass::ExternalContent),
+        Err(err) => Err(err.into()),
+    }
 }
 
 pub(crate) fn validate_trust_class(value: &str) -> Result<()> {
@@ -157,7 +174,7 @@ fn event_trust_class(
     event_type: &str,
     role: Option<&str>,
     tool_name: Option<&str>,
-    source_kind: &str,
+    content: Option<&str>,
 ) -> SourceTrustClass {
     if event_type == "user_prompt_submit" {
         return SourceTrustClass::UserPrompt;
@@ -169,11 +186,7 @@ fn event_trust_class(
         return SourceTrustClass::RepoFile;
     }
     if event_type == "session_stop" {
-        return if source_kind == "summary" {
-            DEFAULT_EXISTING_TRUST_CLASS
-        } else {
-            SourceTrustClass::ExternalContent
-        };
+        return SourceTrustClass::ExternalContent;
     }
 
     let Some(tool_name) = tool_name else {
@@ -182,11 +195,47 @@ fn event_trust_class(
     let tool = tool_name.to_ascii_lowercase();
     if matches!(tool.as_str(), "webfetch" | "websearch") || tool.starts_with("mcp__") {
         SourceTrustClass::ExternalContent
+    } else if tool == "bash" && bash_content_fetches_external_content(content) {
+        SourceTrustClass::ExternalContent
     } else if matches!(tool.as_str(), "read" | "grep" | "glob" | "notebookread") {
         SourceTrustClass::RepoFile
     } else {
         SourceTrustClass::LocalToolOutput
     }
+}
+
+fn bash_content_fetches_external_content(content: Option<&str>) -> bool {
+    let Some(content) = content else {
+        return false;
+    };
+    let mut haystack = content.to_ascii_lowercase();
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
+        for pointer in [
+            "/tool_input/command",
+            "/input/command",
+            "/command",
+            "/args/command",
+            "/tool_result/output",
+            "/output",
+        ] {
+            if let Some(text) = value.pointer(pointer).and_then(|value| value.as_str()) {
+                haystack.push('\n');
+                haystack.push_str(&text.to_ascii_lowercase());
+            }
+        }
+    }
+
+    haystack.contains("http://")
+        || haystack.contains("https://")
+        || haystack.contains("curl ")
+        || haystack.contains("curl\t")
+        || haystack.contains("wget ")
+        || haystack.contains("wget\t")
+        || haystack.contains("urllib.request")
+        || haystack.contains("requests.get")
+        || haystack.contains("requests.post")
+        || haystack.contains("httpx.get")
+        || haystack.contains("httpx.post")
 }
 
 fn normalize_for_pattern_match(text: &str) -> String {
@@ -267,14 +316,15 @@ mod tests {
     }
 
     #[test]
-    fn summary_session_stop_uses_existing_trust_default() -> Result<()> {
+    fn summary_session_stop_is_external_content() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         conn.execute(
             "CREATE TABLE captured_events (
                 id INTEGER PRIMARY KEY,
                 event_type TEXT NOT NULL,
                 role TEXT,
-                tool_name TEXT
+                tool_name TEXT,
+                content_text TEXT
              )",
             [],
         )?;
@@ -286,8 +336,37 @@ mod tests {
 
         assert_eq!(
             derive_source_trust_class(&conn, &[1], "summary")?,
-            DEFAULT_EXISTING_TRUST_CLASS
+            SourceTrustClass::ExternalContent
         );
+        assert_eq!(
+            derive_source_trust_class(&conn, &[1], "observation")?,
+            SourceTrustClass::ExternalContent
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn bash_web_fetches_are_external_content() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute(
+            "CREATE TABLE captured_events (
+                id INTEGER PRIMARY KEY,
+                event_type TEXT NOT NULL,
+                role TEXT,
+                tool_name TEXT,
+                content_text TEXT
+             )",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO captured_events (id, event_type, role, tool_name, content_text)
+             VALUES (1, 'tool_result', NULL, 'Bash', ?1)",
+            [serde_json::json!({
+                "tool_input": {"command": "python -c \"import requests; requests.get('https://example.test')\""}
+            })
+            .to_string()],
+        )?;
+
         assert_eq!(
             derive_source_trust_class(&conn, &[1], "observation")?,
             SourceTrustClass::ExternalContent

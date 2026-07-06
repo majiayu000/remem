@@ -7,6 +7,7 @@ pub enum MemoryGovernanceAction {
     Delete,
     Reject,
     MarkStale,
+    AcknowledgePattern,
 }
 
 impl MemoryGovernanceAction {
@@ -15,6 +16,7 @@ impl MemoryGovernanceAction {
             "delete" | "deleted" => Ok(Self::Delete),
             "reject" | "rejected" => Ok(Self::Reject),
             "stale" | "mark_stale" | "mark-stale" | "invalidate" => Ok(Self::MarkStale),
+            "acknowledge_pattern" | "acknowledge-pattern" | "ack" => Ok(Self::AcknowledgePattern),
             other => bail!("unsupported memory governance action: {other}"),
         }
     }
@@ -24,6 +26,7 @@ impl MemoryGovernanceAction {
             Self::Delete => "delete",
             Self::Reject => "reject",
             Self::MarkStale => "stale",
+            Self::AcknowledgePattern => "acknowledge_pattern",
         }
     }
 
@@ -32,6 +35,7 @@ impl MemoryGovernanceAction {
             Self::Delete => "deleted",
             Self::Reject => "rejected",
             Self::MarkStale => "stale",
+            Self::AcknowledgePattern => "active",
         }
     }
 }
@@ -45,6 +49,7 @@ pub struct GovernMemoryRequest<'a> {
     pub actor: Option<&'a str>,
     pub dry_run: bool,
     pub confirm_destructive: bool,
+    pub acknowledge_pattern: Option<&'a str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -133,35 +138,62 @@ pub fn govern_memories(
         bail!("memory governance requires at least one memory id");
     }
     let reason = normalized_reason(req)?;
+    let acknowledged_pattern = normalized_acknowledge_pattern(req)?;
     let target_status = req.action.target_status();
     let tx = conn.unchecked_transaction()?;
     let mut affected = Vec::with_capacity(ids.len());
     for id in ids {
         let target = load_target(&tx, req.project, id)?;
+        if req.action == MemoryGovernanceAction::AcknowledgePattern {
+            validate_acknowledgement(&target, acknowledged_pattern)?;
+        }
+        let new_status = if req.action == MemoryGovernanceAction::AcknowledgePattern {
+            target.status.as_str()
+        } else {
+            target_status
+        };
         affected.push(GovernedMemory {
             id: target.id,
             title: target.title.clone(),
             previous_status: target.status.clone(),
-            new_status: target_status.to_string(),
+            new_status: new_status.to_string(),
         });
         if req.dry_run {
             continue;
         }
         let now = chrono::Utc::now().timestamp();
-        let updated = tx.execute(
-            "UPDATE memories
-             SET status = ?1, updated_at_epoch = ?2
-             WHERE id = ?3 AND project = ?4",
-            params![target_status, now, target.id, req.project],
-        )?;
+        let updated = if req.action == MemoryGovernanceAction::AcknowledgePattern {
+            tx.execute(
+                "UPDATE memories
+                 SET acknowledged_pattern_id = ?1,
+                     acknowledged_pattern_version = ?2,
+                     acknowledged_at_epoch = ?3,
+                     updated_at_epoch = ?3
+                 WHERE id = ?4 AND project = ?5",
+                params![
+                    acknowledged_pattern,
+                    crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION,
+                    now,
+                    target.id,
+                    req.project
+                ],
+            )?
+        } else {
+            tx.execute(
+                "UPDATE memories
+                 SET status = ?1, updated_at_epoch = ?2
+                 WHERE id = ?3 AND project = ?4",
+                params![target_status, now, target.id, req.project],
+            )?
+        };
         if updated != 1 {
             return Err(anyhow!(
-                "failed to update memory governance status: id={} project={}",
+                "failed to update memory governance target: id={} project={}",
                 target.id,
                 req.project
             ));
         }
-        insert_audit_event(&tx, req, &target, target_status, reason.as_deref(), now)?;
+        insert_audit_event(&tx, req, &target, new_status, reason.as_deref(), now)?;
     }
     tx.commit()?;
     Ok(GovernMemoryResult {
@@ -228,15 +260,57 @@ fn normalized_reason(req: &GovernMemoryRequest<'_>) -> Result<Option<String>> {
     Ok(Some(reason.to_string()))
 }
 
+fn normalized_acknowledge_pattern<'a>(req: &'a GovernMemoryRequest<'a>) -> Result<Option<&'a str>> {
+    let pattern = req
+        .acknowledge_pattern
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    if req.action == MemoryGovernanceAction::AcknowledgePattern && pattern.is_none() {
+        bail!("acknowledge_pattern action requires acknowledge_pattern");
+    }
+    if req.action != MemoryGovernanceAction::AcknowledgePattern && pattern.is_some() {
+        bail!("acknowledge_pattern is only valid with acknowledge_pattern action");
+    }
+    Ok(pattern)
+}
+
+fn validate_acknowledgement(
+    target: &GovernanceTarget,
+    acknowledged_pattern: Option<&str>,
+) -> Result<()> {
+    let acknowledged_pattern = acknowledged_pattern.expect("validated acknowledge_pattern");
+    let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(&format!(
+        "{}\n{}",
+        target.title, target.content
+    )) else {
+        bail!(
+            "memory id={} does not match an instruction-pattern; cannot acknowledge {}",
+            target.id,
+            acknowledged_pattern
+        );
+    };
+    if matched.pattern_id != acknowledged_pattern {
+        bail!(
+            "memory id={} acknowledged pattern {} does not match instruction-pattern {}@v{}",
+            target.id,
+            acknowledged_pattern,
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
+    Ok(())
+}
+
 struct GovernanceTarget {
     id: i64,
     title: String,
+    content: String,
     status: String,
 }
 
 fn load_target(conn: &Connection, project: &str, id: i64) -> Result<GovernanceTarget> {
     conn.query_row(
-        "SELECT id, title, status
+        "SELECT id, title, content, status
          FROM memories
          WHERE id = ?1 AND project = ?2",
         params![id, project],
@@ -244,7 +318,8 @@ fn load_target(conn: &Connection, project: &str, id: i64) -> Result<GovernanceTa
             Ok(GovernanceTarget {
                 id: row.get(0)?,
                 title: row.get(1)?,
-                status: row.get(2)?,
+                content: row.get(2)?,
+                status: row.get(3)?,
             })
         },
     )
@@ -269,6 +344,7 @@ fn insert_audit_event(
         "new_status": new_status,
         "reason": reason,
         "actor": actor,
+        "acknowledged_pattern": req.acknowledge_pattern,
     })
     .to_string();
     let summary = format!(

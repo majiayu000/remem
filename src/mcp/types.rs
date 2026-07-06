@@ -179,6 +179,10 @@ pub(super) struct SaveMemoryParams {
         description = "Optional claim source label. Defaults to manual_save for MCP calls."
     )]
     pub claim_source: Option<String>,
+    #[schemars(
+        description = "Explicitly acknowledge an instruction-pattern match in direct save text after human review. Must match the detected pattern id, e.g. override_previous_instructions."
+    )]
+    pub acknowledge_pattern: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -187,8 +191,12 @@ pub(super) struct GovernMemoryParams {
     pub ids: Vec<i64>,
     #[schemars(description = "Project name filter. Defaults to the MCP process current project.")]
     pub project: Option<String>,
-    #[schemars(description = "Governance action: delete, reject, or stale.")]
+    #[schemars(description = "Governance action: delete, reject, stale, or acknowledge-pattern.")]
     pub action: String,
+    #[schemars(
+        description = "Pattern id required when action is acknowledge-pattern, e.g. override_previous_instructions."
+    )]
+    pub acknowledge_pattern: Option<String>,
     #[schemars(description = "Explicit user-visible reason for the mutation.")]
     pub reason: Option<String>,
     #[schemars(description = "Actor initiating the mutation, e.g. user, codex, claude.")]

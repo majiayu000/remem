@@ -1,4 +1,5 @@
 use axum::{
+    body::Bytes,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
@@ -18,14 +19,25 @@ use super::super::types::{
 pub(in crate::api) async fn handle_approve_candidate(
     State(_state): State<DbState>,
     Path(id): Path<i64>,
-    request: Option<Json<CandidateApproveRequest>>,
+    body: Bytes,
 ) -> impl IntoResponse {
     let mut conn = match open_request_db() {
         Ok(conn) => conn,
         Err(response) => return response,
     };
 
-    let acknowledged_pattern = request.and_then(|Json(request)| request.acknowledge_pattern);
+    let request = match parse_approve_request_body(&body) {
+        Ok(request) => request,
+        Err(message) => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "candidate_approve_invalid",
+                &message,
+            )
+            .into_response()
+        }
+    };
+    let acknowledged_pattern = request.and_then(|request| request.acknowledge_pattern);
     let result = match acknowledged_pattern.as_deref() {
         Some(pattern) => approve_candidate_with_ack(&mut conn, id, pattern),
         None => approve_candidate(&mut conn, id),
@@ -41,6 +53,15 @@ pub(in crate::api) async fn handle_approve_candidate(
         Ok(None) => candidate_not_found(id),
         Err(err) => candidate_review_error(id, &err),
     }
+}
+
+fn parse_approve_request_body(body: &[u8]) -> Result<Option<CandidateApproveRequest>, String> {
+    if body.iter().all(|byte| byte.is_ascii_whitespace()) {
+        return Ok(None);
+    }
+    serde_json::from_slice(body)
+        .map(Some)
+        .map_err(|error| format!("approve request body must be empty or valid JSON: {error}"))
 }
 
 pub(in crate::api) async fn handle_reject_candidate(

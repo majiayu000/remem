@@ -93,6 +93,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Govern {
             project,
             action,
+            acknowledge_pattern,
             reason,
             actor,
             query,
@@ -109,6 +110,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         } => run_governance(GovernanceCliRequest {
             project: project.as_deref(),
             action,
+            acknowledge_pattern: acknowledge_pattern.as_deref(),
             reason: reason.as_deref(),
             actor: actor.as_deref(),
             query: query.as_deref(),

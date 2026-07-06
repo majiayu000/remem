@@ -111,6 +111,7 @@ impl MemoryServer {
                     .clone()
                     .filter(|source| !source.trim().is_empty())
                     .or_else(|| Some("manual_save".to_string())),
+                acknowledge_pattern: params.acknowledge_pattern.clone(),
             };
             let saved = service::save_memory_with_reference_time(
                 conn,
@@ -214,6 +215,7 @@ impl MemoryServer {
                     actor: params.actor.as_deref().or(Some("mcp")),
                     dry_run: params.dry_run.unwrap_or(false),
                     confirm_destructive: params.confirm_destructive.unwrap_or(false),
+                    acknowledge_pattern: params.acknowledge_pattern.as_deref(),
                 },
             )
             .map_err(|e| {
