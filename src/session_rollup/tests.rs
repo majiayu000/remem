@@ -51,6 +51,7 @@ fn xml_response(summary: &str, segments: &str) -> String {
 
 #[derive(Debug)]
 struct SummaryWriterProjection {
+    project: Option<String>,
     request: Option<String>,
     completed: Option<String>,
     decisions: Option<String>,
@@ -84,7 +85,7 @@ fn summary_writer_projection(
     memory_session_id: &str,
 ) -> Result<SummaryWriterProjection> {
     conn.query_row(
-        "SELECT request, completed, decisions, learned, next_steps, preferences,
+        "SELECT project, request, completed, decisions, learned, next_steps, preferences,
                 prompt_number, discovery_tokens, host_id, project_id,
                 session_row_id, summary_text, covered_from_event_id,
                 covered_to_event_id, model, source_project, target_project,
@@ -96,32 +97,33 @@ fn summary_writer_projection(
         params![memory_session_id],
         |row| {
             Ok(SummaryWriterProjection {
-                request: row.get(0)?,
-                completed: row.get(1)?,
-                decisions: row.get(2)?,
-                learned: row.get(3)?,
-                next_steps: row.get(4)?,
-                preferences: row.get(5)?,
-                prompt_number: row.get(6)?,
-                discovery_tokens: row.get(7)?,
-                host_id: row.get(8)?,
-                project_id: row.get(9)?,
-                session_row_id: row.get(10)?,
-                summary_text: row.get(11)?,
-                covered_from_event_id: row.get(12)?,
-                covered_to_event_id: row.get(13)?,
-                model: row.get(14)?,
-                source_project: row.get(15)?,
-                target_project: row.get(16)?,
-                owner_scope: row.get(17)?,
-                owner_key: row.get(18)?,
-                topic_domain: row.get(19)?,
-                routing_confidence: row.get(20)?,
-                routing_reason: row.get(21)?,
-                context_class: row.get(22)?,
-                expires_at_epoch: row.get(23)?,
-                valid_from_epoch: row.get(24)?,
-                valid_to_epoch: row.get(25)?,
+                project: row.get(0)?,
+                request: row.get(1)?,
+                completed: row.get(2)?,
+                decisions: row.get(3)?,
+                learned: row.get(4)?,
+                next_steps: row.get(5)?,
+                preferences: row.get(6)?,
+                prompt_number: row.get(7)?,
+                discovery_tokens: row.get(8)?,
+                host_id: row.get(9)?,
+                project_id: row.get(10)?,
+                session_row_id: row.get(11)?,
+                summary_text: row.get(12)?,
+                covered_from_event_id: row.get(13)?,
+                covered_to_event_id: row.get(14)?,
+                model: row.get(15)?,
+                source_project: row.get(16)?,
+                target_project: row.get(17)?,
+                owner_scope: row.get(18)?,
+                owner_key: row.get(19)?,
+                topic_domain: row.get(20)?,
+                routing_confidence: row.get(21)?,
+                routing_reason: row.get(22)?,
+                context_class: row.get(23)?,
+                expires_at_epoch: row.get(24)?,
+                valid_from_epoch: row.get(25)?,
+                valid_to_epoch: row.get(26)?,
             })
         },
     )
@@ -146,6 +148,24 @@ fn assert_ownership_context_fields_unset(summary: &SummaryWriterProjection) {
 async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Result<()> {
     let mut conn = setup_conn();
     let project = "/tmp/remem";
+    let legacy_request = "Compare summary writers";
+    let legacy_completed = "Captured a decision, lesson, next step, and preference.";
+    let legacy_decisions = "Keep session_summaries until writer fields are proven equivalent.";
+    let legacy_learned = "SessionRollup currently stores range metadata that legacy Summary lacks.";
+    let legacy_next_steps = "Port load-bearing legacy fields before retiring JobType::Summary.";
+    let legacy_preferences = "Do not silently drop structured preferences from summaries.";
+    let legacy_discovery_tokens = [
+        legacy_request,
+        legacy_completed,
+        legacy_decisions,
+        legacy_learned,
+        legacy_next_steps,
+        legacy_preferences,
+    ]
+    .into_iter()
+    .map(str::len)
+    .sum::<usize>() as i64
+        / 4;
 
     capture(
         &conn,
@@ -183,25 +203,27 @@ async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Re
         "legacy-summary-writer-equivalence",
         project,
         "legacy-message-hash",
-        Some("Compare summary writers"),
-        Some("Captured a decision, lesson, next step, and preference."),
-        Some("Keep session_summaries until writer fields are proven equivalent."),
-        Some("SessionRollup currently stores range metadata that legacy Summary lacks."),
-        Some("Port load-bearing legacy fields before retiring JobType::Summary."),
-        Some("Do not silently drop structured preferences from summaries."),
-        Some(7),
-        42,
+        Some(legacy_request),
+        Some(legacy_completed),
+        Some(legacy_decisions),
+        Some(legacy_learned),
+        Some(legacy_next_steps),
+        Some(legacy_preferences),
+        None,
+        legacy_discovery_tokens,
     )?;
     assert_eq!(deleted, 0);
 
     let legacy = summary_writer_projection(&conn, "legacy-summary-writer-equivalence")?;
     let rollup = summary_writer_projection(&conn, &rollup_memory_session_id)?;
 
+    assert_eq!(legacy.project.as_deref(), Some(project));
+    assert_eq!(rollup.project.as_deref(), Some(project));
     assert_eq!(legacy.completed, rollup.completed);
     assert_eq!(legacy.summary_text, None);
     assert_eq!(rollup.summary_text, rollup.completed);
 
-    assert_eq!(legacy.request.as_deref(), Some("Compare summary writers"));
+    assert_eq!(legacy.request.as_deref(), Some(legacy_request));
     assert_eq!(
         rollup.request,
         Some(format!(
@@ -211,30 +233,19 @@ async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Re
         ))
     );
 
-    assert_eq!(
-        legacy.decisions.as_deref(),
-        Some("Keep session_summaries until writer fields are proven equivalent.")
-    );
-    assert_eq!(
-        legacy.learned.as_deref(),
-        Some("SessionRollup currently stores range metadata that legacy Summary lacks.")
-    );
-    assert_eq!(
-        legacy.next_steps.as_deref(),
-        Some("Port load-bearing legacy fields before retiring JobType::Summary.")
-    );
-    assert_eq!(
-        legacy.preferences.as_deref(),
-        Some("Do not silently drop structured preferences from summaries.")
-    );
-    assert_eq!(legacy.prompt_number, Some(7));
+    assert_eq!(legacy.decisions.as_deref(), Some(legacy_decisions));
+    assert_eq!(legacy.learned.as_deref(), Some(legacy_learned));
+    assert_eq!(legacy.next_steps.as_deref(), Some(legacy_next_steps));
+    assert_eq!(legacy.preferences.as_deref(), Some(legacy_preferences));
+    assert_eq!(legacy.prompt_number, None);
     assert_eq!(rollup.decisions, None);
     assert_eq!(rollup.learned, None);
     assert_eq!(rollup.next_steps, None);
     assert_eq!(rollup.preferences, None);
     assert_eq!(rollup.prompt_number, None);
 
-    assert_eq!(legacy.discovery_tokens, 42);
+    assert_eq!(legacy.discovery_tokens, legacy_discovery_tokens);
+    assert_ne!(legacy.discovery_tokens, rollup.discovery_tokens);
     assert_eq!(
         rollup.discovery_tokens,
         ((rollup.completed.as_deref().unwrap_or_default().len() as i64) + 3) / 4

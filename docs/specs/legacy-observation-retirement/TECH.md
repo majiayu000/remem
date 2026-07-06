@@ -161,9 +161,10 @@ Tests: fixture DBs per state; frozen-write detection test.
    | `completed` | parsed summary `completed` text | top-level rollup `<summary>` text | Equivalent for the fixture text |
    | `summary_text` | `NULL` | same top-level rollup summary text | Rollup-only range summary column |
    | `request` | parsed request text | synthetic `Captured event range X..Y` | Not equivalent; current summary readers may show this as a title/source string |
-   | `decisions`, `learned`, `next_steps`, `preferences`, `prompt_number` | structured legacy summary fields | `NULL` | Load-bearing for observation extraction, user-context extraction/recall, and Claude native-memory sync; port before retiring Summary |
+   | `decisions`, `learned`, `next_steps`, `preferences` | structured legacy summary fields | `NULL` | Load-bearing for observation extraction, user-context extraction/recall, and Claude native-memory sync; port before retiring Summary |
+   | `prompt_number` | `NULL` in the production Summary caller | `NULL` | Equivalent unset state in current writers |
    | `discovery_tokens` | token estimate across structured fields | summary-text length estimate | Not equivalent; accounting changes if unported |
-   | `host_id`, `project_id`, `session_row_id`, `covered_*_event_id` | `NULL` | populated rollup range identity | Rollup-only provenance; keep |
+   | `host_id`, `project_id`, `session_row_id`, `covered_*_event_id` | `NULL` | populated rollup range identity | Rollup-only range identity; T3 must move or cover current readers that filter `session_row_id IS NULL` before Summary retirement |
    | ownership/context columns (`source_project`, `target_project`, `owner_scope`, `owner_key`, `topic_domain`, `routing_confidence`, `routing_reason`, `context_class`, validity/expiry) | `NULL` | `NULL` | Equivalent unset state in current writers |
    | `summarize_cooldown` | updated with message hash | not updated | Legacy retry/dedup side effect; retire or replace deliberately |
 
