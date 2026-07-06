@@ -28,7 +28,7 @@ chain, and one mislabeled current surface.
 - [ ] `SP684-T5` Owner: maintainer or release operator; Dependencies: `SP684-T1`; Done when: `pending_observations` emptiness is confirmed on real databases, or stragglers are migrated with `remem pending migrate-legacy`; Verify: GH-684 status comment or release handoff.
 - [ ] `SP684-T6` Owner: agent; Dependencies: `SP684-T5`; Done when: dead pending queue claim/write machinery is frozen or removed while admin migration/reporting stays available; Verify: pending admin and status tests.
 - [ ] `SP684-T7` Owner: agent; Dependencies: `SP684-T2` `SP684-T3` `SP684-T4`; Done when: legacy `JobType::Summary` handling at upgrade is decided (drain, reject, or convert) and tested; Verify: upgrade/migration tests.
-- [ ] `SP684-T8` Owner: agent; Dependencies: none after spec approval; Done when: MCP and docs stop describing live `observations` as legacy; Verify: docs or descriptor tests.
+- [x] `SP684-T8` Owner: agent; Dependencies: none after spec approval; Done when: MCP and docs stop describing live `observations` as legacy; Verify: docs or descriptor tests.
 - [ ] `SP684-T9` Owner: agent; Dependencies: deprecation window; Done when: guarded drop migration refuses to run while unmigrated valuable rows remain; Verify: migration refusal and schema-drift tests.
 
 ## Parallelization

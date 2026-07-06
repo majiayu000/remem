@@ -21,7 +21,7 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 | Surface | Files | Verified status | Implementation concern |
 | --- | --- | --- | --- |
 | `pending_observations` | `src/db/pending/` | No default-path writer; dogfood queue empty. | Retire dead queue machinery only after real-db confirmation and migration escape hatch. |
-| `observations` | `src/observation_extract.rs`, `src/db/observation.rs`, MCP/context/timeline readers | Live current intermediate. | Fix misleading legacy wording; do not retire. |
+| `observations` | `src/observation_extract.rs`, `src/db/observation.rs`, MCP/context/timeline readers | Live current intermediate. | GH684-T8 fixed misleading legacy wording; do not retire. |
 | `observations_fts` | migrations triggers, timeline anchor search | Current trigger-maintained search index. | Keep with `observations`. |
 | `session_summaries` | `src/session_rollup/`, `src/db/summarize/session/`, context/timeline/user-context readers | Load-bearing table with duplicate writers. | Retire legacy Summary job chain, not the table. |
 | Stop hook side effects | `src/summarize/summary_job/`, `src/worker.rs` | Summary path also owns other behaviors. | Preserve Compress/Dream/raw/citation/failure/candidate/native-memory side effects before removal. |
@@ -46,7 +46,7 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
    `JobType::Summary`.
 6. Confirm `pending_observations` emptiness across real databases and keep
    `pending migrate-legacy` as the explicit migration path.
-7. Fix MCP and architecture docs that describe live observations as legacy.
+7. Keep MCP and architecture docs from describing live observations as legacy.
 8. Ship any table drop only after a deprecation window and a guarded migration.
 
 ## Product-to-Test Mapping
@@ -84,7 +84,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
 - [ ] `finalize_summarize` versus `persist_session_rollup` equivalence tests.
 - [ ] Stop-hook side-effect regression tests.
 - [ ] Pending legacy migration and guarded-drop tests.
-- [ ] MCP/docs wording verification.
+- [x] MCP/docs wording verification.
 - [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
       before merge readiness.
 
