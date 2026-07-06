@@ -178,7 +178,7 @@ pub(crate) async fn process(task: &db::ExtractionTask) -> Result<MemoryCandidate
     .await
 }
 
-async fn process_with_generator<F, Fut>(
+pub(crate) async fn process_with_generator<F, Fut>(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     generate: F,
