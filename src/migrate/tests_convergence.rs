@@ -79,6 +79,9 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "user_context_candidates",
     "memory_suppressions",
     "memory_feedback",
+    "memory_preference_reinforcements",
+    "preference_rule_overrides",
+    "preference_rule_diagnostics",
     "ingest_cursors",
     "failure_lifecycle_daily",
 ];

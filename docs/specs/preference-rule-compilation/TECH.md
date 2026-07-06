@@ -9,6 +9,12 @@ Tracking:
 
 ## Existing Implementation Facts
 
+- Phase 1 state foundation is implemented: runtime config defaults keep rule
+  compilation disabled by default, SQLite stores preference reinforcement,
+  rule override, and rule diagnostic state, and schema drift/convergence tests
+  cover those tables and indexes. Runtime compilation, artifact writing,
+  hook evaluation, rule CLI, doctor output, fixtures, and latency evidence are
+  still pending.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).

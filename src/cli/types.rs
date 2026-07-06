@@ -7,6 +7,7 @@ pub(in crate::cli) use super::embedding_types::EmbeddingAction;
 pub(in crate::cli) use super::memory_types::{
     MemoryAction, MemoryCleanupType, MemorySuppressionsAction,
 };
+pub(in crate::cli) use super::procedure_types::ProcedureAction;
 pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
     WorkstreamStatusArg,
@@ -176,6 +177,11 @@ pub(super) enum Commands {
     GraphReview {
         #[command(subcommand)]
         action: GraphReviewAction,
+    },
+    /// Inspect promoted procedure memories.
+    Procedures {
+        #[command(subcommand)]
+        action: ProcedureAction,
     },
     /// Auditably delete, reject, stale, or acknowledge curated memories by ID.
     Govern {

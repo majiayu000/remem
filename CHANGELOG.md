@@ -3,11 +3,25 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.5.165` for GH-672 memory poisoning defense:
+- Staged source version `0.5.170` for GH-672 memory poisoning defense:
   source trust metadata, deterministic instruction-pattern quarantine, and
   direct-save trust tagging. The staged line also adds explicit quarantine
   acknowledgement review, render-time poisoned-memory drops, and doctor
   reporting for quarantine/drop state.
+- Staged source version `0.5.169` for the GH-671 preference rule
+  compilation foundation: disabled-by-default config defaults, canonical
+  preference reinforcement state, rule override state, diagnostic state, and
+  schema/convergence guardrails without enabling runtime rule behavior.
+- Staged source version `0.5.168` for GH-678 project memory pack export:
+  deterministic `pack.json`/`memories.jsonl`/`INDEX.md` generation for active
+  repo-owned startup memories, fail-loud redaction gating, and focused export
+  fixtures.
+- Staged source version `0.5.167` for GH-680 procedure export Phase 1:
+  `remem procedures list` exposes promoted procedure memories with maturity
+  metadata before any review-gated export writer is introduced.
+- Staged source version `0.5.166` for GH-684 observation wording: MCP and
+  architecture docs now classify `source='observation'` as a current extracted
+  observation source instead of a legacy source.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.

@@ -31,6 +31,9 @@ The promoted memory keeps:
 Procedural memory is still ordinary remem memory. It participates in retrieval
 only after the gates pass; raw traces remain evidence, not prompt context.
 
+Use `remem procedures list` to inspect promoted procedures and their maturity
+signals before deciding whether to externalize one through a later review step.
+
 ## Non-Goals
 
 This path does not auto-write repository docs, generate skills, or create

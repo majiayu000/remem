@@ -305,6 +305,11 @@ Remem is meant for the parts that should not depend on manual upkeep:
   ./remem-memory` updates existing rows and rebuilds search, entity, embedding,
   and current-state indexes. Export refuses non-empty directories to avoid
   overwriting manual edits.
+- **A git-diffable project memory pack export**: `remem export --project "$PWD"
+  --pack .remem-pack` writes deterministic `pack.json`, `memories.jsonl`, and
+  `INDEX.md` files for active repo-owned startup memories. Export re-runs the
+  redaction scan and fails loudly on secret-like content; pack import is still
+  pending the explicit merge/trust-class workflow.
 - **Failure-loop learning**: raw transcripts that contain both concrete
   build/test failure evidence and an explicit "stop and challenge the
   hypothesis" style lesson feed an idempotent `failure` lesson before summary
@@ -595,6 +600,8 @@ remem review approve <id>
 remem review approve <id> --acknowledge-pattern <pattern_id>
 remem review discard <id>
 remem review edit <id> --text "updated memory"
+remem procedures list
+remem procedures list --project /repo/path --json
 remem preferences list
 remem preferences add "text"
 remem preferences remove 42
@@ -726,6 +733,7 @@ is set:
 | `remem raw search ... --json` | `query`, `project`, `branch`, `role`, `limit`, `offset`, `since_epoch`, `until_epoch`, `count`, `has_more`, `next_offset`, `source_type`, `note`, `results` |
 | `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
+| `remem procedures list --json` | `project`, `limit`, `offset`, `count`, `procedures` |
 | `remem memory suppress <target> --json` | `status`, `suppression` |
 | `remem memory unsuppress <id-or-target> --json` | `status`, `count`, `suppressions` |
 | `remem memory feedback <target> --json` | `status`, `feedback` |

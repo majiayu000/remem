@@ -3,14 +3,17 @@ mod config_command;
 mod embedding;
 mod encrypt_state;
 mod eval;
+mod export;
 mod import;
 mod ingest_sessions;
 mod maintenance;
 mod markdown_archive;
 mod memory_policy;
 mod model;
+mod pack_export;
 mod pending;
 mod preferences;
+mod procedures;
 mod query;
 mod review;
 mod scope_cleanup;
@@ -28,16 +31,17 @@ pub(super) use eval::{
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
     run_eval_graph_decision, run_eval_local, run_eval_provider_comparison, run_eval_weight_grid,
 };
+pub(super) use export::run_export;
 pub(super) use import::run_import;
 pub(super) use ingest_sessions::run_ingest_sessions_cli;
 pub(super) use maintenance::{
     run_cleanup, run_dream, run_encrypt, run_governance, GovernanceCliRequest,
 };
-pub(super) use markdown_archive::run_export_markdown;
 pub(super) use memory_policy::run_memory_action;
 pub(super) use model::run_model;
 pub(super) use pending::run_pending;
 pub(super) use preferences::{run_preferences, run_user};
+pub(super) use procedures::run_procedures;
 pub(super) use query::{
     run_backfill_embeddings, run_backfill_entities, run_commit, run_current_state, run_raw,
     run_search, run_show, run_status, run_timeline, run_why, run_workstreams,

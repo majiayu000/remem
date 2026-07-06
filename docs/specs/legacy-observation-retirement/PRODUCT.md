@@ -22,8 +22,8 @@ Two storage generations run side by side. The 2026-07-02 verification pass
   hook, unconditionally. The legacy chain also accounts for thousands of
   failed jobs and unattributed AI spend on the dogfood database.
 - `observations` (+ `observations_fts`) turned out to be a live intermediate
-  of the current extraction pipeline — but MCP still advertises it as
-  "legacy observations", which misleads both users and future contributors.
+  of the current extraction pipeline. GH684-T8 fixes the MCP/docs wording that
+  previously advertised it as "legacy observations".
 
 So the debt is one dead surface, one duplicated writer chain, and one
 mislabeled current surface — not a wholesale parallel pipeline.
