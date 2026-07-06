@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.171` for GH-684 legacy surface visibility:
+  status and doctor now report tracked legacy surface row counts, last-write
+  epochs, and retire/freeze blockers before later Summary/pending retirement.
 - Staged source version `0.5.170` for GH-672 memory poisoning defense:
   source trust metadata, deterministic instruction-pattern quarantine, and
   direct-save trust tagging. The staged line also adds explicit quarantine

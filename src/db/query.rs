@@ -1,3 +1,4 @@
+mod legacy_surfaces;
 mod observability;
 mod queries;
 mod search;
@@ -7,6 +8,7 @@ mod status_spend;
 mod summaries;
 mod timeline;
 
+pub use legacy_surfaces::*;
 pub use observability::*;
 pub use queries::*;
 pub use search::*;

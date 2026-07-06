@@ -6,6 +6,7 @@ use crate::db::{
     WeeklyAiUsage,
 };
 
+pub use super::legacy_surfaces::LegacySurfaceStats;
 use super::shared::collect_rows;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,7 @@ pub struct SystemStats {
     pub worker_daemon_healthy: bool,
     pub worker_heartbeat_owner: Option<String>,
     pub worker_heartbeat_age_secs: Option<i64>,
+    pub legacy_surfaces: Vec<LegacySurfaceStats>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +128,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         .as_ref()
         .map(|heartbeat| now.saturating_sub(heartbeat.updated_at_epoch));
     let worker_daemon_healthy = healthy_worker_heartbeat.is_some();
+    let legacy_surfaces = super::legacy_surfaces::query_legacy_surface_stats(conn)?;
     Ok(SystemStats {
         active_memories: query_current_active_memory_count(conn)?,
         active_observations: conn.query_row(
@@ -266,6 +269,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         worker_heartbeat_owner: worker_heartbeat.map(|heartbeat| heartbeat.owner),
         worker_heartbeat_age_secs,
         failure_lifecycle,
+        legacy_surfaces,
     })
 }
 

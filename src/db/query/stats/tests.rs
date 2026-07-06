@@ -12,6 +12,7 @@ use crate::db::query::{
 use crate::db::{FailureLifecycleStats, FailureSurfaceStats};
 
 mod candidate_promotion;
+mod legacy_surfaces;
 
 fn setup_stats_schema(conn: &Connection) {
     conn.execute_batch(
@@ -28,9 +29,8 @@ fn setup_stats_schema(conn: &Connection) {
             status TEXT NOT NULL,
             created_at_epoch INTEGER NOT NULL
         );
-        CREATE TABLE session_summaries (
-            id INTEGER PRIMARY KEY
-        );
+        CREATE TABLE observations_fts (rowid INTEGER PRIMARY KEY, title TEXT);
+        CREATE TABLE session_summaries (id INTEGER PRIMARY KEY, created_at_epoch INTEGER NOT NULL);
         CREATE TABLE raw_messages (
             id INTEGER PRIMARY KEY,
             created_at_epoch INTEGER NOT NULL
@@ -100,8 +100,11 @@ fn setup_stats_schema(conn: &Connection) {
         );
         CREATE TABLE jobs (
             id INTEGER PRIMARY KEY,
+            job_type TEXT NOT NULL,
             state TEXT NOT NULL,
-            lease_expires_epoch INTEGER
+            lease_expires_epoch INTEGER,
+            created_at_epoch INTEGER NOT NULL,
+            updated_at_epoch INTEGER NOT NULL
         );
         CREATE TABLE worker_heartbeats (
             owner TEXT PRIMARY KEY,
@@ -177,8 +180,16 @@ fn query_system_stats_and_related_views_share_one_definition() {
         [],
     )
     .expect("stale observation insert should succeed");
-    conn.execute("INSERT INTO session_summaries (id) VALUES (1)", [])
-        .expect("summary insert should succeed");
+    conn.execute(
+        "INSERT INTO observations_fts (rowid, title) VALUES (1, 'active observation')",
+        [],
+    )
+    .expect("observation fts insert should succeed");
+    conn.execute(
+        "INSERT INTO session_summaries (id, created_at_epoch) VALUES (1, 230)",
+        [],
+    )
+    .expect("summary insert should succeed");
     conn.execute(
         "INSERT INTO raw_ingest_failures
          (transcript_path, error_kind, error_message, parse_errors, insert_errors, created_at_epoch)
@@ -268,17 +279,20 @@ fn query_system_stats_and_related_views_share_one_definition() {
     )
     .expect("failed pending insert should succeed");
     conn.execute(
-        "INSERT INTO jobs (state, lease_expires_epoch) VALUES ('pending', NULL)",
+        "INSERT INTO jobs (job_type, state, lease_expires_epoch, created_at_epoch, updated_at_epoch)
+         VALUES ('compress', 'pending', NULL, 150, 150)",
         [],
     )
     .expect("pending job insert should succeed");
     conn.execute(
-        "INSERT INTO jobs (state, lease_expires_epoch) VALUES ('processing', 0)",
+        "INSERT INTO jobs (job_type, state, lease_expires_epoch, created_at_epoch, updated_at_epoch)
+         VALUES ('summary', 'processing', 0, 260, 265)",
         [],
     )
     .expect("stuck job insert should succeed");
     conn.execute(
-        "INSERT INTO jobs (state, lease_expires_epoch) VALUES ('failed', NULL)",
+        "INSERT INTO jobs (job_type, state, lease_expires_epoch, created_at_epoch, updated_at_epoch)
+         VALUES ('summary', 'failed', NULL, 280, 285)",
         [],
     )
     .expect("failed job insert should succeed");
@@ -360,13 +374,14 @@ fn query_system_stats_and_related_views_share_one_definition() {
                 job: FailureSurfaceStats {
                     actionable_total: 1,
                     transient: 1,
-                    oldest_actionable_epoch: Some(0),
+                    oldest_actionable_epoch: Some(285),
                     ..FailureSurfaceStats::default()
                 },
             },
             worker_daemon_healthy: true,
             worker_heartbeat_owner: Some("worker-a".to_string()),
             worker_heartbeat_age_secs: system.worker_heartbeat_age_secs,
+            legacy_surfaces: legacy_surfaces::expected_fixture(),
         }
     );
     assert!(

@@ -10,8 +10,8 @@ use super::capture_capability::check_capture_capabilities;
 use super::capture_liveness::check_capture_liveness;
 use super::database::{
     check_capture_drops, check_database, check_declared_empty_surfaces, check_disk_space,
-    check_memory_usage_feedback, check_pending_queue, check_promotion_funnel,
-    check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
+    check_legacy_surfaces, check_memory_usage_feedback, check_pending_queue,
+    check_promotion_funnel, check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
 };
 use super::embedding::check_embedding_provider;
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
@@ -111,6 +111,9 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_declared_empty_surfaces(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_legacy_surfaces(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_promotion_funnel(shared_db.conn())

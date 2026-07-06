@@ -21,7 +21,7 @@ chain, and one mislabeled current surface.
 
 ## Implementation Tasks
 
-- [ ] `SP684-T1` Owner: agent; Dependencies: spec approval; Done when: doctor/status reports legacy row counts, last-write epochs, and frozen-write violations for the tracked surfaces; Verify: doctor/status fixture tests.
+- [x] `SP684-T1` Owner: agent; Dependencies: spec approval; Done when: doctor/status reports legacy row counts, last-write epochs, and frozen-write violations for the tracked surfaces; Verify: doctor/status fixture tests.
 - [ ] `SP684-T2` Owner: maintainer or agent with approved fixtures; Dependencies: `SP684-T1`; Done when: field-level output equivalence is established for `finalize_summarize` and `persist_session_rollup`; Verify: committed equivalence fixtures.
 - [ ] `SP684-T3` Owner: agent; Dependencies: `SP684-T2`; Done when: any load-bearing legacy Summary output delta is ported into SessionRollup; Verify: context/timeline/user-context regression tests.
 - [ ] `SP684-T4` Owner: agent; Dependencies: `SP684-T2`; Done when: Stop-hook side effects currently coupled to Summary are preserved or re-homed before `JobType::Summary` retirement; Verify: Compress, Dream, raw ingest, citation, failure lesson, candidate finalization, and native-memory tests.

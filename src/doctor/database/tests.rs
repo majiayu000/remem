@@ -51,6 +51,50 @@ fn declared_empty_surfaces_warns_when_source_data_exists_without_rows() -> anyho
 }
 
 #[test]
+fn legacy_surfaces_are_ok_when_retired_surfaces_are_empty() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+
+    let check = check_legacy_surfaces(Some(&conn));
+
+    assert!(matches!(check.status, Status::Ok));
+    assert!(check.detail.contains("pending_observations rows=0"));
+    assert!(check.detail.contains("summary_jobs rows=0"));
+    assert!(
+        check.detail.contains("frozen_write_violations=0"),
+        "{}",
+        check.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_surfaces_warn_on_retire_blockers() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    conn.execute(
+        "INSERT INTO pending_observations
+         (session_id, project, tool_name, created_at_epoch, updated_at_epoch)
+         VALUES ('sess-legacy', '/tmp/remem', 'tool', 100, 120)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO jobs
+         (host, job_type, project, session_id, payload_json, state, priority,
+          attempt_count, max_attempts, next_retry_epoch, created_at_epoch, updated_at_epoch)
+         VALUES ('codex-cli', 'summary', '/tmp/remem', 'sess-legacy',
+                 '{}', 'pending', 1, 0, 6, 0, 110, 130)",
+        [],
+    )?;
+
+    let check = check_legacy_surfaces(Some(&conn));
+
+    assert!(matches!(check.status, Status::Warn));
+    assert!(check.detail.contains("pending_observations rows=1"));
+    assert!(check.detail.contains("summary_jobs rows=1"));
+    assert!(check.detail.contains("retire/freeze blockers=2"));
+    Ok(())
+}
+
+#[test]
 fn promotion_funnel_warns_when_observations_do_not_create_candidates() -> anyhow::Result<()> {
     let conn = setup_conn()?;
     record_capture(&conn)?;
