@@ -125,7 +125,8 @@ ergonomics, the pack for determinism and re-import.
 ## Phases and Verification
 
 Phase 1: pack format + export + determinism/redaction tests
-(`cargo test export`).
+(`cargo test pack_export`) is implemented for `remem export --project <p>
+[--pack <dir>]`; import paths remain disabled.
 Phase 2: import dry-run + merge planner + round-trip simulation and
 resurrection-safety tests, without writing active imported memories until the
 #672 quarantine/trust-class schema is available (`cargo test import`).

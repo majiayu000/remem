@@ -346,6 +346,8 @@ MCP server via stdio transport, providing 7 tools:
 | `update_workstream` | Update workstream status, next action, or blockers |
 
 Recommended workflow: `search(query)` → find relevant IDs → `get_observations(ids)` for full content.
+`get_observations(source='observation')` reads current extracted-observation
+details; only `pending_observations` is the legacy queue surface.
 
 `save_memory` behavior:
 - Dual-write by default: SQLite memory + local Markdown (`~/.remem/manual-notes/<project>/...md`)

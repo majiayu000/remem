@@ -138,7 +138,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Fetch complete details by IDs. Use after search(): pass selected IDs and the exact source from search.next_step.source or each result.source. Supports source='memory' for curated memories and source='observation' for legacy observations."
+        description = "Fetch complete details by IDs. Use after search(): pass selected IDs and the exact source from search.next_step.source or each result.source. Supports source='memory' for curated memories and source='observation' for current extracted observations."
     )]
     pub(super) fn get_observations(
         &self,

@@ -44,9 +44,9 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   status/stats.
 - The promotion funnel counts it as a current stage:
   `captured_events -> observations -> candidates -> promoted`.
-- The actual defect is naming: the MCP tool description calls this source
-  "legacy observations" (`src/mcp/server/context_tools.rs`), which
-  misdescribes a live intermediate store.
+- The GH684-T8 wording fix labels MCP `get_observations(source='observation')`
+  as current extracted observations. Keep that descriptor from regressing to
+  "legacy observations" because that misdescribes a live intermediate store.
 
 ### `observations_fts` — verdict: current but narrow
 
@@ -117,7 +117,7 @@ Existing Implementation Facts above):
 | Surface | Disposition |
 |---|---|
 | `pending_observations` | `retire` — no default-path writer, dogfood queue empty; drop table + claim/queue machinery after window |
-| `observations` | `reclassify-current` — live intermediate of the extraction pipeline; fix the "legacy" MCP wording instead |
+| `observations` | `reclassify-current` — live intermediate of the extraction pipeline; GH684-T8 fixed the "legacy" MCP wording |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
 | legacy summary writer (`enqueue_summary_jobs` → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job is the dual-writer duplicating `SessionRollup`; the surrounding Stop hook also schedules Compress and Dream jobs and those side effects must be preserved or ported before the shared helper is removed |
@@ -175,10 +175,9 @@ status/doctor keep reporting row counts until the drop ships.
 
 ### Reclassification (no freeze)
 
-`observations` + `observations_fts` stay current. The only change is
-accuracy: update the MCP `get_observations` tool description to stop calling
-the source "legacy observations", and update `docs/ARCHITECTURE.md`
-accordingly.
+`observations` + `observations_fts` stay current. GH684-T8 updates the MCP
+`get_observations` tool description and `docs/ARCHITECTURE.md` so the source is
+not described as legacy.
 
 ## Phase 4: Value Migration + Drop
 

@@ -99,10 +99,10 @@ categories without mutating the store.
 
 ## Test Plan
 
-- [ ] Export determinism fixture.
+- [x] Export determinism fixture.
 - [ ] Round-trip export/import fixture.
 - [ ] Import planner dedup, conflict, suppression, and invalidation tests.
-- [ ] Redaction failure test.
+- [x] Redaction failure test.
 - [ ] Active import trust-class tests after #672 dependency lands.
 - [ ] README walkthrough smoke.
 - [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`

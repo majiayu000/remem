@@ -6,9 +6,12 @@ pub(in crate::cli) struct ExportArgs {
     /// Export as one markdown file per curated memory.
     #[arg(long)]
     pub(in crate::cli) markdown: bool,
-    /// Output directory for the exported mirror.
+    /// Output directory for the markdown mirror.
     #[arg(long)]
-    pub(in crate::cli) output: PathBuf,
+    pub(in crate::cli) output: Option<PathBuf>,
+    /// Output directory for a deterministic project memory pack.
+    #[arg(long)]
+    pub(in crate::cli) pack: Option<PathBuf>,
     /// Project path to export. Defaults to the current working directory.
     #[arg(long, short)]
     pub(in crate::cli) project: Option<String>,

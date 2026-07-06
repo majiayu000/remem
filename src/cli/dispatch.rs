@@ -8,10 +8,11 @@ use super::actions::{
     run_encrypt, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
     run_eval_graph_decision, run_eval_local, run_eval_provider_comparison, run_eval_weight_grid,
-    run_export_markdown, run_governance, run_graph_review, run_import, run_ingest_sessions_cli,
-    run_memory_action, run_merge_preferences, run_model, run_pending, run_preferences, run_raw,
-    run_reroute, run_review, run_search, run_show, run_status, run_timeline, run_usage, run_user,
-    run_why, run_workstreams, GovernanceCliRequest, RerouteCliRequest,
+    run_export, run_governance, run_graph_review, run_import, run_ingest_sessions_cli,
+    run_memory_action, run_merge_preferences, run_model, run_pending, run_preferences,
+    run_procedures, run_raw, run_reroute, run_review, run_search, run_show, run_status,
+    run_timeline, run_usage, run_user, run_why, run_workstreams, GovernanceCliRequest,
+    RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
 use super::types::{Cli, Commands, ContextGateAction};
@@ -90,6 +91,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
         Commands::GraphReview { action } => run_graph_review(action)?,
+        Commands::Procedures { action } => run_procedures(action)?,
         Commands::Govern {
             project,
             action,
@@ -294,14 +296,10 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Export(args) => {
             let project = args
                 .project
+                .as_deref()
+                .map(str::to_string)
                 .unwrap_or_else(|| db::project_from_cwd(&resolve_cwd_arg(None)));
-            run_export_markdown(
-                args.markdown,
-                &args.output,
-                &project,
-                args.include_inactive,
-                args.limit,
-            )?;
+            run_export(args, &project)?;
         }
     }
 
