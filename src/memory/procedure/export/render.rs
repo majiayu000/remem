@@ -197,12 +197,36 @@ fn append_indented_block(output: &mut String, text: &str) {
 }
 
 fn procedure_slug(source: &ProcedureExportSource) -> String {
-    let slug = crate::memory::slugify_for_topic(&source.workflow_key, 64);
+    let slug = skill_safe_slug(&source.workflow_key);
     if slug.is_empty() {
         format!("procedure-{}", source.id)
     } else {
         slug
     }
+}
+
+fn skill_safe_slug(value: &str) -> String {
+    let mut slug = String::new();
+    let mut last_was_hyphen = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            if slug.len() == 64 {
+                break;
+            }
+            slug.push(ch.to_ascii_lowercase());
+            last_was_hyphen = false;
+        } else if !slug.is_empty() && !last_was_hyphen && slug.len() < 64 {
+            slug.push('-');
+            last_was_hyphen = true;
+        }
+        if slug.len() == 64 {
+            break;
+        }
+    }
+    while slug.ends_with('-') {
+        slug.pop();
+    }
+    slug
 }
 
 fn bounded_description(source: &ProcedureExportSource) -> String {
@@ -322,8 +346,7 @@ fn ensure_no_export_scan_hit(field: &str, value: &str) -> Result<()> {
     let max_bytes = value
         .len()
         .saturating_add(crate::adapter::redaction::HOOK_PAYLOAD_PREVIEW_REDACTION_LOOKAHEAD_BYTES);
-    let redacted = crate::adapter::redaction::redact_hook_payload_preview(value, max_bytes);
-    if redacted != value {
+    if crate::adapter::redaction::hook_payload_preview_contains_sensitive_match(value, max_bytes) {
         bail!("procedure export blocked by redaction scan for field {field}");
     }
     if let Some(matched) = crate::memory::poisoning::scan_instruction_pattern(value) {
@@ -342,6 +365,10 @@ mod tests {
 
     const GENERATED_AT: i64 = 1_700_000_600;
 
+    fn snapshot_with_package_version(snapshot: &str) -> String {
+        snapshot.replace("@PACKAGE_VERSION@", env!("CARGO_PKG_VERSION"))
+    }
+
     #[test]
     fn claude_skill_snapshot_keeps_frontmatter_first_and_description_bounded() -> Result<()> {
         let rendered = render_procedure_export(
@@ -353,7 +380,8 @@ mod tests {
         assert!(rendered.starts_with("---\nname: \"cargo-test\""));
         assert_eq!(
             rendered,
-            "\
+            snapshot_with_package_version(
+                "\
 ---\n\
 name: \"cargo-test\"\n\
 description: \"Run verified procedure cargo-test when the same project and branch 'main' need verified workflow 'cargo-test'.\"\n\
@@ -392,7 +420,8 @@ Run this command:\n\
 - Last verified at: `2023-11-14T22:13:20+00:00`\n\
 - Source updated at: `2023-11-14T22:15:00+00:00`\n\
 - Generated at: `2023-11-14T22:23:20+00:00`\n\
-- remem version: `0.5.180`\n"
+- remem version: `@PACKAGE_VERSION@`\n"
+            )
         );
         Ok(())
     }
@@ -407,7 +436,8 @@ Run this command:\n\
 
         assert_eq!(
             rendered,
-            "\
+            snapshot_with_package_version(
+                "\
 <!-- remem-draft: procedure export, review before commit -->\n\
 Draft — review before committing\n\
 \n\
@@ -439,7 +469,8 @@ Run this command:\n\
 - Last verified at: `2023-11-14T22:13:20+00:00`\n\
 - Source updated at: `2023-11-14T22:15:00+00:00`\n\
 - Generated at: `2023-11-14T22:23:20+00:00`\n\
-- remem version: `0.5.180`\n"
+- remem version: `@PACKAGE_VERSION@`\n"
+            )
         );
         Ok(())
     }
@@ -454,7 +485,8 @@ Run this command:\n\
 
         assert_eq!(
             rendered,
-            "\
+            snapshot_with_package_version(
+                "\
 <!-- remem-draft: procedure export, review before commit -->\n\
 Draft — review before committing\n\
 \n\
@@ -488,7 +520,8 @@ Run this command:\n\
 - Last verified at: `2023-11-14T22:13:20+00:00`\n\
 - Source updated at: `2023-11-14T22:15:00+00:00`\n\
 - Generated at: `2023-11-14T22:23:20+00:00`\n\
-- remem version: `0.5.180`\n"
+- remem version: `@PACKAGE_VERSION@`\n"
+            )
         );
         Ok(())
     }
@@ -502,6 +535,22 @@ Run this command:\n\
             .expect_err("secret-like command must reject before rendering");
 
         assert!(err.to_string().contains("redaction scan for field command"));
+    }
+
+    #[test]
+    fn render_allows_harmless_whitespace_normalization_without_redaction() -> Result<()> {
+        let mut source = fixture_source();
+        source.project = "/tmp/remem  workspace".to_string();
+        source.branch = Some("feature/two  spaces".to_string());
+        source.files_touched = vec!["src/two  spaces.rs".to_string()];
+
+        let rendered =
+            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, GENERATED_AT)?;
+
+        assert!(rendered.contains("- Project: `/tmp/remem  workspace`\n"));
+        assert!(rendered.contains("- Branch: `feature/two  spaces`\n"));
+        assert!(rendered.contains("- `src/two  spaces.rs`\n"));
+        Ok(())
     }
 
     #[test]
@@ -554,6 +603,26 @@ Run this command:\n\
         assert_eq!(markdown_inline_code("a``b"), "```a``b```");
         assert_eq!(markdown_inline_code("`leading"), "`` `leading ``");
         assert_eq!(markdown_inline_code("trailing`"), "`` trailing` ``");
+    }
+
+    #[test]
+    fn claude_skill_name_uses_skill_safe_slug() -> Result<()> {
+        let mut source = fixture_source();
+        source.workflow_key = "测试 --Deploy__Prod-- ".to_string();
+        source.title = "Procedure: 测试 --Deploy__Prod-- ".to_string();
+        source.reuse_condition = "this verified deployment workflow is needed.".to_string();
+
+        let rendered =
+            render_procedure_export(&source, ProcedureExportFormat::ClaudeSkill, GENERATED_AT)?;
+
+        assert!(rendered.starts_with("---\nname: \"deploy-prod\"\n"));
+        assert_eq!(skill_safe_slug("A--B__C "), "a-b-c");
+        assert_eq!(skill_safe_slug("测试---"), "");
+        assert_eq!(
+            skill_safe_slug(&format!("{}-", "a".repeat(64))),
+            "a".repeat(64)
+        );
+        Ok(())
     }
 
     fn fixture_source() -> ProcedureExportSource {

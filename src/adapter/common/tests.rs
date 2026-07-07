@@ -1,5 +1,7 @@
 use crate::db::test_support::ScopedTestDataDir;
 
+use crate::adapter::redaction::hook_payload_preview_contains_sensitive_match;
+
 use super::{
     event_summary, hook_payload_preview_redaction_input, parse_tool_hook, redact_and_truncate,
     redact_hook_payload_preview, redact_sensitive_text, redact_token, should_skip_bash_command,
@@ -154,6 +156,41 @@ fn hook_payload_preview_redacts_malformed_inline_sensitive_assignments() {
     assert!(preview.contains(r#""session_id":"s""#));
     assert!(!preview.contains("short-secret"));
     assert!(!preview.contains("plain-short"));
+}
+
+#[test]
+fn hook_payload_preview_sensitive_match_ignores_whitespace_normalization() {
+    let payload = "project path with  two spaces\nfile path with\tone tab";
+    let preview = redact_hook_payload_preview(payload, 1_000);
+
+    assert_ne!(
+        preview, payload,
+        "existing preview still normalizes whitespace"
+    );
+    assert!(!hook_payload_preview_contains_sensitive_match(
+        payload, 1_000
+    ));
+}
+
+#[test]
+fn hook_payload_preview_sensitive_match_detects_actual_redactions() {
+    let payload = serde_json::json!({
+        "session_id": "s",
+        "tool_input": {
+            "api_key": "short-secret",
+            "command": "curl -H 'Authorization: Bearer tiny-token'"
+        }
+    })
+    .to_string();
+
+    assert!(hook_payload_preview_contains_sensitive_match(
+        &payload, 1_000
+    ));
+    assert!(hook_payload_preview_contains_sensitive_match(
+        r#"{"password":"first-line
+second-line-secret","safe":"visible""#,
+        1_000
+    ));
 }
 
 #[test]

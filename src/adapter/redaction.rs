@@ -15,6 +15,16 @@ pub(crate) fn redact_hook_payload_preview(raw_payload: &str, max_bytes: usize) -
     db::truncate_str(&redacted, max_bytes).to_string()
 }
 
+pub(crate) fn hook_payload_preview_contains_sensitive_match(
+    raw_payload: &str,
+    max_bytes: usize,
+) -> bool {
+    let preview_input = hook_payload_preview_redaction_input(raw_payload, max_bytes);
+    serde_json::from_str::<serde_json::Value>(preview_input)
+        .map(|value| hook_payload_value_contains_sensitive_match(&value))
+        .unwrap_or_else(|_| hook_payload_text_contains_sensitive_match(preview_input))
+}
+
 pub(crate) fn hook_payload_preview_redaction_input(raw_payload: &str, max_bytes: usize) -> &str {
     db::truncate_str(
         raw_payload,
@@ -46,6 +56,19 @@ fn redact_hook_payload_value(value: &serde_json::Value) -> serde_json::Value {
             serde_json::Value::String(redact_hook_payload_text(text))
         }
         _ => value.clone(),
+    }
+}
+
+fn hook_payload_value_contains_sensitive_match(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map.iter().any(|(key, value)| {
+            is_sensitive_key(key) || hook_payload_value_contains_sensitive_match(value)
+        }),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .any(hook_payload_value_contains_sensitive_match),
+        serde_json::Value::String(text) => hook_payload_text_contains_sensitive_match(text),
+        _ => false,
     }
 }
 
@@ -94,11 +117,20 @@ fn redact_hook_payload_text(text: &str) -> String {
         .join("\n")
 }
 
+fn hook_payload_text_contains_sensitive_match(text: &str) -> bool {
+    contains_inline_sensitive_assignment(text)
+        || text.lines().any(hook_payload_line_contains_sensitive_match)
+}
+
 fn redact_hook_payload_line(line: &str) -> String {
     if let Some((prefix, _)) = split_sensitive_assignment(line) {
         return format!("{prefix}[REDACTED]");
     }
     redact_tokens(line, true)
+}
+
+fn hook_payload_line_contains_sensitive_match(line: &str) -> bool {
+    split_sensitive_assignment(line).is_some() || tokens_contain_sensitive_match(line, true)
 }
 
 fn redact_tokens(line: &str, redact_sensitive_options: bool) -> String {
@@ -120,6 +152,22 @@ fn redact_tokens(line: &str, redact_sensitive_options: bool) -> String {
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+fn tokens_contain_sensitive_match(line: &str, redact_sensitive_options: bool) -> bool {
+    let mut previous_was_bearer = false;
+    let mut previous_was_sensitive_option = false;
+    for token in line.split_whitespace() {
+        if previous_was_bearer || previous_was_sensitive_option || redact_token(token) != token {
+            return true;
+        }
+        previous_was_sensitive_option =
+            redact_sensitive_options && token_expects_sensitive_argument(token);
+        previous_was_bearer = token
+            .trim_matches(|ch: char| !ch.is_ascii_alphanumeric())
+            .eq_ignore_ascii_case("bearer");
+    }
+    false
 }
 
 fn redact_inline_sensitive_assignments(line: &str) -> String {
@@ -151,6 +199,22 @@ fn redact_inline_sensitive_assignments(line: &str) -> String {
     }
     output.push_str(&line[output_cursor..]);
     output
+}
+
+fn contains_inline_sensitive_assignment(line: &str) -> bool {
+    let mut scan_cursor = 0usize;
+    while let Some((separator, ch)) = find_next_assignment_separator(line, scan_cursor) {
+        let Some(key_start) = assignment_key_start(line, separator) else {
+            scan_cursor = separator + ch.len_utf8();
+            continue;
+        };
+        let key = &line[key_start..separator];
+        if is_sensitive_key(key) || is_sensitive_option_key(key) {
+            return true;
+        }
+        scan_cursor = separator + ch.len_utf8();
+    }
+    false
 }
 
 fn find_next_assignment_separator(line: &str, cursor: usize) -> Option<(usize, char)> {
