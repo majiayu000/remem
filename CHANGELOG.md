@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.184` for GH-759 auto-promote runtime policy:
+  extraction and candidate apply now share the runtime `AutoPromotePolicy`, so
+  default user-context auto-promote lowers only the confidence threshold while
+  strict mode restores the old 0.9 hard gate and existing safety checks remain
+  review-gated.
 - Staged source version `0.5.183` for GH-759 auto-promote policy config:
   runtime config now exposes `[user_context.auto_promote]` defaults,
   validation, and a strict rollback policy without changing promotion behavior.

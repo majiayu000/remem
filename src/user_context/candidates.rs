@@ -2,6 +2,8 @@ use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
+use crate::runtime_config::AutoPromotePolicy;
+
 use super::claims::{
     load_claim, UserContextClaim, UserContextClaimType, UserContextSensitivity, DEFAULT_OWNER_KEY,
     DEFAULT_OWNER_SCOPE, DEFAULT_USER_KEY,
@@ -97,6 +99,14 @@ pub fn create_candidate(
     conn: &Connection,
     req: &CandidateCreateRequest<'_>,
 ) -> Result<CandidateApplyResult> {
+    create_candidate_with_policy(conn, req, &AutoPromotePolicy::relaxed_default())
+}
+
+pub(crate) fn create_candidate_with_policy(
+    conn: &Connection,
+    req: &CandidateCreateRequest<'_>,
+    policy: &AutoPromotePolicy,
+) -> Result<CandidateApplyResult> {
     let text = normalize_required("candidate text", req.text)?;
     validate_confidence(req.confidence)?;
     validate_source_refs(req.source_refs_json)?;
@@ -114,13 +124,13 @@ pub fn create_candidate(
         bail!("user-context candidate blocked by non-retention policy: {reason}");
     }
     let now = chrono::Utc::now().timestamp();
-    let allowed = auto_promote_allowed(req, source_kind);
+    let allowed = auto_promote_allowed(req, source_kind, policy);
     let block_reason = if allowed {
         None
     } else {
         Some(
             normalized_optional(req.auto_promote_block_reason)
-                .unwrap_or_else(|| auto_promote_block_reason(req, source_kind))
+                .unwrap_or_else(|| auto_promote_block_reason(req, source_kind, policy))
                 .to_string(),
         )
     };
@@ -584,16 +594,24 @@ fn active_claim_key_conflict(active: &[UserContextClaim], text: &str, sensitivit
         .any(|claim| claim.claim_text != text || claim.sensitivity != sensitivity)
 }
 
-fn auto_promote_allowed(req: &CandidateCreateRequest<'_>, source_kind: &str) -> bool {
+fn auto_promote_allowed(
+    req: &CandidateCreateRequest<'_>,
+    source_kind: &str,
+    policy: &AutoPromotePolicy,
+) -> bool {
     req.auto_promote
         && req.risk_class == UserContextCandidateRisk::Low
         && req.sensitivity == UserContextSensitivity::Normal
-        && req.confidence >= 0.9
-        && source_kind == "explicit_user_statement"
+        && req.confidence >= policy.min_confidence
+        && policy.allows_source_kind(source_kind)
         && normalized_optional(req.claim_key).is_some()
 }
 
-fn auto_promote_block_reason(req: &CandidateCreateRequest<'_>, source_kind: &str) -> &'static str {
+fn auto_promote_block_reason(
+    req: &CandidateCreateRequest<'_>,
+    source_kind: &str,
+    policy: &AutoPromotePolicy,
+) -> &'static str {
     if !req.auto_promote {
         return "requires_review";
     }
@@ -606,10 +624,10 @@ fn auto_promote_block_reason(req: &CandidateCreateRequest<'_>, source_kind: &str
     if req.sensitivity != UserContextSensitivity::Normal {
         return "sensitivity_requires_review";
     }
-    if req.confidence < 0.9 {
+    if req.confidence < policy.min_confidence {
         return "low_confidence";
     }
-    if source_kind != "explicit_user_statement" {
+    if !policy.allows_source_kind(source_kind) {
         return "source_requires_review";
     }
     if normalized_optional(req.claim_key).is_none() {

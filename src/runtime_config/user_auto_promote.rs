@@ -30,12 +30,26 @@ pub struct AutoPromotePolicy {
 }
 
 impl AutoPromotePolicy {
+    pub fn relaxed_default() -> Self {
+        Self {
+            min_confidence: DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE,
+            allowed_source_kinds: default_source_kinds(),
+            require_text_support: DEFAULT_AUTO_PROMOTE_REQUIRE_TEXT_SUPPORT,
+        }
+    }
+
     pub fn strict() -> Self {
         Self {
             min_confidence: STRICT_AUTO_PROMOTE_MIN_CONFIDENCE,
             allowed_source_kinds: default_source_kinds(),
             require_text_support: true,
         }
+    }
+
+    pub fn allows_source_kind(&self, source_kind: &str) -> bool {
+        self.allowed_source_kinds
+            .iter()
+            .any(|allowed| allowed == source_kind)
     }
 }
 
