@@ -185,6 +185,14 @@ Tests: fixture DBs per state; frozen-write detection test.
    candidate finalization, and native-memory sync. Add regression tests
    proving Stop still schedules Compress and Dream and that each retained
    side effect has a new owner before Summary retirement.
+
+   GH684-T4 locks these side effects with regression coverage before the
+   Summary retirement decision in GH684-T7: Stop-hook enqueue tests cover
+   Compress and Dream profile/cooldown behavior; Summary job process tests
+   cover raw archive ingest, memory citations before cooldown/summary skips,
+   and failure-lesson distillation; finalize tests cover summary-derived
+   candidate finalization; `process_finalized_summary_syncs_native_memory_side_effect`
+   covers native-memory sync after a finalized Summary job.
 4. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 
