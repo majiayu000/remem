@@ -140,11 +140,17 @@ fn truncate_to_byte_limit(content: &str, max_bytes: usize) -> String {
     content[..end].to_string()
 }
 
-fn load_recent_sessions(conn: &rusqlite::Connection, project: &str) -> Result<Vec<SessionRow>> {
+pub(super) fn load_recent_sessions(
+    conn: &rusqlite::Connection,
+    project: &str,
+) -> Result<Vec<SessionRow>> {
     let mut stmt = conn.prepare(
         "SELECT request, completed, decisions, created_at_epoch \
          FROM session_summaries \
-         WHERE project = ?1 AND request IS NOT NULL AND request != '' \
+         WHERE project = ?1 \
+           AND request IS NOT NULL \
+           AND request != '' \
+           AND request NOT LIKE 'Captured event range %..%' \
          ORDER BY created_at_epoch DESC LIMIT ?2",
     )?;
 
