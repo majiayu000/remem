@@ -707,7 +707,10 @@ profile snapshot, and recall readers avoid showing the same preference as both a
 legacy memory and a claim. Use `remem user claims why <claim_id>` to audit the
 source `memory:<id>`, and use `remem user claims suppress <claim_id>` or
 `remem user claims delete <claim_id>` to govern or roll back inserted claims;
-the JSON report's `converted[].claim_id` gives the exact ids.
+the JSON report's `converted[].claim_id` gives the exact ids. Because the source
+memory row is intentionally left unchanged, use `remem memory suppress` on
+`memory:<id>` when the original legacy preference should also be hidden from
+legacy memory readers.
 
 `remem user review ...` governs review-gated user-context candidates before
 they become active claims. `inbox` shows pending candidates with risk,
