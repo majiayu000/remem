@@ -1,10 +1,10 @@
-use anyhow::{bail, ensure, Result};
+use anyhow::{ensure, Result};
 use serde::Serialize;
 
 use crate::{
     db,
     memory::preference,
-    user_context::{claims, recall},
+    user_context::{claims, preference_backfill, recall},
 };
 
 use super::shared::resolve_cwd_project;
@@ -126,13 +126,14 @@ fn run_user_backfill(apply: bool, json: bool, limit: Option<i64>) -> Result<()> 
         ensure!(limit > 0, "backfill limit must be positive");
     }
 
-    if apply {
-        bail!(
-            "remem user backfill --apply requires the GH760 storage conversion slice; rerun without --apply for the dry-run report"
-        );
-    }
-
-    let report = UserBackfillReport::dry_run(limit);
+    let request = preference_backfill::UserBackfillRequest { limit };
+    let report = if apply {
+        let mut conn = db::open_db_no_migrate()?;
+        preference_backfill::apply_backfill(&mut conn, &request)?
+    } else {
+        let conn = db::open_db_read_only()?;
+        preference_backfill::preview_backfill(&conn, &request)?
+    };
     if json {
         print_json(&report)?;
     } else {
@@ -141,19 +142,56 @@ fn run_user_backfill(apply: bool, json: bool, limit: Option<i64>) -> Result<()> 
     Ok(())
 }
 
-fn print_backfill_report(report: &UserBackfillReport) {
+fn print_backfill_report(report: &preference_backfill::UserBackfillReport) {
+    print!("{}", format_backfill_report(report));
+}
+
+fn format_backfill_report(report: &preference_backfill::UserBackfillReport) -> String {
     let limit = report
         .limit
         .map(|value| value.to_string())
         .unwrap_or_else(|| "unlimited".to_string());
-    println!(
-        "User preference backfill dry-run: candidates={}, converted={}, skipped={}, limit={}",
+    let action = if report.applied { "applied" } else { "dry-run" };
+    let mut output = String::new();
+    output.push_str(&format!(
+        "User preference backfill {action}: candidates={}, converted={}, skipped={}, limit={}\n",
         report.candidates.len(),
         report.converted.len(),
         report.skipped.len(),
         limit
-    );
-    println!("{}", report.message);
+    ));
+    output.push_str(&format!("{}\n\n", report.message));
+    output.push_str("Candidates:\n");
+    if report.candidates.is_empty() {
+        output.push_str("  (none)\n");
+    } else {
+        for candidate in &report.candidates {
+            output.push_str(&format!("  - memory:{}\n", candidate.memory_id));
+        }
+    }
+    output.push_str("Converted:\n");
+    if report.converted.is_empty() {
+        output.push_str("  (none)\n");
+    } else {
+        for converted in &report.converted {
+            output.push_str(&format!(
+                "  - memory:{} -> claim:{}\n",
+                converted.memory_id, converted.claim_id
+            ));
+        }
+    }
+    output.push_str("Skipped:\n");
+    if report.skipped.is_empty() {
+        output.push_str("  (none)\n");
+    } else {
+        for skipped in &report.skipped {
+            output.push_str(&format!(
+                "  - memory:{} reason={}\n",
+                skipped.memory_id, skipped.reason
+            ));
+        }
+    }
+    output
 }
 
 struct UserRecallCliRequest {
@@ -382,46 +420,6 @@ struct ClaimEditOutput {
     claim: claims::UserContextClaim,
 }
 
-#[derive(Serialize)]
-struct UserBackfillReport {
-    applied: bool,
-    limit: Option<i64>,
-    candidates: Vec<UserBackfillCandidate>,
-    converted: Vec<UserBackfillConverted>,
-    skipped: Vec<UserBackfillSkipped>,
-    message: &'static str,
-}
-
-impl UserBackfillReport {
-    fn dry_run(limit: Option<i64>) -> Self {
-        Self {
-            applied: false,
-            limit,
-            candidates: Vec::new(),
-            converted: Vec::new(),
-            skipped: Vec::new(),
-            message: "GH760 storage selection and conversion are intentionally deferred to the next implementation slice.",
-        }
-    }
-}
-
-#[derive(Serialize)]
-struct UserBackfillCandidate {
-    memory_id: i64,
-}
-
-#[derive(Serialize)]
-struct UserBackfillConverted {
-    memory_id: i64,
-    claim_id: i64,
-}
-
-#[derive(Serialize)]
-struct UserBackfillSkipped {
-    memory_id: i64,
-    reason: String,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -534,29 +532,23 @@ mod tests {
     }
 
     #[test]
-    fn user_backfill_dry_run_does_not_open_db() -> Result<()> {
+    fn user_backfill_dry_run_requires_existing_db_without_creating_it() {
         let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-dry-run");
         assert!(!dir.db_path().exists());
 
-        run_user(UserAction::Backfill {
+        let err = run_user(UserAction::Backfill {
             apply: false,
             json: true,
             limit: Some(5),
-        })?;
+        })
+        .expect_err("dry-run should require an existing database");
 
+        assert!(err.to_string().contains("database not found"));
         assert!(!dir.db_path().exists());
-
-        let report = serde_json::to_value(UserBackfillReport::dry_run(Some(5)))?;
-        assert_eq!(report["applied"], false);
-        assert_eq!(report["limit"], 5);
-        assert!(report["candidates"].is_array());
-        assert!(report["converted"].is_array());
-        assert!(report["skipped"].is_array());
-        Ok(())
     }
 
     #[test]
-    fn user_backfill_apply_fails_closed_until_storage_slice_lands() {
+    fn user_backfill_apply_requires_existing_db_without_creating_it() {
         let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-apply");
         assert!(!dir.db_path().exists());
         let err = run_user(UserAction::Backfill {
@@ -564,8 +556,8 @@ mod tests {
             json: false,
             limit: None,
         })
-        .expect_err("apply should fail before GH760 storage conversion lands");
-        assert!(err.to_string().contains("storage conversion slice"));
+        .expect_err("apply should require an existing database");
+        assert!(err.to_string().contains("database not found"));
         assert!(!dir.db_path().exists());
     }
 
@@ -578,6 +570,46 @@ mod tests {
         })
         .expect_err("zero limit should be rejected");
         assert!(err.to_string().contains("limit must be positive"));
+    }
+
+    #[test]
+    fn user_backfill_human_report_includes_row_level_audit() {
+        let dry_run = preference_backfill::UserBackfillReport {
+            applied: false,
+            limit: Some(10),
+            candidates: vec![preference_backfill::UserBackfillCandidate { memory_id: 101 }],
+            converted: Vec::new(),
+            skipped: vec![preference_backfill::UserBackfillSkipped {
+                memory_id: 202,
+                reason: "duplicate".to_string(),
+            }],
+            message: "Dry-run only; rerun with --apply to convert candidates.".to_string(),
+        };
+
+        let dry_run_output = format_backfill_report(&dry_run);
+        assert!(dry_run_output.contains("candidates=1"));
+        assert!(dry_run_output.contains("limit=10"));
+        assert!(dry_run_output.contains("Candidates:\n  - memory:101\n"));
+        assert!(dry_run_output.contains("Converted:\n  (none)\n"));
+        assert!(dry_run_output.contains("Skipped:\n  - memory:202 reason=duplicate\n"));
+
+        let applied = preference_backfill::UserBackfillReport {
+            applied: true,
+            limit: None,
+            candidates: Vec::new(),
+            converted: vec![preference_backfill::UserBackfillConverted {
+                memory_id: 101,
+                claim_id: 303,
+            }],
+            skipped: Vec::new(),
+            message: "User preference backfill applied.".to_string(),
+        };
+
+        let applied_output = format_backfill_report(&applied);
+        assert!(applied_output.contains("limit=unlimited"));
+        assert!(applied_output.contains("Candidates:\n  (none)\n"));
+        assert!(applied_output.contains("Converted:\n  - memory:101 -> claim:303\n"));
+        assert!(applied_output.contains("Skipped:\n  (none)\n"));
     }
 
     #[test]

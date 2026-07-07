@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.182` for GH-760 preference backfill storage:
+  dry-run now selects visible user-scope preference memories read-only, and
+  `--apply` writes idempotent `preference_backfill` claims with memory source
+  refs, governed duplicate skips, and stable conversion reporting.
 - Staged source version `0.5.181` for GH-760 user preference backfill CLI:
   `remem user backfill [--json] [--limit <n>]` now exposes a dry-run report
   shape while `--apply` fails closed until the storage conversion slice lands.

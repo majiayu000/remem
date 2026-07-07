@@ -9,6 +9,7 @@ pub const DEFAULT_OWNER_KEY: &str = "user:default";
 
 const DEFAULT_SOURCE_KIND: &str = "manual";
 const DEFAULT_SOURCE_REFS_JSON: &str = r#"[{"kind":"manual_cli","command":"user remember"}]"#;
+pub(crate) const PREFERENCE_BACKFILL_SOURCE_KIND: &str = "preference_backfill";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserContextClaimType {
@@ -94,6 +95,12 @@ pub struct ManualClaimRequest<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct PreferenceBackfillClaimRequest<'a> {
+    pub memory_id: i64,
+    pub text: &'a str,
+}
+
+#[derive(Debug, Clone)]
 pub struct ClaimListRequest<'a> {
     pub owner_scope: Option<&'a str>,
     pub owner_key: Option<&'a str>,
@@ -154,6 +161,57 @@ pub fn create_manual_claim(
         ],
     )
     .context("insert manual user-context claim")?;
+    load_claim(conn, conn.last_insert_rowid())
+}
+
+pub(crate) fn preference_claim_key(text: &str) -> Result<String> {
+    let text = normalize_required("claim text", text)?;
+    Ok(normalized_claim_key(
+        None,
+        UserContextClaimType::Preference.db_value(),
+        text,
+    ))
+}
+
+pub(crate) fn create_preference_backfill_claim(
+    conn: &Connection,
+    req: &PreferenceBackfillClaimRequest<'_>,
+) -> Result<UserContextClaim> {
+    let text = normalize_required("claim text", req.text)?;
+    if req.memory_id <= 0 {
+        bail!("source memory id must be positive");
+    }
+    let claim_type = UserContextClaimType::Preference.db_value();
+    let claim_key = normalized_claim_key(None, claim_type, text);
+    let source_refs_json = serde_json::json!([
+        {
+            "kind": "memory",
+            "id": req.memory_id
+        }
+    ])
+    .to_string();
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (user_key, owner_scope, owner_key, claim_type, claim_key, claim_text,
+          confidence, sensitivity, source_kind, source_refs_json, status,
+          valid_from_epoch, valid_to_epoch, last_confirmed_at_epoch,
+          supersedes_claim_id, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1.0, 'normal', ?7, ?8, 'active',
+                 NULL, NULL, ?9, NULL, ?9, ?9)",
+        params![
+            DEFAULT_USER_KEY,
+            DEFAULT_OWNER_SCOPE,
+            DEFAULT_OWNER_KEY,
+            claim_type,
+            claim_key,
+            text,
+            PREFERENCE_BACKFILL_SOURCE_KIND,
+            source_refs_json,
+            now,
+        ],
+    )
+    .context("insert preference backfill user-context claim")?;
     load_claim(conn, conn.last_insert_rowid())
 }
 

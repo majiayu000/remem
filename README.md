@@ -628,6 +628,7 @@ remem user summary sources
 remem user profile export --format markdown --output profile.md
 remem user recall "review the remem user context design"
 remem user backfill --json --limit 100
+remem user backfill --apply --json --limit 100
 remem user review inbox
 remem user review approve <id>
 remem user review edit <id> --text "updated candidate"
@@ -687,12 +688,14 @@ improves the answer, prefer invisible adaptation over memory narration, avoid
 uncited profile inferences, and avoid inventing a profile when no context
 applies.
 
-`remem user backfill` previews migration of legacy user-scope preference
-memories into governed user-context claims. In this staged CLI slice the
-command is dry-run only: it emits a report and does not open, create, migrate,
-or write the remem database. `--limit <n>` bounds the preview report, `--json`
-emits the stable scriptable shape, and `--apply` fails closed until the storage
-conversion slice lands.
+`remem user backfill` migrates legacy user-scope preference memories into
+governed user-context claims. Without `--apply`, it opens an existing database
+read-only, reports candidate and skipped memory ids, and never creates,
+migrates, or writes the store. With `--apply`, it inserts active preference
+claims with `source_kind=preference_backfill` and JSON memory source refs while
+leaving the source memory rows unchanged. `--limit <n>` bounds the source rows
+processed, and `--json` emits the stable scriptable shape with
+`converted[{memory_id, claim_id}]` and explicit skip reasons.
 
 `remem user review ...` governs review-gated user-context candidates before
 they become active claims. `inbox` shows pending candidates with risk,
@@ -759,7 +762,7 @@ is set:
 | `remem user summary refresh --json` / `edit --json` | `status`, `summary` |
 | `remem user summary sources --json` | `summary`, `included_claims`, `included_memories`, `included_activity_refs`, `dropped_claims` |
 | `remem user recall <query> --json` | `query`, `project`, `task_intent`, `host`, `empty`, `context`, `usage_policy`, `included`, `dropped`, `diagnostics` |
-| `remem user backfill --json` | `applied`, `limit`, `candidates`, `converted`, `skipped`, `message`; current staged CLI slice reports dry-run only and leaves `converted` empty until apply conversion lands |
+| `remem user backfill --json` | `applied`, `limit`, `candidates`, `converted`, `skipped`, `message`; dry-run fills `candidates`, while `--apply` fills `converted[{memory_id, claim_id}]` for inserted claims |
 | `remem user review inbox --json` | `count`, `candidates` |
 | `remem user review approve <id> --json` / `edit <id> --json` | `status`, `action`, `candidate`, `claim` |
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
