@@ -126,7 +126,6 @@ fn run_user_backfill(apply: bool, json: bool, limit: Option<i64>) -> Result<()> 
         ensure!(limit > 0, "backfill limit must be positive");
     }
 
-    let _conn = db::open_db()?;
     if apply {
         bail!(
             "remem user backfill --apply requires the GH760 storage conversion slice; rerun without --apply for the dry-run report"
@@ -535,14 +534,9 @@ mod tests {
     }
 
     #[test]
-    fn user_backfill_dry_run_does_not_write_claims() -> Result<()> {
-        let _dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-dry-run");
-        let conn = db::open_db()?;
-        let before: i64 =
-            conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
-                row.get(0)
-            })?;
-        drop(conn);
+    fn user_backfill_dry_run_does_not_open_db() -> Result<()> {
+        let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-dry-run");
+        assert!(!dir.db_path().exists());
 
         run_user(UserAction::Backfill {
             apply: false,
@@ -550,11 +544,7 @@ mod tests {
             limit: Some(5),
         })?;
 
-        let conn = db::open_db()?;
-        let after: i64 = conn.query_row("SELECT COUNT(*) FROM user_context_claims", [], |row| {
-            row.get(0)
-        })?;
-        assert_eq!(after, before);
+        assert!(!dir.db_path().exists());
 
         let report = serde_json::to_value(UserBackfillReport::dry_run(Some(5)))?;
         assert_eq!(report["applied"], false);
@@ -567,7 +557,8 @@ mod tests {
 
     #[test]
     fn user_backfill_apply_fails_closed_until_storage_slice_lands() {
-        let _dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-apply");
+        let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-apply");
+        assert!(!dir.db_path().exists());
         let err = run_user(UserAction::Backfill {
             apply: true,
             json: false,
@@ -575,6 +566,7 @@ mod tests {
         })
         .expect_err("apply should fail before GH760 storage conversion lands");
         assert!(err.to_string().contains("storage conversion slice"));
+        assert!(!dir.db_path().exists());
     }
 
     #[test]
