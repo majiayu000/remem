@@ -3,17 +3,23 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use toml_edit::{value, DocumentMut, Item, Table};
 
+mod config_value;
 #[cfg(test)]
 mod migration_tests;
 mod model;
 mod promotion;
 mod rules;
+mod user_auto_promote;
+use config_value::cli_value;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
 pub use rules::{rule_compilation_config, RuleCompilationConfig};
+pub use user_auto_promote::{
+    user_context_auto_promote_config, AutoPromotePolicy, UserContextAutoPromoteConfig,
+};
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
@@ -250,6 +256,7 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
 
     promotion::ensure_defaults(doc)?;
     rules::ensure_defaults(doc)?;
+    user_auto_promote::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);
@@ -491,30 +498,6 @@ fn optional_str(table: &Table, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-fn cli_value(raw: &str) -> Item {
-    let trimmed = raw.trim();
-    match trimmed.to_ascii_lowercase().as_str() {
-        "true" => value(true),
-        "false" => value(false),
-        _ => match trimmed.parse::<i64>() {
-            Ok(number) => value(number),
-            Err(_) => value(trim_outer_quotes(trimmed)),
-        },
-    }
-}
-
-fn trim_outer_quotes(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(value)
 }
 
 #[cfg(test)]

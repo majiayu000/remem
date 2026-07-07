@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.183` for GH-759 auto-promote policy config:
+  runtime config now exposes `[user_context.auto_promote]` defaults,
+  validation, and a strict rollback policy without changing promotion behavior.
 - Staged source version `0.5.182` for GH-760 preference backfill storage:
   dry-run now selects visible user-scope preference memories read-only, and
   `--apply` writes idempotent `preference_backfill` claims with memory source
