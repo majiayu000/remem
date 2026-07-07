@@ -154,8 +154,10 @@ Phase 2a: export eligibility core. The export source loader reuses the same
 fresh procedure verification evidence as `procedures list` and rejects
 non-procedure, inactive, expired, suppressed, superseded, or insufficiently
 verified rows before any render/write path can be added.
-Phase 2b: export command, templates, snapshot tests, write-path guard negative
-test.
+Phase 2b-a: render-time field scan and template snapshots for `claude-skill`,
+`codex-prompt`, and `runbook-md` drafts. This phase does not write files.
+Phase 2b-b: export command, safe writer, overwrite/path guards, and
+write-path guard negative test.
 Phase 3: `procedure_exports` migration + doctor probe; docs update replacing
 the procedural-memory.md non-goal paragraph with this contract.
 

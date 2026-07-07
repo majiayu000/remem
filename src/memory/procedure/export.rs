@@ -5,6 +5,8 @@ use super::evidence::{
     load_verified_procedure_evidence, parse_evidence_ids, VerifiedProcedureEvidence,
 };
 
+mod render;
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub(crate) struct ProcedureExportSource {
