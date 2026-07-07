@@ -6,8 +6,8 @@ use crate::{
     memory,
     memory::suppression::{create_suppression, parse_target, SuppressRequest},
     user_context::claims::{
-        create_manual_claim, suppress_claim, ManualClaimRequest, UserContextClaimType,
-        UserContextSensitivity,
+        create_manual_claim, create_preference_backfill_claim, suppress_claim, ManualClaimRequest,
+        PreferenceBackfillClaimRequest, UserContextClaimType, UserContextSensitivity,
     },
 };
 
@@ -208,6 +208,41 @@ fn recall_returns_repo_only_memory_context() -> Result<()> {
         .included
         .iter()
         .any(|item| item.source_type == "user_claim"));
+    Ok(())
+}
+
+#[test]
+fn recall_excludes_backfilled_user_preference_memory_duplicate() -> Result<()> {
+    let conn = migrated_conn()?;
+    insert_user_preference_memory(
+        &conn,
+        15,
+        "Backfilled recall preference",
+        "Prefer backfilled recall dedupe",
+    )?;
+    let claim = create_preference_backfill_claim(
+        &conn,
+        &PreferenceBackfillClaimRequest {
+            memory_id: 15,
+            text: "Prefer backfilled recall dedupe",
+        },
+    )?;
+
+    let result = recall_user_context(&conn, &request("backfilled recall dedupe"))?;
+
+    assert!(result
+        .included
+        .iter()
+        .any(|item| item.source_type == "user_claim" && item.source_id == Some(claim.id)));
+    assert!(!result
+        .included
+        .iter()
+        .any(|item| item.source_type == "memory" && item.source_id == Some(15)));
+    assert!(result.dropped.iter().any(|item| {
+        item.source_type == "memory"
+            && item.source_id == Some(15)
+            && item.reason_code == "backfilled_as_user_claim"
+    }));
     Ok(())
 }
 
@@ -414,6 +449,24 @@ fn seed_current_state(conn: &Connection) -> Result<()> {
     conn.execute(
         "UPDATE memory_state_keys SET current_memory_id = 2 WHERE id = 10",
         [],
+    )?;
+    Ok(())
+}
+
+fn insert_user_preference_memory(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    text: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, NULL, '/repo', NULL, ?2, ?3, 'preference', NULL,
+                 10, 10, 'active', NULL, 'global', '/repo', NULL, 'user', 'user:default')",
+        rusqlite::params![id, title, text],
     )?;
     Ok(())
 }
