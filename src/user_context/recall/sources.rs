@@ -8,7 +8,7 @@ use super::types::{
     ClaimCandidate, NormalizedRequest, RecallCandidate, RecallState, UserRecallDroppedItem,
     MAX_CLAIM_SCAN, MAX_SESSION_SCAN,
 };
-use crate::user_context::claims::{DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE};
+use crate::user_context::claims::{self, DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE};
 
 pub(super) fn collect_summary(
     conn: &Connection,
@@ -117,6 +117,15 @@ pub(super) fn collect_memories(
     )?;
     state.counts.memories += result.memories.len();
     for memory in result.memories {
+        if claims::active_preference_backfill_covers_user_preference_memory(conn, memory.id)? {
+            state.dropped.push(UserRecallDroppedItem {
+                source_type: "memory".to_string(),
+                source_id: Some(memory.id),
+                label: Some(memory.title),
+                reason_code: "backfilled_as_user_claim".to_string(),
+            });
+            continue;
+        }
         state.candidates.push(RecallCandidate {
             source_type: "memory".to_string(),
             source_id: Some(memory.id),

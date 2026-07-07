@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::claims::{DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE, DEFAULT_USER_KEY};
+use super::claims::{self, DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE, DEFAULT_USER_KEY};
 mod types;
 pub use types::{
     ActivityRef, DroppedSource, SummaryClaimSource, SummaryEditRequest, SummaryMemorySource,
@@ -425,12 +425,20 @@ fn load_claim_sources_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Summa
 }
 
 fn load_memory_sources(conn: &Connection, project: &str) -> Result<Vec<SummaryMemorySource>> {
+    let active_backfill_exists =
+        claims::active_preference_backfill_memory_source_exists_sql("memories");
     let mut stmt = conn.prepare(&format!(
         "SELECT id, title, content, memory_type, owner_scope, owner_key, status
          FROM memories
          WHERE status = 'active'
            AND (expires_at_epoch IS NULL OR expires_at_epoch > CAST(strftime('%s', 'now') AS INTEGER))
            AND {policy_filter}
+           AND NOT (
+               owner_scope = 'user'
+               AND owner_key = 'user:default'
+               AND memory_type = 'preference'
+               AND {active_backfill_exists}
+           )
            AND (
                 (owner_scope = 'repo' AND owner_key = ?1)
              OR (owner_scope = 'repo' AND target_project = ?1)

@@ -25,11 +25,12 @@ visible memories (owner_scope='user', owner_key='user:default',
                   not expired, not policy-suppressed)
   → 逐条:
       1. non_retention::classify(text)      命中 → skip(reason)
-      2. sensitivity guard                非 normal 或无法证明 normal → skip 或 pending_review
-      3. claim_key 生成（复用现有 claim_key 派生逻辑，输入 memory 文本）
-      4. 去重/governance: user_context_claims 中已有同 claim_key 的 active/superseded/suppressed/deleted/rejected 等 governed 行，
+      2. poisoning guard                  未确认的 instruction-pattern → skip(instruction_pattern_unacknowledged:...)
+      3. sensitivity guard                非 normal 或无法证明 normal → skip 或 pending_review
+      4. claim_key 生成（复用现有 claim_key 派生逻辑，输入 memory 文本）
+      5. 去重/governance: user_context_claims 中已有同 claim_key 的 active/superseded/suppressed/deleted/rejected 等 governed 行，
          或 source_refs_json 已指向该 memory id → skip(duplicate 或 governed_duplicate)
-      5. dry-run: 记入 candidates；apply: INSERT active claim
+      6. dry-run: 记入 candidates；apply: INSERT active claim
   → 审计报告
 ```
 
@@ -60,11 +61,13 @@ visible memories (owner_scope='user', owner_key='user:default',
 | governed duplicate | 单元 | suppressed/deleted/rejected 同 claim_key/source_ref 阻止 active 回填 |
 | expired/suppressed memory 过滤 | 单元 | 过期或 policy-suppressed source memory 不进入 candidates |
 | summary 去重 | 集成 | backfilled preference 不在 user summary prompt 中同时作为 memory 和 claim 出现 |
+| recall 去重 | 集成 | backfilled preference 不在 recall 结果中同时作为 memory 和 claim 出现 |
 | source_refs_json schema | 单元 | source refs 是 JSON array，recall/why source reader 可解析 |
+| poisoning guard | 单元 | 未确认 instruction-pattern source skip，已确认 source 可回填 |
 | sensitivity guard | 单元 | personal/sensitive/restricted 或不确定文本不直接 active 回填 |
 | non-retention 拦截 | 单元 | secret-like 文本 skip，reason 正确（B1） |
 | project-scope / 非 preference / 非 active 行不入选 | 单元 | 候选集为空（P3/N2） |
-| --limit 分批 | 单元 | 处理数 ≤ limit，剩余下次可继续 |
+| --limit 分批 | 单元 | 处理数 ≤ limit，active source-ref duplicate 不占用下次批次窗口，剩余下次可继续 |
 | --json 字段稳定 | 单元 | `converted[{memory_id, claim_id}]`、`skipped[{memory_id, reason}]` schema 快照测试 |
 
 ## 4. 迁移与回滚
