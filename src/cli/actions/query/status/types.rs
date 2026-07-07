@@ -16,6 +16,7 @@ pub(super) struct StatusReport {
     pub pending_observations: PendingObservationStatus,
     pub review_queue: ReviewQueueStatus,
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
+    pub user_context: UserContextStatus,
     pub jobs: JobStatus,
     pub failure_lifecycle: db::FailureLifecycleStats,
     pub worker_daemon: WorkerDaemonStatus,
@@ -177,6 +178,24 @@ pub(super) struct CandidatePromotionStatus {
     pub block_reason: Option<String>,
     pub total: i64,
     pub last_7_days: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct UserContextStatus {
+    pub claims_total: i64,
+    pub claims_active: i64,
+    pub claims_suppressed: i64,
+    pub claims_deleted: i64,
+    pub candidates_total: i64,
+    pub candidates_pending_review: i64,
+    pub candidates_auto_promoted: i64,
+    pub candidate_block_reasons: Vec<UserContextBlockReasonStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct UserContextBlockReasonStatus {
+    pub reason: Option<String>,
+    pub pending: i64,
 }
 
 #[derive(Debug, Clone, Serialize)]

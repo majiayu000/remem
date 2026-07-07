@@ -38,6 +38,7 @@ fn load_status_report() -> Result<StatusReport> {
     let top_projects = db::query_top_projects(&conn, 5)?;
     let now = chrono::Utc::now().timestamp();
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
+    let user_context = db::query_user_context_stats(&conn)?;
     let review_queue = crate::memory_candidate::review_stats::query_review_queue_stats(&conn, now)?;
     let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
     let usage_feedback = crate::memory::usage::query_memory_usage_feedback_stats(&conn)?;
@@ -241,6 +242,23 @@ fn load_status_report() -> Result<StatusReport> {
                 last_7_days: stat.last_7_days,
             })
             .collect(),
+        user_context: UserContextStatus {
+            claims_total: user_context.claims_total,
+            claims_active: user_context.claims_active,
+            claims_suppressed: user_context.claims_suppressed,
+            claims_deleted: user_context.claims_deleted,
+            candidates_total: user_context.candidates_total,
+            candidates_pending_review: user_context.candidates_pending_review,
+            candidates_auto_promoted: user_context.candidates_auto_promoted,
+            candidate_block_reasons: user_context
+                .candidate_block_reasons
+                .into_iter()
+                .map(|reason| UserContextBlockReasonStatus {
+                    reason: reason.reason,
+                    pending: reason.pending,
+                })
+                .collect(),
+        },
         today: DailyStatus {
             new_memories: daily_stats.memories,
             new_observations: daily_stats.observations,
@@ -544,6 +562,31 @@ fn print_status_report(report: &StatusReport) {
                 label, stat.total, stat.last_7_days
             );
         }
+    }
+    println!();
+    println!("User context:");
+    println!(
+        "  Claims active:{:>6}/{:<6}",
+        report.user_context.claims_active, report.user_context.claims_total
+    );
+    println!(
+        "  Claims hidden:{:>6} suppressed, {:>6} deleted",
+        report.user_context.claims_suppressed, report.user_context.claims_deleted
+    );
+    println!(
+        "  Cand pending: {:>6}/{:<6}",
+        report.user_context.candidates_pending_review, report.user_context.candidates_total
+    );
+    println!(
+        "  Cand promoted:{:>6}/{:<6}",
+        report.user_context.candidates_auto_promoted, report.user_context.candidates_total
+    );
+    for reason in report.user_context.candidate_block_reasons.iter().take(5) {
+        println!(
+            "  Blocked:      {:>6}  {}",
+            reason.pending,
+            reason.reason.as_deref().unwrap_or("<none>")
+        );
     }
     println!();
     println!("Jobs:");

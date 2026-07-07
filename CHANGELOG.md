@@ -3,10 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.186` for GH-759 final observability and docs:
+  `remem status` now reports user-context claim/candidate counts and pending
+  block reasons, and the user-facing/runtime specs document the relaxed default,
+  strict rollback, unchanged hard gates, governance path, and verification stats.
 - Staged source version `0.5.185` for GH-759 relaxed auto-promote safety:
   expanded regression fixtures keep sensitivity, high-risk, third-party,
-  non-user source, non-retention, and claim-key conflict paths fail-closed
-  under the relaxed default policy.
+  assistant-only and mixed non-user source, non-retention, and claim-key conflict
+  paths fail-closed under the relaxed default policy.
 - Staged source version `0.5.184` for GH-759 auto-promote runtime policy:
   extraction and candidate apply now share the runtime `AutoPromotePolicy`, so
   default user-context auto-promote lowers only the confidence threshold while
