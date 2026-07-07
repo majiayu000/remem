@@ -8,7 +8,8 @@ use crate::{
     memory::suppression::{create_suppression, SuppressRequest, SuppressionTarget},
     user_context::{
         claims::{
-            create_manual_claim, delete_claim, ManualClaimRequest, UserContextClaim,
+            create_manual_claim, create_preference_backfill_claim, delete_claim,
+            ManualClaimRequest, PreferenceBackfillClaimRequest, UserContextClaim,
             UserContextClaimType, UserContextSensitivity,
         },
         profile_snapshot::{render_markdown_profile_snapshot, ProfileSnapshotRequest},
@@ -217,6 +218,40 @@ fn profile_snapshot_manual_summary_requires_audit_flag() -> Result<()> {
     assert!(output.contains("Manual profile summary text"));
     assert!(output.contains("provenance: manual-edit"));
     assert!(!output.contains("provenance: excluded"));
+    Ok(())
+}
+
+#[test]
+fn profile_snapshot_hides_summary_after_memory_source_is_backfilled() -> Result<()> {
+    let data_dir = db::test_support::ScopedTestDataDir::new("profile-snapshot-backfilled-source");
+    let conn = db::open_db()?;
+    insert_profile_user_preference_memory(&conn, 100, "Prefer profile backfill dedupe")?;
+    let summary = refresh_summary(
+        &conn,
+        &SummaryRequest {
+            owner_scope: None,
+            owner_key: None,
+            project: "/repo",
+        },
+    )?;
+    assert_eq!(summary.source_memory_ids, vec![100]);
+    let claim = create_preference_backfill_claim(
+        &conn,
+        &PreferenceBackfillClaimRequest {
+            memory_id: 100,
+            text: "Prefer profile backfill dedupe",
+        },
+    )?;
+
+    let output = render_markdown_profile_snapshot(
+        &conn,
+        &snapshot_request("/repo", data_dir.db_path().as_path()),
+    )?;
+
+    assert!(output.contains("No default-eligible active summary text."));
+    assert!(!output.contains("source_memory_ids: [100]"));
+    assert!(output.contains(&format!("[claim:{}]", claim.id)));
+    assert!(output.contains("Prefer profile backfill dedupe"));
     Ok(())
 }
 
@@ -569,4 +604,17 @@ fn create_claim_for_owner(
             valid_to_epoch: None,
         },
     )
+}
+
+fn insert_profile_user_preference_memory(conn: &Connection, id: i64, text: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, NULL, '/repo', NULL, 'Profile preference', ?2, 'preference', NULL,
+                 10, 10, 'active', NULL, 'global', '/repo', NULL, 'user', 'user:default')",
+        rusqlite::params![id, text],
+    )?;
+    Ok(())
 }

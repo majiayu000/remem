@@ -240,6 +240,25 @@ fn refresh_summary_excludes_backfilled_user_preference_memory_source() -> Result
 }
 
 #[test]
+fn active_summary_is_hidden_after_memory_source_is_backfilled_as_claim() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    insert_summary_user_preference_source(&conn, 13, "Prefer stale summary source")?;
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+    assert_eq!(summary.source_memory_ids, vec![13]);
+
+    create_preference_backfill_claim(
+        &conn,
+        &PreferenceBackfillClaimRequest {
+            memory_id: 13,
+            text: "Prefer stale summary source",
+        },
+    )?;
+
+    assert!(load_active_summary(&conn, &summary_request("/repo"))?.is_none());
+    Ok(())
+}
+
+#[test]
 fn load_active_summary_hides_text_after_policy_suppresses_source() -> Result<()> {
     let conn = summary_migrated_conn()?;
     let claim = create_manual_claim(

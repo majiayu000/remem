@@ -297,7 +297,10 @@ fn summary_memory_source_is_visible(conn: &Connection, memory_id: i64) -> Result
         crate::memory::suppression::memory_policy_filter_sql("memories"),
     );
     let count: i64 = conn.query_row(&sql, [memory_id], |row| row.get(0))?;
-    Ok(count > 0)
+    if count == 0 {
+        return Ok(false);
+    }
+    Ok(!claims::active_preference_backfill_covers_user_preference_memory(conn, memory_id)?)
 }
 
 fn load_summary_by_id(conn: &Connection, id: i64) -> Result<UserContextSummary> {

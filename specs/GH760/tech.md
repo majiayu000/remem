@@ -61,6 +61,7 @@ visible memories (owner_scope='user', owner_key='user:default',
 | governed duplicate | 单元 | suppressed/deleted/rejected 同 claim_key/source_ref 阻止 active 回填 |
 | expired/suppressed memory 过滤 | 单元 | 过期或 policy-suppressed source memory 不进入 candidates |
 | summary 去重 | 集成 | backfilled preference 不在 user summary prompt 中同时作为 memory 和 claim 出现 |
+| profile 去重 | 集成 | backfilled preference 不在 profile snapshot 中同时作为旧 summary memory source 和 active claim 出现 |
 | recall 去重 | 集成 | backfilled preference 不在 recall 结果中同时作为 memory 和 claim 出现 |
 | source_refs_json schema | 单元 | source refs 是 JSON array，recall/why source reader 可解析 |
 | poisoning guard | 单元 | 未确认 instruction-pattern source skip，已确认 source 可回填 |
