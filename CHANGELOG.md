@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.180` for GH-680 procedure export templates:
+  render-time field scanning now blocks secret-like or instruction-pattern
+  procedure fields before draft generation, and pinned snapshots cover
+  Claude skill, Codex prompt, and runbook draft formats.
 - Staged source version `0.5.179` for GH-680 procedure export eligibility:
   the export source loader now reuses fresh procedure verification evidence
   and rejects non-procedure, inactive, expired, suppressed, superseded, or
