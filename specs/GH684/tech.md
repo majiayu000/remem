@@ -91,7 +91,10 @@ needed fields and side effects, then removes only the redundant Summary writer.
 - [x] Context, timeline, and user-context regression tests prove semantic
       rollup rows feed summary readers while synthetic `Captured event range`
       fallback titles stay hidden from user-facing context.
-- [ ] Stop-hook side-effect regression tests.
+- [x] Stop-hook side-effect regression tests cover Compress/Dream enqueueing,
+      raw archive ingest, memory citations, failure lessons, summary-derived
+      candidate finalization, and native-memory sync before `JobType::Summary`
+      retirement.
 - [ ] Pending legacy migration and guarded-drop tests.
 - [x] MCP/docs wording verification.
 - [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`

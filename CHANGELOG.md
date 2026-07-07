@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.178` for GH-684 Summary side-effect
+  preservation: regression coverage now locks Compress/Dream enqueueing, raw
+  archive ingest, memory citations, failure lessons, summary-derived
+  candidate finalization, and native-memory sync before Summary writer
+  retirement.
 - Staged source version `0.5.177` for GH-684 summary writer convergence:
   SessionRollup now persists semantic request, decisions, learned, next steps,
   and preferences fields, and context/user-context readers can consume

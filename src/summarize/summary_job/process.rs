@@ -410,6 +410,36 @@ mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
     use rusqlite::params;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[tokio::test]
     async fn bad_transcript_path_uses_last_assistant_message_hook_fallback() -> Result<()> {
@@ -441,6 +471,75 @@ mod tests {
         )?;
         assert_eq!(path, missing_transcript.to_string_lossy());
         assert_eq!(kind, "read_error");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_finalized_summary_syncs_native_memory_side_effect() -> Result<()> {
+        let data_dir = ScopedTestDataDir::new("summary-native-memory-side-effect");
+        std::fs::create_dir_all(&data_dir.path)?;
+        let home = data_dir.path.join("home");
+        std::fs::create_dir_all(&home)?;
+        let _home = EnvVarGuard::set_path("HOME", &home);
+        let _native_sync =
+            EnvVarGuard::remove(crate::context::claude_memory::DISABLE_NATIVE_MEMORY_SYNC_ENV);
+
+        let cwd_path = data_dir.path.join("project");
+        std::fs::create_dir_all(&cwd_path)?;
+        let cwd = std::fs::canonicalize(&cwd_path)?
+            .to_string_lossy()
+            .to_string();
+        let project = db::project_from_cwd(&cwd);
+        let memory_dir = home
+            .join(".claude")
+            .join("projects")
+            .join(cwd.replace('/', "-"))
+            .join("memory");
+        std::fs::create_dir_all(&memory_dir)?;
+
+        let stub_codex = data_dir.path.join("codex-summary-stub.sh");
+        install_summary_stub(&stub_codex)?;
+        crate::runtime_config::init_config()?;
+        let stub_codex_path = stub_codex.to_string_lossy();
+        crate::runtime_config::set_config_value("memory_ai.profiles.codex.path", &stub_codex_path)?;
+
+        let conn = db::open_db()?;
+        db::record_captured_event(
+            &conn,
+            &db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "session-native-memory-side-effect",
+                project: &project,
+                cwd: Some(&cwd),
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: "summary source payload for native memory side effect",
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+        drop(conn);
+
+        let payload = serde_json::json!({
+            "session_id": "session-native-memory-side-effect",
+            "cwd": cwd,
+            "last_assistant_message": "This assistant message is deliberately long enough for the legacy Summary job to call the summarization backend and finalize a row."
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        let native_file = memory_dir.join(crate::context::claude_memory::REMEM_FILE);
+        let content = std::fs::read_to_string(&native_file)?;
+        assert!(content.contains("Summary native sync request"), "{content}");
+        assert!(
+            content.contains("Summary job kept native memory sync before retirement"),
+            "{content}"
+        );
+        assert!(
+            content.contains("Keep native memory sync owned before Summary retirement"),
+            "{content}"
+        );
         Ok(())
     }
 
@@ -612,5 +711,40 @@ mod tests {
             ..crate::memory::raw_archive::RawIngestReport::default()
         };
         assert_eq!(raw_archive_status(&read_failed), "read_failed");
+    }
+
+    #[cfg(unix)]
+    fn install_summary_stub(path: &std::path::Path) -> Result<()> {
+        let script = r#"#!/bin/sh
+prev=""
+output_path=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then
+    output_path="$arg"
+    break
+  fi
+  prev="$arg"
+done
+if [ -z "$output_path" ]; then
+  echo "missing output path" >&2
+  exit 1
+fi
+cat > /dev/null
+cat <<'EOF' > "$output_path"
+<summary>
+  <request>Summary native sync request</request>
+  <completed>Summary job kept native memory sync before retirement.</completed>
+  <decisions>Keep native memory sync owned before Summary retirement.</decisions>
+  <learned></learned>
+  <next_steps></next_steps>
+  <preferences></preferences>
+</summary>
+EOF
+"#;
+        std::fs::write(path, script)?;
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms)?;
+        Ok(())
     }
 }
