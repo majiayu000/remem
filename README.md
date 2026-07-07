@@ -698,9 +698,9 @@ processed, and `--json` emits the stable scriptable shape with
 `converted[{memory_id, claim_id}]` and explicit skip reasons. The candidate set
 matches visible legacy preference rows for `owner_scope=user`,
 `owner_key=user:default`, `memory_type=preference`, and `status=active`; expired
-rows, policy-suppressed rows, non-retention hits, uncertain-sensitivity text,
-unacknowledged instruction-pattern text, too-long text, duplicates, and governed
-duplicates are skipped with row-level reasons such as `secret_like_content`,
+or policy-suppressed rows are outside that visible set and do not become
+candidates. Visible rows that fail guards or duplicate checks are reported in
+`skipped[]` with row-level reasons such as `secret_like_content`,
 `sensitivity_uncertain`, `instruction_pattern_unacknowledged:*`,
 `text_too_long`, `duplicate`, or `governed_duplicate`. After apply, summary,
 profile snapshot, and recall readers avoid showing the same preference as both a
