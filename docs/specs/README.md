@@ -57,7 +57,6 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 
 | Directory | Status | Notes |
 |---|---|---|
-| `GH759/` | Current contract | SpecRail packet: product and technical contract for shifting user-context auto-promote from pre-admission review to config-driven store-first + post-hoc governance (configurable confidence/source-kind gates, strict-mode rollback, unchanged non-retention and safety bounds). Refs #759. |
 | `associative-multihop-fixtures/` | Current contract | Product and technical contract for associative entity-hop golden fixtures and the two graph eval arms required before the graph decision gate can be re-evaluated. Refs #676. |
 | `cache-stable-injection/` | Current contract | Product and technical contract for a deterministic, prefix-cache-stable context block: byte-identical renders for unchanged memory state, additive prompt-time injection, and churn evals. Refs #673. |
 | `capacity-eval-axis/` | Current contract | Product and technical contract for the retrieval-quality-vs-store-size degradation curve: seeded corpus synthesis, per-channel metrics, and a regression budget wired into eval gates. Refs #675, #384. |
