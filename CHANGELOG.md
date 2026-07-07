@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.177` for GH-684 summary writer convergence:
+  SessionRollup now persists semantic request, decisions, learned, next steps,
+  and preferences fields, and context/user-context readers can consume
+  semantic rollup rows while excluding synthetic event-range fallback titles.
 - Staged source version `0.5.176` for GH-678 project memory pack completion:
   round-trip export/import identity fixture, pack-origin doctor and `remem why`
   attribution, and README onboarding workflow.
