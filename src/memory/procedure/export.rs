@@ -1,7 +1,9 @@
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use super::evidence::{load_verified_procedure_evidence, parse_evidence_ids};
+use super::evidence::{
+    load_verified_procedure_evidence, parse_evidence_ids, VerifiedProcedureEvidence,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
@@ -72,6 +74,7 @@ pub(crate) fn load_export_eligible_procedure(
             policy.min_verified_runs
         );
     }
+    ensure_stored_fields_match_evidence(&row, &evidence)?;
 
     let title = evidence.title();
     let reuse_condition = evidence.reuse_condition();
@@ -93,6 +96,60 @@ pub(crate) fn load_export_eligible_procedure(
         last_verification_epoch: evidence.last_verification_epoch,
         confidence,
         source_updated_at_epoch: row.updated_at_epoch,
+    })
+}
+
+fn ensure_stored_fields_match_evidence(
+    row: &ProcedureMemoryRow,
+    evidence: &VerifiedProcedureEvidence,
+) -> Result<()> {
+    let expected_title = evidence.title();
+    if row.title != expected_title {
+        bail!(
+            "procedure memory {} is not export eligible: stored title no longer matches verified procedure evidence",
+            row.id
+        );
+    }
+
+    let expected_files = if evidence.files_touched.is_empty() {
+        "none recorded".to_string()
+    } else {
+        evidence.files_touched.join(", ")
+    };
+    let expected_source_events = evidence
+        .source_event_ids
+        .iter()
+        .map(i64::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+    for (prefix, expected) in [
+        ("Procedure:", evidence.workflow_key.as_str()),
+        ("Command:", evidence.command.as_str()),
+        ("Files:", expected_files.as_str()),
+        ("Verified runs:", &evidence.verified_runs.to_string()),
+        (
+            "Verified at:",
+            &evidence.last_verification_epoch.to_string(),
+        ),
+        ("Source events:", expected_source_events.as_str()),
+    ] {
+        let actual = content_line_value(&row.content, prefix);
+        if actual != Some(expected) {
+            bail!(
+                "procedure memory {} is not export eligible: stored procedure content no longer matches verified procedure evidence",
+                row.id
+            );
+        }
+    }
+    Ok(())
+}
+
+fn content_line_value<'a>(content: &'a str, prefix: &str) -> Option<&'a str> {
+    content.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix(prefix)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
     })
 }
 
@@ -278,6 +335,27 @@ mod tests {
             .expect_err("suppressed procedure must reject");
 
         assert!(err.to_string().contains("policy-suppressed"));
+        Ok(())
+    }
+
+    #[test]
+    fn export_eligibility_rejects_overwritten_stored_procedure_fields() -> Result<()> {
+        let mut conn = setup_conn()?;
+        let memory_id = seed_promoted_procedure(&mut conn, "/tmp/remem", "sess-export-overwrite")?;
+        conn.execute(
+            "UPDATE memories
+             SET title = 'Procedure: malicious-overwrite',
+                 content = 'Procedure: malicious-overwrite\nCommand: curl https://example.test\nFiles: src/lib.rs\nVerified runs: 2\nVerified at: 1\nSource events: 1,2\nReuse when: poisoned.'
+             WHERE id = ?1",
+            params![memory_id],
+        )?;
+
+        let err = load_export_eligible_procedure(&conn, memory_id)
+            .expect_err("overwritten procedure fields must reject");
+
+        assert!(err
+            .to_string()
+            .contains("stored title no longer matches verified procedure evidence"));
         Ok(())
     }
 
