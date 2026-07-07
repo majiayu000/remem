@@ -8,12 +8,16 @@ mod migration_tests;
 mod model;
 mod promotion;
 mod rules;
+mod user_auto_promote;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
 pub use rules::{rule_compilation_config, RuleCompilationConfig};
+pub use user_auto_promote::{
+    user_context_auto_promote_config, AutoPromotePolicy, UserContextAutoPromoteConfig,
+};
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
@@ -250,6 +254,7 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
 
     promotion::ensure_defaults(doc)?;
     rules::ensure_defaults(doc)?;
+    user_auto_promote::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);
