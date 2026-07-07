@@ -92,12 +92,20 @@ fn refresh_summary_excludes_synthetic_rollup_activity_refs() -> Result<()> {
         "INSERT INTO session_summaries
          (id, memory_session_id, project, request, created_at_epoch,
           source_project, target_project, owner_scope, owner_key, session_row_id,
-          covered_from_event_id, covered_to_event_id)
+         covered_from_event_id, covered_to_event_id)
          VALUES
          (31, 'rollup-synthetic', '/repo', 'Captured event range 1..3', 11,
           '/repo', '/repo', 'repo', '/repo', 1, 1, 3),
          (32, 'rollup-semantic', '/repo', 'Retire legacy Summary writer', 12,
-          '/repo', '/repo', 'repo', '/repo', 2, 4, 6)",
+          '/repo', '/repo', 'repo', '/repo', 2, 4, 6),
+         (33, 'rollup-structured-fallback', '/repo', 'Captured event range 7..9', 13,
+          '/repo', '/repo', 'repo', '/repo', 3, 7, 9)",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE session_summaries
+         SET decisions = 'Rollup structured decision'
+         WHERE id = 33",
         [],
     )?;
 
@@ -108,9 +116,11 @@ fn refresh_summary_excludes_synthetic_rollup_activity_refs() -> Result<()> {
         .map(|activity| activity.label.as_str())
         .collect();
 
+    assert!(labels.contains(&"Rollup structured decision"));
     assert!(labels.contains(&"Retire legacy Summary writer"));
     assert!(labels.contains(&"Reviewed user context design"));
     assert!(!labels.contains(&"Captured event range 1..3"));
+    assert!(!labels.contains(&"Captured event range 7..9"));
     Ok(())
 }
 

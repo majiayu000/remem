@@ -40,12 +40,13 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
         .filter(|summary| !summary.is_empty())
         .ok_or_else(|| anyhow!("session_rollup response missing non-empty <summary>"))?;
 
+    let structured_fields = parse_structured_fields(text)?;
     let segments_xml = extract_tag(text, "segments")
         .ok_or_else(|| anyhow!("session_rollup response missing <segments>"))?;
     if segments_xml.trim().is_empty() {
         return Ok(RollupOutput {
             summary_text,
-            structured_fields: parse_structured_fields(text),
+            structured_fields,
             segments: Vec::new(),
         });
     }
@@ -63,7 +64,7 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
     }
     Ok(RollupOutput {
         summary_text,
-        structured_fields: parse_structured_fields(text),
+        structured_fields,
         segments,
     })
 }
@@ -92,23 +93,23 @@ fn extract_top_level_summary(text: &str) -> Option<String> {
     extract_tag(&text[..segments_start], "summary")
 }
 
-fn parse_structured_fields(text: &str) -> RollupStructuredFields {
-    let Some(body) = extract_tag(text, "structured_fields") else {
-        return RollupStructuredFields::default();
-    };
-    RollupStructuredFields {
-        request: optional_structured_tag(&body, "request"),
-        decisions: optional_structured_tag(&body, "decisions"),
-        learned: optional_structured_tag(&body, "learned"),
-        next_steps: optional_structured_tag(&body, "next_steps"),
-        preferences: optional_structured_tag(&body, "preferences"),
-    }
+fn parse_structured_fields(text: &str) -> Result<RollupStructuredFields> {
+    let body = extract_tag(text, "structured_fields")
+        .ok_or_else(|| anyhow!("session_rollup response missing <structured_fields>"))?;
+    Ok(RollupStructuredFields {
+        request: optional_structured_tag(&body, "request")?,
+        decisions: optional_structured_tag(&body, "decisions")?,
+        learned: optional_structured_tag(&body, "learned")?,
+        next_steps: optional_structured_tag(&body, "next_steps")?,
+        preferences: optional_structured_tag(&body, "preferences")?,
+    })
 }
 
-fn optional_structured_tag(body: &str, tag: &str) -> Option<String> {
-    extract_tag(body, tag)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+fn optional_structured_tag(body: &str, tag: &str) -> Result<Option<String>> {
+    let raw = extract_tag(body, tag)
+        .ok_or_else(|| anyhow!("session_rollup response missing <structured_fields><{tag}>"))?;
+    let value = raw.trim().to_string();
+    Ok((!value.is_empty()).then_some(value))
 }
 
 fn parse_segment(
@@ -304,6 +305,13 @@ mod tests {
     fn parses_segments_with_overlapping_event_ranges() -> Result<()> {
         let parsed = parse_rollup_response(
             r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
             <segments>
             <segment topic_key="anti-bot-research" status="resolved">
               <title>Anti-bot research</title>
@@ -336,6 +344,13 @@ mod tests {
     fn rejects_segment_with_evidence_event_absent_from_loaded_events() {
         let err = parse_rollup_response(
             r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
             <segments>
             <segment topic_key="interleaved-session" status="open">
               <title>Interleaved session</title>
@@ -356,19 +371,46 @@ mod tests {
 
     #[test]
     fn missing_segments_tag_fails_entire_rollup_parse() {
-        let err = parse_rollup_response("<summary>done</summary>", &range())
-            .expect_err("missing segments should fail");
+        let err = parse_rollup_response(
+            r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>"#,
+            &range(),
+        )
+        .expect_err("missing segments should fail");
         assert!(err.to_string().contains("missing <segments>"));
     }
 
     #[test]
     fn explicit_empty_segments_is_accepted() -> Result<()> {
-        let parsed =
-            parse_rollup_response("<summary>done</summary><segments></segments>", &range())?;
+        let parsed = parse_rollup_response(
+            r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
+            <segments></segments>"#,
+            &range(),
+        )?;
 
         assert_eq!(parsed.summary_text, "done");
         assert!(parsed.segments.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn missing_structured_fields_tag_fails_entire_rollup_parse() {
+        let err = parse_rollup_response("<summary>done</summary><segments></segments>", &range())
+            .expect_err("missing structured fields should fail");
+        assert!(err.to_string().contains("missing <structured_fields>"));
     }
 
     #[test]

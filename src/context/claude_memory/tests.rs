@@ -90,13 +90,16 @@ fn native_memory_sessions_exclude_synthetic_rollup_titles() -> anyhow::Result<()
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, decisions,
           created_at_epoch, session_row_id, covered_from_event_id,
-          covered_to_event_id)
+         covered_to_event_id)
          VALUES
          ('rollup-synthetic', '/repo', 'Captured event range 1..3',
-          'synthetic range fallback', 'synthetic decision', 10, 1, 1, 3),
+          'synthetic range fallback', '', 10, 1, 1, 3),
          ('rollup-semantic', '/repo', 'Retire legacy Summary writer',
           'semantic rollup summary', 'SessionRollup owns structured fields',
-          11, 2, 4, 6)",
+          11, 2, 4, 6),
+         ('rollup-structured-fallback', '/repo', 'Captured event range 7..9',
+          'structured fallback summary', 'Fallback request keeps decisions',
+          12, 3, 7, 9)",
         [],
     )?;
 
@@ -106,7 +109,9 @@ fn native_memory_sessions_exclude_synthetic_rollup_titles() -> anyhow::Result<()
 
     assert!(content.contains("Retire legacy Summary writer"));
     assert!(content.contains("SessionRollup owns structured fields"));
+    assert!(content.contains("Fallback request keeps decisions"));
     assert!(!content.contains("Captured event range 1..3"));
+    assert!(!content.contains("Captured event range 7..9"));
     assert!(!content.contains("synthetic range fallback"));
     Ok(())
 }

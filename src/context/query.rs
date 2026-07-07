@@ -519,6 +519,7 @@ pub(super) fn query_recent_summaries(
     let mut selected = Vec::new();
     let mut low_signal_fallback = Vec::new();
     let mut seen_clusters = HashSet::new();
+    let mut seen_session_keys = HashSet::new();
     let mut offset = 0usize;
 
     while selected.len() < limit && offset < scan_limit {
@@ -528,22 +529,31 @@ pub(super) fn query_recent_summaries(
             break;
         }
 
-        for summary in batch {
+        for row in batch {
+            let summary = row.summary;
             if is_session_summary_self_diagnostic(&summary) {
                 continue;
             }
 
             let cluster_key = summary_cluster_key(&summary);
-            if seen_clusters.contains(&cluster_key) {
+            if seen_clusters.contains(&cluster_key)
+                || row
+                    .session_key
+                    .as_ref()
+                    .is_some_and(|session_key| seen_session_keys.contains(session_key))
+            {
                 continue;
             }
 
             if is_stale_design_prototype_summary(&summary, now_epoch) {
-                low_signal_fallback.push((cluster_key, summary));
+                low_signal_fallback.push((cluster_key, row.session_key, summary));
                 continue;
             }
 
             seen_clusters.insert(cluster_key);
+            if let Some(session_key) = row.session_key {
+                seen_session_keys.insert(session_key);
+            }
             selected.push(summary);
             if selected.len() >= limit {
                 break;
@@ -554,8 +564,14 @@ pub(super) fn query_recent_summaries(
     }
 
     if selected.is_empty() {
-        for (cluster_key, summary) in low_signal_fallback {
-            if seen_clusters.insert(cluster_key) {
+        for (cluster_key, session_key, summary) in low_signal_fallback {
+            let seen_session = session_key
+                .as_ref()
+                .is_some_and(|key| seen_session_keys.contains(key));
+            if !seen_session && seen_clusters.insert(cluster_key) {
+                if let Some(session_key) = session_key {
+                    seen_session_keys.insert(session_key);
+                }
                 selected.push(summary);
             }
             if selected.len() >= limit {
@@ -567,29 +583,57 @@ pub(super) fn query_recent_summaries(
     Ok(selected)
 }
 
+struct SessionSummaryQueryRow {
+    summary: SessionSummaryBrief,
+    session_key: Option<String>,
+}
+
 fn query_summary_batch(
     conn: &Connection,
     project: &str,
     limit: usize,
     offset: usize,
-) -> Result<Vec<SessionSummaryBrief>> {
+) -> Result<Vec<SessionSummaryQueryRow>> {
     let mut stmt = conn.prepare(
-        "SELECT request, completed, created_at_epoch \
-         FROM session_summaries \
-         WHERE request IS NOT NULL AND request != '' \
-           AND (session_row_id IS NULL OR request NOT LIKE 'Captured event range %..%') \
-           AND ((owner_scope = 'repo' AND owner_key = ?1) \
-                OR (owner_scope = 'repo' AND target_project = ?1) \
-                OR (owner_scope IS NULL AND project = ?1)) \
-         ORDER BY created_at_epoch DESC, request ASC, completed ASC LIMIT ?2 OFFSET ?3",
+        "SELECT \
+             CASE \
+               WHEN ss.request LIKE 'Captured event range %..%' THEN \
+                 COALESCE(NULLIF(ss.decisions, ''), NULLIF(ss.learned, ''), \
+                          NULLIF(ss.next_steps, ''), NULLIF(ss.preferences, ''), \
+                          NULLIF(ss.completed, ''), ss.request) \
+               ELSE ss.request \
+             END AS display_request, \
+             ss.completed, \
+             ss.created_at_epoch, \
+             CASE \
+               WHEN ss.session_row_id IS NOT NULL AND s.session_id IS NOT NULL THEN \
+                 'mem-' || substr(s.session_id, 1, 8) \
+               ELSE ss.memory_session_id \
+             END AS session_key \
+         FROM session_summaries ss \
+         LEFT JOIN sessions s ON s.id = ss.session_row_id \
+         WHERE ss.request IS NOT NULL AND ss.request != '' \
+           AND (ss.session_row_id IS NULL \
+                OR ss.request NOT LIKE 'Captured event range %..%' \
+                OR COALESCE(ss.decisions, '') != '' \
+                OR COALESCE(ss.learned, '') != '' \
+                OR COALESCE(ss.next_steps, '') != '' \
+                OR COALESCE(ss.preferences, '') != '') \
+           AND ((ss.owner_scope = 'repo' AND ss.owner_key = ?1) \
+                OR (ss.owner_scope = 'repo' AND ss.target_project = ?1) \
+                OR (ss.owner_scope IS NULL AND ss.project = ?1)) \
+         ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC LIMIT ?2 OFFSET ?3",
     )?;
     let rows = stmt.query_map(
         rusqlite::params![project, limit as i64, offset as i64],
         |row| {
-            Ok(SessionSummaryBrief {
-                request: row.get(0)?,
-                completed: row.get(1)?,
-                created_at_epoch: row.get(2)?,
+            Ok(SessionSummaryQueryRow {
+                summary: SessionSummaryBrief {
+                    request: row.get(0)?,
+                    completed: row.get(1)?,
+                    created_at_epoch: row.get(2)?,
+                },
+                session_key: row.get(3)?,
             })
         },
     )?;

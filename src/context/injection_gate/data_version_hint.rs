@@ -443,7 +443,12 @@ fn push_session_signal(
         "SELECT id, created_at_epoch, request, completed
          FROM session_summaries
          WHERE request IS NOT NULL AND request != ''
-           AND (session_row_id IS NULL OR request NOT LIKE 'Captured event range %..%')
+           AND (session_row_id IS NULL
+                OR request NOT LIKE 'Captured event range %..%'
+                OR COALESCE(decisions, '') != ''
+                OR COALESCE(learned, '') != ''
+                OR COALESCE(next_steps, '') != ''
+                OR COALESCE(preferences, '') != '')
            AND ((owner_scope = 'repo' AND owner_key = ?1)
                 OR (owner_scope = 'repo' AND target_project = ?1)
                 OR (owner_scope IS NULL AND project = ?1))

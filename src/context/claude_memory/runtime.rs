@@ -145,12 +145,25 @@ pub(super) fn load_recent_sessions(
     project: &str,
 ) -> Result<Vec<SessionRow>> {
     let mut stmt = conn.prepare(
-        "SELECT request, completed, decisions, created_at_epoch \
+        "SELECT \
+             CASE \
+               WHEN request LIKE 'Captured event range %..%' THEN \
+                 COALESCE(NULLIF(decisions, ''), NULLIF(learned, ''), \
+                          NULLIF(next_steps, ''), NULLIF(preferences, ''), \
+                          NULLIF(completed, ''), request) \
+               ELSE request \
+             END AS display_request, \
+             completed, decisions, created_at_epoch \
          FROM session_summaries \
          WHERE project = ?1 \
            AND request IS NOT NULL \
            AND request != '' \
-           AND request NOT LIKE 'Captured event range %..%' \
+           AND (session_row_id IS NULL \
+                OR request NOT LIKE 'Captured event range %..%' \
+                OR COALESCE(decisions, '') != '' \
+                OR COALESCE(learned, '') != '' \
+                OR COALESCE(next_steps, '') != '' \
+                OR COALESCE(preferences, '') != '') \
          ORDER BY created_at_epoch DESC LIMIT ?2",
     )?;
 

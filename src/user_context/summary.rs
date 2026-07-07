@@ -490,9 +490,21 @@ fn load_activity_refs(conn: &Connection, project: &str) -> Result<Vec<ActivityRe
         return Ok(refs);
     }
     let mut stmt = conn.prepare(
-        "SELECT id, COALESCE(request, completed, learned, decisions, next_steps, preferences, memory_session_id)
+        "SELECT id,
+                CASE
+                  WHEN request LIKE 'Captured event range %..%' THEN
+                    COALESCE(NULLIF(decisions, ''), NULLIF(learned, ''),
+                             NULLIF(next_steps, ''), NULLIF(preferences, ''),
+                             NULLIF(completed, ''), memory_session_id)
+                  ELSE COALESCE(request, completed, learned, decisions, next_steps, preferences, memory_session_id)
+                END
          FROM session_summaries
-         WHERE (request IS NULL OR request NOT LIKE 'Captured event range %..%')
+         WHERE (request IS NULL
+                OR request NOT LIKE 'Captured event range %..%'
+                OR COALESCE(decisions, '') != ''
+                OR COALESCE(learned, '') != ''
+                OR COALESCE(next_steps, '') != ''
+                OR COALESCE(preferences, '') != '')
            AND ((owner_scope = 'repo' AND owner_key = ?1)
              OR (owner_scope = 'repo' AND target_project = ?1)
              OR (owner_scope IS NULL AND project = ?1))

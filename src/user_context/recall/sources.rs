@@ -228,12 +228,25 @@ pub(super) fn collect_recent_sessions(
     state: &mut RecallState,
 ) -> Result<()> {
     let mut stmt = conn.prepare(
-        "SELECT id, COALESCE(request, ''), COALESCE(completed, ''),
+        "SELECT id,
+                CASE
+                  WHEN request LIKE 'Captured event range %..%' THEN
+                    COALESCE(NULLIF(decisions, ''), NULLIF(learned, ''),
+                             NULLIF(next_steps, ''), NULLIF(preferences, ''),
+                             NULLIF(completed, ''), '')
+                  ELSE COALESCE(request, '')
+                END AS display_request,
+                COALESCE(completed, ''),
                 COALESCE(decisions, ''), COALESCE(learned, ''),
                 COALESCE(next_steps, ''), COALESCE(preferences, ''),
                 created_at_epoch
          FROM session_summaries
-         WHERE (session_row_id IS NULL OR request NOT LIKE 'Captured event range %..%')
+         WHERE (session_row_id IS NULL
+                OR request NOT LIKE 'Captured event range %..%'
+                OR COALESCE(decisions, '') != ''
+                OR COALESCE(learned, '') != ''
+                OR COALESCE(next_steps, '') != ''
+                OR COALESCE(preferences, '') != '')
            AND ((owner_scope = 'repo' AND owner_key = ?1)
              OR (owner_scope = 'repo' AND target_project = ?1)
              OR (owner_scope IS NULL AND project = ?1))

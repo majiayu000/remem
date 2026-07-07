@@ -46,7 +46,7 @@ fn summary_count(conn: &Connection) -> i64 {
 }
 
 fn xml_response(summary: &str, segments: &str) -> String {
-    format!("<summary>{summary}</summary><segments>{segments}</segments>")
+    xml_response_with_structured_fields(summary, "", "", "", "", "", segments)
 }
 
 fn xml_response_with_structured_fields(
@@ -680,7 +680,15 @@ async fn session_rollup_missing_segments_tag_fails_without_writing() -> Result<(
     let task = claim_rollup_task(&mut conn)?;
 
     let err = process_with_summarizer(&mut conn, &task, |_prompt| async {
-        Ok("<summary>summary only</summary>".to_string())
+        Ok(r#"<summary>summary only</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>"#
+            .to_string())
     })
     .await
     .expect_err("missing segments should fail");
