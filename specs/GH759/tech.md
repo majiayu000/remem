@@ -1,7 +1,7 @@
 # GH759 Tech Spec: 配置驱动的 auto-promote 治理策略
 
 Issue: https://github.com/majiayu000/remem/issues/759
-Product spec: `docs/specs/GH759/PRODUCT.md`
+Product spec: `specs/GH759/product.md`
 Status: Draft, needs human approval before implementation
 Base: origin/main（写作时 1de527f）
 

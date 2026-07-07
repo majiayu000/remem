@@ -5,7 +5,7 @@ Route: write_spec
 Locale: zh-CN
 Status: Draft, needs human approval before implementation
 Related: #674, #579, #760
-Evidence: `docs/artifacts/multi-ai-research-personal-memory-grok-gemini-20260707-144830.md`
+Evidence: `docs/research/multi-ai-research-personal-memory-grok-gemini-20260707-144830.md`
 
 ## 1. 背景
 
