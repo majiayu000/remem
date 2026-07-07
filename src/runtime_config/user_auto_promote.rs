@@ -6,6 +6,13 @@ const STRICT_AUTO_PROMOTE_MIN_CONFIDENCE: f64 = 0.9;
 const DEFAULT_AUTO_PROMOTE_SOURCE_KIND: &str = "explicit_user_statement";
 const DEFAULT_AUTO_PROMOTE_REQUIRE_TEXT_SUPPORT: bool = true;
 const DEFAULT_AUTO_PROMOTE_STRICT: bool = false;
+const SUPPORTED_AUTO_PROMOTE_SOURCE_KINDS: &[&str] = &[
+    "explicit_user_statement",
+    "inferred_from_behavior",
+    "session_summary",
+    "third_party_statement",
+    "speculative_inference",
+];
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserContextAutoPromoteConfig {
@@ -85,6 +92,21 @@ fn user_context_auto_promote_config_from_doc(
         return Ok(default_config());
     };
 
+    let strict = match table.get("strict") {
+        Some(item) => item
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("user_context.auto_promote.strict must be a boolean"))?,
+        None => DEFAULT_AUTO_PROMOTE_STRICT,
+    };
+    if strict {
+        return Ok(UserContextAutoPromoteConfig {
+            min_confidence: STRICT_AUTO_PROMOTE_MIN_CONFIDENCE,
+            allowed_source_kinds: default_source_kinds(),
+            require_text_support: true,
+            strict,
+        });
+    }
+
     let min_confidence = match table.get("min_confidence") {
         Some(item) => {
             parse_auto_promote_confidence(item, "user_context.auto_promote.min_confidence")?
@@ -100,12 +122,6 @@ fn user_context_auto_promote_config_from_doc(
             anyhow::anyhow!("user_context.auto_promote.require_text_support must be a boolean")
         })?,
         None => DEFAULT_AUTO_PROMOTE_REQUIRE_TEXT_SUPPORT,
-    };
-    let strict = match table.get("strict") {
-        Some(item) => item
-            .as_bool()
-            .ok_or_else(|| anyhow::anyhow!("user_context.auto_promote.strict must be a boolean"))?,
-        None => DEFAULT_AUTO_PROMOTE_STRICT,
     };
 
     Ok(UserContextAutoPromoteConfig {
@@ -152,15 +168,23 @@ fn parse_source_kinds(item: &Item) -> Result<Vec<String>> {
                 index + 1
             );
         };
-        let trimmed = raw.trim();
+        let trimmed = raw.trim().to_ascii_lowercase();
         if trimmed.is_empty() {
             bail!(
                 "user_context.auto_promote.allowed_source_kinds[{}] must not be empty",
                 index + 1
             );
         }
-        if !values.iter().any(|existing| existing == trimmed) {
-            values.push(trimmed.to_string());
+        if !SUPPORTED_AUTO_PROMOTE_SOURCE_KINDS.contains(&trimmed.as_str()) {
+            bail!(
+                "user_context.auto_promote.allowed_source_kinds[{}] has unsupported source kind `{}`; expected one of: {}",
+                index + 1,
+                trimmed,
+                SUPPORTED_AUTO_PROMOTE_SOURCE_KINDS.join(", ")
+            );
+        }
+        if !values.iter().any(|existing| existing == &trimmed) {
+            values.push(trimmed);
         }
     }
     if values.is_empty() {
@@ -285,9 +309,31 @@ mod tests {
     fn strict_auto_promote_config_restores_old_policy() -> Result<()> {
         let path = user_context_config_path("user-context-auto-promote-strict");
         with_user_context_config_path(&path, || -> Result<()> {
+            std::fs::write(&path, "[user_context.auto_promote]\nstrict = true\n")?;
+            let config = user_context_auto_promote_config()?;
+            assert_eq!(
+                config,
+                UserContextAutoPromoteConfig {
+                    min_confidence: 0.9,
+                    allowed_source_kinds: vec!["explicit_user_statement".to_string()],
+                    require_text_support: true,
+                    strict: true,
+                }
+            );
+            assert_eq!(config.effective_policy(), AutoPromotePolicy::strict());
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
+    fn strict_auto_promote_config_ignores_other_policy_fields() -> Result<()> {
+        let path = user_context_config_path("user-context-auto-promote-strict-ignore");
+        with_user_context_config_path(&path, || -> Result<()> {
             std::fs::write(
                 &path,
-                "[user_context.auto_promote]\nmin_confidence = 0.5\nallowed_source_kinds = [\"inferred_from_behavior\"]\nrequire_text_support = false\nstrict = true\n",
+                "[user_context.auto_promote]\nmin_confidence = 2.0\nallowed_source_kinds = [\"typo\"]\nrequire_text_support = \"false\"\nstrict = true\n",
             )?;
             let config = user_context_auto_promote_config()?;
             assert_eq!(config.effective_policy(), AutoPromotePolicy::strict());
@@ -327,6 +373,7 @@ mod tests {
             ("empty-array", "[]"),
             ("empty-string", "[\"\"]"),
             ("non-string", "[1]"),
+            ("unknown", "[\"typo\"]"),
         ] {
             let path =
                 user_context_config_path(&format!("user-context-auto-promote-source-{label}"));
