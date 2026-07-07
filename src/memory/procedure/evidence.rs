@@ -17,6 +17,27 @@ impl VerifiedProcedureEvidence {
         format!("Procedure: {}", self.workflow_key)
     }
 
+    pub(super) fn canonical_content(&self) -> String {
+        let files_line = if self.files_touched.is_empty() {
+            "Files: none recorded".to_string()
+        } else {
+            format!("Files: {}", self.files_touched.join(", "))
+        };
+        format!(
+            "Procedure: {}\nCommand: {}\n{}\nVerified runs: {}\nVerified at: {}\nSource events: {}\nReuse when: the same project and branch need this verified workflow.",
+            self.workflow_key,
+            self.command,
+            files_line,
+            self.verified_runs,
+            self.last_verification_epoch,
+            self.source_event_ids
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+
     pub(super) fn reuse_condition(&self) -> String {
         match self.branch.as_deref() {
             Some(branch) => format!(
