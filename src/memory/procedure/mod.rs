@@ -3,6 +3,8 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
+mod evidence;
+mod export;
 mod list;
 mod trace_store;
 

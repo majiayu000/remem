@@ -150,7 +150,11 @@ re-imported.
 Phase 1: `procedures list` + fixture (`cargo test procedures`). Shipped by
 GH680 Phase 1 with read-only listing and maturity metadata; export remains
 future work.
-Phase 2: export command, templates, snapshot tests, write-path guard negative
+Phase 2a: export eligibility core. The export source loader reuses the same
+fresh procedure verification evidence as `procedures list` and rejects
+non-procedure, inactive, expired, suppressed, superseded, or insufficiently
+verified rows before any render/write path can be added.
+Phase 2b: export command, templates, snapshot tests, write-path guard negative
 test.
 Phase 3: `procedure_exports` migration + doctor probe; docs update replacing
 the procedural-memory.md non-goal paragraph with this contract.

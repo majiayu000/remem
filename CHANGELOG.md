@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.179` for GH-680 procedure export eligibility:
+  the export source loader now reuses fresh procedure verification evidence
+  and rejects non-procedure, inactive, expired, suppressed, superseded, or
+  insufficiently verified procedure memories before render/write paths land.
 - Staged source version `0.5.178` for GH-684 Summary side-effect
   preservation: regression coverage now locks Compress/Dream enqueueing, raw
   archive ingest, memory citations, failure lessons, summary-derived

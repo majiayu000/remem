@@ -14,8 +14,8 @@ GH-680
 
 ## Implementation Tasks
 
-- [ ] `SP680-T1` Owner: agent; Dependencies: spec approval; Done when: `remem procedures list` shows active procedure memories with maturity and freshness signals; Verify: CLI and JSON tests.
-- [ ] `SP680-T2` Owner: agent; Dependencies: `SP680-T1`; Done when: export eligibility reuses procedure promotion/freshness evidence and rejects ineligible rows; Verify: eligibility tests.
+- [x] `SP680-T1` Owner: agent; Dependencies: spec approval; Done when: `remem procedures list` shows active procedure memories with maturity and freshness signals; Verify: CLI and JSON tests. Shipped by PR #744.
+- [x] `SP680-T2` Owner: agent; Dependencies: `SP680-T1`; Done when: export eligibility reuses procedure promotion/freshness evidence and rejects ineligible rows; Verify: eligibility tests. Shipped by this partial implementation slice.
 - [ ] `SP680-T3` Owner: agent; Dependencies: `SP680-T2`; Done when: all rendered fields are scanned before file writes; Verify: secret and instruction-pattern rejection tests.
 - [ ] `SP680-T4` Owner: agent; Dependencies: `SP680-T2` `SP680-T3`; Done when: templates render `claude-skill`, `codex-prompt`, and `runbook-md` drafts with provenance; Verify: snapshot tests.
 - [ ] `SP680-T5` Owner: agent; Dependencies: `SP680-T4`; Done when: writer refuses high-context paths and user-edited existing files, and allows only explicit generated-overwrite cases; Verify: path and overwrite tests.

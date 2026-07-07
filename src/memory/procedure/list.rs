@@ -1,6 +1,8 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::{types::Value, Connection};
 use serde::Serialize;
+
+use super::evidence::{load_verified_procedure_evidence, parse_evidence_ids};
 
 const DEFAULT_LIMIT: i64 = 50;
 const MAX_LIMIT: i64 = 500;
@@ -92,167 +94,34 @@ impl ProcedureRow {
     fn into_list_item(self, conn: &Connection) -> Result<Option<ProcedureListItem>> {
         let evidence_ids = parse_evidence_ids(self.evidence_event_ids.as_deref())?;
         let policy = crate::memory::procedure::ProcedurePromotionPolicy::default();
-        let Some(verification_summary) =
-            verification_summary(conn, &evidence_ids, &self.project, &policy)?
+        let Some(evidence) =
+            load_verified_procedure_evidence(conn, &evidence_ids, &self.project, &policy)?
         else {
             return Ok(None);
         };
-        if verification_summary.verified_runs < policy.min_verified_runs {
+        if evidence.verified_runs < policy.min_verified_runs {
             return Ok(None);
         }
-        let verified_runs = verification_summary.verified_runs;
-        let verification_epoch = Some(verification_summary.last_verification_epoch);
-        let reuse_condition = verified_reuse_condition(&verification_summary);
-        let title = format!("Procedure: {}", verification_summary.workflow_key);
+        let verified_runs = evidence.verified_runs;
+        let verification_epoch = Some(evidence.last_verification_epoch);
+        let reuse_condition = evidence.reuse_condition();
+        let title = evidence.title();
+        let files_touched_count = evidence.files_touched.len();
+        let confidence = evidence.confidence();
         Ok(Some(ProcedureListItem {
             id: self.id,
             title,
             project: self.project,
-            branch: verification_summary.branch,
+            branch: evidence.branch,
             topic_key: self.topic_key,
-            command: Some(verification_summary.command),
+            command: Some(evidence.command),
             reuse_condition: Some(reuse_condition),
-            files_touched_count: verification_summary.files_touched.len(),
-            files_touched: verification_summary.files_touched,
+            files_touched_count,
+            files_touched: evidence.files_touched,
             verified_runs,
             last_verification_epoch: verification_epoch,
-            confidence: Some(super::confidence_for_verified_runs(verified_runs)),
+            confidence: Some(confidence),
         }))
-    }
-}
-
-fn parse_evidence_ids(raw: Option<&str>) -> Result<Vec<i64>> {
-    let Some(raw) = raw else {
-        return Ok(Vec::new());
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    serde_json::from_str(trimmed).with_context(|| "invalid procedure evidence_event_ids JSON")
-}
-
-struct VerificationSummary {
-    verified_runs: usize,
-    last_verification_epoch: i64,
-    branch: Option<String>,
-    workflow_key: String,
-    command: String,
-    files_touched: Vec<String>,
-}
-
-fn verification_summary(
-    conn: &Connection,
-    evidence_ids: &[i64],
-    memory_project: &str,
-    policy: &crate::memory::procedure::ProcedurePromotionPolicy,
-) -> Result<Option<VerificationSummary>> {
-    if evidence_ids.is_empty() {
-        return Ok(None);
-    }
-    let earliest = chrono::Utc::now()
-        .timestamp()
-        .saturating_sub(policy.max_verification_age_secs);
-    let placeholders = (1..=evidence_ids.len())
-        .map(|idx| format!("?{idx}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let sql = format!(
-        "SELECT p.project_path, v.branch, v.workflow_key, v.command, v.files_touched,
-                v.source_event_id, v.verified_at_epoch
-         FROM procedure_verifications v
-         JOIN projects p ON p.id = v.project_id
-         WHERE v.source_event_id IN ({placeholders})
-           AND v.verified_at_epoch >= ?
-         ORDER BY v.verified_at_epoch ASC, v.source_event_id ASC"
-    );
-    let mut params = evidence_ids
-        .iter()
-        .map(|id| Value::Integer(*id))
-        .collect::<Vec<_>>();
-    params.push(Value::Integer(earliest));
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt
-        .query_map(rusqlite::params_from_iter(params.iter()), |row| {
-            Ok(VerificationRow {
-                project: row.get(0)?,
-                branch: row.get(1)?,
-                workflow_key: row.get(2)?,
-                command: row.get(3)?,
-                files_touched: row.get(4)?,
-                source_event_id: row.get(5)?,
-                verified_at_epoch: row.get(6)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let Some(first) = rows.first() else {
-        return Ok(None);
-    };
-    if first.project != memory_project {
-        return Ok(None);
-    }
-    if rows.iter().any(|row| {
-        row.project != first.project
-            || row.branch != first.branch
-            || row.workflow_key != first.workflow_key
-            || row.command != first.command
-    }) {
-        return Ok(None);
-    }
-    let branch = first.branch.clone();
-    let workflow_key = first.workflow_key.clone();
-    let command = first.command.clone();
-    let mut source_ids = std::collections::BTreeSet::new();
-    let mut files_touched = std::collections::BTreeSet::new();
-    let mut last_verification_epoch = first.verified_at_epoch;
-    for row in rows {
-        source_ids.insert(row.source_event_id);
-        last_verification_epoch = last_verification_epoch.max(row.verified_at_epoch);
-        for file in parse_files(Some(&row.files_touched))? {
-            files_touched.insert(file);
-        }
-    }
-    Ok(Some(VerificationSummary {
-        verified_runs: source_ids.len(),
-        last_verification_epoch,
-        branch,
-        workflow_key,
-        command,
-        files_touched: files_touched.into_iter().collect(),
-    }))
-}
-
-struct VerificationRow {
-    project: String,
-    branch: Option<String>,
-    workflow_key: String,
-    command: String,
-    files_touched: String,
-    source_event_id: i64,
-    verified_at_epoch: i64,
-}
-
-fn parse_files(raw: Option<&str>) -> Result<Vec<String>> {
-    let Some(raw) = raw else {
-        return Ok(Vec::new());
-    };
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(Vec::new());
-    }
-    serde_json::from_str(trimmed).with_context(|| "invalid procedure files JSON")
-}
-
-fn verified_reuse_condition(summary: &VerificationSummary) -> String {
-    match summary.branch.as_deref() {
-        Some(branch) => format!(
-            "the same project and branch '{branch}' need verified workflow '{}'.",
-            summary.workflow_key
-        ),
-        None => format!(
-            "the same project needs verified workflow '{}'.",
-            summary.workflow_key
-        ),
     }
 }
 
