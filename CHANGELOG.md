@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.181` for GH-760 user preference backfill CLI:
+  `remem user backfill [--json] [--limit <n>]` now exposes a dry-run report
+  shape while `--apply` fails closed until the storage conversion slice lands.
 - Staged source version `0.5.180` for GH-680 procedure export templates:
   render-time field scanning now blocks secret-like or instruction-pattern
   procedure fields before draft generation, and pinned snapshots cover

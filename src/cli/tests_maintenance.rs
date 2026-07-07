@@ -211,6 +211,24 @@ fn cli_parses_user_remember_with_claim_metadata() {
 }
 
 #[test]
+fn cli_parses_user_backfill_command() {
+    let cli = Cli::parse_from([
+        "remem", "user", "backfill", "--apply", "--json", "--limit", "25",
+    ]);
+
+    match cli.command {
+        Commands::User {
+            action: UserAction::Backfill { apply, json, limit },
+        } => {
+            assert!(apply);
+            assert!(json);
+            assert_eq!(limit, Some(25));
+        }
+        _ => panic!("expected user backfill command"),
+    }
+}
+
+#[test]
 fn cli_parses_user_claim_governance_commands() {
     let list = Cli::parse_from([
         "remem",

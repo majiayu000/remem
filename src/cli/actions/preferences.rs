@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, ensure, Result};
 use serde::Serialize;
 
 use crate::{
@@ -80,6 +80,7 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
                 println!("User-context claim saved (id={}).", claim.id);
             }
         }
+        UserAction::Backfill { apply, json, limit } => run_user_backfill(apply, json, limit)?,
         UserAction::Claims { action } => {
             let conn = db::open_db()?;
             run_user_claims(&conn, action)?
@@ -118,6 +119,41 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
         })?,
     }
     Ok(())
+}
+
+fn run_user_backfill(apply: bool, json: bool, limit: Option<i64>) -> Result<()> {
+    if let Some(limit) = limit {
+        ensure!(limit > 0, "backfill limit must be positive");
+    }
+
+    if apply {
+        bail!(
+            "remem user backfill --apply requires the GH760 storage conversion slice; rerun without --apply for the dry-run report"
+        );
+    }
+
+    let report = UserBackfillReport::dry_run(limit);
+    if json {
+        print_json(&report)?;
+    } else {
+        print_backfill_report(&report);
+    }
+    Ok(())
+}
+
+fn print_backfill_report(report: &UserBackfillReport) {
+    let limit = report
+        .limit
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unlimited".to_string());
+    println!(
+        "User preference backfill dry-run: candidates={}, converted={}, skipped={}, limit={}",
+        report.candidates.len(),
+        report.converted.len(),
+        report.skipped.len(),
+        limit
+    );
+    println!("{}", report.message);
 }
 
 struct UserRecallCliRequest {
@@ -346,6 +382,46 @@ struct ClaimEditOutput {
     claim: claims::UserContextClaim,
 }
 
+#[derive(Serialize)]
+struct UserBackfillReport {
+    applied: bool,
+    limit: Option<i64>,
+    candidates: Vec<UserBackfillCandidate>,
+    converted: Vec<UserBackfillConverted>,
+    skipped: Vec<UserBackfillSkipped>,
+    message: &'static str,
+}
+
+impl UserBackfillReport {
+    fn dry_run(limit: Option<i64>) -> Self {
+        Self {
+            applied: false,
+            limit,
+            candidates: Vec::new(),
+            converted: Vec::new(),
+            skipped: Vec::new(),
+            message: "GH760 storage selection and conversion are intentionally deferred to the next implementation slice.",
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct UserBackfillCandidate {
+    memory_id: i64,
+}
+
+#[derive(Serialize)]
+struct UserBackfillConverted {
+    memory_id: i64,
+    claim_id: i64,
+}
+
+#[derive(Serialize)]
+struct UserBackfillSkipped {
+    memory_id: i64,
+    reason: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,6 +531,53 @@ mod tests {
             budget_chars: 1_000,
             json: true,
         })
+    }
+
+    #[test]
+    fn user_backfill_dry_run_does_not_open_db() -> Result<()> {
+        let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-dry-run");
+        assert!(!dir.db_path().exists());
+
+        run_user(UserAction::Backfill {
+            apply: false,
+            json: true,
+            limit: Some(5),
+        })?;
+
+        assert!(!dir.db_path().exists());
+
+        let report = serde_json::to_value(UserBackfillReport::dry_run(Some(5)))?;
+        assert_eq!(report["applied"], false);
+        assert_eq!(report["limit"], 5);
+        assert!(report["candidates"].is_array());
+        assert!(report["converted"].is_array());
+        assert!(report["skipped"].is_array());
+        Ok(())
+    }
+
+    #[test]
+    fn user_backfill_apply_fails_closed_until_storage_slice_lands() {
+        let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-apply");
+        assert!(!dir.db_path().exists());
+        let err = run_user(UserAction::Backfill {
+            apply: true,
+            json: false,
+            limit: None,
+        })
+        .expect_err("apply should fail before GH760 storage conversion lands");
+        assert!(err.to_string().contains("storage conversion slice"));
+        assert!(!dir.db_path().exists());
+    }
+
+    #[test]
+    fn user_backfill_rejects_non_positive_limit() {
+        let err = run_user(UserAction::Backfill {
+            apply: false,
+            json: false,
+            limit: Some(0),
+        })
+        .expect_err("zero limit should be rejected");
+        assert!(err.to_string().contains("limit must be positive"));
     }
 
     #[test]
