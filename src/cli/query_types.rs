@@ -235,6 +235,18 @@ pub(in crate::cli) enum UserAction {
         /// Claim text to remember.
         text: String,
     },
+    /// Preview or apply user-scope preference memory backfill into user-context claims.
+    Backfill {
+        /// Apply conversions instead of dry-run preview.
+        #[arg(long)]
+        apply: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+        /// Maximum source memories to inspect in this run. Defaults to unlimited.
+        #[arg(long)]
+        limit: Option<i64>,
+    },
     /// Inspect or govern explicit user-context claims.
     Claims {
         #[command(subcommand)]

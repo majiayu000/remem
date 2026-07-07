@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/remem/issues/760
 Product spec: `specs/GH760/product.md`
-Status: Draft, needs human approval before implementation
+Status: Approved for implementation (2026-07-08 user authorization)
 Base: origin/main（写作时 1de527f）
 
 ## 1. CLI 面
