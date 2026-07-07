@@ -120,6 +120,46 @@ fn recall_combines_user_claim_repo_memory_workstream_and_session() -> Result<()>
 }
 
 #[test]
+fn recall_includes_semantic_rollup_session_but_excludes_synthetic_range_title() -> Result<()> {
+    let conn = migrated_conn()?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, decisions, learned,
+          next_steps, preferences, created_at_epoch, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES
+         ('rollup-1', '/repo', 'Captured event range 1..3', 'synthetic rollup text',
+          '', '', '', '', 10, 1, 1, 3),
+         ('rollup-2', '/repo', 'rollup structured recall', 'semantic rollup text',
+          'SessionRollup owns structured fields.', 'reader migration works',
+          'keep regression coverage', 'preserve preferences', 11, 2, 4, 6),
+         ('rollup-3', '/repo', 'Captured event range 7..9', 'fallback title summary',
+          'SessionRollup fallback request still preserves structured decisions.',
+          'reader keeps synthetic request hidden', '', '', 12, 3, 7, 9)",
+        [],
+    )?;
+
+    let result = recall_user_context(&conn, &request("rollup structured fallback"))?;
+
+    assert!(!result.empty);
+    assert!(result.included.iter().any(|item| {
+        item.source_type == "session_summary"
+            && item.title.as_deref() == Some("rollup structured recall")
+            && item.text.contains("SessionRollup owns structured fields")
+            && item.text.contains("preserve preferences")
+    }));
+    assert!(result.included.iter().any(|item| {
+        item.source_type == "session_summary"
+            && item.title.as_deref()
+                == Some("SessionRollup fallback request still preserves structured decisions.")
+            && item.text.contains("reader keeps synthetic request hidden")
+    }));
+    assert!(!result.context.contains("Captured event range 1..3"));
+    assert!(!result.context.contains("Captured event range 7..9"));
+    Ok(())
+}
+
+#[test]
 fn recall_returns_user_only_claim_context() -> Result<()> {
     let conn = migrated_conn()?;
     let claim_id = claim(

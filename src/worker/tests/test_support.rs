@@ -41,6 +41,13 @@ fi
 if grep -q "REPLACE_WITH_TOPIC_KEY" "$stdin_path"; then
 cat <<'EOF' > "$output_path"
 <summary>Codex worker flush completed.</summary>
+<structured_fields>
+  <request>Codex worker flush</request>
+  <decisions>Queued Codex observation persisted.</decisions>
+  <learned></learned>
+  <next_steps></next_steps>
+  <preferences></preferences>
+</structured_fields>
 <segments></segments>
 EOF
 rm -f "$stdin_path"

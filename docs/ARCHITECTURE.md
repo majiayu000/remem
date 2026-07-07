@@ -160,13 +160,15 @@ Stop hook fires
        └─ >100 active observations → oldest 30 merged into 1-2 summaries
 ```
 
-The legacy Summary job remains the canonical source for SessionStart recent
-session context because it also drives summary-derived candidates, workstream
-updates, raw archive ingest, and native-memory sync. Capture-ledger
-`SessionRollup` rows are event-range artifacts keyed by `session_row_id` and
-coverage columns; they may coexist in `session_summaries`, but recent-session
-context queries exclude rows with `session_row_id IS NOT NULL` so the two
-pipelines cannot surface duplicate user-facing session summaries.
+During GH684 convergence, the legacy Summary job still owns Stop-hook side
+effects such as summary-derived candidates, workstream updates, raw archive
+ingest, cooldown, and native-memory sync. Capture-ledger `SessionRollup` rows
+now persist semantic request, decisions, learned, next_steps, and preferences
+fields into `session_summaries`, so current recent-session, context,
+user-context, and native-memory readers may consume those semantic rollup rows.
+Readers continue to hide synthetic `Captured event range ...` fallback titles
+while Summary remains dual-written. Retiring `JobType::Summary` waits for the
+remaining GH684 side-effect and upgrade slices.
 
 ### 4. Context Injection (SessionStart → context)
 

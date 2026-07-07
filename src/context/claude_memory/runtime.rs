@@ -140,11 +140,30 @@ fn truncate_to_byte_limit(content: &str, max_bytes: usize) -> String {
     content[..end].to_string()
 }
 
-fn load_recent_sessions(conn: &rusqlite::Connection, project: &str) -> Result<Vec<SessionRow>> {
+pub(super) fn load_recent_sessions(
+    conn: &rusqlite::Connection,
+    project: &str,
+) -> Result<Vec<SessionRow>> {
     let mut stmt = conn.prepare(
-        "SELECT request, completed, decisions, created_at_epoch \
+        "SELECT \
+             CASE \
+               WHEN request LIKE 'Captured event range %..%' THEN \
+                 COALESCE(NULLIF(decisions, ''), NULLIF(learned, ''), \
+                          NULLIF(next_steps, ''), NULLIF(preferences, ''), \
+                          NULLIF(completed, ''), request) \
+               ELSE request \
+             END AS display_request, \
+             completed, decisions, created_at_epoch \
          FROM session_summaries \
-         WHERE project = ?1 AND request IS NOT NULL AND request != '' \
+         WHERE project = ?1 \
+           AND request IS NOT NULL \
+           AND request != '' \
+           AND (session_row_id IS NULL \
+                OR request NOT LIKE 'Captured event range %..%' \
+                OR COALESCE(decisions, '') != '' \
+                OR COALESCE(learned, '') != '' \
+                OR COALESCE(next_steps, '') != '' \
+                OR COALESCE(preferences, '') != '') \
          ORDER BY created_at_epoch DESC LIMIT ?2",
     )?;
 

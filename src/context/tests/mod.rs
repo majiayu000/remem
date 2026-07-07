@@ -190,9 +190,16 @@ pub(super) fn insert_session_summary(
     created_at_epoch: i64,
 ) {
     conn.execute(
-        "INSERT INTO session_summaries (project, request, completed, created_at_epoch)
-         VALUES (?1, ?2, ?3, ?4)",
-        params![project, request, completed, created_at_epoch],
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, created_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![
+            format!("session-{created_at_epoch}"),
+            project,
+            request,
+            completed,
+            created_at_epoch
+        ],
     )
     .unwrap();
 }
@@ -200,9 +207,15 @@ pub(super) fn insert_session_summary(
 pub(super) fn create_session_summary_schema(conn: &Connection) {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS session_summaries (
+            id INTEGER PRIMARY KEY,
+            memory_session_id TEXT,
             project TEXT,
             request TEXT,
             completed TEXT,
+            decisions TEXT,
+            learned TEXT,
+            next_steps TEXT,
+            preferences TEXT,
             created_at_epoch INTEGER,
             source_project TEXT,
             target_project TEXT,
@@ -218,6 +231,10 @@ pub(super) fn create_session_summary_schema(conn: &Connection) {
             session_row_id INTEGER,
             covered_from_event_id INTEGER,
             covered_to_event_id INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS sessions (
+            id INTEGER PRIMARY KEY,
+            session_id TEXT
         );",
     )
     .unwrap();

@@ -81,3 +81,37 @@ fn native_memory_disable_env_accepts_explicit_truthy_values() {
         assert!(!env_value_enabled(value), "{value}");
     }
 }
+
+#[test]
+fn native_memory_sessions_exclude_synthetic_rollup_titles() -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, decisions,
+          created_at_epoch, session_row_id, covered_from_event_id,
+         covered_to_event_id)
+         VALUES
+         ('rollup-synthetic', '/repo', 'Captured event range 1..3',
+          'synthetic range fallback', '', 10, 1, 1, 3),
+         ('rollup-semantic', '/repo', 'Retire legacy Summary writer',
+          'semantic rollup summary', 'SessionRollup owns structured fields',
+          11, 2, 4, 6),
+         ('rollup-structured-fallback', '/repo', 'Captured event range 7..9',
+          'structured fallback summary', 'Fallback request keeps decisions',
+          12, 3, 7, 9)",
+        [],
+    )?;
+
+    let sessions = super::runtime::load_recent_sessions(&conn, "/repo")?;
+    let content =
+        super::render::render_memory_content(&sessions).expect("semantic session should render");
+
+    assert!(content.contains("Retire legacy Summary writer"));
+    assert!(content.contains("SessionRollup owns structured fields"));
+    assert!(content.contains("Fallback request keeps decisions"));
+    assert!(!content.contains("Captured event range 1..3"));
+    assert!(!content.contains("Captured event range 7..9"));
+    assert!(!content.contains("synthetic range fallback"));
+    Ok(())
+}
