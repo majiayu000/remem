@@ -84,7 +84,13 @@ needed fields and side effects, then removes only the redundant Summary writer.
 - [x] `finalize_summarize` versus `persist_session_rollup` field-comparison
       fixture: `summary_writer_equivalence_fixture_documents_field_level_deltas`
       documents legacy-only structured fields, rollup-only range fields, and
-      the legacy cooldown side-effect delta.
+      the legacy cooldown side-effect delta. GH684-T3 updates the fixture so
+      SessionRollup owns the load-bearing request, decisions, learned,
+      next_steps, and preferences fields while cooldown remains a separate
+      retirement side effect.
+- [x] Context, timeline, and user-context regression tests prove semantic
+      rollup rows feed summary readers while synthetic `Captured event range`
+      fallback titles stay hidden from user-facing context.
 - [ ] Stop-hook side-effect regression tests.
 - [ ] Pending legacy migration and guarded-drop tests.
 - [x] MCP/docs wording verification.

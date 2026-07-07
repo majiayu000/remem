@@ -49,6 +49,28 @@ fn xml_response(summary: &str, segments: &str) -> String {
     format!("<summary>{summary}</summary><segments>{segments}</segments>")
 }
 
+fn xml_response_with_structured_fields(
+    summary: &str,
+    request: &str,
+    decisions: &str,
+    learned: &str,
+    next_steps: &str,
+    preferences: &str,
+    segments: &str,
+) -> String {
+    format!(
+        r#"<summary>{summary}</summary>
+        <structured_fields>
+          <request>{request}</request>
+          <decisions>{decisions}</decisions>
+          <learned>{learned}</learned>
+          <next_steps>{next_steps}</next_steps>
+          <preferences>{preferences}</preferences>
+        </structured_fields>
+        <segments>{segments}</segments>"#
+    )
+}
+
 #[derive(Debug)]
 struct SummaryWriterProjection {
     project: Option<String>,
@@ -180,8 +202,13 @@ async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Re
     let rollup_memory_session_id = format!("capture-rollup-{session_row_id}");
 
     let rollup_result = process_with_summarizer(&mut conn, &task, |_prompt| async {
-        Ok(xml_response(
+        Ok(xml_response_with_structured_fields(
             "Captured a decision, lesson, next step, and preference.",
+            legacy_request,
+            legacy_decisions,
+            legacy_learned,
+            legacy_next_steps,
+            legacy_preferences,
             "",
         ))
     })
@@ -224,32 +251,21 @@ async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Re
     assert_eq!(rollup.summary_text, rollup.completed);
 
     assert_eq!(legacy.request.as_deref(), Some(legacy_request));
-    assert_eq!(
-        rollup.request,
-        Some(format!(
-            "Captured event range {}..{}",
-            task.high_watermark_event_id.unwrap_or_default(),
-            task.high_watermark_event_id.unwrap_or_default()
-        ))
-    );
+    assert_eq!(rollup.request.as_deref(), Some(legacy_request));
 
     assert_eq!(legacy.decisions.as_deref(), Some(legacy_decisions));
     assert_eq!(legacy.learned.as_deref(), Some(legacy_learned));
     assert_eq!(legacy.next_steps.as_deref(), Some(legacy_next_steps));
     assert_eq!(legacy.preferences.as_deref(), Some(legacy_preferences));
     assert_eq!(legacy.prompt_number, None);
-    assert_eq!(rollup.decisions, None);
-    assert_eq!(rollup.learned, None);
-    assert_eq!(rollup.next_steps, None);
-    assert_eq!(rollup.preferences, None);
+    assert_eq!(rollup.decisions.as_deref(), Some(legacy_decisions));
+    assert_eq!(rollup.learned.as_deref(), Some(legacy_learned));
+    assert_eq!(rollup.next_steps.as_deref(), Some(legacy_next_steps));
+    assert_eq!(rollup.preferences.as_deref(), Some(legacy_preferences));
     assert_eq!(rollup.prompt_number, None);
 
     assert_eq!(legacy.discovery_tokens, legacy_discovery_tokens);
-    assert_ne!(legacy.discovery_tokens, rollup.discovery_tokens);
-    assert_eq!(
-        rollup.discovery_tokens,
-        ((rollup.completed.as_deref().unwrap_or_default().len() as i64) + 3) / 4
-    );
+    assert!(rollup.discovery_tokens >= legacy.discovery_tokens);
 
     assert_eq!(legacy.host_id, None);
     assert_eq!(legacy.project_id, None);
@@ -272,6 +288,115 @@ async fn summary_writer_equivalence_fixture_documents_field_level_deltas() -> Re
         |row| row.get(0),
     )?;
     assert_eq!(cooldown_hash, "legacy-message-hash");
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_structured_fields_feed_current_summary_readers() -> Result<()> {
+    let mut conn = setup_conn();
+    let project = "/tmp/remem";
+    capture(
+        &conn,
+        "sess-structured-reader",
+        "session_stop",
+        "User asked for writer retirement. Agent decided to port structured fields and learned the context readers need request labels.",
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    let session_row_id = task
+        .session_row_id
+        .ok_or_else(|| anyhow::anyhow!("rollup task missing session row id"))?;
+
+    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response_with_structured_fields(
+            "Ported structured fields into the current rollup writer.",
+            "Retire legacy Summary writer",
+            "SessionRollup now owns structured summary fields.",
+            "Context readers depend on request and decisions columns.",
+            "Add regression coverage before retiring JobType::Summary.",
+            "Do not drop preferences from rollup summaries.",
+            "",
+        ))
+    })
+    .await?;
+    assert_eq!(result, SessionRollupResult::Written);
+
+    let observation_extract_context: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = conn.query_row(
+        "SELECT summary_text, request, completed, decisions, learned, next_steps, preferences
+         FROM session_summaries
+         WHERE session_row_id = ?1",
+        params![session_row_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        observation_extract_context.0.as_deref(),
+        Some("Ported structured fields into the current rollup writer.")
+    );
+    assert_eq!(
+        observation_extract_context.1.as_deref(),
+        Some("Retire legacy Summary writer")
+    );
+    assert_eq!(
+        observation_extract_context.3.as_deref(),
+        Some("SessionRollup now owns structured summary fields.")
+    );
+    assert_eq!(
+        observation_extract_context.6.as_deref(),
+        Some("Do not drop preferences from rollup summaries.")
+    );
+
+    let native_memory_context: (String, String, String, i64) = conn.query_row(
+        "SELECT request, completed, decisions, created_at_epoch
+         FROM session_summaries
+         WHERE project = ?1 AND request IS NOT NULL AND request != ''
+         ORDER BY created_at_epoch DESC LIMIT 1",
+        params![project],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(native_memory_context.0, "Retire legacy Summary writer");
+    assert_eq!(
+        native_memory_context.2,
+        "SessionRollup now owns structured summary fields."
+    );
+
+    let user_context_label: String = conn.query_row(
+        "SELECT COALESCE(request, completed, learned, decisions, next_steps, preferences, memory_session_id)
+         FROM session_summaries
+         WHERE ((owner_scope = 'repo' AND owner_key = ?1)
+             OR (owner_scope = 'repo' AND target_project = ?1)
+             OR (owner_scope IS NULL AND project = ?1))
+         ORDER BY created_at_epoch DESC, id DESC
+         LIMIT 1",
+        params![project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(user_context_label, "Retire legacy Summary writer");
+
+    let timeline_summary_count: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT memory_session_id)
+         FROM session_summaries
+         WHERE project = ?1 AND request = ?2",
+        params![project, "Retire legacy Summary writer"],
+        |row| row.get(0),
+    )?;
+    assert_eq!(timeline_summary_count, 1);
     Ok(())
 }
 

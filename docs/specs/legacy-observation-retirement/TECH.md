@@ -151,7 +151,8 @@ Tests: fixture DBs per state; frozen-write detection test.
    output rows against `persist_session_rollup` output for the same seeded
    session; document every field-level delta.
 
-   Current GH684-T2 fixture:
+   GH684-T2 established the delta and GH684-T3 ported the load-bearing
+   row-output fields. The current fixture:
    `summary_writer_equivalence_fixture_documents_field_level_deltas`
    (`src/session_rollup/tests.rs`) locks the field contract before writer
    retirement:
@@ -160,18 +161,19 @@ Tests: fixture DBs per state; frozen-write detection test.
    | --- | --- | --- | --- |
    | `completed` | parsed summary `completed` text | top-level rollup `<summary>` text | Equivalent for the fixture text |
    | `summary_text` | `NULL` | same top-level rollup summary text | Rollup-only range summary column |
-   | `request` | parsed request text | synthetic `Captured event range X..Y` | Not equivalent; current summary readers may show this as a title/source string |
-   | `decisions`, `learned`, `next_steps`, `preferences` | structured legacy summary fields | `NULL` | Load-bearing for observation extraction, user-context extraction/recall, and Claude native-memory sync; port before retiring Summary |
+   | `request` | parsed request text | semantic rollup `<structured_fields><request>` text, with `Captured event range X..Y` fallback only for old/malformed responses | GH684-T3 ports the user-facing title/source string; current readers exclude synthetic fallback rollup rows |
+   | `decisions`, `learned`, `next_steps`, `preferences` | structured legacy summary fields | semantic rollup `<structured_fields>` values | GH684-T3 ports the load-bearing fields for observation extraction, user-context extraction/recall, and Claude native-memory sync |
    | `prompt_number` | `NULL` in the production Summary caller | `NULL` | Equivalent unset state in current writers |
-   | `discovery_tokens` | token estimate across structured fields | summary-text length estimate | Not equivalent; accounting changes if unported |
-   | `host_id`, `project_id`, `session_row_id`, `covered_*_event_id` | `NULL` | populated rollup range identity | Rollup-only range identity; T3 must move or cover current readers that filter `session_row_id IS NULL` before Summary retirement |
+   | `discovery_tokens` | token estimate across structured fields | token estimate across summary plus structured fields | Equivalent enough for reader accounting; not a retirement blocker |
+   | `host_id`, `project_id`, `session_row_id`, `covered_*_event_id` | `NULL` | populated rollup range identity | Rollup-only range identity; GH684-T3 lets semantic rollup rows feed context/user-context while still excluding synthetic fallback range titles |
    | ownership/context columns (`source_project`, `target_project`, `owner_scope`, `owner_key`, `topic_domain`, `routing_confidence`, `routing_reason`, `context_class`, validity/expiry) | `NULL` | `NULL` | Equivalent unset state in current writers |
    | `summarize_cooldown` | updated with message hash | not updated | Legacy retry/dedup side effect; retire or replace deliberately |
 
-   This fixture establishes that GH684-T3 must port or intentionally replace
-   the legacy structured fields before `JobType::Summary` can be retired.
+   The remaining field delta is the legacy cooldown side effect, which belongs
+   to Summary retirement/upgrade handling rather than row-output parity.
 2. Port any load-bearing delta into the rollup path (readers must not lose
-   fields they consume today).
+   fields they consume today). Completed by GH684-T3 for request, decisions,
+   learned, next_steps, preferences, and semantic rollup reader visibility.
 3. Remove only the `JobType::Summary` enqueue/worker/finalize path from the
    Stop hook path. Before deleting or renaming the shared helper, port or
    preserve its other Stop side effects: `JobType::Compress` enqueueing,

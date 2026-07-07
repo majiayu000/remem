@@ -7,7 +7,17 @@ use super::RollupRange;
 #[derive(Debug, Clone)]
 pub(super) struct RollupOutput {
     pub(super) summary_text: String,
+    pub(super) structured_fields: RollupStructuredFields,
     pub(super) segments: Vec<ParsedTopicSegment>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct RollupStructuredFields {
+    pub(super) request: Option<String>,
+    pub(super) decisions: Option<String>,
+    pub(super) learned: Option<String>,
+    pub(super) next_steps: Option<String>,
+    pub(super) preferences: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -35,6 +45,7 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
     if segments_xml.trim().is_empty() {
         return Ok(RollupOutput {
             summary_text,
+            structured_fields: parse_structured_fields(text),
             segments: Vec::new(),
         });
     }
@@ -52,6 +63,7 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
     }
     Ok(RollupOutput {
         summary_text,
+        structured_fields: parse_structured_fields(text),
         segments,
     })
 }
@@ -78,6 +90,25 @@ fn iter_segment_blocks(text: &str) -> Result<Vec<String>> {
 fn extract_top_level_summary(text: &str) -> Option<String> {
     let segments_start = text.find("<segments").unwrap_or(text.len());
     extract_tag(&text[..segments_start], "summary")
+}
+
+fn parse_structured_fields(text: &str) -> RollupStructuredFields {
+    let Some(body) = extract_tag(text, "structured_fields") else {
+        return RollupStructuredFields::default();
+    };
+    RollupStructuredFields {
+        request: optional_structured_tag(&body, "request"),
+        decisions: optional_structured_tag(&body, "decisions"),
+        learned: optional_structured_tag(&body, "learned"),
+        next_steps: optional_structured_tag(&body, "next_steps"),
+        preferences: optional_structured_tag(&body, "preferences"),
+    }
+}
+
+fn optional_structured_tag(body: &str, tag: &str) -> Option<String> {
+    extract_tag(body, tag)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn parse_segment(
@@ -337,6 +368,45 @@ mod tests {
 
         assert_eq!(parsed.summary_text, "done");
         assert!(parsed.segments.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn parses_optional_structured_summary_fields() -> Result<()> {
+        let parsed = parse_rollup_response(
+            r#"<summary>overall</summary>
+            <structured_fields>
+              <request>Compare rollup and summary writers</request>
+              <decisions>Keep session_summaries as the shared table.</decisions>
+              <learned>Rollup owns range identity.</learned>
+              <next_steps>Port structured fields before Summary retirement.</next_steps>
+              <preferences>Do not silently drop summary preferences.</preferences>
+            </structured_fields>
+            <segments></segments>"#,
+            &range(),
+        )?;
+
+        assert_eq!(parsed.summary_text, "overall");
+        assert_eq!(
+            parsed.structured_fields.request.as_deref(),
+            Some("Compare rollup and summary writers")
+        );
+        assert_eq!(
+            parsed.structured_fields.decisions.as_deref(),
+            Some("Keep session_summaries as the shared table.")
+        );
+        assert_eq!(
+            parsed.structured_fields.learned.as_deref(),
+            Some("Rollup owns range identity.")
+        );
+        assert_eq!(
+            parsed.structured_fields.next_steps.as_deref(),
+            Some("Port structured fields before Summary retirement.")
+        );
+        assert_eq!(
+            parsed.structured_fields.preferences.as_deref(),
+            Some("Do not silently drop summary preferences.")
+        );
         Ok(())
     }
 

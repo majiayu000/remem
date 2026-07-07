@@ -122,6 +122,31 @@ fn json_report_data_exposes_structured_fields() -> anyhow::Result<()> {
 }
 
 #[test]
+fn overview_counts_semantic_rollup_summary_rows_as_sessions() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_test_db(&conn);
+    let now = chrono::Utc::now().timestamp();
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, decisions, preferences,
+          created_at, created_at_epoch)
+         VALUES ('capture-rollup-1', 'tools/remem', 'retire legacy summary writer',
+                 'SessionRollup wrote semantic fields',
+                 'SessionRollup owns structured fields',
+                 'Preserve preferences in rollup rows',
+                 '2026-07-07', ?1)",
+        params![now],
+    )?;
+
+    let report = generate_timeline_report_data(&conn, "tools/remem", false)?;
+    let json = serde_json::to_value(report)?;
+
+    assert_eq!(json["overview"]["total_sessions"], 1);
+    Ok(())
+}
+
+#[test]
 fn full_report_includes_timeline_and_monthly() {
     let conn = Connection::open_in_memory().unwrap();
     setup_test_db(&conn);

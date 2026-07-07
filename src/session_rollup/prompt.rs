@@ -19,6 +19,13 @@ pub(super) fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange
     prompt.push_str(
         "Return exactly this XML shape:\n\
          <summary>overall session summary</summary>\n\
+         <structured_fields>\n\
+         <request>short user-facing task or question for this event range</request>\n\
+         <decisions>durable decisions from this range, or empty</decisions>\n\
+         <learned>lessons or discoveries from this range, or empty</learned>\n\
+         <next_steps>explicit follow-up actions from this range, or empty</next_steps>\n\
+         <preferences>user preferences or constraints from this range, or empty</preferences>\n\
+         </structured_fields>\n\
          <segments>\n\
          <segment topic_key=\"REPLACE_WITH_TOPIC_KEY\" status=\"open\" confidence=\"0.75\">\n\
          <title>REPLACE_WITH_TITLE</title>\n\
@@ -30,6 +37,7 @@ pub(super) fn build_rollup_prompt(task: &db::ExtractionTask, range: &RollupRange
          </segment>\n\
          </segments>\n\n\
          Do not copy REPLACE_WITH placeholders; replace every placeholder with facts from the loaded events below.\n\
+         Keep structured_fields factual and concise. Leave a structured field empty when the loaded events do not support it.\n\
          topic_key must be stable kebab-case or snake_case.\n\
          status must be one of open, resolved, or superseded.\n\
          evidence_event_ids is authoritative. from_event_id/to_event_id must be min/max evidence IDs.\n\

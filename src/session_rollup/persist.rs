@@ -19,18 +19,24 @@ pub(super) fn persist_session_rollup(
     let created_at = now.to_rfc3339();
     let created_at_epoch = now.timestamp();
     let memory_session_id = format!("capture-rollup-{session_row_id}");
-    let request = format!(
+    let fallback_request = format!(
         "Captured event range {}..{}",
         range.from_event_id, range.to_event_id
     );
-    let discovery_tokens = ((output.summary_text.len() as i64) + 3) / 4;
+    let request = output
+        .structured_fields
+        .request
+        .as_deref()
+        .unwrap_or(&fallback_request);
+    let discovery_tokens = estimate_discovery_tokens(output);
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, created_at, created_at_epoch,
-          discovery_tokens, host_id, project_id, session_row_id, summary_text,
+          decisions, learned, next_steps, preferences, discovery_tokens,
+          host_id, project_id, session_row_id, summary_text,
           covered_from_event_id, covered_to_event_id, model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL)",
         params![
             memory_session_id,
             task.project,
@@ -38,6 +44,10 @@ pub(super) fn persist_session_rollup(
             output.summary_text,
             created_at,
             created_at_epoch,
+            output.structured_fields.decisions.as_deref(),
+            output.structured_fields.learned.as_deref(),
+            output.structured_fields.next_steps.as_deref(),
+            output.structured_fields.preferences.as_deref(),
             discovery_tokens,
             task.host_id,
             task.project_id,
@@ -78,4 +88,20 @@ pub(super) fn persist_session_rollup(
 
     tx.commit()?;
     Ok(())
+}
+
+fn estimate_discovery_tokens(output: &RollupOutput) -> i64 {
+    let structured_len = [
+        Some(output.summary_text.as_str()),
+        output.structured_fields.request.as_deref(),
+        output.structured_fields.decisions.as_deref(),
+        output.structured_fields.learned.as_deref(),
+        output.structured_fields.next_steps.as_deref(),
+        output.structured_fields.preferences.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::len)
+    .sum::<usize>() as i64;
+    (structured_len + 3) / 4
 }
