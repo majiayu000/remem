@@ -121,22 +121,19 @@ fn ensure_stored_content_shape_matches_evidence(
     content: &str,
     evidence: &VerifiedProcedureEvidence,
 ) -> Result<()> {
-    let expected_files = if evidence.files_touched.is_empty() {
-        "none recorded".to_string()
-    } else {
-        evidence.files_touched.join(", ")
-    };
     let mut lines = content.lines();
-    let fixed_fields = [
+    for (prefix, expected) in [
         ("Procedure:", evidence.workflow_key.as_str()),
         ("Command:", evidence.command.as_str()),
-        ("Files:", expected_files.as_str()),
-    ];
-    for (prefix, expected) in fixed_fields {
+    ] {
         let actual = next_line_value(&mut lines, prefix, memory_id)?;
         if actual != expected {
             return Err(stored_content_mismatch(memory_id));
         }
+    }
+    let stored_files = next_line_value(&mut lines, "Files:", memory_id)?;
+    if !stored_files_cover_fresh_files(stored_files, &evidence.files_touched) {
+        return Err(stored_content_mismatch(memory_id));
     }
 
     let verified_runs = next_line_value(&mut lines, "Verified runs:", memory_id)?;
@@ -168,6 +165,21 @@ fn ensure_stored_content_shape_matches_evidence(
         return Err(stored_content_mismatch(memory_id));
     }
     Ok(())
+}
+
+fn stored_files_cover_fresh_files(stored_files: &str, fresh_files: &[String]) -> bool {
+    if stored_files == "none recorded" {
+        return fresh_files.is_empty();
+    }
+    let stored = stored_files
+        .split(',')
+        .map(str::trim)
+        .filter(|file| !file.is_empty())
+        .collect::<Vec<_>>();
+    !stored.is_empty()
+        && fresh_files
+            .iter()
+            .all(|fresh_file| stored.iter().any(|stored_file| stored_file == fresh_file))
 }
 
 fn next_line_value<'a>(
@@ -475,6 +487,45 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn export_eligibility_tolerates_stale_only_stored_file_entries() -> Result<()> {
+        let mut conn = setup_conn()?;
+        let memory_id = seed_promoted_procedure_runs_with_files(
+            &mut conn,
+            "/tmp/remem",
+            "sess-export-stale-file",
+            &[vec!["src/a.rs"], vec!["src/b.rs"], vec!["src/b.rs"]],
+        )?;
+        let stored_content: String = conn.query_row(
+            "SELECT content FROM memories WHERE id = ?1",
+            params![memory_id],
+            |row| row.get(0),
+        )?;
+        assert!(stored_content.contains("Files: src/a.rs, src/b.rs"));
+        let stale_source_event_id: i64 = conn.query_row(
+            "SELECT MIN(source_event_id) FROM procedure_verifications",
+            [],
+            |row| row.get(0),
+        )?;
+        let stale_epoch = chrono::Utc::now().timestamp()
+            - super::super::ProcedurePromotionPolicy::default().max_verification_age_secs
+            - 1;
+        conn.execute(
+            "UPDATE procedure_verifications
+             SET verified_at_epoch = ?1
+             WHERE source_event_id = ?2",
+            params![stale_epoch, stale_source_event_id],
+        )?;
+
+        let source = load_export_eligible_procedure(&conn, memory_id)?;
+
+        assert_eq!(source.verified_runs, 2);
+        assert_eq!(source.files_touched, vec!["src/b.rs"]);
+        assert!(source.canonical_content.contains("Files: src/b.rs"));
+        assert!(!source.canonical_content.contains("src/a.rs"));
+        Ok(())
+    }
+
     fn setup_conn() -> Result<Connection> {
         let conn = Connection::open_in_memory()?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
@@ -496,7 +547,19 @@ mod tests {
         session_id: &str,
         runs: i64,
     ) -> Result<i64> {
-        for seq in 1..=runs {
+        let file_lists = (0..runs).map(|_| vec!["src/lib.rs"]).collect::<Vec<_>>();
+        seed_promoted_procedure_runs_with_files(conn, project, session_id, &file_lists)
+    }
+
+    fn seed_promoted_procedure_runs_with_files(
+        conn: &mut Connection,
+        project: &str,
+        session_id: &str,
+        file_lists: &[Vec<&str>],
+    ) -> Result<i64> {
+        for (idx, files) in file_lists.iter().enumerate() {
+            let seq = idx + 1;
+            let files_json = serde_json::to_string(files)?;
             crate::db::record_captured_event(
                 conn,
                 &crate::db::CaptureEventInput {
@@ -512,7 +575,7 @@ mod tests {
                         "event_type": "bash",
                         "exit_code": 0,
                         "tool_input": { "command": "cargo test" },
-                        "files": "[\"src/lib.rs\"]",
+                        "files": files_json,
                         "git_branch": "main"
                     })
                     .to_string(),
