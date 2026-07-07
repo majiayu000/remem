@@ -653,6 +653,26 @@ and delete commands change status without hard-deleting the audit row; default
 claim lists exclude suppressed, deleted, expired, not-yet-valid, and restricted
 claims.
 
+Automatic user-context extraction can auto-promote only normal, low-risk
+preference or constraint claims with stable claim keys, explicit user statement
+sources, user-authored source events, and conservative text support. The default
+auto-promote policy lowers only the confidence threshold from `0.9` to `0.7`:
+
+```toml
+[user_context.auto_promote]
+min_confidence = 0.7
+allowed_source_kinds = ["explicit_user_statement"]
+require_text_support = true
+strict = false
+```
+
+Set `strict = true` to restore the old `0.9` threshold while keeping the same
+source and text-support requirements. Sensitivity, high risk, third-party
+framing, non-user-authored source refs, missing keys, claim-key conflicts, and
+non-retention matches remain hard review/no-retention gates in every mode.
+`require_text_support = false` currently fails closed until queue support and
+full source non-retention scanning are policy-aware.
+
 `remem user profile export --format markdown` writes a derived, read-only
 snapshot of the user profile remem would use. Without `--output` it prints to
 stdout; with `--output profile.md` it creates a new file and refuses to
@@ -722,6 +742,13 @@ appending a contradictory active claim. `edit` applies corrected text, key, or
 metadata, while `reject` and `suppress` close candidates without activating
 them.
 
+`remem status` and `remem status --json` include a `user_context` block with
+claim totals, active/suppressed/deleted claim counts, candidate totals,
+pending-review and auto-promoted candidate counts, and pending block reasons.
+Use `remem user claims why <id>`, `remem user claims suppress <id>`, and
+`remem user claims delete <id>` to audit or roll back active claims created by
+manual save, preference backfill, or auto-promotion.
+
 ### Raw Session Backfill
 
 `remem ingest-sessions` batch-ingests Claude Code and Codex JSONL transcripts
@@ -756,7 +783,7 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `embedding`, `capture_pipeline`, `promotion_funnel`, `legacy_surfaces`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `failure_lifecycle`, `today`, `top_projects` |
+| `remem status --json` | `version`, `database`, `totals`, `embedding`, `raw_archive`, `capture_pipeline`, `promotion_funnel`, `legacy_surfaces`, `usage_feedback`, `pending_observations`, `review_queue`, `candidate_promotion`, `user_context`, `jobs`, `failure_lifecycle`, `worker_daemon`, `latest_session_memory_spend`, `today`, `top_projects` |
 | `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied`; archived failure purge counts stay zero unless `--archived-failures[=DAYS]` is supplied |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |
@@ -822,7 +849,11 @@ in source version `0.5.122`; transient, speculative, unsafe,
 assistant-authored, or unapproved external-source content does not enter the
 candidate queue. Source version `0.5.125` tightens post-review external-source
 attribution and third-party subject edge cases while preserving valid
-user-stated workflow preferences.
+user-stated workflow preferences. Source versions `0.5.183` through `0.5.186`
+make user-context auto-promote configuration-driven: the default lowers only the
+confidence threshold to `0.7`, `strict = true` restores the old `0.9` threshold,
+existing hard gates remain review/no-retention gates, and `remem status` reports
+user-context claim/candidate counts and pending block reasons.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more

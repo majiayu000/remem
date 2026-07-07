@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/remem/issues/759
 Product spec: `specs/GH759/product.md`
-Status: Draft, needs human approval before implementation
+Status: Implemented in source versions 0.5.183-0.5.186
 Base: origin/main（写作时 1de527f）
 
 ## 1. 现状代码路径
@@ -50,7 +50,11 @@ strict = false
 
 ### 2.3 观测
 
-- `remem doctor` / status 目前的 promotion-funnel 主要覆盖 `memory_candidates`。实现 GH-759 时必须新增或扩展 user-context candidate/claim 统计，或在 PR 中明确不用 doctor funnel 作为验收证据。
+- `remem status` / `remem status --json` exposes a `user_context` block with
+  claim totals, active/suppressed/deleted counts, candidate totals,
+  pending-review and auto-promoted counts, and pending block-reason counts.
+  GH-759 verification uses this user-context block rather than the legacy
+  `memory_candidates` promotion funnel.
 - 每次自动晋升写入的 claim 保留 `source_kind` 原值，`remem user claims why` 可见判定依据。
 
 ## 3. 测试计划

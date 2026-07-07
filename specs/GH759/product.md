@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/remem/issues/759
 Route: write_spec
 Locale: zh-CN
-Status: Draft, needs human approval before implementation
+Status: Implemented in source versions 0.5.183-0.5.186
 Related: #674, #579, #760
 Evidence: `docs/research/multi-ai-research-personal-memory-grok-gemini-20260707-144830.md`
 

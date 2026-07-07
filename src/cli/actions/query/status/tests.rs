@@ -140,6 +140,19 @@ fn status_report_fixture() -> StatusReport {
             total: 41,
             last_7_days: 6,
         }],
+        user_context: UserContextStatus {
+            claims_total: 5,
+            claims_active: 3,
+            claims_suppressed: 1,
+            claims_deleted: 1,
+            candidates_total: 7,
+            candidates_pending_review: 4,
+            candidates_auto_promoted: 2,
+            candidate_block_reasons: vec![UserContextBlockReasonStatus {
+                reason: Some("source_not_user_authored".to_string()),
+                pending: 3,
+            }],
+        },
         jobs: JobStatus {
             pending: 19,
             processing: 20,
@@ -267,6 +280,21 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     );
     assert_eq!(parsed["candidate_promotion"][0]["total"], 41);
     assert_eq!(parsed["candidate_promotion"][0]["last_7_days"], 6);
+    assert_eq!(parsed["user_context"]["claims_total"], 5);
+    assert_eq!(parsed["user_context"]["claims_active"], 3);
+    assert_eq!(parsed["user_context"]["claims_suppressed"], 1);
+    assert_eq!(parsed["user_context"]["claims_deleted"], 1);
+    assert_eq!(parsed["user_context"]["candidates_total"], 7);
+    assert_eq!(parsed["user_context"]["candidates_pending_review"], 4);
+    assert_eq!(parsed["user_context"]["candidates_auto_promoted"], 2);
+    assert_eq!(
+        parsed["user_context"]["candidate_block_reasons"][0]["reason"],
+        "source_not_user_authored"
+    );
+    assert_eq!(
+        parsed["user_context"]["candidate_block_reasons"][0]["pending"],
+        3
+    );
     assert_eq!(parsed["worker_daemon"]["health"], "healthy");
     assert_eq!(
         parsed["latest_session_memory_spend"]["session_id"],
