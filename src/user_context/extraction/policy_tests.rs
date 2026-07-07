@@ -298,6 +298,50 @@ async fn relaxed_policy_drops_non_user_sources_and_non_retention_before_candidat
 }
 
 #[tokio::test]
+async fn relaxed_policy_keeps_mixed_non_user_source_citations_review_gated() -> Result<()> {
+    let mut conn = setup_conn();
+    let user_event_id = capture_event(
+        &conn,
+        "sess-user-context-relaxed-mixed-source",
+        Some("user"),
+        "I prefer concise code reviews.",
+    )?;
+    let assistant_event_id = capture_event(
+        &conn,
+        "sess-user-context-relaxed-mixed-source",
+        Some("assistant"),
+        "The user prefers concise code reviews.",
+    )?;
+    let task = claim_task(&mut conn)?;
+
+    let result = process_with_generator(&mut conn, &task, |_prompt| async move {
+        Ok(candidate_json(
+            "preference",
+            "preference:review-style",
+            "User prefers concise code reviews.",
+            0.75,
+            &[user_event_id, assistant_event_id],
+        ))
+    })
+    .await?;
+
+    assert_eq!(
+        result,
+        UserContextCandidateExtractResult::Written {
+            candidates: 1,
+            promoted: 0,
+            pending_review: 1,
+            to_event_id: assistant_event_id,
+        }
+    );
+    let (status, reason) = candidate_status_and_reason(&conn)?;
+    assert_eq!(status, "pending_review");
+    assert_eq!(reason.as_deref(), Some("source_not_user_authored"));
+    assert_eq!(active_claim_count(&conn)?, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn relaxed_policy_keeps_claim_key_conflicts_pending_review() -> Result<()> {
     let mut conn = setup_conn();
     let event_id = capture_event(
