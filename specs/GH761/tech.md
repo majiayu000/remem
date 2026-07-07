@@ -41,15 +41,15 @@ pub(crate) struct HookIntegrityReport {
 - 复用 `src/doctor/hook_validation.rs` 中的 expectation、command parsing、host normalization。
 - 如现有 `pub(super)` 可见性不足，应把 hook expectation/parse helpers 移到共享模块，doctor 与 runtime self-check 都调用同一实现。
 - Claude expected events 继续是 5 个：`PostToolUse`、`PreCompact`、`Stop`、`SessionStart`、`UserPromptSubmit`。
-- 完整性判断必须按当前 remem binary 路径与 `--host claude-code` 校验，不只按 command 字符串包含 `remem`。
-- Hook removal 必须使用同一 parser 判断 remem-owned invocation：executable file stem 是 `remem`，subcommand 是该 event 的 expected subcommand，host 是 `claude-code` 或 legacy env host 可归一到 `claude-code`。不能用 `command.contains("remem")` 或 path substring 删除 entries。
+- 完整性判断必须复用 doctor 的 expected executable 选择：优先使用 Claude MCP remem command，其次使用 hook 文件中可唯一识别的 matching remem path，最后才使用当前进程 path。不能只按当前进程 path 校验，否则 stale hook binary 自检会漏报。
+- Hook removal 必须使用同一 parser 判断 remem-owned invocation：executable file stem 是 `remem`，subcommand 是该 event 的 expected subcommand，host 是 `claude-code`、legacy env host 可归一到 `claude-code`，或 hostless legacy remem invocation。不能用 `command.contains("remem")` 或 path substring 删除 entries。Hostless legacy entries 只用于 repair removal/convergence；完整性 evaluator 仍应要求新版 host-aware hooks。
 
 ## 3. Runtime self-check
 
 在 Claude `SessionStart` context 路径增加只读自检：
 
-- 入口：`src/context/render.rs` 中 `generate_context_for_invocation` 的最终 `ContextGateDecision.output` 组装后、`context_stdout_for_invocation` 调用前。
-- 触发条件：`invocation.host == HostKind::ClaudeCode` 且 source 是 SessionStart 类事件（startup/clear/compact/resume 或 Claude 传入的空 source，按现有 Claude hook 行为确认）。
+- 入口：`src/context/render.rs` 中 `generate_context_for_invocation`。自检应在 DB open 之前或以 helper 形式同时覆盖 DB-open failure early-return 分支和正常 `ContextGateDecision.output` 分支。
+- 触发条件：`invocation.host == HostKind::ClaudeCode` 且 source 是已安装 Claude SessionStart matcher 会触发的事件（startup/clear/compact）或 Claude 传入的空 source。不要承诺 `resume`，除非同一实现同步把 `build_hooks(bin, HookStrategy::ClaudeCode)` 的 matcher 扩展并补测试。
 - 输出位置：context header 后或 context body 前，追加短 warning block，例如：
 
 ```text
@@ -62,6 +62,7 @@ pub(crate) struct HookIntegrityReport {
 - 自检读取/解析失败时输出 warning，保留原 context 内容；不得因为自检失败返回空 context。
 - 自检 OK 时不改变输出。
 - Context gate 已经返回 empty/suppressed output 时，如果 integrity unhealthy，仍必须输出 warning。实现可在 gate decision 后追加 warning，或让 unhealthy integrity 强制 gate 发出 warning-only output。
+- DB/key/schema 错误导致 context load 失败时，如果 hook integrity unhealthy，DB error output 与 hook warning 都必须出现；该 self-check 不依赖数据库连接。
 
 ## 4. Repair 实现
 
@@ -77,7 +78,7 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
 
 1. 解析目标 host。
 2. 对 Claude 调用专用 hook-only repair 函数，例如 `ClaudeHost.repair_hooks_only(&bin)`。不能调用现有 `ClaudeHost.install_hooks(&bin)`，因为该方法会清理 settings 中的 legacy MCP entry，违反 repair 不触碰 MCP 的副作用边界。
-3. 该函数可以复用 `build_hooks(bin, HookStrategy::ClaudeCode)` 和 JSON read/write helpers，但不能复用当前 substring-based `remove_remem_hooks`。必须新增 parser-based removal，只移除当前 host/event 下可识别的 remem-owned expected hook entries，然后合并 fresh hooks。
+3. 该函数可以复用 `build_hooks(bin, HookStrategy::ClaudeCode)` 和 JSON read/write helpers，但不能复用当前 substring-based `remove_remem_hooks`。必须新增 parser-based removal，只移除当前 host/event 下可识别的 remem-owned expected hook entries，包括 hostless legacy remem invocations，然后合并 fresh hooks。
 4. 写入后立即调用共享 integrity evaluator；不是 5/5 则返回失败。
 5. 输出明确结果：`hooks -> ~/.claude/settings.json (5/5 registered)`；若 settings repair 成功但 doctor 会因 stale MCP 继续把 expected executable 绑定到旧 binary，输出必须提示 stale MCP/install-path 仍需完整 `remem install --target claude` 或 doctor 修复，而不是声称整机健康。
 
@@ -110,9 +111,11 @@ Repair path 不应：
 | 测试 | 类型 | 断言 |
 |---|---|---|
 | shared evaluator detects 3/5 | 单元 | 删除 `PostToolUse` 与 `Stop` 后 registered=3，missing 包含两个事件 |
-| context warning visible | 单元/集成 | Claude SessionStart 输出含 warning、3/5、repair 命令；即使 context gate suppresses normal output 也能显示 warning；Codex JSON 输出不被污染 |
+| configured executable drift | 单元 | MCP 指向 current binary 但 hook entries 指向 stale binary 时 self-check/doctor 都报告 stale/incomplete，而不是按当前进程误判 5/5 |
+| context warning visible | 单元/集成 | Claude SessionStart 输出含 warning、3/5、repair 命令；context gate suppresses normal output 和 DB-open failure 仍显示 warning；Codex JSON 输出不被污染 |
 | repair restores hooks | 单元/集成 | repair 后 Claude settings 中 5 个 remem hook 存在 |
 | repair preserves third-party hooks | 单元 | 非 remem entries 保留，包括 command/path 含 `remem` 子串但不是 remem-owned invocation 的第三方 hook |
+| repair removes hostless legacy hooks | 单元 | `/tmp/remem context`、`remem summarize` 等 hostless legacy remem hooks 被移除并替换为 host-aware hooks |
 | repair idempotent | 单元 | 连续 repair 两次后 hook 数量不增加 |
 | repair dry-run no write | 单元 | 文件内容不变，输出 repair plan |
 | repair has no install side effects | 单元 | 不写 `.claude.json` MCP、不清理 settings legacy MCP、不初始化 runtime store、不创建 API token |
