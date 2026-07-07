@@ -57,6 +57,7 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 
 | Directory | Status | Notes |
 |---|---|---|
+| `GH760/` | Current contract | SpecRail packet: product and technical contract for an explicit, user-triggered, idempotent, audited `remem user backfill` command converting legacy user-scope preference memories into user_context_claims with source traceability. Refs #760. |
 | `associative-multihop-fixtures/` | Current contract | Product and technical contract for associative entity-hop golden fixtures and the two graph eval arms required before the graph decision gate can be re-evaluated. Refs #676. |
 | `cache-stable-injection/` | Current contract | Product and technical contract for a deterministic, prefix-cache-stable context block: byte-identical renders for unchanged memory state, additive prompt-time injection, and churn evals. Refs #673. |
 | `capacity-eval-axis/` | Current contract | Product and technical contract for the retrieval-quality-vs-store-size degradation curve: seeded corpus synthesis, per-channel metrics, and a regression budget wired into eval gates. Refs #675, #384. |
