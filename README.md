@@ -783,7 +783,7 @@ is set:
 
 | Command | Stable top-level fields |
 |---|---|
-| `remem status --json` | `version`, `database`, `totals`, `embedding`, `capture_pipeline`, `promotion_funnel`, `legacy_surfaces`, `pending_observations`, `jobs`, `worker_daemon`, `usage_feedback`, `failure_lifecycle`, `today`, `top_projects` |
+| `remem status --json` | `version`, `database`, `totals`, `embedding`, `raw_archive`, `capture_pipeline`, `promotion_funnel`, `legacy_surfaces`, `usage_feedback`, `pending_observations`, `review_queue`, `candidate_promotion`, `user_context`, `jobs`, `failure_lifecycle`, `worker_daemon`, `latest_session_memory_spend`, `today`, `top_projects` |
 | `remem cleanup --dry-run --json` | `dry_run`, `retention_days`, `plan`, `applied`; archived failure purge counts stay zero unless `--archived-failures[=DAYS]` is supplied |
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |
