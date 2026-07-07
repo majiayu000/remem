@@ -3,7 +3,7 @@
 Issue: https://github.com/majiayu000/remem/issues/761
 Route: write_spec
 Locale: zh-CN
-Status: Approved for implementation (2026-07-08 user authorization)
+Status: Draft for SpecRail approval (2026-07-08)
 
 ## 1. 背景
 
@@ -45,7 +45,7 @@ B2. Runtime warning 必须是可见的人读文本，出现在 Claude `SessionSt
 
 B3. Runtime warning 检测失败时不能破坏原 context 输出。无法读取用户配置时输出 warning；内部自检代码崩溃不得导致 context 全空。
 
-B4. Repair 只能移除/替换 remem 自己的 hook entries，然后合并当前版本期望的 remem hook entries；非 remem entries 必须字节级语义保留。
+B4. Repair 只能移除/替换 remem 自己的 hook entries，然后合并当前版本期望的 remem hook entries；非 remem entries 必须按 JSON value 语义保留。允许整体 JSON 格式化变化，但不能删除、改写或重排第三方 hook 的事件、matcher、command、timeout 等字段值。
 
 B5. Repair 写入后 `remem doctor` 与 runtime self-check 使用同一套 hook expectation，不允许 doctor 认为 5/5 而 runtime 仍报 stale，或相反。
 
@@ -63,4 +63,8 @@ A4. Repair 后 doctor 对 Claude hooks 报告 5/5。
 
 A5. JSON 非法或写入失败时 repair 返回失败，不报告成功。
 
-A6. `cargo test` 全绿，相关 focused tests 覆盖 self-check、repair、doctor 兼容和第三方 hook 保留。
+A6. Repair 对 unreadable settings、根节点非 object、JSON 非法、写入失败都返回失败，并在错误中包含配置路径或根因上下文。
+
+A7. Repair 不触碰 `.claude.json` MCP、不初始化 runtime store、不创建 API token；测试通过文件存在性或写入 spy 证明无副作用。
+
+A8. `cargo test` 全绿，相关 focused tests 覆盖 self-check、repair、doctor 兼容、第三方 hook 保留和 repair 副作用边界。

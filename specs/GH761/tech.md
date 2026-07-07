@@ -2,7 +2,7 @@
 
 Issue: https://github.com/majiayu000/remem/issues/761
 Product spec: `specs/GH761/product.md`
-Status: Approved for implementation (2026-07-08 user authorization)
+Status: Draft for SpecRail approval (2026-07-08)
 Base: origin/main（写作时 694d4e6）
 
 ## 1. CLI 面
@@ -112,8 +112,9 @@ Repair path 不应：
 | repair preserves third-party hooks | 单元 | 非 remem entries 保留 |
 | repair idempotent | 单元 | 连续 repair 两次后 hook 数量不增加 |
 | repair dry-run no write | 单元 | 文件内容不变，输出 repair plan |
+| repair has no install side effects | 单元 | 不写 `.claude.json` MCP、不初始化 runtime store、不创建 API token |
 | doctor after repair | 单元 | doctor hook check 为 Ok 且详情含 5/5 |
-| invalid JSON fails closed | 单元 | repair 返回 error，路径上下文可诊断 |
+| invalid settings fails closed | 单元 | unreadable、根节点非 object、JSON 非法或写入失败时 repair 返回 error，路径上下文可诊断 |
 
 ## 8. 验证命令
 
