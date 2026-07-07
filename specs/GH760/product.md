@@ -5,7 +5,7 @@ Route: write_spec
 Locale: zh-CN
 Status: Draft, needs human approval before implementation
 Related: #575, #759
-Evidence: `docs/artifacts/multi-ai-research-personal-memory-grok-gemini-20260707-144830.md`（随 GH759 spec PR 入库）
+Evidence: `docs/research/multi-ai-research-personal-memory-grok-gemini-20260707-144830.md`（随 GH759 spec PR 入库）
 
 ## 1. 背景
 

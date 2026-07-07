@@ -1,7 +1,7 @@
 # GH760 Tech Spec: `remem user backfill` 实现设计
 
 Issue: https://github.com/majiayu000/remem/issues/760
-Product spec: `docs/specs/GH760/PRODUCT.md`
+Product spec: `specs/GH760/product.md`
 Status: Draft, needs human approval before implementation
 Base: origin/main（写作时 1de527f）
 
