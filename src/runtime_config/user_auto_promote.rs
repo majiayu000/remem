@@ -30,12 +30,26 @@ pub struct AutoPromotePolicy {
 }
 
 impl AutoPromotePolicy {
+    pub fn relaxed_default() -> Self {
+        Self {
+            min_confidence: DEFAULT_AUTO_PROMOTE_MIN_CONFIDENCE,
+            allowed_source_kinds: default_source_kinds(),
+            require_text_support: DEFAULT_AUTO_PROMOTE_REQUIRE_TEXT_SUPPORT,
+        }
+    }
+
     pub fn strict() -> Self {
         Self {
             min_confidence: STRICT_AUTO_PROMOTE_MIN_CONFIDENCE,
             allowed_source_kinds: default_source_kinds(),
             require_text_support: true,
         }
+    }
+
+    pub fn allows_source_kind(&self, source_kind: &str) -> bool {
+        self.allowed_source_kinds
+            .iter()
+            .any(|allowed| allowed == source_kind)
     }
 }
 
@@ -123,6 +137,11 @@ fn user_context_auto_promote_config_from_doc(
         })?,
         None => DEFAULT_AUTO_PROMOTE_REQUIRE_TEXT_SUPPORT,
     };
+    if !require_text_support {
+        bail!(
+            "user_context.auto_promote.require_text_support=false is not supported until queue support and non-retention source scanning are policy-aware"
+        );
+    }
 
     Ok(UserContextAutoPromoteConfig {
         min_confidence,
@@ -275,7 +294,7 @@ mod tests {
         with_user_context_config_path(&path, || -> Result<()> {
             std::fs::write(
                 &path,
-                "[user_context.auto_promote]\nmin_confidence = 0.75\nallowed_source_kinds = [\"explicit_user_statement\", \"inferred_from_behavior\", \"explicit_user_statement\"]\nrequire_text_support = false\nstrict = false\n",
+                "[user_context.auto_promote]\nmin_confidence = 0.75\nallowed_source_kinds = [\"explicit_user_statement\", \"inferred_from_behavior\", \"explicit_user_statement\"]\nrequire_text_support = true\nstrict = false\n",
             )?;
             let config = user_context_auto_promote_config()?;
             assert_eq!(config.min_confidence, 0.75);
@@ -286,7 +305,7 @@ mod tests {
                     "inferred_from_behavior".to_string()
                 ]
             );
-            assert!(!config.require_text_support);
+            assert!(config.require_text_support);
             assert!(!config.strict);
             assert_eq!(
                 config.effective_policy(),
@@ -296,7 +315,7 @@ mod tests {
                         "explicit_user_statement".to_string(),
                         "inferred_from_behavior".to_string()
                     ],
-                    require_text_support: false,
+                    require_text_support: true,
                 }
             );
             Ok(())
@@ -426,6 +445,26 @@ mod tests {
             })?;
             std::fs::remove_file(path)?;
         }
+        Ok(())
+    }
+
+    #[test]
+    fn auto_promote_config_rejects_disabled_text_support_until_policy_safe() -> Result<()> {
+        let path = user_context_config_path("user-context-auto-promote-text-support-disabled");
+        with_user_context_config_path(&path, || -> Result<()> {
+            std::fs::write(
+                &path,
+                "[user_context.auto_promote]\nrequire_text_support = false\n",
+            )?;
+            let err = user_context_auto_promote_config()
+                .expect_err("disabled text support must fail closed until queue support is safe");
+            assert!(
+                err.to_string().contains("require_text_support=false"),
+                "{err}"
+            );
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
         Ok(())
     }
 }

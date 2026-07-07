@@ -5,11 +5,15 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
 use crate::memory_candidate::support::has_conservative_source_support;
+use crate::runtime_config::AutoPromotePolicy;
 
 use super::candidates::{self, CandidateCreateRequest};
 use super::claims::{DEFAULT_OWNER_KEY, DEFAULT_OWNER_SCOPE};
 
 mod parse;
+#[cfg(test)]
+mod policy_tests;
+mod promotion_gate;
 mod prompt;
 #[cfg(test)]
 mod review_feedback_tests;
@@ -60,7 +64,8 @@ pub(crate) async fn process(
     let mut conn = db::open_db()?;
     let project = task.project.clone();
     let ai_profile = task.ai_profile.clone();
-    process_with_generator(&mut conn, task, move |prompt| {
+    let policy = crate::runtime_config::user_context_auto_promote_config()?.effective_policy();
+    process_with_generator_with_policy(&mut conn, task, &policy, move |prompt| {
         let project = project.clone();
         let ai_profile = ai_profile.clone();
         async move {
@@ -82,9 +87,38 @@ pub(crate) async fn process(
     .await
 }
 
+#[cfg(test)]
 async fn process_with_generator<F, Fut>(
     conn: &mut Connection,
     task: &db::ExtractionTask,
+    generate: F,
+) -> Result<UserContextCandidateExtractResult>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<String>>,
+{
+    let policy = AutoPromotePolicy::relaxed_default();
+    process_with_generator_with_policy(conn, task, &policy, generate).await
+}
+
+#[cfg(test)]
+async fn process_with_generator_strict<F, Fut>(
+    conn: &mut Connection,
+    task: &db::ExtractionTask,
+    generate: F,
+) -> Result<UserContextCandidateExtractResult>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<String>>,
+{
+    let policy = AutoPromotePolicy::strict();
+    process_with_generator_with_policy(conn, task, &policy, generate).await
+}
+
+async fn process_with_generator_with_policy<F, Fut>(
+    conn: &mut Connection,
+    task: &db::ExtractionTask,
+    policy: &AutoPromotePolicy,
     generate: F,
 ) -> Result<UserContextCandidateExtractResult>
 where
@@ -105,7 +139,7 @@ where
         UserContextCandidateResponse::Candidates(candidates) => candidates,
     };
     validate_candidate_sources(&batch, &parsed)?;
-    let summary = persist_candidates(conn, task, &batch, &parsed)?;
+    let summary = persist_candidates(conn, task, &batch, &parsed, policy)?;
     crate::log::info(
         "user-context-candidate",
         &format!(
@@ -139,6 +173,7 @@ fn persist_candidates(
     task: &db::ExtractionTask,
     batch: &CandidateSourceBatch,
     parsed: &[ParsedUserContextCandidate],
+    policy: &AutoPromotePolicy,
 ) -> Result<PersistSummary> {
     let mut summary = PersistSummary::default();
     for candidate in parsed {
@@ -160,8 +195,8 @@ fn persist_candidates(
         if candidate_exists(conn, candidate, &source_refs_json)? {
             continue;
         }
-        let auto_promote = should_auto_promote(candidate, batch);
-        let result = candidates::create_candidate(
+        let auto_promote = promotion_gate::is_auto_promote_allowed(candidate, batch, policy);
+        let result = candidates::create_candidate_with_policy(
             conn,
             &CandidateCreateRequest {
                 text: &candidate.claim_text,
@@ -180,8 +215,9 @@ fn persist_candidates(
                 source_preview: source_preview.as_deref(),
                 auto_promote,
                 auto_promote_block_reason: (!auto_promote)
-                    .then(|| auto_promote_block_reason(candidate, batch)),
+                    .then(|| promotion_gate::blocked_reason(candidate, batch, policy)),
             },
+            policy,
         )?;
         summary.candidates += 1;
         if result.candidate.review_status == "auto_promoted" {
@@ -449,65 +485,6 @@ fn has_durable_third_party_context_token(tokens: &[String]) -> bool {
                 | "workflow"
         )
     })
-}
-
-fn should_auto_promote(
-    candidate: &ParsedUserContextCandidate,
-    batch: &CandidateSourceBatch,
-) -> bool {
-    matches!(
-        candidate.claim_type,
-        super::claims::UserContextClaimType::Preference
-            | super::claims::UserContextClaimType::Constraint
-    ) && candidate.risk_class == super::candidates::UserContextCandidateRisk::Low
-        && candidate.sensitivity == super::claims::UserContextSensitivity::Normal
-        && candidate.confidence >= 0.9
-        && candidate.source_kind == "explicit_user_statement"
-        && !requires_third_party_framing(candidate)
-        && candidate
-            .source_event_ids
-            .iter()
-            .all(|id| batch.event_is_user_authored(*id))
-        && is_supported_by_user_source_event(candidate, batch)
-}
-
-fn auto_promote_block_reason(
-    candidate: &ParsedUserContextCandidate,
-    batch: &CandidateSourceBatch,
-) -> &'static str {
-    if requires_third_party_framing(candidate) {
-        return "third_party_requires_review";
-    }
-    if !matches!(
-        candidate.claim_type,
-        super::claims::UserContextClaimType::Preference
-            | super::claims::UserContextClaimType::Constraint
-    ) {
-        return "claim_type_requires_review";
-    }
-    if candidate.risk_class != super::candidates::UserContextCandidateRisk::Low {
-        return "risk_requires_review";
-    }
-    if candidate.sensitivity != super::claims::UserContextSensitivity::Normal {
-        return "sensitivity_requires_review";
-    }
-    if candidate.confidence < 0.9 {
-        return "low_confidence";
-    }
-    if candidate.source_kind != "explicit_user_statement" {
-        return "source_requires_review";
-    }
-    if !candidate
-        .source_event_ids
-        .iter()
-        .all(|id| batch.event_is_user_authored(*id))
-    {
-        return "source_not_user_authored";
-    }
-    if !is_supported_by_user_source_event(candidate, batch) {
-        return "no_supporting_source_event";
-    }
-    "requires_review"
 }
 
 fn is_supported_for_candidate_queue(
