@@ -306,6 +306,24 @@ mod tests {
     }
 
     #[test]
+    fn auto_promote_min_confidence_can_be_set_through_config_cli() -> Result<()> {
+        let path = user_context_config_path("user-context-auto-promote-cli-float");
+        with_user_context_config_path(&path, || -> Result<()> {
+            super::super::init_config()?;
+            super::super::set_config_value("user_context.auto_promote.min_confidence", "0.75")?;
+            let config = user_context_auto_promote_config()?;
+            let text = std::fs::read_to_string(&path)?;
+
+            assert_eq!(config.min_confidence, 0.75);
+            assert!(text.contains("min_confidence = 0.75"), "{text}");
+            assert!(!text.contains("min_confidence = \"0.75\""), "{text}");
+            Ok(())
+        })?;
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
+
+    #[test]
     fn strict_auto_promote_config_restores_old_policy() -> Result<()> {
         let path = user_context_config_path("user-context-auto-promote-strict");
         with_user_context_config_path(&path, || -> Result<()> {

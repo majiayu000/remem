@@ -3,12 +3,14 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use toml_edit::{value, DocumentMut, Item, Table};
 
+mod config_value;
 #[cfg(test)]
 mod migration_tests;
 mod model;
 mod promotion;
 mod rules;
 mod user_auto_promote;
+use config_value::cli_value;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
@@ -496,30 +498,6 @@ fn optional_str(table: &Table, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-fn cli_value(raw: &str) -> Item {
-    let trimmed = raw.trim();
-    match trimmed.to_ascii_lowercase().as_str() {
-        "true" => value(true),
-        "false" => value(false),
-        _ => match trimmed.parse::<i64>() {
-            Ok(number) => value(number),
-            Err(_) => value(trim_outer_quotes(trimmed)),
-        },
-    }
-}
-
-fn trim_outer_quotes(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(value)
 }
 
 #[cfg(test)]
