@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.191` for GH-680 procedure export final guard:
+  `remem procedures export` now enforces a runtime CLI invocation guard,
+  refuses plugin `skills/` roots before creating missing directories, and
+  documents the export command and review-gated overwrite/path semantics in
+  the README and current procedure export contract.
 - Staged source version `0.5.190` for GH-680 procedure export registry:
   successful review-gated procedure exports now record content/source
   snapshots in `procedure_exports`, and `remem doctor` warns when exported
