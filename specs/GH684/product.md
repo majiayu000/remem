@@ -60,8 +60,10 @@ current SessionRollup path and the legacy Summary job chain.
 - [x] In-flight `JobType::Summary` upgrade handling is decided and tested:
       non-terminal legacy Summary jobs are rejected as permanent failures by
       migration v064, and already-claimed Summary jobs are rejected by the
-      worker before the retired AI/finalize path can run. Terminal Summary
-      history and non-summary jobs are preserved.
+      worker before the retired AI/finalize path can run. Stop hooks no longer
+      enqueue new Summary jobs, capture-ledger failures spill instead of
+      falling back to the retired writer, and terminal Summary history plus
+      non-summary jobs are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.

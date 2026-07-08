@@ -116,6 +116,14 @@ fn legacy_summary_job_surface(conn: &Connection) -> Result<LegacySurfaceStats> {
                 "SELECT COUNT(*) FROM jobs
                  WHERE job_type = 'summary'
                    AND state <> 'done'
+                   AND NOT (
+                     state = 'failed'
+                     AND failure_class = 'permanent'
+                     AND last_error IN (
+                       'legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output',
+                       'legacy Summary jobs are retired; SessionRollup owns session summary output'
+                     )
+                   )
                    {archived_filter}"
             ),
             [],

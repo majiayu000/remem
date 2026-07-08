@@ -127,15 +127,22 @@ fn enqueue_summary_payload(
     let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
     let compress_payload = compress_payload(profile)?;
 
-    record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload);
-    enqueue_summary_jobs(
-        conn,
-        &host,
-        session_id,
-        &project,
-        &summary_payload,
-        &compress_payload,
-    )?;
+    if let Err(error) =
+        record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload)
+    {
+        let error_text = error.to_string();
+        let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+        crate::log::error(
+            "summarize",
+            &format!(
+                "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {}",
+                path.display(),
+                error_text
+            ),
+        );
+        anyhow::bail!(error_text);
+    }
+    enqueue_summary_followup_jobs(conn, &host, session_id, &project, &compress_payload)?;
     Ok(())
 }
 
@@ -188,8 +195,8 @@ fn record_summary_capture_event(
     project: &str,
     cwd: &str,
     content: &str,
-) -> bool {
-    match db::record_captured_event(
+) -> Result<()> {
+    db::record_captured_event(
         conn,
         &db::CaptureEventInput {
             host,
@@ -202,27 +209,15 @@ fn record_summary_capture_event(
             content,
             task_kind: Some(db::ExtractionTaskKind::SessionRollup),
         },
-    ) {
-        Ok(_) => true,
-        Err(err) => {
-            crate::log::warn(
-                "summarize",
-                &format!(
-                    "capture ledger record failed; continuing summary enqueue: {}",
-                    err
-                ),
-            );
-            false
-        }
-    }
+    )?;
+    Ok(())
 }
 
-fn enqueue_summary_jobs(
+fn enqueue_summary_followup_jobs(
     conn: &rusqlite::Connection,
     host: &str,
     session_id: &str,
     project: &str,
-    input: &str,
     compress_input: &str,
 ) -> Result<()> {
     let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
@@ -234,15 +229,6 @@ fn enqueue_summary_jobs(
             ),
         );
     }
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Summary,
-        project,
-        Some(session_id),
-        input,
-        100,
-    )?;
     db::enqueue_job(
         conn,
         host,
@@ -263,7 +249,7 @@ fn enqueue_summary_jobs(
     crate::log::info(
         "summarize",
         &format!(
-            "QUEUED summary session={} project={} legacy_pending_observations={}",
+            "QUEUED session_rollup_followups session={} project={} legacy_pending_observations={}",
             session_id, project, ready_pending
         ),
     );
@@ -296,8 +282,8 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
-        summarize_input, summary_payload_with_cwd,
+        compress_payload, enqueue_summary_followup_jobs, record_summary_capture_event,
+        resolve_hook_host, summarize_input, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -493,69 +479,69 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn summarize_hook_spills_when_capture_ledger_fails() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-capture-failure");
+        drop(db::open_db()?);
+        match std::fs::remove_file(super::super::spill::summary_spill_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let input = serde_json::json!({
+            "session_id": "sess-summary-capture-failure",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+
+        let err = summarize_input(&input, Some("unknown"), None)
+            .await
+            .expect_err("capture ledger failure should fail closed");
+
+        assert!(
+            err.to_string().contains("invalid capture host"),
+            "unexpected error: {err:#}"
+        );
+        let conn = db::open_db()?;
+        let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+        assert_eq!(job_count, 0);
+        assert!(super::super::spill::summary_spill_path().exists());
+        Ok(())
+    }
+
     #[test]
-    fn capture_ledger_failure_does_not_block_legacy_summary_hook() {
+    fn capture_ledger_failure_blocks_followup_jobs() {
         let _test_dir = ScopedTestDataDir::new("summary-legacy-unknown-host");
         let conn = db::open_db().expect("db should open");
 
-        let captured = record_summary_capture_event(
+        let err = record_summary_capture_event(
             &conn,
             "unknown",
             "sess-legacy",
             "/tmp/remem",
             "/tmp/remem",
             r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
-        );
-        enqueue_summary_jobs(
-            &conn,
-            "unknown",
-            "sess-legacy",
-            "/tmp/remem",
-            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
-            "{}",
         )
-        .expect("legacy summary jobs should still enqueue");
+        .expect_err("capture ledger failure should stop summary hook followups");
 
-        assert!(!captured);
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
+        assert!(err.to_string().contains("invalid capture host"));
+        assert!(job_types(&conn).is_empty());
     }
 
     #[test]
-    fn enqueue_summary_jobs_skips_observation_job_when_no_pending_events() {
+    fn enqueue_summary_followup_jobs_skips_legacy_summary_job() {
         let _test_dir = ScopedTestDataDir::new("summary-no-pending-observation");
         let conn = db::open_db().expect("db should open");
 
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-no-pending",
-            "/tmp/remem",
-            r#"{"session_id":"sess-no-pending"}"#,
-            "{}",
-        )
-        .expect("summary jobs should enqueue");
+        enqueue_summary_followup_jobs(&conn, "codex-cli", "sess-no-pending", "/tmp/remem", "{}")
+            .expect("follow-up jobs should enqueue");
 
         let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
+        assert_eq!(jobs, vec!["compress".to_string(), "dream".to_string()]);
     }
 
     #[test]
-    fn enqueue_summary_jobs_ignores_legacy_pending_observations() {
+    fn enqueue_summary_followup_jobs_ignores_legacy_pending_observations() {
         let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
         let conn = db::open_db().expect("db should open");
         db::test_support::insert_legacy_pending_fixture(
@@ -570,51 +556,29 @@ mod tests {
         )
         .expect("pending observation should insert");
 
-        enqueue_summary_jobs(
+        enqueue_summary_followup_jobs(
             &conn,
             "claude-code",
             "sess-with-pending",
             "/tmp/remem",
-            r#"{"session_id":"sess-with-pending"}"#,
             "{}",
         )
-        .expect("summary jobs should enqueue");
+        .expect("follow-up jobs should enqueue");
 
         let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
+        assert_eq!(jobs, vec!["compress".to_string(), "dream".to_string()]);
     }
 
     #[test]
-    fn enqueue_summary_jobs_dedups_dream_and_preserves_profile_payload() {
+    fn enqueue_summary_followup_jobs_dedups_dream_and_preserves_profile_payload() {
         let _test_dir = ScopedTestDataDir::new("summary-dream-profile");
         let conn = db::open_db().expect("db should open");
         let payload = compress_payload(Some("custom")).expect("compress payload should serialize");
 
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-dream-a",
-            "/tmp/remem",
-            r#"{"session_id":"sess-dream-a"}"#,
-            &payload,
-        )
-        .expect("first summary jobs should enqueue");
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-dream-b",
-            "/tmp/remem",
-            r#"{"session_id":"sess-dream-b"}"#,
-            &payload,
-        )
-        .expect("second summary jobs should enqueue");
+        enqueue_summary_followup_jobs(&conn, "codex-cli", "sess-dream-a", "/tmp/remem", &payload)
+            .expect("first follow-up jobs should enqueue");
+        enqueue_summary_followup_jobs(&conn, "codex-cli", "sess-dream-b", "/tmp/remem", &payload)
+            .expect("second follow-up jobs should enqueue");
 
         let dream_payloads = job_payloads(&conn, "dream");
         assert_eq!(dream_payloads.len(), 1);

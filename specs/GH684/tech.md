@@ -98,10 +98,16 @@ needed fields and side effects, then removes only the redundant Summary writer.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary
-      history and non-summary jobs, and the worker rejects already-claimed
-      Summary jobs before the retired path can run. Covered by
-      `legacy_summary_upgrade_rejects_non_terminal_jobs` and
-      `worker_rejects_legacy_summary_job_without_retry`.
+      history and non-summary jobs, Stop hooks no longer enqueue new Summary
+      jobs, capture-ledger failures spill instead of falling back to the
+      retired writer, doctor/status ignore explicit rejection rows as freeze
+      blockers, and the worker rejects already-claimed Summary jobs before the
+      retired path can run. Covered by
+      `legacy_summary_upgrade_rejects_non_terminal_jobs`,
+      `worker_rejects_legacy_summary_job_without_retry`,
+      `enqueue_summary_followup_jobs_skips_legacy_summary_job`,
+      `capture_ledger_failure_blocks_followup_jobs`, and
+      `legacy_surfaces_ignore_explicit_summary_rejections_as_blockers`.
 - [ ] Pending legacy migration and guarded-drop tests.
 - [x] MCP/docs wording verification.
 - [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`

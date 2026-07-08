@@ -58,16 +58,19 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   MCP tool or `remem search`, which query `memories` only.
 - Disposition follows `observations`.
 
-### `session_summaries` — verdict: shared, DUAL-WRITE (the real target)
+### `session_summaries` — verdict: shared, single writer after GH684-T7
 
-- Two writers, both unconditionally reachable from the same Stop hook:
+- Historical inventory found two writers reachable from the same Stop hook:
   1. Current: `persist_session_rollup` (`src/session_rollup/persist.rs`)
      via the `SessionRollup` extraction task.
-  2. Legacy pre-v006: `enqueue_summary_jobs`
+  2. Legacy pre-v006: the former Summary enqueue helper
      (`src/summarize/summary_job/hook.rs`) → worker `JobType::Summary`
      (`src/worker.rs`) → `finalize_summarize`
      (`src/db/summarize/session/finalize.rs`, DELETE+INSERT).
-  Neither is behind a flag; every session end drives both chains.
+- GH684-T7 retires the legacy enqueue path: Stop hooks record the
+  `SessionRollup` extraction task and enqueue only Compress/Dream follow-up
+  jobs. If capture-ledger recording fails, the hook spills the payload and
+  skips follow-up jobs instead of relying on legacy Summary fallback.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -120,7 +123,7 @@ Existing Implementation Facts above):
 | `observations` | `reclassify-current` — live intermediate of the extraction pipeline; GH684-T8 fixed the "legacy" MCP wording |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
-| legacy summary writer (`enqueue_summary_jobs` → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job is the dual-writer duplicating `SessionRollup`; the surrounding Stop hook also schedules Compress and Dream jobs and those side effects must be preserved or ported before the shared helper is removed |
+| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; GH684-T7 keeps the surrounding Stop-hook Compress and Dream follow-ups while stopping new Summary job enqueue |
 
 Remaining Phase 1 analysis before freeze decisions execute:
 
@@ -187,8 +190,8 @@ Tests: fixture DBs per state; frozen-write detection test.
    side effect has a new owner before Summary retirement.
 
    GH684-T4 locks these side effects with regression coverage before the
-   Summary retirement decision in GH684-T7: Stop-hook enqueue tests cover
-   Compress and Dream profile/cooldown behavior; Summary job process tests
+   Summary retirement decision in GH684-T7: Stop-hook follow-up enqueue tests
+   cover Compress and Dream profile/cooldown behavior; Summary job process tests
    cover raw archive ingest, memory citations before cooldown/summary skips,
    and failure-lesson distillation; finalize tests cover summary-derived
    candidate finalization; `process_finalized_summary_syncs_native_memory_side_effect`
@@ -197,10 +200,13 @@ Tests: fixture DBs per state; frozen-write detection test.
    upgrade time. Migration v064 marks non-terminal Summary jobs as failed
    permanent, clears lease/retry state, and records an explicit upgrade
    rejection error. The worker also rejects any already-claimed Summary job
-   before it can enter the retired AI/finalize path. This preserves terminal
-   Summary history and non-summary jobs. Draining would rerun the retired AI
-   path, and conversion lacks an authoritative legacy payload-to-SessionRollup
-   contract.
+   before it can enter the retired AI/finalize path, while doctor/status
+   excludes these explicit rejection rows from freeze blockers. Stop hooks no
+   longer enqueue new Summary jobs, and capture-ledger failures spill and abort
+   follow-ups rather than falling back to the retired writer. This preserves
+   terminal Summary history and non-summary jobs. Draining would rerun the
+   retired AI path, and conversion lacks an authoritative legacy
+   payload-to-SessionRollup contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 
@@ -285,7 +291,7 @@ epic before each drop ships.
   (This gates the legacy-chain removal.)
 - Answered by GH684-T7: in-flight `JobType::Summary` jobs are rejected at
   upgrade time by migration v064 and by a worker-side execution fence, not
-  drained or converted.
+  drained or converted; new Stop-hook work no longer enqueues Summary jobs.
 - Should the `get_observations` MCP source keep the name
   `source='observation'` after the description fix, or is a rename worth the
   client churn?
