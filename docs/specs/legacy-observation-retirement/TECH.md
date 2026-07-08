@@ -203,10 +203,13 @@ needed. Freeze means: delete the dead claim/lease machinery
 (`src/db/pending/claim.rs`) and the test-only `enqueue_pending` write path;
 status/doctor keep reporting row counts until the drop ships.
 
-GH684-T5 confirmed the default real database on 2026-07-08:
-`/Users/apple/.remem/remem.db` had zero ready, delayed, processing, expired,
-and failed `pending_observations` rows, and `remem pending list-failed --json`
-returned zero rows. No `remem pending migrate-legacy` run was needed.
+GH684-T5 confirmed the real local databases on 2026-07-08. The default store
+(`/Users/apple/.remem/remem.db`) and the dated backup stores under
+`/Users/apple/Backups/remem/20260704-094200` through
+`/Users/apple/Backups/remem/20260708-033004` all had zero ready, delayed,
+processing, expired, and failed `pending_observations` rows. The default store
+also returned zero rows from `remem pending list-failed --json`. No
+`remem pending migrate-legacy` run was needed for any checked store.
 
 GH684-T6 freezes the dead queue writer/claim surface by deleting
 `enqueue_pending`, claim/lease helpers, and the legacy `PendingObservation`
