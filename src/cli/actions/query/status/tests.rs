@@ -346,6 +346,7 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     assert!(text.contains("preview migration prep: remem pending retry-failed --dry-run"));
     assert!(text.contains("apply migration prep: remem pending retry-failed"));
     assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
+    assert!(text.contains("apply replay: remem pending migrate-legacy"));
     assert!(text.contains("1 expired processing pending observation"));
     assert!(text.contains("4 failed extraction tasks"));
     assert!(text.contains("2 failed jobs"));

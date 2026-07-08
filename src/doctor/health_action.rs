@@ -78,7 +78,9 @@ pub(crate) fn queue_actions_with_replay(
                 "expired processing pending observation",
                 "expired processing pending observations",
             ))
-            .command("inspect counts", "remem status --json"),
+            .command("inspect counts", "remem status --json")
+            .command("preview replay", "remem pending migrate-legacy --dry-run")
+            .command("apply replay", "remem pending migrate-legacy"),
         );
     }
 
