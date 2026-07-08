@@ -2,6 +2,7 @@ use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
 
 pub const WORKER_HEARTBEAT_HEALTH_SECS: i64 = 480;
+const CURRENT_WORKER_OWNER_PREFIX: &str = concat!("worker-v", env!("CARGO_PKG_VERSION"), "-");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerHeartbeat {
@@ -29,6 +30,14 @@ pub fn upsert_worker_heartbeat(
     Ok(())
 }
 
+pub fn current_worker_owner(mode: &str, pid: u32, epoch_millis: i64) -> String {
+    format!("{CURRENT_WORKER_OWNER_PREFIX}{mode}-{pid}-{epoch_millis}")
+}
+
+pub fn is_current_daemon_worker_owner(owner: &str) -> bool {
+    owner.starts_with(&format!("{CURRENT_WORKER_OWNER_PREFIX}daemon-"))
+}
+
 pub fn latest_worker_heartbeat(conn: &Connection) -> Result<Option<WorkerHeartbeat>> {
     query_latest_worker_heartbeat(conn, false)
 }
@@ -42,7 +51,8 @@ fn query_latest_worker_heartbeat(
     daemon_only: bool,
 ) -> Result<Option<WorkerHeartbeat>> {
     let daemon_filter = if daemon_only {
-        "WHERE owner NOT LIKE 'worker-once-%'"
+        "WHERE owner NOT LIKE 'worker-once-%'
+           AND owner NOT LIKE 'worker-v%-once-%'"
     } else {
         ""
     };
@@ -89,7 +99,8 @@ fn query_healthy_worker_heartbeat(
 ) -> Result<Option<WorkerHeartbeat>> {
     let now = chrono::Utc::now().timestamp();
     let daemon_filter = if daemon_only {
-        " AND owner NOT LIKE 'worker-once-%'"
+        " AND owner NOT LIKE 'worker-once-%'
+          AND owner NOT LIKE 'worker-v%-once-%'"
     } else {
         ""
     };
@@ -152,9 +163,9 @@ mod tests {
     use rusqlite::Connection;
 
     use super::{
-        healthy_daemon_worker_heartbeat, healthy_worker_heartbeat, latest_daemon_worker_heartbeat,
-        latest_worker_heartbeat, test_heartbeat_process_alive, upsert_worker_heartbeat,
-        WORKER_HEARTBEAT_HEALTH_SECS,
+        current_worker_owner, healthy_daemon_worker_heartbeat, healthy_worker_heartbeat,
+        is_current_daemon_worker_owner, latest_daemon_worker_heartbeat, latest_worker_heartbeat,
+        test_heartbeat_process_alive, upsert_worker_heartbeat, WORKER_HEARTBEAT_HEALTH_SECS,
     };
 
     fn setup(conn: &Connection) {
@@ -184,6 +195,17 @@ mod tests {
             .expect("healthy heartbeat should load")
             .expect("healthy heartbeat should exist");
         assert_eq!(healthy.owner, "worker-new");
+    }
+
+    #[test]
+    fn current_worker_owner_is_version_gated() {
+        let owner = current_worker_owner("daemon", 123, 456);
+
+        assert!(is_current_daemon_worker_owner(&owner));
+        assert!(!is_current_daemon_worker_owner("worker-daemon-123-456"));
+        assert!(!is_current_daemon_worker_owner(&current_worker_owner(
+            "once", 123, 456
+        )));
     }
 
     #[test]
@@ -227,11 +249,19 @@ mod tests {
             now,
             now,
         )?;
+        let current_once_owner = current_worker_owner("once", std::process::id(), now * 1000);
+        upsert_worker_heartbeat(
+            &conn,
+            &current_once_owner,
+            i64::from(std::process::id()),
+            now + 1,
+            now + 1,
+        )?;
 
         let healthy = healthy_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)?;
         assert_eq!(
             healthy.as_ref().map(|heartbeat| heartbeat.owner.as_str()),
-            Some("worker-once-test")
+            Some(current_once_owner.as_str())
         );
         let healthy_daemon = healthy_daemon_worker_heartbeat(&conn, WORKER_HEARTBEAT_HEALTH_SECS)?;
         assert!(healthy_daemon.is_none());
@@ -280,11 +310,19 @@ mod tests {
             now,
             now,
         )?;
+        let current_once_owner = current_worker_owner("once", std::process::id(), now * 1000);
+        upsert_worker_heartbeat(
+            &conn,
+            &current_once_owner,
+            i64::from(std::process::id()),
+            now + 1,
+            now + 1,
+        )?;
 
         let latest = latest_worker_heartbeat(&conn)?;
         assert_eq!(
             latest.as_ref().map(|heartbeat| heartbeat.owner.as_str()),
-            Some("worker-once-test")
+            Some(current_once_owner.as_str())
         );
 
         let latest_daemon = latest_daemon_worker_heartbeat(&conn)?;

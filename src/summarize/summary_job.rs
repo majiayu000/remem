@@ -2,6 +2,7 @@ mod hook;
 mod host;
 mod persist;
 mod process;
+mod replay;
 mod side_effects;
 mod spill;
 mod worker_launch;

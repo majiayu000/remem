@@ -37,7 +37,22 @@ fn spawn_worker_once_if_idle_with(
 }
 
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
-    Ok(db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
+    let Some(heartbeat) =
+        db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?
+    else {
+        return Ok(true);
+    };
+    if db::is_current_daemon_worker_owner(&heartbeat.owner) {
+        return Ok(false);
+    }
+    crate::log::info(
+        "summarize",
+        &format!(
+            "worker daemon heartbeat owner={} is from another binary version; spawning worker --once fallback",
+            heartbeat.owner
+        ),
+    );
+    Ok(true)
 }
 
 fn spawn_worker_once() -> Result<()> {
@@ -157,8 +172,28 @@ mod tests {
     }
 
     #[test]
-    fn healthy_daemon_skips_stop_spawn() {
+    fn current_healthy_daemon_skips_stop_spawn() {
         let _test_dir = ScopedTestDataDir::new("summary-healthy-daemon");
+        let conn = db::open_db().expect("db should open");
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            &db::current_worker_owner("daemon", std::process::id(), now * 1000),
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )
+        .expect("heartbeat should insert");
+
+        assert!(
+            !should_spawn_worker_once(&conn).expect("worker check should run"),
+            "healthy daemon heartbeat should skip worker --once fallback"
+        );
+    }
+
+    #[test]
+    fn old_version_healthy_daemon_uses_stop_fallback_spawn() {
+        let _test_dir = ScopedTestDataDir::new("summary-old-daemon-version");
         let conn = db::open_db().expect("db should open");
         let now = chrono::Utc::now().timestamp();
         db::upsert_worker_heartbeat(
@@ -171,8 +206,8 @@ mod tests {
         .expect("heartbeat should insert");
 
         assert!(
-            !should_spawn_worker_once(&conn).expect("worker check should run"),
-            "healthy daemon heartbeat should skip worker --once fallback"
+            should_spawn_worker_once(&conn).expect("worker check should run"),
+            "old-version daemon heartbeat should not suppress Stop fallback"
         );
     }
 

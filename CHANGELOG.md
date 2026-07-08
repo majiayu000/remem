@@ -15,10 +15,13 @@
   failed Summary rows are frozen during upgrade, doctor/status ignore explicit
   v064 upgrade rejection rows as freeze blockers and actionable failed jobs,
   post-retirement worker rejections stay visible, spill replay compares the
-  full host/project/session identity before dropping stale rows, workers run
-  extraction tasks before Compress/Dream jobs, and worker execution rejects
-  legacy Summary jobs without retry if an already-claimed job reaches the
-  runner.
+  full host/project/session identity before dropping stale rows, replayed Stop
+  captures use stable event IDs so later retry failures stay idempotent,
+  replay capture-ledger failures are preserved once by the replay layer instead
+  of duplicating active spill rows, old-version daemon heartbeats no longer
+  suppress the Stop-hook `worker --once` fallback, workers run extraction tasks
+  before Compress/Dream jobs, and worker execution rejects legacy Summary jobs
+  without retry if an already-claimed job reaches the runner.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact

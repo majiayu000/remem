@@ -121,11 +121,10 @@ fn run_idle_embedding_backfill(conn: &rusqlite::Connection) -> Result<bool> {
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     let started_at_epoch = chrono::Utc::now().timestamp();
     let mode = if once { "once" } else { "daemon" };
-    let lease_owner = format!(
-        "worker-{}-{}-{}",
+    let lease_owner = db::current_worker_owner(
         mode,
         std::process::id(),
-        chrono::Utc::now().timestamp_millis()
+        chrono::Utc::now().timestamp_millis(),
     );
     let Some(_singleton) = lock::acquire_worker_singleton()? else {
         crate::log::info("worker", "worker already running, exiting");
@@ -438,8 +437,9 @@ mod tests {
         let Some(heartbeat) = db::latest_worker_heartbeat(&conn)? else {
             anyhow::bail!("worker --once should record startup heartbeat");
         };
+        let expected_prefix = format!("worker-v{}-once-", env!("CARGO_PKG_VERSION"));
         anyhow::ensure!(
-            heartbeat.owner.starts_with("worker-once-"),
+            heartbeat.owner.starts_with(&expected_prefix),
             "unexpected heartbeat owner {}",
             heartbeat.owner
         );
@@ -501,7 +501,10 @@ mod tests {
 
         let conn = db::open_db()?;
         let update_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM heartbeat_updates WHERE owner LIKE 'worker-once-%'",
+            "SELECT COUNT(*)
+             FROM heartbeat_updates
+             WHERE owner LIKE 'worker-once-%'
+                OR owner LIKE 'worker-v%-once-%'",
             [],
             |row| row.get(0),
         )?;

@@ -9,6 +9,7 @@ use crate::perf::{format_phase_timings, push_elapsed, time_result, PhaseTiming};
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 use super::host::resolve_hook_host;
+use super::replay::{replay_capture_event_id, SummaryPayloadOrigin};
 use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
 use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
@@ -64,7 +65,13 @@ pub(super) async fn summarize_input(
         }
     };
     time_result(&mut timings, "enqueue_summary_payload", || {
-        enqueue_summary_payload(&conn, input, Some(&host), profile)
+        enqueue_summary_payload(
+            &conn,
+            input,
+            Some(&host),
+            profile,
+            SummaryPayloadOrigin::Live,
+        )
     })?;
     let current_identity =
         SummaryPayloadIdentity::from_hook(&host, &hook, &cwd, &db::project_from_cwd(&cwd));
@@ -87,6 +94,7 @@ pub(super) async fn summarize_input(
                 &record.input,
                 record.host.as_deref(),
                 record.profile.as_deref(),
+                SummaryPayloadOrigin::Replay,
             )
         })
     }) {
@@ -125,11 +133,12 @@ pub(super) async fn summarize_input(
     Ok(())
 }
 
-fn enqueue_summary_payload(
+pub(super) fn enqueue_summary_payload(
     conn: &rusqlite::Connection,
     input: &str,
     host: Option<&str>,
     profile: Option<&str>,
+    origin: SummaryPayloadOrigin,
 ) -> Result<()> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
@@ -141,19 +150,37 @@ fn enqueue_summary_payload(
     let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
     let compress_payload = compress_payload(profile)?;
 
-    if let Err(error) =
-        record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload)
-    {
+    let replay_event_id = origin
+        .is_replay()
+        .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
+    if let Err(error) = record_summary_capture_event(
+        conn,
+        &host,
+        session_id,
+        &project,
+        &cwd,
+        &summary_payload,
+        replay_event_id.as_deref(),
+    ) {
         let error_text = error.to_string();
-        let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
-        crate::log::error(
-            "summarize",
-            &format!(
-                "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {}",
-                path.display(),
-                error_text
-            ),
-        );
+        if origin.is_replay() {
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "replayed capture ledger record failed; replay layer will preserve summary hook payload and skip follow-up jobs: {error_text}"
+                ),
+            );
+        } else {
+            let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {}",
+                    path.display(),
+                    error_text
+                ),
+            );
+        }
         anyhow::bail!(error_text);
     }
     let current_branch = db::detect_git_branch(&cwd);
@@ -258,8 +285,9 @@ fn record_summary_capture_event(
     project: &str,
     cwd: &str,
     content: &str,
+    event_id: Option<&str>,
 ) -> Result<()> {
-    db::record_captured_event(
+    db::record_captured_event_with_id(
         conn,
         &db::CaptureEventInput {
             host,
@@ -272,6 +300,7 @@ fn record_summary_capture_event(
             content,
             task_kind: Some(db::ExtractionTaskKind::SessionRollup),
         },
+        event_id,
     )?;
     Ok(())
 }
@@ -672,6 +701,7 @@ mod tests {
             "/tmp/remem",
             "/tmp/remem",
             r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
+            None,
         )
         .expect_err("capture ledger failure should stop summary hook followups");
 

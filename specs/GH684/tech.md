@@ -102,15 +102,23 @@ needed fields and side effects, then removes only the redundant Summary writer.
       failure maintenance can reopen them, Stop hooks no longer enqueue new
       Summary jobs, capture-ledger failures spill instead of falling back to the
       retired writer, stale spill replay compares host/project/session before
-      dropping older current-identity rows, doctor/status ignore v064 upgrade
+      dropping older current-identity rows, replayed Stop captures use stable
+      event IDs for retry idempotency, replay capture-ledger failures are
+      preserved once by the replay layer, doctor/status ignore v064 upgrade
       rejection rows as freeze blockers and actionable failed jobs while
-      keeping worker-side post-retirement Summary rejections visible, workers
-      claim extraction tasks before Compress/Dream jobs, and the worker rejects
-      already-claimed Summary jobs before the retired path can run. Covered by
+      keeping worker-side post-retirement Summary rejections visible,
+      old-version daemon heartbeats do not suppress the current Stop fallback
+      worker, workers claim extraction tasks before Compress/Dream jobs, and
+      the worker rejects already-claimed Summary jobs before the retired path
+      can run. Covered by
       `legacy_summary_upgrade_rejects_non_terminal_jobs`,
       `worker_rejects_legacy_summary_job_without_retry`,
       `summarize_hook_runs_stop_side_effects_without_summary_job`,
       `citation_failure_does_not_block_followup_jobs`,
+      `replay_capture_failure_is_preserved_once_by_replay_layer`,
+      `replay_capture_is_idempotent_when_later_followup_fails`,
+      `current_healthy_daemon_skips_stop_spawn`,
+      `old_version_healthy_daemon_uses_stop_fallback_spawn`,
       `summarize_hook_replays_same_session_spill_for_different_project`,
       `enqueue_summary_followup_jobs_skips_legacy_summary_job`,
       `capture_ledger_failure_blocks_followup_jobs`, and
