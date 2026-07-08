@@ -3,9 +3,54 @@ use serde_json::json;
 use anyhow::Context;
 use rusqlite::{params, Connection};
 
-use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp, HookStrategy};
+use super::config::{
+    build_hooks, remove_remem_hooks, remove_remem_mcp, repair_hooks_json, HookStrategy,
+};
+use super::host::InstallHost;
 use super::runtime::ensure_runtime_store_ready;
+use super::InstallTarget;
 use crate::db::test_support::ScopedTestDataDir;
+
+struct ScopedHome {
+    _guard: std::sync::MutexGuard<'static, ()>,
+    previous_home: Option<std::ffi::OsString>,
+    path: std::path::PathBuf,
+}
+
+static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+impl ScopedHome {
+    fn new(label: &str) -> anyhow::Result<Self> {
+        let guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let path = std::env::temp_dir().join(format!(
+            "remem-install-home-{label}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(path.join(".claude"))?;
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &path);
+        Ok(Self {
+            _guard: guard,
+            previous_home,
+            path,
+        })
+    }
+}
+
+impl Drop for ScopedHome {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous_home.as_ref() {
+            std::env::set_var("HOME", previous);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
 
 fn seed_plaintext_runtime_db_through(
     test_dir: &ScopedTestDataDir,
@@ -111,7 +156,7 @@ fn install_dry_run_does_not_initialize_runtime_store() -> anyhow::Result<()> {
     std::env::remove_var("REMEM_CIPHER_KEY");
     test_dir.remove_db_files();
 
-    super::runtime::install(super::InstallTarget::Codex, true, false)?;
+    super::runtime::install(super::InstallTarget::Codex, true, false, false)?;
 
     assert!(
         !test_dir.path.join(".key").exists(),
@@ -120,6 +165,60 @@ fn install_dry_run_does_not_initialize_runtime_store() -> anyhow::Result<()> {
     assert!(
         !test_dir.db_path().exists(),
         "dry-run install must not create or migrate the database"
+    );
+    Ok(())
+}
+
+#[test]
+fn repair_dry_run_does_not_write_hooks_mcp_or_runtime_store() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-repair-dry-run-no-side-effects");
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    test_dir.remove_db_files();
+    let home = ScopedHome::new("repair-dry-run")?;
+    let settings_path = home.path.join(".claude").join("settings.json");
+    let claude_json_path = home.path.join(".claude.json");
+    let original_settings = r#"{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"/old/remem context","timeout":15000}]}]}}"#;
+    let original_mcp = r#"{"mcpServers":{"remem":{"command":"/old/remem","args":["mcp"]}}}"#;
+    std::fs::write(&settings_path, original_settings)?;
+    std::fs::write(&claude_json_path, original_mcp)?;
+
+    super::install(InstallTarget::Claude, true, false, true)?;
+
+    assert_eq!(std::fs::read_to_string(&settings_path)?, original_settings);
+    assert_eq!(std::fs::read_to_string(&claude_json_path)?, original_mcp);
+    assert!(
+        !test_dir.path.join(".key").exists(),
+        "repair dry-run must not create an API/runtime key"
+    );
+    assert!(
+        !test_dir.db_path().exists(),
+        "repair dry-run must not initialize the runtime database"
+    );
+    Ok(())
+}
+
+#[test]
+fn repair_hooks_warns_for_desktop_mcp_drift() -> anyhow::Result<()> {
+    let home = ScopedHome::new("repair-desktop-mcp")?;
+    let settings_path = home.path.join(".claude").join("settings.json");
+    let desktop_mcp_path = home.path.join(".claude").join("claude_desktop_config.json");
+    std::fs::write(&settings_path, "{}")?;
+    std::fs::write(
+        &desktop_mcp_path,
+        r#"{"mcpServers":{"remem":{"command":"/old/remem","args":["mcp"]}}}"#,
+    )?;
+
+    let report = super::hosts::ClaudeHost.repair_hooks("/new/remem")?;
+
+    assert_eq!(report.registered, 5);
+    assert_eq!(report.expected, 5);
+    let Some(warning) = report.mcp_warning else {
+        panic!("desktop MCP drift should produce a warning");
+    };
+    assert!(warning.contains("/old/remem"), "{warning}");
+    assert!(
+        !home.path.join(".claude.json").exists(),
+        "test must exercise desktop MCP without primary Claude JSON"
     );
     Ok(())
 }
@@ -389,7 +488,11 @@ fn build_hooks_contains_expected_claude_commands() {
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context --host claude-code"
     );
-    assert_eq!(hooks["SessionStart"][0]["matcher"], "startup|clear|compact");
+    assert_eq!(
+        hooks["SessionStart"][0]["matcher"],
+        "startup|resume|clear|compact"
+    );
+    assert_eq!(hooks["SessionStart"][0]["hooks"][0]["timeout"], 15);
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
         "/tmp/remem session-init --host claude-code"
@@ -400,8 +503,9 @@ fn build_hooks_contains_expected_claude_commands() {
     );
     assert_eq!(
         hooks["PostToolUse"][0]["matcher"],
-        "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task"
+        "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task"
     );
+    assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 120);
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "/tmp/remem summarize --host claude-code"
@@ -480,6 +584,105 @@ fn remove_remem_hooks_preserves_other_hooks() {
         "other-tool prepare"
     );
     assert!(settings["hooks"].get("Stop").is_none());
+}
+
+#[test]
+fn repair_hooks_json_preserves_third_party_and_is_idempotent() -> anyhow::Result<()> {
+    let path = temp_json_path("repair-claude-hooks");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "remem": {"command": "/legacy/remem", "args": ["mcp"]}
+            },
+            "hooks": {
+                "SessionStart": [{
+                    "matcher": "startup|clear|compact",
+                    "hooks": [
+                        {"type": "command", "command": "/old/remem context", "timeout": 15000},
+                        {"type": "command", "command": "/opt/remem-helper prepare", "timeout": 7}
+                    ]
+                }],
+                "PostToolUse": [{
+                    "matcher": "Write|Edit|NotebookEdit|Bash",
+                    "hooks": [{"type": "command", "command": "/old/remem", "args": ["observe", "--host", "claude-code"], "timeout": 120000}]
+                }],
+                "Stop": [{
+                    "hooks": [{"type": "command", "command": "/old/remem summarize", "timeout": 120000}]
+                }]
+            }
+        }))?,
+    )?;
+
+    let first = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)?;
+    let second = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)?;
+    let repaired: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+
+    assert!(first.is_healthy());
+    assert!(second.is_healthy());
+    assert_eq!(count_command_prefix(&repaired, "/new/remem"), 5);
+    assert_eq!(
+        repaired["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+        "/opt/remem-helper prepare"
+    );
+    assert_eq!(repaired["mcpServers"]["remem"]["command"], "/legacy/remem");
+    assert_eq!(
+        repaired["hooks"]["SessionStart"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["matcher"] == "startup|resume|clear|compact")
+            .unwrap()["hooks"][0]["timeout"],
+        15
+    );
+    assert_eq!(
+        repaired["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["matcher"] == "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task")
+            .unwrap()["hooks"][0]["timeout"],
+        120
+    );
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
+fn repair_hooks_json_invalid_settings_fails_with_path_context() -> anyhow::Result<()> {
+    let path = temp_json_path("repair-invalid-claude-hooks");
+    std::fs::write(&path, "{not valid json")?;
+
+    let err = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)
+        .expect_err("invalid settings JSON must fail closed");
+    let message = format!("{err:?}");
+
+    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert!(message.contains("解析"), "{message}");
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+fn temp_json_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "remem-{label}-{}-{}.json",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+}
+
+fn count_command_prefix(doc: &serde_json::Value, prefix: &str) -> usize {
+    doc.get("hooks")
+        .and_then(|hooks| hooks.as_object())
+        .into_iter()
+        .flat_map(|hooks| hooks.values())
+        .filter_map(|entries| entries.as_array())
+        .flatten()
+        .filter_map(|entry| entry.get("hooks").and_then(|hooks| hooks.as_array()))
+        .flatten()
+        .filter_map(|hook| hook.get("command").and_then(|command| command.as_str()))
+        .filter(|command| command.starts_with(prefix))
+        .count()
 }
 
 #[test]

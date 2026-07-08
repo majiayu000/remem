@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.187` for GH-761 Claude hook integrity repair:
+  Claude hook setup now evaluates all five expected hooks, warns during
+  SessionStart when registrations are missing or stale, and provides a
+  hook-only `remem install --target claude --repair` path that preserves
+  third-party hooks and avoids MCP/runtime/token writes.
 - Staged source version `0.5.186` for GH-759 final observability and docs:
   `remem status` now reports user-context claim/candidate counts and pending
   block reasons, and the user-facing/runtime specs document the relaxed default,

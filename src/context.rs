@@ -7,6 +7,7 @@ mod diagnostics;
 mod fact_labels;
 mod filters;
 mod format;
+mod hook_warning;
 mod host;
 mod hybrid_context;
 mod implicit_query;

@@ -14,6 +14,17 @@ pub(in crate::install) fn claude_json_path() -> PathBuf {
         .join(".claude.json")
 }
 
+pub(in crate::install) fn claude_desktop_config_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".claude")
+        .join("claude_desktop_config.json")
+}
+
+pub(crate) fn claude_mcp_paths() -> Vec<PathBuf> {
+    vec![claude_json_path(), claude_desktop_config_path()]
+}
+
 pub(in crate::install) fn old_hooks_path() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))

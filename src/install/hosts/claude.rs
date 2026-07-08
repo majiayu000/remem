@@ -3,11 +3,12 @@ use serde_json::json;
 use std::path::PathBuf;
 
 use crate::install::config::{
-    apply_hooks_json, build_mcp_server, remove_remem_mcp, strip_hooks_json, HookStrategy,
+    apply_hooks_json, build_mcp_server, remove_remem_mcp, repair_hooks_json, strip_hooks_json,
+    HookStrategy,
 };
-use crate::install::host::{HookSupport, InstallHost};
+use crate::install::host::{HookRepairReport, HookSupport, InstallHost};
 use crate::install::json_io::{read_json_file, write_json_file};
-use crate::install::paths::{claude_json_path, settings_path};
+use crate::install::paths::{claude_json_path, claude_mcp_paths, settings_path};
 
 pub(in crate::install) struct ClaudeHost;
 
@@ -67,6 +68,30 @@ impl InstallHost for ClaudeHost {
         }
         apply_hooks_json(&path, bin, HookStrategy::ClaudeCode)?;
         Ok(HookSupport::Installed)
+    }
+
+    fn repair_hooks(&self, bin: &str) -> Result<HookRepairReport> {
+        let path = settings_path();
+        let integrity = repair_hooks_json(&path, bin, HookStrategy::ClaudeCode)?;
+        let mcp_warning =
+            match crate::hook_integrity::read_first_claude_mcp_command(&claude_mcp_paths()) {
+                Ok(Some(command)) if command != bin => Some(format!(
+                    "Claude MCP still points at {}; run `remem install --target claude` after repair if doctor reports install-path drift",
+                    command
+                )),
+                Ok(_) => None,
+                Err(error) => Some(format!("Could not inspect Claude MCP path: {error}")),
+            };
+        Ok(HookRepairReport {
+            path,
+            registered: integrity.registered,
+            expected: integrity.expected,
+            mcp_warning,
+            scope_warning: Some(
+                "Scope: repaired user-level ~/.claude/settings.json only; project/local/managed Claude hook locations were not modified"
+                    .to_string(),
+            ),
+        })
     }
 
     fn uninstall_hooks(&self, bin: &str) -> Result<()> {

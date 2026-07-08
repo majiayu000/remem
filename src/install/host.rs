@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::ValueEnum;
 use std::path::PathBuf;
 
@@ -26,6 +26,14 @@ pub enum HookSupport {
     Skipped(&'static str),
 }
 
+pub struct HookRepairReport {
+    pub path: PathBuf,
+    pub registered: usize,
+    pub expected: usize,
+    pub mcp_warning: Option<String>,
+    pub scope_warning: Option<String>,
+}
+
 /// A host capable of running the remem MCP server.
 ///
 /// Each host owns its own config file format and mutation logic. The runtime
@@ -49,6 +57,11 @@ pub trait InstallHost {
 
     /// Add / update remem hooks. Hosts without hook support return `Skipped`.
     fn install_hooks(&self, bin: &str) -> Result<HookSupport>;
+
+    /// Repair host hooks without touching MCP, runtime store, or tokens.
+    fn repair_hooks(&self, _bin: &str) -> Result<HookRepairReport> {
+        bail!("{} hook repair is not supported", self.name())
+    }
 
     /// Remove remem hooks. No-op if the host doesn't support hooks.
     fn uninstall_hooks(&self, bin: &str) -> Result<()>;

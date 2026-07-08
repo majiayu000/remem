@@ -6,6 +6,7 @@ use crate::db;
 
 use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
 use super::format::{char_len, truncate_chars_with_ellipsis};
+use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
 use super::injection_gate::{
     apply_context_gate_with_data_version, compute_data_version_hint, pre_render_context_gate,
@@ -76,6 +77,15 @@ pub fn generate_context_from_cli(
 }
 
 fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
+    let stdout = generate_context_output_for_invocation(invocation, use_gate)?;
+    print!("{stdout}");
+    Ok(())
+}
+
+fn generate_context_output_for_invocation(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<String> {
     let timer = crate::log::Timer::start("context", &format!("cwd={}", invocation.cwd));
     let debug_enabled = invocation.debug || context_debug_enabled();
     let request = ContextRequest {
@@ -88,6 +98,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         use_colors: invocation.use_colors,
     };
     let policy = resolve_profile(request.host).default_policy();
+    let hook_integrity_warning = claude_hook_integrity_warning(&invocation);
     let db_open_start = Instant::now();
     let conn = match open_context_connection_or_error(&request, &policy) {
         Ok(conn) => conn,
@@ -120,10 +131,8 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     &decision_for_debug,
                 );
             }
-            print!(
-                "{}",
-                context_stdout_for_invocation(&decision.output, &invocation)?
-            );
+            append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
+            let stdout = context_stdout_for_invocation(&decision.output, &invocation)?;
             log_context_timer(
                 timer,
                 &request,
@@ -131,7 +140,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 &rendered.stats,
                 ContextGatePrecheck::Off,
             );
-            return Ok(());
+            return Ok(stdout);
         }
     };
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
@@ -209,6 +218,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         let decision_for_debug = decision.clone();
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
+    append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
     if !audit_items.is_empty() {
         let audit_write_start = Instant::now();
         if let Err(error) =
@@ -224,12 +234,9 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             audit_write_start,
         ));
     }
-    print!(
-        "{}",
-        context_stdout_for_invocation(&decision.output, &invocation)?
-    );
+    let stdout = context_stdout_for_invocation(&decision.output, &invocation)?;
     log_context_timer(timer, &request, &decision, &stats, precheck);
-    Ok(())
+    Ok(stdout)
 }
 
 #[cfg(test)]
@@ -238,6 +245,14 @@ pub(in crate::context) fn generate_context_for_test(
     use_gate: bool,
 ) -> Result<()> {
     generate_context_for_invocation(invocation, use_gate)
+}
+
+#[cfg(test)]
+pub(in crate::context) fn generate_context_output_for_test(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<String> {
+    generate_context_output_for_invocation(invocation, use_gate)
 }
 
 pub(in crate::context) fn append_context_gate_debug_trace(

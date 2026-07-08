@@ -19,6 +19,7 @@ mod extraction_worker;
 pub mod git_trace;
 pub mod git_util;
 mod graph_candidate;
+mod hook_integrity;
 mod hook_stdin;
 pub mod identity;
 pub mod ingest;

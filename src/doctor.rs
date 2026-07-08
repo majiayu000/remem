@@ -4,7 +4,6 @@ mod database;
 mod embedding;
 mod environment;
 pub(crate) mod health_action;
-mod hook_validation;
 mod logging;
 mod mcp_processes;
 mod memory_poisoning;

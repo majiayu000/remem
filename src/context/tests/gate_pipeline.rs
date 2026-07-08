@@ -2,7 +2,46 @@ use rusqlite::{params, Connection};
 
 use super::super::host::HostKind;
 use super::super::invocation::ContextInvocation;
-use super::super::render::generate_context_for_test;
+use super::super::render::{generate_context_for_test, generate_context_output_for_test};
+
+struct ScopedClaudeHome {
+    previous_home: Option<std::ffi::OsString>,
+    path: std::path::PathBuf,
+}
+
+impl ScopedClaudeHome {
+    fn with_incomplete_hooks(label: &str) -> anyhow::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "remem-claude-home-{label}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        let claude_dir = path.join(".claude");
+        std::fs::create_dir_all(&claude_dir)?;
+        std::fs::write(
+            claude_dir.join("settings.json"),
+            r#"{"hooks":{"SessionStart":[{"matcher":"startup|resume|clear|compact","hooks":[{"command":"/tmp/remem context --host claude-code","timeout":15}]}],"UserPromptSubmit":[{"hooks":[{"command":"/tmp/remem session-init --host claude-code","timeout":15}]}],"PreCompact":[{"hooks":[{"command":"/tmp/remem summarize --host claude-code","timeout":120}]}]}}"#,
+        )?;
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &path);
+        Ok(Self {
+            previous_home,
+            path,
+        })
+    }
+}
+
+impl Drop for ScopedClaudeHome {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous_home.as_ref() {
+            std::env::set_var("HOME", previous);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
 
 fn strict_invocation(
     cwd: &str,
@@ -23,6 +62,30 @@ fn strict_invocation(
     }
 }
 
+fn claude_startup_invocation(project: &str, session_id: &str) -> ContextInvocation {
+    ContextInvocation {
+        cwd: project.to_string(),
+        project: project.to_string(),
+        session_id: Some(session_id.to_string()),
+        transcript_path: None,
+        source: Some("startup".to_string()),
+        host: HostKind::ClaudeCode,
+        use_colors: false,
+        debug: false,
+        force: false,
+        gate_mode: Some("auto".to_string()),
+    }
+}
+
+fn assert_claude_hook_warning(output: &str) {
+    assert!(output.contains("## Hook Integrity Warning"), "{output}");
+    assert!(output.contains("3/5 registered"), "{output}");
+    assert!(
+        output.contains("remem install --target claude --repair"),
+        "{output}"
+    );
+}
+
 fn gate_row(
     conn: &rusqlite::Connection,
     session_id: &str,
@@ -35,6 +98,47 @@ fn gate_row(
         |row| Ok((row.get(0)?, row.get(1)?)),
     )
     .map_err(Into::into)
+}
+
+#[test]
+fn claude_hook_warning_survives_db_open_failure() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-hook-db-open");
+    data_dir.remove_db_files();
+    let _home = ScopedClaudeHome::with_incomplete_hooks("db-open")?;
+    let project = data_dir.path.to_string_lossy().to_string();
+
+    let output = generate_context_output_for_test(
+        claude_startup_invocation(&project, "sess-hook-db-open"),
+        true,
+    )?;
+
+    assert!(output.contains("failed to open remem database"), "{output}");
+    assert_claude_hook_warning(&output);
+    Ok(())
+}
+
+#[test]
+fn claude_hook_warning_survives_context_gate_suppression() -> anyhow::Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-hook-gate-suppress");
+    let setup = crate::db::test_support::runtime_connection()?;
+    drop(setup);
+    let _home = ScopedClaudeHome::with_incomplete_hooks("gate-suppress")?;
+    let project = data_dir.path.to_string_lossy().to_string();
+    let invocation = claude_startup_invocation(&project, "sess-hook-gate-suppress");
+
+    let first = generate_context_output_for_test(invocation.clone(), true)?;
+    let second = generate_context_output_for_test(invocation, true)?;
+
+    assert_claude_hook_warning(&first);
+    assert_claude_hook_warning(&second);
+    assert!(
+        second.trim_start().starts_with("## Hook Integrity Warning"),
+        "{second}"
+    );
+    let conn = Connection::open(data_dir.db_path())?;
+    let (suppress_count, _) = gate_row(&conn, "sess-hook-gate-suppress")?;
+    assert_eq!(suppress_count, 1);
+    Ok(())
 }
 
 #[test]
