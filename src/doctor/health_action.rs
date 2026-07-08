@@ -67,7 +67,8 @@ pub(crate) fn queue_actions_with_replay(
                 "remem pending retry-failed --dry-run",
             )
             .command("apply migration prep", "remem pending retry-failed")
-            .command("preview replay", "remem pending migrate-legacy --dry-run"),
+            .command("preview replay", "remem pending migrate-legacy --dry-run")
+            .command("apply replay", "remem pending migrate-legacy"),
         );
     }
 

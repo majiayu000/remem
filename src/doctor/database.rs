@@ -153,10 +153,13 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         .map(|hints| format!("; actions: {hints}"))
         .unwrap_or_default();
 
-    if stats.expired_processing_pending_observations > 0
-        || stats.expired_processing_extraction_tasks > 0
-        || stats.stuck_jobs > 0
-    {
+    if stats.expired_processing_pending_observations > 0 {
+        Check::new(
+            "Pending queue",
+            Status::Warn,
+            format!("{detail} (requires legacy replay{action_suffix})"),
+        )
+    } else if stats.expired_processing_extraction_tasks > 0 || stats.stuck_jobs > 0 {
         Check::new(
             "Pending queue",
             Status::Warn,

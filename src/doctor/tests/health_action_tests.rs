@@ -29,6 +29,19 @@ fn queue_actions_render_copy_paste_commands() {
 }
 
 #[test]
+fn failed_pending_rows_render_apply_replay_without_expired_rows() {
+    let actions = queue_actions(2, 0, 0, 0, 0, 0);
+    let text = render_action_block(&actions);
+
+    assert!(text.contains("2 failed pending observations"));
+    assert!(text.contains("inspect: remem pending list-failed --limit 20"));
+    assert!(text.contains("preview migration prep: remem pending retry-failed --dry-run"));
+    assert!(text.contains("apply migration prep: remem pending retry-failed"));
+    assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
+    assert!(text.contains("apply replay: remem pending migrate-legacy"));
+}
+
+#[test]
 fn expired_processing_pending_rows_render_replay_commands_without_failed_rows() {
     let actions = queue_actions(0, 2, 0, 0, 0, 0);
     let text = render_action_block(&actions);
