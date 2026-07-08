@@ -119,9 +119,13 @@ fn command_adds_forbidden_commit_trailer(command: &str, trailer: &str) -> Result
 }
 
 fn git_commit_segment_adds_trailer(tokens: &[String], trailer: &str) -> bool {
-    let Some(mut index) = tokens.iter().position(|token| token == "git") else {
+    let Some(command_index) = tokens.iter().position(|token| !is_env_assignment(token)) else {
         return false;
     };
+    if tokens[command_index] != "git" {
+        return false;
+    }
+    let mut index = command_index;
     index += 1;
 
     while let Some(token) = tokens.get(index) {
@@ -168,6 +172,10 @@ fn commit_args_add_trailer(args: &[String], trailer: &str) -> bool {
         if arg == "--" {
             return false;
         }
+        if commit_option_consumes_next(arg) {
+            index += 2;
+            continue;
+        }
         if arg == "--trailer" {
             if args
                 .get(index + 1)
@@ -187,6 +195,49 @@ fn commit_args_add_trailer(args: &[String], trailer: &str) -> bool {
     }
 
     false
+}
+
+fn commit_option_consumes_next(arg: &str) -> bool {
+    if matches!(
+        arg,
+        "-m" | "-F"
+            | "-C"
+            | "-c"
+            | "--message"
+            | "--file"
+            | "--reuse-message"
+            | "--reedit-message"
+            | "--author"
+            | "--date"
+            | "--cleanup"
+            | "--template"
+            | "--fixup"
+            | "--squash"
+            | "--pathspec-from-file"
+    ) {
+        return true;
+    }
+    if arg.starts_with("--") {
+        return false;
+    }
+
+    arg.len() > 2
+        && arg
+            .chars()
+            .last()
+            .is_some_and(|ch| matches!(ch, 'm' | 'F' | 'C' | 'c'))
+}
+
+fn is_env_assignment(token: &str) -> bool {
+    let Some((name, _)) = token.split_once('=') else {
+        return false;
+    };
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn trailer_arg_matches(value: &str, trailer: &str) -> bool {
@@ -408,6 +459,34 @@ mod tests {
         let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
         let input = EvaluationInput {
             command: "git commit -m 'remove AI-generated-by support'".to_string(),
+        };
+
+        let outcome = evaluate_artifact(&artifact, &input);
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+        assert!(outcome.matches.is_empty());
+        assert!(outcome.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn commit_trailer_rule_requires_git_as_segment_command() {
+        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
+        let input = EvaluationInput {
+            command: "echo git commit --trailer AI-generated-by=bot".to_string(),
+        };
+
+        let outcome = evaluate_artifact(&artifact, &input);
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+        assert!(outcome.matches.is_empty());
+        assert!(outcome.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn commit_trailer_rule_skips_message_option_values() {
+        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
+        let input = EvaluationInput {
+            command: "git commit -m --trailer AI-generated-by=bot".to_string(),
         };
 
         let outcome = evaluate_artifact(&artifact, &input);
