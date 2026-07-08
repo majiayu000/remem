@@ -203,6 +203,20 @@ needed. Freeze means: delete the dead claim/lease machinery
 (`src/db/pending/claim.rs`) and the test-only `enqueue_pending` write path;
 status/doctor keep reporting row counts until the drop ships.
 
+GH684-T5 confirmed the default real database on 2026-07-08:
+`/Users/apple/.remem/remem.db` had zero ready, delayed, processing, expired,
+and failed `pending_observations` rows, and `remem pending list-failed --json`
+returned zero rows. No `remem pending migrate-legacy` run was needed.
+
+GH684-T6 freezes the dead queue writer/claim surface by deleting
+`enqueue_pending`, claim/lease helpers, and the legacy `PendingObservation`
+claim DTO from the crate. Production builds keep the read/reporting surfaces
+and admin commands (`pending migrate-legacy`, `retry-failed`, `purge-failed`,
+`list-failed`) but no longer export a runtime API that can enqueue, claim,
+retry, fail, or delete claimed legacy pending rows. Tests that need historical
+rows seed them through `db::test_support::insert_legacy_pending_fixture`
+instead of a production-style queue API.
+
 ### Reclassification (no freeze)
 
 `observations` + `observations_fts` stay current. GH684-T8 updates the MCP

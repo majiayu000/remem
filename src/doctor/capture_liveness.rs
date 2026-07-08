@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn capture_liveness_fails_on_failed_observation_backlog() -> anyhow::Result<()> {
         let conn = setup_liveness_conn()?;
-        let id = crate::db::enqueue_pending(
+        let id = crate::db::test_support::insert_legacy_pending_fixture(
             &conn,
             "codex-cli",
             "sess-failed",

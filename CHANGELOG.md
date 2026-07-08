@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.192` for GH-684 pending queue freeze:
+  the dead legacy `pending_observations` enqueue/claim/lease API has been
+  removed from the crate while pending admin migration, failure handling,
+  doctor, and status tests seed historical rows through an explicit test
+  fixture.
 - Staged source version `0.5.191` for GH-680 procedure export final guard:
   `remem procedures export` now enforces a runtime CLI invocation guard,
   refuses plugin `skills/` roots before creating missing directories, and

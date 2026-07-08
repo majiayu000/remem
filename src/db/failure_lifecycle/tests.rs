@@ -40,7 +40,7 @@ fn setup_conn() -> Result<Connection> {
 }
 
 fn seed_pending_failure(conn: &Connection, failed_at: i64, class: &str) -> Result<i64> {
-    let id = crate::db::enqueue_pending(
+    let id = crate::db::test_support::insert_legacy_pending_fixture(
         conn,
         "codex-cli",
         "sess-failure",

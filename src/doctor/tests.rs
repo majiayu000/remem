@@ -158,7 +158,7 @@ fn check_key_format_reports_effective_env_key() -> anyhow::Result<()> {
 fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-pending");
     let conn = db::open_db().expect("db should open");
-    db::enqueue_pending(
+    db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "session-1",
@@ -169,7 +169,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         None,
     )
     .expect("pending row insert should succeed");
-    let failed_id = db::enqueue_pending(
+    let failed_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "session-2",

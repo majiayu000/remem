@@ -558,7 +558,7 @@ mod tests {
     fn enqueue_summary_jobs_ignores_legacy_pending_observations() {
         let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
         let conn = db::open_db().expect("db should open");
-        db::enqueue_pending(
+        db::test_support::insert_legacy_pending_fixture(
             &conn,
             "claude-code",
             "sess-with-pending",
