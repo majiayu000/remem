@@ -100,6 +100,7 @@ pub fn classify_failure(error: &str) -> FailureClass {
         "unsupported version",
         "missing evidence",
         "not implemented",
+        "retired",
     ]
     .iter()
     .any(|needle| lower.contains(needle))

@@ -11,6 +11,7 @@ fn classifier_maps_known_permanent_patterns() {
         "unsupported version marker",
         "missing evidence rows",
         "rule candidate extraction is not implemented",
+        "legacy summary writer retired",
     ] {
         assert_eq!(classify_failure(error), FailureClass::Permanent);
     }

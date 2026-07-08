@@ -196,9 +196,11 @@ Tests: fixture DBs per state; frozen-write detection test.
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
    upgrade time. Migration v064 marks non-terminal Summary jobs as failed
    permanent, clears lease/retry state, and records an explicit upgrade
-   rejection error. It preserves terminal Summary history and non-summary jobs.
-   Draining would rerun the retired AI path, and conversion lacks an
-   authoritative legacy payload-to-SessionRollup contract.
+   rejection error. The worker also rejects any already-claimed Summary job
+   before it can enter the retired AI/finalize path. This preserves terminal
+   Summary history and non-summary jobs. Draining would rerun the retired AI
+   path, and conversion lacks an authoritative legacy payload-to-SessionRollup
+   contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 
@@ -282,7 +284,8 @@ epic before each drop ships.
   fields differ, and do any current readers depend on legacy-only fields?
   (This gates the legacy-chain removal.)
 - Answered by GH684-T7: in-flight `JobType::Summary` jobs are rejected at
-  upgrade time by migration v064, not drained or converted.
+  upgrade time by migration v064 and by a worker-side execution fence, not
+  drained or converted.
 - Should the `get_observations` MCP source keep the name
   `source='observation'` after the description fix, or is a rename worth the
   client churn?
