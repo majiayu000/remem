@@ -5,8 +5,9 @@ use anyhow::{bail, Context, Result};
 use crate::{
     db,
     memory::procedure::{
-        load_export_eligible_procedure, procedure_export_slug, render_procedure_export,
-        ProcedureExportFormat, ProcedureExportSource, PROCEDURE_EXPORT_DRAFT_MARKER,
+        load_export_eligible_procedure, procedure_export_slug, record_procedure_export,
+        render_procedure_export, ProcedureExportFormat, ProcedureExportRecordRequest,
+        ProcedureExportSource, PROCEDURE_EXPORT_DRAFT_MARKER,
     },
 };
 
@@ -22,7 +23,8 @@ pub(super) fn run_procedure_export(
 ) -> Result<()> {
     let conn = db::open_db()?;
     let source = load_export_eligible_procedure(&conn, memory_id)?;
-    let rendered = render_procedure_export(&source, format, chrono::Utc::now().timestamp())?;
+    let exported_at_epoch = chrono::Utc::now().timestamp();
+    let rendered = render_procedure_export(&source, format, exported_at_epoch)?;
     let result = write_procedure_export_draft(ProcedureExportWriteRequest {
         source: &source,
         format,
@@ -30,6 +32,18 @@ pub(super) fn run_procedure_export(
         rendered: &rendered,
         overwrite_generated,
     })?;
+    let cwd = std::env::current_dir().context("resolve current directory for procedure export")?;
+    record_procedure_export(
+        &conn,
+        ProcedureExportRecordRequest {
+            source: &source,
+            format,
+            output_path: &result.path,
+            content: &rendered,
+            cwd: &cwd,
+            exported_at_epoch,
+        },
+    )?;
 
     if result.overwritten {
         println!(

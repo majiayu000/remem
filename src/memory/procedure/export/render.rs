@@ -16,6 +16,16 @@ pub(crate) enum ProcedureExportFormat {
     RunbookMd,
 }
 
+impl ProcedureExportFormat {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ClaudeSkill => "claude-skill",
+            Self::CodexPrompt => "codex-prompt",
+            Self::RunbookMd => "runbook-md",
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub(crate) fn render_procedure_export(
     source: &ProcedureExportSource,

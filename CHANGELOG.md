@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.190` for GH-680 procedure export registry:
+  successful review-gated procedure exports now record content/source
+  snapshots in `procedure_exports`, and `remem doctor` warns when exported
+  drafts drift because the source procedure became inactive, verification
+  freshness lapsed, or the active source changed after export.
 - Staged source version `0.5.189` for GH-680 procedure export reachability:
   a negative source invariant test now keeps procedure draft export writer and
   renderer entrypoints reachable only from the explicit CLI procedures export

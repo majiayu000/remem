@@ -315,6 +315,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "preference_rule_state",
         sql: include_str!("../migrations/v062_preference_rule_state.sql"),
     },
+    Migration {
+        version: 63,
+        name: "procedure_exports",
+        sql: include_str!("../migrations/v063_procedure_exports.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

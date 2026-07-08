@@ -16,6 +16,7 @@ mod health_action_tests;
 mod log_health;
 mod memory_usage_feedback;
 mod pack_imports;
+mod procedure_exports;
 mod promotion_funnel;
 
 struct ScopedCipherKeyEnv {
