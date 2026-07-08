@@ -41,7 +41,7 @@ N5. 不改变 capture、summarize、context 的核心数据语义。
 
 B1. 完整的 Claude hook set 是 5 个事件：`SessionStart`、`UserPromptSubmit`、`PostToolUse`、`PreCompact`、`Stop`，且分别调用当前 remem binary 的 `context`、`session-init`、`observe`、`summarize`、`summarize`，host 为 `claude-code`。
 
-B1a. 完整的 hook set 也包含 remem-managed matcher 与 timeout：`SessionStart` matcher 为 `startup|clear|compact`，`PostToolUse` matcher 覆盖 `Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task`，timeouts 使用当前 `build_hooks` 期望值（context/session-init 15000ms，observe/summarize 120000ms）。
+B1a. 完整的 hook set 也包含 remem-managed matcher 与 timeout：`SessionStart` matcher 为 `startup|resume|clear|compact`，`PostToolUse` matcher 覆盖 `Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task`，timeouts 使用 Claude hook schema 的秒单位（context/session-init 15s，observe/summarize 120s）。
 
 B2. Runtime warning 必须是可见的人读文本，出现在 Claude `SessionStart` context 输出中；缺失 capture hook 不能只写日志，不能被 context gate 的重复输出抑制吞掉。
 
@@ -55,7 +55,9 @@ B5. Repair 写入后 `remem doctor` 与 runtime self-check 使用同一套 hook 
 
 B6. Runtime self-check 的 expected executable 必须与 doctor 的配置优先级一致：优先使用已配置 MCP remem path，其次回退到 hook 中可唯一识别的 remem path，再回退到当前进程 path。这样 stale hook binary 与当前 MCP binary 不一致时必须可见报警。
 
-B7. `--repair` 与 `--dry-run` 同时使用时只输出将修复的目标，不写磁盘。
+B7. 首版 repair 只写用户级 `~/.claude/settings.json`。如果 runtime self-check 或 repair 能检测到 project/local/managed/plugin hook source 未被本命令修复，输出必须明确 scope 是 user-level，不能宣称所有 Claude hook locations 都健康。
+
+B8. `--repair` 与 `--dry-run` 同时使用时只输出将修复的目标，不写磁盘。
 
 ## 5. 验收
 
