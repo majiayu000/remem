@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.194` for GH-684 Summary upgrade handling:
+  migration v064 now rejects non-terminal legacy `JobType::Summary` jobs as
+  permanent failures during upgrade, preserving terminal job history and other
+  job types while SessionRollup owns session summary output.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact

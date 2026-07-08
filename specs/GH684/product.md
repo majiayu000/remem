@@ -57,7 +57,10 @@ current SessionRollup path and the legacy Summary job chain.
       retirement.
 - [ ] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
-- [ ] In-flight `JobType::Summary` upgrade handling is decided and tested.
+- [x] In-flight `JobType::Summary` upgrade handling is decided and tested:
+      non-terminal legacy Summary jobs are rejected as permanent failures by
+      migration v064, while terminal Summary history and non-summary jobs are
+      preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.

@@ -193,7 +193,13 @@ Tests: fixture DBs per state; frozen-write detection test.
    and failure-lesson distillation; finalize tests cover summary-derived
    candidate finalization; `process_finalized_summary_syncs_native_memory_side_effect`
    covers native-memory sync after a finalized Summary job.
-4. Doctor: a `session_summaries` row written by anything other than the
+4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
+   upgrade time. Migration v064 marks non-terminal Summary jobs as failed
+   permanent, clears lease/retry state, and records an explicit upgrade
+   rejection error. It preserves terminal Summary history and non-summary jobs.
+   Draining would rerun the retired AI path, and conversion lacks an
+   authoritative legacy payload-to-SessionRollup contract.
+5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 
 ### `pending_observations`
@@ -241,8 +247,10 @@ not described as legacy.
    unmigrated rows exist). No drop for `observations`, `observations_fts`,
    or `session_summaries` — they stay.
 4. Retire `JobType::Summary` handling and `finalize_summarize` code after
-   the window; clean up the 2479-failed-legacy-jobs class in the jobs table
+   the window; clean up historical failed legacy-job rows in the jobs table
    with an explicit `remem cleanup` action rather than a silent migration.
+   Migration v064 only rejects non-terminal Summary jobs at upgrade and does
+   not delete historical rows.
 
 Tests: migration idempotency; guarded-drop refusal; post-drop schema-drift
 tests (`src/migrate/schema_drift.rs`) updated in the same PR as the drop.
@@ -273,8 +281,8 @@ epic before each drop ships.
 - `finalize_summarize` vs `persist_session_rollup` output equivalence: which
   fields differ, and do any current readers depend on legacy-only fields?
   (This gates the legacy-chain removal.)
-- Do in-flight `JobType::Summary` jobs at upgrade time get drained, rejected,
-  or converted to `SessionRollup` tasks?
+- Answered by GH684-T7: in-flight `JobType::Summary` jobs are rejected at
+  upgrade time by migration v064, not drained or converted.
 - Should the `get_observations` MCP source keep the name
   `source='observation'` after the description fix, or is a rename worth the
   client churn?
