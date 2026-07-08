@@ -6,11 +6,12 @@ use crate::{
     db,
     memory::procedure::{
         load_export_eligible_procedure, procedure_export_slug, render_procedure_export,
-        ProcedureExportFormat, ProcedureExportSource,
+        ProcedureExportFormat, ProcedureExportSource, PROCEDURE_EXPORT_DRAFT_MARKER,
     },
 };
 
 const DEFAULT_DRAFT_DIR: &str = "remem-drafts";
+const GENERATED_AT_PREFIX: &str = "- Generated at: `";
 
 pub(super) fn run_procedure_export(
     memory_id: i64,
@@ -105,7 +106,7 @@ fn ensure_writable_target(
 
     let existing = std::fs::read_to_string(target)
         .with_context(|| format!("read existing procedure export {}", target.display()))?;
-    if existing != rendered {
+    if existing != rendered && !same_generated_draft_except_generated_at(&existing, rendered) {
         bail!(
             "procedure export target already exists and may be reviewed or user-edited: {}; choose --out <new-dir> or rename the existing draft",
             target.display()
@@ -118,6 +119,32 @@ fn ensure_writable_target(
         );
     }
     Ok(true)
+}
+
+fn same_generated_draft_except_generated_at(existing: &str, rendered: &str) -> bool {
+    existing.contains(PROCEDURE_EXPORT_DRAFT_MARKER)
+        && rendered.contains(PROCEDURE_EXPORT_DRAFT_MARKER)
+        && normalize_generated_at(existing) == normalize_generated_at(rendered)
+}
+
+fn normalize_generated_at(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for line in value.split_inclusive('\n') {
+        if is_generated_at_line(line) {
+            output.push_str("- Generated at: `<generated-at>`");
+            if line.ends_with('\n') {
+                output.push('\n');
+            }
+        } else {
+            output.push_str(line);
+        }
+    }
+    output
+}
+
+fn is_generated_at_line(line: &str) -> bool {
+    let trimmed = line.strip_suffix('\n').unwrap_or(line);
+    trimmed.starts_with(GENERATED_AT_PREFIX) && trimmed.ends_with('`')
 }
 
 fn write_atomically(target: &Path, rendered: &str) -> Result<()> {
@@ -294,22 +321,35 @@ mod tests {
     fn writer_overwrites_only_unchanged_generated_target_with_explicit_flag() -> Result<()> {
         let root = procedure_export_temp_dir("procedure-export-overwrite")?;
         let out = root.join("drafts");
-        let target = export_target_path(
-            &out,
-            &writer_fixture_source(),
-            ProcedureExportFormat::RunbookMd,
-        );
+        let source = writer_fixture_source();
+        let target = export_target_path(&out, &source, ProcedureExportFormat::RunbookMd);
+        let old_rendered =
+            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, 1_700_000_000)?;
+        let new_rendered =
+            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, 1_700_000_600)?;
         std::fs::create_dir_all(target.parent().unwrap())?;
-        std::fs::write(&target, RENDERED)?;
+        std::fs::write(&target, old_rendered)?;
 
-        let missing_flag = write_for(out.clone(), ProcedureExportFormat::RunbookMd, false)
-            .expect_err("implicit overwrite must reject");
+        let missing_flag = write_rendered_for(
+            out.clone(),
+            &source,
+            ProcedureExportFormat::RunbookMd,
+            &new_rendered,
+            false,
+        )
+        .expect_err("implicit overwrite must reject");
         assert!(missing_flag.to_string().contains("--overwrite-generated"));
 
-        let result = write_for(out, ProcedureExportFormat::RunbookMd, true)?;
+        let result = write_rendered_for(
+            out,
+            &source,
+            ProcedureExportFormat::RunbookMd,
+            &new_rendered,
+            true,
+        )?;
 
         assert!(result.overwritten);
-        assert_eq!(std::fs::read_to_string(result.path)?, RENDERED);
+        assert_eq!(std::fs::read_to_string(result.path)?, new_rendered);
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -320,11 +360,21 @@ mod tests {
         overwrite_generated: bool,
     ) -> Result<ProcedureExportWriteResult> {
         let source = writer_fixture_source();
+        write_rendered_for(out_dir, &source, format, RENDERED, overwrite_generated)
+    }
+
+    fn write_rendered_for(
+        out_dir: PathBuf,
+        source: &ProcedureExportSource,
+        format: ProcedureExportFormat,
+        rendered: &str,
+        overwrite_generated: bool,
+    ) -> Result<ProcedureExportWriteResult> {
         write_procedure_export_draft(ProcedureExportWriteRequest {
-            source: &source,
+            source,
             format,
             out_dir: Some(&out_dir),
-            rendered: RENDERED,
+            rendered,
             overwrite_generated,
         })
     }
