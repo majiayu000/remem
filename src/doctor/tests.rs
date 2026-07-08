@@ -262,7 +262,21 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     assert!(
         check
             .detail
-            .contains("preview retry: `remem pending retry-failed --dry-run`"),
+            .contains("preview migration prep: `remem pending retry-failed --dry-run`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("apply migration prep: `remem pending retry-failed`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("preview replay: `remem pending migrate-legacy --dry-run`"),
         "{}",
         check.detail
     );

@@ -677,7 +677,7 @@ pub(in crate::cli) enum PendingAction {
         #[arg(long)]
         json: bool,
     },
-    /// Move failed pending observation rows back to pending.
+    /// Move failed legacy pending rows back to pending so migrate-legacy can replay them.
     #[command(alias = "retry")]
     RetryFailed {
         /// Restrict rows to one project path.

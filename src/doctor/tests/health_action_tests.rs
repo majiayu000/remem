@@ -15,7 +15,9 @@ fn queue_actions_render_copy_paste_commands() {
     assert!(text.contains("Needs attention:"));
     assert!(text.contains("43 failed pending observations"));
     assert!(text.contains("inspect: remem pending list-failed --limit 20"));
-    assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
+    assert!(text.contains("preview migration prep: remem pending retry-failed --dry-run"));
+    assert!(text.contains("apply migration prep: remem pending retry-failed"));
+    assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
     assert!(text.contains("1 expired processing pending observation"));
     assert!(text.contains("5 expired processing extraction tasks"));
     assert!(text.contains("2 failed jobs"));

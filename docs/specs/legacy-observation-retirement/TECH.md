@@ -216,9 +216,13 @@ GH684-T6 freezes the dead queue writer/claim surface by deleting
 claim DTO from the crate. Production builds keep the read/reporting surfaces
 and admin commands (`pending migrate-legacy`, `retry-failed`, `purge-failed`,
 `list-failed`) but no longer export a runtime API that can enqueue, claim,
-retry, fail, or delete claimed legacy pending rows. Tests that need historical
-rows seed them through `db::test_support::insert_legacy_pending_fixture`
-instead of a production-style queue API.
+fail, or delete claimed legacy pending rows. `retry-failed` remains only as a
+migration-prep admin step: it moves failed rows back to `pending` so
+`pending migrate-legacy` can replay them into `captured_events`, and CLI,
+doctor, status, and README guidance point users to that follow-up migration.
+Tests that need historical rows seed them through
+`db::test_support::insert_legacy_pending_fixture` instead of a
+production-style queue API.
 
 ### Reclassification (no freeze)
 

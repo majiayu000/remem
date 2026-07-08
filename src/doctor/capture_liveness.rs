@@ -50,9 +50,19 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
         let oldest_age = oldest_actionable_failure_age(&stats.failure_lifecycle)
             .map(|age| format!("; oldest actionable failure age={}s", age))
             .unwrap_or_default();
+        let mut recovery = Vec::new();
+        if stats.failed_pending_observations > 0 {
+            recovery.push("run `remem pending list-failed --limit 20`; then prepare legacy rows with `remem pending retry-failed --dry-run` and replay them with `remem pending migrate-legacy --dry-run`");
+        }
+        if stats.failed_extraction_tasks > 0 {
+            recovery.push("run `remem worker --once` for failed extraction tasks");
+        }
         failures.push(format!(
-            "failed-observation backlog: {} actionable failed pending observations, {} actionable failed extraction tasks{}; run `remem pending list-failed --limit 20` and `remem worker --once`",
-            stats.failed_pending_observations, stats.failed_extraction_tasks, oldest_age
+            "failed-observation backlog: {} actionable failed pending observations, {} actionable failed extraction tasks{}; {}",
+            stats.failed_pending_observations,
+            stats.failed_extraction_tasks,
+            oldest_age,
+            recovery.join("; ")
         ));
     }
     if stats.actionable_capture_drops > 0 {

@@ -607,6 +607,7 @@ remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending list-failed --json
 remem pending retry-failed --dry-run
+remem pending migrate-legacy --dry-run
 remem pending purge-failed --dry-run --older-than-days 7
 remem govern --action stale --dry-run --json <id>
 remem review list
@@ -830,6 +831,7 @@ is set:
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
 | `remem workstreams merge --json` | `project`, `result` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
+| `remem pending migrate-legacy --json` | `project`, `limit`, `count`, `migrated` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
 ## REST API

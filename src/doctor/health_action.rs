@@ -62,7 +62,12 @@ pub(crate) fn queue_actions_with_replay(
                 "failed pending observations",
             ))
             .command("inspect", "remem pending list-failed --limit 20")
-            .command("preview retry", "remem pending retry-failed --dry-run"),
+            .command(
+                "preview migration prep",
+                "remem pending retry-failed --dry-run",
+            )
+            .command("apply migration prep", "remem pending retry-failed")
+            .command("preview replay", "remem pending migrate-legacy --dry-run"),
         );
     }
 
