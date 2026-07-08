@@ -7,6 +7,8 @@ use super::evidence::{
 
 mod render;
 
+pub(crate) use render::{procedure_export_slug, render_procedure_export, ProcedureExportFormat};
+
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub(crate) struct ProcedureExportSource {

@@ -205,6 +205,10 @@ fn procedure_slug(source: &ProcedureExportSource) -> String {
     }
 }
 
+pub(crate) fn procedure_export_slug(source: &ProcedureExportSource) -> String {
+    procedure_slug(source)
+}
+
 fn skill_safe_slug(value: &str) -> String {
     let mut slug = String::new();
     let mut last_was_hyphen = false;

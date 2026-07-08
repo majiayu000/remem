@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.188` for GH-680 procedure export writer guard:
+  `remem procedures export` now writes reviewable drafts only through the CLI,
+  refuses high-context output paths and user-edited targets, and requires
+  `--overwrite-generated` before replacing an unchanged generated draft.
 - Staged source version `0.5.187` for GH-761 Claude hook integrity repair:
   Claude hook setup now evaluates all five expected hooks, warns during
   SessionStart when registrations are missing or stale, and provides a
