@@ -143,39 +143,22 @@ mod tests {
     fn export_writer_is_reachable_only_from_cli_procedure_action() {
         let procedures_action = read_repo_file("src/cli/actions/procedures.rs");
         let procedures_production = production_section(&procedures_action);
-        assert!(
-            procedures_production.contains("mod write;"),
-            "procedure export writer must stay private to the procedures action module"
-        );
-        assert!(
-            !procedures_production.contains("pub mod write"),
-            "procedure export writer module must not be public"
-        );
+        assert_private_module_declaration(procedures_production, "write");
         assert!(
             procedures_production.contains("write::run_procedure_export("),
             "CLI procedures export action should be the only runtime entrypoint"
         );
 
         let writer = read_repo_file("src/cli/actions/procedures/write.rs");
-        assert!(
-            writer.contains("pub(super) fn run_procedure_export"),
-            "procedure export entrypoint must stay visible only to its parent CLI action"
-        );
-        assert!(
-            writer.contains("fn write_procedure_export_draft"),
-            "draft writer must stay module-private"
-        );
-        assert!(
-            !writer.contains("pub(crate) fn write_procedure_export_draft")
-                && !writer.contains("pub fn write_procedure_export_draft"),
-            "draft writer must not become reachable from non-CLI modules"
-        );
+        assert_function_visibility(&writer, "run_procedure_export", "pub(super)");
+        assert_function_visibility(&writer, "write_procedure_export_draft", "");
 
         let actions = read_repo_file("src/cli/actions.rs");
         assert!(
             !actions.contains("run_procedure_export"),
             "top-level CLI actions must not re-export the procedure export writer"
         );
+        assert_cli_dispatch_routes_procedure_export_only_through_procedure_command();
 
         assert_no_background_export_writer_tokens(&[
             "src/worker.rs",
@@ -187,11 +170,72 @@ mod tests {
             "src/user_context",
             "src/graph_candidate",
             "src/dream",
+            "src/dream.rs",
             "src/observe",
+            "src/observe.rs",
             "src/context",
+            "src/context.rs",
             "src/summarize",
+            "src/summarize.rs",
             "src/mcp",
         ]);
+    }
+
+    fn assert_private_module_declaration(content: &str, module: &str) {
+        let expected = format!("mod {module};");
+        let declarations: Vec<&str> = content
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.ends_with(&expected))
+            .collect();
+        assert_eq!(
+            declarations,
+            vec![expected.as_str()],
+            "module `{module}` must have exactly one private declaration"
+        );
+    }
+
+    fn assert_function_visibility(content: &str, name: &str, expected_visibility: &str) {
+        let needle = format!("fn {name}(");
+        let Some(line) = content.lines().find(|line| line.contains(&needle)) else {
+            panic!("missing function declaration for {name}");
+        };
+        let expected_prefix = if expected_visibility.is_empty() {
+            needle
+        } else {
+            format!("{expected_visibility} {needle}")
+        };
+        assert!(
+            line.trim_start().starts_with(&expected_prefix),
+            "function `{name}` must have visibility `{expected_visibility}`; found `{}`",
+            line.trim()
+        );
+    }
+
+    fn assert_cli_dispatch_routes_procedure_export_only_through_procedure_command() {
+        let dispatch = read_repo_file("src/cli/dispatch.rs");
+        assert!(
+            !dispatch.contains("run_procedure_export")
+                && !dispatch.contains("render_procedure_export")
+                && !dispatch.contains("load_export_eligible_procedure"),
+            "CLI dispatch must not call procedure export internals"
+        );
+        let run_procedures_lines: Vec<&str> = dispatch
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.contains("run_procedures"))
+            .collect();
+        assert_eq!(
+            run_procedures_lines.len(),
+            2,
+            "`run_procedures` should appear only in the import list and Procedures command arm"
+        );
+        assert!(
+            run_procedures_lines
+                .iter()
+                .any(|line| *line == "Commands::Procedures { action } => run_procedures(action)?,"),
+            "CLI dispatch must route procedure actions only from Commands::Procedures"
+        );
     }
 
     fn assert_no_background_export_writer_tokens(paths: &[&str]) {
