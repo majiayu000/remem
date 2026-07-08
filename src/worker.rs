@@ -126,7 +126,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         std::process::id(),
         chrono::Utc::now().timestamp_millis(),
     );
-    let Some(_singleton) = lock::acquire_worker_singleton()? else {
+    let Some(_singleton) = lock::acquire_worker_singleton_for_mode(once)? else {
         crate::log::info("worker", "worker already running, exiting");
         return Ok(());
     };
@@ -552,7 +552,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_and_once_are_mutually_exclusive() -> anyhow::Result<()> {
+    async fn old_version_daemon_lock_allows_current_once_heartbeat() -> anyhow::Result<()> {
         let _data_dir = ScopedTestDataDir::new("worker-daemon-once-mutual-exclusion");
         let Some(_daemon_lock) = lock::acquire_worker_singleton()? else {
             anyhow::bail!("test daemon lock should acquire");
@@ -564,13 +564,15 @@ mod tests {
 
         run(true, 10).await?;
 
-        let conn = db::open_db()?;
-        let Some(heartbeat) = db::latest_worker_heartbeat(&conn)? else {
-            anyhow::bail!("daemon heartbeat should remain present");
-        };
+        let expected_prefix = format!("worker-v{}-once-", env!("CARGO_PKG_VERSION"));
+        let current_once_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM worker_heartbeats WHERE owner LIKE ?1",
+            params![format!("{expected_prefix}%")],
+            |row| row.get(0),
+        )?;
         anyhow::ensure!(
-            heartbeat.owner == daemon_owner,
-            "worker --once should not replace daemon heartbeat while daemon holds singleton"
+            current_once_count == 1,
+            "worker --once should record one current-version heartbeat after bypass, got {current_once_count}"
         );
         Ok(())
     }

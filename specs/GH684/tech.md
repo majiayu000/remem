@@ -107,10 +107,10 @@ needed fields and side effects, then removes only the redundant Summary writer.
       preserved once by the replay layer, doctor/status ignore v064 upgrade
       rejection rows as freeze blockers and actionable failed jobs while
       keeping worker-side post-retirement Summary rejections visible,
-      old-version daemon heartbeats do not suppress the current Stop fallback
-      worker, workers claim extraction tasks before Compress/Dream jobs, and
-      the worker rejects already-claimed Summary jobs before the retired path
-      can run. Covered by
+      old-version daemon heartbeats and legacy singleton locks do not suppress
+      the current Stop fallback worker, workers claim extraction tasks before
+      Compress/Dream jobs, and the worker rejects already-claimed Summary jobs
+      before the retired path can run. Covered by
       `legacy_summary_upgrade_rejects_non_terminal_jobs`,
       `worker_rejects_legacy_summary_job_without_retry`,
       `summarize_hook_runs_stop_side_effects_without_summary_job`,
@@ -119,6 +119,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `replay_capture_is_idempotent_when_later_followup_fails`,
       `current_healthy_daemon_skips_stop_spawn`,
       `old_version_healthy_daemon_uses_stop_fallback_spawn`,
+      `once_bypasses_lock_for_old_version_daemon_heartbeat`,
+      `old_version_daemon_lock_allows_current_once_heartbeat`,
       `summarize_hook_replays_same_session_spill_for_different_project`,
       `enqueue_summary_followup_jobs_skips_legacy_summary_job`,
       `capture_ledger_failure_blocks_followup_jobs`, and

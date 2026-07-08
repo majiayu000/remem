@@ -71,10 +71,10 @@ current SessionRollup path and the legacy Summary job chain.
       actionable doctor/status failures, worker-side post-retirement Summary
       rejections stay visible, raw/citation/failure side effects stay reachable
       from the hook path, citation failures are logged without blocking
-      follow-ups, old-version daemon heartbeats do not suppress the current
-      Stop fallback worker, workers run SessionRollup extraction before
-      Compress/Dream jobs, and terminal Summary history plus non-summary jobs
-      are preserved.
+      follow-ups, old-version daemon heartbeats and legacy singleton locks do
+      not suppress the current Stop fallback worker, workers run SessionRollup
+      extraction before Compress/Dream jobs, and terminal Summary history plus
+      non-summary jobs are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.

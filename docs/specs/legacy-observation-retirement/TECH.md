@@ -221,12 +221,12 @@ Tests: fixture DBs per state; frozen-write detection test.
    and replay capture-ledger failures are left to the replay layer so the
    active spill row is preserved once instead of duplicated. Stop hooks treat
    healthy daemon heartbeats from older binary versions as stale for fallback
-   purposes, so an old daemon cannot suppress the current binary's
-   `worker --once` SessionRollup drain. Workers claim extraction tasks before
-   Compress/Dream jobs so SessionRollup can run before background follow-ups.
-   This preserves terminal Summary history and non-summary jobs. Draining would
-   rerun the retired AI path, and conversion lacks an authoritative legacy
-   payload-to-SessionRollup contract.
+   purposes, and the current binary's `worker --once` may bypass an old daemon
+   holding the legacy singleton lock so it can drain SessionRollup tasks.
+   Workers claim extraction tasks before Compress/Dream jobs so SessionRollup
+   can run before background follow-ups. This preserves terminal Summary
+   history and non-summary jobs. Draining would rerun the retired AI path, and
+   conversion lacks an authoritative legacy payload-to-SessionRollup contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 
