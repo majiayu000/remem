@@ -207,7 +207,7 @@ mod tests {
             ArtifactLoad::Loaded(original)
         );
         let temp_entries = fs::read_dir(&dir)?
-            .filter_map(Result::ok)
+            .filter_map(|entry| entry.ok())
             .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
             .count();
         assert_eq!(temp_entries, 0);

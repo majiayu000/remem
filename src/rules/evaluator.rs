@@ -67,6 +67,14 @@ pub fn evaluate_artifact(
         }
     }
 
+    if !diagnostics.is_empty() {
+        return EvaluationOutcome {
+            verdict: EvaluationVerdict::Allow,
+            matches: Vec::new(),
+            diagnostics,
+        };
+    }
+
     EvaluationOutcome {
         verdict: verdict_for_matches(&matches),
         matches,
@@ -97,16 +105,188 @@ fn rule_matches(rule: &CompiledRule, input: &EvaluationInput) -> Result<bool, St
             .map(|regex| regex.is_match(&input.command))
             .map_err(|err| format!("rule {} has invalid regex: {err}", rule.rule_id)),
         RulePredicate::CommitTrailerForbidden { trailer, .. } => {
-            Ok(is_git_commit(&input.command) && input.command.contains(trailer))
+            command_adds_forbidden_commit_trailer(&input.command, trailer)
+                .map_err(|err| format!("rule {} could not parse command: {err}", rule.rule_id))
         }
     }
 }
 
-fn is_git_commit(command: &str) -> bool {
-    match regex::Regex::new(r"(^|[;&|]\s*)git\s+commit(\s|$)") {
-        Ok(regex) => regex.is_match(command),
-        Err(_) => false,
+fn command_adds_forbidden_commit_trailer(command: &str, trailer: &str) -> Result<bool, String> {
+    let segments = shell_command_segments(command)?;
+    Ok(segments
+        .iter()
+        .any(|tokens| git_commit_segment_adds_trailer(tokens, trailer)))
+}
+
+fn git_commit_segment_adds_trailer(tokens: &[String], trailer: &str) -> bool {
+    let Some(mut index) = tokens.iter().position(|token| token == "git") else {
+        return false;
+    };
+    index += 1;
+
+    while let Some(token) = tokens.get(index) {
+        match token.as_str() {
+            "commit" => return commit_args_add_trailer(&tokens[index + 1..], trailer),
+            "-C" | "-c" | "--exec-path" | "--git-dir" | "--work-tree" | "--namespace"
+            | "--super-prefix" => {
+                index += 2;
+            }
+            "-p"
+            | "--paginate"
+            | "-P"
+            | "--no-pager"
+            | "--bare"
+            | "--no-replace-objects"
+            | "--literal-pathspecs"
+            | "--glob-pathspecs"
+            | "--noglob-pathspecs"
+            | "--icase-pathspecs"
+            | "--no-optional-locks" => {
+                index += 1;
+            }
+            value
+                if value.starts_with("-C")
+                    || value.starts_with("-c")
+                    || value.starts_with("--exec-path=")
+                    || value.starts_with("--git-dir=")
+                    || value.starts_with("--work-tree=")
+                    || value.starts_with("--namespace=")
+                    || value.starts_with("--super-prefix=") =>
+            {
+                index += 1;
+            }
+            _ => return false,
+        }
     }
+
+    false
+}
+
+fn commit_args_add_trailer(args: &[String], trailer: &str) -> bool {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if arg == "--" {
+            return false;
+        }
+        if arg == "--trailer" {
+            if args
+                .get(index + 1)
+                .is_some_and(|value| trailer_arg_matches(value, trailer))
+            {
+                return true;
+            }
+            index += 2;
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--trailer=") {
+            if trailer_arg_matches(value, trailer) {
+                return true;
+            }
+        }
+        index += 1;
+    }
+
+    false
+}
+
+fn trailer_arg_matches(value: &str, trailer: &str) -> bool {
+    let trimmed = value.trim_start();
+    if trimmed == trailer {
+        return true;
+    }
+    let Some(rest) = trimmed.strip_prefix(trailer) else {
+        return false;
+    };
+    rest.chars()
+        .next()
+        .is_some_and(|ch| matches!(ch, '=' | ':'))
+}
+
+fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
+    let mut segments = Vec::new();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = command.chars().peekable();
+    let mut quote = ShellQuote::None;
+    let mut in_token = false;
+
+    while let Some(ch) = chars.next() {
+        match quote {
+            ShellQuote::None => match ch {
+                '\'' => {
+                    quote = ShellQuote::Single;
+                    in_token = true;
+                }
+                '"' => {
+                    quote = ShellQuote::Double;
+                    in_token = true;
+                }
+                '\\' => {
+                    in_token = true;
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                }
+                ';' | '|' | '&' => {
+                    push_token(&mut tokens, &mut current, &mut in_token);
+                    push_segment(&mut segments, &mut tokens);
+                    if matches!(chars.peek(), Some(next) if *next == ch) {
+                        chars.next();
+                    }
+                }
+                ch if ch.is_whitespace() => {
+                    push_token(&mut tokens, &mut current, &mut in_token);
+                }
+                _ => {
+                    current.push(ch);
+                    in_token = true;
+                }
+            },
+            ShellQuote::Single => {
+                if ch == '\'' {
+                    quote = ShellQuote::None;
+                } else {
+                    current.push(ch);
+                }
+            }
+            ShellQuote::Double => match ch {
+                '"' => quote = ShellQuote::None,
+                '\\' => {
+                    if let Some(next) = chars.next() {
+                        current.push(next);
+                    }
+                }
+                _ => current.push(ch),
+            },
+        }
+    }
+
+    if quote != ShellQuote::None {
+        return Err("unclosed shell quote".to_string());
+    }
+    push_token(&mut tokens, &mut current, &mut in_token);
+    push_segment(&mut segments, &mut tokens);
+    Ok(segments)
+}
+
+fn push_token(tokens: &mut Vec<String>, current: &mut String, in_token: &mut bool) {
+    if *in_token {
+        tokens.push(std::mem::take(current));
+        *in_token = false;
+    }
+}
+
+fn push_segment(segments: &mut Vec<Vec<String>>, tokens: &mut Vec<String>) {
+    if !tokens.is_empty() {
+        segments.push(std::mem::take(tokens));
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShellQuote {
+    None,
+    Single,
+    Double,
 }
 
 fn verdict_for_matches(matches: &[RuleMatch]) -> EvaluationVerdict {
@@ -198,6 +378,62 @@ mod tests {
         );
         let input = EvaluationInput {
             command: "npm install".to_string(),
+        };
+
+        let outcome = evaluate_artifact(&artifact, &input);
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+        assert!(outcome.matches.is_empty());
+        assert_eq!(outcome.diagnostics.len(), 1);
+        assert!(outcome.diagnostics[0].message.contains("invalid regex"));
+    }
+
+    #[test]
+    fn commit_trailer_rule_handles_git_global_options() {
+        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
+        let input = EvaluationInput {
+            command: "git -C /repo -c user.email=x commit -m init --trailer AI-generated-by=bot"
+                .to_string(),
+        };
+
+        let outcome = evaluate_artifact(&artifact, &input);
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block);
+        assert_eq!(outcome.matches.len(), 1);
+        assert!(outcome.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn commit_trailer_rule_ignores_message_text_mentions() {
+        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
+        let input = EvaluationInput {
+            command: "git commit -m 'remove AI-generated-by support'".to_string(),
+        };
+
+        let outcome = evaluate_artifact(&artifact, &input);
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+        assert!(outcome.matches.is_empty());
+        assert!(outcome.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn evaluation_error_fails_open_for_whole_artifact() {
+        let artifact = CompiledRulesArtifact::new(
+            99,
+            vec![
+                CompiledRule {
+                    predicate: RulePredicate::CommandRegex {
+                        pattern: "(".to_string(),
+                        message: "broken".to_string(),
+                    },
+                    ..package_manager_rule(RuleAction::Block)
+                },
+                forbidden_trailer_rule(),
+            ],
+        );
+        let input = EvaluationInput {
+            command: "git commit --trailer AI-generated-by=bot".to_string(),
         };
 
         let outcome = evaluate_artifact(&artifact, &input);
