@@ -1837,7 +1837,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remem-ai"
-version = "0.5.192"
+version = "0.5.193"
 dependencies = [
  "anyhow",
  "axum",
@@ -1848,6 +1848,7 @@ dependencies = [
  "fs2",
  "getrandom 0.3.4",
  "libc",
+ "regex",
  "reqwest",
  "ring",
  "rmcp",

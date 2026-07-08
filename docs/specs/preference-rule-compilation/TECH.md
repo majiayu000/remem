@@ -12,9 +12,12 @@ Tracking:
 - Phase 1 state foundation is implemented: runtime config defaults keep rule
   compilation disabled by default, SQLite stores preference reinforcement,
   rule override, and rule diagnostic state, and schema drift/convergence tests
-  cover those tables and indexes. Runtime compilation, artifact writing,
-  hook evaluation, rule CLI, doctor output, fixtures, and latency evidence are
-  still pending.
+  cover those tables and indexes.
+- GH671-T2 adds the derived artifact foundation: versioned JSON structs,
+  the closed v1 predicate enum, a pure in-memory evaluator, fail-open artifact
+  loading for missing/corrupt/unsupported artifacts, stable project artifact
+  paths, and atomic artifact writes. Runtime compilation, hook dispatch, rule
+  CLI, doctor output, fixtures, and latency evidence are still pending.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
