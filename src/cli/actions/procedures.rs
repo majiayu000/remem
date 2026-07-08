@@ -144,10 +144,7 @@ mod tests {
         let procedures_action = read_repo_file("src/cli/actions/procedures.rs");
         let procedures_production = production_section(&procedures_action);
         assert_private_module_declaration(procedures_production, "write");
-        assert!(
-            procedures_production.contains("write::run_procedure_export("),
-            "CLI procedures export action should be the only runtime entrypoint"
-        );
+        assert_procedure_export_arm_calls_writer_once(procedures_production);
 
         let writer = read_repo_file("src/cli/actions/procedures/write.rs");
         assert_function_visibility(&writer, "run_procedure_export", "pub(super)");
@@ -159,6 +156,8 @@ mod tests {
             "top-level CLI actions must not re-export the procedure export writer"
         );
         assert_cli_dispatch_routes_procedure_export_only_through_procedure_command();
+        assert_no_cli_procedure_export_bridge("src/cli/actions/maintenance.rs");
+        assert_no_procedure_export_cli_launches(&["plugins/remem/scripts/remem-hook.js"]);
 
         assert_no_background_export_writer_tokens(&[
             "src/worker.rs",
@@ -173,6 +172,7 @@ mod tests {
             "src/graph_candidate",
             "src/dream",
             "src/dream.rs",
+            "src/hook_stdin.rs",
             "src/observe",
             "src/observe.rs",
             "src/context",
@@ -181,6 +181,33 @@ mod tests {
             "src/summarize.rs",
             "src/mcp",
         ]);
+    }
+
+    fn assert_procedure_export_arm_calls_writer_once(content: &str) {
+        let writer_call = "write::run_procedure_export(";
+        let lines: Vec<&str> = content.lines().collect();
+        let writer_call_lines: Vec<(usize, &str)> = lines
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, line)| line.contains(writer_call))
+            .collect();
+        assert_eq!(
+            writer_call_lines.len(),
+            1,
+            "procedure export writer must be called exactly once"
+        );
+        let Some(export_arm_line) = lines
+            .iter()
+            .position(|line| line.trim() == "ProcedureAction::Export {")
+        else {
+            panic!("missing ProcedureAction::Export arm");
+        };
+        let (writer_line, writer_text) = writer_call_lines[0];
+        assert!(
+            writer_line > export_arm_line && writer_text.trim_start().starts_with("} => "),
+            "procedure export writer call must be tied directly to the Export match arm"
+        );
     }
 
     fn assert_private_module_declaration(content: &str, module: &str) {
@@ -238,6 +265,35 @@ mod tests {
                 .any(|line| *line == "Commands::Procedures { action } => run_procedures(action)?,"),
             "CLI dispatch must route procedure actions only from Commands::Procedures"
         );
+    }
+
+    fn assert_no_cli_procedure_export_bridge(path: &str) {
+        let content = read_repo_file(path);
+        for token in ["run_procedures", "ProcedureAction::Export"] {
+            assert!(
+                !content.contains(token),
+                "CLI wrapper {path} must not bridge background commands to procedure export via `{token}`"
+            );
+        }
+    }
+
+    fn assert_no_procedure_export_cli_launches(paths: &[&str]) {
+        for path in paths {
+            let content = read_repo_file(path);
+            let lowercase = content.to_ascii_lowercase();
+            let compact: String = lowercase.chars().filter(|ch| !ch.is_whitespace()).collect();
+            for pattern in [
+                "procedures export",
+                "\"procedures\",\"export\"",
+                "'procedures','export'",
+                "`procedures`,`export`",
+            ] {
+                assert!(
+                    !lowercase.contains(pattern) && !compact.contains(pattern),
+                    "hook command surface {path} must not launch `procedures export`"
+                );
+            }
+        }
     }
 
     fn assert_no_background_export_writer_tokens(paths: &[&str]) {
