@@ -6,6 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 mod evidence;
 mod export;
 mod list;
+mod registry;
 mod trace_store;
 
 pub(crate) use export::{
@@ -13,6 +14,10 @@ pub(crate) use export::{
     ProcedureExportFormat, ProcedureExportSource, PROCEDURE_EXPORT_DRAFT_MARKER,
 };
 pub use list::{list_promoted_procedures, ProcedureListItem};
+pub(crate) use registry::{
+    ensure_existing_export_registry_match, load_procedure_export_doctor_report,
+    procedure_export_registry_exists, record_procedure_export, ProcedureExportRecordRequest,
+};
 
 #[cfg(test)]
 mod incremental_tests;

@@ -53,6 +53,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "git_commit_sessions",
     "memory_facts",
     "procedure_verifications",
+    "procedure_exports",
     "context_injections",
     "memory_state_keys",
     "topic_segments",

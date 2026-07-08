@@ -179,6 +179,30 @@ fn dry_run_pending_reports_v061_memory_poisoning_drop_schema_drift() -> Result<(
 }
 
 #[test]
+fn dry_run_pending_reports_v063_procedure_exports_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[63])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result.error.ok_or_else(|| {
+        anyhow::anyhow!("procedure export registry schema drift must be reported")
+    })?;
+    assert!(error.contains("v063_procedure_exports"), "got: {error}");
+    assert!(error.contains("table procedure_exports"), "got: {error}");
+    assert!(
+        error.contains("index idx_procedure_exports_project"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_procedure_exports_memory"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[45])?;

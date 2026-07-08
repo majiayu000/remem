@@ -5,8 +5,10 @@ use anyhow::{bail, Context, Result};
 use crate::{
     db,
     memory::procedure::{
-        load_export_eligible_procedure, procedure_export_slug, render_procedure_export,
-        ProcedureExportFormat, ProcedureExportSource, PROCEDURE_EXPORT_DRAFT_MARKER,
+        ensure_existing_export_registry_match, load_export_eligible_procedure,
+        procedure_export_slug, record_procedure_export, render_procedure_export,
+        ProcedureExportFormat, ProcedureExportRecordRequest, ProcedureExportSource,
+        PROCEDURE_EXPORT_DRAFT_MARKER,
     },
 };
 
@@ -22,14 +24,45 @@ pub(super) fn run_procedure_export(
 ) -> Result<()> {
     let conn = db::open_db()?;
     let source = load_export_eligible_procedure(&conn, memory_id)?;
-    let rendered = render_procedure_export(&source, format, chrono::Utc::now().timestamp())?;
+    let exported_at_epoch = chrono::Utc::now().timestamp();
+    let rendered = render_procedure_export(&source, format, exported_at_epoch)?;
+    let cwd = std::env::current_dir().context("resolve current directory for procedure export")?;
+    let out_dir = procedure_export_out_dir(out_dir);
+    let target = export_target_path(&out_dir, &source, format);
+    verify_existing_target_registry(&conn, &source, format, &target, &cwd, overwrite_generated)?;
     let result = write_procedure_export_draft(ProcedureExportWriteRequest {
         source: &source,
         format,
-        out_dir,
+        out_dir: &out_dir,
         rendered: &rendered,
         overwrite_generated,
     })?;
+    if let Err(error) = record_procedure_export(
+        &conn,
+        ProcedureExportRecordRequest {
+            source: &source,
+            format,
+            output_path: &result.path,
+            content: &rendered,
+            cwd: &cwd,
+            exported_at_epoch,
+        },
+    ) {
+        if let Err(rollback_error) = rollback_unregistered_draft(&result, &rendered) {
+            return Err(error).with_context(|| {
+                format!(
+                    "record procedure export registry row; additionally failed to roll back unregistered draft {}: {rollback_error}",
+                    result.path.display()
+                )
+            });
+        }
+        return Err(error).with_context(|| {
+            format!(
+                "record procedure export registry row; rolled back unregistered draft {}",
+                result.path.display()
+            )
+        });
+    }
 
     if result.overwritten {
         println!(
@@ -45,7 +78,7 @@ pub(super) fn run_procedure_export(
 struct ProcedureExportWriteRequest<'a> {
     source: &'a ProcedureExportSource,
     format: ProcedureExportFormat,
-    out_dir: Option<&'a Path>,
+    out_dir: &'a Path,
     rendered: &'a str,
     overwrite_generated: bool,
 }
@@ -54,20 +87,17 @@ struct ProcedureExportWriteRequest<'a> {
 struct ProcedureExportWriteResult {
     path: PathBuf,
     overwritten: bool,
+    previous_content: Option<String>,
 }
 
 fn write_procedure_export_draft(
     request: ProcedureExportWriteRequest<'_>,
 ) -> Result<ProcedureExportWriteResult> {
-    let out_dir = request
-        .out_dir
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_DRAFT_DIR));
-    reject_high_context_path(&out_dir)?;
+    reject_high_context_path(request.out_dir)?;
 
-    let target = export_target_path(&out_dir, request.source, request.format);
+    let target = export_target_path(request.out_dir, request.source, request.format);
     reject_high_context_path(&target)?;
-    let overwrote_existing =
+    let previous_content =
         ensure_writable_target(&target, request.rendered, request.overwrite_generated)?;
 
     let parent = target
@@ -79,8 +109,31 @@ fn write_procedure_export_draft(
 
     Ok(ProcedureExportWriteResult {
         path: target,
-        overwritten: overwrote_existing,
+        overwritten: previous_content.is_some(),
+        previous_content,
     })
+}
+
+fn procedure_export_out_dir(out_dir: Option<&Path>) -> PathBuf {
+    out_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DRAFT_DIR))
+}
+
+fn verify_existing_target_registry(
+    conn: &rusqlite::Connection,
+    source: &ProcedureExportSource,
+    format: ProcedureExportFormat,
+    target: &Path,
+    cwd: &Path,
+    overwrite_generated: bool,
+) -> Result<()> {
+    if !overwrite_generated || !target.exists() {
+        return Ok(());
+    }
+    let existing = std::fs::read_to_string(target)
+        .with_context(|| format!("read existing procedure export {}", target.display()))?;
+    ensure_existing_export_registry_match(conn, source, format, target, cwd, &existing)
 }
 
 fn export_target_path(
@@ -100,9 +153,9 @@ fn ensure_writable_target(
     target: &Path,
     rendered: &str,
     overwrite_generated: bool,
-) -> Result<bool> {
+) -> Result<Option<String>> {
     if !target.exists() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let existing = std::fs::read_to_string(target)
@@ -119,7 +172,36 @@ fn ensure_writable_target(
             target.display()
         );
     }
-    Ok(true)
+    Ok(Some(existing))
+}
+
+fn rollback_unregistered_draft(result: &ProcedureExportWriteResult, rendered: &str) -> Result<()> {
+    let current = match std::fs::read(&result.path) {
+        Ok(current) => current,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read draft before rollback {}", result.path.display()));
+        }
+    };
+    if current != rendered.as_bytes() {
+        bail!(
+            "refusing to roll back procedure draft {} because it changed after export write",
+            result.path.display()
+        );
+    }
+
+    if let Some(previous_content) = &result.previous_content {
+        write_atomically(&result.path, previous_content)
+            .with_context(|| format!("restore previous procedure draft {}", result.path.display()))
+    } else {
+        std::fs::remove_file(&result.path).with_context(|| {
+            format!(
+                "remove unregistered procedure draft {}",
+                result.path.display()
+            )
+        })
+    }
 }
 
 fn same_generated_draft_except_generated_at(existing: &str, rendered: &str) -> bool {
@@ -351,261 +433,4 @@ fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const RENDERED: &str = "<!-- remem-draft: procedure export, review before commit -->\nDraft\n";
-
-    #[test]
-    fn writer_creates_neutral_runbook_target() -> Result<()> {
-        let root = procedure_export_temp_dir("procedure-export-new")?;
-        let result = write_for(root.join("drafts"), ProcedureExportFormat::RunbookMd, false)?;
-
-        assert_eq!(
-            result.path.file_name().and_then(|name| name.to_str()),
-            Some("cargo-test.runbook.md")
-        );
-        assert_eq!(std::fs::read_to_string(result.path)?, RENDERED);
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn writer_refuses_high_context_paths() -> Result<()> {
-        let root = procedure_export_temp_dir("procedure-export-high-context")?;
-
-        let claude_err = write_for(
-            root.join(".claude").join("skills"),
-            ProcedureExportFormat::ClaudeSkill,
-            false,
-        )
-        .expect_err("claude skill roots must reject");
-        assert!(claude_err.to_string().contains("high-context agent path"));
-
-        let agents_skill_err = write_for(
-            root.join(".AGENTS").join("SKILLS"),
-            ProcedureExportFormat::ClaudeSkill,
-            false,
-        )
-        .expect_err("agent skill roots must reject case-insensitively");
-        assert!(agents_skill_err.to_string().contains("skill-root path"));
-
-        let case_err = write_for(
-            root.join(".CLAUDE").join("skills"),
-            ProcedureExportFormat::ClaudeSkill,
-            false,
-        )
-        .expect_err("case variants of claude roots must reject");
-        assert!(case_err.to_string().contains("high-context agent path"));
-
-        let agents_err = write_for(
-            root.join("AGENTS.md"),
-            ProcedureExportFormat::RunbookMd,
-            false,
-        )
-        .expect_err("AGENTS.md must reject");
-        assert!(agents_err
-            .to_string()
-            .contains("high-context instruction file"));
-
-        let skill_root_err = write_for(
-            std::env::current_dir()?
-                .join("skills")
-                .join("procedure-export"),
-            ProcedureExportFormat::RunbookMd,
-            false,
-        )
-        .expect_err("repo-local skills root must reject");
-        assert!(skill_root_err.to_string().contains("skill-root path"));
-
-        let plugin_skill_err = write_for(
-            std::env::current_dir()?
-                .join("plugins")
-                .join("remem")
-                .join("skills"),
-            ProcedureExportFormat::RunbookMd,
-            false,
-        )
-        .expect_err("plugin skills root must reject");
-        assert!(plugin_skill_err.to_string().contains("skill-root path"));
-
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn path_guard_resolves_repo_root_and_parent_components_before_skill_checks() -> Result<()> {
-        let root = procedure_export_temp_dir("procedure-export-repo-root")?;
-        std::fs::write(root.join(".git"), "gitdir: /tmp/not-used\n")?;
-        std::fs::create_dir_all(root.join("src"))?;
-        std::fs::create_dir_all(root.join("skills"))?;
-        std::fs::create_dir_all(root.join(".agents").join("skills"))?;
-        std::fs::create_dir_all(root.join("plugins").join("remem").join("skills"))?;
-        let outside = procedure_export_temp_dir("procedure-export-outside-repo")?;
-
-        let subdir_err =
-            reject_high_context_path_with_cwd(Path::new("../skills"), &root.join("src"))
-                .expect_err("repo skills must reject from subdirectories");
-        assert!(subdir_err.to_string().contains("skill-root path"));
-
-        let parent_err = reject_high_context_path_with_cwd(
-            &root
-                .join(".agents")
-                .join("missing")
-                .join("..")
-                .join("skills"),
-            &root,
-        )
-        .expect_err("parent components must normalize before guard checks");
-        assert!(parent_err.to_string().contains("skill-root path"));
-
-        let absolute_skill_err = reject_high_context_path_with_cwd(&root.join("skills"), &outside)
-            .expect_err("absolute repo skills must reject even when cwd is outside the repo");
-        assert!(absolute_skill_err.to_string().contains("skill-root path"));
-
-        let case_skill_err = reject_high_context_path_with_cwd(&root.join("SKILLS"), &outside)
-            .expect_err("case variants of repo skills must reject");
-        assert!(case_skill_err.to_string().contains("skill-root path"));
-
-        let absolute_plugin_err = reject_high_context_path_with_cwd(
-            &root.join("plugins").join("remem").join("skills"),
-            &outside,
-        )
-        .expect_err("absolute plugin skills must reject even when cwd is outside the repo");
-        assert!(absolute_plugin_err.to_string().contains("skill-root path"));
-
-        let case_plugin_err = reject_high_context_path_with_cwd(
-            &root.join("Plugins").join("remem").join("SKILLS"),
-            &outside,
-        )
-        .expect_err("case variants of plugin skills must reject");
-        assert!(case_plugin_err.to_string().contains("skill-root path"));
-
-        std::fs::remove_dir_all(outside)?;
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn writer_refuses_user_edited_existing_target_even_with_overwrite_flag() -> Result<()> {
-        let root = procedure_export_temp_dir("procedure-export-edited")?;
-        let out = root.join("drafts");
-        let target = export_target_path(
-            &out,
-            &writer_fixture_source(),
-            ProcedureExportFormat::RunbookMd,
-        );
-        std::fs::create_dir_all(target.parent().unwrap())?;
-        std::fs::write(&target, "reviewed edits\n")?;
-
-        let err = write_for(out, ProcedureExportFormat::RunbookMd, true)
-            .expect_err("user edited target must reject");
-
-        assert!(err.to_string().contains("may be reviewed or user-edited"));
-        assert_eq!(std::fs::read_to_string(target)?, "reviewed edits\n");
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    #[test]
-    fn writer_overwrites_unchanged_generated_target_after_version_change() -> Result<()> {
-        let old = RENDERED.replace("Draft\n", "Draft\n- remem version: `0.5.187`\n");
-        let new = RENDERED.replace("Draft\n", "Draft\n- remem version: `0.5.188`\n");
-
-        assert!(same_generated_draft_except_generated_at(&old, &new));
-        Ok(())
-    }
-
-    #[test]
-    fn writer_overwrites_only_unchanged_generated_target_with_explicit_flag() -> Result<()> {
-        let root = procedure_export_temp_dir("procedure-export-overwrite")?;
-        let out = root.join("drafts");
-        let source = writer_fixture_source();
-        let target = export_target_path(&out, &source, ProcedureExportFormat::RunbookMd);
-        let old_rendered =
-            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, 1_700_000_000)?;
-        let new_rendered =
-            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, 1_700_000_600)?;
-        std::fs::create_dir_all(target.parent().unwrap())?;
-        std::fs::write(&target, old_rendered)?;
-
-        let missing_flag = write_rendered_for(
-            out.clone(),
-            &source,
-            ProcedureExportFormat::RunbookMd,
-            &new_rendered,
-            false,
-        )
-        .expect_err("implicit overwrite must reject");
-        assert!(missing_flag.to_string().contains("--overwrite-generated"));
-
-        let result = write_rendered_for(
-            out,
-            &source,
-            ProcedureExportFormat::RunbookMd,
-            &new_rendered,
-            true,
-        )?;
-
-        assert!(result.overwritten);
-        assert_eq!(std::fs::read_to_string(result.path)?, new_rendered);
-        std::fs::remove_dir_all(root)?;
-        Ok(())
-    }
-
-    fn write_for(
-        out_dir: PathBuf,
-        format: ProcedureExportFormat,
-        overwrite_generated: bool,
-    ) -> Result<ProcedureExportWriteResult> {
-        let source = writer_fixture_source();
-        write_rendered_for(out_dir, &source, format, RENDERED, overwrite_generated)
-    }
-
-    fn write_rendered_for(
-        out_dir: PathBuf,
-        source: &ProcedureExportSource,
-        format: ProcedureExportFormat,
-        rendered: &str,
-        overwrite_generated: bool,
-    ) -> Result<ProcedureExportWriteResult> {
-        write_procedure_export_draft(ProcedureExportWriteRequest {
-            source,
-            format,
-            out_dir: Some(&out_dir),
-            rendered,
-            overwrite_generated,
-        })
-    }
-
-    fn writer_fixture_source() -> ProcedureExportSource {
-        ProcedureExportSource {
-            id: 42,
-            project: "/tmp/remem".to_string(),
-            branch: Some("main".to_string()),
-            topic_key: Some("procedure-cargo-test".to_string()),
-            title: "Procedure: cargo-test".to_string(),
-            stored_title: "Procedure: cargo-test".to_string(),
-            canonical_content: String::new(),
-            workflow_key: "cargo-test".to_string(),
-            command: "cargo test".to_string(),
-            reuse_condition: "same project".to_string(),
-            files_touched: vec!["src/lib.rs".to_string()],
-            evidence_event_ids: vec![100, 101],
-            verified_runs: 2,
-            last_verification_epoch: 1_700_000_000,
-            confidence: 0.86,
-            source_updated_at_epoch: 1_700_000_100,
-        }
-    }
-
-    fn procedure_export_temp_dir(name: &str) -> Result<PathBuf> {
-        let path = std::env::temp_dir().join(format!(
-            "remem-{name}-{}-{}",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&path)?;
-        Ok(path)
-    }
-}
+mod tests;
