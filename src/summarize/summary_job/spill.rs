@@ -463,14 +463,15 @@ mod tests {
 
         assert!(!summary_spill_path().exists());
         let conn = db::open_db()?;
-        let summary_jobs: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM jobs
-             WHERE job_type = 'summary'
-               AND session_id IN ('sess-summary-spilled', 'sess-summary-current')",
+        let rollup_tasks: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks t
+             JOIN sessions s ON s.id = t.session_row_id
+             WHERE t.task_kind = 'session_rollup'
+               AND s.session_id IN ('sess-summary-spilled', 'sess-summary-current')",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(summary_jobs, 2);
+        assert_eq!(rollup_tasks, 2);
         Ok(())
     }
 
@@ -508,12 +509,15 @@ mod tests {
         .to_string();
         super::super::hook::summarize_input(&current_input, Some("codex-cli"), None).await?;
 
-        let payload: String = conn.query_row(
-            "SELECT payload_json FROM jobs
-             WHERE job_type = 'summary' AND session_id = 'sess-summary-current-wins'",
+        let (event_count, payload): (i64, String) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(content_text), '')
+             FROM captured_events
+             WHERE event_type = 'session_stop'
+               AND session_id = 'sess-summary-current-wins'",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
+        assert_eq!(event_count, 1);
         assert!(payload.contains("/tmp/current-transcript.jsonl"));
         assert!(!payload.contains("/tmp/old-transcript.jsonl"));
         Ok(())
@@ -764,14 +768,15 @@ mod tests {
         super::super::hook::summarize_input(&current_input, Some("codex-cli"), None).await?;
 
         let conn = db::open_db()?;
-        let summary_jobs: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM jobs
-             WHERE job_type = 'summary'
-               AND session_id = 'sess-summary-current-after-replay-error'",
+        let rollup_tasks: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM extraction_tasks t
+             JOIN sessions s ON s.id = t.session_row_id
+             WHERE t.task_kind = 'session_rollup'
+               AND s.session_id = 'sess-summary-current-after-replay-error'",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(summary_jobs, 1);
+        assert_eq!(rollup_tasks, 1);
         Ok(())
     }
 }

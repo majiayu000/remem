@@ -66,8 +66,19 @@ pub(super) async fn summarize_input(
     time_result(&mut timings, "enqueue_summary_payload", || {
         enqueue_summary_payload(&conn, input, Some(&host), profile)
     })?;
+    let current_session_id = hook.session_id.clone();
     if let Err(error) = time_result(&mut timings, "spill_replay", || {
         replay_spilled_summary_hook_payloads(&conn, |conn, record| {
+            if summary_payload_session_id(&record.input)? == current_session_id {
+                crate::log::info(
+                    "summarize",
+                    &format!(
+                        "skipped spilled summary hook payload for current session {}",
+                        current_session_id.as_deref().unwrap_or("<missing>")
+                    ),
+                );
+                return Ok(());
+            }
             enqueue_summary_payload(
                 conn,
                 &record.input,
@@ -186,6 +197,10 @@ fn compress_payload(profile: Option<&str>) -> Result<String> {
         );
     }
     Ok(serde_json::to_string(&serde_json::Value::Object(payload))?)
+}
+
+fn summary_payload_session_id(input: &str) -> Result<Option<String>> {
+    Ok(serde_json::from_str::<SummarizeInput>(input)?.session_id)
 }
 
 fn record_summary_capture_event(

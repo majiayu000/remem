@@ -70,7 +70,9 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 - GH684-T7 retires the legacy enqueue path: Stop hooks record the
   `SessionRollup` extraction task and enqueue only Compress/Dream follow-up
   jobs. If capture-ledger recording fails, the hook spills the payload and
-  skips follow-up jobs instead of relying on legacy Summary fallback.
+  skips follow-up jobs instead of relying on legacy Summary fallback. If the
+  current stop payload succeeds, replay skips older same-session spills so the
+  current capture remains authoritative.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -203,9 +205,10 @@ Tests: fixture DBs per state; frozen-write detection test.
    before it can enter the retired AI/finalize path, while doctor/status
    excludes these explicit rejection rows from freeze blockers. Stop hooks no
    longer enqueue new Summary jobs, and capture-ledger failures spill and abort
-   follow-ups rather than falling back to the retired writer. This preserves
-   terminal Summary history and non-summary jobs. Draining would rerun the
-   retired AI path, and conversion lacks an authoritative legacy
+   follow-ups rather than falling back to the retired writer. When the current
+   stop payload succeeds, older same-session spills are skipped during replay.
+   This preserves terminal Summary history and non-summary jobs. Draining would
+   rerun the retired AI path, and conversion lacks an authoritative legacy
    payload-to-SessionRollup contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.

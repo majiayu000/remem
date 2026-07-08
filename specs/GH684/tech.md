@@ -100,9 +100,10 @@ needed fields and side effects, then removes only the redundant Summary writer.
       authoritative contract; migration v064 preserves terminal Summary
       history and non-summary jobs, Stop hooks no longer enqueue new Summary
       jobs, capture-ledger failures spill instead of falling back to the
-      retired writer, doctor/status ignore explicit rejection rows as freeze
-      blockers, and the worker rejects already-claimed Summary jobs before the
-      retired path can run. Covered by
+      retired writer, same-session stale spills are skipped after the current
+      stop payload succeeds, doctor/status ignore explicit rejection rows as
+      freeze blockers, and the worker rejects already-claimed Summary jobs
+      before the retired path can run. Covered by
       `legacy_summary_upgrade_rejects_non_terminal_jobs`,
       `worker_rejects_legacy_summary_job_without_retry`,
       `enqueue_summary_followup_jobs_skips_legacy_summary_job`,
