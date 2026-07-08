@@ -158,6 +158,16 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             );
         }
         db::maintain_failure_lifecycle(&conn)?;
+        if crate::extraction_worker::run_next(
+            &lease_owner,
+            JOB_LEASE_SECS,
+            EXTRACTION_TASK_TIMEOUT_SECS,
+        )
+        .await?
+        {
+            continue;
+        }
+
         if let Some(job) = db::claim_next_job(&mut conn, &lease_owner, JOB_LEASE_SECS)? {
             crate::log::info(
                 "worker",
@@ -204,16 +214,6 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                     );
                 }
             }
-            continue;
-        }
-
-        if crate::extraction_worker::run_next(
-            &lease_owner,
-            JOB_LEASE_SECS,
-            EXTRACTION_TASK_TIMEOUT_SECS,
-        )
-        .await?
-        {
             continue;
         }
 

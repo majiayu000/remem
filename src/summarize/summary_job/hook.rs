@@ -66,15 +66,18 @@ pub(super) async fn summarize_input(
     time_result(&mut timings, "enqueue_summary_payload", || {
         enqueue_summary_payload(&conn, input, Some(&host), profile)
     })?;
-    let current_session_id = hook.session_id.clone();
+    let current_identity =
+        SummaryPayloadIdentity::from_hook(&host, &hook, &cwd, &db::project_from_cwd(&cwd));
     if let Err(error) = time_result(&mut timings, "spill_replay", || {
         replay_spilled_summary_hook_payloads(&conn, |conn, record| {
-            if summary_payload_session_id(&record.input)? == current_session_id {
+            if summary_payload_identity(&record.input, record.host.as_deref())?.as_ref()
+                == Some(&current_identity)
+            {
                 crate::log::info(
                     "summarize",
                     &format!(
-                        "skipped spilled summary hook payload for current session {}",
-                        current_session_id.as_deref().unwrap_or("<missing>")
+                        "skipped spilled summary hook payload for current identity host={} project={} session={}",
+                        current_identity.host, current_identity.project, current_identity.session_id
                     ),
                 );
                 return Ok(());
@@ -209,8 +212,43 @@ fn compress_payload(profile: Option<&str>) -> Result<String> {
     Ok(serde_json::to_string(&serde_json::Value::Object(payload))?)
 }
 
-fn summary_payload_session_id(input: &str) -> Result<Option<String>> {
-    Ok(serde_json::from_str::<SummarizeInput>(input)?.session_id)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SummaryPayloadIdentity {
+    host: String,
+    session_id: String,
+    project: String,
+}
+
+impl SummaryPayloadIdentity {
+    fn from_hook(host: &str, hook: &SummarizeInput, cwd: &str, project: &str) -> Self {
+        Self {
+            host: host.to_string(),
+            session_id: hook.session_id.clone().unwrap_or_default(),
+            project: if project.trim().is_empty() {
+                db::project_from_cwd(cwd)
+            } else {
+                project.to_string()
+            },
+        }
+    }
+}
+
+fn summary_payload_identity(
+    input: &str,
+    host: Option<&str>,
+) -> Result<Option<SummaryPayloadIdentity>> {
+    let hook: SummarizeInput = serde_json::from_str(input)?;
+    let Some(session_id) = hook.session_id.clone() else {
+        return Ok(None);
+    };
+    let host = resolve_hook_host(host)?;
+    let cwd = effective_cwd(&hook)?;
+    let project = db::project_from_cwd(&cwd);
+    Ok(Some(SummaryPayloadIdentity {
+        host,
+        session_id,
+        project,
+    }))
 }
 
 fn record_summary_capture_event(
@@ -571,6 +609,54 @@ mod tests {
         )?;
         assert_eq!(raw_messages, 1);
         assert_eq!(summary_jobs, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_replays_same_session_spill_for_different_project() -> anyhow::Result<()>
+    {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-project-scoped-spill");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        let old_input = serde_json::json!({
+            "session_id": "sess-summary-shared-id",
+            "cwd": "/tmp/remem-other",
+            "transcript_path": "/tmp/old-other-transcript.jsonl"
+        })
+        .to_string();
+        super::super::spill::spill_summary_hook_payload(
+            &old_input,
+            Some("codex-cli"),
+            None,
+            Some("/tmp/remem-other"),
+            &anyhow::anyhow!("stale db"),
+        )?;
+
+        let current_input = serde_json::json!({
+            "session_id": "sess-summary-shared-id",
+            "cwd": "/tmp/remem-current",
+            "transcript_path": "/tmp/current-transcript.jsonl"
+        })
+        .to_string();
+        summarize_input(&current_input, Some("codex-cli"), None).await?;
+
+        let event_count: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM captured_events
+             WHERE event_type = 'session_stop'
+               AND session_id = 'sess-summary-shared-id'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(event_count, 2);
+        assert!(!super::super::spill::summary_spill_path().exists());
         Ok(())
     }
 

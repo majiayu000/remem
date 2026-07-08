@@ -206,14 +206,17 @@ Tests: fixture DBs per state; frozen-write detection test.
    jobs as failed permanent, clears lease/retry state, and records an explicit
    upgrade rejection error. The worker also rejects any already-claimed Summary
    job before it can enter the retired AI/finalize path, while doctor/status
-   excludes these explicit rejection rows from freeze blockers and actionable
-   failed-job counts. Stop hooks no longer enqueue new Summary jobs, and
-   capture-ledger failures spill and abort follow-ups rather than falling back
-   to the retired writer. When the current stop payload succeeds, older
-   same-session spills are skipped during replay. This preserves terminal
-   Summary history and non-summary jobs. Draining would rerun the retired AI
-   path, and conversion lacks an authoritative legacy payload-to-SessionRollup
-   contract.
+   excludes the v064 upgrade rejection rows from freeze blockers and actionable
+   failed-job counts. Worker-side post-retirement Summary rejections remain
+   visible so stale hook/plugin writers are not hidden. Stop hooks no longer
+   enqueue new Summary jobs, and capture-ledger failures spill and abort
+   follow-ups rather than falling back to the retired writer. When the current
+   stop payload succeeds, older same-host/project/session spills are skipped
+   during replay, but same `session_id` spills from other projects still replay.
+   Workers claim extraction tasks before Compress/Dream jobs so SessionRollup
+   can run before background follow-ups. This preserves terminal Summary
+   history and non-summary jobs. Draining would rerun the retired AI path, and
+   conversion lacks an authoritative legacy payload-to-SessionRollup contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 

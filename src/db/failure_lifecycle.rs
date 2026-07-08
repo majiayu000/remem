@@ -179,10 +179,7 @@ fn job_failed_predicate(conn: &Connection) -> Result<std::borrow::Cow<'static, s
             AND NOT (
               job_type = 'summary'
               AND failure_class = 'permanent'
-              AND last_error IN (
-                'legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output',
-                'legacy Summary jobs are retired; SessionRollup owns session summary output'
-              )
+              AND last_error = 'legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output'
             )"
         .into())
     } else {

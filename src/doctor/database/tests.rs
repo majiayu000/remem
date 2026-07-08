@@ -116,7 +116,8 @@ fn legacy_surfaces_ignore_archived_summary_jobs_as_blockers() -> anyhow::Result<
 }
 
 #[test]
-fn legacy_surfaces_ignore_explicit_summary_rejections_as_blockers() -> anyhow::Result<()> {
+fn legacy_surfaces_ignore_upgrade_summary_rejections_but_report_worker_rejections(
+) -> anyhow::Result<()> {
     let conn = setup_conn()?;
     for (idx, last_error) in [
         "legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output",
@@ -139,9 +140,10 @@ fn legacy_surfaces_ignore_explicit_summary_rejections_as_blockers() -> anyhow::R
 
     let check = check_legacy_surfaces(Some(&conn));
 
-    assert!(matches!(check.status, Status::Ok), "{}", check.detail);
+    assert!(matches!(check.status, Status::Warn), "{}", check.detail);
     assert!(check.detail.contains("summary_jobs rows=2"));
-    assert!(check.detail.contains("frozen_write_violations=0"));
+    assert!(check.detail.contains("frozen_write_violations=1"));
+    assert!(check.detail.contains("retire/freeze blockers=1"));
     Ok(())
 }
 

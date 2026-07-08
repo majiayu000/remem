@@ -12,9 +12,12 @@
   after the current stop payload succeeds, raw/citation/failure-lesson Stop
   side effects are owned by the hook path before follow-up enqueue, retryable
   failed Summary rows are frozen during upgrade, doctor/status ignore explicit
-  rejection rows as freeze blockers and actionable failed jobs, and worker
-  execution rejects legacy Summary jobs without retry if an already-claimed job
-  reaches the runner.
+  v064 upgrade rejection rows as freeze blockers and actionable failed jobs,
+  post-retirement worker rejections stay visible, spill replay compares the
+  full host/project/session identity before dropping stale rows, workers run
+  extraction tasks before Compress/Dream jobs, and worker execution rejects
+  legacy Summary jobs without retry if an already-claimed job reaches the
+  runner.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact
