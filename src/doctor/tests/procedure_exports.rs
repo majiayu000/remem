@@ -24,13 +24,28 @@ fn check_procedure_exports_reports_inactive_stale_and_changed_sources() -> Resul
     )?;
     let stale_id =
         seed_doctor_promoted_procedure(&mut conn, "sess-export-stale", "cargo test -- stale")?;
-    let changed_id =
-        seed_doctor_promoted_procedure(&mut conn, "sess-export-changed", "cargo test -- changed")?;
+    let changed_updated_at_id = seed_doctor_promoted_procedure(
+        &mut conn,
+        "sess-export-changed-updated-at",
+        "cargo test -- changed-updated-at",
+    )?;
+    let changed_digest_id = seed_doctor_promoted_procedure(
+        &mut conn,
+        "sess-export-changed-digest",
+        "cargo test -- changed-digest",
+    )?;
+    let changed_version_id = seed_doctor_promoted_procedure(
+        &mut conn,
+        "sess-export-changed-version",
+        "cargo test -- changed-version",
+    )?;
 
     record_export_snapshot(&conn, ok_id, "ok")?;
+    record_export_snapshot(&conn, changed_digest_id, "changed-digest")?;
+    record_export_snapshot(&conn, changed_version_id, "changed-version")?;
+    record_export_snapshot(&conn, changed_updated_at_id, "changed-updated-at")?;
     record_export_snapshot(&conn, inactive_id, "inactive")?;
     record_export_snapshot(&conn, stale_id, "stale")?;
-    record_export_snapshot(&conn, changed_id, "changed")?;
 
     conn.execute(
         "UPDATE memories SET status = 'stale' WHERE id = ?1",
@@ -47,22 +62,35 @@ fn check_procedure_exports_reports_inactive_stale_and_changed_sources() -> Resul
     )?;
     let changed_updated_at: i64 = conn.query_row(
         "SELECT updated_at_epoch FROM memories WHERE id = ?1",
-        params![changed_id],
+        params![changed_updated_at_id],
         |row| row.get::<_, i64>(0),
     )? + 60;
     conn.execute(
         "UPDATE memories SET updated_at_epoch = ?1 WHERE id = ?2",
-        params![changed_updated_at, changed_id],
+        params![changed_updated_at, changed_updated_at_id],
+    )?;
+    conn.execute(
+        "UPDATE procedure_exports
+         SET source_digest = 'content-v1:stale-source-digest'
+         WHERE memory_id = ?1",
+        params![changed_digest_id],
+    )?;
+    conn.execute(
+        "UPDATE procedure_exports
+         SET source_digest_version = source_digest_version + 1
+         WHERE memory_id = ?1",
+        params![changed_version_id],
     )?;
 
     let check = check_procedure_exports(Some(&conn));
 
     assert_eq!(check.icon(), "WARN");
-    assert!(check.detail.contains("4 export(s) across 1 project(s)"));
-    assert!(check.detail.contains("drifted=3"));
+    assert!(check.detail.contains("6 export(s) across 1 project(s)"));
+    assert!(check.detail.contains("projects: /tmp/remem=6"));
+    assert!(check.detail.contains("drifted=5"));
     assert!(check.detail.contains("inactive=1"));
     assert!(check.detail.contains("stale=1"));
-    assert!(check.detail.contains("changed=1"));
+    assert!(check.detail.contains("changed=3"));
     assert!(check.detail.contains("source procedure inactive"));
     assert!(check.detail.contains("source verification stale"));
     assert!(check
@@ -76,12 +104,22 @@ fn check_procedure_exports_reports_clean_registry_as_ok() -> Result<()> {
     let mut conn = setup_procedure_export_conn()?;
     let memory_id =
         seed_doctor_promoted_procedure(&mut conn, "sess-export-clean", "cargo test -- clean")?;
+    let other_memory_id = seed_doctor_promoted_procedure_for_project(
+        &mut conn,
+        "/tmp/remem-other",
+        "sess-export-clean-other",
+        "cargo test -- clean-other",
+    )?;
     record_export_snapshot(&conn, memory_id, "clean")?;
+    record_export_snapshot(&conn, other_memory_id, "clean-other")?;
 
     let check = check_procedure_exports(Some(&conn));
 
     assert_eq!(check.icon(), "ok");
-    assert!(check.detail.contains("1 export(s) across 1 project(s)"));
+    assert!(check.detail.contains("2 export(s) across 2 project(s)"));
+    assert!(check
+        .detail
+        .contains("projects: /tmp/remem=1, /tmp/remem-other=1"));
     Ok(())
 }
 
@@ -115,13 +153,22 @@ fn seed_doctor_promoted_procedure(
     session_id: &str,
     command: &str,
 ) -> Result<i64> {
+    seed_doctor_promoted_procedure_for_project(conn, "/tmp/remem", session_id, command)
+}
+
+fn seed_doctor_promoted_procedure_for_project(
+    conn: &mut Connection,
+    project: &str,
+    session_id: &str,
+    command: &str,
+) -> Result<i64> {
     for seq in 1..=2 {
         db::record_captured_event(
             conn,
             &db::CaptureEventInput {
                 host: "codex-cli",
                 session_id,
-                project: "/tmp/remem",
+                project,
                 cwd: None,
                 event_type: "tool_result",
                 role: None,
@@ -151,11 +198,11 @@ fn seed_doctor_promoted_procedure(
     let memory_id = conn.query_row(
         "SELECT id FROM memories
          WHERE memory_type = 'procedure'
-           AND project = '/tmp/remem'
-           AND content LIKE '%' || ?1 || '%'
+           AND project = ?1
+           AND content LIKE '%' || ?2 || '%'
          ORDER BY id DESC
          LIMIT 1",
-        params![command],
+        params![project, command],
         |row| row.get(0),
     )?;
     Ok(memory_id)

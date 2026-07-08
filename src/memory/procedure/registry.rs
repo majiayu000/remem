@@ -1,4 +1,8 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeMap,
+    ffi::OsString,
+    path::{Component, Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
@@ -21,6 +25,7 @@ pub(crate) struct ProcedureExportRecordRequest<'a> {
 pub(crate) struct ProcedureExportDoctorReport {
     pub(crate) total_exports: usize,
     pub(crate) project_count: usize,
+    pub(crate) project_exports: Vec<ProcedureExportProjectCount>,
     pub(crate) inactive: usize,
     pub(crate) stale: usize,
     pub(crate) changed: usize,
@@ -31,6 +36,12 @@ impl ProcedureExportDoctorReport {
     pub(crate) fn drifted_exports(&self) -> usize {
         self.inactive + self.stale + self.changed
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ProcedureExportProjectCount {
+    pub(crate) project: String,
+    pub(crate) exports: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,14 +114,14 @@ pub(crate) fn load_procedure_export_doctor_report(
     now_epoch: i64,
 ) -> Result<ProcedureExportDoctorReport> {
     let rows = load_registry_rows(conn)?;
-    let mut projects = BTreeSet::new();
+    let mut projects = BTreeMap::<String, usize>::new();
     let mut report = ProcedureExportDoctorReport {
         total_exports: rows.len(),
         ..ProcedureExportDoctorReport::default()
     };
 
     for row in rows {
-        projects.insert(row.project.clone());
+        *projects.entry(row.project.clone()).or_default() += 1;
         if let Some(reason) = classify_drift(conn, &row, now_epoch)? {
             match reason {
                 ProcedureExportDriftReason::SourceInactive => report.inactive += 1,
@@ -129,6 +140,10 @@ pub(crate) fn load_procedure_export_doctor_report(
     }
 
     report.project_count = projects.len();
+    report.project_exports = projects
+        .into_iter()
+        .map(|(project, exports)| ProcedureExportProjectCount { project, exports })
+        .collect();
     Ok(report)
 }
 
@@ -279,16 +294,81 @@ fn source_digest_for_export_source(source: &ProcedureExportSource) -> Result<Str
 }
 
 fn registry_output_path(path: &Path, cwd: &Path) -> String {
-    let relative = if path.is_absolute() {
-        path.strip_prefix(cwd).unwrap_or(path)
+    let cwd = normalize_path_lexically(cwd);
+    let absolute = if path.is_absolute() {
+        normalize_path_lexically(path)
     } else {
-        path
+        normalize_path_lexically(&cwd.join(path))
     };
-    normalize_path_separators(relative)
+    let relative = absolute
+        .strip_prefix(&cwd)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|_| relative_path_lexically(&absolute, &cwd).unwrap_or(absolute));
+    normalize_path_separators(&relative)
 }
 
 fn normalize_path_separators(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    normalized
+}
+
+fn relative_path_lexically(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path_components = comparable_components(path)?;
+    let base_components = comparable_components(base)?;
+    let mut common = 0;
+    while common < path_components.len()
+        && common < base_components.len()
+        && path_components[common] == base_components[common]
+    {
+        common += 1;
+    }
+    if common == 0 {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in base_components[common..].iter().filter(|component| {
+        component.as_os_str() != std::ffi::OsStr::new("/")
+            && !component.as_os_str().to_string_lossy().ends_with(':')
+    }) {
+        relative.push("..");
+    }
+    for component in &path_components[common..] {
+        relative.push(component);
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    Some(relative)
+}
+
+fn comparable_components(path: &Path) -> Option<Vec<OsString>> {
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => components.push(prefix.as_os_str().to_os_string()),
+            Component::RootDir => components.push(std::ffi::OsStr::new("/").to_os_string()),
+            Component::Normal(value) => components.push(value.to_os_string()),
+            Component::CurDir => {}
+            Component::ParentDir => return None,
+        }
+    }
+    Some(components)
 }
 
 #[cfg(test)]
@@ -370,6 +450,24 @@ mod tests {
         assert_eq!(content_digest, crate::db::content_identity_hash(b"second"));
         assert_eq!(exported_at, 20);
         Ok(())
+    }
+
+    #[test]
+    fn registry_output_path_is_relative_outside_cwd() {
+        assert_eq!(
+            registry_output_path(
+                Path::new("/repo/../other/procedure.runbook.md"),
+                Path::new("/repo/project")
+            ),
+            "../../other/procedure.runbook.md"
+        );
+        assert_eq!(
+            registry_output_path(
+                Path::new("remem-drafts/procedure.runbook.md"),
+                Path::new("/repo")
+            ),
+            "remem-drafts/procedure.runbook.md"
+        );
     }
 
     fn registry_fixture_source() -> ProcedureExportSource {

@@ -33,6 +33,15 @@ pub(super) fn check_procedure_exports(conn: Option<&Connection>) -> Check {
         "{} export(s) across {} project(s)",
         report.total_exports, report.project_count
     );
+    if !report.project_exports.is_empty() {
+        let project_counts = report
+            .project_exports
+            .iter()
+            .map(|project| format!("{}={}", project.project, project.exports))
+            .collect::<Vec<_>>()
+            .join(", ");
+        detail.push_str(&format!("; projects: {project_counts}"));
+    }
     if report.drifted_exports() == 0 {
         return Check::new("Procedure exports", Status::Ok, detail);
     }

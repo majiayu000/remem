@@ -33,7 +33,7 @@ pub(super) fn run_procedure_export(
         overwrite_generated,
     })?;
     let cwd = std::env::current_dir().context("resolve current directory for procedure export")?;
-    record_procedure_export(
+    if let Err(error) = record_procedure_export(
         &conn,
         ProcedureExportRecordRequest {
             source: &source,
@@ -43,7 +43,22 @@ pub(super) fn run_procedure_export(
             cwd: &cwd,
             exported_at_epoch,
         },
-    )?;
+    ) {
+        if let Err(rollback_error) = rollback_unregistered_draft(&result, &rendered) {
+            return Err(error).with_context(|| {
+                format!(
+                    "record procedure export registry row; additionally failed to roll back unregistered draft {}: {rollback_error}",
+                    result.path.display()
+                )
+            });
+        }
+        return Err(error).with_context(|| {
+            format!(
+                "record procedure export registry row; rolled back unregistered draft {}",
+                result.path.display()
+            )
+        });
+    }
 
     if result.overwritten {
         println!(
@@ -68,6 +83,7 @@ struct ProcedureExportWriteRequest<'a> {
 struct ProcedureExportWriteResult {
     path: PathBuf,
     overwritten: bool,
+    previous_content: Option<String>,
 }
 
 fn write_procedure_export_draft(
@@ -81,7 +97,7 @@ fn write_procedure_export_draft(
 
     let target = export_target_path(&out_dir, request.source, request.format);
     reject_high_context_path(&target)?;
-    let overwrote_existing =
+    let previous_content =
         ensure_writable_target(&target, request.rendered, request.overwrite_generated)?;
 
     let parent = target
@@ -93,7 +109,8 @@ fn write_procedure_export_draft(
 
     Ok(ProcedureExportWriteResult {
         path: target,
-        overwritten: overwrote_existing,
+        overwritten: previous_content.is_some(),
+        previous_content,
     })
 }
 
@@ -114,9 +131,9 @@ fn ensure_writable_target(
     target: &Path,
     rendered: &str,
     overwrite_generated: bool,
-) -> Result<bool> {
+) -> Result<Option<String>> {
     if !target.exists() {
-        return Ok(false);
+        return Ok(None);
     }
 
     let existing = std::fs::read_to_string(target)
@@ -133,7 +150,36 @@ fn ensure_writable_target(
             target.display()
         );
     }
-    Ok(true)
+    Ok(Some(existing))
+}
+
+fn rollback_unregistered_draft(result: &ProcedureExportWriteResult, rendered: &str) -> Result<()> {
+    let current = match std::fs::read(&result.path) {
+        Ok(current) => current,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("read draft before rollback {}", result.path.display()));
+        }
+    };
+    if current != rendered.as_bytes() {
+        bail!(
+            "refusing to roll back procedure draft {} because it changed after export write",
+            result.path.display()
+        );
+    }
+
+    if let Some(previous_content) = &result.previous_content {
+        write_atomically(&result.path, previous_content)
+            .with_context(|| format!("restore previous procedure draft {}", result.path.display()))
+    } else {
+        std::fs::remove_file(&result.path).with_context(|| {
+            format!(
+                "remove unregistered procedure draft {}",
+                result.path.display()
+            )
+        })
+    }
 }
 
 fn same_generated_draft_except_generated_at(existing: &str, rendered: &str) -> bool {
@@ -563,6 +609,49 @@ mod tests {
 
         assert!(result.overwritten);
         assert_eq!(std::fs::read_to_string(result.path)?, new_rendered);
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_unregistered_draft_removes_new_file() -> Result<()> {
+        let root = procedure_export_temp_dir("procedure-export-rollback-new")?;
+        let result = write_for(root.join("drafts"), ProcedureExportFormat::RunbookMd, false)?;
+
+        rollback_unregistered_draft(&result, RENDERED)?;
+
+        assert!(!result.path.exists());
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_unregistered_draft_restores_overwritten_generated_file() -> Result<()> {
+        let root = procedure_export_temp_dir("procedure-export-rollback-overwrite")?;
+        let out = root.join("drafts");
+        let source = writer_fixture_source();
+        let target = export_target_path(&out, &source, ProcedureExportFormat::RunbookMd);
+        let old_rendered =
+            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, 1_700_000_000)?;
+        let new_rendered =
+            render_procedure_export(&source, ProcedureExportFormat::RunbookMd, 1_700_000_600)?;
+        let parent = target
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("test procedure export target has no parent"))?;
+        std::fs::create_dir_all(parent)?;
+        std::fs::write(&target, &old_rendered)?;
+
+        let result = write_rendered_for(
+            out,
+            &source,
+            ProcedureExportFormat::RunbookMd,
+            &new_rendered,
+            true,
+        )?;
+
+        rollback_unregistered_draft(&result, &new_rendered)?;
+
+        assert_eq!(std::fs::read_to_string(result.path)?, old_rendered);
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
