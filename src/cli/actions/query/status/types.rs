@@ -139,6 +139,7 @@ pub(super) struct PendingObservationStatus {
     pub processing: i64,
     pub expired: i64,
     pub failed: i64,
+    pub replayable_legacy: i64,
     pub oldest_ready_epoch: Option<i64>,
     pub oldest_ready_age_secs: Option<i64>,
 }

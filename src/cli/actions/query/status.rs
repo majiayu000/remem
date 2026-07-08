@@ -28,6 +28,8 @@ fn load_status_report() -> Result<StatusReport> {
         .len();
     let version = crate::build_info::version_label();
     let stats = db::query_system_stats(&conn)?;
+    let replayable_legacy_pending =
+        db::pending::admin::count_legacy_migration_candidates(&conn, None, i64::MAX)? as i64;
 
     let today_start = chrono::Local::now()
         .date_naive()
@@ -169,6 +171,7 @@ fn load_status_report() -> Result<StatusReport> {
             processing: stats.processing_pending_observations,
             expired: stats.expired_processing_pending_observations,
             failed: stats.failed_pending_observations,
+            replayable_legacy: replayable_legacy_pending,
             oldest_ready_epoch: stats.oldest_ready_pending_epoch,
             oldest_ready_age_secs: stats
                 .oldest_ready_pending_epoch
@@ -524,6 +527,10 @@ fn print_status_report(report: &StatusReport) {
     );
     println!("  Expired:      {:>6}", report.pending_observations.expired);
     println!("  Failed:       {:>6}", report.pending_observations.failed);
+    println!(
+        "  Replayable:   {:>6}",
+        report.pending_observations.replayable_legacy
+    );
     if let Some(age_secs) = report.pending_observations.oldest_ready_age_secs {
         println!("  Oldest ready: {:>6}s", age_secs);
     }
@@ -703,12 +710,9 @@ fn percent(numerator: i64, denominator: i64) -> f64 {
 }
 
 fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_action::HealthAction> {
-    let replayable_legacy_pending = report.pending_observations.ready
-        + report.pending_observations.delayed
-        + report.pending_observations.expired;
     queue_actions_with_replay(
         report.pending_observations.failed,
-        replayable_legacy_pending,
+        report.pending_observations.replayable_legacy,
         report.capture_pipeline.extract_expired,
         report.jobs.failed,
         report.jobs.stuck,

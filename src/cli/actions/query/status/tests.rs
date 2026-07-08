@@ -110,6 +110,7 @@ fn status_report_fixture() -> StatusReport {
             processing: 14,
             expired: 0,
             failed: 0,
+            replayable_legacy: 25,
             oldest_ready_epoch: Some(17),
             oldest_ready_age_secs: Some(18),
         },
@@ -201,6 +202,7 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     report.raw_archive.latest_failure_path = Some("/bad/raw.jsonl".to_string());
     report.pending_observations.expired = 15;
     report.pending_observations.failed = 16;
+    report.pending_observations.replayable_legacy = 17;
     report.jobs.failed = 21;
     report.jobs.stuck = 22;
 
@@ -255,6 +257,7 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["usage_feedback"]["unmatched_events"], 1);
     assert_eq!(parsed["usage_feedback"]["usage_events"], 6);
     assert_eq!(parsed["pending_observations"]["failed"], 16);
+    assert_eq!(parsed["pending_observations"]["replayable_legacy"], 17);
     assert_eq!(parsed["review_queue"]["pending"], 41);
     assert_eq!(parsed["review_queue"]["median_age_secs"], 86_400);
     assert_eq!(parsed["review_queue"]["max_age_secs"], 172_800);
@@ -325,6 +328,7 @@ fn cli_status_has_no_action_block_when_runtime_is_clear() {
     let mut report = status_report_fixture();
     report.pending_observations.ready = 0;
     report.pending_observations.delayed = 0;
+    report.pending_observations.replayable_legacy = 0;
     let actions = status_health_actions(&report);
 
     assert!(render_action_block(&actions).is_empty());
@@ -335,6 +339,7 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     let mut report = status_report_fixture();
     report.pending_observations.failed = 43;
     report.pending_observations.expired = 1;
+    report.pending_observations.replayable_legacy = 26;
     report.capture_pipeline.extract_failed = 4;
     report.jobs.failed = 2;
     report.jobs.stuck = 3;
@@ -360,6 +365,24 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     assert!(text.contains("3 stuck jobs"));
     assert!(text.contains("inspect counts: remem status --json"));
     assert!(text.contains("recover: remem worker --once"));
+}
+
+#[test]
+fn cli_status_renders_replay_action_for_null_lease_processing_legacy_pending() {
+    let mut report = status_report_fixture();
+    report.pending_observations.ready = 0;
+    report.pending_observations.delayed = 0;
+    report.pending_observations.processing = 1;
+    report.pending_observations.expired = 0;
+    report.pending_observations.failed = 0;
+    report.pending_observations.replayable_legacy = 1;
+
+    let actions = status_health_actions(&report);
+    let text = render_action_block(&actions);
+
+    assert!(text.contains("1 replayable legacy pending observation"));
+    assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
+    assert!(text.contains("apply replay: remem pending migrate-legacy"));
 }
 
 #[test]
