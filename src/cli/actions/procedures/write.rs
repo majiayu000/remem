@@ -12,6 +12,7 @@ use crate::{
 
 const DEFAULT_DRAFT_DIR: &str = "remem-drafts";
 const GENERATED_AT_PREFIX: &str = "- Generated at: `";
+const REMEM_VERSION_PREFIX: &str = "- remem version: `";
 
 pub(super) fn run_procedure_export(
     memory_id: i64,
@@ -130,8 +131,8 @@ fn same_generated_draft_except_generated_at(existing: &str, rendered: &str) -> b
 fn normalize_generated_at(value: &str) -> String {
     let mut output = String::with_capacity(value.len());
     for line in value.split_inclusive('\n') {
-        if is_generated_at_line(line) {
-            output.push_str("- Generated at: `<generated-at>`");
+        if is_generated_provenance_line(line) {
+            output.push_str(generated_provenance_placeholder(line));
             if line.ends_with('\n') {
                 output.push('\n');
             }
@@ -142,9 +143,24 @@ fn normalize_generated_at(value: &str) -> String {
     output
 }
 
-fn is_generated_at_line(line: &str) -> bool {
+fn is_generated_provenance_line(line: &str) -> bool {
     let trimmed = line.strip_suffix('\n').unwrap_or(line);
-    trimmed.starts_with(GENERATED_AT_PREFIX) && trimmed.ends_with('`')
+    ((trimmed.starts_with(GENERATED_AT_PREFIX) && trimmed.len() > GENERATED_AT_PREFIX.len())
+        || (trimmed.starts_with(REMEM_VERSION_PREFIX)
+            && trimmed.len() > REMEM_VERSION_PREFIX.len()))
+        && trimmed.ends_with('`')
+}
+
+fn generated_provenance_placeholder(line: &str) -> &'static str {
+    if line
+        .strip_suffix('\n')
+        .unwrap_or(line)
+        .starts_with(GENERATED_AT_PREFIX)
+    {
+        "- Generated at: `<generated-at>`"
+    } else {
+        "- remem version: `<remem-version>`"
+    }
 }
 
 fn write_atomically(target: &Path, rendered: &str) -> Result<()> {
@@ -164,23 +180,43 @@ fn write_atomically(target: &Path, rendered: &str) -> Result<()> {
 }
 
 fn reject_high_context_path(path: &Path) -> Result<()> {
-    let absolute = absolute_path(path)?;
+    let cwd = std::env::current_dir().context("resolve current directory for procedure export")?;
+    reject_high_context_path_with_cwd(path, &cwd)
+}
+
+fn reject_high_context_path_with_cwd(path: &Path, cwd: &Path) -> Result<()> {
+    let absolute = normalize_path_lexically(&absolute_path(path, cwd));
     reject_high_context_components(&absolute)?;
-    reject_repo_skill_roots(&absolute)?;
+    reject_repo_skill_roots(&absolute, cwd)?;
     if let Ok(resolved) = resolve_existing_prefix(&absolute) {
+        let resolved = normalize_path_lexically(&resolved);
         reject_high_context_components(&resolved)?;
-        reject_repo_skill_roots(&resolved)?;
+        reject_repo_skill_roots(&resolved, cwd)?;
     }
     Ok(())
 }
 
-fn absolute_path(path: &Path) -> Result<PathBuf> {
+fn absolute_path(path: &Path, cwd: &Path) -> PathBuf {
     if path.is_absolute() {
-        return Ok(path.to_path_buf());
+        return path.to_path_buf();
     }
-    Ok(std::env::current_dir()
-        .context("resolve current directory for procedure export")?
-        .join(path))
+    cwd.join(path)
+}
+
+fn normalize_path_lexically(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+            Component::RootDir => normalized.push(component.as_os_str()),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(value) => normalized.push(value),
+        }
+    }
+    normalized
 }
 
 fn resolve_existing_prefix(path: &Path) -> Result<PathBuf> {
@@ -204,7 +240,7 @@ fn reject_high_context_components(path: &Path) -> Result<()> {
             continue;
         };
         let value = raw.to_string_lossy();
-        if value == ".claude" || value == ".codex" {
+        if value.eq_ignore_ascii_case(".claude") || value.eq_ignore_ascii_case(".codex") {
             bail!(
                 "procedure export refuses high-context agent path {}; choose a neutral --out directory such as ./remem-drafts",
                 path.display()
@@ -216,7 +252,11 @@ fn reject_high_context_components(path: &Path) -> Result<()> {
                 path.display()
             );
         }
-        if previous.as_deref() == Some(".agents") && value == "skills" {
+        if previous
+            .as_deref()
+            .is_some_and(|previous| previous.eq_ignore_ascii_case(".agents"))
+            && value.eq_ignore_ascii_case("skills")
+        {
             bail!(
                 "procedure export refuses skill-root path {}; review the draft in a neutral directory before moving it manually",
                 path.display()
@@ -227,9 +267,8 @@ fn reject_high_context_components(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn reject_repo_skill_roots(path: &Path) -> Result<()> {
-    let cwd = std::env::current_dir().context("resolve current directory for procedure export")?;
-    for root in [cwd.join("skills"), cwd.join(".agents").join("skills")] {
+fn reject_repo_skill_roots(path: &Path, cwd: &Path) -> Result<()> {
+    for root in protected_skill_roots(cwd)? {
         if path.starts_with(&root) {
             bail!(
                 "procedure export refuses skill-root path {}; review the draft in a neutral directory before moving it manually",
@@ -238,6 +277,49 @@ fn reject_repo_skill_roots(path: &Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn protected_skill_roots(cwd: &Path) -> Result<Vec<PathBuf>> {
+    let Some(repo_root) = discover_repo_root(cwd) else {
+        return Ok(Vec::new());
+    };
+    let repo_root = normalize_path_lexically(&repo_root);
+    let mut roots = vec![
+        repo_root.join("skills"),
+        repo_root.join(".agents").join("skills"),
+    ];
+
+    let plugins_dir = repo_root.join("plugins");
+    if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
+        for entry in entries {
+            let entry = entry.with_context(|| {
+                format!(
+                    "read procedure export plugin skill root under {}",
+                    plugins_dir.display()
+                )
+            })?;
+            let path = entry.path().join("skills");
+            if path.exists() {
+                roots.push(path);
+            }
+        }
+    }
+
+    roots.sort();
+    roots.dedup();
+    Ok(roots
+        .into_iter()
+        .map(|root| normalize_path_lexically(&root))
+        .collect())
+}
+
+fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
+    for candidate in cwd.ancestors() {
+        if candidate.join(".git").exists() {
+            return Some(candidate.to_path_buf());
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -272,6 +354,22 @@ mod tests {
         .expect_err("claude skill roots must reject");
         assert!(claude_err.to_string().contains("high-context agent path"));
 
+        let agents_skill_err = write_for(
+            root.join(".AGENTS").join("SKILLS"),
+            ProcedureExportFormat::ClaudeSkill,
+            false,
+        )
+        .expect_err("agent skill roots must reject case-insensitively");
+        assert!(agents_skill_err.to_string().contains("skill-root path"));
+
+        let case_err = write_for(
+            root.join(".CLAUDE").join("skills"),
+            ProcedureExportFormat::ClaudeSkill,
+            false,
+        )
+        .expect_err("case variants of claude roots must reject");
+        assert!(case_err.to_string().contains("high-context agent path"));
+
         let agents_err = write_for(
             root.join("AGENTS.md"),
             ProcedureExportFormat::RunbookMd,
@@ -291,6 +389,45 @@ mod tests {
         )
         .expect_err("repo-local skills root must reject");
         assert!(skill_root_err.to_string().contains("skill-root path"));
+
+        let plugin_skill_err = write_for(
+            std::env::current_dir()?
+                .join("plugins")
+                .join("remem")
+                .join("skills"),
+            ProcedureExportFormat::RunbookMd,
+            false,
+        )
+        .expect_err("plugin skills root must reject");
+        assert!(plugin_skill_err.to_string().contains("skill-root path"));
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn path_guard_resolves_repo_root_and_parent_components_before_skill_checks() -> Result<()> {
+        let root = procedure_export_temp_dir("procedure-export-repo-root")?;
+        std::fs::write(root.join(".git"), "gitdir: /tmp/not-used\n")?;
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("skills"))?;
+        std::fs::create_dir_all(root.join(".agents").join("skills"))?;
+
+        let subdir_err =
+            reject_high_context_path_with_cwd(Path::new("../skills"), &root.join("src"))
+                .expect_err("repo skills must reject from subdirectories");
+        assert!(subdir_err.to_string().contains("skill-root path"));
+
+        let parent_err = reject_high_context_path_with_cwd(
+            &root
+                .join(".agents")
+                .join("missing")
+                .join("..")
+                .join("skills"),
+            &root,
+        )
+        .expect_err("parent components must normalize before guard checks");
+        assert!(parent_err.to_string().contains("skill-root path"));
 
         std::fs::remove_dir_all(root)?;
         Ok(())
@@ -314,6 +451,15 @@ mod tests {
         assert!(err.to_string().contains("may be reviewed or user-edited"));
         assert_eq!(std::fs::read_to_string(target)?, "reviewed edits\n");
         std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn writer_overwrites_unchanged_generated_target_after_version_change() -> Result<()> {
+        let old = RENDERED.replace("Draft\n", "Draft\n- remem version: `0.5.187`\n");
+        let new = RENDERED.replace("Draft\n", "Draft\n- remem version: `0.5.188`\n");
+
+        assert!(same_generated_draft_except_generated_at(&old, &new));
         Ok(())
     }
 
