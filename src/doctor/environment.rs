@@ -207,7 +207,9 @@ fn probe_hooks(probe: HostProbe) -> Check {
                 probe.hooks_path.display()
             ),
         )
-    } else if found > 0 {
+    } else if report.as_ref().is_some_and(|report| {
+        found > 0 || (probe.name == "claude" && !report.stale_details.is_empty())
+    }) {
         let repair_target = if probe.name == "claude" {
             "claude --repair"
         } else {
@@ -518,44 +520,42 @@ mod tests {
         let cases = [
             (
                 "doctor-codex-wrong-subcommands",
-                r#"{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem status --host codex-cli" }] }],
-    "Stop": [{ "hooks": [{ "command": "/tmp/remem context --host codex-cli" }] }]
-  }
-}"#,
+                "codex",
+                r#"{"hooks":{"SessionStart":[{"hooks":[{"command":"/tmp/remem status --host codex-cli"}]}],"Stop":[{"hooks":[{"command":"/tmp/remem context --host codex-cli"}]}]}}"#,
+                "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n",
+                Status::Fail,
+                "no remem hooks",
             ),
             (
-                "doctor-codex-wrong-hosts",
-                r#"{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host claude-code" }] }],
-    "Stop": [{ "hooks": [{ "command": "/tmp/remem summarize --host claude-code" }] }]
-  }
-}"#,
+                "doctor-claude-stale-only-wrong-hosts",
+                "claude",
+                r#"{"hooks":{"SessionStart":[{"matcher":"startup|resume|clear|compact","hooks":[{"command":"/tmp/remem context --host codex-cli","timeout":15}]}],"UserPromptSubmit":[{"hooks":[{"command":"/tmp/remem session-init --host codex-cli","timeout":15}]}],"PostToolUse":[{"matcher":"Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task","hooks":[{"command":"/tmp/remem observe --host codex-cli","timeout":120}]}],"PreCompact":[{"hooks":[{"command":"/tmp/remem summarize --host codex-cli","timeout":120}]}],"Stop":[{"hooks":[{"command":"/tmp/remem summarize --host codex-cli","timeout":120}]}]}}"#,
+                r#"{"mcpServers":{"remem":{"command":"/tmp/remem"}}}"#,
+                Status::Warn,
+                "remem install --target claude --repair",
             ),
         ];
 
-        for (label, content) in cases {
+        for (label, host, content, mcp_content, expected_status, expected_detail) in cases {
             let dir = temp_path(label);
             let hooks_path = dir.join("hooks.json");
             std::fs::write(&hooks_path, content)?;
-            let mcp_path = dir.join("config.toml");
-            std::fs::write(&mcp_path, "[mcp_servers.remem]\ncommand = \"/tmp/remem\"\n")?;
+            let mcp_path = dir.join(if host == "codex" {
+                "config.toml"
+            } else {
+                "claude.json"
+            });
+            std::fs::write(&mcp_path, mcp_content)?;
 
             let check = probe_hooks(HostProbe {
-                name: "codex",
+                name: host,
                 hooks_path,
                 mcp_paths: vec![mcp_path],
             });
 
+            assert_eq!(check.status, expected_status, "{label}: {}", check.detail);
             assert!(
-                matches!(check.status, Status::Fail),
-                "{label}: {}",
-                check.detail
-            );
-            assert!(
-                check.detail.contains("no remem hooks"),
+                check.detail.contains(expected_detail),
                 "{label}: {}",
                 check.detail
             );

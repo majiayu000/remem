@@ -12,12 +12,12 @@ pub(super) fn claude_hook_integrity_warning(invocation: &ContextInvocation) -> O
 
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let settings_path = home.join(".claude").join("settings.json");
-    let claude_json_path = home.join(".claude.json");
+    let claude_mcp_paths = crate::install::claude_mcp_paths();
     let fallback_executable = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("remem"));
     claude_hook_integrity_warning_from_paths(
         invocation,
         &settings_path,
-        &claude_json_path,
+        &claude_mcp_paths,
         fallback_executable,
     )
 }
@@ -25,7 +25,7 @@ pub(super) fn claude_hook_integrity_warning(invocation: &ContextInvocation) -> O
 fn claude_hook_integrity_warning_from_paths(
     invocation: &ContextInvocation,
     settings_path: &Path,
-    claude_json_path: &Path,
+    claude_mcp_paths: &[PathBuf],
     fallback_executable: PathBuf,
 ) -> Option<String> {
     if invocation.host != HostKind::ClaudeCode || !is_claude_session_start_source(invocation) {
@@ -58,15 +58,16 @@ fn claude_hook_integrity_warning_from_paths(
         }
     };
 
-    let expected_executable = crate::hook_integrity::read_claude_mcp_command(claude_json_path)
-        .ok()
-        .flatten()
-        .map(PathBuf::from)
-        .or_else(|| {
-            crate::hook_integrity::expected_hook_executable_from_hooks(&doc, "claude")
-                .map(PathBuf::from)
-        })
-        .unwrap_or(fallback_executable);
+    let expected_executable =
+        crate::hook_integrity::read_first_claude_mcp_command(claude_mcp_paths)
+            .ok()
+            .flatten()
+            .map(PathBuf::from)
+            .or_else(|| {
+                crate::hook_integrity::expected_hook_executable_from_hooks(&doc, "claude")
+                    .map(PathBuf::from)
+            })
+            .unwrap_or(fallback_executable);
     let report = crate::hook_integrity::evaluate_hooks(
         &doc,
         "claude",
@@ -138,7 +139,7 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir)?;
         let settings_path = dir.join("settings.json");
-        let mcp_path = dir.join("claude.json");
+        let mcp_paths = vec![dir.join("claude.json")];
         std::fs::write(
             &settings_path,
             r#"{"hooks":{"SessionStart":[{"matcher":"startup|resume|clear|compact","hooks":[{"command":"/tmp/remem context --host claude-code","timeout":15}]}],"UserPromptSubmit":[{"hooks":[{"command":"/tmp/remem session-init --host claude-code","timeout":15}]}],"PreCompact":[{"hooks":[{"command":"/tmp/remem summarize --host claude-code","timeout":120}]}]}}"#,
@@ -159,7 +160,7 @@ mod tests {
         let warning = claude_hook_integrity_warning_from_paths(
             &invocation,
             &settings_path,
-            &mcp_path,
+            &mcp_paths,
             PathBuf::from("/tmp/remem"),
         )
         .expect("incomplete Claude hooks should warn");
@@ -169,6 +170,51 @@ mod tests {
             warning.contains("remem install --target claude --repair"),
             "{warning}"
         );
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
+    }
+
+    #[test]
+    fn warning_uses_desktop_mcp_path_when_primary_is_missing() -> anyhow::Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "remem-hook-warning-desktop-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir)?;
+        let settings_path = dir.join("settings.json");
+        let desktop_mcp = dir.join("claude_desktop_config.json");
+        std::fs::write(
+            &settings_path,
+            r#"{"hooks":{"SessionStart":[{"matcher":"startup|resume|clear|compact","hooks":[{"command":"/hook/remem context --host claude-code","timeout":15}]}],"UserPromptSubmit":[{"hooks":[{"command":"/hook/remem session-init --host claude-code","timeout":15}]}],"PostToolUse":[{"matcher":"Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task","hooks":[{"command":"/hook/remem observe --host claude-code","timeout":120}]}],"PreCompact":[{"hooks":[{"command":"/hook/remem summarize --host claude-code","timeout":120}]}],"Stop":[{"hooks":[{"command":"/hook/remem summarize --host claude-code","timeout":120}]}]}}"#,
+        )?;
+        std::fs::write(
+            &desktop_mcp,
+            r#"{"mcpServers":{"remem":{"command":"/mcp/remem"}}}"#,
+        )?;
+        let invocation = ContextInvocation {
+            cwd: ".".to_string(),
+            project: ".".to_string(),
+            session_id: None,
+            transcript_path: None,
+            source: Some("startup".to_string()),
+            host: HostKind::ClaudeCode,
+            use_colors: false,
+            debug: false,
+            force: false,
+            gate_mode: None,
+        };
+
+        let Some(warning) = claude_hook_integrity_warning_from_paths(
+            &invocation,
+            &settings_path,
+            &[dir.join("missing.json"), desktop_mcp],
+            PathBuf::from("/hook/remem"),
+        ) else {
+            panic!("desktop MCP path drift should warn");
+        };
+
+        assert!(warning.contains("executable /hook/remem"), "{warning}");
         std::fs::remove_dir_all(dir)?;
         Ok(())
     }

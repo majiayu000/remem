@@ -8,7 +8,7 @@ use crate::install::config::{
 };
 use crate::install::host::{HookRepairReport, HookSupport, InstallHost};
 use crate::install::json_io::{read_json_file, write_json_file};
-use crate::install::paths::{claude_json_path, settings_path};
+use crate::install::paths::{claude_json_path, claude_mcp_paths, settings_path};
 
 pub(in crate::install) struct ClaudeHost;
 
@@ -74,7 +74,7 @@ impl InstallHost for ClaudeHost {
         let path = settings_path();
         let integrity = repair_hooks_json(&path, bin, HookStrategy::ClaudeCode)?;
         let mcp_warning =
-            match crate::hook_integrity::read_claude_mcp_command(&claude_json_path()) {
+            match crate::hook_integrity::read_first_claude_mcp_command(&claude_mcp_paths()) {
                 Ok(Some(command)) if command != bin => Some(format!(
                     "Claude MCP still points at {}; run `remem install --target claude` after repair if doctor reports install-path drift",
                     command

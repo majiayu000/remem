@@ -6,17 +6,24 @@ use rusqlite::{params, Connection};
 use super::config::{
     build_hooks, remove_remem_hooks, remove_remem_mcp, repair_hooks_json, HookStrategy,
 };
+use super::host::InstallHost;
 use super::runtime::ensure_runtime_store_ready;
 use super::InstallTarget;
 use crate::db::test_support::ScopedTestDataDir;
 
 struct ScopedHome {
+    _guard: std::sync::MutexGuard<'static, ()>,
     previous_home: Option<std::ffi::OsString>,
     path: std::path::PathBuf,
 }
 
+static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 impl ScopedHome {
     fn new(label: &str) -> anyhow::Result<Self> {
+        let guard = HOME_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let path = std::env::temp_dir().join(format!(
             "remem-install-home-{label}-{}-{}",
             std::process::id(),
@@ -27,6 +34,7 @@ impl ScopedHome {
         let previous_home = std::env::var_os("HOME");
         std::env::set_var("HOME", &path);
         Ok(Self {
+            _guard: guard,
             previous_home,
             path,
         })
@@ -185,6 +193,32 @@ fn repair_dry_run_does_not_write_hooks_mcp_or_runtime_store() -> anyhow::Result<
     assert!(
         !test_dir.db_path().exists(),
         "repair dry-run must not initialize the runtime database"
+    );
+    Ok(())
+}
+
+#[test]
+fn repair_hooks_warns_for_desktop_mcp_drift() -> anyhow::Result<()> {
+    let home = ScopedHome::new("repair-desktop-mcp")?;
+    let settings_path = home.path.join(".claude").join("settings.json");
+    let desktop_mcp_path = home.path.join(".claude").join("claude_desktop_config.json");
+    std::fs::write(&settings_path, "{}")?;
+    std::fs::write(
+        &desktop_mcp_path,
+        r#"{"mcpServers":{"remem":{"command":"/old/remem","args":["mcp"]}}}"#,
+    )?;
+
+    let report = super::hosts::ClaudeHost.repair_hooks("/new/remem")?;
+
+    assert_eq!(report.registered, 5);
+    assert_eq!(report.expected, 5);
+    let Some(warning) = report.mcp_warning else {
+        panic!("desktop MCP drift should produce a warning");
+    };
+    assert!(warning.contains("/old/remem"), "{warning}");
+    assert!(
+        !home.path.join(".claude.json").exists(),
+        "test must exercise desktop MCP without primary Claude JSON"
     );
     Ok(())
 }

@@ -24,7 +24,9 @@ GH-761
 - `cargo test install:: -- --nocapture`
 - `cargo test install::tests::repair_ -- --nocapture`
 - `cargo test context:: -- --nocapture`
+- `cargo test context::hook_warning -- --nocapture`
 - `cargo test context::tests::gate_pipeline::claude_hook_warning_survives -- --nocapture`
+- `cargo test doctor::environment -- --nocapture`
 - `cargo fmt --check`
 - `cargo check`
 - `cargo test`

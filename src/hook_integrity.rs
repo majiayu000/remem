@@ -261,19 +261,18 @@ pub(crate) fn remove_remem_hooks_for_host(settings: &mut Value, host: &str) -> u
         };
         let mut retained_entries = Vec::new();
         for mut entry in std::mem::take(entries) {
-            if let Some(inner_hooks) = entry
+            let Some(inner_hooks) = entry
                 .get_mut("hooks")
                 .and_then(|hooks| hooks.as_array_mut())
-            {
-                let before = inner_hooks.len();
-                inner_hooks.retain(|hook| !is_remem_owned_for_event(host, event, hook));
-                removed += before.saturating_sub(inner_hooks.len());
-            }
-            let keep = entry
-                .get("hooks")
-                .and_then(|hooks| hooks.as_array())
-                .is_some_and(|hooks| !hooks.is_empty());
-            if keep {
+            else {
+                retained_entries.push(entry);
+                continue;
+            };
+            let before = inner_hooks.len();
+            inner_hooks.retain(|hook| !is_remem_owned_for_event(host, event, hook));
+            let removed_from_entry = before.saturating_sub(inner_hooks.len());
+            removed += removed_from_entry;
+            if !inner_hooks.is_empty() || removed_from_entry == 0 {
                 retained_entries.push(entry);
             }
         }
@@ -310,6 +309,17 @@ pub(crate) fn read_claude_mcp_command(path: &Path) -> Result<Option<String>, Str
         .and_then(|server| server.get("command"))
         .and_then(|command| command.as_str())
         .map(ToString::to_string))
+}
+
+pub(crate) fn read_first_claude_mcp_command(paths: &[PathBuf]) -> Result<Option<String>, String> {
+    for path in paths {
+        match read_claude_mcp_command(path) {
+            Ok(Some(command)) => return Ok(Some(command)),
+            Ok(None) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(None)
 }
 
 fn expected_match_count(doc: &Value, spec: &ExpectedHookSpec, executable: &Path) -> usize {
@@ -407,8 +417,12 @@ fn is_remem_owned_for_event(host: &str, event: &str, hook: &Value) -> bool {
     let Some(spec) = expected_specs(host).iter().find(|spec| spec.event == event) else {
         return false;
     };
-    parse_remem_hook_value(hook)
-        .is_some_and(|invocation| invocation.subcommand.as_deref() == Some(spec.subcommand))
+    parse_remem_hook_value(hook).is_some_and(|invocation| {
+        invocation.subcommand.as_deref() == Some(spec.subcommand)
+            && invocation
+                .resolved_host()
+                .is_none_or(|resolved| resolved == runtime_host(host))
+    })
 }
 
 fn hook_values_for_event<'a>(
@@ -716,5 +730,60 @@ mod tests {
             "/opt/not-remem-helper context"
         );
         assert!(doc["hooks"].get("Stop").is_none());
+    }
+
+    #[test]
+    fn removal_preserves_non_array_entries_and_other_host_remem_hooks() {
+        let mut doc = json!({
+            "hooks": {
+                "SessionStart": [
+                    {"matcher": "custom", "plugin": "third-party"},
+                    {"matcher": "custom", "hooks": {"command": "third-party"}},
+                    {"hooks": [
+                        { "command": "/tmp/remem context --host codex-cli" },
+                        { "command": "/tmp/remem context --host claude-code" }
+                    ]}
+                ]
+            }
+        });
+
+        let removed = remove_remem_hooks_for_host(&mut doc, "claude");
+
+        assert_eq!(removed, 1);
+        let Some(entries) = doc["hooks"]["SessionStart"].as_array() else {
+            panic!("SessionStart entries should remain");
+        };
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0]["plugin"], "third-party");
+        assert!(entries[1]["hooks"].is_object());
+        assert_eq!(
+            entries[2]["hooks"][0]["command"],
+            "/tmp/remem context --host codex-cli"
+        );
+    }
+
+    #[test]
+    fn first_claude_mcp_command_checks_desktop_config_after_primary() -> anyhow::Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "remem-mcp-paths-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&dir)?;
+        let desktop = dir.join("claude_desktop_config.json");
+        std::fs::write(
+            &desktop,
+            r#"{"mcpServers":{"remem":{"command":"/desktop/remem"}}}"#,
+        )?;
+
+        let Some(command) = read_first_claude_mcp_command(&[dir.join("missing.json"), desktop])
+            .map_err(anyhow::Error::msg)?
+        else {
+            panic!("desktop MCP command should be found");
+        };
+
+        assert_eq!(command, "/desktop/remem");
+        std::fs::remove_dir_all(dir)?;
+        Ok(())
     }
 }

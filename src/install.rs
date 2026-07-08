@@ -9,4 +9,5 @@ mod runtime;
 mod tests;
 
 pub use host::InstallTarget;
+pub(crate) use paths::claude_mcp_paths;
 pub use runtime::{install, uninstall};
