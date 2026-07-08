@@ -10,7 +10,8 @@
   longer enqueue new Summary jobs, capture-ledger failures spill instead of
   falling back to the retired writer, same-session stale spills are skipped
   after the current stop payload succeeds, raw/citation/failure-lesson Stop
-  side effects are owned by the hook path before follow-up enqueue, retryable
+  side effects are owned by the hook path before follow-up enqueue, citation
+  recording errors log at error level without blocking follow-up jobs, retryable
   failed Summary rows are frozen during upgrade, doctor/status ignore explicit
   v064 upgrade rejection rows as freeze blockers and actionable failed jobs,
   post-retirement worker rejections stay visible, spill replay compares the

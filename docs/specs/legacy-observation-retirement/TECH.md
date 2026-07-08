@@ -74,7 +74,8 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   current stop payload succeeds, replay skips older same-session spills so the
   current capture remains authoritative. Raw archive ingest, memory-citation
   recording, and failure-lesson distillation run from the hook side-effect path
-  before Compress/Dream follow-up enqueue.
+  before Compress/Dream follow-up enqueue; citation recording errors log at error
+  level and do not block those follow-ups.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -210,13 +211,15 @@ Tests: fixture DBs per state; frozen-write detection test.
    failed-job counts. Worker-side post-retirement Summary rejections remain
    visible so stale hook/plugin writers are not hidden. Stop hooks no longer
    enqueue new Summary jobs, and capture-ledger failures spill and abort
-   follow-ups rather than falling back to the retired writer. When the current
-   stop payload succeeds, older same-host/project/session spills are skipped
-   during replay, but same `session_id` spills from other projects still replay.
-   Workers claim extraction tasks before Compress/Dream jobs so SessionRollup
-   can run before background follow-ups. This preserves terminal Summary
-   history and non-summary jobs. Draining would rerun the retired AI path, and
-   conversion lacks an authoritative legacy payload-to-SessionRollup contract.
+   follow-ups rather than falling back to the retired writer. Citation-recording
+   side-effect failures are logged at error level without suppressing the
+   Compress/Dream follow-ups. When the current stop payload succeeds, older
+   same-host/project/session spills are skipped during replay, but same
+   `session_id` spills from other projects still replay. Workers claim
+   extraction tasks before Compress/Dream jobs so SessionRollup can run before
+   background follow-ups. This preserves terminal Summary history and
+   non-summary jobs. Draining would rerun the retired AI path, and conversion
+   lacks an authoritative legacy payload-to-SessionRollup contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 

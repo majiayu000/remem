@@ -42,26 +42,34 @@ pub(super) fn run_stop_hook_side_effects(
         .unwrap_or_default();
     if !assistant_msg.is_empty() {
         let usage_msg_hash = hash_message(&assistant_msg);
-        let usage_report = crate::memory::usage::record_stop_memory_citations(
+        match crate::memory::usage::record_stop_memory_citations(
             conn,
             host,
             project,
             session_id,
             &usage_msg_hash,
             &assistant_msg,
-        )?;
-        if usage_report.parsed_count > 0 || usage_report.duplicate_event {
-            crate::log::info(
+        ) {
+            Ok(usage_report) if usage_report.parsed_count > 0 || usage_report.duplicate_event => {
+                crate::log::info(
+                    "summary-job",
+                    &format!(
+                        "memory citations parsed={} matched={} inserted={} duplicate={} project={}",
+                        usage_report.parsed_count,
+                        usage_report.matched_count,
+                        usage_report.inserted_count,
+                        usage_report.duplicate_event,
+                        project
+                    ),
+                );
+            }
+            Ok(_) => {}
+            Err(error) => crate::log::error(
                 "summary-job",
                 &format!(
-                    "memory citations parsed={} matched={} inserted={} duplicate={} project={}",
-                    usage_report.parsed_count,
-                    usage_report.matched_count,
-                    usage_report.inserted_count,
-                    usage_report.duplicate_event,
-                    project
+                    "memory citation recording failed for project={project} session={session_id} message_hash={usage_msg_hash}: {error}"
                 ),
-            );
+            ),
         }
     }
     Ok(assistant_msg)
@@ -182,5 +190,75 @@ fn insert_raw_hook_fallback(
                 &format!("raw archive insert failed: {}", error),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::db::{self, test_support::ScopedTestDataDir};
+
+    use super::super::hook::summarize_input;
+
+    #[tokio::test]
+    async fn citation_failure_does_not_block_followup_jobs() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-citation-failure");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        let project = db::project_from_cwd("/tmp/remem");
+        let missing_memory_id = 9_999_999_i64;
+        conn.execute(
+            "INSERT INTO context_injection_items
+             (injection_run_id, host, project, session_id, injection_key, output_mode,
+              decision, item_kind, item_id, memory_id, channel, render_order, status,
+              title, provenance, staleness, injected_at_epoch)
+             VALUES ('run-1', 'codex-cli', ?1, 'sess-summary-citation-failure', 'key-1', 'full',
+                     'emitted', 'memory', ?2, ?2, 'core', 1, 'injected',
+                     'stale memory', 'src=memory', 'current', 100)",
+            rusqlite::params![project, missing_memory_id],
+        )?;
+        drop(conn);
+        let input = serde_json::json!({
+            "session_id": "sess-summary-citation-failure",
+            "cwd": "/tmp/remem",
+            "last_assistant_message": format!("assistant cited stale memory\nMemory citations: memory:#{missing_memory_id}")
+        })
+        .to_string();
+
+        summarize_input(&input, Some("codex-cli"), None).await?;
+
+        let conn = db::open_db()?;
+        let jobs = job_types(&conn)?;
+        let summary_jobs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE job_type = 'summary'",
+            [],
+            |row| row.get(0),
+        )?;
+        let citation_events: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_citation_events", [], |row| {
+                row.get(0)
+            })?;
+        let usage_events: i64 =
+            conn.query_row("SELECT COUNT(*) FROM memory_usage_events", [], |row| {
+                row.get(0)
+            })?;
+
+        assert_eq!(jobs, vec!["compress".to_string(), "dream".to_string()]);
+        assert_eq!(summary_jobs, 0);
+        assert_eq!(citation_events, 0);
+        assert_eq!(usage_events, 0);
+        Ok(())
+    }
+
+    fn job_types(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
+        let mut stmt = conn.prepare("SELECT job_type FROM jobs ORDER BY id ASC")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
     }
 }

@@ -68,7 +68,8 @@ current SessionRollup path and the legacy Summary job chain.
       failure maintenance can reopen them, v064 upgrade rejection rows are not
       actionable doctor/status failures, worker-side post-retirement Summary
       rejections stay visible, raw/citation/failure side effects stay reachable
-      from the hook path, workers run SessionRollup extraction before
+      from the hook path, citation failures are logged without blocking
+      follow-ups, workers run SessionRollup extraction before
       Compress/Dream jobs, and terminal Summary history plus non-summary jobs
       are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.

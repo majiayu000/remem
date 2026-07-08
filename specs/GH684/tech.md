@@ -110,6 +110,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `legacy_summary_upgrade_rejects_non_terminal_jobs`,
       `worker_rejects_legacy_summary_job_without_retry`,
       `summarize_hook_runs_stop_side_effects_without_summary_job`,
+      `citation_failure_does_not_block_followup_jobs`,
       `summarize_hook_replays_same_session_spill_for_different_project`,
       `enqueue_summary_followup_jobs_skips_legacy_summary_job`,
       `capture_ledger_failure_blocks_followup_jobs`, and
