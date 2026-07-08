@@ -52,16 +52,16 @@ deterministic agent capability.
 
 ## Acceptance Criteria
 
-- [ ] Fixture procedure exports to all three formats with snapshot coverage,
+- [x] Fixture procedure exports to all three formats with snapshot coverage,
       provenance header, and evidence ids.
-- [ ] Claude skill snapshot proves frontmatter is first-line content and the
+- [x] Claude skill snapshot proves frontmatter is first-line content and the
       description includes a bounded reuse-condition summary.
-- [ ] Export rejects ineligible source memories and source text that fails
+- [x] Export rejects ineligible source memories and source text that fails
       secret or instruction-pattern scan.
-- [ ] Existing user-edited draft paths are refused with actionable errors.
-- [ ] Worker/dream/hook paths cannot reach the export writer.
-- [ ] Doctor reports drifted exports.
-- [ ] `docs/procedural-memory.md` describes the review-gated export contract.
+- [x] Existing user-edited draft paths are refused with actionable errors.
+- [x] Worker/dream/hook paths cannot reach the export writer.
+- [x] Doctor reports drifted exports.
+- [x] `docs/procedural-memory.md` describes the review-gated export contract.
 
 ## Edge Cases
 

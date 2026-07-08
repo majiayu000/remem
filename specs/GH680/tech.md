@@ -84,13 +84,13 @@ reports drift without hashing user-edited output files.
 
 ## Test Plan
 
-- [ ] CLI parsing and list output tests.
-- [ ] Snapshot tests for all three export formats.
-- [ ] Eligibility, scan, overwrite, and high-context path rejection tests.
-- [ ] Negative worker/dream/hook reachability test.
-- [ ] `procedure_exports` migration and doctor drift tests.
-- [ ] Documentation update verification.
-- [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
+- [x] CLI parsing and list output tests.
+- [x] Snapshot tests for all three export formats.
+- [x] Eligibility, scan, overwrite, and high-context path rejection tests.
+- [x] Negative worker/dream/hook reachability test.
+- [x] `procedure_exports` migration and doctor drift tests.
+- [x] Documentation update verification.
+- [x] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
       before merge readiness.
 
 ## Rollback Plan

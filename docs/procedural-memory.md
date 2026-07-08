@@ -34,8 +34,28 @@ only after the gates pass; raw traces remain evidence, not prompt context.
 Use `remem procedures list` to inspect promoted procedures and their maturity
 signals before deciding whether to externalize one through a later review step.
 
-## Non-Goals
+## Review-Gated Export
 
-This path does not auto-write repository docs, generate skills, or create
-runbooks. Exporting mature procedures to committed docs or skills should remain
-an explicit review step.
+Use `remem procedures export <id> --format claude-skill|codex-prompt|runbook-md
+[--out <dir>]` to render a mature procedure as a draft artifact. The default
+output directory is `remem-drafts/`, a neutral location that is not loaded as an
+agent instruction path.
+
+Export is intentionally CLI-only. Worker, dream, hook, and MCP paths cannot
+write procedure drafts, and committing or moving a draft into an active docs or
+skill location remains a human review step.
+
+The exporter refuses high-context destinations such as `.claude/`, `.codex/`,
+`AGENTS.md`, `CLAUDE.md`, repo-local `skills/`, repo-local `.agents/skills/`,
+plugin skill roots, and discovered skill roots. It also scans rendered fields
+for secrets and instruction patterns before opening the output file.
+
+Existing reviewed or user-edited drafts are not overwritten. Only an unchanged
+remem-generated draft with a matching `procedure_exports` registry row and
+content digest can be replaced, and only when the user passes
+`--overwrite-generated`.
+
+The `procedure_exports` registry records the source procedure snapshot and the
+draft content digest at export time. `remem doctor` reports exports whose source
+procedure is now inactive, whose verification freshness lapsed, or whose active
+source procedure changed after export.
