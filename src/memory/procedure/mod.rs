@@ -8,6 +8,10 @@ mod export;
 mod list;
 mod trace_store;
 
+pub(crate) use export::{
+    load_export_eligible_procedure, procedure_export_slug, render_procedure_export,
+    ProcedureExportFormat, ProcedureExportSource, PROCEDURE_EXPORT_DRAFT_MARKER,
+};
 pub use list::{list_promoted_procedures, ProcedureListItem};
 
 #[cfg(test)]

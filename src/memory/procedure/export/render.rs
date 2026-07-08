@@ -2,7 +2,9 @@ use anyhow::{bail, Result};
 
 use super::ProcedureExportSource;
 
-const DRAFT_MARKER: &str = "<!-- remem-draft: procedure export, review before commit -->";
+pub(crate) const PROCEDURE_EXPORT_DRAFT_MARKER: &str =
+    "<!-- remem-draft: procedure export, review before commit -->";
+const DRAFT_MARKER: &str = PROCEDURE_EXPORT_DRAFT_MARKER;
 const DRAFT_WARNING: &str = "Draft — review before committing";
 const DESCRIPTION_MAX_BYTES: usize = 180;
 
@@ -203,6 +205,10 @@ fn procedure_slug(source: &ProcedureExportSource) -> String {
     } else {
         slug
     }
+}
+
+pub(crate) fn procedure_export_slug(source: &ProcedureExportSource) -> String {
+    procedure_slug(source)
 }
 
 fn skill_safe_slug(value: &str) -> String {

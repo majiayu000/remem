@@ -18,7 +18,7 @@ GH-680
 - [x] `SP680-T2` Owner: agent; Dependencies: `SP680-T1`; Done when: export eligibility reuses procedure promotion/freshness evidence and rejects ineligible rows; Verify: eligibility tests. Shipped by this partial implementation slice.
 - [x] `SP680-T3` Owner: agent; Dependencies: `SP680-T2`; Done when: all rendered fields are scanned before file writes; Verify: secret and instruction-pattern rejection tests. Shipped by this partial implementation slice.
 - [x] `SP680-T4` Owner: agent; Dependencies: `SP680-T2` `SP680-T3`; Done when: templates render `claude-skill`, `codex-prompt`, and `runbook-md` drafts with provenance; Verify: snapshot tests. Shipped by this partial implementation slice.
-- [ ] `SP680-T5` Owner: agent; Dependencies: `SP680-T4`; Done when: writer refuses high-context paths and user-edited existing files, and allows only explicit generated-overwrite cases; Verify: path and overwrite tests.
+- [x] `SP680-T5` Owner: agent; Dependencies: `SP680-T4`; Done when: writer refuses high-context paths and user-edited existing files, and allows only explicit generated-overwrite cases; Verify: path and overwrite tests. Shipped by this partial implementation slice.
 - [ ] `SP680-T6` Owner: agent; Dependencies: `SP680-T5`; Done when: worker, dream, hook, and MCP write paths cannot reach the export writer; Verify: negative reachability test.
 - [ ] `SP680-T7` Owner: agent; Dependencies: `SP680-T4`; Done when: `procedure_exports` registry records source snapshot and doctor flags inactive, stale, or changed source procedures; Verify: migration and doctor tests.
 - [ ] `SP680-T8` Owner: agent; Dependencies: export behavior; Done when: `docs/procedural-memory.md` documents the review-gated export contract; Verify: docs review.

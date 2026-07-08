@@ -5,6 +5,8 @@ use crate::{db, memory::procedure::ProcedureListItem};
 
 use super::super::procedure_types::ProcedureAction;
 
+mod write;
+
 pub(in crate::cli) fn run_procedures(action: ProcedureAction) -> Result<()> {
     match action {
         ProcedureAction::List {
@@ -13,6 +15,17 @@ pub(in crate::cli) fn run_procedures(action: ProcedureAction) -> Result<()> {
             offset,
             json,
         } => run_procedure_list(project.as_deref(), limit, offset, json),
+        ProcedureAction::Export {
+            memory_id,
+            format,
+            out,
+            overwrite_generated,
+        } => write::run_procedure_export(
+            memory_id,
+            format.into(),
+            out.as_deref(),
+            overwrite_generated,
+        ),
     }
 }
 
