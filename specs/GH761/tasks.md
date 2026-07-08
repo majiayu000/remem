@@ -9,17 +9,25 @@ GH-761
 - Product: `product.md`
 - Tech: `tech.md`
 
-## Spec-Only Handoff
+## Implementation Tasks
 
-- [ ] `SP761-T0` Owner: SpecRail coordinator; Dependencies: spec approval; Done when: after GH-761 moves to `ready_to_implement`, replace this placeholder with implementation tasks for hook integrity evaluator, Claude SessionStart warning, hook-only repair, doctor/docs, and verification; Verify: `python3 checks/route_gate.py --repo . --route implement --issue 761 --state ready_to_implement --json`.
+- [x] `SP761-T1` Owner: Implementation; Dependencies: GH-761 ready_to_implement; Done when: hook expectation, shell/exec parsing, matcher/timeout validation, stale duplicate detection, and parser-based removal live in one shared evaluator used by doctor, repair, and runtime self-check; Verify: `cargo test hook_integrity -- --nocapture`.
+- [x] `SP761-T2` Owner: Implementation; Dependencies: T1; Done when: Claude `SessionStart` context emits a visible warning for incomplete/stale hooks, including suppressed gate output and DB-open error paths, without changing Codex JSON hook output; Verify: `cargo test context:: -- --nocapture`.
+- [x] `SP761-T3` Owner: Implementation; Dependencies: T1; Done when: `remem install --target claude --repair` repairs only user-level Claude hooks, preserves third-party hook entries and MCP settings, handles hostless/exec-form stale remem hooks, and is idempotent; Verify: `cargo test install:: -- --nocapture`.
+- [x] `SP761-T4` Owner: Implementation; Dependencies: T1-T3; Done when: doctor uses the shared evaluator, README documents repair semantics, and CI/preflight evidence is attached before merge; Verify: `cargo fmt --check`, `cargo check`, `cargo test`, and `python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file /tmp/pr-body-gh761-impl.md`.
 
 ## Verification
 
 - `python3 checks/check_workflow.py --repo .`
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH761`
+- `cargo test hook_integrity -- --nocapture`
+- `cargo test install:: -- --nocapture`
+- `cargo test context:: -- --nocapture`
+- `cargo fmt --check`
+- `cargo check`
+- `cargo test`
 
 ## Handoff Notes
 
-- This write-spec PR does not authorize runtime implementation by itself.
-- Do not start GH-761 implementation from this task file until the issue is moved through the SpecRail implementation gate.
-- Implementation PRs may use `Refs #761`; only a final implementation PR with warning, repair, doctor/docs, tests, and full verification may use `Closes #761`.
+- This implementation may close GH-761 only after code, docs, tests, CI, reviewThreads, and `pr_gate` pass.
+- Do not weaken doctor drift checks for stale MCP; hook-only repair must remain narrower than a full install.

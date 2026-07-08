@@ -3,7 +3,9 @@ use serde_json::json;
 use anyhow::Context;
 use rusqlite::{params, Connection};
 
-use super::config::{build_hooks, remove_remem_hooks, remove_remem_mcp, HookStrategy};
+use super::config::{
+    build_hooks, remove_remem_hooks, remove_remem_mcp, repair_hooks_json, HookStrategy,
+};
 use super::runtime::ensure_runtime_store_ready;
 use crate::db::test_support::ScopedTestDataDir;
 
@@ -111,7 +113,7 @@ fn install_dry_run_does_not_initialize_runtime_store() -> anyhow::Result<()> {
     std::env::remove_var("REMEM_CIPHER_KEY");
     test_dir.remove_db_files();
 
-    super::runtime::install(super::InstallTarget::Codex, true, false)?;
+    super::runtime::install(super::InstallTarget::Codex, true, false, false)?;
 
     assert!(
         !test_dir.path.join(".key").exists(),
@@ -389,7 +391,11 @@ fn build_hooks_contains_expected_claude_commands() {
         hooks["SessionStart"][0]["hooks"][0]["command"],
         "/tmp/remem context --host claude-code"
     );
-    assert_eq!(hooks["SessionStart"][0]["matcher"], "startup|clear|compact");
+    assert_eq!(
+        hooks["SessionStart"][0]["matcher"],
+        "startup|resume|clear|compact"
+    );
+    assert_eq!(hooks["SessionStart"][0]["hooks"][0]["timeout"], 15);
     assert_eq!(
         hooks["UserPromptSubmit"][0]["hooks"][0]["command"],
         "/tmp/remem session-init --host claude-code"
@@ -400,8 +406,9 @@ fn build_hooks_contains_expected_claude_commands() {
     );
     assert_eq!(
         hooks["PostToolUse"][0]["matcher"],
-        "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task"
+        "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task"
     );
+    assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 120);
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "/tmp/remem summarize --host claude-code"
@@ -480,6 +487,90 @@ fn remove_remem_hooks_preserves_other_hooks() {
         "other-tool prepare"
     );
     assert!(settings["hooks"].get("Stop").is_none());
+}
+
+#[test]
+fn repair_hooks_json_preserves_third_party_and_is_idempotent() -> anyhow::Result<()> {
+    let path = temp_json_path("repair-claude-hooks");
+    std::fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!({
+            "mcpServers": {
+                "remem": {"command": "/legacy/remem", "args": ["mcp"]}
+            },
+            "hooks": {
+                "SessionStart": [{
+                    "matcher": "startup|clear|compact",
+                    "hooks": [
+                        {"type": "command", "command": "/old/remem context", "timeout": 15000},
+                        {"type": "command", "command": "/opt/remem-helper prepare", "timeout": 7}
+                    ]
+                }],
+                "PostToolUse": [{
+                    "matcher": "Write|Edit|NotebookEdit|Bash",
+                    "hooks": [{"type": "command", "command": "/old/remem", "args": ["observe", "--host", "claude-code"], "timeout": 120000}]
+                }],
+                "Stop": [{
+                    "hooks": [{"type": "command", "command": "/old/remem summarize", "timeout": 120000}]
+                }]
+            }
+        }))?,
+    )?;
+
+    let first = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)?;
+    let second = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)?;
+    let repaired: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path)?)?;
+
+    assert!(first.is_healthy());
+    assert!(second.is_healthy());
+    assert_eq!(count_command_prefix(&repaired, "/new/remem"), 5);
+    assert_eq!(
+        repaired["hooks"]["SessionStart"][0]["hooks"][0]["command"],
+        "/opt/remem-helper prepare"
+    );
+    assert_eq!(repaired["mcpServers"]["remem"]["command"], "/legacy/remem");
+    assert_eq!(
+        repaired["hooks"]["SessionStart"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["matcher"] == "startup|resume|clear|compact")
+            .unwrap()["hooks"][0]["timeout"],
+        15
+    );
+    assert_eq!(
+        repaired["hooks"]["PostToolUse"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["matcher"] == "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task")
+            .unwrap()["hooks"][0]["timeout"],
+        120
+    );
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+fn temp_json_path(label: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "remem-{label}-{}-{}.json",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+}
+
+fn count_command_prefix(doc: &serde_json::Value, prefix: &str) -> usize {
+    doc.get("hooks")
+        .and_then(|hooks| hooks.as_object())
+        .into_iter()
+        .flat_map(|hooks| hooks.values())
+        .filter_map(|entries| entries.as_array())
+        .flatten()
+        .filter_map(|entry| entry.get("hooks").and_then(|hooks| hooks.as_array()))
+        .flatten()
+        .filter_map(|hook| hook.get("command").and_then(|command| command.as_str()))
+        .filter(|command| command.starts_with(prefix))
+        .count()
 }
 
 #[test]

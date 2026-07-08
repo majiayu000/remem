@@ -2,12 +2,11 @@ use serde_json::Value;
 use std::path::PathBuf;
 use toml_edit::DocumentMut;
 
-use super::hook_validation::{
-    event_has_expected_remem_hook, event_has_remem_subcommand_hook, expected_hook_command,
-    expected_hook_events, expected_hook_executable_from_hooks, extract_remem_command_path,
-    hook_command_strings,
-};
 use super::types::{Check, Status};
+use crate::hook_integrity::{
+    evaluate_hooks, event_has_remem_subcommand_hook, expected_hook_events,
+    expected_hook_executable_from_hooks, extract_remem_command_path, hook_command_strings,
+};
 
 pub(super) fn check_binary() -> Check {
     let exe = std::env::current_exe()
@@ -167,20 +166,15 @@ fn probe_hooks(probe: HostProbe) -> Check {
 
     let events = expected_hook_events(probe.name);
     let expected_executable = expected_hook_executable(&doc, &probe);
-    let found = events
-        .iter()
-        .filter(|event| {
-            expected_executable
-                .as_deref()
-                .and_then(|executable| expected_hook_command(probe.name, event, executable))
-                .is_some_and(|expected| event_has_expected_remem_hook(&doc, event, expected))
-        })
-        .count();
+    let report = expected_executable
+        .as_ref()
+        .map(|executable| evaluate_hooks(&doc, probe.name, probe.hooks_path.clone(), executable));
+    let found = report.as_ref().map(|report| report.registered).unwrap_or(0);
     let deprecated_codex_observe =
         probe.name == "codex" && event_has_remem_subcommand_hook(&doc, "PostToolUse", "observe");
     let legacy_policy = has_legacy_hook_policy(&doc);
 
-    if found == events.len() {
+    if report.as_ref().is_some_and(|report| report.is_healthy()) {
         if legacy_policy {
             return Check::new(
                 name,
@@ -214,14 +208,25 @@ fn probe_hooks(probe: HostProbe) -> Check {
             ),
         )
     } else if found > 0 {
+        let repair_target = if probe.name == "claude" {
+            "claude --repair"
+        } else {
+            probe.name
+        };
+        let stale = report
+            .as_ref()
+            .and_then(|report| report.stale_details.first())
+            .map(|detail| format!("; {detail}"))
+            .unwrap_or_default();
         Check::new(
             name,
             Status::Warn,
             format!(
-                "{}/{} registered (run `remem install --target {}` to fix)",
+                "{}/{} registered{} (run `remem install --target {}` to fix)",
                 found,
                 events.len(),
-                probe.name
+                stale,
+                repair_target
             ),
         )
     } else {
@@ -443,14 +448,7 @@ mod tests {
         let hooks_path = dir.join("hooks.json");
         std::fs::write(
             &hooks_path,
-            r#"{
-  "hooks": {
-    "SessionStart": [{ "hooks": [{ "command": "/tmp/remem context --host claude-code" }] }],
-    "Stop": [{ "hooks": [{ "command": "other-tool summarize" }] }],
-    "PostToolUse": [{ "hooks": [{ "command": "other-tool observe" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "command": "other-tool init" }] }]
-  }
-}"#,
+            r#"{"hooks":{"SessionStart":[{"matcher":"startup|resume|clear|compact","hooks":[{"command":"/tmp/remem context --host claude-code","timeout":15}]}],"Stop":[{"hooks":[{"command":"other-tool summarize"}]}],"PostToolUse":[{"hooks":[{"command":"other-tool observe"}]}],"UserPromptSubmit":[{"hooks":[{"command":"other-tool init"}]}]}}"#,
         )?;
         let mcp_path = dir.join("claude.json");
         std::fs::write(

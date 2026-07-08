@@ -19,7 +19,7 @@ pub(in crate::install) struct RuntimeStoreReady {
     pub(in crate::install) encrypted_existing_db: bool,
 }
 
-pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result<()> {
+pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: bool) -> Result<()> {
     let bin = binary_path()?;
     let hosts = resolve_hosts(target);
     if hosts.is_empty() {
@@ -27,6 +27,10 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
             "没检测到可用的 host（target=Auto 时仅安装已检测到的 host）。\n\
              如需强制安装到全部 host，请使用 `--target all`。"
         );
+    }
+
+    if repair {
+        return repair_install(target, dry_run, &bin, hosts);
     }
 
     if dry_run {
@@ -134,6 +138,74 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
     eprintln!("  2. remem will automatically capture your sessions (hosts with hook support)");
     eprintln!("  3. Run 'remem doctor' to check hook/MCP paths and stale MCP processes");
 
+    Ok(())
+}
+
+fn repair_install(
+    target: InstallTarget,
+    dry_run: bool,
+    bin: &str,
+    hosts: Vec<Box<dyn crate::install::host::InstallHost>>,
+) -> Result<()> {
+    let repairable_hosts = hosts.iter().filter(|host| host.name() == "claude").count();
+    if repairable_hosts == 0 {
+        if matches!(target, InstallTarget::Auto) {
+            bail!(
+                "没有检测到 Claude 配置；`--repair` 首版只支持 Claude hooks。请使用 `remem install --target claude --repair` 强制修复 Claude。"
+            );
+        }
+        bail!("`--repair` 首版只支持 Claude hooks；target={target:?} 没有可修复 host");
+    }
+
+    if dry_run {
+        eprintln!("remem install --repair (dry-run) — 以下写入不会被执行:");
+        for host in hosts {
+            eprintln!("→ {}", host.name());
+            if host.name() == "claude" {
+                eprintln!(
+                    "  hooks  -> {} (repair user-level Claude hooks only)",
+                    crate::install::paths::settings_path().display()
+                );
+                eprintln!("  MCP    read-only diagnostic; no writes");
+                eprintln!("  data   skipped");
+                eprintln!("  API    skipped");
+            } else {
+                eprintln!("  repair skipped: unsupported in this release");
+            }
+        }
+        print_install_path_warnings(bin);
+        return Ok(());
+    }
+
+    eprintln!("remem install --repair:");
+    let mut repaired = 0usize;
+    for host in hosts {
+        eprintln!("→ {}", host.name());
+        if host.name() != "claude" {
+            eprintln!("  repair skipped: unsupported in this release");
+            continue;
+        }
+        let report = host.repair_hooks(bin)?;
+        eprintln!(
+            "  hooks  -> {} ({}/{} registered)",
+            report.path.display(),
+            report.registered,
+            report.expected
+        );
+        eprintln!("  MCP    read-only diagnostic; no writes");
+        eprintln!("  data   skipped");
+        eprintln!("  API    skipped");
+        if let Some(warning) = report.mcp_warning {
+            eprintln!("  warn   {warning}");
+        }
+        if let Some(warning) = report.scope_warning {
+            eprintln!("  warn   {warning}");
+        }
+        repaired += 1;
+    }
+    ensure!(repaired > 0, "no repairable hooks were repaired");
+    eprintln!("  binary -> {}", bin);
+    print_install_path_warnings(bin);
     Ok(())
 }
 

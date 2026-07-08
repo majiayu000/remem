@@ -71,8 +71,9 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Install {
             target,
             hooks_only,
+            repair,
             dry_run,
-        } => install::install(target, dry_run, hooks_only)?,
+        } => install::install(target, dry_run, hooks_only, repair)?,
         Commands::Uninstall { target, dry_run } => install::uninstall(target, dry_run)?,
         Commands::Cleanup {
             dry_run,

@@ -117,6 +117,9 @@ pub(super) enum Commands {
         /// Install automatic capture hooks without registering MCP servers.
         #[arg(long)]
         hooks_only: bool,
+        /// Repair host hooks without touching MCP, runtime store, or API token.
+        #[arg(long)]
+        repair: bool,
         /// Print what would be written without touching disk.
         #[arg(long)]
         dry_run: bool,

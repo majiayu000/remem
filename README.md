@@ -60,6 +60,16 @@ directories. On first-time setups, use `--target codex`, `--target claude`, or
 `--target all` so remem can create the selected config files.
 
 Run `remem doctor` when you want to verify or troubleshoot the integration.
+If Claude Code reports a Hook Integrity Warning or doctor shows incomplete
+Claude hooks, run:
+
+```bash
+remem install --target claude --repair
+```
+
+Repair mode restores only user-level Claude hooks in `~/.claude/settings.json`.
+It preserves third-party hooks, does not write `.claude.json` MCP settings, and
+does not initialize the runtime store or API token.
 
 ## Success Check
 

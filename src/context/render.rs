@@ -6,6 +6,7 @@ use crate::db;
 
 use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
 use super::format::{char_len, truncate_chars_with_ellipsis};
+use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
 use super::injection_gate::{
     apply_context_gate_with_data_version, compute_data_version_hint, pre_render_context_gate,
@@ -88,6 +89,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         use_colors: invocation.use_colors,
     };
     let policy = resolve_profile(request.host).default_policy();
+    let hook_integrity_warning = claude_hook_integrity_warning(&invocation);
     let db_open_start = Instant::now();
     let conn = match open_context_connection_or_error(&request, &policy) {
         Ok(conn) => conn,
@@ -120,6 +122,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     &decision_for_debug,
                 );
             }
+            append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
             print!(
                 "{}",
                 context_stdout_for_invocation(&decision.output, &invocation)?
@@ -209,6 +212,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         let decision_for_debug = decision.clone();
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
+    append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
     if !audit_items.is_empty() {
         let audit_write_start = Instant::now();
         if let Err(error) =

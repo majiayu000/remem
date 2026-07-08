@@ -21,8 +21,22 @@ impl HookStrategy {
 
     fn session_start_matcher(self) -> Option<&'static str> {
         match self {
-            Self::ClaudeCode => Some("startup|clear|compact"),
+            Self::ClaudeCode => Some("startup|resume|clear|compact"),
             Self::Codex => None,
+        }
+    }
+
+    fn context_timeout(self) -> i64 {
+        match self {
+            Self::ClaudeCode => 15,
+            Self::Codex => 15000,
+        }
+    }
+
+    fn observe_timeout(self) -> i64 {
+        match self {
+            Self::ClaudeCode => 120,
+            Self::Codex => 120000,
         }
     }
 
@@ -59,7 +73,7 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
     let mut hooks = serde_json::Map::new();
 
     let mut session_start = json!({
-        "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "context"), "timeout": 15000 }]
+        "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "context"), "timeout": strategy.context_timeout() }]
     });
     if let Some(matcher) = strategy.session_start_matcher() {
         session_start["matcher"] = json!(matcher);
@@ -73,7 +87,7 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
         hooks.insert(
             "UserPromptSubmit".to_string(),
             json!([{
-                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "session-init"), "timeout": 15000 }]
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "session-init"), "timeout": strategy.context_timeout() }]
             }]),
         );
     }
@@ -82,8 +96,8 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
         hooks.insert(
             "PostToolUse".to_string(),
             json!([{
-                "matcher": "Write|Edit|NotebookEdit|Bash|Grep|Glob|Task",
-                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": 120000 }]
+                "matcher": "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task",
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "observe"), "timeout": strategy.observe_timeout() }]
             }]),
         );
     }
@@ -92,7 +106,7 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
         hooks.insert(
             "PreCompact".to_string(),
             json!([{
-                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "summarize"), "timeout": 120000 }]
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "summarize"), "timeout": strategy.observe_timeout() }]
             }]),
         );
     }
@@ -100,7 +114,7 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
     hooks.insert(
         "Stop".to_string(),
         json!([{
-            "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "summarize"), "timeout": 120000 }]
+            "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "summarize"), "timeout": strategy.observe_timeout() }]
         }]),
     );
 
@@ -182,6 +196,47 @@ pub(in crate::install) fn apply_hooks_json(
         }
     }
     write_json_file(&path.to_path_buf(), &doc)
+}
+
+pub(in crate::install) fn repair_hooks_json(
+    path: &Path,
+    bin: &str,
+    strategy: HookStrategy,
+) -> Result<crate::hook_integrity::HookIntegrityReport> {
+    let mut doc = read_json_file(&path.to_path_buf())?;
+    let host = match strategy {
+        HookStrategy::ClaudeCode => "claude",
+        HookStrategy::Codex => "codex",
+    };
+    crate::hook_integrity::remove_remem_hooks_for_host(&mut doc, host);
+    let new_hooks = build_hooks(bin, strategy);
+    let obj = doc
+        .as_object_mut()
+        .with_context(|| format!("{} 根节点不是 Object", path.display()))?;
+    let hooks = obj.entry("hooks").or_insert_with(|| json!({}));
+    if let (Some(existing), Some(new)) = (hooks.as_object_mut(), new_hooks.as_object()) {
+        for (event_type, entries) in new {
+            let arr = existing.entry(event_type).or_insert_with(|| json!([]));
+            if let (Some(arr), Some(new_entries)) = (arr.as_array_mut(), entries.as_array()) {
+                for entry in new_entries {
+                    arr.push(entry.clone());
+                }
+            }
+        }
+    }
+    write_json_file(&path.to_path_buf(), &doc)?;
+    let report =
+        crate::hook_integrity::evaluate_hooks(&doc, host, path.to_path_buf(), Path::new(bin));
+    if !report.is_healthy() {
+        anyhow::bail!(
+            "{} repair convergence failed: {}/{} registered; stale={:?}",
+            path.display(),
+            report.registered,
+            report.expected,
+            report.stale_details
+        );
+    }
+    Ok(report)
 }
 
 /// Remove remem hook entries from the JSON file at `path`, if it exists.
