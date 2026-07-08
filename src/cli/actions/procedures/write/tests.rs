@@ -80,6 +80,75 @@ fn writer_refuses_high_context_paths() -> Result<()> {
 }
 
 #[test]
+fn writer_refuses_missing_plugin_skill_roots_before_creation() -> Result<()> {
+    let root = procedure_export_temp_dir("procedure-export-missing-plugin-root")?;
+    std::fs::write(root.join(".git"), "gitdir: /tmp/not-used\n")?;
+    std::fs::create_dir_all(root.join("plugins"))?;
+
+    let missing_plugin_err = reject_high_context_path_with_cwd(
+        &root
+            .join("plugins")
+            .join("new-plugin")
+            .join("skills")
+            .join("generated-procedure"),
+        &root,
+    )
+    .expect_err("missing plugin skills root must reject before create_dir_all");
+    assert!(missing_plugin_err.to_string().contains("skill-root path"));
+
+    assert!(
+        !root.join("plugins").join("new-plugin").exists(),
+        "path guard must not create the protected plugin path while checking it"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
+fn cli_invocation_guard_accepts_only_procedures_export() {
+    assert!(cli_args_are_procedure_export([
+        std::ffi::OsString::from("procedures"),
+        std::ffi::OsString::from("export"),
+        std::ffi::OsString::from("42"),
+    ]));
+    assert!(!cli_args_are_procedure_export([
+        std::ffi::OsString::from("worker"),
+        std::ffi::OsString::from("--once"),
+    ]));
+    assert!(!cli_args_are_procedure_export([
+        std::ffi::OsString::from("mcp"),
+        std::ffi::OsString::from("procedures"),
+        std::ffi::OsString::from("export"),
+    ]));
+}
+
+#[test]
+fn writer_rejects_background_invocation_guard() -> Result<()> {
+    let root = procedure_export_temp_dir("procedure-export-background-guard")?;
+    let out = root.join("drafts");
+    let source = writer_fixture_source();
+    let err = write_procedure_export_draft(ProcedureExportWriteRequest {
+        source: &source,
+        format: ProcedureExportFormat::RunbookMd,
+        out_dir: &out,
+        rendered: RENDERED,
+        overwrite_generated: false,
+        invocation: ProcedureExportCliInvocationGuard::background_entrypoint_for_test(),
+    })
+    .expect_err("background guard must reject before writing");
+
+    assert!(err
+        .to_string()
+        .contains("only available from `remem procedures export`"));
+    assert!(
+        !out.exists(),
+        "writer must reject background invocation before creating draft directories"
+    );
+    std::fs::remove_dir_all(root)?;
+    Ok(())
+}
+
+#[test]
 fn path_guard_resolves_repo_root_and_parent_components_before_skill_checks() -> Result<()> {
     let root = procedure_export_temp_dir("procedure-export-repo-root")?;
     std::fs::write(root.join(".git"), "gitdir: /tmp/not-used\n")?;
@@ -337,6 +406,7 @@ fn write_rendered_for(
         out_dir: &out_dir,
         rendered,
         overwrite_generated,
+        invocation: ProcedureExportCliInvocationGuard::assume_cli_for_test(),
     })
 }
 

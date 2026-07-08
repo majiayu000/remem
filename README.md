@@ -616,6 +616,9 @@ remem review discard <id>
 remem review edit <id> --text "updated memory"
 remem procedures list
 remem procedures list --project /repo/path --json
+remem procedures export <id> --format runbook-md
+remem procedures export <id> --format claude-skill --out remem-drafts
+remem procedures export <id> --format codex-prompt --out remem-drafts --overwrite-generated
 remem preferences list
 remem preferences add "text"
 remem preferences remove 42
@@ -655,6 +658,13 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+`remem procedures export` writes reviewable drafts for promoted procedure
+memories. The default output is `remem-drafts/`; export refuses high-context
+agent instruction paths such as `.claude/`, `.codex/`, `AGENTS.md`,
+`CLAUDE.md`, repo `skills/`, `.agents/skills/`, and plugin `skills/` roots.
+`--overwrite-generated` only replaces an unchanged remem-generated draft with a
+matching export registry row.
 
 `remem user ...` stores explicit user-context claims separately from
 repo-scoped coding memories. Manual claims default to `owner_scope=user`,
