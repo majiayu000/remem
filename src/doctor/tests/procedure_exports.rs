@@ -123,6 +123,17 @@ fn check_procedure_exports_reports_clean_registry_as_ok() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn check_procedure_exports_skips_unmigrated_registry_table() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+
+    let check = check_procedure_exports(Some(&conn));
+
+    assert_eq!(check.icon(), "ok");
+    assert!(check.detail.contains("registry not migrated yet"));
+    Ok(())
+}
+
 fn setup_procedure_export_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;

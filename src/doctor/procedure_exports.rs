@@ -7,6 +7,24 @@ pub(super) fn check_procedure_exports(conn: Option<&Connection>) -> Check {
         return Check::new("Procedure exports", Status::Warn, "cannot open database");
     };
 
+    match crate::memory::procedure::procedure_export_registry_exists(conn) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Check::new(
+                "Procedure exports",
+                Status::Ok,
+                "procedure export registry not migrated yet",
+            );
+        }
+        Err(error) => {
+            return Check::new(
+                "Procedure exports",
+                Status::Warn,
+                format!("cannot inspect procedure export registry: {error}"),
+            );
+        }
+    }
+
     let report = match crate::memory::procedure::load_procedure_export_doctor_report(
         conn,
         chrono::Utc::now().timestamp(),

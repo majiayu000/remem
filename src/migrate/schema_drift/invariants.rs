@@ -707,4 +707,7 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "preference_rule_state",
         "idx_preference_rule_diagnostics_rule",
     ),
+    SchemaInvariant::table(63, "procedure_exports", "procedure_exports"),
+    SchemaInvariant::index(63, "procedure_exports", "idx_procedure_exports_project"),
+    SchemaInvariant::index(63, "procedure_exports", "idx_procedure_exports_memory"),
 ];

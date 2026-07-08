@@ -4,7 +4,7 @@ use std::{
     path::{Component, Path, PathBuf},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
@@ -107,6 +107,57 @@ pub(crate) fn record_procedure_export(
     )
     .context("record procedure export registry row")?;
     Ok(())
+}
+
+pub(crate) fn ensure_existing_export_registry_match(
+    conn: &Connection,
+    source: &ProcedureExportSource,
+    format: ProcedureExportFormat,
+    output_path: &Path,
+    cwd: &Path,
+    existing_content: &str,
+) -> Result<()> {
+    let output_path = registry_output_path(output_path, cwd);
+    let content_digest = crate::db::content_identity_hash(existing_content.as_bytes());
+    let recorded_digest = conn
+        .query_row(
+            "SELECT content_digest
+             FROM procedure_exports
+             WHERE memory_id = ?1
+               AND format = ?2
+               AND output_path = ?3",
+            params![source.id, format.as_str(), output_path],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .context("load existing procedure export registry row")?;
+
+    let Some(recorded_digest) = recorded_digest else {
+        bail!(
+            "procedure export target already exists without a matching registry row for memory #{} {}; choose --out <new-dir> or rename the existing draft",
+            source.id,
+            output_path
+        );
+    };
+    if recorded_digest != content_digest {
+        bail!(
+            "procedure export target digest no longer matches registry row for memory #{} {}; choose --out <new-dir> or rename the existing draft",
+            source.id,
+            output_path
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn procedure_export_registry_exists(conn: &Connection) -> Result<bool> {
+    conn.query_row(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'procedure_exports'",
+        [],
+        |_| Ok(()),
+    )
+    .optional()
+    .map(|row| row.is_some())
+    .context("check procedure export registry availability")
 }
 
 pub(crate) fn load_procedure_export_doctor_report(
@@ -449,6 +500,67 @@ mod tests {
         assert_eq!(output, "remem-drafts/cargo-test.runbook.md");
         assert_eq!(content_digest, crate::db::content_identity_hash(b"second"));
         assert_eq!(exported_at, 20);
+        Ok(())
+    }
+
+    #[test]
+    fn ensure_existing_export_registry_match_rejects_missing_or_mismatched_rows() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status, scope)
+             VALUES (42, '/tmp/remem', 'Procedure: cargo-test', 'Procedure: cargo-test',
+                     'procedure', 1, 1, 'active', 'project')",
+            [],
+        )?;
+        let source = registry_fixture_source();
+        let cwd = Path::new("/repo");
+        let output_path = Path::new("/repo/remem-drafts/cargo-test.runbook.md");
+
+        let missing = ensure_existing_export_registry_match(
+            &conn,
+            &source,
+            ProcedureExportFormat::RunbookMd,
+            output_path,
+            cwd,
+            "first",
+        )
+        .expect_err("missing registry row must block overwrite");
+        assert!(missing
+            .to_string()
+            .contains("without a matching registry row"));
+
+        record_procedure_export(
+            &conn,
+            ProcedureExportRecordRequest {
+                source: &source,
+                format: ProcedureExportFormat::RunbookMd,
+                output_path,
+                content: "first",
+                cwd,
+                exported_at_epoch: 10,
+            },
+        )?;
+
+        ensure_existing_export_registry_match(
+            &conn,
+            &source,
+            ProcedureExportFormat::RunbookMd,
+            output_path,
+            cwd,
+            "first",
+        )?;
+        let mismatch = ensure_existing_export_registry_match(
+            &conn,
+            &source,
+            ProcedureExportFormat::RunbookMd,
+            output_path,
+            cwd,
+            "edited",
+        )
+        .expect_err("digest mismatch must block overwrite");
+        assert!(mismatch.to_string().contains("digest no longer matches"));
         Ok(())
     }
 

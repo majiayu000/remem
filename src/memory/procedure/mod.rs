@@ -15,7 +15,8 @@ pub(crate) use export::{
 };
 pub use list::{list_promoted_procedures, ProcedureListItem};
 pub(crate) use registry::{
-    load_procedure_export_doctor_report, record_procedure_export, ProcedureExportRecordRequest,
+    ensure_existing_export_registry_match, load_procedure_export_doctor_report,
+    procedure_export_registry_exists, record_procedure_export, ProcedureExportRecordRequest,
 };
 
 #[cfg(test)]
