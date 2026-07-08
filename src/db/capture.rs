@@ -396,11 +396,30 @@ fn estimate_tokens(content: &str) -> i64 {
 
 pub(crate) fn redact_capture_content(content: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
-        let redacted = crate::adapter::common::redact_sensitive_value(&value);
+        let mut redacted = crate::adapter::common::redact_sensitive_value(&value);
+        preserve_capture_path_field(&mut redacted, &value, "cwd");
+        preserve_capture_path_field(&mut redacted, &value, "transcript_path");
         return serde_json::to_string(&redacted)
             .unwrap_or_else(|_| crate::adapter::common::redact_sensitive_text(content));
     }
     crate::adapter::common::redact_sensitive_text(content)
+}
+
+fn preserve_capture_path_field(
+    redacted: &mut serde_json::Value,
+    original: &serde_json::Value,
+    key: &str,
+) {
+    let (Some(redacted_obj), Some(original_obj)) = (redacted.as_object_mut(), original.as_object())
+    else {
+        return;
+    };
+    if let Some(original_value) = original_obj.get(key).and_then(serde_json::Value::as_str) {
+        redacted_obj.insert(
+            key.to_string(),
+            serde_json::Value::String(original_value.to_string()),
+        );
+    }
 }
 
 fn compact_preview(content: &str, max_bytes: usize) -> String {
@@ -657,6 +676,29 @@ mod tests {
         assert!(!stored.contains("hunter2"));
         assert!(!stored.contains("github_pat_secret"));
         assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_redaction_preserves_stop_payload_paths_for_worker_side_effects() -> Result<()> {
+        let content = serde_json::json!({
+            "cwd": "/Users/apple/.claude/projects/remem-abcdef1234567890abcdef1234567890",
+            "transcript_path": "/Users/apple/.claude/projects/remem/session-abcdef1234567890abcdef1234567890.jsonl",
+            "api_key": "sk-secret-value"
+        })
+        .to_string();
+
+        let redacted: serde_json::Value = serde_json::from_str(&redact_capture_content(&content))?;
+
+        assert_eq!(
+            redacted["cwd"].as_str(),
+            Some("/Users/apple/.claude/projects/remem-abcdef1234567890abcdef1234567890")
+        );
+        assert_eq!(
+            redacted["transcript_path"].as_str(),
+            Some("/Users/apple/.claude/projects/remem/session-abcdef1234567890abcdef1234567890.jsonl")
+        );
+        assert_eq!(redacted["api_key"].as_str(), Some("[REDACTED]"));
         Ok(())
     }
 

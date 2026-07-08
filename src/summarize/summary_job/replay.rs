@@ -103,16 +103,9 @@ mod tests {
     }
 
     #[test]
-    fn replay_capture_is_idempotent_when_later_followup_fails() -> anyhow::Result<()> {
+    fn replay_capture_is_idempotent_without_hook_followup_jobs() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("summary-replay-capture-idempotent");
         let conn = db::open_db()?;
-        conn.execute_batch(
-            "CREATE TRIGGER fail_summary_followups
-             BEFORE INSERT ON jobs
-             BEGIN
-                 SELECT RAISE(FAIL, 'forced followup failure');
-             END;",
-        )?;
         let input = serde_json::json!({
             "session_id": "sess-replay-idempotent",
             "cwd": "/tmp/remem"
@@ -126,7 +119,7 @@ mod tests {
             &anyhow::anyhow!("initial spill"),
         )?;
 
-        for _ in 0..2 {
+        for expected in [1, 0] {
             let replayed = super::super::spill::replay_spilled_summary_hook_payloads(
                 &conn,
                 |conn, record| {
@@ -139,7 +132,7 @@ mod tests {
                     )
                 },
             )?;
-            assert_eq!(replayed, 0);
+            assert_eq!(replayed, expected);
         }
 
         let event_count: i64 = conn.query_row(
@@ -156,6 +149,8 @@ mod tests {
         )?;
         assert_eq!(event_count, 1);
         assert_eq!(high_watermark_count, 1);
+        let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+        assert_eq!(job_count, 0);
         Ok(())
     }
 }

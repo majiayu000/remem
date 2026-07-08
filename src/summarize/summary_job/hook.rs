@@ -148,8 +148,6 @@ pub(super) fn enqueue_summary_payload(
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
     let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
-    let compress_payload = compress_payload(profile)?;
-
     let replay_event_id = origin
         .is_replay()
         .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
@@ -192,8 +190,8 @@ pub(super) fn enqueue_summary_payload(
         &project,
         &cwd,
         current_branch.as_deref(),
+        false,
     )?;
-    enqueue_summary_followup_jobs(conn, &host, session_id, &project, &compress_payload)?;
     Ok(())
 }
 
@@ -226,17 +224,6 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
         );
     }
     Ok(serde_json::to_string(&payload)?)
-}
-
-fn compress_payload(profile: Option<&str>) -> Result<String> {
-    let mut payload = serde_json::Map::new();
-    if let Some(profile) = clean_optional(profile) {
-        payload.insert(
-            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
-            serde_json::Value::String(profile),
-        );
-    }
-    Ok(serde_json::to_string(&serde_json::Value::Object(payload))?)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -305,49 +292,6 @@ fn record_summary_capture_event(
     Ok(())
 }
 
-fn enqueue_summary_followup_jobs(
-    conn: &rusqlite::Connection,
-    host: &str,
-    session_id: &str,
-    project: &str,
-    compress_input: &str,
-) -> Result<()> {
-    let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
-    if ready_pending > 0 {
-        crate::log::warn(
-            "summarize",
-            &format!(
-                "ignored {ready_pending} legacy pending observation row(s); captures now use extraction_tasks"
-            ),
-        );
-    }
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Compress,
-        project,
-        None,
-        compress_input,
-        200,
-    )?;
-    db::maybe_enqueue_dream_job(
-        conn,
-        host,
-        project,
-        compress_input,
-        300,
-        crate::dream::DREAM_COOLDOWN_SECS,
-    )?;
-    crate::log::info(
-        "summarize",
-        &format!(
-            "QUEUED session_rollup_followups session={} project={} legacy_pending_observations={}",
-            session_id, project, ready_pending
-        ),
-    );
-    Ok(())
-}
-
 fn clean_optional(value: Option<&str>) -> Option<String> {
     value
         .map(str::trim)
@@ -374,8 +318,7 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        compress_payload, enqueue_summary_followup_jobs, record_summary_capture_event,
-        resolve_hook_host, summarize_input, summary_payload_with_cwd,
+        record_summary_capture_event, resolve_hook_host, summarize_input, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -502,21 +445,17 @@ mod tests {
     }
 
     #[test]
-    fn summary_and_compress_payloads_preserve_profile() {
+    fn summary_payload_preserves_profile() {
         let summary = summary_payload_with_cwd(
             r#"{"session_id":"sess-cwd"}"#,
             "/tmp/project",
             Some("custom"),
         )
         .expect("payload should serialize");
-        let compress = compress_payload(Some("custom")).expect("payload should serialize");
         let summary: serde_json::Value =
             serde_json::from_str(&summary).expect("summary payload should parse");
-        let compress: serde_json::Value =
-            serde_json::from_str(&compress).expect("compress payload should parse");
 
         assert_eq!(summary["remem_ai_profile"].as_str(), Some("custom"));
-        assert_eq!(compress["remem_ai_profile"].as_str(), Some("custom"));
     }
 
     #[test]
@@ -624,19 +563,21 @@ mod tests {
         summarize_input(&input, Some("codex-cli"), None).await?;
 
         let conn = db::open_db()?;
-        let raw_messages: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM raw_messages
+        let captured_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events
              WHERE session_id = 'sess-summary-hook-side-effects'
-               AND source = 'hook'",
+               AND event_type = 'session_stop'",
             [],
             |row| row.get(0),
         )?;
+        let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
         let summary_jobs: i64 = conn.query_row(
             "SELECT COUNT(*) FROM jobs WHERE job_type = 'summary'",
             [],
             |row| row.get(0),
         )?;
-        assert_eq!(raw_messages, 1);
+        assert_eq!(captured_events, 1);
+        assert_eq!(job_count, 0);
         assert_eq!(summary_jobs, 0);
         Ok(())
     }
@@ -706,85 +647,9 @@ mod tests {
         .expect_err("capture ledger failure should stop summary hook followups");
 
         assert!(err.to_string().contains("invalid capture host"));
-        assert!(job_types(&conn).is_empty());
-    }
-
-    #[test]
-    fn enqueue_summary_followup_jobs_skips_legacy_summary_job() {
-        let _test_dir = ScopedTestDataDir::new("summary-no-pending-observation");
-        let conn = db::open_db().expect("db should open");
-
-        enqueue_summary_followup_jobs(&conn, "codex-cli", "sess-no-pending", "/tmp/remem", "{}")
-            .expect("follow-up jobs should enqueue");
-
-        let jobs = job_types(&conn);
-        assert_eq!(jobs, vec!["compress".to_string(), "dream".to_string()]);
-    }
-
-    #[test]
-    fn enqueue_summary_followup_jobs_ignores_legacy_pending_observations() {
-        let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
-        let conn = db::open_db().expect("db should open");
-        db::test_support::insert_legacy_pending_fixture(
-            &conn,
-            "claude-code",
-            "sess-with-pending",
-            "/tmp/remem",
-            "Edit",
-            Some(r#"{"file_path":"src/lib.rs"}"#),
-            None,
-            Some("/tmp/remem"),
-        )
-        .expect("pending observation should insert");
-
-        enqueue_summary_followup_jobs(
-            &conn,
-            "claude-code",
-            "sess-with-pending",
-            "/tmp/remem",
-            "{}",
-        )
-        .expect("follow-up jobs should enqueue");
-
-        let jobs = job_types(&conn);
-        assert_eq!(jobs, vec!["compress".to_string(), "dream".to_string()]);
-    }
-
-    #[test]
-    fn enqueue_summary_followup_jobs_dedups_dream_and_preserves_profile_payload() {
-        let _test_dir = ScopedTestDataDir::new("summary-dream-profile");
-        let conn = db::open_db().expect("db should open");
-        let payload = compress_payload(Some("custom")).expect("compress payload should serialize");
-
-        enqueue_summary_followup_jobs(&conn, "codex-cli", "sess-dream-a", "/tmp/remem", &payload)
-            .expect("first follow-up jobs should enqueue");
-        enqueue_summary_followup_jobs(&conn, "codex-cli", "sess-dream-b", "/tmp/remem", &payload)
-            .expect("second follow-up jobs should enqueue");
-
-        let dream_payloads = job_payloads(&conn, "dream");
-        assert_eq!(dream_payloads.len(), 1);
-        let dream_payload: serde_json::Value =
-            serde_json::from_str(&dream_payloads[0]).expect("dream payload should parse");
-        assert_eq!(dream_payload["remem_ai_profile"].as_str(), Some("custom"));
-    }
-
-    fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT job_type FROM jobs ORDER BY id ASC")
-            .expect("job query should prepare");
-        stmt.query_map([], |row| row.get(0))
-            .expect("job query should run")
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .expect("job rows should collect")
-    }
-
-    fn job_payloads(conn: &rusqlite::Connection, job_type: &str) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT payload_json FROM jobs WHERE job_type = ?1 ORDER BY id ASC")
-            .expect("job query should prepare");
-        stmt.query_map([job_type], |row| row.get(0))
-            .expect("job query should run")
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .expect("job rows should collect")
+        let job_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
+            .expect("job count should query");
+        assert_eq!(job_count, 0);
     }
 }

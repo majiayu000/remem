@@ -291,6 +291,18 @@ pub fn drain_transcript(
     )
 }
 
+pub fn raw_ingest_status(report: &RawIngestReport) -> &'static str {
+    if report.read_error.is_some() {
+        "read_failed"
+    } else if report.parse_errors > 0 || report.insert_errors > 0 {
+        "partial"
+    } else if report.inserted == 0 && report.duplicates > 0 {
+        "duplicate_only"
+    } else {
+        "ok"
+    }
+}
+
 /// Drain a transcript with an explicit source root and partial-tail policy.
 #[allow(clippy::too_many_arguments)]
 pub fn drain_transcript_with_options(

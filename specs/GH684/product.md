@@ -70,12 +70,16 @@ current SessionRollup path and the legacy Summary job chain.
       preserve one active spill row, retryable failed Summary rows are frozen
       before failure maintenance can reopen them, v064 upgrade rejection rows
       are not actionable doctor/status failures, worker-side post-retirement
-      Summary rejections stay visible, raw/citation/failure side effects stay
-      reachable from the hook path, citation failures are logged without
-      blocking follow-ups, old-version daemon heartbeats and legacy singleton
-      locks do not suppress the current Stop fallback worker, workers run
-      SessionRollup extraction before Compress/Dream jobs, and terminal Summary
-      history plus non-summary jobs are preserved.
+      Summary rejections stay visible, the Stop hook keeps only lightweight
+      citation/failure side effects, raw archive ingest moves to the
+      SessionRollup worker from preserved Stop payload paths, persisted
+      rollups re-home summary-derived candidates, workstream upsert, observed
+      commit linking, and native-memory sync, Compress/Dream follow-up jobs are
+      enqueued only after the rollup is persisted, old-version daemon
+      heartbeats and legacy singleton locks do not suppress the current Stop
+      fallback worker, workers run SessionRollup extraction before
+      Compress/Dream jobs, and terminal Summary history plus non-summary jobs
+      are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
@@ -85,6 +89,8 @@ current SessionRollup path and the legacy Summary job chain.
 - Stop-hook Summary retirement must preserve non-summary side effects such as
   Compress enqueueing, Dream enqueueing, raw archive ingest, citation handling,
   failure lessons, candidate finalization, and native memory sync.
+- Stop payload redaction must preserve path fields needed by worker-side raw
+  ingest while continuing to redact sensitive keys.
 - Drop migrations must refuse to run while unmigrated valuable rows remain.
 - Current reader surfaces must not lose context, timeline, or `why` behavior.
 

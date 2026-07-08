@@ -1,6 +1,7 @@
 mod parse;
 mod persist;
 mod prompt;
+mod side_effects;
 #[cfg(test)]
 mod tests;
 
@@ -85,8 +86,9 @@ where
     let Some(range) = load_rollup_range(conn, task)? else {
         return Ok(SessionRollupResult::EmptyRange);
     };
+    side_effects::drain_raw_archive_from_range(conn, task, &range);
     if session_rollup_exists(conn, task, &range)? {
-        enqueue_user_context_followup(conn, task, &range)?;
+        side_effects::run_persisted_rollup_side_effects(conn, task, &range)?;
         return Ok(SessionRollupResult::AlreadyExists);
     }
 
@@ -94,23 +96,8 @@ where
     let response = summarize(prompt).await?;
     let output = parse::parse_rollup_response(&response, &range)?;
     persist::persist_session_rollup(conn, task, &range, &output)?;
-    enqueue_user_context_followup(conn, task, &range)?;
+    side_effects::run_persisted_rollup_side_effects(conn, task, &range)?;
     Ok(SessionRollupResult::Written)
-}
-
-fn enqueue_user_context_followup(
-    conn: &Connection,
-    task: &db::ExtractionTask,
-    range: &RollupRange,
-) -> Result<()> {
-    db::enqueue_bounded_followup_extraction_task(
-        conn,
-        task,
-        db::ExtractionTaskKind::UserContextCandidate,
-        range.from_event_id.saturating_sub(1),
-        range.to_event_id,
-    )?;
-    Ok(())
 }
 
 fn load_rollup_range(conn: &Connection, task: &db::ExtractionTask) -> Result<Option<RollupRange>> {

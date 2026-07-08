@@ -10,8 +10,11 @@ pub(super) fn run_stop_hook_side_effects(
     project: &str,
     cwd: &str,
     branch: Option<&str>,
+    drain_raw_archive: bool,
 ) -> Result<String> {
-    capture_raw_archive(conn, hook, session_id, project, cwd, branch);
+    if drain_raw_archive {
+        capture_raw_archive(conn, hook, session_id, project, cwd, branch);
+    }
     match crate::memory::failure_lesson::distill_session_failure_lessons(
         conn, session_id, project, branch,
     ) {
@@ -35,9 +38,13 @@ pub(super) fn run_stop_hook_side_effects(
         .last_assistant_message
         .clone()
         .or_else(|| {
-            hook.transcript_path
-                .as_deref()
-                .and_then(extract_last_assistant_message)
+            drain_raw_archive
+                .then(|| {
+                    hook.transcript_path
+                        .as_deref()
+                        .and_then(extract_last_assistant_message)
+                })
+                .flatten()
         })
         .unwrap_or_default();
     if !assistant_msg.is_empty() {
@@ -99,7 +106,7 @@ fn capture_raw_archive(
                     "summary-job",
                     &format!(
                         "raw archive drained transcript status={} inserted={} duplicates={} parse_errors={} insert_errors={} read_error={} project={}",
-                        raw_archive_status(&report),
+                        crate::memory::raw_archive::raw_ingest_status(&report),
                         report.inserted,
                         report.duplicates,
                         report.parse_errors,
@@ -121,20 +128,6 @@ fn capture_raw_archive(
         }
     } else if let Some(last) = hook.last_assistant_message.as_deref() {
         insert_raw_hook_fallback(conn, session_id, project, last, branch, cwd_opt);
-    }
-}
-
-pub(super) fn raw_archive_status(
-    report: &crate::memory::raw_archive::RawIngestReport,
-) -> &'static str {
-    if report.read_error.is_some() {
-        "read_failed"
-    } else if report.parse_errors > 0 || report.insert_errors > 0 {
-        "partial"
-    } else if report.inserted == 0 && report.duplicates > 0 {
-        "duplicate_only"
-    } else {
-        "ok"
     }
 }
 
@@ -200,7 +193,7 @@ mod tests {
     use super::super::hook::summarize_input;
 
     #[tokio::test]
-    async fn citation_failure_does_not_block_followup_jobs() -> anyhow::Result<()> {
+    async fn citation_failure_does_not_block_capture_payload() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("summary-hook-citation-failure");
         let conn = db::open_db()?;
         let now = chrono::Utc::now().timestamp();
@@ -234,7 +227,14 @@ mod tests {
         summarize_input(&input, Some("codex-cli"), None).await?;
 
         let conn = db::open_db()?;
-        let jobs = job_types(&conn)?;
+        let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+        let captured_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events
+             WHERE session_id = 'sess-summary-citation-failure'
+               AND event_type = 'session_stop'",
+            [],
+            |row| row.get(0),
+        )?;
         let summary_jobs: i64 = conn.query_row(
             "SELECT COUNT(*) FROM jobs WHERE job_type = 'summary'",
             [],
@@ -249,16 +249,11 @@ mod tests {
                 row.get(0)
             })?;
 
-        assert_eq!(jobs, vec!["compress".to_string(), "dream".to_string()]);
+        assert_eq!(job_count, 0);
+        assert_eq!(captured_events, 1);
         assert_eq!(summary_jobs, 0);
         assert_eq!(citation_events, 0);
         assert_eq!(usage_events, 0);
         Ok(())
-    }
-
-    fn job_types(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
-        let mut stmt = conn.prepare("SELECT job_type FROM jobs ORDER BY id ASC")?;
-        let rows = stmt.query_map([], |row| row.get(0))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
     }
 }

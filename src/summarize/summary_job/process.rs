@@ -42,6 +42,7 @@ pub async fn process_summary_job_input(
             &project,
             cwd,
             current_branch.as_deref(),
+            true,
         )
     })?;
 
@@ -528,7 +529,7 @@ mod tests {
             ..crate::memory::raw_archive::RawIngestReport::default()
         };
         assert_eq!(
-            super::super::side_effects::raw_archive_status(&duplicate_only),
+            crate::memory::raw_archive::raw_ingest_status(&duplicate_only),
             "duplicate_only"
         );
 
@@ -537,7 +538,7 @@ mod tests {
             ..crate::memory::raw_archive::RawIngestReport::default()
         };
         assert_eq!(
-            super::super::side_effects::raw_archive_status(&read_failed),
+            crate::memory::raw_archive::raw_ingest_status(&read_failed),
             "read_failed"
         );
     }
