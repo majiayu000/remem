@@ -42,7 +42,9 @@ pub(crate) struct HookIntegrityReport {
 - 如现有 `pub(super)` 可见性不足，应把 hook expectation/parse helpers 移到共享模块，doctor 与 runtime self-check 都调用同一实现。
 - Claude expected events 继续是 5 个：`PostToolUse`、`PreCompact`、`Stop`、`SessionStart`、`UserPromptSubmit`。
 - 完整性判断必须复用 doctor 的 expected executable 选择：优先使用 Claude MCP remem command，其次使用 hook 文件中可唯一识别的 matching remem path，最后才使用当前进程 path。不能只按当前进程 path 校验，否则 stale hook binary 自检会漏报。
-- 完整性判断必须校验 remem-managed matcher：`SessionStart` 期望 `startup|clear|compact`，`PostToolUse` 期望 `Write|Edit|NotebookEdit|Bash|Grep|Glob|Task`，其余 expected entries 没有 matcher。命令存在但 matcher 被缩窄或丢失时不能报告 5/5。
+- 完整性判断必须校验 remem-managed matcher：`SessionStart` 期望 `startup|clear|compact`，`PostToolUse` 期望 `Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task`，其余 expected entries 没有 matcher。命令存在但 matcher 被缩窄或丢失时不能报告 5/5。
+- 完整性判断必须校验 remem-managed timeout：`context` / `session-init` 期望 15000ms，`observe` / `summarize` 期望 120000ms。Timeout 缺失或偏离当前 `build_hooks` 输出时不能报告 5/5。
+- 完整性判断不能只证明 expected entries 存在；同一 Claude event 中存在 parser 识别的额外 remem-owned hook（旧 binary、旧 matcher、旧 timeout、旧 hostless 形式等）时也必须 unhealthy，并给出 stale/duplicate detail。
 - Hook removal 必须使用同一 parser 判断 remem-owned invocation：executable file stem 是 `remem`，subcommand 是该 event 的 expected subcommand，host 是 `claude-code`、legacy env host 可归一到 `claude-code`，或 hostless legacy remem invocation。不能用 `command.contains("remem")` 或 path substring 删除 entries。Hostless legacy entries 只用于 repair removal/convergence；完整性 evaluator 仍应要求新版 host-aware hooks。
 
 ## 3. Runtime self-check
@@ -79,8 +81,8 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: b
 
 1. 解析目标 host。
 2. 对 Claude 调用专用 hook-only repair 函数，例如 `ClaudeHost.repair_hooks_only(&bin)`。不能调用现有 `ClaudeHost.install_hooks(&bin)`，因为该方法会清理 settings 中的 legacy MCP entry，违反 repair 不触碰 MCP 的副作用边界。
-3. 该函数可以复用 `build_hooks(bin, HookStrategy::ClaudeCode)` 和 JSON read/write helpers，但不能复用当前 substring-based `remove_remem_hooks`。必须新增 parser-based removal，只移除当前 host/event 下可识别的 remem-owned expected hook entries，包括 hostless legacy remem invocations，然后合并 fresh hooks。
-4. 写入后立即做 hook JSON convergence check：`~/.claude/settings.json` 中 5 个新版 remem hook entries、matcher、subcommand、host 和当前 repair binary 均匹配即为 repair 成功。这个 check 不使用 stale MCP path 作为硬失败条件。
+3. 该函数可以复用 `build_hooks(bin, HookStrategy::ClaudeCode)` 和 JSON read/write helpers，但不能复用当前 substring-based `remove_remem_hooks`。必须新增 parser-based removal，只移除当前 host/event 下可识别的 remem-owned expected hook inner commands，包括 hostless legacy remem invocations；如果一个 Claude hook object 的 `hooks` array 同时含 remem 和第三方 commands，必须只移除 matching remem inner commands 或拆分对象，保留第三方 sibling commands 与 matcher 字段。
+4. 写入后立即做 hook JSON convergence check：`~/.claude/settings.json` 中 5 个新版 remem hook entries、matcher、timeout、subcommand、host 和当前 repair binary 均匹配，且不存在额外 parser-recognized Claude remem hooks，即为 repair 成功。这个 check 不使用 stale MCP path 作为硬失败条件。
 5. 输出明确结果：`hooks -> ~/.claude/settings.json (5/5 registered)`；repair 可以只读 `.claude.json` MCP command。若 doctor-style evaluator 会因 stale MCP 继续把 expected executable 绑定到旧 binary，repair 仍可成功，但输出必须追加 warning/detail，提示 stale MCP/install-path 仍需完整 `remem install --target claude` 或 doctor 修复，而不是声称整机健康。
 
 Repair path 不应：
@@ -114,9 +116,12 @@ Repair path 不应：
 | shared evaluator detects 3/5 | 单元 | 删除 `PostToolUse` 与 `Stop` 后 registered=3，missing 包含两个事件 |
 | configured executable drift | 单元 | MCP 指向 current binary 但 hook entries 指向 stale binary 时 self-check/doctor 都报告 stale/incomplete，而不是按当前进程误判 5/5 |
 | matcher drift | 单元 | 五个命令存在但 SessionStart/PostToolUse matcher 被缩窄或丢失时 evaluator 不报告 5/5，repair 后 matcher 收敛 |
+| timeout drift | 单元 | 五个命令和 matcher 存在但 remem timeout 被缩短或丢失时 evaluator 不报告 5/5，repair 后 timeout 收敛 |
+| extra stale remem hooks | 单元 | Fresh 5/5 hook set 外另有 stale remem Claude hook 时 evaluator unhealthy，repair 后只剩 expected set |
 | context warning visible | 单元/集成 | Claude SessionStart 输出含 warning、3/5、repair 命令；context gate suppresses normal output 和 DB-open failure 仍显示 warning；Codex JSON 输出不被污染 |
 | repair restores hooks | 单元/集成 | repair 后 Claude settings 中 5 个 remem hook 存在 |
 | repair preserves third-party hooks | 单元 | 非 remem entries 保留，包括 command/path 含 `remem` 子串但不是 remem-owned invocation 的第三方 hook |
+| repair preserves mixed hook arrays | 单元 | 同一 event/matcher object 的 `hooks` array 同时含 remem 和第三方 command 时，只移除/替换 remem inner command，第三方 sibling 保留 |
 | repair removes hostless legacy hooks | 单元 | `/tmp/remem context`、`remem summarize` 等 hostless legacy remem hooks 被移除并替换为 host-aware hooks |
 | repair idempotent | 单元 | 连续 repair 两次后 hook 数量不增加 |
 | repair dry-run no write | 单元 | 文件内容不变，输出 repair plan |

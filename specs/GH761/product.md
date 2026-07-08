@@ -41,11 +41,15 @@ N5. 不改变 capture、summarize、context 的核心数据语义。
 
 B1. 完整的 Claude hook set 是 5 个事件：`SessionStart`、`UserPromptSubmit`、`PostToolUse`、`PreCompact`、`Stop`，且分别调用当前 remem binary 的 `context`、`session-init`、`observe`、`summarize`、`summarize`，host 为 `claude-code`。
 
+B1a. 完整的 hook set 也包含 remem-managed matcher 与 timeout：`SessionStart` matcher 为 `startup|clear|compact`，`PostToolUse` matcher 覆盖 `Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task`，timeouts 使用当前 `build_hooks` 期望值（context/session-init 15000ms，observe/summarize 120000ms）。
+
 B2. Runtime warning 必须是可见的人读文本，出现在 Claude `SessionStart` context 输出中；缺失 capture hook 不能只写日志，不能被 context gate 的重复输出抑制吞掉。
 
 B3. Runtime warning 检测失败时不能破坏原 context 输出。无法读取用户配置时输出 warning；内部自检代码崩溃不得导致 context 全空。
 
 B4. Repair 只能移除/替换 parser 可识别的 remem-owned hook entries，然后合并当前版本期望的 remem hook entries；非 remem entries 必须按 JSON value 语义保留。允许整体 JSON 格式化变化，但不能删除、改写或重排第三方 hook 的事件、matcher、command、timeout 等字段值，即使第三方 command/path 文本包含 `remem` 子串也不能被误删。
+
+B4a. 如果 remem command 与第三方 command 共用同一个 Claude hook event/matcher object 的 `hooks` array，repair 只能移除或替换 matching remem inner command，或拆分出新的 remem object；不得删除 sibling 第三方 hook。
 
 B5. Repair 写入后 `remem doctor` 与 runtime self-check 使用同一套 hook expectation，不允许 doctor 认为 5/5 而 runtime 仍报 stale，或相反。
 
