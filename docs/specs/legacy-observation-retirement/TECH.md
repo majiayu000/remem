@@ -217,12 +217,14 @@ Tests: fixture DBs per state; frozen-write detection test.
    same-host/project/session spills are skipped during replay, but same
    `session_id` spills from other projects still replay. Replayed Stop captures
    use a stable capture event ID derived from host/project/session/payload so a
-   successful capture followed by a later failure remains idempotent on retry,
-   and replay capture-ledger failures are left to the replay layer so the
-   active spill row is preserved once instead of duplicated. Stop hooks treat
-   healthy daemon heartbeats from older binary versions as stale for fallback
-   purposes, and the current binary's `worker --once` may bypass an old daemon
-   holding the legacy singleton lock so it can drain SessionRollup tasks.
+   successful capture followed by a later failure remains idempotent on retry;
+   duplicate replay captures with the same fixed event ID reuse the existing
+   extraction task without reviving a terminal rollup task. Replay
+   capture-ledger failures are left to the replay layer so the active spill row
+   is preserved once instead of duplicated. Stop hooks treat healthy daemon
+   heartbeats from older binary versions as stale for fallback purposes, and the
+   current binary's `worker --once` may bypass an old daemon holding the legacy
+   singleton lock so it can drain SessionRollup tasks.
    Workers claim extraction tasks before Compress/Dream jobs so SessionRollup
    can run before background follow-ups. This preserves terminal Summary
    history and non-summary jobs. Draining would rerun the retired AI path, and

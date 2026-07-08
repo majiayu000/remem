@@ -2,6 +2,9 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::ExtractionTaskKind;
+use extraction_task::{coalesce_extraction_task, existing_extraction_task_id};
+
+mod extraction_task;
 
 const DIRECT_CONTENT_BYTES: usize = 16 * 1024;
 
@@ -98,6 +101,14 @@ fn record_captured_event_inner(
         .map(ToString::to_string)
         .unwrap_or_else(|| synthesize_event_id(input.event_type, &content_hash));
     let identity = upsert_identity(conn, input, now)?;
+    let existing_event_row_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM captured_events
+             WHERE host_id = ?1 AND session_id = ?2 AND event_id = ?3",
+            params![identity.host_id, input.session_id, event_id],
+            |row| row.get(0),
+        )
+        .optional()?;
     let (content_text, content_blob_id, retention_class) =
         store_content(conn, &sanitized_content, &content_hash, now)?;
     let token_estimate = estimate_tokens(&sanitized_content);
@@ -140,13 +151,26 @@ fn record_captured_event_inner(
     )?;
 
     let extraction_task_id = if let Some(kind) = input.task_kind {
-        Some(coalesce_extraction_task(
-            conn,
-            identity,
-            kind,
-            event_row_id,
-            now,
-        )?)
+        if existing_event_row_id.is_some() {
+            match existing_extraction_task_id(conn, identity, kind)? {
+                Some(task_id) => Some(task_id),
+                None => Some(coalesce_extraction_task(
+                    conn,
+                    identity,
+                    kind,
+                    event_row_id,
+                    now,
+                )?),
+            }
+        } else {
+            Some(coalesce_extraction_task(
+                conn,
+                identity,
+                kind,
+                event_row_id,
+                now,
+            )?)
+        }
     } else {
         None
     };
@@ -336,80 +360,6 @@ fn matching_legacy_blob_id(conn: &Connection, content: &str) -> Result<Option<i6
     } else {
         Ok(None)
     }
-}
-
-fn coalesce_extraction_task(
-    conn: &Connection,
-    identity: IdentityIds,
-    kind: ExtractionTaskKind,
-    event_row_id: i64,
-    now: i64,
-) -> Result<i64> {
-    let idempotency_key = format!(
-        "{}:{}:{}:{}",
-        identity.host_id,
-        identity.project_id,
-        identity.session_row_id,
-        kind.as_str()
-    );
-    conn.execute(
-        "INSERT INTO extraction_tasks
-         (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
-          idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
-          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch, updated_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, NULL, ?8, 0, NULL, NULL, NULL, NULL, ?9, ?9)
-         ON CONFLICT(idempotency_key) DO UPDATE SET
-             high_watermark_event_id = MAX(COALESCE(extraction_tasks.high_watermark_event_id, 0), excluded.high_watermark_event_id),
-             status = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN 'pending'
-                 ELSE extraction_tasks.status
-             END,
-             -- Reviving a terminal task resets its retry budget: the old
-             -- attempts counted a range the exhaust path already skipped, so
-             -- the new range must start with fresh attempts or it would fail
-             -- terminally on its first defer.
-             attempts = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN 0
-                 ELSE extraction_tasks.attempts
-             END,
-             next_retry_epoch = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.next_retry_epoch
-             END,
-             last_error = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.last_error
-             END,
-             failure_class = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.failure_class
-             END,
-             failed_at_epoch = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.failed_at_epoch
-             END,
-             archived_at_epoch = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.archived_at_epoch
-             END,
-             updated_at_epoch = excluded.updated_at_epoch",
-        params![
-            kind.as_str(),
-            identity.host_id,
-            identity.workspace_id,
-            identity.project_id,
-            identity.session_row_id,
-            kind.priority(),
-            idempotency_key,
-            event_row_id,
-            now
-        ],
-    )?;
-    Ok(conn.query_row(
-        "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
-        params![idempotency_key],
-        |row| row.get(0),
-    )?)
 }
 
 fn exact_hash(content: &str) -> String {

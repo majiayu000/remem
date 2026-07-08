@@ -103,10 +103,12 @@ needed fields and side effects, then removes only the redundant Summary writer.
       Summary jobs, capture-ledger failures spill instead of falling back to the
       retired writer, stale spill replay compares host/project/session before
       dropping older current-identity rows, replayed Stop captures use stable
-      event IDs for retry idempotency, replay capture-ledger failures are
-      preserved once by the replay layer, doctor/status ignore v064 upgrade
-      rejection rows as freeze blockers and actionable failed jobs while
-      keeping worker-side post-retirement Summary rejections visible,
+      event IDs for retry idempotency, duplicate fixed event ID captures reuse
+      the existing extraction task without reviving terminal rollup work, replay
+      capture-ledger failures are preserved once by the replay layer,
+      doctor/status ignore v064 upgrade rejection rows as freeze blockers and
+      actionable failed jobs while keeping worker-side post-retirement Summary
+      rejections visible,
       old-version daemon heartbeats and legacy singleton locks do not suppress
       the current Stop fallback worker, workers claim extraction tasks before
       Compress/Dream jobs, and the worker rejects already-claimed Summary jobs
@@ -117,6 +119,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `citation_failure_does_not_block_followup_jobs`,
       `replay_capture_failure_is_preserved_once_by_replay_layer`,
       `replay_capture_is_idempotent_when_later_followup_fails`,
+      `duplicate_fixed_event_id_does_not_revive_done_task`,
       `current_healthy_daemon_skips_stop_spawn`,
       `old_version_healthy_daemon_uses_stop_fallback_spawn`,
       `once_bypasses_lock_for_old_version_daemon_heartbeat`,

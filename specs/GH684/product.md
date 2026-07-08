@@ -65,16 +65,17 @@ current SessionRollup path and the legacy Summary job chain.
       falling back to the retired writer, same-host/project/session stale
       spills are skipped after the current stop payload succeeds while other
       projects still replay, replayed Stop captures are idempotent after later
-      replay-step failures, replay capture-ledger failures preserve one active
-      spill row, retryable failed Summary rows are frozen before failure
-      maintenance can reopen them, v064 upgrade rejection rows are not
-      actionable doctor/status failures, worker-side post-retirement Summary
-      rejections stay visible, raw/citation/failure side effects stay reachable
-      from the hook path, citation failures are logged without blocking
-      follow-ups, old-version daemon heartbeats and legacy singleton locks do
-      not suppress the current Stop fallback worker, workers run SessionRollup
-      extraction before Compress/Dream jobs, and terminal Summary history plus
-      non-summary jobs are preserved.
+      replay-step failures, duplicate replay captures with the same fixed event
+      ID do not revive completed rollup tasks, replay capture-ledger failures
+      preserve one active spill row, retryable failed Summary rows are frozen
+      before failure maintenance can reopen them, v064 upgrade rejection rows
+      are not actionable doctor/status failures, worker-side post-retirement
+      Summary rejections stay visible, raw/citation/failure side effects stay
+      reachable from the hook path, citation failures are logged without
+      blocking follow-ups, old-version daemon heartbeats and legacy singleton
+      locks do not suppress the current Stop fallback worker, workers run
+      SessionRollup extraction before Compress/Dream jobs, and terminal Summary
+      history plus non-summary jobs are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
