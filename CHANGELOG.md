@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.193` for GH-671 preference rule artifact
+  foundation: compiled-rule artifacts now have a versioned JSON schema, closed
+  v1 predicate enum, deterministic in-memory evaluator, fail-open artifact
+  loading, stable project artifact paths, and atomic artifact writes.
 - Staged source version `0.5.192` for GH-684 pending queue freeze:
   the dead legacy `pending_observations` enqueue/claim/lease API has been
   removed from the crate while pending admin migration, failure handling,

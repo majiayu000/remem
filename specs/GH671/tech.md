@@ -27,8 +27,10 @@ Authoritative contract:
 ## Proposed Design
 
 Phase 1 implementation status: `SP671-T1` is implemented as state-only
-foundation. Runtime compilation, artifact writing, CLI rule management, hook
-evaluation, doctor reporting, fixtures, and latency evidence remain pending.
+foundation. `SP671-T2` adds versioned derived artifact structs, the closed v1
+predicate enum, pure evaluator, fail-open artifact loading, stable artifact
+paths, and atomic writes. Runtime compilation, CLI rule management, hook
+dispatch, doctor reporting, fixtures, and latency evidence remain pending.
 
 - Add a `rules` module with a versioned artifact schema, closed predicate enum,
   pure evaluator, compiler, and atomic artifact writer.
