@@ -112,6 +112,7 @@ struct ProcedureListJson {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn render_procedure_list_shows_maturity_columns() {
@@ -136,5 +137,115 @@ mod tests {
         assert!(rendered.contains("Command: cargo test"));
         assert!(rendered.contains("Confidence: 0.86"));
         assert!(rendered.contains("Files:   1 touched"));
+    }
+
+    #[test]
+    fn export_writer_is_reachable_only_from_cli_procedure_action() {
+        let procedures_action = read_repo_file("src/cli/actions/procedures.rs");
+        let procedures_production = production_section(&procedures_action);
+        assert!(
+            procedures_production.contains("mod write;"),
+            "procedure export writer must stay private to the procedures action module"
+        );
+        assert!(
+            !procedures_production.contains("pub mod write"),
+            "procedure export writer module must not be public"
+        );
+        assert!(
+            procedures_production.contains("write::run_procedure_export("),
+            "CLI procedures export action should be the only runtime entrypoint"
+        );
+
+        let writer = read_repo_file("src/cli/actions/procedures/write.rs");
+        assert!(
+            writer.contains("pub(super) fn run_procedure_export"),
+            "procedure export entrypoint must stay visible only to its parent CLI action"
+        );
+        assert!(
+            writer.contains("fn write_procedure_export_draft"),
+            "draft writer must stay module-private"
+        );
+        assert!(
+            !writer.contains("pub(crate) fn write_procedure_export_draft")
+                && !writer.contains("pub fn write_procedure_export_draft"),
+            "draft writer must not become reachable from non-CLI modules"
+        );
+
+        let actions = read_repo_file("src/cli/actions.rs");
+        assert!(
+            !actions.contains("run_procedure_export"),
+            "top-level CLI actions must not re-export the procedure export writer"
+        );
+
+        assert_no_background_export_writer_tokens(&[
+            "src/worker.rs",
+            "src/worker",
+            "src/dream",
+            "src/observe",
+            "src/context",
+            "src/summarize",
+            "src/mcp",
+        ]);
+    }
+
+    fn assert_no_background_export_writer_tokens(paths: &[&str]) {
+        let forbidden = [
+            "run_procedure_export",
+            "write_procedure_export_draft",
+            "ProcedureExportWriteRequest",
+            "ProcedureExportWriteResult",
+            "render_procedure_export",
+            "load_export_eligible_procedure",
+        ];
+        for path in paths {
+            let path = repo_root().join(path);
+            assert_path_has_no_tokens(&path, &forbidden);
+        }
+    }
+
+    fn assert_path_has_no_tokens(path: &Path, forbidden: &[&str]) {
+        if path.is_file() {
+            assert_file_has_no_tokens(path, forbidden);
+            return;
+        }
+        let entries = std::fs::read_dir(path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        for entry in entries {
+            let entry =
+                entry.unwrap_or_else(|error| panic!("read {} entry: {error}", path.display()));
+            let path = entry.path();
+            if path.is_dir() {
+                assert_path_has_no_tokens(&path, forbidden);
+            } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+                assert_file_has_no_tokens(&path, forbidden);
+            }
+        }
+    }
+
+    fn assert_file_has_no_tokens(path: &Path, forbidden: &[&str]) {
+        let content = std::fs::read_to_string(path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        for token in forbidden {
+            assert!(
+                !content.contains(token),
+                "background path {} must not reference procedure export writer token `{}`",
+                path.display(),
+                token
+            );
+        }
+    }
+
+    fn read_repo_file(path: &str) -> String {
+        let path = repo_root().join(path);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
+    }
+
+    fn production_section(content: &str) -> &str {
+        content.split("#[cfg(test)]").next().unwrap_or(content)
+    }
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
     }
 }

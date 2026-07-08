@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.189` for GH-680 procedure export reachability:
+  a negative source invariant test now keeps procedure draft export writer and
+  renderer entrypoints reachable only from the explicit CLI procedures export
+  action, failing if worker, dream, hook, context, summarize, or MCP paths wire
+  into the draft writer.
 - Staged source version `0.5.188` for GH-680 procedure export writer guard:
   `remem procedures export` now writes reviewable drafts only through the CLI,
   refuses high-context output paths and user-edited targets, and requires
