@@ -180,6 +180,12 @@ mod tests {
         assert_no_background_export_writer_tokens(&[
             "src/worker.rs",
             "src/worker",
+            "src/extraction_worker.rs",
+            "src/session_rollup",
+            "src/observation_extract.rs",
+            "src/memory_candidate",
+            "src/user_context",
+            "src/graph_candidate",
             "src/dream",
             "src/observe",
             "src/context",
