@@ -269,7 +269,7 @@ fn reject_high_context_components(path: &Path) -> Result<()> {
 
 fn reject_repo_skill_roots(path: &Path, cwd: &Path) -> Result<()> {
     for root in protected_skill_roots(cwd, path)? {
-        if path.starts_with(&root) {
+        if path_starts_with_case_insensitive(path, &root) {
             bail!(
                 "procedure export refuses skill-root path {}; review the draft in a neutral directory before moving it manually",
                 path.display()
@@ -317,6 +317,28 @@ fn protected_skill_roots(cwd: &Path, target: &Path) -> Result<Vec<PathBuf>> {
         .into_iter()
         .map(|root| normalize_path_lexically(&root))
         .collect())
+}
+
+fn path_starts_with_case_insensitive(path: &Path, prefix: &Path) -> bool {
+    let mut path_components = path.components();
+    for prefix_component in prefix.components() {
+        let Some(path_component) = path_components.next() else {
+            return false;
+        };
+        if !components_equal_case_insensitive(path_component, prefix_component) {
+            return false;
+        }
+    }
+    true
+}
+
+fn components_equal_case_insensitive(left: Component<'_>, right: Component<'_>) -> bool {
+    match (left, right) {
+        (Component::Normal(left), Component::Normal(right)) => left
+            .to_string_lossy()
+            .eq_ignore_ascii_case(&right.to_string_lossy()),
+        _ => left == right,
+    }
 }
 
 fn discover_repo_root(cwd: &Path) -> Option<PathBuf> {
@@ -441,12 +463,23 @@ mod tests {
             .expect_err("absolute repo skills must reject even when cwd is outside the repo");
         assert!(absolute_skill_err.to_string().contains("skill-root path"));
 
+        let case_skill_err = reject_high_context_path_with_cwd(&root.join("SKILLS"), &outside)
+            .expect_err("case variants of repo skills must reject");
+        assert!(case_skill_err.to_string().contains("skill-root path"));
+
         let absolute_plugin_err = reject_high_context_path_with_cwd(
             &root.join("plugins").join("remem").join("skills"),
             &outside,
         )
         .expect_err("absolute plugin skills must reject even when cwd is outside the repo");
         assert!(absolute_plugin_err.to_string().contains("skill-root path"));
+
+        let case_plugin_err = reject_high_context_path_with_cwd(
+            &root.join("Plugins").join("remem").join("SKILLS"),
+            &outside,
+        )
+        .expect_err("case variants of plugin skills must reject");
+        assert!(case_plugin_err.to_string().contains("skill-root path"));
 
         std::fs::remove_dir_all(outside)?;
         std::fs::remove_dir_all(root)?;
