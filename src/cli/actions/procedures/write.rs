@@ -29,6 +29,7 @@ pub(super) fn run_procedure_export(
     let cwd = std::env::current_dir().context("resolve current directory for procedure export")?;
     let out_dir = procedure_export_out_dir(out_dir);
     let target = export_target_path(&out_dir, &source, format);
+    let invocation = ProcedureExportCliInvocationGuard::current()?;
     verify_existing_target_registry(&conn, &source, format, &target, &cwd, overwrite_generated)?;
     let result = write_procedure_export_draft(ProcedureExportWriteRequest {
         source: &source,
@@ -36,6 +37,7 @@ pub(super) fn run_procedure_export(
         out_dir: &out_dir,
         rendered: &rendered,
         overwrite_generated,
+        invocation,
     })?;
     if let Err(error) = record_procedure_export(
         &conn,
@@ -81,6 +83,7 @@ struct ProcedureExportWriteRequest<'a> {
     out_dir: &'a Path,
     rendered: &'a str,
     overwrite_generated: bool,
+    invocation: ProcedureExportCliInvocationGuard,
 }
 
 #[derive(Debug)]
@@ -93,6 +96,7 @@ struct ProcedureExportWriteResult {
 fn write_procedure_export_draft(
     request: ProcedureExportWriteRequest<'_>,
 ) -> Result<ProcedureExportWriteResult> {
+    request.invocation.require_cli_procedure_export()?;
     reject_high_context_path(request.out_dir)?;
 
     let target = export_target_path(request.out_dir, request.source, request.format);
@@ -112,6 +116,61 @@ fn write_procedure_export_draft(
         overwritten: previous_content.is_some(),
         previous_content,
     })
+}
+
+#[derive(Clone, Copy)]
+struct ProcedureExportCliInvocationGuard {
+    is_cli_procedure_export: bool,
+}
+
+impl ProcedureExportCliInvocationGuard {
+    fn current() -> Result<Self> {
+        if cli_args_are_procedure_export(std::env::args_os().skip(1)) {
+            return Ok(Self {
+                is_cli_procedure_export: true,
+            });
+        }
+        bail!(
+            "procedure export writer is only available from `remem procedures export`; worker, hook, MCP, and background entrypoints must not write procedure drafts"
+        );
+    }
+
+    fn require_cli_procedure_export(self) -> Result<()> {
+        if self.is_cli_procedure_export {
+            return Ok(());
+        }
+        bail!(
+            "procedure export writer is only available from `remem procedures export`; worker, hook, MCP, and background entrypoints must not write procedure drafts"
+        );
+    }
+
+    #[cfg(test)]
+    fn assume_cli_for_test() -> Self {
+        Self {
+            is_cli_procedure_export: true,
+        }
+    }
+
+    #[cfg(test)]
+    fn background_entrypoint_for_test() -> Self {
+        Self {
+            is_cli_procedure_export: false,
+        }
+    }
+}
+
+fn cli_args_are_procedure_export<I, S>(args: I) -> bool
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<std::ffi::OsStr>,
+{
+    let mut args = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string_lossy().to_ascii_lowercase());
+    matches!(
+        (args.next().as_deref(), args.next().as_deref()),
+        (Some("procedures"), Some("export"))
+    )
 }
 
 fn procedure_export_out_dir(out_dir: Option<&Path>) -> PathBuf {
@@ -350,8 +409,20 @@ fn reject_high_context_components(path: &Path) -> Result<()> {
 }
 
 fn reject_repo_skill_roots(path: &Path, cwd: &Path) -> Result<()> {
-    for root in protected_skill_roots(cwd, path)? {
-        if path_starts_with_case_insensitive(path, &root) {
+    for repo_root in protected_repo_roots(cwd, path) {
+        let roots = [
+            repo_root.join("skills"),
+            repo_root.join(".agents").join("skills"),
+        ];
+        for root in roots {
+            if path_starts_with_case_insensitive(path, &root) {
+                bail!(
+                    "procedure export refuses skill-root path {}; review the draft in a neutral directory before moving it manually",
+                    path.display()
+                );
+            }
+        }
+        if path_is_under_plugin_skill_root(path, &repo_root) {
             bail!(
                 "procedure export refuses skill-root path {}; review the draft in a neutral directory before moving it manually",
                 path.display()
@@ -361,7 +432,7 @@ fn reject_repo_skill_roots(path: &Path, cwd: &Path) -> Result<()> {
     Ok(())
 }
 
-fn protected_skill_roots(cwd: &Path, target: &Path) -> Result<Vec<PathBuf>> {
+fn protected_repo_roots(cwd: &Path, target: &Path) -> Vec<PathBuf> {
     let mut repo_roots = Vec::new();
     for candidate in [cwd, target] {
         if let Some(repo_root) = discover_repo_root(candidate) {
@@ -370,35 +441,38 @@ fn protected_skill_roots(cwd: &Path, target: &Path) -> Result<Vec<PathBuf>> {
     }
     repo_roots.sort();
     repo_roots.dedup();
+    repo_roots
+}
 
-    let mut roots = Vec::new();
-    for repo_root in repo_roots {
-        roots.push(repo_root.join("skills"));
-        roots.push(repo_root.join(".agents").join("skills"));
+fn path_is_under_plugin_skill_root(path: &Path, repo_root: &Path) -> bool {
+    let Some(relative) = strip_prefix_case_insensitive(path, repo_root) else {
+        return false;
+    };
+    let components: Vec<String> = relative
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(value) => Some(value.to_string_lossy().to_ascii_lowercase()),
+            _ => None,
+        })
+        .collect();
+    if components.len() < 3 {
+        return false;
+    }
+    components[0] == "plugins" && components[2] == "skills"
+}
 
-        let plugins_dir = repo_root.join("plugins");
-        if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
-            for entry in entries {
-                let entry = entry.with_context(|| {
-                    format!(
-                        "read procedure export plugin skill root under {}",
-                        plugins_dir.display()
-                    )
-                })?;
-                let path = entry.path().join("skills");
-                if path.exists() {
-                    roots.push(path);
-                }
-            }
+fn strip_prefix_case_insensitive(path: &Path, prefix: &Path) -> Option<PathBuf> {
+    if !path_starts_with_case_insensitive(path, prefix) {
+        return None;
+    }
+    let prefix_len = prefix.components().count();
+    let mut relative = PathBuf::new();
+    for component in path.components().skip(prefix_len) {
+        if let Component::Normal(value) = component {
+            relative.push(value);
         }
     }
-
-    roots.sort();
-    roots.dedup();
-    Ok(roots
-        .into_iter()
-        .map(|root| normalize_path_lexically(&root))
-        .collect())
+    Some(relative)
 }
 
 fn path_starts_with_case_insensitive(path: &Path, prefix: &Path) -> bool {

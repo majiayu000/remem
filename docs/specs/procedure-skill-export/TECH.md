@@ -90,12 +90,14 @@ Snapshot tests pin all three renderings for a fixture procedure.
 
 ### 3. Write-path guard
 
-The export writer lives in a `procedures::export` module whose only caller is
+The export writer lives in a private `procedures::write` module whose only caller is
 the CLI action. Enforcement is layered:
 
 - module visibility: the writer is not `pub` beyond the CLI action path;
-- runtime guard: the writer asserts it is running in a CLI invocation context
-  (not worker/dream/hook entrypoints) and returns an error otherwise;
+- runtime guard: the writer request carries a `ProcedureExportCliInvocationGuard`
+  created only when the current process argv is `remem procedures export ...`;
+  worker, dream, hook, MCP, or other background entrypoints return an error
+  before write;
 - negative test: a compile-fail or runtime test proves worker/dream/hook
   paths cannot invoke the writer.
 
@@ -103,9 +105,11 @@ Default `--out` is `./remem-drafts/` (created on demand). The writer refuses
 paths that resolve into high-context locations (`.claude/`, `.codex/`,
 `AGENTS.md`, `CLAUDE.md`, repo-local `skills/`, repo-local `.agents/skills/`,
 repo-local and plugin `skills/` roots, and nested variants) even when passed
-explicitly, regardless of export format or final file name. Moving a reviewed
-draft there is deliberately a human `mv`/`git` action (SEC-13 surface; path
-check is by canonicalized prefix/basename, SEC-07).
+explicitly, regardless of export format, final file name, or whether the target
+plugin `skills/` directory already exists. Moving a reviewed draft there is
+deliberately a human `mv`/`git` action (SEC-13 surface; path check is by
+canonicalized prefix/basename and `plugins/<plugin>/skills` component shape,
+SEC-07).
 
 The writer never silently replaces an existing draft path:
 
@@ -160,8 +164,8 @@ verified rows before render/write.
 Phase 2b-a shipped render-time field scan and template snapshots for
 `claude-skill`, `codex-prompt`, and `runbook-md` drafts.
 
-Phase 2b-b shipped the export command, safe writer, overwrite/path guards, and
-write-path guard negative test.
+Phase 2b-b shipped the export command, safe writer, CLI invocation guard,
+overwrite/path guards, and write-path guard negative test.
 
 Phase 3 shipped the `procedure_exports` migration, doctor probe, and
 `docs/procedural-memory.md` review-gated export documentation.
