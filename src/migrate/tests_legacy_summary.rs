@@ -30,6 +30,7 @@ fn legacy_summary_upgrade_rejects_non_terminal_jobs() -> Result<()> {
     insert_job(&conn, 3, "summary", "done")?;
     insert_job(&conn, 4, "summary", "failed")?;
     insert_job(&conn, 5, "compress", "pending")?;
+    insert_job(&conn, 6, "summary", "failed")?;
     conn.execute(
         "UPDATE jobs
          SET lease_owner = 'worker-a',
@@ -47,10 +48,19 @@ fn legacy_summary_upgrade_rejects_non_terminal_jobs() -> Result<()> {
          WHERE id = 4",
         [],
     )?;
+    conn.execute(
+        "UPDATE jobs
+         SET last_error = 'retryable old failure',
+             failure_class = 'transient',
+             failed_at_epoch = 45,
+             attempt_count = 1
+         WHERE id = 6",
+        [],
+    )?;
 
     run_migrations(&conn)?;
 
-    for id in [1_i64, 2] {
+    for id in [1_i64, 2, 6] {
         let row: (
             String,
             i64,
@@ -102,25 +112,26 @@ fn legacy_summary_upgrade_rejects_non_terminal_jobs() -> Result<()> {
         conn.query_row("SELECT state FROM jobs WHERE id = 3", [], |row| row.get(0))?;
     assert_eq!(done_state, "done");
 
-    let failed_row: (String, i64, Option<String>, Option<String>, Option<i64>) = conn.query_row(
-        "SELECT state, attempt_count, last_error, failure_class, failed_at_epoch
+    let terminal_failed_row: (String, i64, Option<String>, Option<String>, Option<i64>) = conn
+        .query_row(
+            "SELECT state, attempt_count, last_error, failure_class, failed_at_epoch
          FROM jobs WHERE id = 4",
-        [],
-        |row| {
-            Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-            ))
-        },
-    )?;
-    assert_eq!(failed_row.0, "failed");
-    assert_eq!(failed_row.1, 3);
-    assert_eq!(failed_row.2.as_deref(), Some("old failure"));
-    assert_eq!(failed_row.3.as_deref(), Some("transient"));
-    assert_eq!(failed_row.4, Some(44));
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+    assert_eq!(terminal_failed_row.0, "failed");
+    assert_eq!(terminal_failed_row.1, 3);
+    assert_eq!(terminal_failed_row.2.as_deref(), Some("old failure"));
+    assert_eq!(terminal_failed_row.3.as_deref(), Some("transient"));
+    assert_eq!(terminal_failed_row.4, Some(44));
 
     let compress_state: String =
         conn.query_row("SELECT state FROM jobs WHERE id = 5", [], |row| row.get(0))?;

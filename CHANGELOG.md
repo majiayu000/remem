@@ -9,9 +9,12 @@
   job types while SessionRollup owns session summary output; Stop hooks no
   longer enqueue new Summary jobs, capture-ledger failures spill instead of
   falling back to the retired writer, same-session stale spills are skipped
-  after the current stop payload succeeds, doctor/status ignore explicit
-  rejection rows as freeze blockers, and worker execution rejects legacy
-  Summary jobs without retry if an already-claimed job reaches the runner.
+  after the current stop payload succeeds, raw/citation/failure-lesson Stop
+  side effects are owned by the hook path before follow-up enqueue, retryable
+  failed Summary rows are frozen during upgrade, doctor/status ignore explicit
+  rejection rows as freeze blockers and actionable failed jobs, and worker
+  execution rejects legacy Summary jobs without retry if an already-claimed job
+  reaches the runner.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact

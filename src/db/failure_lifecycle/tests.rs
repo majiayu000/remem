@@ -219,6 +219,28 @@ fn maintenance_requeues_due_transient_job_failure() -> Result<()> {
 }
 
 #[test]
+fn explicit_summary_rejections_are_not_actionable_job_failures() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    for error in [
+        "legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output",
+        "legacy Summary jobs are retired; SessionRollup owns session summary output",
+    ] {
+        let id = seed_job_failure(&conn, now - 1_000, "permanent", 3)?;
+        conn.execute(
+            "UPDATE jobs SET last_error = ?1 WHERE id = ?2",
+            params![error, id],
+        )?;
+    }
+
+    let stats = query_failure_lifecycle_stats(&conn, now)?;
+
+    assert_eq!(stats.job.actionable_total, 0);
+    assert_eq!(stats.job.permanent, 0);
+    Ok(())
+}
+
+#[test]
 fn maintenance_requeues_due_no_range_extraction_task_failure() -> Result<()> {
     let conn = setup_conn()?;
     let now = chrono::Utc::now().timestamp();

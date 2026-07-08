@@ -153,6 +153,16 @@ fn enqueue_summary_payload(
         );
         anyhow::bail!(error_text);
     }
+    let current_branch = db::detect_git_branch(&cwd);
+    super::side_effects::run_stop_hook_side_effects(
+        conn,
+        &host,
+        &hook,
+        session_id,
+        &project,
+        &cwd,
+        current_branch.as_deref(),
+    )?;
     enqueue_summary_followup_jobs(conn, &host, session_id, &project, &compress_payload)?;
     Ok(())
 }
@@ -521,6 +531,46 @@ mod tests {
         let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
         assert_eq!(job_count, 0);
         assert!(super::super::spill::summary_spill_path().exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_runs_stop_side_effects_without_summary_job() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-side-effects");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        drop(conn);
+        let input = serde_json::json!({
+            "session_id": "sess-summary-hook-side-effects",
+            "cwd": "/tmp/remem",
+            "last_assistant_message": "hook side effect assistant message"
+        })
+        .to_string();
+
+        summarize_input(&input, Some("codex-cli"), None).await?;
+
+        let conn = db::open_db()?;
+        let raw_messages: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM raw_messages
+             WHERE session_id = 'sess-summary-hook-side-effects'
+               AND source = 'hook'",
+            [],
+            |row| row.get(0),
+        )?;
+        let summary_jobs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE job_type = 'summary'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(raw_messages, 1);
+        assert_eq!(summary_jobs, 0);
         Ok(())
     }
 

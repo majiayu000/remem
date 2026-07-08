@@ -92,23 +92,26 @@ needed fields and side effects, then removes only the redundant Summary writer.
       rollup rows feed summary readers while synthetic `Captured event range`
       fallback titles stay hidden from user-facing context.
 - [x] Stop-hook side-effect regression tests cover Compress/Dream enqueueing,
-      raw archive ingest, memory citations, failure lessons, summary-derived
-      candidate finalization, and native-memory sync before `JobType::Summary`
-      retirement.
+      hook-owned raw archive ingest, memory citations, failure lessons,
+      summary-derived candidate finalization, and native-memory sync before
+      `JobType::Summary` retirement.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary
-      history and non-summary jobs, Stop hooks no longer enqueue new Summary
-      jobs, capture-ledger failures spill instead of falling back to the
+      history and non-summary jobs, freezes retryable failed Summary jobs before
+      failure maintenance can reopen them, Stop hooks no longer enqueue new
+      Summary jobs, capture-ledger failures spill instead of falling back to the
       retired writer, same-session stale spills are skipped after the current
       stop payload succeeds, doctor/status ignore explicit rejection rows as
-      freeze blockers, and the worker rejects already-claimed Summary jobs
-      before the retired path can run. Covered by
+      freeze blockers and actionable failed jobs, and the worker rejects
+      already-claimed Summary jobs before the retired path can run. Covered by
       `legacy_summary_upgrade_rejects_non_terminal_jobs`,
       `worker_rejects_legacy_summary_job_without_retry`,
+      `summarize_hook_runs_stop_side_effects_without_summary_job`,
       `enqueue_summary_followup_jobs_skips_legacy_summary_job`,
       `capture_ledger_failure_blocks_followup_jobs`, and
-      `legacy_surfaces_ignore_explicit_summary_rejections_as_blockers`.
+      `legacy_surfaces_ignore_explicit_summary_rejections_as_blockers`,
+      `explicit_summary_rejections_are_not_actionable_job_failures`.
 - [ ] Pending legacy migration and guarded-drop tests.
 - [x] MCP/docs wording verification.
 - [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`

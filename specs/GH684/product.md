@@ -63,8 +63,11 @@ current SessionRollup path and the legacy Summary job chain.
       worker before the retired AI/finalize path can run. Stop hooks no longer
       enqueue new Summary jobs, capture-ledger failures spill instead of
       falling back to the retired writer, same-session stale spills are skipped
-      after the current stop payload succeeds, and terminal Summary history
-      plus non-summary jobs are preserved.
+      after the current stop payload succeeds, retryable failed Summary rows
+      are frozen before failure maintenance can reopen them, explicit rejection
+      rows are not actionable doctor/status failures, raw/citation/failure
+      side effects stay reachable from the hook path, and terminal Summary
+      history plus non-summary jobs are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.

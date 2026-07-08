@@ -72,7 +72,9 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   jobs. If capture-ledger recording fails, the hook spills the payload and
   skips follow-up jobs instead of relying on legacy Summary fallback. If the
   current stop payload succeeds, replay skips older same-session spills so the
-  current capture remains authoritative.
+  current capture remains authoritative. Raw archive ingest, memory-citation
+  recording, and failure-lesson distillation run from the hook side-effect path
+  before Compress/Dream follow-up enqueue.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -193,23 +195,25 @@ Tests: fixture DBs per state; frozen-write detection test.
 
    GH684-T4 locks these side effects with regression coverage before the
    Summary retirement decision in GH684-T7: Stop-hook follow-up enqueue tests
-   cover Compress and Dream profile/cooldown behavior; Summary job process tests
-   cover raw archive ingest, memory citations before cooldown/summary skips,
-   and failure-lesson distillation; finalize tests cover summary-derived
-   candidate finalization; `process_finalized_summary_syncs_native_memory_side_effect`
-   covers native-memory sync after a finalized Summary job.
+   cover Compress and Dream profile/cooldown behavior; the shared hook
+   side-effect path owns raw archive ingest, memory citations before
+   cooldown/summary skips, and failure-lesson distillation; finalize tests
+   cover summary-derived candidate finalization;
+   `process_finalized_summary_syncs_native_memory_side_effect` covers
+   native-memory sync after a finalized Summary job.
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
-   upgrade time. Migration v064 marks non-terminal Summary jobs as failed
-   permanent, clears lease/retry state, and records an explicit upgrade
-   rejection error. The worker also rejects any already-claimed Summary job
-   before it can enter the retired AI/finalize path, while doctor/status
-   excludes these explicit rejection rows from freeze blockers. Stop hooks no
-   longer enqueue new Summary jobs, and capture-ledger failures spill and abort
-   follow-ups rather than falling back to the retired writer. When the current
-   stop payload succeeds, older same-session spills are skipped during replay.
-   This preserves terminal Summary history and non-summary jobs. Draining would
-   rerun the retired AI path, and conversion lacks an authoritative legacy
-   payload-to-SessionRollup contract.
+   upgrade time. Migration v064 marks non-terminal and retryable failed Summary
+   jobs as failed permanent, clears lease/retry state, and records an explicit
+   upgrade rejection error. The worker also rejects any already-claimed Summary
+   job before it can enter the retired AI/finalize path, while doctor/status
+   excludes these explicit rejection rows from freeze blockers and actionable
+   failed-job counts. Stop hooks no longer enqueue new Summary jobs, and
+   capture-ledger failures spill and abort follow-ups rather than falling back
+   to the retired writer. When the current stop payload succeeds, older
+   same-session spills are skipped during replay. This preserves terminal
+   Summary history and non-summary jobs. Draining would rerun the retired AI
+   path, and conversion lacks an authoritative legacy payload-to-SessionRollup
+   contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
 
