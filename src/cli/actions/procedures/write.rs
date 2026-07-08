@@ -268,7 +268,7 @@ fn reject_high_context_components(path: &Path) -> Result<()> {
 }
 
 fn reject_repo_skill_roots(path: &Path, cwd: &Path) -> Result<()> {
-    for root in protected_skill_roots(cwd)? {
+    for root in protected_skill_roots(cwd, path)? {
         if path.starts_with(&root) {
             bail!(
                 "procedure export refuses skill-root path {}; review the draft in a neutral directory before moving it manually",
@@ -279,28 +279,34 @@ fn reject_repo_skill_roots(path: &Path, cwd: &Path) -> Result<()> {
     Ok(())
 }
 
-fn protected_skill_roots(cwd: &Path) -> Result<Vec<PathBuf>> {
-    let Some(repo_root) = discover_repo_root(cwd) else {
-        return Ok(Vec::new());
-    };
-    let repo_root = normalize_path_lexically(&repo_root);
-    let mut roots = vec![
-        repo_root.join("skills"),
-        repo_root.join(".agents").join("skills"),
-    ];
+fn protected_skill_roots(cwd: &Path, target: &Path) -> Result<Vec<PathBuf>> {
+    let mut repo_roots = Vec::new();
+    for candidate in [cwd, target] {
+        if let Some(repo_root) = discover_repo_root(candidate) {
+            repo_roots.push(normalize_path_lexically(&repo_root));
+        }
+    }
+    repo_roots.sort();
+    repo_roots.dedup();
 
-    let plugins_dir = repo_root.join("plugins");
-    if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
-        for entry in entries {
-            let entry = entry.with_context(|| {
-                format!(
-                    "read procedure export plugin skill root under {}",
-                    plugins_dir.display()
-                )
-            })?;
-            let path = entry.path().join("skills");
-            if path.exists() {
-                roots.push(path);
+    let mut roots = Vec::new();
+    for repo_root in repo_roots {
+        roots.push(repo_root.join("skills"));
+        roots.push(repo_root.join(".agents").join("skills"));
+
+        let plugins_dir = repo_root.join("plugins");
+        if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
+            for entry in entries {
+                let entry = entry.with_context(|| {
+                    format!(
+                        "read procedure export plugin skill root under {}",
+                        plugins_dir.display()
+                    )
+                })?;
+                let path = entry.path().join("skills");
+                if path.exists() {
+                    roots.push(path);
+                }
             }
         }
     }
@@ -412,6 +418,8 @@ mod tests {
         std::fs::create_dir_all(root.join("src"))?;
         std::fs::create_dir_all(root.join("skills"))?;
         std::fs::create_dir_all(root.join(".agents").join("skills"))?;
+        std::fs::create_dir_all(root.join("plugins").join("remem").join("skills"))?;
+        let outside = procedure_export_temp_dir("procedure-export-outside-repo")?;
 
         let subdir_err =
             reject_high_context_path_with_cwd(Path::new("../skills"), &root.join("src"))
@@ -429,6 +437,18 @@ mod tests {
         .expect_err("parent components must normalize before guard checks");
         assert!(parent_err.to_string().contains("skill-root path"));
 
+        let absolute_skill_err = reject_high_context_path_with_cwd(&root.join("skills"), &outside)
+            .expect_err("absolute repo skills must reject even when cwd is outside the repo");
+        assert!(absolute_skill_err.to_string().contains("skill-root path"));
+
+        let absolute_plugin_err = reject_high_context_path_with_cwd(
+            &root.join("plugins").join("remem").join("skills"),
+            &outside,
+        )
+        .expect_err("absolute plugin skills must reject even when cwd is outside the repo");
+        assert!(absolute_plugin_err.to_string().contains("skill-root path"));
+
+        std::fs::remove_dir_all(outside)?;
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
