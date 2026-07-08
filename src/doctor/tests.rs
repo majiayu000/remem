@@ -249,7 +249,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     );
     assert!(check.detail.contains(&expected_counts), "{}", check.detail);
     assert!(
-        check.detail.contains("will auto-recover"),
+        check.detail.contains("requires legacy replay"),
         "{}",
         check.detail
     );
@@ -285,6 +285,20 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         check
             .detail
             .contains("apply replay: `remem pending migrate-legacy`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains(
+            "apply replay for Claude host: `remem pending migrate-legacy --host claude-code`"
+        ),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains(
+            "apply replay for Codex host: `remem pending migrate-legacy --host codex-cli`"
+        ),
         "{}",
         check.detail
     );

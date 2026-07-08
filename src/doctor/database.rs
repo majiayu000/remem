@@ -129,10 +129,21 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     };
     let detail = format!("{detail}{replay_detail}{lifecycle_detail}");
 
+    let legacy_pending_replay_candidates =
+        match db::pending::admin::count_legacy_migration_candidates(conn, None, i64::MAX) {
+            Ok(count) => count as i64,
+            Err(err) => {
+                return Check::new(
+                    "Pending queue",
+                    Status::Warn,
+                    format!("{detail} (cannot count legacy replay candidates: {err})"),
+                );
+            }
+        };
     let actions = if stats.retryable_extraction_replay_ranges > 0 {
         queue_actions_with_replay(
             stats.failed_pending_observations,
-            stats.expired_processing_pending_observations,
+            legacy_pending_replay_candidates,
             stats.expired_processing_extraction_tasks,
             stats.failed_jobs,
             stats.stuck_jobs,
@@ -142,7 +153,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     } else {
         queue_actions(
             stats.failed_pending_observations,
-            stats.expired_processing_pending_observations,
+            legacy_pending_replay_candidates,
             stats.expired_processing_extraction_tasks,
             stats.failed_jobs,
             stats.stuck_jobs,
@@ -153,7 +164,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         .map(|hints| format!("; actions: {hints}"))
         .unwrap_or_default();
 
-    if stats.expired_processing_pending_observations > 0 {
+    if legacy_pending_replay_candidates > 0 {
         Check::new(
             "Pending queue",
             Status::Warn,

@@ -703,9 +703,12 @@ fn percent(numerator: i64, denominator: i64) -> f64 {
 }
 
 fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_action::HealthAction> {
+    let replayable_legacy_pending = report.pending_observations.ready
+        + report.pending_observations.delayed
+        + report.pending_observations.expired;
     queue_actions_with_replay(
         report.pending_observations.failed,
-        report.pending_observations.expired,
+        replayable_legacy_pending,
         report.capture_pipeline.extract_expired,
         report.jobs.failed,
         report.jobs.stuck,

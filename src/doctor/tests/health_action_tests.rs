@@ -19,7 +19,12 @@ fn queue_actions_render_copy_paste_commands() {
     assert!(text.contains("apply migration prep: remem pending retry-failed"));
     assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
     assert!(text.contains("apply replay: remem pending migrate-legacy"));
-    assert!(text.contains("1 expired processing pending observation"));
+    assert!(text
+        .contains("apply replay for Claude host: remem pending migrate-legacy --host claude-code"));
+    assert!(
+        text.contains("apply replay for Codex host: remem pending migrate-legacy --host codex-cli")
+    );
+    assert!(text.contains("1 replayable legacy pending observation"));
     assert!(text.contains("5 expired processing extraction tasks"));
     assert!(text.contains("2 failed jobs"));
     assert!(text.contains("3 stuck jobs"));
@@ -39,16 +44,26 @@ fn failed_pending_rows_render_apply_replay_without_expired_rows() {
     assert!(text.contains("apply migration prep: remem pending retry-failed"));
     assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
     assert!(text.contains("apply replay: remem pending migrate-legacy"));
+    assert!(text
+        .contains("apply replay for Claude host: remem pending migrate-legacy --host claude-code"));
+    assert!(
+        text.contains("apply replay for Codex host: remem pending migrate-legacy --host codex-cli")
+    );
 }
 
 #[test]
-fn expired_processing_pending_rows_render_replay_commands_without_failed_rows() {
+fn replayable_legacy_pending_rows_render_replay_commands_without_failed_rows() {
     let actions = queue_actions(0, 2, 0, 0, 0, 0);
     let text = render_action_block(&actions);
 
-    assert!(text.contains("2 expired processing pending observations"));
+    assert!(text.contains("2 replayable legacy pending observations"));
     assert!(text.contains("inspect counts: remem status --json"));
     assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
     assert!(text.contains("apply replay: remem pending migrate-legacy"));
+    assert!(text
+        .contains("apply replay for Claude host: remem pending migrate-legacy --host claude-code"));
+    assert!(
+        text.contains("apply replay for Codex host: remem pending migrate-legacy --host codex-cli")
+    );
     assert!(!text.contains("retry-failed"));
 }

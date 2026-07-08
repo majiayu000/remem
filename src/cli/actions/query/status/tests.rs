@@ -322,7 +322,9 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
 
 #[test]
 fn cli_status_has_no_action_block_when_runtime_is_clear() {
-    let report = status_report_fixture();
+    let mut report = status_report_fixture();
+    report.pending_observations.ready = 0;
+    report.pending_observations.delayed = 0;
     let actions = status_health_actions(&report);
 
     assert!(render_action_block(&actions).is_empty());
@@ -347,7 +349,12 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     assert!(text.contains("apply migration prep: remem pending retry-failed"));
     assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
     assert!(text.contains("apply replay: remem pending migrate-legacy"));
-    assert!(text.contains("1 expired processing pending observation"));
+    assert!(text
+        .contains("apply replay for Claude host: remem pending migrate-legacy --host claude-code"));
+    assert!(
+        text.contains("apply replay for Codex host: remem pending migrate-legacy --host codex-cli")
+    );
+    assert!(text.contains("26 replayable legacy pending observations"));
     assert!(text.contains("4 failed extraction tasks"));
     assert!(text.contains("2 failed jobs"));
     assert!(text.contains("3 stuck jobs"));

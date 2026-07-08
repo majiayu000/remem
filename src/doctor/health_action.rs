@@ -26,7 +26,7 @@ impl HealthAction {
 
 pub(crate) fn queue_actions(
     failed_pending_observations: i64,
-    expired_processing_pending_observations: i64,
+    replayable_legacy_pending_observations: i64,
     expired_processing_extraction_tasks: i64,
     failed_jobs: i64,
     stuck_jobs: i64,
@@ -34,7 +34,7 @@ pub(crate) fn queue_actions(
 ) -> Vec<HealthAction> {
     queue_actions_with_replay(
         failed_pending_observations,
-        expired_processing_pending_observations,
+        replayable_legacy_pending_observations,
         expired_processing_extraction_tasks,
         failed_jobs,
         stuck_jobs,
@@ -45,7 +45,7 @@ pub(crate) fn queue_actions(
 
 pub(crate) fn queue_actions_with_replay(
     failed_pending_observations: i64,
-    expired_processing_pending_observations: i64,
+    replayable_legacy_pending_observations: i64,
     expired_processing_extraction_tasks: i64,
     failed_jobs: i64,
     stuck_jobs: i64,
@@ -67,21 +67,19 @@ pub(crate) fn queue_actions_with_replay(
                 "remem pending retry-failed --dry-run",
             )
             .command("apply migration prep", "remem pending retry-failed")
-            .command("preview replay", "remem pending migrate-legacy --dry-run")
-            .command("apply replay", "remem pending migrate-legacy"),
+            .legacy_replay_commands(),
         );
     }
 
-    if expired_processing_pending_observations > 0 {
+    if replayable_legacy_pending_observations > 0 {
         actions.push(
             HealthAction::new(count_title(
-                expired_processing_pending_observations,
-                "expired processing pending observation",
-                "expired processing pending observations",
+                replayable_legacy_pending_observations,
+                "replayable legacy pending observation",
+                "replayable legacy pending observations",
             ))
             .command("inspect counts", "remem status --json")
-            .command("preview replay", "remem pending migrate-legacy --dry-run")
-            .command("apply replay", "remem pending migrate-legacy"),
+            .legacy_replay_commands(),
         );
     }
 
@@ -139,6 +137,25 @@ pub(crate) fn queue_actions_with_replay(
     }
 
     actions
+}
+
+trait LegacyReplayCommands {
+    fn legacy_replay_commands(self) -> Self;
+}
+
+impl LegacyReplayCommands for HealthAction {
+    fn legacy_replay_commands(self) -> Self {
+        self.command("preview replay", "remem pending migrate-legacy --dry-run")
+            .command("apply replay", "remem pending migrate-legacy")
+            .command(
+                "apply replay for Claude host",
+                "remem pending migrate-legacy --host claude-code",
+            )
+            .command(
+                "apply replay for Codex host",
+                "remem pending migrate-legacy --host codex-cli",
+            )
+    }
 }
 
 pub(crate) fn render_action_block(actions: &[HealthAction]) -> String {

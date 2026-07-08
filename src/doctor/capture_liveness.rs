@@ -52,7 +52,7 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
             .unwrap_or_default();
         let mut recovery = Vec::new();
         if stats.failed_pending_observations > 0 {
-            recovery.push("run `remem pending list-failed --limit 20`; then prepare legacy rows with `remem pending retry-failed --dry-run` and replay them with `remem pending migrate-legacy --dry-run`");
+            recovery.push("run `remem pending list-failed --limit 20`; preview and apply migration prep with `remem pending retry-failed --dry-run` then `remem pending retry-failed`; replay with `remem pending migrate-legacy --dry-run` then `remem pending migrate-legacy`; if replay reports host='unknown', rerun with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`");
         }
         if stats.failed_extraction_tasks > 0 {
             recovery.push("run `remem worker --once` for failed extraction tasks");
@@ -360,6 +360,14 @@ mod tests {
         assert!(matches!(check.status, Status::Fail));
         assert!(check.detail.contains("failed-observation backlog"));
         assert!(check.detail.contains("failed pending observations"));
+        assert!(check.detail.contains("`remem pending retry-failed`"));
+        assert!(check.detail.contains("`remem pending migrate-legacy`"));
+        assert!(check
+            .detail
+            .contains("`remem pending migrate-legacy --host claude-code`"));
+        assert!(check
+            .detail
+            .contains("`remem pending migrate-legacy --host codex-cli`"));
         Ok(())
     }
 
