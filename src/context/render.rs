@@ -77,6 +77,15 @@ pub fn generate_context_from_cli(
 }
 
 fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
+    let stdout = generate_context_output_for_invocation(invocation, use_gate)?;
+    print!("{stdout}");
+    Ok(())
+}
+
+fn generate_context_output_for_invocation(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<String> {
     let timer = crate::log::Timer::start("context", &format!("cwd={}", invocation.cwd));
     let debug_enabled = invocation.debug || context_debug_enabled();
     let request = ContextRequest {
@@ -123,10 +132,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 );
             }
             append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
-            print!(
-                "{}",
-                context_stdout_for_invocation(&decision.output, &invocation)?
-            );
+            let stdout = context_stdout_for_invocation(&decision.output, &invocation)?;
             log_context_timer(
                 timer,
                 &request,
@@ -134,7 +140,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 &rendered.stats,
                 ContextGatePrecheck::Off,
             );
-            return Ok(());
+            return Ok(stdout);
         }
     };
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
@@ -228,12 +234,9 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             audit_write_start,
         ));
     }
-    print!(
-        "{}",
-        context_stdout_for_invocation(&decision.output, &invocation)?
-    );
+    let stdout = context_stdout_for_invocation(&decision.output, &invocation)?;
     log_context_timer(timer, &request, &decision, &stats, precheck);
-    Ok(())
+    Ok(stdout)
 }
 
 #[cfg(test)]
@@ -242,6 +245,14 @@ pub(in crate::context) fn generate_context_for_test(
     use_gate: bool,
 ) -> Result<()> {
     generate_context_for_invocation(invocation, use_gate)
+}
+
+#[cfg(test)]
+pub(in crate::context) fn generate_context_output_for_test(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<String> {
+    generate_context_output_for_invocation(invocation, use_gate)
 }
 
 pub(in crate::context) fn append_context_gate_debug_trace(

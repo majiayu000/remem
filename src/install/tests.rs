@@ -7,7 +7,42 @@ use super::config::{
     build_hooks, remove_remem_hooks, remove_remem_mcp, repair_hooks_json, HookStrategy,
 };
 use super::runtime::ensure_runtime_store_ready;
+use super::InstallTarget;
 use crate::db::test_support::ScopedTestDataDir;
+
+struct ScopedHome {
+    previous_home: Option<std::ffi::OsString>,
+    path: std::path::PathBuf,
+}
+
+impl ScopedHome {
+    fn new(label: &str) -> anyhow::Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "remem-install-home-{label}-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&path);
+        std::fs::create_dir_all(path.join(".claude"))?;
+        let previous_home = std::env::var_os("HOME");
+        std::env::set_var("HOME", &path);
+        Ok(Self {
+            previous_home,
+            path,
+        })
+    }
+}
+
+impl Drop for ScopedHome {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous_home.as_ref() {
+            std::env::set_var("HOME", previous);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
 
 fn seed_plaintext_runtime_db_through(
     test_dir: &ScopedTestDataDir,
@@ -122,6 +157,34 @@ fn install_dry_run_does_not_initialize_runtime_store() -> anyhow::Result<()> {
     assert!(
         !test_dir.db_path().exists(),
         "dry-run install must not create or migrate the database"
+    );
+    Ok(())
+}
+
+#[test]
+fn repair_dry_run_does_not_write_hooks_mcp_or_runtime_store() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("install-repair-dry-run-no-side-effects");
+    std::env::remove_var("REMEM_CIPHER_KEY");
+    test_dir.remove_db_files();
+    let home = ScopedHome::new("repair-dry-run")?;
+    let settings_path = home.path.join(".claude").join("settings.json");
+    let claude_json_path = home.path.join(".claude.json");
+    let original_settings = r#"{"hooks":{"SessionStart":[{"matcher":"startup","hooks":[{"type":"command","command":"/old/remem context","timeout":15000}]}]}}"#;
+    let original_mcp = r#"{"mcpServers":{"remem":{"command":"/old/remem","args":["mcp"]}}}"#;
+    std::fs::write(&settings_path, original_settings)?;
+    std::fs::write(&claude_json_path, original_mcp)?;
+
+    super::install(InstallTarget::Claude, true, false, true)?;
+
+    assert_eq!(std::fs::read_to_string(&settings_path)?, original_settings);
+    assert_eq!(std::fs::read_to_string(&claude_json_path)?, original_mcp);
+    assert!(
+        !test_dir.path.join(".key").exists(),
+        "repair dry-run must not create an API/runtime key"
+    );
+    assert!(
+        !test_dir.db_path().exists(),
+        "repair dry-run must not initialize the runtime database"
     );
     Ok(())
 }
@@ -547,6 +610,21 @@ fn repair_hooks_json_preserves_third_party_and_is_idempotent() -> anyhow::Result
             .unwrap()["hooks"][0]["timeout"],
         120
     );
+    let _ = std::fs::remove_file(path);
+    Ok(())
+}
+
+#[test]
+fn repair_hooks_json_invalid_settings_fails_with_path_context() -> anyhow::Result<()> {
+    let path = temp_json_path("repair-invalid-claude-hooks");
+    std::fs::write(&path, "{not valid json")?;
+
+    let err = repair_hooks_json(&path, "/new/remem", HookStrategy::ClaudeCode)
+        .expect_err("invalid settings JSON must fail closed");
+    let message = format!("{err:?}");
+
+    assert!(message.contains(&path.display().to_string()), "{message}");
+    assert!(message.contains("解析"), "{message}");
     let _ = std::fs::remove_file(path);
     Ok(())
 }

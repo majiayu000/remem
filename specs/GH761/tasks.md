@@ -22,7 +22,9 @@ GH-761
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH761`
 - `cargo test hook_integrity -- --nocapture`
 - `cargo test install:: -- --nocapture`
+- `cargo test install::tests::repair_ -- --nocapture`
 - `cargo test context:: -- --nocapture`
+- `cargo test context::tests::gate_pipeline::claude_hook_warning_survives -- --nocapture`
 - `cargo fmt --check`
 - `cargo check`
 - `cargo test`
