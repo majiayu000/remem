@@ -1,7 +1,7 @@
 # Procedure Skill Export Technical Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-08
 
 Tracking:
 - Spec/tracking issue: #680
@@ -14,8 +14,10 @@ Tracking:
   (`docs/procedural-memory.md`).
 - Promotion gates: ≥2 successful verified runs, raw source event ids per run,
   verification freshness window, matching project/branch/workflow key/command.
-- GH680 Phase 1 adds `remem procedures list`; export remains unimplemented
-  until the later phases below.
+- GH680 implements `remem procedures list`, CLI-only
+  `remem procedures export <memory_id> --format
+  claude-skill|codex-prompt|runbook-md [--out <dir>]`, the
+  `procedure_exports` registry, and doctor drift reporting.
 - Memory lifecycle marks superseded/wrong rows `stale`
   (`docs/memory-lifecycle.md`); procedures carry no TTL by default.
 
@@ -23,7 +25,7 @@ Tracking:
 
 ### 1. CLI surface
 
-New `remem procedures` namespace:
+The `remem procedures` namespace:
 
 - `list [--project <p>] [--json]`: promoted procedures with maturity columns
   (verified runs, last verification epoch, branch, files touched count,
@@ -100,10 +102,10 @@ the CLI action. Enforcement is layered:
 Default `--out` is `./remem-drafts/` (created on demand). The writer refuses
 paths that resolve into high-context locations (`.claude/`, `.codex/`,
 `AGENTS.md`, `CLAUDE.md`, repo-local `skills/`, repo-local `.agents/skills/`,
-configured skill roots, discovered skill roots, and nested variants) even
-when passed explicitly, regardless of export format or final file name. Moving
-a reviewed draft there is deliberately a human `mv`/`git` action (SEC-13
-surface; path check is by canonicalized prefix/basename, SEC-07).
+repo-local and plugin `skills/` roots, and nested variants) even when passed
+explicitly, regardless of export format or final file name. Moving a reviewed
+draft there is deliberately a human `mv`/`git` action (SEC-13 surface; path
+check is by canonicalized prefix/basename, SEC-07).
 
 The writer never silently replaces an existing draft path:
 
@@ -147,19 +149,22 @@ re-imported.
 
 ## Phases and Verification
 
-Phase 1: `procedures list` + fixture (`cargo test procedures`). Shipped by
-GH680 Phase 1 with read-only listing and maturity metadata; export remains
-future work.
-Phase 2a: export eligibility core. The export source loader reuses the same
-fresh procedure verification evidence as `procedures list` and rejects
+Phase 1 shipped `procedures list` + fixture coverage (`cargo test
+procedures`) with read-only listing and maturity metadata.
+
+Phase 2a shipped export eligibility core. The export source loader reuses the
+same fresh procedure verification evidence as `procedures list` and rejects
 non-procedure, inactive, expired, suppressed, superseded, or insufficiently
-verified rows before any render/write path can be added.
-Phase 2b-a: render-time field scan and template snapshots for `claude-skill`,
-`codex-prompt`, and `runbook-md` drafts. This phase does not write files.
-Phase 2b-b: export command, safe writer, overwrite/path guards, and
+verified rows before render/write.
+
+Phase 2b-a shipped render-time field scan and template snapshots for
+`claude-skill`, `codex-prompt`, and `runbook-md` drafts.
+
+Phase 2b-b shipped the export command, safe writer, overwrite/path guards, and
 write-path guard negative test.
-Phase 3: `procedure_exports` migration + doctor probe; docs update replacing
-the procedural-memory.md non-goal paragraph with this contract.
+
+Phase 3 shipped the `procedure_exports` migration, doctor probe, and
+`docs/procedural-memory.md` review-gated export documentation.
 
 Verify per phase: `cargo fmt --check && cargo check && cargo test`, plus
 `remem doctor` smoke on a fixture store with one drifted export.

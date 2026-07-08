@@ -47,8 +47,8 @@ skill location remains a human review step.
 
 The exporter refuses high-context destinations such as `.claude/`, `.codex/`,
 `AGENTS.md`, `CLAUDE.md`, repo-local `skills/`, repo-local `.agents/skills/`,
-plugin skill roots, and discovered skill roots. It also scans rendered fields
-for secrets and instruction patterns before opening the output file.
+and plugin `skills/` roots. It also scans rendered fields for secrets and
+instruction patterns before opening the output file.
 
 Existing reviewed or user-edited drafts are not overwritten. Only an unchanged
 remem-generated draft with a matching `procedure_exports` registry row and
