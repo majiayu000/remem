@@ -23,7 +23,7 @@ fn insert_failed_row(
     updated_at_epoch: i64,
     last_error: &str,
 ) -> i64 {
-    let id = db::enqueue_pending(
+    let id = db::test_support::insert_legacy_pending_fixture(
         conn,
         "codex-cli",
         session_id,
@@ -33,7 +33,7 @@ fn insert_failed_row(
         None,
         None,
     )
-    .expect("pending row should enqueue");
+    .expect("legacy fixture should insert");
     conn.execute(
         "UPDATE pending_observations
          SET status = 'failed',
@@ -230,7 +230,7 @@ fn purge_failed_dry_run_count_respects_cutoff_without_deleting() {
 #[test]
 fn migrate_legacy_pending_replays_rows_into_capture_pipeline() {
     let mut conn = setup_conn();
-    let id = db::enqueue_pending(
+    let id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "sess-legacy",
@@ -240,7 +240,7 @@ fn migrate_legacy_pending_replays_rows_into_capture_pipeline() {
         Some("edited"),
         Some("/tmp/remem"),
     )
-    .expect("legacy row should enqueue");
+    .expect("legacy fixture should insert");
 
     let migrated = migrate_legacy_pending(&mut conn, Some("alpha"), None, 10)
         .expect("legacy migration should succeed");
@@ -286,7 +286,7 @@ fn migrate_legacy_pending_replays_rows_into_capture_pipeline() {
 #[test]
 fn migrate_legacy_pending_requires_host_for_unknown_rows() {
     let mut conn = setup_conn();
-    let id = db::enqueue_pending(
+    let id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "unknown",
         "sess-legacy",
@@ -296,7 +296,7 @@ fn migrate_legacy_pending_requires_host_for_unknown_rows() {
         None,
         Some("/tmp/remem"),
     )
-    .expect("legacy row should enqueue");
+    .expect("legacy fixture should insert");
 
     let error = migrate_legacy_pending(&mut conn, Some("alpha"), None, 10)
         .expect_err("unknown legacy host should fail closed");
@@ -318,7 +318,7 @@ fn migrate_legacy_pending_requires_host_for_unknown_rows() {
 #[test]
 fn migrate_legacy_pending_uses_fallback_host_and_is_idempotent() {
     let mut conn = setup_conn();
-    let id = db::enqueue_pending(
+    let id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "unknown",
         "sess-legacy",
@@ -328,7 +328,7 @@ fn migrate_legacy_pending_uses_fallback_host_and_is_idempotent() {
         Some(r#"{"exitCode":0}"#),
         Some("/tmp/remem"),
     )
-    .expect("legacy row should enqueue");
+    .expect("legacy fixture should insert");
 
     assert_eq!(
         count_legacy_migration_candidates(&conn, Some("alpha"), 10)
@@ -358,7 +358,7 @@ fn migrate_legacy_pending_uses_fallback_host_and_is_idempotent() {
 #[test]
 fn migrate_legacy_pending_dry_run_counts_expired_processing_rows() {
     let conn = setup_conn();
-    let expired_id = db::enqueue_pending(
+    let expired_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "sess-expired",
@@ -368,8 +368,8 @@ fn migrate_legacy_pending_dry_run_counts_expired_processing_rows() {
         None,
         Some("/tmp/remem"),
     )
-    .expect("expired row should enqueue");
-    let active_id = db::enqueue_pending(
+    .expect("expired legacy fixture should insert");
+    let active_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "sess-active",
@@ -379,8 +379,8 @@ fn migrate_legacy_pending_dry_run_counts_expired_processing_rows() {
         None,
         Some("/tmp/remem"),
     )
-    .expect("active row should enqueue");
-    let beta_id = db::enqueue_pending(
+    .expect("active legacy fixture should insert");
+    let beta_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "sess-beta",
@@ -390,7 +390,7 @@ fn migrate_legacy_pending_dry_run_counts_expired_processing_rows() {
         None,
         Some("/tmp/remem"),
     )
-    .expect("beta row should enqueue");
+    .expect("beta legacy fixture should insert");
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "UPDATE pending_observations
@@ -446,7 +446,7 @@ fn migrate_legacy_pending_dry_run_counts_expired_processing_rows() {
 #[test]
 fn migrate_legacy_pending_replays_expired_processing_rows() {
     let mut conn = setup_conn();
-    let expired_id = db::enqueue_pending(
+    let expired_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "sess-expired",
@@ -456,8 +456,8 @@ fn migrate_legacy_pending_replays_expired_processing_rows() {
         None,
         Some("/tmp/remem"),
     )
-    .expect("expired row should enqueue");
-    let active_id = db::enqueue_pending(
+    .expect("expired legacy fixture should insert");
+    let active_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "sess-active",
@@ -467,7 +467,7 @@ fn migrate_legacy_pending_replays_expired_processing_rows() {
         None,
         Some("/tmp/remem"),
     )
-    .expect("active row should enqueue");
+    .expect("active legacy fixture should insert");
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "UPDATE pending_observations

@@ -50,9 +50,19 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
         let oldest_age = oldest_actionable_failure_age(&stats.failure_lifecycle)
             .map(|age| format!("; oldest actionable failure age={}s", age))
             .unwrap_or_default();
+        let mut recovery = Vec::new();
+        if stats.failed_pending_observations > 0 {
+            recovery.push("run `remem pending list-failed --limit 20`; preview and apply migration prep with `remem pending retry-failed --dry-run` then `remem pending retry-failed`; replay with `remem pending migrate-legacy --dry-run` then `remem pending migrate-legacy`; if replay reports host='unknown', rerun with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`");
+        }
+        if stats.failed_extraction_tasks > 0 {
+            recovery.push("run `remem worker --once` for failed extraction tasks");
+        }
         failures.push(format!(
-            "failed-observation backlog: {} actionable failed pending observations, {} actionable failed extraction tasks{}; run `remem pending list-failed --limit 20` and `remem worker --once`",
-            stats.failed_pending_observations, stats.failed_extraction_tasks, oldest_age
+            "failed-observation backlog: {} actionable failed pending observations, {} actionable failed extraction tasks{}; {}",
+            stats.failed_pending_observations,
+            stats.failed_extraction_tasks,
+            oldest_age,
+            recovery.join("; ")
         ));
     }
     if stats.actionable_capture_drops > 0 {
@@ -330,7 +340,7 @@ mod tests {
     #[test]
     fn capture_liveness_fails_on_failed_observation_backlog() -> anyhow::Result<()> {
         let conn = setup_liveness_conn()?;
-        let id = crate::db::enqueue_pending(
+        let id = crate::db::test_support::insert_legacy_pending_fixture(
             &conn,
             "codex-cli",
             "sess-failed",
@@ -350,6 +360,14 @@ mod tests {
         assert!(matches!(check.status, Status::Fail));
         assert!(check.detail.contains("failed-observation backlog"));
         assert!(check.detail.contains("failed pending observations"));
+        assert!(check.detail.contains("`remem pending retry-failed`"));
+        assert!(check.detail.contains("`remem pending migrate-legacy`"));
+        assert!(check
+            .detail
+            .contains("`remem pending migrate-legacy --host claude-code`"));
+        assert!(check
+            .detail
+            .contains("`remem pending migrate-legacy --host codex-cli`"));
         Ok(())
     }
 

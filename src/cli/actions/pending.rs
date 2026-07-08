@@ -62,11 +62,25 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                     project.as_deref(),
                     limit,
                 )?;
-                println!("Would move {} failed rows back to pending.", count);
+                println!(
+                    "Would move {} failed row(s) back to pending for legacy migration.",
+                    count
+                );
+                println!(
+                    "Next after applying retry-failed: run `remem pending migrate-legacy --dry-run`."
+                );
             } else {
                 let conn = db::open_db()?;
                 let count = db::pending::admin::retry_failed(&conn, project.as_deref(), limit)?;
-                println!("Moved {} failed rows back to pending.", count);
+                println!(
+                    "Moved {} failed row(s) back to pending for legacy migration.",
+                    count
+                );
+                if count > 0 {
+                    println!(
+                        "Next: run `remem pending migrate-legacy --dry-run`, then `remem pending migrate-legacy` to replay them into captured_events."
+                    );
+                }
             }
         }
         PendingAction::PurgeFailed {
