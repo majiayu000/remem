@@ -212,23 +212,9 @@ fn cli_parses_governance_delete_options() {
 fn cli_parses_scriptable_json_flags() {
     let status = Cli::parse_from(["remem", "status", "--json"]);
     match status.command {
-        Commands::Status { json, share } => {
-            assert!(json);
-            assert!(!share);
-        }
+        Commands::Status { json, .. } => assert!(json),
         _ => panic!("expected status command"),
     }
-
-    let share = Cli::parse_from(["remem", "status", "--share"]);
-    match share.command {
-        Commands::Status { json, share } => {
-            assert!(!json);
-            assert!(share);
-        }
-        _ => panic!("expected status command"),
-    }
-
-    assert!(Cli::try_parse_from(["remem", "status", "--json", "--share"]).is_err());
 
     let search = Cli::parse_from(["remem", "search", "context gate", "--json"]);
     match search.command {

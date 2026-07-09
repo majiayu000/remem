@@ -579,3 +579,21 @@ fn share_card_expands_width_for_long_version_labels() {
     }
     assert!(card.contains("extremely-long-build-label"));
 }
+
+#[test]
+fn cli_parses_status_share_flag() {
+    use clap::Parser;
+
+    use crate::cli::types::{Cli, Commands};
+
+    let share = Cli::parse_from(["remem", "status", "--share"]);
+    match share.command {
+        Commands::Status { json, share } => {
+            assert!(!json);
+            assert!(share);
+        }
+        _ => panic!("expected status command"),
+    }
+
+    assert!(Cli::try_parse_from(["remem", "status", "--json", "--share"]).is_err());
+}
