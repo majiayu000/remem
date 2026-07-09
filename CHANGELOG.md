@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.194`: `remem status --share` prints a compact,
+  screenshot-friendly summary card (totals, today delta, repo URL) that omits
+  database paths and project names for safe public sharing.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact

@@ -1,6 +1,6 @@
 {
   "name": "remem",
-  "version": "0.5.193",
+  "version": "0.5.194",
   "description": "Persistent project memory for Codex through remem MCP and explicit hook activation.",
   "author": {
     "name": "majiayu000",
@@ -9,7 +9,12 @@
   "homepage": "https://github.com/majiayu000/remem",
   "repository": "https://github.com/majiayu000/remem",
   "license": "MIT",
-  "keywords": ["codex", "memory", "mcp", "remem"],
+  "keywords": [
+    "codex",
+    "memory",
+    "mcp",
+    "remem"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
@@ -18,7 +23,10 @@
     "longDescription": "Remem lets Codex search, save, govern, and activate project memory through the remem MCP server. Automatic context injection and Stop summarization stay behind an explicit activation script.",
     "developerName": "majiayu000",
     "category": "Productivity",
-    "capabilities": ["Read", "Write"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "websiteURL": "https://github.com/majiayu000/remem",
     "defaultPrompt": [
       "Search remem for prior project context",
