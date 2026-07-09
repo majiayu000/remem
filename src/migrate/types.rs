@@ -320,6 +320,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "procedure_exports",
         sql: include_str!("../migrations/v063_procedure_exports.sql"),
     },
+    Migration {
+        version: 65,
+        name: "preference_reinforcement",
+        sql: include_str!("../migrations/v065_preference_reinforcement.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

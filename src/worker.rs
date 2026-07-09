@@ -72,6 +72,12 @@ async fn process_job(job: &db::Job) -> Result<()> {
             }
             Ok(())
         }
+        db::JobType::CompileRules => {
+            let project = job.project.clone();
+            tokio::task::spawn_blocking(move || crate::rules::run_compile_rules_job(&project))
+                .await??;
+            Ok(())
+        }
     }
 }
 

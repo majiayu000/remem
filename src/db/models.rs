@@ -71,6 +71,7 @@ pub enum JobType {
     Summary,
     Compress,
     Dream,
+    CompileRules,
 }
 
 impl JobType {
@@ -80,6 +81,7 @@ impl JobType {
             Self::Summary => "summary",
             Self::Compress => "compress",
             Self::Dream => "dream",
+            Self::CompileRules => "compile_rules",
         }
     }
 
@@ -89,6 +91,7 @@ impl JobType {
             "summary" => Ok(Self::Summary),
             "compress" => Ok(Self::Compress),
             "dream" => Ok(Self::Dream),
+            "compile_rules" => Ok(Self::CompileRules),
             _ => anyhow::bail!("unknown job_type: {}", raw),
         }
     }
