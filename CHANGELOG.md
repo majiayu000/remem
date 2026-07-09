@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.194` for GH-671 T3 preference rule compiler:
+  canonical preference reinforcement state (migration `v065_preference_reinforcement`
+  wiring the v062 `memory_preference_reinforcements` table via the apply path) and
+  a worker-only rule compiler (`JobType::CompileRules`) with eligibility selection,
+  user-override merge, source lifecycle removal, and newest-source conflict
+  resolution.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact
