@@ -149,6 +149,7 @@ After the tag workflow finishes:
 curl -fsSI https://github.com/majiayu000/remem/releases/download/vX.Y.Z/remem-releases.json
 npm view @remem-ai/remem version
 cargo search remem-ai --limit 1
+curl -fsS "https://registry.modelcontextprotocol.io/v0/servers?search=io.github.majiayu000/remem"
 ```
 
 Clean install smoke:
@@ -174,4 +175,10 @@ remem search "last decision"
 ```
 
 Do not announce a release until the GitHub Release, crates.io package, npm
-package, and clean install smoke all agree on the same version.
+package, MCP registry entry, and clean install smoke all agree on the same
+version.
+
+The MCP registry entry is published by the `publish-mcp-registry` release job
+from the repo-root `server.json` via GitHub OIDC (no long-lived token). The
+registry validates ownership through the `mcpName` field inside the published
+npm package, so the registry publish must always run after `publish-npm`.
