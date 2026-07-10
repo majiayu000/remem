@@ -5,13 +5,19 @@ use crate::doctor::health_action::{
     queue_actions_with_replay, render_action_block, worker_once_fallback_human,
 };
 
+mod share;
 mod types;
+use share::render_share_card;
 use types::*;
 
-pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
+pub(in crate::cli) fn run_status(json: bool, share: bool) -> Result<()> {
     let report = load_status_report()?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if share {
+        print!("{}", render_share_card(&report));
         return Ok(());
     }
 

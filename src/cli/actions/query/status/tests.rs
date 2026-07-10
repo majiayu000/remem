@@ -521,3 +521,79 @@ fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<
     assert_eq!(v054_applied, 1);
     Ok(())
 }
+
+#[test]
+fn share_card_shows_grouped_totals_without_private_details() {
+    let mut report = status_report_fixture();
+    report.totals.memories = 80553;
+    report.totals.sessions = 16082;
+    report.totals.observations = 1837;
+    report.totals.raw_messages = 91732;
+    report.today.new_memories = 12;
+
+    let card = share::render_share_card(&report);
+
+    assert!(card.contains("80,553"), "card missing memories: {card}");
+    assert!(card.contains("16,082"), "card missing sessions: {card}");
+    assert!(card.contains("+12"), "card missing today delta: {card}");
+    assert!(card.contains("github.com/majiayu000/remem"), "{card}");
+    assert!(
+        !card.contains(&report.database.path),
+        "share card must not leak the database path: {card}"
+    );
+    for line in card.lines() {
+        assert_eq!(
+            line.chars().count(),
+            card.lines().next().unwrap().chars().count(),
+            "card lines must align: {card}"
+        );
+    }
+}
+
+#[test]
+fn share_card_hides_today_line_when_empty() {
+    let mut report = status_report_fixture();
+    report.today.new_memories = 0;
+    let card = share::render_share_card(&report);
+    assert!(!card.contains("Today"), "{card}");
+}
+
+#[test]
+fn format_count_groups_thousands() {
+    assert_eq!(share::format_count(0), "0");
+    assert_eq!(share::format_count(999), "999");
+    assert_eq!(share::format_count(1000), "1,000");
+    assert_eq!(share::format_count(91732), "91,732");
+    assert_eq!(share::format_count(1234567), "1,234,567");
+    assert_eq!(share::format_count(-1234), "-1,234");
+}
+
+#[test]
+fn share_card_expands_width_for_long_version_labels() {
+    let mut report = status_report_fixture();
+    report.version = "0.5.193 (schema v63) extremely-long-build-label".to_string();
+    let card = share::render_share_card(&report);
+    let first_width = card.lines().next().unwrap().chars().count();
+    for line in card.lines() {
+        assert_eq!(line.chars().count(), first_width, "misaligned card: {card}");
+    }
+    assert!(card.contains("extremely-long-build-label"));
+}
+
+#[test]
+fn cli_parses_status_share_flag() {
+    use clap::Parser;
+
+    use crate::cli::types::{Cli, Commands};
+
+    let share = Cli::parse_from(["remem", "status", "--share"]);
+    match share.command {
+        Commands::Status { json, share } => {
+            assert!(!json);
+            assert!(share);
+        }
+        _ => panic!("expected status command"),
+    }
+
+    assert!(Cli::try_parse_from(["remem", "status", "--json", "--share"]).is_err());
+}
