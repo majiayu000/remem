@@ -20,9 +20,13 @@
   replay capture-ledger failures are preserved once by the replay layer instead
   of duplicating active spill rows, old-version daemon heartbeats no longer
   suppress the Stop-hook `worker --once` fallback even when the old daemon
-  still holds the legacy singleton lock, workers run extraction tasks before
+  still holds the legacy singleton lock, migration v064 requeues SessionRollup
+  leases claimed before the binary upgrade, workers run extraction tasks before
   Compress/Dream jobs, and worker execution rejects legacy Summary jobs without
-  retry if an already-claimed job reaches the runner.
+  retry if an already-claimed job reaches the runner. SessionRollup side effects
+  load the exact persisted event range, and required raw-archive, workstream,
+  and native-memory failures keep the extraction task retryable instead of
+  completing with missing memory state.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact

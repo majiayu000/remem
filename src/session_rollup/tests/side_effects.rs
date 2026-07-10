@@ -230,3 +230,196 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
     assert_eq!(content, "archived assistant turn");
     Ok(())
 }
+
+#[tokio::test]
+async fn session_rollup_later_range_uses_its_own_persisted_fields() -> Result<()> {
+    let mut conn = setup_conn();
+    custom_capture(
+        &conn,
+        "sess-rollup-range-fields",
+        "/tmp/remem",
+        Some("/tmp/remem"),
+        r#"{"session_id":"sess-rollup-range-fields","cwd":"/tmp/remem","last_assistant_message":"first"}"#,
+    )?;
+    let first_task = claim_rollup_task(&mut conn)?;
+    let first_result = process_with_summarizer(&mut conn, &first_task, |_prompt| async {
+        Ok(xml_response_with_structured_fields(
+            "First range summary.",
+            "First range request",
+            "First range decision is intentionally long enough to promote.",
+            "",
+            "First range next step",
+            "",
+            "",
+        ))
+    })
+    .await?;
+    assert_eq!(first_result, SessionRollupResult::Written);
+    db::mark_extraction_task_done(
+        &conn,
+        first_task.id,
+        "worker-a",
+        first_task.high_watermark_event_id,
+    )?;
+
+    custom_capture(
+        &conn,
+        "sess-rollup-range-fields",
+        "/tmp/remem",
+        Some("/tmp/remem"),
+        r#"{"session_id":"sess-rollup-range-fields","cwd":"/tmp/remem","last_assistant_message":"second"}"#,
+    )?;
+    let second_task = claim_rollup_task(&mut conn)?;
+    let second_result = process_with_summarizer(&mut conn, &second_task, |_prompt| async {
+        Ok(xml_response_with_structured_fields(
+            "Second range summary.",
+            "Second range request",
+            "Second range decision must drive the second side-effect pass.",
+            "",
+            "Second range next step",
+            "",
+            "",
+        ))
+    })
+    .await?;
+    assert_eq!(second_result, SessionRollupResult::Written);
+
+    let second_workstream_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM workstreams
+         WHERE project = '/tmp/remem' AND title = 'Second range request'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(second_workstream_count, 1);
+    let second_candidate_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates
+         WHERE text LIKE '%Second range decision%'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(second_candidate_count > 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_retries_persisted_side_effect_failures() -> Result<()> {
+    let mut conn = setup_conn();
+    custom_capture(
+        &conn,
+        "sess-rollup-side-effect-retry",
+        "/tmp/remem",
+        Some("/tmp/remem"),
+        r#"{"session_id":"sess-rollup-side-effect-retry","cwd":"/tmp/remem"}"#,
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_rollup_workstream
+         BEFORE INSERT ON workstreams
+         BEGIN
+             SELECT RAISE(FAIL, 'forced workstream failure');
+         END;",
+    )?;
+
+    let first_error = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response_with_structured_fields(
+            "Persist the summary before retrying side effects.",
+            "Retry rollup side effects",
+            "Side effects must not be silently omitted after summary persistence.",
+            "",
+            "Retry the same persisted rollup range.",
+            "",
+            "",
+        ))
+    })
+    .await
+    .expect_err("workstream persistence failure must keep the task retryable");
+    assert!(first_error.to_string().contains("workstream"));
+    assert_eq!(summary_count(&conn), 1);
+
+    conn.execute_batch("DROP TRIGGER fail_rollup_workstream;")?;
+    let retry_result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("existing rollup retry must not call the summarizer")
+    })
+    .await?;
+    assert_eq!(retry_result, SessionRollupResult::AlreadyExists);
+    let workstream_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM workstreams WHERE title = 'Retry rollup side effects'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(workstream_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("session-rollup-raw-retry");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    std::fs::write(
+        &transcript,
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"retry archived assistant turn"}]}}"#,
+    )?;
+    let mut conn = crate::db::open_db()?;
+    custom_capture(
+        &conn,
+        "sess-rollup-raw-retry",
+        "/tmp/remem",
+        Some("/tmp/remem"),
+        &serde_json::json!({
+            "session_id": "sess-rollup-raw-retry",
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_rollup_raw_insert
+         BEFORE INSERT ON raw_messages
+         BEGIN
+             SELECT RAISE(FAIL, 'forced raw archive failure');
+         END;",
+    )?;
+
+    let first_error = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response(
+            "Persist summary while raw archive retries.",
+            "",
+        ))
+    })
+    .await
+    .expect_err("partial raw archive ingest must keep the task retryable");
+    assert!(first_error
+        .to_string()
+        .contains("raw archive ingest incomplete"));
+    assert_eq!(summary_count(&conn), 1);
+    let premature_jobs: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+    assert_eq!(premature_jobs, 0);
+    let failure_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_ingest_failures
+         WHERE session_id = 'sess-rollup-raw-retry'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(failure_count, 1);
+
+    conn.execute_batch("DROP TRIGGER fail_rollup_raw_insert;")?;
+    let retry_result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("existing rollup retry must not call the summarizer")
+    })
+    .await?;
+    assert_eq!(retry_result, SessionRollupResult::AlreadyExists);
+    assert_eq!(
+        job_types(&conn)?,
+        vec!["compress".to_string(), "dream".to_string()]
+    );
+    let raw_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages
+         WHERE session_id = 'sess-rollup-raw-retry'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(raw_count, 1);
+    Ok(())
+}

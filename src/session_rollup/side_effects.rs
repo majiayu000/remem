@@ -30,12 +30,12 @@ pub(super) fn drain_raw_archive_from_range(
     conn: &Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
-) {
+) -> Result<()> {
     let Some(session_id) = task.session_id.as_deref() else {
-        return;
+        return Ok(());
     };
     let Some(payload) = latest_stop_payload(range) else {
-        return;
+        return Ok(());
     };
     let cwd = payload
         .cwd
@@ -50,43 +50,46 @@ pub(super) fn drain_raw_archive_from_range(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        match crate::memory::raw_archive::drain_transcript(
+        let report = crate::memory::raw_archive::drain_transcript(
             conn,
             transcript_path,
             session_id,
             &task.project,
             branch.as_deref(),
             Some(cwd),
-        ) {
-            Ok(report) => {
-                crate::log::info(
-                    "session-rollup",
-                    &format!(
-                        "raw archive drained transcript status={} inserted={} duplicates={} parse_errors={} insert_errors={} read_error={} project={}",
-                        crate::memory::raw_archive::raw_ingest_status(&report),
-                        report.inserted,
-                        report.duplicates,
-                        report.parse_errors,
-                        report.insert_errors,
-                        report.read_error.is_some(),
-                        task.project
-                    ),
-                );
-                if report.read_error.is_some() {
-                    insert_raw_hook_fallback(
-                        conn,
-                        session_id,
-                        &task.project,
-                        payload.last_assistant_message.as_deref(),
-                        branch.as_deref(),
-                        Some(cwd),
-                    );
-                }
-            }
-            Err(error) => crate::log::warn(
-                "session-rollup",
-                &format!("raw archive drain failed: {error}"),
+        )
+        .context("session rollup raw archive drain failed")?;
+        crate::log::info(
+            "session-rollup",
+            &format!(
+                "raw archive drained transcript status={} inserted={} duplicates={} parse_errors={} insert_errors={} read_error={} project={}",
+                crate::memory::raw_archive::raw_ingest_status(&report),
+                report.inserted,
+                report.duplicates,
+                report.parse_errors,
+                report.insert_errors,
+                report.read_error.is_some(),
+                task.project
             ),
+        );
+        if report.read_error.is_some() {
+            insert_raw_hook_fallback(
+                conn,
+                session_id,
+                &task.project,
+                payload.last_assistant_message.as_deref(),
+                branch.as_deref(),
+                Some(cwd),
+            )?;
+        }
+        if report.has_failures() {
+            anyhow::bail!(
+                "session rollup raw archive ingest incomplete: status={} parse_errors={} insert_errors={} read_error={}",
+                crate::memory::raw_archive::raw_ingest_status(&report),
+                report.parse_errors,
+                report.insert_errors,
+                report.read_error.is_some()
+            );
         }
     } else {
         insert_raw_hook_fallback(
@@ -96,8 +99,9 @@ pub(super) fn drain_raw_archive_from_range(
             payload.last_assistant_message.as_deref(),
             branch.as_deref(),
             Some(cwd),
-        );
+        )?;
     }
+    Ok(())
 }
 
 pub(super) fn run_persisted_rollup_side_effects(
@@ -113,13 +117,13 @@ pub(super) fn run_persisted_rollup_side_effects(
         .as_deref()
         .context("session rollup side effects require session_id")?;
     let memory_session_id = rollup_memory_session_id(session_row_id);
-    let fields = load_persisted_rollup_fields(conn, &memory_session_id)?;
+    let fields = load_persisted_rollup_fields(conn, session_row_id, range)?;
     let cwd = rollup_cwd(task, range);
 
     link_observed_commits(conn, &task.project, session_id, &memory_session_id)?;
-    upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields);
+    upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields)?;
     promote_rollup_candidates(conn, session_id, &task.project, &fields)?;
-    sync_native_memory(conn, &cwd, &task.project);
+    sync_native_memory(conn, &cwd, &task.project)?;
     enqueue_user_context_followup(conn, task, range)?;
     enqueue_summary_followup_jobs(conn, task, session_id)?;
     Ok(())
@@ -149,12 +153,12 @@ fn insert_raw_hook_fallback(
     last_message: Option<&str>,
     branch: Option<&str>,
     cwd: Option<&str>,
-) {
+) -> Result<()> {
     let Some(last) = last_message
         .map(str::trim)
         .filter(|value| !value.is_empty())
     else {
-        return;
+        return Ok(());
     };
     match crate::memory::raw_archive::insert_raw_message(
         conn,
@@ -174,22 +178,41 @@ fn insert_raw_hook_fallback(
             ),
         ),
         Ok(None) => {}
-        Err(error) => crate::log::warn(
-            "session-rollup",
-            &format!("raw archive insert failed: {error}"),
-        ),
+        Err(error) => {
+            let report = crate::memory::raw_archive::RawIngestReport {
+                insert_errors: 1,
+                ..crate::memory::raw_archive::RawIngestReport::default()
+            };
+            if let Err(record_error) = crate::memory::raw_archive::record_raw_ingest_failure(
+                conn,
+                session_id,
+                project,
+                crate::memory::raw_archive::SOURCE_HOOK,
+                None,
+                &report,
+            ) {
+                return Err(error).context(format!(
+                    "raw archive fallback insert failed and failure recording also failed: {record_error}"
+                ));
+            }
+            return Err(error).context("session rollup raw archive fallback insert failed");
+        }
     }
+    Ok(())
 }
 
 fn load_persisted_rollup_fields(
     conn: &Connection,
-    memory_session_id: &str,
+    session_row_id: i64,
+    range: &RollupRange,
 ) -> Result<PersistedRollupFields> {
     conn.query_row(
         "SELECT request, completed, decisions, learned, next_steps, preferences, summary_text
          FROM session_summaries
-         WHERE memory_session_id = ?1",
-        params![memory_session_id],
+         WHERE session_row_id = ?1
+           AND covered_from_event_id = ?2
+           AND covered_to_event_id = ?3",
+        params![session_row_id, range.from_event_id, range.to_event_id],
         |row| {
             Ok(PersistedRollupFields {
                 request: row.get(0)?,
@@ -233,10 +256,10 @@ fn upsert_rollup_workstream(
     project: &str,
     memory_session_id: &str,
     fields: &PersistedRollupFields,
-) {
+) -> Result<()> {
     let title = clean_field(fields.request.as_deref());
     let Some(title) = title else {
-        return;
+        return Ok(());
     };
     let parsed = ParsedWorkStream {
         title: Some(title),
@@ -246,20 +269,17 @@ fn upsert_rollup_workstream(
         blockers: None,
         is_completed: false,
     };
-    match crate::workstream::upsert_workstream_with_match(conn, project, memory_session_id, &parsed)
-    {
-        Ok(result) => crate::log::info(
-            "session-rollup",
-            &format!(
-                "upserted workstream id={} reason={} project={project}",
-                result.id, result.match_reason
-            ),
+    let result =
+        crate::workstream::upsert_workstream_with_match(conn, project, memory_session_id, &parsed)
+            .context("session rollup workstream persistence failed")?;
+    crate::log::info(
+        "session-rollup",
+        &format!(
+            "upserted workstream id={} reason={} project={project}",
+            result.id, result.match_reason
         ),
-        Err(error) => crate::log::warn(
-            "session-rollup",
-            &format!("workstream persistence failed: {error}"),
-        ),
-    }
+    );
+    Ok(())
 }
 
 fn promote_rollup_candidates(
@@ -287,13 +307,9 @@ fn promote_rollup_candidates(
     Ok(())
 }
 
-fn sync_native_memory(conn: &Connection, cwd: &str, project: &str) {
-    if let Err(error) = crate::context::claude_memory::sync_to_claude_memory(conn, cwd, project) {
-        crate::log::warn(
-            "session-rollup",
-            &format!("claude memory sync failed: {error}"),
-        );
-    }
+fn sync_native_memory(conn: &Connection, cwd: &str, project: &str) -> Result<()> {
+    crate::context::claude_memory::sync_to_claude_memory(conn, cwd, project)
+        .context("session rollup native memory sync failed")
 }
 
 fn enqueue_user_context_followup(

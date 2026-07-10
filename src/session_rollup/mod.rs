@@ -86,8 +86,9 @@ where
     let Some(range) = load_rollup_range(conn, task)? else {
         return Ok(SessionRollupResult::EmptyRange);
     };
-    side_effects::drain_raw_archive_from_range(conn, task, &range);
+    let raw_archive_result = side_effects::drain_raw_archive_from_range(conn, task, &range);
     if session_rollup_exists(conn, task, &range)? {
+        raw_archive_result?;
         side_effects::run_persisted_rollup_side_effects(conn, task, &range)?;
         return Ok(SessionRollupResult::AlreadyExists);
     }
@@ -96,6 +97,7 @@ where
     let response = summarize(prompt).await?;
     let output = parse::parse_rollup_response(&response, &range)?;
     persist::persist_session_rollup(conn, task, &range, &output)?;
+    raw_archive_result?;
     side_effects::run_persisted_rollup_side_effects(conn, task, &range)?;
     Ok(SessionRollupResult::Written)
 }

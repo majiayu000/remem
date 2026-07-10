@@ -1,6 +1,8 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+use crate::db::{self, CaptureEventInput, ExtractionTaskKind};
+
 use super::run_migrations;
 
 fn insert_job(conn: &Connection, id: i64, job_type: &str, state: &str) -> Result<()> {
@@ -25,6 +27,35 @@ fn legacy_summary_upgrade_rejects_non_terminal_jobs() -> Result<()> {
     run_migrations(&conn)?;
 
     conn.execute("DELETE FROM _schema_migrations WHERE version = 64", [])?;
+    let rollup_task_id = db::record_captured_event(
+        &conn,
+        &CaptureEventInput {
+            host: "codex-cli",
+            session_id: "session-upgrade-rollup",
+            project: "/repo",
+            cwd: Some("/repo"),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content: r#"{"session_id":"session-upgrade-rollup","cwd":"/repo"}"#,
+            task_kind: Some(ExtractionTaskKind::SessionRollup),
+        },
+    )?
+    .extraction_task_id
+    .ok_or_else(|| anyhow::anyhow!("capture should enqueue a SessionRollup task"))?;
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'processing',
+             attempts = 4,
+             next_retry_epoch = 1700000900,
+             last_error = 'old worker retry',
+             failure_class = 'transient',
+             failed_at_epoch = 1700000800,
+             lease_owner = 'worker-daemon-old-version',
+             lease_expires_epoch = 1700001000
+         WHERE id = ?1",
+        [rollup_task_id],
+    )?;
     insert_job(&conn, 1, "summary", "pending")?;
     insert_job(&conn, 2, "summary", "processing")?;
     insert_job(&conn, 3, "summary", "done")?;
@@ -59,6 +90,38 @@ fn legacy_summary_upgrade_rejects_non_terminal_jobs() -> Result<()> {
     )?;
 
     run_migrations(&conn)?;
+
+    let rollup_state: (
+        String,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT status, attempts, next_retry_epoch, last_error, failure_class,
+                failed_at_epoch, lease_owner, lease_expires_epoch
+         FROM extraction_tasks WHERE id = ?1",
+        [rollup_task_id],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        rollup_state,
+        ("pending".to_string(), 0, None, None, None, None, None, None)
+    );
 
     for id in [1_i64, 2, 6] {
         let row: (
