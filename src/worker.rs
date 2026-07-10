@@ -1,5 +1,5 @@
 use anyhow::Result;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 
 use crate::db;
 
@@ -17,6 +17,7 @@ const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
 const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
 const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
+const RULE_COMPILATION_SWEEP_INTERVAL_SECS: u64 = 60;
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
@@ -93,7 +94,19 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
     }
 
+    let mut next_rule_compilation_sweep_at = Instant::now();
     loop {
+        if Instant::now() >= next_rule_compilation_sweep_at {
+            let compiled_projects = job::run_rule_compilation_sweep().await?;
+            if compiled_projects > 0 {
+                crate::log::info(
+                    "rules",
+                    &format!("rule compilation sweep rebuilt {compiled_projects} project(s)"),
+                );
+            }
+            next_rule_compilation_sweep_at =
+                Instant::now() + Duration::from_secs(RULE_COMPILATION_SWEEP_INTERVAL_SECS);
+        }
         let mut conn = db::open_db()?;
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
         let recovered = db::requeue_stuck_jobs(&conn)?;

@@ -16,8 +16,12 @@ Tracking:
 - GH671-T2 adds the derived artifact foundation: versioned JSON structs,
   the closed v1 predicate enum, a pure in-memory evaluator, fail-open artifact
   loading for missing/corrupt/unsupported artifacts, stable project artifact
-  paths, and atomic artifact writes. Runtime compilation, hook dispatch, rule
-  CLI, doctor output, fixtures, and latency evidence are still pending.
+  paths, and atomic artifact writes.
+- GH671-T3 adds canonical repeated-preference reinforcement, conservative v1
+  classification, low-risk/review eligibility, user override merging,
+  project-over-global conflict resolution, lifecycle sweeps, and worker-only
+  atomic artifact writes. Hook dispatch, rule CLI, doctor output, fixtures,
+  and latency evidence are still pending.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).

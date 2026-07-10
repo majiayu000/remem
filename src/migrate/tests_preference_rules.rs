@@ -14,6 +14,7 @@ fn preference_rule_state_migration_creates_rows_and_indexes() -> Result<()> {
         "preference_rule_overrides",
         "preference_rule_diagnostics",
         "idx_memory_preference_reinforcements_rank",
+        "idx_memory_preference_reinforcements_eligible",
         "idx_preference_rule_overrides_project",
         "idx_preference_rule_overrides_source",
         "idx_preference_rule_diagnostics_project_event",
@@ -36,6 +37,12 @@ fn preference_rule_state_migration_creates_rows_and_indexes() -> Result<()> {
          VALUES (1, '/repo', 'Preference', 'Use bun instead of npm.', 'preference', 10, 10, 'active')",
         [],
     )?;
+    assert!(conn
+        .prepare(
+            "SELECT machine_checkable, risk_class
+             FROM memory_preference_reinforcements LIMIT 0"
+        )
+        .is_ok());
     conn.execute(
         "INSERT INTO memory_preference_reinforcements
          (memory_id, reinforcement_count, last_reinforced_at_epoch,
@@ -73,6 +80,17 @@ fn preference_rule_state_schema_validates_actions_and_counts() -> Result<()> {
             [],
         )
         .expect_err("reinforcement count must be positive");
+    assert!(err.to_string().contains("CHECK"), "{err}");
+
+    let err = conn
+        .execute(
+            "INSERT INTO memory_preference_reinforcements
+             (memory_id, reinforcement_count, last_reinforced_at_epoch,
+              created_at_epoch, updated_at_epoch, machine_checkable, risk_class)
+             VALUES (98, 1, 20, 10, 20, 0, 'critical')",
+            [],
+        )
+        .expect_err("risk class must stay closed");
     assert!(err.to_string().contains("CHECK"), "{err}");
 
     let err = conn

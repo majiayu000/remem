@@ -26,10 +26,11 @@ Authoritative contract:
 
 ## Proposed Design
 
-Phase 1 implementation status: `SP671-T1` is implemented as state-only
-foundation. `SP671-T2` adds versioned derived artifact structs, the closed v1
-predicate enum, pure evaluator, fail-open artifact loading, stable artifact
-paths, and atomic writes. Runtime compilation, CLI rule management, hook
+Phase 1 implementation status: `SP671-T1` provides canonical state and
+disabled-by-default configuration; `SP671-T2` provides the derived artifact
+and evaluator foundation; `SP671-T3` provides canonical reinforcement and the
+worker-side compiler with low-risk eligibility, lifecycle sweeps, override
+merge, and project-over-global conflict resolution. CLI rule management, hook
 dispatch, doctor reporting, fixtures, and latency evidence remain pending.
 
 - Add a `rules` module with a versioned artifact schema, closed predicate enum,

@@ -119,6 +119,17 @@ pub(super) fn promote_candidate_to_memory_with_route(
             .filter(|row| row.is_current)
             .find(|row| same_memory_text(&row.content, &candidate.text))
         {
+            if candidate.memory_type == "preference" {
+                crate::memory::preference::reinforcement::reinforce_existing_preference(
+                    conn,
+                    existing.id,
+                    &candidate.text,
+                    &candidate.risk_class,
+                    Some(evidence_json),
+                    now,
+                )?;
+                maybe_enqueue_rule_compilation(conn, &memory_project)?;
+            }
             let plan = MemoryOperationPlan::new(
                 MemoryLifecycleOp::Noop,
                 state_key_value,
@@ -181,9 +192,11 @@ pub(super) fn promote_candidate_to_memory_with_route(
                 memory_id,
                 &superseded_ids,
                 &candidate.text,
+                &candidate.risk_class,
+                Some(evidence_json),
                 now,
             )?;
-            maybe_enqueue_rule_compilation(conn, &memory_project);
+            maybe_enqueue_rule_compilation(conn, &memory_project)?;
         }
         let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
         crate::memory::edge::insert_memory_edge(
@@ -574,26 +587,24 @@ fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &st
         .with_context(|| format!("entity refresh failed for memory id={id}"))
 }
 
-/// Best-effort enqueue of a background rule-compilation job for `project`.
+/// Enqueue a background rule-compilation job for `project` when enabled.
 ///
 /// Compilation and artifact writes happen only in the worker; this merely
-/// schedules that work. Gated behind the disabled-by-default
-/// `rule_compilation.enabled` config. Failures here are optional-feature
-/// failures that must not break memory promotion (U-29: primary flow still
-/// works), so they are logged at warning level and swallowed.
-fn maybe_enqueue_rule_compilation(conn: &Connection, project: &str) {
+/// schedules that work. A configured feature that cannot read its config or
+/// enqueue work must fail visibly instead of leaving a stale/missing artifact.
+fn maybe_enqueue_rule_compilation(conn: &Connection, project: &str) -> Result<()> {
     let enabled = match crate::runtime_config::rule_compilation_config() {
         Ok(config) => config.enabled,
         Err(error) => {
-            crate::log::warn(
+            crate::log::error(
                 "rules",
-                &format!("skipping rule compilation enqueue; config unreadable: {error}"),
+                &format!("rule compilation enqueue config unreadable: {error}"),
             );
-            return;
+            return Err(error).context("read rule compilation config before enqueue");
         }
     };
     if !enabled {
-        return;
+        return Ok(());
     }
     if let Err(error) = crate::db::enqueue_job(
         conn,
@@ -604,11 +615,14 @@ fn maybe_enqueue_rule_compilation(conn: &Connection, project: &str) {
         "{}",
         100,
     ) {
-        crate::log::warn(
+        crate::log::error(
             "rules",
             &format!("failed to enqueue rule compilation for {project}: {error}"),
         );
+        return Err(error)
+            .with_context(|| format!("enqueue rule compilation for project {project}"));
     }
+    Ok(())
 }
 
 fn soft_supersede_routed(

@@ -203,6 +203,36 @@ fn dry_run_pending_reports_v063_procedure_exports_schema_drift() -> Result<()> {
 }
 
 #[test]
+fn dry_run_pending_reports_v065_preference_reinforcement_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[65])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("preference reinforcement drift must be reported"))?;
+    assert!(
+        error.contains("v065_preference_reinforcement"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_preference_reinforcements.machine_checkable"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_preference_reinforcements.risk_class"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_memory_preference_reinforcements_eligible"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[45])?;

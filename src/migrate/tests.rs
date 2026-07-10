@@ -184,6 +184,7 @@ fn full_migration_on_empty_db() -> Result<()> {
         "idx_extraction_replay_ranges_failure_lifecycle",
         "idx_jobs_failure_lifecycle",
         "idx_memory_preference_reinforcements_rank",
+        "idx_memory_preference_reinforcements_eligible",
         "idx_preference_rule_overrides_project",
         "idx_preference_rule_overrides_source",
         "idx_preference_rule_diagnostics_project_event",

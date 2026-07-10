@@ -27,6 +27,25 @@ pub struct CompileOutcome {
     pub artifact_path: std::path::PathBuf,
 }
 
+/// Rebuild rule artifacts for every known project. The worker calls this on a
+/// bounded cadence so enabling compilation and source lifecycle changes do not
+/// depend on a new preference write to enqueue a job.
+pub fn run_compile_rules_sweep() -> Result<usize> {
+    let config = rule_compilation_config()?;
+    if !config.enabled {
+        return Ok(0);
+    }
+
+    let conn = crate::db::open_db()?;
+    let projects = load_rule_compilation_projects(&conn)?;
+    drop(conn);
+
+    for project in &projects {
+        run_compile_rules_job(project)?;
+    }
+    Ok(projects.len())
+}
+
 /// Worker-only entry point: gate on config, compile canonical state into the
 /// derived artifact, and persist it atomically. Returns `Ok(None)` when rule
 /// compilation is disabled by config (disabled-by-default).
@@ -91,16 +110,17 @@ pub fn compile_project_rules(
     let eligible = select_eligible_preferences(conn, project, config.min_reinforcement, now)?;
     let overrides = load_overrides(conn, project)?;
 
-    // Rows arrive newest-source-first (updated_at DESC, id DESC). Resolve
-    // conflicts by keeping the first (newest) rule per conflict key.
+    // Rows arrive project-before-global, then newest-source-first. Resolve
+    // conflicts by keeping the first authoritative rule per conflict key.
     let mut seen_conflicts: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut rules = Vec::new();
     for pref in eligible {
-        let Some(classification) = classify_preference_predicate(&pref.content) else {
-            // machine_checkable was set at apply time; a classification that no
-            // longer resolves is a state drift we skip rather than compile.
-            continue;
-        };
+        let classification = classify_preference_predicate(&pref.content).with_context(|| {
+            format!(
+                "preference #{} is marked machine_checkable but no safe v1 predicate can be derived",
+                pref.memory_id
+            )
+        })?;
         let conflict_key = classification.predicate.conflict_key();
         if !seen_conflicts.insert(conflict_key.clone()) {
             record_diagnostic(
@@ -167,15 +187,24 @@ fn select_eligible_preferences(
         "SELECT m.id, m.content, r.reinforcement_count
          FROM memories m
          JOIN memory_preference_reinforcements r ON r.memory_id = m.id
+         JOIN memory_candidates c ON c.id = m.source_candidate_id
          WHERE m.memory_type = 'preference'
            AND m.status = 'active'
            AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?1)
            AND m.owner_scope IS NOT NULL
            AND r.machine_checkable = 1
+           AND r.risk_class = 'low'
            AND r.reinforcement_count >= ?2
-           AND (m.project = ?3 OR COALESCE(m.scope, 'project') = 'global')
+           AND c.risk_class = 'low'
+           AND c.review_status IN ('approved', 'edited', 'auto_promoted')
+           AND (
+               (COALESCE(m.scope, 'project') = 'project' AND m.project = ?3)
+               OR COALESCE(m.scope, 'project') = 'global'
+           )
            AND {policy_filter}
-         ORDER BY m.updated_at_epoch DESC, m.id DESC"
+         ORDER BY CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 1 ELSE 0 END,
+                  m.updated_at_epoch DESC,
+                  m.id DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params![now, min_reinforcement, project], |row| {
@@ -186,6 +215,23 @@ fn select_eligible_preferences(
         })
     })?;
     crate::db::query::collect_rows(rows).context("load eligible preferences for rule compilation")
+}
+
+fn load_rule_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT project
+         FROM (
+             SELECT DISTINCT project FROM memories
+             UNION
+             SELECT DISTINCT project FROM preference_rule_overrides
+             UNION
+             SELECT DISTINCT project FROM preference_rule_diagnostics
+         )
+         WHERE project IS NOT NULL AND TRIM(project) <> ''
+         ORDER BY project",
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    crate::db::query::collect_rows(rows).context("load projects for rule compilation sweep")
 }
 
 fn load_overrides(

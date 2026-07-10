@@ -8,6 +8,7 @@ use super::{process_with_generator, MemoryCandidateResult};
 mod candidate_edges;
 mod existing_preferences;
 mod poisoning;
+mod preference_reinforcement;
 mod ttl;
 
 pub(super) fn setup_conn() -> Connection {

@@ -455,6 +455,7 @@ fn persist_candidate_rows(
             &tx,
             source.project_id,
             candidate,
+            &evidence_json,
             expires_at_epoch.is_some(),
             now,
         )? {
@@ -624,6 +625,7 @@ fn candidate_exists(
     conn: &Connection,
     project_id: i64,
     candidate: &ParsedMemoryCandidate,
+    evidence_json: &str,
     candidate_has_ttl: bool,
     now_epoch: i64,
 ) -> Result<bool> {
@@ -635,9 +637,10 @@ fn candidate_exists(
                AND memory_type = ?3
                AND topic_key = ?4
                AND text = ?5
+               AND (?6 = 0 OR evidence_event_ids = ?7)
                AND (
-                    ?6 = 0
-                    OR (expires_at_epoch IS NOT NULL AND expires_at_epoch > ?7)
+                    ?8 = 0
+                    OR (expires_at_epoch IS NOT NULL AND expires_at_epoch > ?9)
                )
              LIMIT 1",
             params![
@@ -646,6 +649,12 @@ fn candidate_exists(
                 candidate.memory_type,
                 candidate.topic_key,
                 candidate.text,
+                if candidate.memory_type == "preference" {
+                    1_i64
+                } else {
+                    0_i64
+                },
+                evidence_json,
                 if candidate_has_ttl { 1_i64 } else { 0_i64 },
                 now_epoch
             ],

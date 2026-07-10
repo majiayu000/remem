@@ -37,17 +37,13 @@ pub struct PreferenceClassification {
     pub summary: String,
 }
 
-/// Known package managers that a preference may ask the agent to avoid.
-const BANNED_MANAGERS: &[(&str, &str)] = &[
+/// Package managers with v1 command predicates.
+const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
     ("npm", r"(^|\s)npm\s+(install|i|add|ci)\b"),
     ("yarn", r"(^|\s)yarn\s+(add|install)\b"),
 ];
 
-/// Words signalling the preference expresses avoidance / a hard choice.
-const AVOIDANCE_MARKERS: &[&str] = &[
-    "not", "instead", "over", "don't", "dont", "do not", "avoid", "never", "prefer", "use ", "no ",
-    "forbid", "ban", "without",
-];
+const PACKAGE_MANAGERS: &[&str] = &["bun", "deno", "npm", "pnpm", "yarn"];
 
 /// Commit trailers a preference may forbid.
 const KNOWN_TRAILERS: &[&str] = &[
@@ -58,77 +54,111 @@ const KNOWN_TRAILERS: &[&str] = &[
 ];
 
 pub fn classify_preference_predicate(text: &str) -> Option<PreferenceClassification> {
-    let lower = text.to_lowercase();
-    if let Some(classification) = classify_package_manager(text, &lower) {
-        return Some(classification);
-    }
-    classify_commit_trailer(text, &lower)
-}
-
-fn classify_package_manager(original: &str, lower: &str) -> Option<PreferenceClassification> {
-    if !has_avoidance_marker(lower) {
+    if crate::memory_candidate::contains_unsafe_memory_marker(text)
+        || crate::adapter::common::redact_sensitive_text(text) != text
+    {
         return None;
     }
-    let alternatives = ["bun", "pnpm", "deno", "yarn"];
-    for (banned, pattern) in BANNED_MANAGERS {
-        if !lower.contains(banned) {
+    let lower = text.to_lowercase();
+    if let Some(classification) = classify_package_manager(&lower) {
+        return Some(classification);
+    }
+    classify_commit_trailer(&lower)
+}
+
+fn classify_package_manager(lower: &str) -> Option<PreferenceClassification> {
+    for (avoided, pattern) in PACKAGE_MANAGER_PREDICATES {
+        if !contains_word(lower, avoided) || !explicitly_avoids_manager(lower, avoided) {
             continue;
         }
-        // Only compile a genuine "use X, not <banned>" choice: require a
-        // different preferred manager to be named. Prevents banning a manager
-        // that is merely mentioned in passing.
-        let has_preferred_alternative = alternatives
+        let has_preferred_alternative = PACKAGE_MANAGERS
             .iter()
-            .any(|alt| alt != banned && lower.contains(alt));
+            .any(|manager| manager != avoided && contains_word(lower, manager));
         if has_preferred_alternative {
             return Some(PreferenceClassification {
                 predicate: PreferencePredicate::CommandRegex {
                     pattern: (*pattern).to_string(),
-                    conflict_key: format!("package-manager:{banned}"),
+                    // All package-manager choices conflict. Otherwise two
+                    // opposite choices could compile into mutually exclusive
+                    // bans merely because they avoid different managers.
+                    conflict_key: "package-manager".to_string(),
                 },
-                summary: normalize_summary(original),
+                summary: format!("avoid {avoided} package-manager commands"),
             });
         }
     }
     None
 }
 
-fn classify_commit_trailer(original: &str, lower: &str) -> Option<PreferenceClassification> {
-    if !has_avoidance_marker(lower) {
-        return None;
-    }
+fn classify_commit_trailer(lower: &str) -> Option<PreferenceClassification> {
     if !(lower.contains("trailer") || lower.contains("commit")) {
         return None;
     }
     for trailer in KNOWN_TRAILERS {
-        if lower.contains(&trailer.to_lowercase()) {
+        let trailer_lower = trailer.to_lowercase();
+        if explicitly_forbids_term(lower, &trailer_lower) {
             return Some(PreferenceClassification {
                 predicate: PreferencePredicate::CommitTrailerForbidden {
                     trailer: (*trailer).to_string(),
-                    conflict_key: format!("trailer:{}", trailer.to_lowercase()),
+                    conflict_key: format!("trailer:{trailer_lower}"),
                 },
-                summary: normalize_summary(original),
+                summary: format!("do not add the {trailer} commit trailer"),
             });
         }
     }
     None
 }
 
-fn has_avoidance_marker(lower: &str) -> bool {
-    AVOIDANCE_MARKERS
-        .iter()
-        .any(|marker| lower.contains(marker))
+fn explicitly_avoids_manager(lower: &str, manager: &str) -> bool {
+    [
+        format!("not {manager}"),
+        format!("not use {manager}"),
+        format!("don't use {manager}"),
+        format!("dont use {manager}"),
+        format!("do not use {manager}"),
+        format!("avoid {manager}"),
+        format!("never use {manager}"),
+        format!("no {manager}"),
+        format!("without {manager}"),
+        format!("ban {manager}"),
+        format!("forbid {manager}"),
+        format!("instead of {manager}"),
+        format!("rather than {manager}"),
+    ]
+    .iter()
+    .any(|phrase| lower.contains(phrase))
+        || (lower.contains("prefer ") && lower.contains(&format!(" over {manager}")))
 }
 
-fn normalize_summary(text: &str) -> String {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    const MAX: usize = 120;
-    if collapsed.chars().count() > MAX {
-        let truncated: String = collapsed.chars().take(MAX).collect();
-        format!("{truncated}…")
-    } else {
-        collapsed
-    }
+fn explicitly_forbids_term(lower: &str, term: &str) -> bool {
+    [
+        "avoid",
+        "ban",
+        "do not add",
+        "do not include",
+        "do not use",
+        "don't add",
+        "don't include",
+        "dont add",
+        "dont include",
+        "exclude",
+        "forbid",
+        "never add",
+        "never include",
+        "no",
+        "omit",
+        "without",
+    ]
+    .iter()
+    .any(|marker| {
+        lower.contains(&format!("{marker} {term}"))
+            || lower.contains(&format!("{marker} the {term}"))
+    })
+}
+
+fn contains_word(text: &str, needle: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+        .any(|word| word == needle)
 }
 
 #[cfg(test)]
@@ -146,10 +176,46 @@ mod tests {
                 conflict_key,
             } => {
                 assert!(pattern.contains("npm"));
-                assert_eq!(conflict_key, "package-manager:npm");
+                assert_eq!(conflict_key, "package-manager");
             }
             other => panic!("expected command regex, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn classifies_the_explicitly_avoided_manager_not_the_first_manager() {
+        let Some(classification) = classify_preference_predicate("Use npm, not yarn") else {
+            panic!("explicit package-manager direction should classify");
+        };
+        match classification.predicate {
+            PreferencePredicate::CommandRegex {
+                pattern,
+                conflict_key,
+            } => {
+                assert!(pattern.contains("yarn"));
+                assert!(!pattern.contains("npm"));
+                assert_eq!(conflict_key, "package-manager");
+            }
+            other => panic!("expected command regex, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn positive_commit_trailer_instruction_is_not_inverted() {
+        assert!(
+            classify_preference_predicate("Always add the Co-Authored-By commit trailer").is_none()
+        );
+        assert!(
+            classify_preference_predicate("Use the AI-generated-by trailer on commits").is_none()
+        );
+    }
+
+    #[test]
+    fn sensitive_preference_is_not_machine_checkable() {
+        assert!(classify_preference_predicate(
+            "Use bun, not npm; the API key is sk-testsecret123456"
+        )
+        .is_none());
     }
 
     #[test]

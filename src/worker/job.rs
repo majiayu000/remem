@@ -2,6 +2,10 @@ use anyhow::Result;
 
 use crate::{db, summarize};
 
+pub(super) async fn run_rule_compilation_sweep() -> Result<usize> {
+    tokio::task::spawn_blocking(crate::rules::run_compile_rules_sweep).await?
+}
+
 pub(super) async fn process_job(job: &db::Job) -> Result<()> {
     match job.job_type {
         db::JobType::Observation => {

@@ -22,10 +22,10 @@ has learned.
 
 ## Goals
 
-Phase 1 implementation status: the disabled-by-default configuration and
-canonical SQLite state needed for rule compilation are implemented. The
-user-visible behavior in this product contract remains pending until compiler,
-artifact, hook, CLI, doctor, fixture, and latency work lands.
+Phase 1 implementation status: the disabled-by-default configuration,
+canonical SQLite reinforcement state, derived artifact foundation, and
+worker-side compiler are implemented. Hook enforcement, CLI management,
+doctor reporting, fixture evidence, and latency evidence remain pending.
 
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.

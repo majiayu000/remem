@@ -23,11 +23,11 @@ remem owns both the memory store and the hook surfaces, so high-confidence,
 machine-checkable corrections can become local runtime checks instead of
 remaining recall-only prose.
 
-Phase 1 implementation status: this issue currently has the state foundation
-only. It adds disabled-by-default configuration and canonical SQLite state for
-preference reinforcement, user overrides, and diagnostics. User-visible rule
-compilation, hook warnings/blocks, CLI rule management, and doctor reporting
-remain pending and #671 must stay open.
+Phase 1 implementation status: disabled-by-default configuration, canonical
+SQLite state, the derived artifact foundation, and the worker-side compiler
+are implemented through `SP671-T3`. Hook warnings/blocks, CLI rule management,
+doctor reporting, fixtures, and latency evidence remain pending, so #671 must
+stay open.
 
 ## Goals
 

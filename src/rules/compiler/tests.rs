@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
 use super::{compile_project_rules, run_compile_rules_job};
@@ -18,6 +18,7 @@ fn config(min: i64) -> RuleCompilationConfig {
 
 struct PrefSpec<'a> {
     id: i64,
+    project: &'a str,
     content: &'a str,
     status: &'a str,
     scope: &'a str,
@@ -26,12 +27,15 @@ struct PrefSpec<'a> {
     expires_at: Option<i64>,
     reinforcement: i64,
     machine_checkable: i64,
+    risk_class: &'a str,
+    review_status: &'a str,
 }
 
 impl Default for PrefSpec<'_> {
     fn default() -> Self {
         Self {
             id: 1,
+            project: PROJECT,
             content: "Use bun, not npm",
             status: "active",
             scope: "project",
@@ -40,19 +44,36 @@ impl Default for PrefSpec<'_> {
             expires_at: None,
             reinforcement: 3,
             machine_checkable: 1,
+            risk_class: "low",
+            review_status: "auto_promoted",
         }
     }
 }
 
 fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
     conn.execute(
-        "INSERT INTO memories
-         (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
-          status, scope, owner_scope, owner_key, expires_at_epoch)
-         VALUES (?1, ?2, 'pref', ?3, 'preference', 1, ?4, ?5, ?6, ?7, ?8, ?9)",
+        "INSERT INTO memory_candidates
+         (id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, 'preference', 'package-manager', ?3, '[1]',
+                 0.95, ?4, ?5, 1, ?6)",
         params![
             spec.id,
-            PROJECT,
+            spec.scope,
+            spec.content,
+            spec.risk_class,
+            spec.review_status,
+            spec.updated_at,
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO memories
+         (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
+          status, scope, owner_scope, owner_key, expires_at_epoch, source_candidate_id)
+         VALUES (?1, ?2, 'pref', ?3, 'preference', 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        params![
+            spec.id,
+            spec.project,
             spec.content,
             spec.updated_at,
             spec.status,
@@ -60,18 +81,21 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
             spec.owner_scope,
             spec.owner_scope.map(|_| PROJECT),
             spec.expires_at,
+            spec.id,
         ],
     )?;
     conn.execute(
         "INSERT INTO memory_preference_reinforcements
          (memory_id, reinforcement_count, source_evidence,
-          last_reinforced_at_epoch, created_at_epoch, updated_at_epoch, machine_checkable)
-         VALUES (?1, ?2, NULL, ?3, ?3, ?3, ?4)",
+          last_reinforced_at_epoch, created_at_epoch, updated_at_epoch,
+          machine_checkable, risk_class)
+         VALUES (?1, ?2, NULL, ?3, ?3, ?3, ?4, ?5)",
         params![
             spec.id,
             spec.reinforcement,
             spec.updated_at,
-            spec.machine_checkable
+            spec.machine_checkable,
+            spec.risk_class,
         ],
     )?;
     Ok(())
@@ -178,6 +202,55 @@ fn ambiguous_preference_is_not_compiled() -> Result<()> {
 }
 
 #[test]
+fn high_risk_preference_is_not_compiled() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-high-risk");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            risk_class: "high",
+            ..Default::default()
+        },
+    )?;
+    assert!(compile(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn unreviewed_preference_is_not_compiled() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-unreviewed");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            review_status: "pending_review",
+            ..Default::default()
+        },
+    )?;
+    assert!(compile(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn machine_checkable_state_drift_is_an_error() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-classification-drift");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            content: "I like clean code",
+            machine_checkable: 1,
+            ..Default::default()
+        },
+    )?;
+    let error = compile(&conn)
+        .err()
+        .context("classification drift must fail the compile pass")?;
+    assert!(error.to_string().contains("marked machine_checkable"));
+    Ok(())
+}
+
+#[test]
 fn suppressed_source_removes_rule() -> Result<()> {
     let _dir = ScopedTestDataDir::new("compile-suppressed");
     let conn = db::open_db()?;
@@ -256,6 +329,35 @@ fn conflicting_predicates_keep_newest_source() -> Result<()> {
 
     let ids = compile(&conn)?;
     assert_eq!(ids, vec!["pref-2-1".to_string()]);
+    Ok(())
+}
+
+#[test]
+fn project_rule_precedes_newer_global_conflict() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-project-over-global");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            id: 1,
+            content: "Use bun, not npm",
+            updated_at: 100,
+            ..Default::default()
+        },
+    )?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            id: 2,
+            project: "/tmp/other",
+            content: "Prefer pnpm over npm",
+            scope: "global",
+            updated_at: 200,
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(compile(&conn)?, vec!["pref-1-1".to_string()]);
     Ok(())
 }
 
