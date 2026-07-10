@@ -28,10 +28,13 @@
   and native-memory failures keep the extraction task retryable instead of
   completing with missing memory state. Transcript-only Stop payloads now
   snapshot their transcript byte boundary, then record memory citations and
-  distill failure lessons after bounded worker-side raw ingest; retries of
-  those signals no longer suppress persisted rollup maintenance. A versioned
-  once-launch heartbeat prevents overlapping fallback workers while an old
-  daemon is still alive during upgrade.
+  distill failure lessons after bounded worker-side raw ingest. Coalesced
+  rollups drain every covered Stop payload, deduplicate repeated transcript
+  paths at the widest captured boundary, and bind summary-candidate evidence
+  to the exact persisted event range instead of a later session capture;
+  retries of those signals no longer suppress persisted rollup maintenance. A
+  versioned once-launch heartbeat prevents overlapping fallback workers while
+  an old daemon is still alive during upgrade.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact

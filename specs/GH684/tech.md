@@ -97,7 +97,11 @@ needed fields and side effects, then removes only the redundant Summary writer.
       SessionRollup worker side effects own byte-bounded raw archive ingest plus
       transcript-only citations/failure lessons, summary-derived candidate
       finalization, workstream upsert, native memory sync, UserContextCandidate
-      extraction, and Compress/Dream enqueue after rollup persistence.
+      extraction, and Compress/Dream enqueue after rollup persistence. Raw
+      archive ingest covers every Stop payload coalesced into the claimed range,
+      deduplicates repeated transcript paths, and summary-derived candidate
+      evidence is sourced from that exact range rather than the session-wide
+      latest capture.
       Observed-commit wiring remains blocked by #792.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
@@ -128,6 +132,9 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `citation_failure_does_not_block_capture_payload`,
       `capture_redaction_preserves_stop_payload_paths_for_worker_side_effects`,
       `session_rollup_worker_drains_raw_archive_from_stop_payload`,
+      `session_rollup_drains_every_coalesced_stop_payload`,
+      `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`,
+      `session_rollup_candidate_evidence_stays_with_claimed_range`,
       `session_rollup_honors_stop_transcript_snapshot_boundary`,
       `session_rollup_retries_transcript_side_effects_without_resummarizing`,
       `session_rollup_rehomes_finalize_side_effects`,

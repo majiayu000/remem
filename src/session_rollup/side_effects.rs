@@ -35,24 +35,35 @@ pub(super) fn drain_raw_archive_from_range(
     let Some(session_id) = task.session_id.as_deref() else {
         return Ok(());
     };
-    let Some(payload) = latest_stop_payload(range) else {
+    let payloads = stop_payloads(range)?;
+    if payloads.is_empty() {
         return Ok(());
-    };
-    let cwd = payload
-        .cwd
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&task.project);
-    let branch = db::detect_git_branch(cwd);
-    if let Some(transcript_path) = payload
-        .transcript_path
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    }
+    let selected_transcripts = unique_transcript_payload_indices(&payloads);
+    let mut errors = Vec::new();
+
+    for (payload_index, payload) in payloads.iter().enumerate() {
+        let cwd = stop_payload_cwd(payload, &task.project);
+        let branch = db::detect_git_branch(cwd);
+        let Some(transcript_path) = stop_transcript_path(payload) else {
+            if let Err(error) = insert_raw_hook_fallback(
+                conn,
+                session_id,
+                &task.project,
+                payload.last_assistant_message.as_deref(),
+                branch.as_deref(),
+                Some(cwd),
+            ) {
+                errors.push(error);
+            }
+            continue;
+        };
+        if !selected_transcripts.contains(&payload_index) {
+            continue;
+        }
+
         let options = crate::memory::raw_archive::TranscriptDrainOptions::default();
-        let report = crate::memory::raw_archive::drain_transcript_with_capture_limit(
+        let report = match crate::memory::raw_archive::drain_transcript_with_capture_limit(
             conn,
             transcript_path,
             session_id,
@@ -61,8 +72,13 @@ pub(super) fn drain_raw_archive_from_range(
             Some(cwd),
             &options,
             payload.transcript_byte_len,
-        )
-        .context("session rollup raw archive drain failed")?;
+        ) {
+            Ok(report) => report,
+            Err(error) => {
+                errors.push(error.context("session rollup raw archive drain failed"));
+                continue;
+            }
+        };
         crate::log::info(
             "session-rollup",
             &format!(
@@ -77,35 +93,47 @@ pub(super) fn drain_raw_archive_from_range(
             ),
         );
         if report.read_error.is_some() {
-            insert_raw_hook_fallback(
-                conn,
-                session_id,
-                &task.project,
-                payload.last_assistant_message.as_deref(),
-                branch.as_deref(),
-                Some(cwd),
-            )?;
+            for fallback in payloads
+                .iter()
+                .filter(|candidate| stop_transcript_path(candidate) == Some(transcript_path))
+            {
+                let fallback_cwd = stop_payload_cwd(fallback, &task.project);
+                let fallback_branch = db::detect_git_branch(fallback_cwd);
+                if let Err(error) = insert_raw_hook_fallback(
+                    conn,
+                    session_id,
+                    &task.project,
+                    fallback.last_assistant_message.as_deref(),
+                    fallback_branch.as_deref(),
+                    Some(fallback_cwd),
+                ) {
+                    errors.push(error);
+                }
+            }
         }
         if report.has_failures() {
-            anyhow::bail!(
+            errors.push(anyhow::anyhow!(
                 "session rollup raw archive ingest incomplete: status={} parse_errors={} insert_errors={} read_error={}",
                 crate::memory::raw_archive::raw_ingest_status(&report),
                 report.parse_errors,
                 report.insert_errors,
                 report.read_error.is_some()
-            );
+            ));
         }
-    } else {
-        insert_raw_hook_fallback(
-            conn,
-            session_id,
-            &task.project,
-            payload.last_assistant_message.as_deref(),
-            branch.as_deref(),
-            Some(cwd),
-        )?;
     }
-    Ok(())
+
+    match errors.len() {
+        0 => Ok(()),
+        1 => Err(errors.remove(0)),
+        _ => anyhow::bail!(
+            "session rollup raw archive side effects failed: {}",
+            errors
+                .iter()
+                .map(|error| format!("{error:#}"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        ),
+    }
 }
 
 pub(super) fn run_post_archive_stop_memory_side_effects(
@@ -116,15 +144,11 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     let Some(session_id) = task.session_id.as_deref() else {
         return Ok(());
     };
-    let Some(payload) = latest_stop_payload(range) else {
+    let payloads = stop_payloads(range)?;
+    let Some(latest_payload) = payloads.last() else {
         return Ok(());
     };
-    let cwd = payload
-        .cwd
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(&task.project);
+    let cwd = stop_payload_cwd(latest_payload, &task.project);
     let branch = db::detect_git_branch(cwd);
     crate::summarize::distill_stop_failure_lessons(
         conn,
@@ -133,23 +157,26 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
         branch.as_deref(),
     )
     .context("session rollup failure-lesson side effect failed")?;
-    let assistant_message = clean_field(payload.last_assistant_message.as_deref()).or_else(|| {
-        payload.transcript_path.as_deref().and_then(|path| {
-            crate::summarize::extract_last_assistant_message_with_limit(
-                path,
-                payload.transcript_byte_len,
+    for payload in &payloads {
+        let assistant_message =
+            clean_field(payload.last_assistant_message.as_deref()).or_else(|| {
+                payload.transcript_path.as_deref().and_then(|path| {
+                    crate::summarize::extract_last_assistant_message_with_limit(
+                        path,
+                        payload.transcript_byte_len,
+                    )
+                })
+            });
+        if let Some(message) = assistant_message {
+            crate::summarize::record_stop_memory_citation_usage(
+                conn,
+                &task.host,
+                &task.project,
+                session_id,
+                &message,
             )
-        })
-    });
-    if let Some(message) = assistant_message {
-        crate::summarize::record_stop_memory_citation_usage(
-            conn,
-            &task.host,
-            &task.project,
-            session_id,
-            &message,
-        )
-        .context("session rollup memory-citation side effect failed")?;
+            .context("session rollup memory-citation side effect failed")?;
+        }
     }
     Ok(())
 }
@@ -172,7 +199,7 @@ pub(super) fn run_persisted_rollup_side_effects(
 
     link_observed_commits(conn, &task.project, session_id, &memory_session_id)?;
     upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields)?;
-    promote_rollup_candidates(conn, session_id, &task.project, &fields)?;
+    promote_rollup_candidates(conn, task, range, &fields)?;
     sync_native_memory(conn, &cwd, &task.project)?;
     enqueue_user_context_followup(conn, task, range)?;
     enqueue_summary_followup_jobs(conn, task, session_id)?;
@@ -188,12 +215,79 @@ fn rollup_cwd(task: &db::ExtractionTask, range: &RollupRange) -> String {
 }
 
 fn latest_stop_payload(range: &RollupRange) -> Option<StopHookPayload> {
+    stop_payloads(range).ok()?.pop()
+}
+
+fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
     range
         .events
         .iter()
-        .rev()
-        .find(|event| event.event_type == "session_stop")
-        .and_then(|event| serde_json::from_str::<StopHookPayload>(&event.content).ok())
+        .filter(|event| event.event_type == "session_stop")
+        .filter_map(|event| {
+            if !event.content.trim_start().starts_with('{') {
+                return None;
+            }
+            Some(
+                serde_json::from_str::<StopHookPayload>(&event.content).with_context(|| {
+                    format!(
+                        "invalid session_stop payload for captured event {}",
+                        event.id
+                    )
+                }),
+            )
+        })
+        .collect()
+}
+
+fn stop_transcript_path(payload: &StopHookPayload) -> Option<&str> {
+    payload
+        .transcript_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
+fn stop_payload_cwd<'a>(payload: &'a StopHookPayload, project: &'a str) -> &'a str {
+    payload
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(project)
+}
+
+fn unique_transcript_payload_indices(payloads: &[StopHookPayload]) -> Vec<usize> {
+    let mut selected: Vec<(String, usize)> = Vec::new();
+    for (index, payload) in payloads.iter().enumerate() {
+        let Some(path) = stop_transcript_path(payload) else {
+            continue;
+        };
+        if let Some((_, selected_index)) = selected
+            .iter_mut()
+            .find(|(selected_path, _)| selected_path == path)
+        {
+            if prefer_transcript_payload(&payloads[*selected_index], payload) {
+                *selected_index = index;
+            }
+        } else {
+            selected.push((path.to_string(), index));
+        }
+    }
+    let mut indices = selected
+        .into_iter()
+        .map(|(_, index)| index)
+        .collect::<Vec<_>>();
+    indices.sort_unstable();
+    indices
+}
+
+fn prefer_transcript_payload(current: &StopHookPayload, candidate: &StopHookPayload) -> bool {
+    match (current.transcript_byte_len, candidate.transcript_byte_len) {
+        (Some(current), Some(candidate)) => candidate >= current,
+        (None, Some(_)) => true,
+        (Some(_), None) => false,
+        (None, None) => true,
+    }
 }
 
 fn insert_raw_hook_fallback(
@@ -334,14 +428,33 @@ fn upsert_rollup_workstream(
 
 fn promote_rollup_candidates(
     conn: &mut Connection,
-    session_id: &str,
-    project: &str,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
     fields: &PersistedRollupFields,
 ) -> Result<()> {
-    let count = crate::memory::promote_summary_to_memory_candidates(
+    let session_id = task
+        .session_id
+        .as_deref()
+        .context("session rollup candidate promotion requires session_id")?;
+    let evidence_event_ids = range
+        .events
+        .iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+    let source_texts = range
+        .events
+        .iter()
+        .map(|event| event.content.trim())
+        .filter(|content| !content.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let count = crate::memory::promote::promote_summary_to_memory_candidates_with_evidence(
         conn,
         session_id,
-        project,
+        task.project_id,
+        &task.project,
+        &evidence_event_ids,
+        &source_texts,
         fields.request.as_deref(),
         fields.decisions.as_deref(),
         fields.learned.as_deref(),
@@ -351,7 +464,10 @@ fn promote_rollup_candidates(
     if count > 0 {
         crate::log::info(
             "session-rollup",
-            &format!("promoted {count} summary-derived candidate(s) project={project} session={session_id}"),
+            &format!(
+                "promoted {count} summary-derived candidate(s) project={} session={session_id}",
+                task.project
+            ),
         );
     }
     Ok(())
@@ -436,4 +552,30 @@ fn clean_field(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod stop_payload_selection_tests {
+    use super::*;
+
+    fn payload(path: &str, transcript_byte_len: Option<u64>) -> StopHookPayload {
+        StopHookPayload {
+            cwd: None,
+            transcript_path: Some(path.to_string()),
+            transcript_byte_len,
+            last_assistant_message: None,
+        }
+    }
+
+    #[test]
+    fn repeated_transcript_path_selects_one_widest_bounded_payload() {
+        let payloads = vec![
+            payload("shared.jsonl", Some(10)),
+            payload("shared.jsonl", Some(20)),
+            payload("shared.jsonl", None),
+            payload("legacy.jsonl", None),
+        ];
+
+        assert_eq!(unique_transcript_payload_indices(&payloads), vec![1, 3]);
+    }
 }

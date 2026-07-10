@@ -37,6 +37,40 @@ pub fn promote_summary_to_memory_candidates(
         learned,
         preferences,
         None,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn promote_summary_to_memory_candidates_with_evidence(
+    conn: &mut Connection,
+    session_id: &str,
+    project_id: i64,
+    project: &str,
+    evidence_event_ids: &[i64],
+    source_texts: &[String],
+    request: Option<&str>,
+    decisions: Option<&str>,
+    learned: Option<&str>,
+    preferences: Option<&str>,
+) -> Result<usize> {
+    if evidence_event_ids.is_empty() {
+        bail!("summary candidate extraction requires captured evidence");
+    }
+    promote_summary_to_memory_candidates_inner(
+        conn,
+        session_id,
+        project,
+        request,
+        decisions,
+        learned,
+        preferences,
+        None,
+        Some(SummaryCandidateSource {
+            project_id,
+            evidence_event_ids: evidence_event_ids.to_vec(),
+            source_texts: source_texts.to_vec(),
+        }),
     )
 }
 
@@ -60,6 +94,7 @@ pub(super) fn promote_summary_to_memory_candidates_with_gate_mode(
         learned,
         preferences,
         Some(summary_gate_mode),
+        None,
     )
 }
 
@@ -72,6 +107,7 @@ fn promote_summary_to_memory_candidates_inner(
     learned: Option<&str>,
     preferences: Option<&str>,
     summary_gate_mode: Option<SummaryGateMode>,
+    source_override: Option<SummaryCandidateSource>,
 ) -> Result<usize> {
     let candidates = summary_memory_candidates(request, decisions, learned, preferences);
     if candidates.is_empty() {
@@ -87,7 +123,10 @@ fn promote_summary_to_memory_candidates_inner(
         return Ok(0);
     }
 
-    let source = summary_candidate_source(conn, session_id, project)?;
+    let source = match source_override {
+        Some(source) => source,
+        None => summary_candidate_source(conn, session_id, project)?,
+    };
     let summary = match summary_gate_mode {
         #[cfg(test)]
         Some(mode) => persist_summary_candidates_with_gate_mode(

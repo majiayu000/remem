@@ -223,6 +223,9 @@ Tests: fixture DBs per state; frozen-write detection test.
    without suppressing captured Stop payload processing. Capture redaction
    preserves `cwd`, `transcript_path`, and the Stop-captured transcript byte
    boundary so the SessionRollup worker cannot consume later appended turns;
+   coalesced rollups drain every covered Stop payload, deduplicate repeated
+   transcript paths, and bind summary-derived candidate evidence to the exact
+   covered event range instead of the session-wide latest capture;
    after a persisted rollup exists, worker side effects re-home
    summary-derived candidates, workstream upsert, native-memory sync,
    UserContextCandidate extraction, and Compress/Dream follow-up enqueue.

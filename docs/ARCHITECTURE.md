@@ -160,10 +160,14 @@ failed required side effect leaves the extraction task retryable against the
 already-persisted range instead of silently completing with missing memory.
 Transcript-only citation and failure-lesson side effects run after bounded raw
 archive ingest on the worker; their retry errors do not suppress the other
-persisted rollup side effects. Stop payloads that already include the final
-assistant message may record those idempotent signals immediately. Versioned
-once-worker launch heartbeats prevent repeated Stop hooks from spawning
-overlapping current workers during an old-daemon upgrade window.
+persisted rollup side effects. When several Stop captures coalesce into one
+range, the worker drains each distinct transcript path at its widest captured
+boundary and preserves pathless hook fallbacks; summary-derived candidates use
+only the covered event IDs and source text from that same range. Stop payloads
+that already include the final assistant message may record those idempotent
+signals immediately. Versioned once-worker launch heartbeats prevent repeated
+Stop hooks from spawning overlapping current workers during an old-daemon
+upgrade window.
 Migration v064 permanently rejects queued legacy Summary jobs and requeues any
 SessionRollup lease held across the binary upgrade. Readers continue to hide
 synthetic `Captured event range ...` fallback titles. The unused legacy

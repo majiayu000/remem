@@ -74,9 +74,12 @@ current SessionRollup path and the legacy Summary job chain.
       Summary rejections stay visible, the Stop hook keeps only immediately
       available citation/failure side effects, and transcript-only signals run
       after worker-side raw archive ingest bounded by the captured Stop byte
-      length. Persisted rollups re-home summary-derived candidates, workstream
-      upsert, and native-memory sync; observed-commit linking remains blocked by
-      #792. Compress/Dream follow-up jobs are enqueued only after the rollup is
+      length. A coalesced rollup drains every covered Stop payload while
+      deduplicating repeated transcript paths, and summary-derived candidates
+      cite only captured events inside the persisted rollup range. Persisted
+      rollups re-home summary-derived candidates, workstream upsert, and
+      native-memory sync; observed-commit linking remains blocked by #792.
+      Compress/Dream follow-up jobs are enqueued only after the rollup is
       persisted, old-version daemon heartbeats and legacy singleton locks do
       not suppress the current Stop fallback worker, a current once-launch
       heartbeat prevents overlapping fallback workers, workers run
@@ -93,6 +96,9 @@ current SessionRollup path and the legacy Summary job chain.
   failure lessons, candidate finalization, and native memory sync.
 - Stop payload redaction must preserve path fields needed by worker-side raw
   ingest while continuing to redact sensitive keys.
+- Multiple Stop captures coalesced into one rollup must not lose earlier
+  transcript or hook-fallback messages, and later captures outside the claimed
+  range must not become evidence for the earlier rollup's candidates.
 - Drop migrations must refuse to run while unmigrated valuable rows remain.
 - Current reader surfaces must not lose context, timeline, or `why` behavior.
 
