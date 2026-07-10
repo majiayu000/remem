@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Fixed the `clippy::manual_filter` lint on `src/runtime_config.rs` profile
+  model resolution (staged source version `0.5.194`), restoring `cargo clippy
+  -- -D warnings` on current stable clippy so binary-impacting PRs are not
+  blocked by pre-existing repo code.
 - Staged source version `0.5.193` for GH-671 preference rule artifact
   foundation: compiled-rule artifacts now have a versioned JSON schema, closed
   v1 predicate enum, deterministic in-memory evaluator, fail-open artifact
