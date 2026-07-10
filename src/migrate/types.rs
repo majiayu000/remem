@@ -325,6 +325,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "reject_legacy_summary_jobs",
         sql: include_str!("../migrations/v064_reject_legacy_summary_jobs.sql"),
     },
+    Migration {
+        version: 65,
+        name: "preference_reinforcement",
+        sql: include_str!("../migrations/v065_preference_reinforcement.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

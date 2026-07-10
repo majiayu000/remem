@@ -1,10 +1,15 @@
 mod artifact;
+mod compiler;
 mod evaluator;
 mod store;
 
 pub use artifact::{
     CompiledRule, CompiledRulesArtifact, RuleAction, RuleOverrideState, RulePredicate,
     ARTIFACT_VERSION,
+};
+pub use compiler::{
+    classify_preference_predicate, compile_project_rules, run_compile_rules_job, CompileOutcome,
+    PreferenceClassification, PreferencePredicate,
 };
 pub use evaluator::{
     evaluate_artifact, evaluate_artifact_file, EvaluationDiagnostic, EvaluationInput,

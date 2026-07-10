@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.196` for GH-671 T3 preference rule compiler:
+  canonical preference reinforcement state (migration `v065_preference_reinforcement`
+  wiring the v062 `memory_preference_reinforcements` table via the apply path) and a
+  worker-only rule compiler (`JobType::CompileRules`) with eligibility selection,
+  user-override merge, source lifecycle removal, and newest-source conflict resolution.
 - Staged source version `0.5.195` for GH-684 Summary upgrade handling:
   migration v064 now rejects non-terminal legacy `JobType::Summary` jobs as
   permanent failures during upgrade, preserving terminal job history and other

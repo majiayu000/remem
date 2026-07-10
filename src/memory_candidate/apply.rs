@@ -175,6 +175,16 @@ pub(super) fn promote_candidate_to_memory_with_route(
         )?;
         plan.target_memory_id = Some(memory_id);
         let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
+        if candidate.memory_type == "preference" {
+            crate::memory::preference::reinforcement::persist_preference_reinforcement(
+                conn,
+                memory_id,
+                &superseded_ids,
+                &candidate.text,
+                now,
+            )?;
+            maybe_enqueue_rule_compilation(conn, &memory_project);
+        }
         let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
         crate::memory::edge::insert_memory_edge(
             conn,
@@ -562,6 +572,43 @@ fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &st
     let entities = crate::retrieval::entity::extract_entities(title, content);
     crate::retrieval::entity::refresh_memory_entities(conn, id, &entities)
         .with_context(|| format!("entity refresh failed for memory id={id}"))
+}
+
+/// Best-effort enqueue of a background rule-compilation job for `project`.
+///
+/// Compilation and artifact writes happen only in the worker; this merely
+/// schedules that work. Gated behind the disabled-by-default
+/// `rule_compilation.enabled` config. Failures here are optional-feature
+/// failures that must not break memory promotion (U-29: primary flow still
+/// works), so they are logged at warning level and swallowed.
+fn maybe_enqueue_rule_compilation(conn: &Connection, project: &str) {
+    let enabled = match crate::runtime_config::rule_compilation_config() {
+        Ok(config) => config.enabled,
+        Err(error) => {
+            crate::log::warn(
+                "rules",
+                &format!("skipping rule compilation enqueue; config unreadable: {error}"),
+            );
+            return;
+        }
+    };
+    if !enabled {
+        return;
+    }
+    if let Err(error) = crate::db::enqueue_job(
+        conn,
+        "worker",
+        crate::db::JobType::CompileRules,
+        project,
+        None,
+        "{}",
+        100,
+    ) {
+        crate::log::warn(
+            "rules",
+            &format!("failed to enqueue rule compilation for {project}: {error}"),
+        );
+    }
 }
 
 fn soft_supersede_routed(

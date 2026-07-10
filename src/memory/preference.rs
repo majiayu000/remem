@@ -1,4 +1,5 @@
 pub(crate) mod consolidation;
+pub(crate) mod reinforcement;
 
 mod command;
 mod query;
