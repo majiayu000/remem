@@ -181,7 +181,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             days,
             weeks,
         } => run_usage(project.as_deref(), days, weeks)?,
-        Commands::Status { json } => run_status(json)?,
+        Commands::Status { json, share } => run_status(json, share)?,
         Commands::Doctor { json, quiet } => {
             let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;
             let code = outcome.exit_code();
