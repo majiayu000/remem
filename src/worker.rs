@@ -55,8 +55,9 @@ async fn process_job(job: &db::Job) -> Result<()> {
             Ok(())
         }
         db::JobType::Summary => {
-            summarize::process_summary_job_input(&job.host, None, &job.payload_json).await?;
-            Ok(())
+            anyhow::bail!(
+                "legacy Summary jobs are retired; SessionRollup owns session summary output"
+            )
         }
         db::JobType::Compress => {
             let profile = job_profile(&job.payload_json);
@@ -120,13 +121,12 @@ fn run_idle_embedding_backfill(conn: &rusqlite::Connection) -> Result<bool> {
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     let started_at_epoch = chrono::Utc::now().timestamp();
     let mode = if once { "once" } else { "daemon" };
-    let lease_owner = format!(
-        "worker-{}-{}-{}",
+    let lease_owner = db::current_worker_owner(
         mode,
         std::process::id(),
-        chrono::Utc::now().timestamp_millis()
+        chrono::Utc::now().timestamp_millis(),
     );
-    let Some(_singleton) = lock::acquire_worker_singleton()? else {
+    let Some(_singleton) = lock::acquire_worker_singleton_for_mode(once)? else {
         crate::log::info("worker", "worker already running, exiting");
         return Ok(());
     };
@@ -157,6 +157,16 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             );
         }
         db::maintain_failure_lifecycle(&conn)?;
+        if crate::extraction_worker::run_next(
+            &lease_owner,
+            JOB_LEASE_SECS,
+            EXTRACTION_TASK_TIMEOUT_SECS,
+        )
+        .await?
+        {
+            continue;
+        }
+
         if let Some(job) = db::claim_next_job(&mut conn, &lease_owner, JOB_LEASE_SECS)? {
             crate::log::info(
                 "worker",
@@ -203,16 +213,6 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                     );
                 }
             }
-            continue;
-        }
-
-        if crate::extraction_worker::run_next(
-            &lease_owner,
-            JOB_LEASE_SECS,
-            EXTRACTION_TASK_TIMEOUT_SECS,
-        )
-        .await?
-        {
             continue;
         }
 
@@ -279,6 +279,63 @@ mod tests {
         anyhow::ensure!(
             last_error.is_none(),
             "legacy job should not record an error"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn worker_rejects_legacy_summary_job_without_retry() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-reject-legacy-summary");
+        let conn = db::open_db()?;
+        let job_id = db::enqueue_job(
+            &conn,
+            "codex-cli",
+            db::JobType::Summary,
+            "/tmp/remem",
+            Some("sess-legacy-summary"),
+            r#"{"host":"codex-cli","session_id":"sess-legacy-summary","project":"/tmp/remem"}"#,
+            50,
+        )?;
+        drop(conn);
+
+        run(true, 10).await?;
+
+        let conn = db::open_db()?;
+        let (state, attempt_count, next_retry, last_error, failure_class): (
+            String,
+            i64,
+            i64,
+            Option<String>,
+            Option<String>,
+        ) = conn.query_row(
+            "SELECT state, attempt_count, next_retry_epoch, last_error, failure_class
+             FROM jobs WHERE id = ?1",
+            params![job_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )?;
+        anyhow::ensure!(state == "failed", "expected failed job, got {state}");
+        anyhow::ensure!(
+            attempt_count == 1,
+            "legacy Summary rejection should consume one attempt, got {attempt_count}"
+        );
+        anyhow::ensure!(next_retry == 0, "legacy Summary job should not retry");
+        anyhow::ensure!(
+            last_error
+                .as_deref()
+                .is_some_and(|err| err.contains("legacy Summary jobs are retired")),
+            "expected retired Summary error, got {last_error:?}"
+        );
+        anyhow::ensure!(
+            failure_class.as_deref() == Some("permanent"),
+            "expected permanent failure, got {failure_class:?}"
         );
         Ok(())
     }
@@ -380,8 +437,9 @@ mod tests {
         let Some(heartbeat) = db::latest_worker_heartbeat(&conn)? else {
             anyhow::bail!("worker --once should record startup heartbeat");
         };
+        let expected_prefix = format!("worker-v{}-once-", env!("CARGO_PKG_VERSION"));
         anyhow::ensure!(
-            heartbeat.owner.starts_with("worker-once-"),
+            heartbeat.owner.starts_with(&expected_prefix),
             "unexpected heartbeat owner {}",
             heartbeat.owner
         );
@@ -443,7 +501,10 @@ mod tests {
 
         let conn = db::open_db()?;
         let update_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM heartbeat_updates WHERE owner LIKE 'worker-once-%'",
+            "SELECT COUNT(*)
+             FROM heartbeat_updates
+             WHERE owner LIKE 'worker-once-%'
+                OR owner LIKE 'worker-v%-once-%'",
             [],
             |row| row.get(0),
         )?;
@@ -491,7 +552,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn daemon_and_once_are_mutually_exclusive() -> anyhow::Result<()> {
+    async fn old_version_daemon_lock_allows_current_once_heartbeat() -> anyhow::Result<()> {
         let _data_dir = ScopedTestDataDir::new("worker-daemon-once-mutual-exclusion");
         let Some(_daemon_lock) = lock::acquire_worker_singleton()? else {
             anyhow::bail!("test daemon lock should acquire");
@@ -503,13 +564,15 @@ mod tests {
 
         run(true, 10).await?;
 
-        let conn = db::open_db()?;
-        let Some(heartbeat) = db::latest_worker_heartbeat(&conn)? else {
-            anyhow::bail!("daemon heartbeat should remain present");
-        };
+        let expected_prefix = format!("worker-v{}-once-", env!("CARGO_PKG_VERSION"));
+        let current_once_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM worker_heartbeats WHERE owner LIKE ?1",
+            params![format!("{expected_prefix}%")],
+            |row| row.get(0),
+        )?;
         anyhow::ensure!(
-            heartbeat.owner == daemon_owner,
-            "worker --once should not replace daemon heartbeat while daemon holds singleton"
+            current_once_count == 1,
+            "worker --once should record one current-version heartbeat after bypass, got {current_once_count}"
         );
         Ok(())
     }

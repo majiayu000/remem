@@ -16,7 +16,8 @@ use maintenance::{
 };
 use query::{query_surface_stats, SurfaceQuery};
 use sql::{
-    count_archived_rows, count_purgeable_extraction_tasks, cutoff_epoch, failure_columns_available,
+    column_exists, count_archived_rows, count_purgeable_extraction_tasks, cutoff_epoch,
+    failure_columns_available, table_exists,
 };
 
 pub const FAILURE_RETENTION_DAYS: i64 = 14;
@@ -100,6 +101,7 @@ pub fn classify_failure(error: &str) -> FailureClass {
         "unsupported version",
         "missing evidence",
         "not implemented",
+        "retired",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -114,13 +116,14 @@ pub fn query_failure_lifecycle_stats(
     conn: &Connection,
     now_epoch: i64,
 ) -> Result<FailureLifecycleStats> {
+    let job_failed_predicate = job_failed_predicate(conn)?;
     Ok(FailureLifecycleStats {
         pending_observation: query_surface_stats(
             conn,
             SurfaceQuery {
                 surface: "pending_observation",
                 table: "pending_observations",
-                failed_predicate: "status = 'failed'",
+                failed_predicate: "status = 'failed'".into(),
                 attempt_column: "attempt_count",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -132,7 +135,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "extraction_task",
                 table: "extraction_tasks",
-                failed_predicate: "status = 'failed'",
+                failed_predicate: "status = 'failed'".into(),
                 attempt_column: "attempts",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -144,7 +147,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "extraction_replay_range",
                 table: "extraction_replay_ranges",
-                failed_predicate: "status IN ('pending', 'failed', 'quarantined')",
+                failed_predicate: "status IN ('pending', 'failed', 'quarantined')".into(),
                 attempt_column: "attempts",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -156,7 +159,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "job",
                 table: "jobs",
-                failed_predicate: "state = 'failed'",
+                failed_predicate: job_failed_predicate,
                 attempt_column: "attempt_count",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -164,6 +167,24 @@ pub fn query_failure_lifecycle_stats(
             now_epoch,
         )?,
     })
+}
+
+fn job_failed_predicate(conn: &Connection) -> Result<std::borrow::Cow<'static, str>> {
+    if table_exists(conn, "jobs")?
+        && column_exists(conn, "jobs", "job_type")?
+        && column_exists(conn, "jobs", "failure_class")?
+        && column_exists(conn, "jobs", "last_error")?
+    {
+        Ok("state = 'failed'
+            AND NOT (
+              job_type = 'summary'
+              AND failure_class = 'permanent'
+              AND last_error = 'legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output'
+            )"
+        .into())
+    } else {
+        Ok("state = 'failed'".into())
+    }
 }
 
 pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleMaintenance> {

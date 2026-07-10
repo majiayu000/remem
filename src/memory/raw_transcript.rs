@@ -1,3 +1,5 @@
+use std::io::Read;
+
 use serde_json::Value;
 
 use super::raw_archive::{ROLE_ASSISTANT, ROLE_USER};
@@ -6,6 +8,28 @@ pub(crate) struct ParsedTranscriptMessage {
     pub role: &'static str,
     pub text: String,
     pub created_at_epoch: Option<i64>,
+}
+
+pub(crate) fn read_transcript_content(
+    transcript_path: &str,
+    byte_limit: Option<u64>,
+) -> std::io::Result<String> {
+    let Some(byte_limit) = byte_limit else {
+        return std::fs::read_to_string(transcript_path);
+    };
+    let file = std::fs::File::open(transcript_path)?;
+    let mut content = String::new();
+    file.take(byte_limit).read_to_string(&mut content)?;
+    if content.len() as u64 != byte_limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            format!(
+                "transcript truncated before captured boundary: expected {byte_limit} bytes, read {}",
+                content.len()
+            ),
+        ));
+    }
+    Ok(content)
 }
 
 pub(crate) fn parse_transcript_message(value: &Value) -> Option<ParsedTranscriptMessage> {

@@ -11,6 +11,7 @@ fn classifier_maps_known_permanent_patterns() {
         "unsupported version marker",
         "missing evidence rows",
         "rule candidate extraction is not implemented",
+        "legacy summary writer retired",
     ] {
         assert_eq!(classify_failure(error), FailureClass::Permanent);
     }
@@ -214,6 +215,34 @@ fn maintenance_requeues_due_transient_job_failure() -> Result<()> {
     assert_eq!(state, "pending");
     assert_eq!(failure_class, None);
     assert_eq!(failed_at, None);
+    Ok(())
+}
+
+#[test]
+fn upgrade_summary_rejections_are_not_actionable_but_worker_rejections_are() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    for (error, session_id) in [
+        (
+            "legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output",
+            "sess-upgrade-rejected",
+        ),
+        (
+            "legacy Summary jobs are retired; SessionRollup owns session summary output",
+            "sess-worker-rejected",
+        ),
+    ] {
+        let id = seed_job_failure(&conn, now - 1_000, "permanent", 3)?;
+        conn.execute(
+            "UPDATE jobs SET last_error = ?1, session_id = ?2 WHERE id = ?3",
+            params![error, session_id, id],
+        )?;
+    }
+
+    let stats = query_failure_lifecycle_stats(&conn, now)?;
+
+    assert_eq!(stats.job.actionable_total, 1);
+    assert_eq!(stats.job.permanent, 1);
     Ok(())
 }
 

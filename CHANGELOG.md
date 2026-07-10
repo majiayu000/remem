@@ -3,6 +3,38 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.195` for GH-684 Summary upgrade handling:
+  migration v064 now rejects non-terminal legacy `JobType::Summary` jobs as
+  permanent failures during upgrade, preserving terminal job history and other
+  job types while SessionRollup owns session summary output; Stop hooks no
+  longer enqueue new Summary jobs, capture-ledger failures spill instead of
+  falling back to the retired writer, same-session stale spills are skipped
+  after the current stop payload succeeds, raw/citation/failure-lesson Stop
+  side effects are owned by the hook path before follow-up enqueue, citation
+  recording errors log at error level without blocking follow-up jobs, retryable
+  failed Summary rows are frozen during upgrade, doctor/status ignore explicit
+  v064 upgrade rejection rows as freeze blockers and actionable failed jobs,
+  post-retirement worker rejections stay visible, spill replay compares the
+  full host/project/session identity before dropping stale rows, replayed Stop
+  captures use stable event IDs so later retry failures stay idempotent,
+  replay capture-ledger failures are preserved once by the replay layer instead
+  of duplicating active spill rows, old-version daemon heartbeats no longer
+  suppress the Stop-hook `worker --once` fallback even when the old daemon
+  still holds the legacy singleton lock, migration v064 requeues SessionRollup
+  leases claimed before the binary upgrade, workers run extraction tasks before
+  Compress/Dream jobs, and worker execution rejects legacy Summary jobs without
+  retry if an already-claimed job reaches the runner. SessionRollup side effects
+  load the exact persisted event range, and required raw-archive, workstream,
+  and native-memory failures keep the extraction task retryable instead of
+  completing with missing memory state. Transcript-only Stop payloads now
+  snapshot their transcript byte boundary, then record memory citations and
+  distill failure lessons after bounded worker-side raw ingest. Coalesced
+  rollups drain every covered Stop payload, deduplicate repeated transcript
+  paths at the widest captured boundary, and bind summary-candidate evidence
+  to the exact persisted event range instead of a later session capture;
+  retries of those signals no longer suppress persisted rollup maintenance. A
+  versioned once-launch heartbeat prevents overlapping fallback workers while
+  an old daemon is still alive during upgrade.
 - Staged source version `0.5.194`: `remem status --share` prints a compact,
   screenshot-friendly summary card (totals, today delta, repo URL) that omits
   database paths and project names for safe public sharing.

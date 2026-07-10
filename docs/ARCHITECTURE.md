@@ -123,52 +123,56 @@ redacted tool evidence in `captured_events`; large payloads spill to
 ```
 Stop hook fires
        │
-       ├─ Enqueue summary/compress/dream jobs
-       └─ Spawn background worker (6ms return)
+       ├─ Capture session_stop → coalesced SessionRollup task
+       ├─ Record immediately available citations + failure lessons
+       └─ Ensure a current background worker is available
        │
        ▼
-  summary worker claims job
+  worker claims extraction_tasks before background jobs
        │
-       ├─ Gate 1: summary evidence too small → skip
-       ├─ Gate 2: project cooldown 300s → skip (prevent duplicates)
-       ├─ Gate 3: message hash match → skip (prevent duplicate content)
-       ├─ Acquire summarize_locks row (prevent parallel AI calls)
+       ├─ SessionRollup
+       │    ├─ Load the captured_events range
+       │    ├─ Ingest raw transcript through the Stop-captured byte boundary
+       │    ├─ Finalize transcript-backed citations + failure lessons
+       │    ├─ AI → semantic summary + topic segments
+       │    ├─ Persist the exact event range
+       │    ├─ Candidates/workstream/native-memory/user-context side effects
+       │    └─ Enqueue Compress/Dream only after required side effects succeed
        │
-       ▼
-  process extraction_tasks
-       │
-       ├─ Load captured_events range
-       ├─ Single AI call → structured observations/candidates
-       ├─ File overlap detection → mark old observations stale
-       ├─ Raw transcript failure lessons → deterministic lesson feed
-       │
-       ▼
-  summarize (session summary)
-       │
-       ├─ Inject same-session old summary (incremental merge)
-       ├─ AI generates → replaces old summary
+       ├─ ObservationExtract
+       │    ├─ Load captured_events + prior semantic rollup context
+       │    ├─ AI → structured observations
+       │    ├─ File overlap detection → mark old observations stale
+       │    └─ Enqueue memory/graph/rule candidate follow-ups
        │
        ▼
-  promote (summary → memories)
+  process Compress/Dream jobs
        │
-       ├─ Extract decisions, preferences, discoveries
-       ├─ Upsert by topic_key (dedup across sessions)
-       │
-       ▼
-  maybe_compress (long-term compression)
-       │
-       └─ >100 active observations → oldest 30 merged into 1-2 summaries
+       └─ Long-term compression and governed dream consolidation
 ```
 
-During GH684 convergence, the legacy Summary job still owns Stop-hook side
-effects such as summary-derived candidates, workstream updates, raw archive
-ingest, cooldown, and native-memory sync. Capture-ledger `SessionRollup` rows
-now persist semantic request, decisions, learned, next_steps, and preferences
-fields into `session_summaries`, so current recent-session, context,
-user-context, and native-memory readers may consume those semantic rollup rows.
-Readers continue to hide synthetic `Captured event range ...` fallback titles
-while Summary remains dual-written. Retiring `JobType::Summary` waits for the
-remaining GH684 side-effect and upgrade slices.
+GH684-T7 removes the legacy Summary job from the production Stop path. Stop
+captures now enqueue `SessionRollup`; the rollup worker persists semantic
+request, decisions, learned, next_steps, and preferences fields, then owns raw
+archive ingest, summary-derived candidates, workstream updates, native-memory
+sync, user-context follow-up extraction, and Compress/Dream scheduling. A
+failed required side effect leaves the extraction task retryable against the
+already-persisted range instead of silently completing with missing memory.
+Transcript-only citation and failure-lesson side effects run after bounded raw
+archive ingest on the worker; their retry errors do not suppress the other
+persisted rollup side effects. When several Stop captures coalesce into one
+range, the worker drains each distinct transcript path at its widest captured
+boundary and preserves pathless hook fallbacks; summary-derived candidates use
+only the covered event IDs and source text from that same range. Stop payloads
+that already include the final assistant message may record those idempotent
+signals immediately. Versioned once-worker launch heartbeats prevent repeated
+Stop hooks from spawning overlapping current workers during an old-daemon
+upgrade window.
+Migration v064 permanently rejects queued legacy Summary jobs and requeues any
+SessionRollup lease held across the binary upgrade. Readers continue to hide
+synthetic `Captured event range ...` fallback titles. The unused legacy
+finalize code remains only for the later guarded-removal phase described by
+GH684; it has no production caller after T7.
 
 ### 4. Context Injection (SessionStart → context)
 
