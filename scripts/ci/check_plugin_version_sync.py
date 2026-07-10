@@ -18,6 +18,7 @@ CHANGELOG = ROOT / "CHANGELOG.md"
 PLUGIN_JSON = ROOT / "plugins/remem/.codex-plugin/plugin.json"
 RELEASES_JSON = ROOT / "plugins/remem/runtimes/remem-releases.json"
 NPM_PACKAGE_JSON = ROOT / "npm/remem/package.json"
+MCP_SERVER_JSON = ROOT / "server.json"
 NPM_INSTALL_JS = ROOT / "npm/remem/scripts/install.js"
 NPM_INSTALL_VERSION_SOURCE = 'require("../package.json").version'
 RELEASE_PLATFORMS = ("darwin-arm64", "darwin-x64", "linux-arm64", "linux-x64")
@@ -71,6 +72,28 @@ def npm_version() -> str:
     if not isinstance(version, str) or not version.strip():
         raise ValueError("npm/remem/package.json is missing version")
     return version
+
+
+def mcp_server_json_errors(cargo: str) -> list[str]:
+    manifest = read_json(MCP_SERVER_JSON)
+    errors: list[str] = []
+    version = manifest.get("version")
+    if version != cargo:
+        errors.append(f"server.json version is {version!r}, expected {cargo}")
+    packages = manifest.get("packages")
+    if not isinstance(packages, list) or not packages:
+        errors.append("server.json is missing a non-empty packages array")
+        return errors
+    for index, package in enumerate(packages):
+        if not isinstance(package, dict):
+            errors.append(f"server.json packages[{index}] must be an object")
+            continue
+        package_version = package.get("version")
+        if package_version != cargo:
+            errors.append(
+                f"server.json packages[{index}] version is {package_version!r}, expected {cargo}"
+            )
+    return errors
 
 
 def npm_install_version_source_error() -> str | None:
@@ -209,6 +232,7 @@ def main() -> int:
     npm_install_error = npm_install_version_source_error()
     if npm_install_error is not None:
         errors.append(npm_install_error)
+    errors.extend(mcp_server_json_errors(cargo))
     errors.extend(release_metadata_errors(cargo, releases, base_url, assets, release_state))
     changelog_error = changelog_current_version_error(cargo)
     if changelog_error is not None:
@@ -221,7 +245,7 @@ def main() -> int:
         print(
             "Update Cargo.toml, Cargo.lock, plugins/remem/.codex-plugin/plugin.json, "
             "plugins/remem/runtimes/remem-releases.json, npm/remem/package.json, "
-            "and CHANGELOG.md together.",
+            "server.json, and CHANGELOG.md together.",
             file=sys.stderr,
         )
         return 1
@@ -230,7 +254,7 @@ def main() -> int:
     print(
         "plugin version sync: "
         f"{cargo} across Cargo.toml, Cargo.lock, plugin.json, remem-releases.json, "
-        f"npm, and CHANGELOG ({rendered_release_state})"
+        f"npm, server.json, and CHANGELOG ({rendered_release_state})"
     )
     return 0
 

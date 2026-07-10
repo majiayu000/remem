@@ -271,3 +271,23 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
+
+  publish-mcp-registry:
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Check version sync
+        run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m).tar.gz" | tar xz mcp-publisher
+      - name: Publish to MCP registry
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
