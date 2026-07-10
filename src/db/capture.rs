@@ -2,6 +2,9 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::ExtractionTaskKind;
+use extraction_task::{coalesce_extraction_task, existing_extraction_task_id};
+
+mod extraction_task;
 
 const DIRECT_CONTENT_BYTES: usize = 16 * 1024;
 
@@ -98,6 +101,14 @@ fn record_captured_event_inner(
         .map(ToString::to_string)
         .unwrap_or_else(|| synthesize_event_id(input.event_type, &content_hash));
     let identity = upsert_identity(conn, input, now)?;
+    let existing_event_row_id: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM captured_events
+             WHERE host_id = ?1 AND session_id = ?2 AND event_id = ?3",
+            params![identity.host_id, input.session_id, event_id],
+            |row| row.get(0),
+        )
+        .optional()?;
     let (content_text, content_blob_id, retention_class) =
         store_content(conn, &sanitized_content, &content_hash, now)?;
     let token_estimate = estimate_tokens(&sanitized_content);
@@ -140,13 +151,26 @@ fn record_captured_event_inner(
     )?;
 
     let extraction_task_id = if let Some(kind) = input.task_kind {
-        Some(coalesce_extraction_task(
-            conn,
-            identity,
-            kind,
-            event_row_id,
-            now,
-        )?)
+        if existing_event_row_id.is_some() {
+            match existing_extraction_task_id(conn, identity, kind)? {
+                Some(task_id) => Some(task_id),
+                None => Some(coalesce_extraction_task(
+                    conn,
+                    identity,
+                    kind,
+                    event_row_id,
+                    now,
+                )?),
+            }
+        } else {
+            Some(coalesce_extraction_task(
+                conn,
+                identity,
+                kind,
+                event_row_id,
+                now,
+            )?)
+        }
     } else {
         None
     };
@@ -338,80 +362,6 @@ fn matching_legacy_blob_id(conn: &Connection, content: &str) -> Result<Option<i6
     }
 }
 
-fn coalesce_extraction_task(
-    conn: &Connection,
-    identity: IdentityIds,
-    kind: ExtractionTaskKind,
-    event_row_id: i64,
-    now: i64,
-) -> Result<i64> {
-    let idempotency_key = format!(
-        "{}:{}:{}:{}",
-        identity.host_id,
-        identity.project_id,
-        identity.session_row_id,
-        kind.as_str()
-    );
-    conn.execute(
-        "INSERT INTO extraction_tasks
-         (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
-          idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
-          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch, updated_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, NULL, ?8, 0, NULL, NULL, NULL, NULL, ?9, ?9)
-         ON CONFLICT(idempotency_key) DO UPDATE SET
-             high_watermark_event_id = MAX(COALESCE(extraction_tasks.high_watermark_event_id, 0), excluded.high_watermark_event_id),
-             status = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN 'pending'
-                 ELSE extraction_tasks.status
-             END,
-             -- Reviving a terminal task resets its retry budget: the old
-             -- attempts counted a range the exhaust path already skipped, so
-             -- the new range must start with fresh attempts or it would fail
-             -- terminally on its first defer.
-             attempts = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN 0
-                 ELSE extraction_tasks.attempts
-             END,
-             next_retry_epoch = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.next_retry_epoch
-             END,
-             last_error = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.last_error
-             END,
-             failure_class = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.failure_class
-             END,
-             failed_at_epoch = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.failed_at_epoch
-             END,
-             archived_at_epoch = CASE
-                 WHEN extraction_tasks.status IN ('done', 'failed') THEN NULL
-                 ELSE extraction_tasks.archived_at_epoch
-             END,
-             updated_at_epoch = excluded.updated_at_epoch",
-        params![
-            kind.as_str(),
-            identity.host_id,
-            identity.workspace_id,
-            identity.project_id,
-            identity.session_row_id,
-            kind.priority(),
-            idempotency_key,
-            event_row_id,
-            now
-        ],
-    )?;
-    Ok(conn.query_row(
-        "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
-        params![idempotency_key],
-        |row| row.get(0),
-    )?)
-}
-
 fn exact_hash(content: &str) -> String {
     crate::db::content_identity_hash(content.as_bytes())
 }
@@ -446,11 +396,30 @@ fn estimate_tokens(content: &str) -> i64 {
 
 pub(crate) fn redact_capture_content(content: &str) -> String {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(content) {
-        let redacted = crate::adapter::common::redact_sensitive_value(&value);
+        let mut redacted = crate::adapter::common::redact_sensitive_value(&value);
+        preserve_capture_path_field(&mut redacted, &value, "cwd");
+        preserve_capture_path_field(&mut redacted, &value, "transcript_path");
         return serde_json::to_string(&redacted)
             .unwrap_or_else(|_| crate::adapter::common::redact_sensitive_text(content));
     }
     crate::adapter::common::redact_sensitive_text(content)
+}
+
+fn preserve_capture_path_field(
+    redacted: &mut serde_json::Value,
+    original: &serde_json::Value,
+    key: &str,
+) {
+    let (Some(redacted_obj), Some(original_obj)) = (redacted.as_object_mut(), original.as_object())
+    else {
+        return;
+    };
+    if let Some(original_value) = original_obj.get(key).and_then(serde_json::Value::as_str) {
+        redacted_obj.insert(
+            key.to_string(),
+            serde_json::Value::String(original_value.to_string()),
+        );
+    }
 }
 
 fn compact_preview(content: &str, max_bytes: usize) -> String {
@@ -707,6 +676,29 @@ mod tests {
         assert!(!stored.contains("hunter2"));
         assert!(!stored.contains("github_pat_secret"));
         assert!(!stored.contains("ghp_abcdefghijklmnopqrstuvwxyz123456"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_redaction_preserves_stop_payload_paths_for_worker_side_effects() -> Result<()> {
+        let content = serde_json::json!({
+            "cwd": "/Users/apple/.claude/projects/remem-abcdef1234567890abcdef1234567890",
+            "transcript_path": "/Users/apple/.claude/projects/remem/session-abcdef1234567890abcdef1234567890.jsonl",
+            "api_key": "sk-secret-value"
+        })
+        .to_string();
+
+        let redacted: serde_json::Value = serde_json::from_str(&redact_capture_content(&content))?;
+
+        assert_eq!(
+            redacted["cwd"].as_str(),
+            Some("/Users/apple/.claude/projects/remem-abcdef1234567890abcdef1234567890")
+        );
+        assert_eq!(
+            redacted["transcript_path"].as_str(),
+            Some("/Users/apple/.claude/projects/remem/session-abcdef1234567890abcdef1234567890.jsonl")
+        );
+        assert_eq!(redacted["api_key"].as_str(), Some("[REDACTED]"));
         Ok(())
     }
 

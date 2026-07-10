@@ -111,11 +111,23 @@ fn legacy_summary_job_surface(conn: &Connection) -> Result<LegacySurfaceStats> {
         } else {
             ""
         };
+        let rejection_filter = if column_exists(conn, "jobs", "failure_class")?
+            && column_exists(conn, "jobs", "last_error")?
+        {
+            "AND NOT (
+                 state = 'failed'
+                 AND failure_class = 'permanent'
+                 AND last_error = 'legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output'
+               )"
+        } else {
+            ""
+        };
         conn.query_row(
             &format!(
                 "SELECT COUNT(*) FROM jobs
                  WHERE job_type = 'summary'
                    AND state <> 'done'
+                   {rejection_filter}
                    {archived_filter}"
             ),
             [],

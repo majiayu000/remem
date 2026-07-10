@@ -291,6 +291,18 @@ pub fn drain_transcript(
     )
 }
 
+pub fn raw_ingest_status(report: &RawIngestReport) -> &'static str {
+    if report.read_error.is_some() {
+        "read_failed"
+    } else if report.parse_errors > 0 || report.insert_errors > 0 {
+        "partial"
+    } else if report.inserted == 0 && report.duplicates > 0 {
+        "duplicate_only"
+    } else {
+        "ok"
+    }
+}
+
 /// Drain a transcript with an explicit source root and partial-tail policy.
 #[allow(clippy::too_many_arguments)]
 pub fn drain_transcript_with_options(
@@ -302,34 +314,58 @@ pub fn drain_transcript_with_options(
     cwd: Option<&str>,
     options: &TranscriptDrainOptions<'_>,
 ) -> Result<RawIngestReport> {
-    let content = match std::fs::read_to_string(transcript_path) {
-        Ok(content) => content,
-        Err(error) => {
-            let report = RawIngestReport {
-                read_error: Some(format!(
-                    "read transcript {} failed: {}",
-                    transcript_path, error
-                )),
-                ..RawIngestReport::default()
-            };
-            crate::log::warn(
-                "raw-archive",
-                report
-                    .read_error
-                    .as_deref()
-                    .unwrap_or("read transcript failed"),
-            );
-            record_raw_ingest_failure(
-                conn,
-                session_id,
-                project,
-                SOURCE_TRANSCRIPT,
-                Some(transcript_path),
-                &report,
-            )?;
-            return Ok(report);
-        }
-    };
+    drain_transcript_with_capture_limit(
+        conn,
+        transcript_path,
+        session_id,
+        project,
+        branch,
+        cwd,
+        options,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drain_transcript_with_capture_limit(
+    conn: &Connection,
+    transcript_path: &str,
+    session_id: &str,
+    project: &str,
+    branch: Option<&str>,
+    cwd: Option<&str>,
+    options: &TranscriptDrainOptions<'_>,
+    byte_limit: Option<u64>,
+) -> Result<RawIngestReport> {
+    let content =
+        match crate::memory::raw_transcript::read_transcript_content(transcript_path, byte_limit) {
+            Ok(content) => content,
+            Err(error) => {
+                let report = RawIngestReport {
+                    read_error: Some(format!(
+                        "read transcript {} failed: {}",
+                        transcript_path, error
+                    )),
+                    ..RawIngestReport::default()
+                };
+                crate::log::warn(
+                    "raw-archive",
+                    report
+                        .read_error
+                        .as_deref()
+                        .unwrap_or("read transcript failed"),
+                );
+                record_raw_ingest_failure(
+                    conn,
+                    session_id,
+                    project,
+                    SOURCE_TRANSCRIPT,
+                    Some(transcript_path),
+                    &report,
+                )?;
+                return Ok(report);
+            }
+        };
 
     let mut report = RawIngestReport::default();
     let line_count = content.lines().count();

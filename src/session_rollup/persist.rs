@@ -18,7 +18,7 @@ pub(super) fn persist_session_rollup(
     let now = chrono::Utc::now();
     let created_at = now.to_rfc3339();
     let created_at_epoch = now.timestamp();
-    let memory_session_id = format!("capture-rollup-{session_row_id}");
+    let memory_session_id = rollup_memory_session_id(session_row_id);
     let fallback_request = format!(
         "Captured event range {}..{}",
         range.from_event_id, range.to_event_id
@@ -88,6 +88,10 @@ pub(super) fn persist_session_rollup(
 
     tx.commit()?;
     Ok(())
+}
+
+pub(super) fn rollup_memory_session_id(session_row_id: i64) -> String {
+    format!("capture-rollup-{session_row_id}")
 }
 
 fn estimate_discovery_tokens(output: &RollupOutput) -> i64 {

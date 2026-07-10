@@ -285,6 +285,65 @@ fn search_branch_filter_keeps_matching_and_branchless_raw_messages() {
 }
 
 #[test]
+fn drain_transcript_honors_captured_byte_limit() -> Result<()> {
+    let conn = setup_conn();
+    let first =
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"before stop"}]}}"#;
+    let second =
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"after stop"}]}}"#;
+    let path = write_temp_transcript("raw-byte-limit", &format!("{first}\n{second}\n"))?;
+    let options = TranscriptDrainOptions::default();
+
+    let report = drain_transcript_with_capture_limit(
+        &conn,
+        path.to_string_lossy().as_ref(),
+        "session-byte-limit",
+        "/proj",
+        None,
+        None,
+        &options,
+        Some((first.len() + 1) as u64),
+    )?;
+
+    assert_eq!(report.inserted, 1);
+    let contents: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT content FROM raw_messages WHERE session_id = 'session-byte-limit' ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    assert_eq!(contents, vec!["before stop".to_string()]);
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
+fn drain_transcript_rejects_content_truncated_before_captured_boundary() -> Result<()> {
+    let conn = setup_conn();
+    let content = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"kept"}]}}"#;
+    let path = write_temp_transcript("raw-truncated-boundary", content)?;
+    let options = TranscriptDrainOptions::default();
+
+    let report = drain_transcript_with_capture_limit(
+        &conn,
+        path.to_string_lossy().as_ref(),
+        "session-truncated-boundary",
+        "/proj",
+        None,
+        None,
+        &options,
+        Some(content.len() as u64 + 10),
+    )?;
+
+    assert!(report.read_error.is_some());
+    assert_eq!(report.inserted, 0);
+    assert_eq!(raw_ingest_failure_count(&conn)?, 1);
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
 fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
     let conn = setup_conn();
     let path = write_temp_transcript(

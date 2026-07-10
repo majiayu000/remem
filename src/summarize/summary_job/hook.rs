@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::db;
 use crate::hook_stdin::read_stdin_with_timeout;
@@ -9,6 +9,7 @@ use crate::perf::{format_phase_timings, push_elapsed, time_result, PhaseTiming};
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 use super::host::resolve_hook_host;
+use super::replay::{replay_capture_event_id, SummaryPayloadOrigin};
 use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
 use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
@@ -64,15 +65,36 @@ pub(super) async fn summarize_input(
         }
     };
     time_result(&mut timings, "enqueue_summary_payload", || {
-        enqueue_summary_payload(&conn, input, Some(&host), profile)
+        enqueue_summary_payload(
+            &conn,
+            input,
+            Some(&host),
+            profile,
+            SummaryPayloadOrigin::Live,
+        )
     })?;
+    let current_identity =
+        SummaryPayloadIdentity::from_hook(&host, &hook, &cwd, &db::project_from_cwd(&cwd));
     if let Err(error) = time_result(&mut timings, "spill_replay", || {
         replay_spilled_summary_hook_payloads(&conn, |conn, record| {
+            if summary_payload_identity(&record.input, record.host.as_deref())?.as_ref()
+                == Some(&current_identity)
+            {
+                crate::log::info(
+                    "summarize",
+                    &format!(
+                        "skipped spilled summary hook payload for current identity host={} project={} session={}",
+                        current_identity.host, current_identity.project, current_identity.session_id
+                    ),
+                );
+                return Ok(());
+            }
             enqueue_summary_payload(
                 conn,
                 &record.input,
                 record.host.as_deref(),
                 record.profile.as_deref(),
+                SummaryPayloadOrigin::Replay,
             )
         })
     }) {
@@ -87,11 +109,8 @@ pub(super) async fn summarize_input(
         Ok(WorkerSpawnDecision::Spawned) => {
             crate::log::info("summarize", "worker --once spawned");
         }
-        Ok(WorkerSpawnDecision::SkippedHealthyDaemon) => {
-            crate::log::info(
-                "summarize",
-                "worker daemon heartbeat healthy; skip worker --once",
-            );
+        Ok(WorkerSpawnDecision::SkippedHealthyWorker) => {
+            crate::log::info("summarize", "worker heartbeat healthy; skip worker --once");
         }
         Ok(WorkerSpawnDecision::SkippedLaunchInProgress) => {
             crate::log::info(
@@ -111,11 +130,12 @@ pub(super) async fn summarize_input(
     Ok(())
 }
 
-fn enqueue_summary_payload(
+pub(super) fn enqueue_summary_payload(
     conn: &rusqlite::Connection,
     input: &str,
     host: Option<&str>,
     profile: Option<&str>,
+    origin: SummaryPayloadOrigin,
 ) -> Result<()> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
@@ -124,17 +144,73 @@ fn enqueue_summary_payload(
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
-    let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
-    let compress_payload = compress_payload(profile)?;
-
-    record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload);
-    enqueue_summary_jobs(
+    let summary_payload = match summary_payload_with_cwd(input, &cwd, profile) {
+        Ok(payload) => payload,
+        Err(error) => {
+            if origin.is_replay() {
+                crate::log::error(
+                    "summarize",
+                    &format!(
+                        "replayed Stop payload preparation failed; replay layer will preserve it: {error}"
+                    ),
+                );
+            } else {
+                let path =
+                    spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+                crate::log::error(
+                    "summarize",
+                    &format!(
+                        "Stop payload preparation failed; spilled summary hook payload to {}: {error}",
+                        path.display()
+                    ),
+                );
+            }
+            return Err(error);
+        }
+    };
+    let replay_event_id = origin
+        .is_replay()
+        .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
+    if let Err(error) = record_summary_capture_event(
         conn,
         &host,
         session_id,
         &project,
+        &cwd,
         &summary_payload,
-        &compress_payload,
+        replay_event_id.as_deref(),
+    ) {
+        let error_text = error.to_string();
+        if origin.is_replay() {
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "replayed capture ledger record failed; replay layer will preserve summary hook payload and skip follow-up jobs: {error_text}"
+                ),
+            );
+        } else {
+            let path = spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {}",
+                    path.display(),
+                    error_text
+                ),
+            );
+        }
+        anyhow::bail!(error_text);
+    }
+    let current_branch = db::detect_git_branch(&cwd);
+    super::side_effects::run_stop_hook_side_effects(
+        conn,
+        &host,
+        &hook,
+        session_id,
+        &project,
+        &cwd,
+        current_branch.as_deref(),
+        false,
     )?;
     Ok(())
 }
@@ -161,6 +237,26 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
             serde_json::Value::String(cwd.to_string()),
         );
     }
+    let transcript_path = obj
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if obj
+        .get("transcript_byte_len")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        if let Some(transcript_path) = transcript_path {
+            let metadata = std::fs::metadata(&transcript_path)
+                .with_context(|| format!("snapshot transcript length path={transcript_path}"))?;
+            obj.insert(
+                "transcript_byte_len".to_string(),
+                serde_json::Value::Number(metadata.len().into()),
+            );
+        }
+    }
     if let Some(profile) = clean_optional(profile) {
         obj.insert(
             crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
@@ -170,15 +266,43 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
     Ok(serde_json::to_string(&payload)?)
 }
 
-fn compress_payload(profile: Option<&str>) -> Result<String> {
-    let mut payload = serde_json::Map::new();
-    if let Some(profile) = clean_optional(profile) {
-        payload.insert(
-            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
-            serde_json::Value::String(profile),
-        );
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SummaryPayloadIdentity {
+    host: String,
+    session_id: String,
+    project: String,
+}
+
+impl SummaryPayloadIdentity {
+    fn from_hook(host: &str, hook: &SummarizeInput, cwd: &str, project: &str) -> Self {
+        Self {
+            host: host.to_string(),
+            session_id: hook.session_id.clone().unwrap_or_default(),
+            project: if project.trim().is_empty() {
+                db::project_from_cwd(cwd)
+            } else {
+                project.to_string()
+            },
+        }
     }
-    Ok(serde_json::to_string(&serde_json::Value::Object(payload))?)
+}
+
+fn summary_payload_identity(
+    input: &str,
+    host: Option<&str>,
+) -> Result<Option<SummaryPayloadIdentity>> {
+    let hook: SummarizeInput = serde_json::from_str(input)?;
+    let Some(session_id) = hook.session_id.clone() else {
+        return Ok(None);
+    };
+    let host = resolve_hook_host(host)?;
+    let cwd = effective_cwd(&hook)?;
+    let project = db::project_from_cwd(&cwd);
+    Ok(Some(SummaryPayloadIdentity {
+        host,
+        session_id,
+        project,
+    }))
 }
 
 fn record_summary_capture_event(
@@ -188,8 +312,9 @@ fn record_summary_capture_event(
     project: &str,
     cwd: &str,
     content: &str,
-) -> bool {
-    match db::record_captured_event(
+    event_id: Option<&str>,
+) -> Result<()> {
+    db::record_captured_event_with_id(
         conn,
         &db::CaptureEventInput {
             host,
@@ -202,71 +327,8 @@ fn record_summary_capture_event(
             content,
             task_kind: Some(db::ExtractionTaskKind::SessionRollup),
         },
-    ) {
-        Ok(_) => true,
-        Err(err) => {
-            crate::log::warn(
-                "summarize",
-                &format!(
-                    "capture ledger record failed; continuing summary enqueue: {}",
-                    err
-                ),
-            );
-            false
-        }
-    }
-}
-
-fn enqueue_summary_jobs(
-    conn: &rusqlite::Connection,
-    host: &str,
-    session_id: &str,
-    project: &str,
-    input: &str,
-    compress_input: &str,
-) -> Result<()> {
-    let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
-    if ready_pending > 0 {
-        crate::log::warn(
-            "summarize",
-            &format!(
-                "ignored {ready_pending} legacy pending observation row(s); captures now use extraction_tasks"
-            ),
-        );
-    }
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Summary,
-        project,
-        Some(session_id),
-        input,
-        100,
+        event_id,
     )?;
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Compress,
-        project,
-        None,
-        compress_input,
-        200,
-    )?;
-    db::maybe_enqueue_dream_job(
-        conn,
-        host,
-        project,
-        compress_input,
-        300,
-        crate::dream::DREAM_COOLDOWN_SECS,
-    )?;
-    crate::log::info(
-        "summarize",
-        &format!(
-            "QUEUED summary session={} project={} legacy_pending_observations={}",
-            session_id, project, ready_pending
-        ),
-    );
     Ok(())
 }
 
@@ -296,8 +358,7 @@ mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};
 
     use super::{
-        compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
-        summarize_input, summary_payload_with_cwd,
+        record_summary_capture_event, resolve_hook_host, summarize_input, summary_payload_with_cwd,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -424,21 +485,39 @@ mod tests {
     }
 
     #[test]
-    fn summary_and_compress_payloads_preserve_profile() {
+    fn summary_payload_preserves_profile() {
         let summary = summary_payload_with_cwd(
             r#"{"session_id":"sess-cwd"}"#,
             "/tmp/project",
             Some("custom"),
         )
         .expect("payload should serialize");
-        let compress = compress_payload(Some("custom")).expect("payload should serialize");
         let summary: serde_json::Value =
             serde_json::from_str(&summary).expect("summary payload should parse");
-        let compress: serde_json::Value =
-            serde_json::from_str(&compress).expect("compress payload should parse");
 
         assert_eq!(summary["remem_ai_profile"].as_str(), Some("custom"));
-        assert_eq!(compress["remem_ai_profile"].as_str(), Some("custom"));
+    }
+
+    #[test]
+    fn summary_payload_snapshots_transcript_byte_length() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("summary-transcript-byte-length");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let transcript = test_dir.path.join("transcript.jsonl");
+        std::fs::write(&transcript, "first line\nsecond line\n")?;
+        let input = serde_json::json!({
+            "session_id": "sess-transcript-byte-length",
+            "transcript_path": transcript
+        })
+        .to_string();
+
+        let payload = summary_payload_with_cwd(&input, "/tmp/project", None)?;
+        let parsed: serde_json::Value = serde_json::from_str(&payload)?;
+
+        assert_eq!(
+            parsed["transcript_byte_len"].as_u64(),
+            Some(std::fs::metadata(&transcript)?.len())
+        );
+        Ok(())
     }
 
     #[test]
@@ -493,153 +572,187 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn summarize_hook_spills_when_capture_ledger_fails() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-capture-failure");
+        drop(db::open_db()?);
+        match std::fs::remove_file(super::super::spill::summary_spill_path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+        let input = serde_json::json!({
+            "session_id": "sess-summary-capture-failure",
+            "cwd": "/tmp/remem"
+        })
+        .to_string();
+
+        let err = summarize_input(&input, Some("unknown"), None)
+            .await
+            .expect_err("capture ledger failure should fail closed");
+
+        assert!(
+            err.to_string().contains("invalid capture host"),
+            "unexpected error: {err:#}"
+        );
+        let conn = db::open_db()?;
+        let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+        assert_eq!(job_count, 0);
+        assert!(super::super::spill::summary_spill_path().exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_spills_when_transcript_snapshot_fails() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("summary-hook-transcript-snapshot-failure");
+        drop(db::open_db()?);
+        let missing_transcript = test_dir.path.join("missing-transcript.jsonl");
+        let input = serde_json::json!({
+            "session_id": "sess-summary-transcript-snapshot-failure",
+            "cwd": "/tmp/remem",
+            "transcript_path": missing_transcript
+        })
+        .to_string();
+
+        let result = summarize_input(&input, Some("codex-cli"), None).await;
+        let error = match result {
+            Ok(()) => anyhow::bail!("missing transcript snapshot unexpectedly succeeded"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("snapshot transcript length"));
+        let conn = db::open_db()?;
+        let captured_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events
+             WHERE session_id = 'sess-summary-transcript-snapshot-failure'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(captured_events, 0);
+        assert!(super::super::spill::summary_spill_path().exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_runs_stop_side_effects_without_summary_job() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-hook-side-effects");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon",
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        drop(conn);
+        let input = serde_json::json!({
+            "session_id": "sess-summary-hook-side-effects",
+            "cwd": "/tmp/remem",
+            "last_assistant_message": "hook side effect assistant message"
+        })
+        .to_string();
+
+        summarize_input(&input, Some("codex-cli"), None).await?;
+
+        let conn = db::open_db()?;
+        let captured_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events
+             WHERE session_id = 'sess-summary-hook-side-effects'
+               AND event_type = 'session_stop'",
+            [],
+            |row| row.get(0),
+        )?;
+        let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+        let summary_jobs: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs WHERE job_type = 'summary'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(captured_events, 1);
+        assert_eq!(job_count, 0);
+        assert_eq!(summary_jobs, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn summarize_hook_replays_same_session_spill_for_different_project() -> anyhow::Result<()>
+    {
+        let test_dir = ScopedTestDataDir::new("summary-hook-project-scoped-spill");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            &db::current_worker_owner("daemon", std::process::id(), now * 1000),
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+        let old_transcript = test_dir.path.join("old-other-transcript.jsonl");
+        let current_transcript = test_dir.path.join("current-transcript.jsonl");
+        std::fs::write(
+            &old_transcript,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"old"}]}}"#,
+        )?;
+        std::fs::write(
+            &current_transcript,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"current"}]}}"#,
+        )?;
+        let old_input = serde_json::json!({
+            "session_id": "sess-summary-shared-id",
+            "cwd": "/tmp/remem-other",
+            "transcript_path": old_transcript
+        })
+        .to_string();
+        super::super::spill::spill_summary_hook_payload(
+            &old_input,
+            Some("codex-cli"),
+            None,
+            Some("/tmp/remem-other"),
+            &anyhow::anyhow!("stale db"),
+        )?;
+
+        let current_input = serde_json::json!({
+            "session_id": "sess-summary-shared-id",
+            "cwd": "/tmp/remem-current",
+            "transcript_path": current_transcript
+        })
+        .to_string();
+        summarize_input(&current_input, Some("codex-cli"), None).await?;
+
+        let event_count: i64 = conn.query_row(
+            "SELECT COUNT(*)
+             FROM captured_events
+             WHERE event_type = 'session_stop'
+               AND session_id = 'sess-summary-shared-id'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(event_count, 2);
+        assert!(!super::super::spill::summary_spill_path().exists());
+        Ok(())
+    }
+
     #[test]
-    fn capture_ledger_failure_does_not_block_legacy_summary_hook() {
+    fn capture_ledger_failure_blocks_followup_jobs() {
         let _test_dir = ScopedTestDataDir::new("summary-legacy-unknown-host");
         let conn = db::open_db().expect("db should open");
 
-        let captured = record_summary_capture_event(
+        let err = record_summary_capture_event(
             &conn,
             "unknown",
             "sess-legacy",
             "/tmp/remem",
             "/tmp/remem",
             r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
-        );
-        enqueue_summary_jobs(
-            &conn,
-            "unknown",
-            "sess-legacy",
-            "/tmp/remem",
-            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
-            "{}",
-        )
-        .expect("legacy summary jobs should still enqueue");
-
-        assert!(!captured);
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn enqueue_summary_jobs_skips_observation_job_when_no_pending_events() {
-        let _test_dir = ScopedTestDataDir::new("summary-no-pending-observation");
-        let conn = db::open_db().expect("db should open");
-
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-no-pending",
-            "/tmp/remem",
-            r#"{"session_id":"sess-no-pending"}"#,
-            "{}",
-        )
-        .expect("summary jobs should enqueue");
-
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn enqueue_summary_jobs_ignores_legacy_pending_observations() {
-        let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
-        let conn = db::open_db().expect("db should open");
-        db::test_support::insert_legacy_pending_fixture(
-            &conn,
-            "claude-code",
-            "sess-with-pending",
-            "/tmp/remem",
-            "Edit",
-            Some(r#"{"file_path":"src/lib.rs"}"#),
             None,
-            Some("/tmp/remem"),
         )
-        .expect("pending observation should insert");
+        .expect_err("capture ledger failure should stop summary hook followups");
 
-        enqueue_summary_jobs(
-            &conn,
-            "claude-code",
-            "sess-with-pending",
-            "/tmp/remem",
-            r#"{"session_id":"sess-with-pending"}"#,
-            "{}",
-        )
-        .expect("summary jobs should enqueue");
-
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn enqueue_summary_jobs_dedups_dream_and_preserves_profile_payload() {
-        let _test_dir = ScopedTestDataDir::new("summary-dream-profile");
-        let conn = db::open_db().expect("db should open");
-        let payload = compress_payload(Some("custom")).expect("compress payload should serialize");
-
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-dream-a",
-            "/tmp/remem",
-            r#"{"session_id":"sess-dream-a"}"#,
-            &payload,
-        )
-        .expect("first summary jobs should enqueue");
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-dream-b",
-            "/tmp/remem",
-            r#"{"session_id":"sess-dream-b"}"#,
-            &payload,
-        )
-        .expect("second summary jobs should enqueue");
-
-        let dream_payloads = job_payloads(&conn, "dream");
-        assert_eq!(dream_payloads.len(), 1);
-        let dream_payload: serde_json::Value =
-            serde_json::from_str(&dream_payloads[0]).expect("dream payload should parse");
-        assert_eq!(dream_payload["remem_ai_profile"].as_str(), Some("custom"));
-    }
-
-    fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT job_type FROM jobs ORDER BY id ASC")
-            .expect("job query should prepare");
-        stmt.query_map([], |row| row.get(0))
-            .expect("job query should run")
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .expect("job rows should collect")
-    }
-
-    fn job_payloads(conn: &rusqlite::Connection, job_type: &str) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT payload_json FROM jobs WHERE job_type = ?1 ORDER BY id ASC")
-            .expect("job query should prepare");
-        stmt.query_map([job_type], |row| row.get(0))
-            .expect("job query should run")
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .expect("job rows should collect")
+        assert!(err.to_string().contains("invalid capture host"));
+        let job_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
+            .expect("job count should query");
+        assert_eq!(job_count, 0);
     }
 }

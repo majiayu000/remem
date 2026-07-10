@@ -116,6 +116,38 @@ fn legacy_surfaces_ignore_archived_summary_jobs_as_blockers() -> anyhow::Result<
 }
 
 #[test]
+fn legacy_surfaces_ignore_upgrade_summary_rejections_but_report_worker_rejections(
+) -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    for (idx, last_error) in [
+        "legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output",
+        "legacy Summary jobs are retired; SessionRollup owns session summary output",
+    ]
+    .iter()
+    .enumerate()
+    {
+        conn.execute(
+            "INSERT INTO jobs
+             (host, job_type, project, session_id, payload_json, state, priority,
+              attempt_count, max_attempts, next_retry_epoch, last_error,
+              failure_class, failed_at_epoch, created_at_epoch, updated_at_epoch)
+             VALUES ('codex-cli', 'summary', '/tmp/remem', ?1,
+                     '{}', 'failed', 1, 6, 6, 0, ?2, 'permanent',
+                     140, 110, 130)",
+            params![format!("sess-rejected-{idx}"), last_error],
+        )?;
+    }
+
+    let check = check_legacy_surfaces(Some(&conn));
+
+    assert!(matches!(check.status, Status::Warn), "{}", check.detail);
+    assert!(check.detail.contains("summary_jobs rows=2"));
+    assert!(check.detail.contains("frozen_write_violations=1"));
+    assert!(check.detail.contains("retire/freeze blockers=1"));
+    Ok(())
+}
+
+#[test]
 fn promotion_funnel_warns_when_observations_do_not_create_candidates() -> anyhow::Result<()> {
     let conn = setup_conn()?;
     record_capture(&conn)?;

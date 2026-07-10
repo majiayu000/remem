@@ -118,6 +118,21 @@ project-scoped, and recoverable:
 - Track usage and background memory cost
 - Avoid hand-maintaining large `MEMORY.md` or `CLAUDE.md` files
 
+### How remem Compares in the Ecosystem
+
+Snapshot from our
+[memory-tool ecosystem survey (2026-03)](docs/research/claude-memory-mcp-ecosystem-2026-03.md);
+check upstream projects for their current feature sets.
+
+| | remem | Built-in memory files | claude-mem | mem0 / OpenMemory |
+|---|---|---|---|---|
+| Capture | Automatic hooks + LLM distillation | Manual editing | Automatic hooks | Agent calls save tools |
+| Agents | Claude Code + Codex, one shared store | Per-tool files | Claude Code | Any MCP client |
+| Storage | Local SQLite, optional SQLCipher encryption | Plain text files | SQLite + Chroma vector DB | Vector DB, hosted platform or local server |
+| Retrieval | FTS + optional embeddings via CLI, MCP, REST | Loaded wholesale | Tiered vector search | Vector search |
+| Runtime | Single Rust binary | None | Node worker + background service | Python service |
+| Audit trail | `remem why`, provenance, usage and cost tracking | Git history | Not documented in survey | Not documented in survey |
+
 ## How remem Solves Session Amnesia
 
 | Without remem | With remem |

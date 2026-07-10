@@ -344,6 +344,10 @@ pub(super) enum Commands {
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
+        /// Print a compact, screenshot-friendly summary card instead of the
+        /// full report. Omits paths and project names.
+        #[arg(long, conflicts_with = "json")]
+        share: bool,
     },
     /// Check install, hook, MCP, database, and queue health.
     Doctor {

@@ -443,10 +443,16 @@ mod tests {
             [],
             |row| row.get(0),
         )?;
+        let migration_applied: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations
+             WHERE version = 63 AND name = 'procedure_exports'",
+            [],
+            |row| row.get(0),
+        )?;
 
         assert_eq!(table_count, 1);
         assert_eq!(source_digest_version_count, 1);
-        assert_eq!(crate::migrate::latest_schema_version(), 63);
+        assert_eq!(migration_applied, 1);
         Ok(())
     }
 
