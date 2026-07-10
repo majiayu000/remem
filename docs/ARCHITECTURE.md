@@ -124,7 +124,7 @@ redacted tool evidence in `captured_events`; large payloads spill to
 Stop hook fires
        │
        ├─ Capture session_stop → coalesced SessionRollup task
-       ├─ Record memory citations + deterministic failure lessons
+       ├─ Record immediately available citations + failure lessons
        └─ Ensure a current background worker is available
        │
        ▼
@@ -132,7 +132,8 @@ Stop hook fires
        │
        ├─ SessionRollup
        │    ├─ Load the captured_events range
-       │    ├─ Attempt raw transcript archive ingest
+       │    ├─ Ingest raw transcript through the Stop-captured byte boundary
+       │    ├─ Finalize transcript-backed citations + failure lessons
        │    ├─ AI → semantic summary + topic segments
        │    ├─ Persist the exact event range
        │    ├─ Candidates/workstream/native-memory/user-context side effects
@@ -157,6 +158,12 @@ archive ingest, summary-derived candidates, workstream updates, native-memory
 sync, user-context follow-up extraction, and Compress/Dream scheduling. A
 failed required side effect leaves the extraction task retryable against the
 already-persisted range instead of silently completing with missing memory.
+Transcript-only citation and failure-lesson side effects run after bounded raw
+archive ingest on the worker; their retry errors do not suppress the other
+persisted rollup side effects. Stop payloads that already include the final
+assistant message may record those idempotent signals immediately. Versioned
+once-worker launch heartbeats prevent repeated Stop hooks from spawning
+overlapping current workers during an old-daemon upgrade window.
 Migration v064 permanently rejects queued legacy Summary jobs and requeues any
 SessionRollup lease held across the binary upgrade. Readers continue to hide
 synthetic `Captured event range ...` fallback titles. The unused legacy

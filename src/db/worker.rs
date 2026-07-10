@@ -82,20 +82,29 @@ pub fn healthy_worker_heartbeat(
     conn: &Connection,
     max_age_secs: i64,
 ) -> Result<Option<WorkerHeartbeat>> {
-    query_healthy_worker_heartbeat(conn, max_age_secs, false)
+    query_healthy_worker_heartbeat(conn, max_age_secs, false, None)
 }
 
 pub fn healthy_daemon_worker_heartbeat(
     conn: &Connection,
     max_age_secs: i64,
 ) -> Result<Option<WorkerHeartbeat>> {
-    query_healthy_worker_heartbeat(conn, max_age_secs, true)
+    query_healthy_worker_heartbeat(conn, max_age_secs, true, None)
+}
+
+pub(crate) fn healthy_current_once_worker_heartbeat(
+    conn: &Connection,
+    max_age_secs: i64,
+) -> Result<Option<WorkerHeartbeat>> {
+    let owner_pattern = format!("{CURRENT_WORKER_OWNER_PREFIX}once-%");
+    query_healthy_worker_heartbeat(conn, max_age_secs, false, Some(&owner_pattern))
 }
 
 fn query_healthy_worker_heartbeat(
     conn: &Connection,
     max_age_secs: i64,
     daemon_only: bool,
+    owner_pattern: Option<&str>,
 ) -> Result<Option<WorkerHeartbeat>> {
     let now = chrono::Utc::now().timestamp();
     let daemon_filter = if daemon_only {
@@ -109,17 +118,21 @@ fn query_healthy_worker_heartbeat(
          FROM worker_heartbeats
          WHERE updated_at_epoch >= ?1
          {daemon_filter}
+           AND (?2 IS NULL OR owner LIKE ?2)
          ORDER BY updated_at_epoch DESC, owner ASC
          LIMIT 10"
     ))?;
-    let rows = stmt.query_map(params![now.saturating_sub(max_age_secs)], |row| {
-        Ok(WorkerHeartbeat {
-            owner: row.get(0)?,
-            pid: row.get(1)?,
-            started_at_epoch: row.get(2)?,
-            updated_at_epoch: row.get(3)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        params![now.saturating_sub(max_age_secs), owner_pattern],
+        |row| {
+            Ok(WorkerHeartbeat {
+                owner: row.get(0)?,
+                pid: row.get(1)?,
+                started_at_epoch: row.get(2)?,
+                updated_at_epoch: row.get(3)?,
+            })
+        },
+    )?;
 
     for row in rows {
         let heartbeat = row?;

@@ -425,13 +425,7 @@ fn profile_from_doc(doc: &DocumentMut, profile_name: &str) -> Result<ResolvedMem
         );
     };
     let executor = parse_executor(required_str(table, "executor")?)?;
-    let model = optional_str(table, "model").and_then(|model| {
-        if model.eq_ignore_ascii_case("auto") {
-            None
-        } else {
-            Some(model)
-        }
-    });
+    let model = optional_str(table, "model").filter(|model| !model.eq_ignore_ascii_case("auto"));
     Ok(ResolvedMemoryAiProfile {
         profile_name: profile_name.to_string(),
         executor,

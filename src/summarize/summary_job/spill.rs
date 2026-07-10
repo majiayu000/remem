@@ -477,20 +477,24 @@ mod tests {
 
     #[tokio::test]
     async fn current_stop_payload_wins_over_same_session_spill_replay() -> anyhow::Result<()> {
-        let _test_dir = ScopedTestDataDir::new("summary-hook-current-wins");
+        let test_dir = ScopedTestDataDir::new("summary-hook-current-wins");
         let conn = db::open_db()?;
         let now = chrono::Utc::now().timestamp();
         db::upsert_worker_heartbeat(
             &conn,
-            "worker-daemon",
+            &db::current_worker_owner("daemon", std::process::id(), now * 1000),
             i64::from(std::process::id()),
             now,
             now,
         )?;
+        let old_transcript = test_dir.path.join("old-transcript.jsonl");
+        let current_transcript = test_dir.path.join("current-transcript.jsonl");
+        std::fs::write(&old_transcript, "old transcript\n")?;
+        std::fs::write(&current_transcript, "current transcript\n")?;
         let old_input = serde_json::json!({
             "session_id": "sess-summary-current-wins",
             "cwd": "/tmp/remem",
-            "transcript_path": "/tmp/old-transcript.jsonl"
+            "transcript_path": old_transcript
         })
         .to_string();
         spill_summary_hook_payload(
@@ -504,7 +508,7 @@ mod tests {
         let current_input = serde_json::json!({
             "session_id": "sess-summary-current-wins",
             "cwd": "/tmp/remem",
-            "transcript_path": "/tmp/current-transcript.jsonl"
+            "transcript_path": current_transcript
         })
         .to_string();
         super::super::hook::summarize_input(&current_input, Some("codex-cli"), None).await?;
@@ -518,8 +522,8 @@ mod tests {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
         assert_eq!(event_count, 1);
-        assert!(payload.contains("/tmp/current-transcript.jsonl"));
-        assert!(!payload.contains("/tmp/old-transcript.jsonl"));
+        assert!(payload.contains(current_transcript.to_string_lossy().as_ref()));
+        assert!(!payload.contains(old_transcript.to_string_lossy().as_ref()));
         Ok(())
     }
 

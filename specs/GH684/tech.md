@@ -91,13 +91,14 @@ needed fields and side effects, then removes only the redundant Summary writer.
 - [x] Context, timeline, and user-context regression tests prove semantic
       rollup rows feed summary readers while synthetic `Captured event range`
       fallback titles stay hidden from user-facing context.
-- [x] Stop-hook side-effect regression tests cover the final ownership split
-      before `JobType::Summary` retirement: the Stop hook owns lightweight
-      memory citations and failure lessons after capture, while SessionRollup
-      worker side effects own raw archive ingest from preserved Stop payload
-      paths, summary-derived candidate finalization, workstream upsert, native
-      memory sync, UserContextCandidate extraction, and Compress/Dream enqueue
-      after rollup persistence.
+- [ ] Stop-hook side-effect regression tests cover the implemented ownership
+      split before `JobType::Summary` retirement: the Stop hook owns immediately
+      available memory citations and failure lessons after capture, while
+      SessionRollup worker side effects own byte-bounded raw archive ingest plus
+      transcript-only citations/failure lessons, summary-derived candidate
+      finalization, workstream upsert, native memory sync, UserContextCandidate
+      extraction, and Compress/Dream enqueue after rollup persistence.
+      Observed-commit wiring remains blocked by #792.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary
@@ -112,11 +113,13 @@ needed fields and side effects, then removes only the redundant Summary writer.
       doctor/status ignore v064 upgrade rejection rows as freeze blockers and
       actionable failed jobs while keeping worker-side post-retirement Summary
       rejections visible, capture redaction preserves `cwd` and
-      `transcript_path` for worker-side raw archive ingest, persisted
-      SessionRollup side effects re-home summary-derived candidates,
-      workstream upsert, observed commit linking, native memory sync, and
-      follow-up scheduling, old-version daemon heartbeats and legacy singleton
-      locks do not suppress the current Stop fallback worker, workers claim
+      `transcript_path` plus its captured byte boundary for worker-side raw
+      archive ingest, persisted SessionRollup side effects re-home
+      summary-derived candidates, workstream upsert, native memory sync, and
+      follow-up scheduling, while observed commit linking remains blocked by
+      #792. Old-version daemon heartbeats and legacy singleton locks do not
+      suppress the current Stop fallback worker, current once-launch
+      heartbeats prevent overlapping fallback workers, workers claim
       extraction tasks before Compress/Dream jobs, and the worker rejects
       already-claimed Summary jobs before the retired path can run. Covered by
       `legacy_summary_upgrade_rejects_non_terminal_jobs`,
@@ -125,6 +128,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `citation_failure_does_not_block_capture_payload`,
       `capture_redaction_preserves_stop_payload_paths_for_worker_side_effects`,
       `session_rollup_worker_drains_raw_archive_from_stop_payload`,
+      `session_rollup_honors_stop_transcript_snapshot_boundary`,
+      `session_rollup_retries_transcript_side_effects_without_resummarizing`,
       `session_rollup_rehomes_finalize_side_effects`,
       `session_rollup_enqueues_followup_jobs_after_rollup`,
       `replay_capture_failure_is_preserved_once_by_replay_layer`,
@@ -132,6 +137,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `duplicate_fixed_event_id_does_not_revive_done_task`,
       `current_healthy_daemon_skips_stop_spawn`,
       `old_version_healthy_daemon_uses_stop_fallback_spawn`,
+      `current_once_suppresses_spawn_with_newer_old_daemon_heartbeat`,
       `once_bypasses_lock_for_old_version_daemon_heartbeat`,
       `old_version_daemon_lock_allows_current_once_heartbeat`,
       `summarize_hook_replays_same_session_spill_for_different_project`,

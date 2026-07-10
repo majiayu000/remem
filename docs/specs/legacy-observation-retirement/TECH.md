@@ -67,18 +67,21 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
      (`src/summarize/summary_job/hook.rs`) → worker `JobType::Summary`
      (`src/worker.rs`) → `finalize_summarize`
      (`src/db/summarize/session/finalize.rs`, DELETE+INSERT).
-- GH684-T7 retires the legacy enqueue path: Stop hooks record the
+- The implemented GH684-T7 slices retire the legacy enqueue path, but full T7
+  completion remains blocked by observed-commit wiring in #792. Stop hooks record the
   `SessionRollup` extraction task and no longer enqueue Summary, Compress, or
   Dream jobs directly. If capture-ledger recording fails, the hook spills the
   payload and skips follow-up work instead of relying on legacy Summary
   fallback. If the current stop payload succeeds, replay skips older
   same-session spills so the current capture remains authoritative. The hook
-  keeps lightweight memory-citation recording and failure-lesson distillation
-  after capture. Worker-side SessionRollup side effects drain raw archive
-  content from the captured Stop payload, preserve `cwd` and `transcript_path`
-  through capture redaction, re-home summary-derived candidates, workstream
-  upsert, observed commit linking, native-memory sync, and UserContextCandidate
+  keeps immediately available memory-citation recording and failure-lesson
+  distillation after capture. Worker-side SessionRollup side effects drain raw
+  archive content through the Stop-captured transcript byte boundary, complete
+  transcript-only citation/failure signals, preserve `cwd` and
+  `transcript_path` through capture redaction, re-home summary-derived
+  candidates, workstream upsert, native-memory sync, and UserContextCandidate
   extraction, then enqueue Compress/Dream jobs only after rollup persistence.
+  Observed-commit linking is not yet connected end to end and remains #792.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -131,7 +134,7 @@ Existing Implementation Facts above):
 | `observations` | `reclassify-current` — live intermediate of the extraction pipeline; GH684-T8 fixed the "legacy" MCP wording |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
-| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; GH684-T7 keeps the surrounding Stop-hook Compress and Dream follow-ups while stopping new Summary job enqueue |
+| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; implemented GH684-T7 slices move Compress/Dream follow-ups behind persisted SessionRollup processing while stopping new Summary job enqueue; #792 still blocks full T7 completion |
 
 Remaining Phase 1 analysis before freeze decisions execute:
 
@@ -198,13 +201,14 @@ Tests: fixture DBs per state; frozen-write detection test.
    side effect has a new owner before Summary retirement.
 
    GH684-T4 locked these side effects with regression coverage before the
-   Summary retirement decision in GH684-T7. GH684-T7 then moves the final
-   ownership to the current paths: the Stop hook keeps capture, memory
-   citations, and failure-lesson distillation; SessionRollup worker side
-   effects own raw archive ingest from captured Stop payload paths,
-   summary-derived candidate finalization, workstream upsert, observed commit
-   linking, native-memory sync, UserContextCandidate extraction, and
-   Compress/Dream enqueue after rollup persistence.
+   Summary retirement decision in GH684-T7. The implemented T7 slices move
+   ownership to the current paths: the Stop hook keeps capture plus immediately
+   available memory citations and failure-lesson distillation; SessionRollup
+   worker side effects own byte-bounded raw archive ingest, transcript-only
+   citations/failure lessons, summary-derived candidate finalization,
+   workstream upsert, native-memory sync, UserContextCandidate extraction, and
+   Compress/Dream enqueue after rollup persistence. Observed-commit linking is
+   the remaining ownership gap tracked by #792.
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
    upgrade time. Migration v064 marks non-terminal and retryable failed Summary
    jobs as failed permanent, clears lease/retry state, and records an explicit
@@ -217,11 +221,13 @@ Tests: fixture DBs per state; frozen-write detection test.
    spill and abort follow-up work rather than falling back to the retired
    writer. Citation-recording side-effect failures are logged at error level
    without suppressing captured Stop payload processing. Capture redaction
-   preserves `cwd` and `transcript_path` so the SessionRollup worker can drain
-   raw transcript archives; after a persisted rollup exists, worker side
-   effects re-home summary-derived candidates, workstream upsert, observed
-   commit linking, native-memory sync, UserContextCandidate extraction, and
-   Compress/Dream follow-up enqueue. When the current stop payload succeeds,
+   preserves `cwd`, `transcript_path`, and the Stop-captured transcript byte
+   boundary so the SessionRollup worker cannot consume later appended turns;
+   after a persisted rollup exists, worker side effects re-home
+   summary-derived candidates, workstream upsert, native-memory sync,
+   UserContextCandidate extraction, and Compress/Dream follow-up enqueue.
+   Citation/failure retry errors do not suppress those persisted side effects.
+   Observed-commit linking remains blocked by #792. When the current stop payload succeeds,
    older same-host/project/session spills are skipped during replay, but same
    `session_id` spills from other projects still replay. Replayed Stop captures
    use a stable capture event ID derived from host/project/session/payload so a
@@ -232,7 +238,9 @@ Tests: fixture DBs per state; frozen-write detection test.
    is preserved once instead of duplicated. Stop hooks treat healthy daemon
    heartbeats from older binary versions as stale for fallback purposes, and the
    current binary's `worker --once` may bypass an old daemon holding the legacy
-   singleton lock so it can drain SessionRollup tasks.
+   singleton lock so it can drain SessionRollup tasks. A PID-backed,
+   versioned once-launch heartbeat prevents repeated Stop hooks from spawning
+   overlapping current fallback workers during that window.
    Workers claim extraction tasks before Compress/Dream jobs and the hook no
    longer enqueues those jobs, so SessionRollup can persist before background
    follow-ups exist. This preserves terminal Summary

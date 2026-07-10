@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::db;
 use crate::hook_stdin::read_stdin_with_timeout;
@@ -109,11 +109,8 @@ pub(super) async fn summarize_input(
         Ok(WorkerSpawnDecision::Spawned) => {
             crate::log::info("summarize", "worker --once spawned");
         }
-        Ok(WorkerSpawnDecision::SkippedHealthyDaemon) => {
-            crate::log::info(
-                "summarize",
-                "worker daemon heartbeat healthy; skip worker --once",
-            );
+        Ok(WorkerSpawnDecision::SkippedHealthyWorker) => {
+            crate::log::info("summarize", "worker heartbeat healthy; skip worker --once");
         }
         Ok(WorkerSpawnDecision::SkippedLaunchInProgress) => {
             crate::log::info(
@@ -147,7 +144,30 @@ pub(super) fn enqueue_summary_payload(
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
-    let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
+    let summary_payload = match summary_payload_with_cwd(input, &cwd, profile) {
+        Ok(payload) => payload,
+        Err(error) => {
+            if origin.is_replay() {
+                crate::log::error(
+                    "summarize",
+                    &format!(
+                        "replayed Stop payload preparation failed; replay layer will preserve it: {error}"
+                    ),
+                );
+            } else {
+                let path =
+                    spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+                crate::log::error(
+                    "summarize",
+                    &format!(
+                        "Stop payload preparation failed; spilled summary hook payload to {}: {error}",
+                        path.display()
+                    ),
+                );
+            }
+            return Err(error);
+        }
+    };
     let replay_event_id = origin
         .is_replay()
         .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
@@ -216,6 +236,26 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
             "cwd".to_string(),
             serde_json::Value::String(cwd.to_string()),
         );
+    }
+    let transcript_path = obj
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if obj
+        .get("transcript_byte_len")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        if let Some(transcript_path) = transcript_path {
+            let metadata = std::fs::metadata(&transcript_path)
+                .with_context(|| format!("snapshot transcript length path={transcript_path}"))?;
+            obj.insert(
+                "transcript_byte_len".to_string(),
+                serde_json::Value::Number(metadata.len().into()),
+            );
+        }
     }
     if let Some(profile) = clean_optional(profile) {
         obj.insert(
@@ -459,6 +499,28 @@ mod tests {
     }
 
     #[test]
+    fn summary_payload_snapshots_transcript_byte_length() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("summary-transcript-byte-length");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let transcript = test_dir.path.join("transcript.jsonl");
+        std::fs::write(&transcript, "first line\nsecond line\n")?;
+        let input = serde_json::json!({
+            "session_id": "sess-transcript-byte-length",
+            "transcript_path": transcript
+        })
+        .to_string();
+
+        let payload = summary_payload_with_cwd(&input, "/tmp/project", None)?;
+        let parsed: serde_json::Value = serde_json::from_str(&payload)?;
+
+        assert_eq!(
+            parsed["transcript_byte_len"].as_u64(),
+            Some(std::fs::metadata(&transcript)?.len())
+        );
+        Ok(())
+    }
+
+    #[test]
     fn hosted_summary_hook_can_preserve_profile_override() -> anyhow::Result<()> {
         let host = resolve_hook_host(Some("codex"))?;
         let summary = summary_payload_with_cwd(
@@ -541,6 +603,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn summarize_hook_spills_when_transcript_snapshot_fails() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("summary-hook-transcript-snapshot-failure");
+        drop(db::open_db()?);
+        let missing_transcript = test_dir.path.join("missing-transcript.jsonl");
+        let input = serde_json::json!({
+            "session_id": "sess-summary-transcript-snapshot-failure",
+            "cwd": "/tmp/remem",
+            "transcript_path": missing_transcript
+        })
+        .to_string();
+
+        let result = summarize_input(&input, Some("codex-cli"), None).await;
+        let error = match result {
+            Ok(()) => anyhow::bail!("missing transcript snapshot unexpectedly succeeded"),
+            Err(error) => error,
+        };
+
+        assert!(error.to_string().contains("snapshot transcript length"));
+        let conn = db::open_db()?;
+        let captured_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM captured_events
+             WHERE session_id = 'sess-summary-transcript-snapshot-failure'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(captured_events, 0);
+        assert!(super::super::spill::summary_spill_path().exists());
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn summarize_hook_runs_stop_side_effects_without_summary_job() -> anyhow::Result<()> {
         let _test_dir = ScopedTestDataDir::new("summary-hook-side-effects");
         let conn = db::open_db()?;
@@ -585,20 +678,30 @@ mod tests {
     #[tokio::test]
     async fn summarize_hook_replays_same_session_spill_for_different_project() -> anyhow::Result<()>
     {
-        let _test_dir = ScopedTestDataDir::new("summary-hook-project-scoped-spill");
+        let test_dir = ScopedTestDataDir::new("summary-hook-project-scoped-spill");
         let conn = db::open_db()?;
         let now = chrono::Utc::now().timestamp();
         db::upsert_worker_heartbeat(
             &conn,
-            "worker-daemon",
+            &db::current_worker_owner("daemon", std::process::id(), now * 1000),
             i64::from(std::process::id()),
             now,
             now,
         )?;
+        let old_transcript = test_dir.path.join("old-other-transcript.jsonl");
+        let current_transcript = test_dir.path.join("current-transcript.jsonl");
+        std::fs::write(
+            &old_transcript,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"old"}]}}"#,
+        )?;
+        std::fs::write(
+            &current_transcript,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"current"}]}}"#,
+        )?;
         let old_input = serde_json::json!({
             "session_id": "sess-summary-shared-id",
             "cwd": "/tmp/remem-other",
-            "transcript_path": "/tmp/old-other-transcript.jsonl"
+            "transcript_path": old_transcript
         })
         .to_string();
         super::super::spill::spill_summary_hook_payload(
@@ -612,7 +715,7 @@ mod tests {
         let current_input = serde_json::json!({
             "session_id": "sess-summary-shared-id",
             "cwd": "/tmp/remem-current",
-            "transcript_path": "/tmp/current-transcript.jsonl"
+            "transcript_path": current_transcript
         })
         .to_string();
         summarize_input(&current_input, Some("codex-cli"), None).await?;

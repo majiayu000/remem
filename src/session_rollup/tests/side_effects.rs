@@ -72,6 +72,69 @@ fn job_payloads(conn: &Connection, job_type: &str) -> Result<Vec<String>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
+fn insert_injected_test_memory(
+    conn: &Connection,
+    project: &str,
+    session_id: &str,
+    suffix: &str,
+) -> Result<i64> {
+    let title = format!("{suffix} rollout decision");
+    let memory_id = crate::memory::insert_memory(
+        conn,
+        Some("seed-session"),
+        project,
+        None,
+        &title,
+        "Keep the capture-ledger rollup path fail closed.",
+        "decision",
+        None,
+    )?;
+    conn.execute(
+        "INSERT INTO context_injection_items
+         (injection_run_id, host, project, session_id, injection_key, output_mode,
+          decision, item_kind, item_id, memory_id, channel, render_order, status,
+          title, provenance, staleness, injected_at_epoch)
+         VALUES (?1, 'codex-cli', ?2, ?3, ?4, 'full',
+                 'emitted', 'memory', ?5, ?5, 'core', 1, 'injected',
+                 ?6, 'src=memory', 'current', 100)",
+        params![
+            format!("run-{suffix}"),
+            project,
+            session_id,
+            format!("key-{suffix}"),
+            memory_id,
+            title
+        ],
+    )?;
+    Ok(memory_id)
+}
+
+fn transcript_message(role: &str, text: impl Into<String>) -> String {
+    serde_json::json!({
+        "type": role,
+        "message": {"content": [{"type": "text", "text": text.into()}]}
+    })
+    .to_string()
+}
+
+fn failure_citation_transcript(memory_id: i64) -> String {
+    [
+        transcript_message(
+            "assistant",
+            "cargo check failed with the same compiler error after the third attempted fix",
+        ),
+        transcript_message(
+            "user",
+            "Lesson: after three consecutive failed fixes, stop and challenge the hypothesis before editing again",
+        ),
+        transcript_message(
+            "assistant",
+            format!("Used the rollout decision.\nMemory citations: memory:#{memory_id}"),
+        ),
+    ]
+    .join("\n")
+}
+
 #[tokio::test]
 async fn session_rollup_enqueues_followup_jobs_after_rollup() -> Result<()> {
     let mut conn = setup_conn();
@@ -228,6 +291,227 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
     )?;
     assert_eq!(source, crate::memory::raw_archive::SOURCE_TRANSCRIPT);
     assert_eq!(content, "archived assistant turn");
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_preserves_transcript_backed_stop_memory_side_effects() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-transcript-side-effects");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let mut conn = crate::db::open_db()?;
+    let project = "/tmp/remem";
+    let session_id = "sess-rollup-transcript-side-effects";
+    let memory_id = insert_injected_test_memory(&conn, project, session_id, "transcript")?;
+    let transcript_text = failure_citation_transcript(memory_id);
+    std::fs::write(&transcript, transcript_text)?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+    custom_capture(
+        &conn,
+        session_id,
+        project,
+        Some(project),
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": project,
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response(
+            "Transcript-backed side effects are preserved.",
+            "",
+        ))
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::Written);
+    let usage_events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_usage_events WHERE memory_id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    let failure_lessons: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_lesson_feed_events
+         WHERE project = ?1 AND session_id = ?2",
+        params![project, session_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(usage_events, 1);
+    assert_eq!(failure_lessons, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_honors_stop_transcript_snapshot_boundary() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-transcript-boundary");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let mut conn = crate::db::open_db()?;
+    let project = "/tmp/remem";
+    let session_id = "sess-rollup-transcript-boundary";
+    let before_memory = insert_injected_test_memory(&conn, project, session_id, "before-stop")?;
+    let after_memory = insert_injected_test_memory(&conn, project, session_id, "after-stop")?;
+    let before = transcript_message(
+        "assistant",
+        format!("Before Stop.\nMemory citations: memory:#{before_memory}"),
+    );
+    let after = transcript_message(
+        "assistant",
+        format!("After Stop.\nMemory citations: memory:#{after_memory}"),
+    );
+    std::fs::write(&transcript, format!("{before}\n"))?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+    custom_capture(
+        &conn,
+        session_id,
+        project,
+        Some(project),
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": project,
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    std::fs::write(&transcript, format!("{before}\n{after}\n"))?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response("Only the Stop snapshot is eligible.", ""))
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::Written);
+    let before_usage: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_usage_events WHERE memory_id = ?1",
+        [before_memory],
+        |row| row.get(0),
+    )?;
+    let after_usage: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_usage_events WHERE memory_id = ?1",
+        [after_memory],
+        |row| row.get(0),
+    )?;
+    let raw_after_stop: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages WHERE content LIKE 'After Stop.%'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(before_usage, 1);
+    assert_eq!(after_usage, 0);
+    assert_eq!(raw_after_stop, 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_retries_transcript_side_effects_without_resummarizing() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-transcript-retry");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let mut conn = crate::db::open_db()?;
+    let project = "/tmp/remem";
+    let session_id = "sess-rollup-transcript-retry";
+    let memory_id = insert_injected_test_memory(&conn, project, session_id, "retry")?;
+    std::fs::write(&transcript, failure_citation_transcript(memory_id))?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+    custom_capture(
+        &conn,
+        session_id,
+        project,
+        Some(project),
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": project,
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_rollup_failure_lesson
+         BEFORE INSERT ON memory_lesson_feed_events
+         BEGIN
+             SELECT RAISE(FAIL, 'forced failure lesson error');
+         END;",
+    )?;
+
+    let first = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response(
+            "Persist once before retrying Stop side effects.",
+            "",
+        ))
+    })
+    .await;
+    let first_error = match first {
+        Ok(result) => anyhow::bail!("failure-lesson fault unexpectedly returned {result:?}"),
+        Err(error) => error,
+    };
+    assert!(first_error.to_string().contains("failure-lesson"));
+    assert_eq!(summary_count(&conn), 1);
+    assert_eq!(
+        job_types(&conn)?,
+        vec!["compress".to_string(), "dream".to_string()]
+    );
+
+    conn.execute_batch(
+        "DROP TRIGGER fail_rollup_failure_lesson;
+         CREATE TRIGGER fail_rollup_memory_citation
+         BEFORE INSERT ON memory_citation_events
+         BEGIN
+             SELECT RAISE(FAIL, 'forced memory citation error');
+         END;",
+    )?;
+    let second = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("persisted rollup retry must not call the summarizer")
+    })
+    .await;
+    let second_error = match second {
+        Ok(result) => anyhow::bail!("memory-citation fault unexpectedly returned {result:?}"),
+        Err(error) => error,
+    };
+    assert!(second_error.to_string().contains("memory-citation"));
+    assert_eq!(summary_count(&conn), 1);
+
+    conn.execute_batch("DROP TRIGGER fail_rollup_memory_citation;")?;
+    let retry_result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("persisted rollup retry must not call the summarizer")
+    })
+    .await?;
+    assert_eq!(retry_result, SessionRollupResult::AlreadyExists);
+    let lesson_events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_lesson_feed_events
+         WHERE project = ?1 AND session_id = ?2",
+        params![project, session_id],
+        |row| row.get(0),
+    )?;
+    let citation_events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_citation_events
+         WHERE project = ?1 AND session_id = ?2",
+        params![project, session_id],
+        |row| row.get(0),
+    )?;
+    let usage_events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_usage_events WHERE memory_id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(lesson_events, 1);
+    assert_eq!(citation_events, 1);
+    assert_eq!(usage_events, 1);
+    assert_eq!(
+        job_types(&conn)?,
+        vec!["compress".to_string(), "dream".to_string()]
+    );
     Ok(())
 }
 

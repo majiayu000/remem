@@ -7,7 +7,7 @@ mod tests;
 
 use std::future::Future;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
@@ -89,7 +89,7 @@ where
     let raw_archive_result = side_effects::drain_raw_archive_from_range(conn, task, &range);
     if session_rollup_exists(conn, task, &range)? {
         raw_archive_result?;
-        side_effects::run_persisted_rollup_side_effects(conn, task, &range)?;
+        run_rollup_side_effects(conn, task, &range)?;
         return Ok(SessionRollupResult::AlreadyExists);
     }
 
@@ -98,8 +98,25 @@ where
     let output = parse::parse_rollup_response(&response, &range)?;
     persist::persist_session_rollup(conn, task, &range, &output)?;
     raw_archive_result?;
-    side_effects::run_persisted_rollup_side_effects(conn, task, &range)?;
+    run_rollup_side_effects(conn, task, &range)?;
     Ok(SessionRollupResult::Written)
+}
+
+fn run_rollup_side_effects(
+    conn: &mut Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+) -> Result<()> {
+    let stop_memory_result =
+        side_effects::run_post_archive_stop_memory_side_effects(conn, task, range);
+    let persisted_result = side_effects::run_persisted_rollup_side_effects(conn, task, range);
+    match (stop_memory_result, persisted_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(stop_error), Err(persisted_error)) => Err(stop_error).context(format!(
+            "persisted rollup side effects also failed: {persisted_error:#}"
+        )),
+    }
 }
 
 fn load_rollup_range(conn: &Connection, task: &db::ExtractionTask) -> Result<Option<RollupRange>> {

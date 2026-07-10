@@ -17,31 +17,29 @@ pub(super) fn hash_message(msg: &str) -> String {
 }
 
 pub(super) fn extract_last_assistant_message(transcript_path: &str) -> Option<String> {
-    let content = std::fs::read_to_string(transcript_path).ok()?;
+    extract_last_assistant_message_with_limit(transcript_path, None)
+}
+
+pub(crate) fn extract_last_assistant_message_with_limit(
+    transcript_path: &str,
+    byte_limit: Option<u64>,
+) -> Option<String> {
+    let content =
+        crate::memory::raw_transcript::read_transcript_content(transcript_path, byte_limit).ok()?;
 
     for line in content.lines().rev() {
         let val: serde_json::Value = match serde_json::from_str(line) {
             Ok(value) => value,
             Err(_) => continue,
         };
-        if val["type"].as_str() != Some("assistant") {
-            continue;
-        }
-        let Some(content_arr) = val["message"]["content"].as_array() else {
+        let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&val) else {
             continue;
         };
-        let text_parts: Vec<&str> = content_arr
-            .iter()
-            .filter_map(|entry| {
-                if entry["type"].as_str() == Some("text") {
-                    entry["text"].as_str()
-                } else {
-                    None
-                }
-            })
-            .collect();
-        if !text_parts.is_empty() {
-            return Some(text_parts.join("\n"));
+        if message.role != crate::memory::raw_archive::ROLE_ASSISTANT {
+            continue;
+        }
+        if !message.text.trim().is_empty() {
+            return Some(message.text);
         }
     }
 

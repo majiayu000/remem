@@ -57,7 +57,8 @@ current SessionRollup path and the legacy Summary job chain.
       retirement.
 - [ ] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
-- [x] In-flight `JobType::Summary` upgrade handling is decided and tested:
+- [ ] In-flight `JobType::Summary` upgrade handling is implemented and tested,
+      but full T7 completion remains blocked by observed-commit wiring in #792:
       non-terminal legacy Summary jobs are rejected as permanent failures by
       migration v064, and already-claimed Summary jobs are rejected by the
       worker before the retired AI/finalize path can run. Stop hooks no longer
@@ -70,16 +71,17 @@ current SessionRollup path and the legacy Summary job chain.
       preserve one active spill row, retryable failed Summary rows are frozen
       before failure maintenance can reopen them, v064 upgrade rejection rows
       are not actionable doctor/status failures, worker-side post-retirement
-      Summary rejections stay visible, the Stop hook keeps only lightweight
-      citation/failure side effects, raw archive ingest moves to the
-      SessionRollup worker from preserved Stop payload paths, persisted
-      rollups re-home summary-derived candidates, workstream upsert, observed
-      commit linking, and native-memory sync, Compress/Dream follow-up jobs are
-      enqueued only after the rollup is persisted, old-version daemon
-      heartbeats and legacy singleton locks do not suppress the current Stop
-      fallback worker, workers run SessionRollup extraction before
-      Compress/Dream jobs, and terminal Summary history plus non-summary jobs
-      are preserved.
+      Summary rejections stay visible, the Stop hook keeps only immediately
+      available citation/failure side effects, and transcript-only signals run
+      after worker-side raw archive ingest bounded by the captured Stop byte
+      length. Persisted rollups re-home summary-derived candidates, workstream
+      upsert, and native-memory sync; observed-commit linking remains blocked by
+      #792. Compress/Dream follow-up jobs are enqueued only after the rollup is
+      persisted, old-version daemon heartbeats and legacy singleton locks do
+      not suppress the current Stop fallback worker, a current once-launch
+      heartbeat prevents overlapping fallback workers, workers run
+      SessionRollup extraction before Compress/Dream jobs, and terminal Summary
+      history plus non-summary jobs are preserved.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.

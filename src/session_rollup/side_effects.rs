@@ -23,6 +23,7 @@ struct PersistedRollupFields {
 struct StopHookPayload {
     cwd: Option<String>,
     transcript_path: Option<String>,
+    transcript_byte_len: Option<u64>,
     last_assistant_message: Option<String>,
 }
 
@@ -50,13 +51,16 @@ pub(super) fn drain_raw_archive_from_range(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        let report = crate::memory::raw_archive::drain_transcript(
+        let options = crate::memory::raw_archive::TranscriptDrainOptions::default();
+        let report = crate::memory::raw_archive::drain_transcript_with_capture_limit(
             conn,
             transcript_path,
             session_id,
             &task.project,
             branch.as_deref(),
             Some(cwd),
+            &options,
+            payload.transcript_byte_len,
         )
         .context("session rollup raw archive drain failed")?;
         crate::log::info(
@@ -100,6 +104,52 @@ pub(super) fn drain_raw_archive_from_range(
             branch.as_deref(),
             Some(cwd),
         )?;
+    }
+    Ok(())
+}
+
+pub(super) fn run_post_archive_stop_memory_side_effects(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+) -> Result<()> {
+    let Some(session_id) = task.session_id.as_deref() else {
+        return Ok(());
+    };
+    let Some(payload) = latest_stop_payload(range) else {
+        return Ok(());
+    };
+    let cwd = payload
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&task.project);
+    let branch = db::detect_git_branch(cwd);
+    crate::summarize::distill_stop_failure_lessons(
+        conn,
+        session_id,
+        &task.project,
+        branch.as_deref(),
+    )
+    .context("session rollup failure-lesson side effect failed")?;
+    let assistant_message = clean_field(payload.last_assistant_message.as_deref()).or_else(|| {
+        payload.transcript_path.as_deref().and_then(|path| {
+            crate::summarize::extract_last_assistant_message_with_limit(
+                path,
+                payload.transcript_byte_len,
+            )
+        })
+    });
+    if let Some(message) = assistant_message {
+        crate::summarize::record_stop_memory_citation_usage(
+            conn,
+            &task.host,
+            &task.project,
+            session_id,
+            &message,
+        )
+        .context("session rollup memory-citation side effect failed")?;
     }
     Ok(())
 }

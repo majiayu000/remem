@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::super::input::{extract_last_assistant_message, hash_message, SummarizeInput};
 
@@ -15,23 +15,13 @@ pub(super) fn run_stop_hook_side_effects(
     if drain_raw_archive {
         capture_raw_archive(conn, hook, session_id, project, cwd, branch);
     }
-    match crate::memory::failure_lesson::distill_session_failure_lessons(
-        conn, session_id, project, branch,
-    ) {
-        Ok(report) if report.inserted > 0 || report.duplicates > 0 => crate::log::info(
-            "summary-job",
-            &format!(
-                "failure lesson feed inserted={} duplicates={} project={}",
-                report.inserted, report.duplicates, project
-            ),
-        ),
-        Ok(_) => {}
-        Err(error) => crate::log::error(
+    if let Err(error) = distill_stop_failure_lessons(conn, session_id, project, branch) {
+        crate::log::error(
             "summary-job",
             &format!(
                 "failure lesson feed failed for project={project} session={session_id}: {error}"
             ),
-        ),
+        );
     }
 
     let assistant_msg = hook
@@ -48,38 +38,73 @@ pub(super) fn run_stop_hook_side_effects(
         })
         .unwrap_or_default();
     if !assistant_msg.is_empty() {
-        let usage_msg_hash = hash_message(&assistant_msg);
-        match crate::memory::usage::record_stop_memory_citations(
-            conn,
-            host,
-            project,
-            session_id,
-            &usage_msg_hash,
-            &assistant_msg,
-        ) {
-            Ok(usage_report) if usage_report.parsed_count > 0 || usage_report.duplicate_event => {
-                crate::log::info(
-                    "summary-job",
-                    &format!(
-                        "memory citations parsed={} matched={} inserted={} duplicate={} project={}",
-                        usage_report.parsed_count,
-                        usage_report.matched_count,
-                        usage_report.inserted_count,
-                        usage_report.duplicate_event,
-                        project
-                    ),
-                );
-            }
-            Ok(_) => {}
-            Err(error) => crate::log::error(
+        if let Err(error) =
+            record_stop_memory_citation_usage(conn, host, project, session_id, &assistant_msg)
+        {
+            crate::log::error(
                 "summary-job",
                 &format!(
-                    "memory citation recording failed for project={project} session={session_id} message_hash={usage_msg_hash}: {error}"
+                    "memory citation recording failed for project={project} session={session_id}: {error}"
                 ),
-            ),
+            );
         }
     }
     Ok(assistant_msg)
+}
+
+pub(crate) fn distill_stop_failure_lessons(
+    conn: &rusqlite::Connection,
+    session_id: &str,
+    project: &str,
+    branch: Option<&str>,
+) -> Result<()> {
+    let report = crate::memory::failure_lesson::distill_session_failure_lessons(
+        conn, session_id, project, branch,
+    )
+    .context("distill Stop-hook failure lessons")?;
+    if report.inserted > 0 || report.duplicates > 0 {
+        crate::log::info(
+            "summary-job",
+            &format!(
+                "failure lesson feed inserted={} duplicates={} project={}",
+                report.inserted, report.duplicates, project
+            ),
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn record_stop_memory_citation_usage(
+    conn: &rusqlite::Connection,
+    host: &str,
+    project: &str,
+    session_id: &str,
+    assistant_msg: &str,
+) -> Result<()> {
+    let usage_msg_hash = hash_message(assistant_msg);
+    let report = crate::memory::usage::record_stop_memory_citations(
+        conn,
+        host,
+        project,
+        session_id,
+        &usage_msg_hash,
+        assistant_msg,
+    )
+    .context("record Stop-hook memory citations")?;
+    if report.parsed_count > 0 || report.duplicate_event {
+        crate::log::info(
+            "summary-job",
+            &format!(
+                "memory citations parsed={} matched={} inserted={} duplicate={} project={}",
+                report.parsed_count,
+                report.matched_count,
+                report.inserted_count,
+                report.duplicate_event,
+                project
+            ),
+        );
+    }
+    Ok(())
 }
 
 fn capture_raw_archive(
