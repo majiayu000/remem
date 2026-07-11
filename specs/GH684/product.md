@@ -57,8 +57,7 @@ current SessionRollup path and the legacy Summary job chain.
       retirement.
 - [ ] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
-- [ ] In-flight `JobType::Summary` upgrade handling is implemented and tested,
-      but full T7 completion remains blocked by observed-commit wiring in #792:
+- [ ] In-flight `JobType::Summary` upgrade handling is implemented and tested:
       non-terminal legacy Summary jobs are rejected as permanent failures by
       migration v064, and already-claimed Summary jobs are rejected by the
       worker before the retired AI/finalize path can run. Stop hooks no longer
@@ -78,7 +77,9 @@ current SessionRollup path and the legacy Summary job chain.
       deduplicating repeated transcript paths, and summary-derived candidates
       cite only captured events inside the persisted rollup range. Persisted
       rollups re-home summary-derived candidates, workstream upsert, and
-      native-memory sync; observed-commit linking remains blocked by #792.
+      native-memory sync. The #792 slice captures only command-result-proven
+      commits, preserves typed evidence through spill/replay, and links every
+      commit from the exact claimed ObservationExtract or SessionRollup range.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered
@@ -100,7 +101,10 @@ current SessionRollup path and the legacy Summary job chain.
       not suppress the current Stop fallback worker, a current once-launch
       heartbeat prevents overlapping fallback workers, workers run
       SessionRollup extraction before Compress/Dream jobs, and terminal Summary
-      history plus non-summary jobs are preserved.
+      history plus non-summary jobs are preserved. The #792 observed-commit and
+      #794 bounded prompt-evidence slices are implemented; #795 native-memory
+      failure isolation and #796 follow-up scheduling idempotency still block
+      full T7 completion.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.

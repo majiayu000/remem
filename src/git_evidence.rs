@@ -214,9 +214,13 @@ fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
     let (commit_segment, leading_segments) = parsed.segments.split_last()?;
     let mut cwd = PathBuf::from(base_cwd);
     for segment in leading_segments {
-        if !apply_literal_cd(segment, &mut cwd) {
-            return None;
+        if apply_literal_cd(segment, &mut cwd) {
+            continue;
         }
+        if is_supported_git_add(segment) {
+            continue;
+        }
+        return None;
     }
     git_commit_workdir(commit_segment, &cwd)
 }
@@ -311,10 +315,10 @@ fn push_token(tokens: &mut Vec<String>, current: &mut String, in_token: &mut boo
 
 fn apply_literal_cd(tokens: &[String], cwd: &mut PathBuf) -> bool {
     let Some(index) = tokens.iter().position(|token| !is_env_assignment(token)) else {
-        return true;
+        return false;
     };
     if tokens.get(index).map(String::as_str) != Some("cd") {
-        return true;
+        return false;
     }
     let target = match &tokens[index + 1..] {
         [target] => target.as_str(),
@@ -328,7 +332,16 @@ fn apply_literal_cd(tokens: &[String], cwd: &mut PathBuf) -> bool {
     true
 }
 
+fn is_supported_git_add(tokens: &[String]) -> bool {
+    matches!(git_subcommand(tokens, Path::new(".")), Some(("add", _)))
+}
+
 fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {
+    let (subcommand, cwd) = git_subcommand(tokens, base_cwd)?;
+    (subcommand == "commit").then_some(cwd)
+}
+
+fn git_subcommand<'a>(tokens: &'a [String], base_cwd: &Path) -> Option<(&'a str, PathBuf)> {
     let mut index = tokens.iter().position(|token| !is_env_assignment(token))?;
     if tokens.get(index).map(String::as_str) != Some("git") {
         return None;
@@ -337,7 +350,6 @@ fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {
     let mut cwd = base_cwd.to_path_buf();
     while let Some(token) = tokens.get(index) {
         match token.as_str() {
-            "commit" => return Some(cwd),
             "-C" => {
                 let target = tokens.get(index + 1)?;
                 cwd = resolve_literal_workdir(&cwd, target)?;
@@ -360,7 +372,7 @@ fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {
                 index += 1;
             }
             value if value.starts_with("-c") && value.len() > 2 => index += 1,
-            _ => return None,
+            subcommand => return Some((subcommand, cwd)),
         }
     }
     None

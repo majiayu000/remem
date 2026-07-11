@@ -200,6 +200,38 @@ fn successful_commit_without_sha_proof_is_not_an_extraction_error() -> Result<()
 }
 
 #[test]
+fn leading_command_output_cannot_spoof_quiet_commit_evidence() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-spoof");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let actual_sha = commit(&repo, "b.txt", "b", "commit b")?;
+    assert_ne!(spoofed_sha, actual_sha);
+    let spoofed_output = format!("[main {}] spoof", &spoofed_sha[..7]);
+    let event = ParsedHookEvent {
+        session_id: "spoofed-quiet-commit".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({
+            "command": format!("printf '{spoofed_output}\\n' && git commit -q -m done")
+        })),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "quiet commit with leading output".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
 fn unsupported_shell_syntax_is_not_a_commit_extraction_error() -> Result<()> {
     let event = ParsedHookEvent {
         session_id: "ordinary-shell".to_string(),
