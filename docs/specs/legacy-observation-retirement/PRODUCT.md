@@ -137,7 +137,7 @@ Acceptance:
   identity configuration, and the documented exact status suffix; environment
   prefixes, arbitrary Git configuration, help/viewer/editor paths, dry runs,
   interactive add modes, shell expansion, redirection, globbing, and process
-  substitution produce no evidence.
+  substitution, or unquoted shell comments produce no evidence.
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
   commit links. A byte-bounded Codex transcript may prove multiple commits;
   one ambiguous call does not erase earlier proven calls, relative workdirs

@@ -88,8 +88,9 @@ current SessionRollup path and the legacy Summary job chain.
       and link-only. Its fail-closed command grammar rejects environment
       prefixes, arbitrary Git configuration, help/viewer/editor output, dry
       runs, interactive add modes, shell expansion, redirection, globbing, and
-      process substitution. Quiet commits remain ordinary captured events but
-      cannot create links because they suppress Git's own commit summary.
+      process substitution, or unquoted shell comments. Quiet commits remain
+      ordinary captured events but cannot create links because they suppress
+      Git's own commit summary.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered

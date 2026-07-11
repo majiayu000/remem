@@ -82,6 +82,12 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     assert!(is_supported_commit_command(
         "git add -A && git commit --message=done"
     ));
+    assert!(is_supported_commit_command(
+        "git add file#name && git commit -m done"
+    ));
+    assert!(is_supported_commit_command(
+        "git add '#literal' && git commit -m done"
+    ));
     assert!(!is_supported_commit_command("echo git commit -m fake"));
     assert!(!is_supported_commit_command(
         "git commit -m done && echo '[main deadbee] spoof'"
@@ -116,6 +122,9 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     assert!(!is_supported_commit_command("git commit -m done <(helper)"));
     assert!(!is_supported_commit_command(
         "git commit -m done [ab] {one,two}"
+    ));
+    assert!(!is_supported_commit_command(
+        "git add tracked.txt # && git commit -m done"
     ));
 }
 
@@ -645,6 +654,35 @@ fn redirected_commit_summary_cannot_leave_callback_as_proof() -> Result<()> {
     let summary = EventSummary {
         event_type: "bash".to_string(),
         summary: "redirected commit summary".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn shell_comment_cannot_expose_an_unexecuted_commit() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-shell-comment");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let spoofed_output = format!("[main {}] filter", &spoofed_sha[..7]);
+    let command = "git add tracked.txt # && git commit -m done";
+    let event = ParsedHookEvent {
+        session_id: "commented-out-commit".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": command})),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "commented-out commit".to_string(),
         detail: None,
         files_json: None,
         exit_code: Some(0),

@@ -290,6 +290,11 @@ fn parse_shell_command(command: &str) -> Result<ParsedShellCommand> {
                     current.push(ch);
                     in_token = true;
                 }
+                '#' if !in_token => {
+                    parsed.has_unmodeled_syntax = true;
+                    current.push(ch);
+                    in_token = true;
+                }
                 ';' | '|' | '&' | '\n' => {
                     push_token(&mut tokens, &mut current, &mut in_token);
                     if tokens.is_empty() {

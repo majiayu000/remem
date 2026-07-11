@@ -298,8 +298,8 @@ worker-time `HEAD`, is the authoritative commit source.
    `user.email` identity configuration, and commit arguments with an explicit
    non-interactive message source. Environment prefixes, arbitrary Git config,
    help/viewer/pager paths, dry runs, editors, interactive add modes, shell
-   expansion, redirection, globbing, and process substitution are rejected as
-   evidence sources.
+   expansion, redirection, globbing, process substitution, and unquoted shell
+   comments are rejected as evidence sources.
 2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
    Stop pairs shell calls and outputs from the captured transcript byte range,
    so one Stop may prove multiple commits without reading bytes appended later.
