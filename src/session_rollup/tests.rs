@@ -5,6 +5,7 @@ use crate::db::{record_captured_event, CaptureEventInput, ExtractionTaskKind};
 
 use super::*;
 
+mod citation_evidence;
 mod range_side_effects;
 mod side_effects;
 

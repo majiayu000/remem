@@ -264,6 +264,7 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
         &transcript,
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"archived assistant turn"}]}}"#,
     )?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
     let mut conn = crate::db::open_db()?;
     custom_capture(
         &conn,
@@ -273,7 +274,8 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
         &serde_json::json!({
             "session_id": "sess-rollup-raw",
             "cwd": "/tmp/remem",
-            "transcript_path": transcript
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
         })
         .to_string(),
     )?;
@@ -462,6 +464,7 @@ async fn session_rollup_retries_transcript_side_effects_without_resummarizing() 
         job_types(&conn)?,
         vec!["compress".to_string(), "dream".to_string()]
     );
+    std::fs::remove_file(&transcript)?;
 
     conn.execute_batch(
         "DROP TRIGGER fail_rollup_failure_lesson;
@@ -644,6 +647,7 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
         &transcript,
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"retry archived assistant turn"}]}}"#,
     )?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
     let mut conn = crate::db::open_db()?;
     custom_capture(
         &conn,
@@ -653,7 +657,8 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
         &serde_json::json!({
             "session_id": "sess-rollup-raw-retry",
             "cwd": "/tmp/remem",
-            "transcript_path": transcript
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
         })
         .to_string(),
     )?;
@@ -678,6 +683,20 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
         .to_string()
         .contains("raw archive ingest incomplete"));
     assert_eq!(summary_count(&conn), 1);
+    let checkpoint_before_retry: Option<i64> = conn.query_row(
+        "SELECT raw_archive_completed_at_epoch
+         FROM session_summaries
+         WHERE session_row_id = ?1
+           AND covered_from_event_id = ?2
+           AND covered_to_event_id = ?3",
+        params![
+            task.session_row_id,
+            task.cursor_event_id.unwrap_or(0) + 1,
+            task.high_watermark_event_id
+        ],
+        |row| row.get(0),
+    )?;
+    assert_eq!(checkpoint_before_retry, None);
     let premature_jobs: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
     assert_eq!(premature_jobs, 0);
     let failure_count: i64 = conn.query_row(
@@ -705,5 +724,19 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(raw_count, 1);
+    let checkpoint_after_retry: Option<i64> = conn.query_row(
+        "SELECT raw_archive_completed_at_epoch
+         FROM session_summaries
+         WHERE session_row_id = ?1
+           AND covered_from_event_id = ?2
+           AND covered_to_event_id = ?3",
+        params![
+            task.session_row_id,
+            task.cursor_event_id.unwrap_or(0) + 1,
+            task.high_watermark_event_id
+        ],
+        |row| row.get(0),
+    )?;
+    assert!(checkpoint_after_retry.is_some());
     Ok(())
 }
