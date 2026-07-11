@@ -233,6 +233,32 @@ fn dry_run_pending_reports_v065_preference_reinforcement_schema_drift() -> Resul
 }
 
 #[test]
+fn dry_run_pending_reports_v066_session_rollup_evidence_checkpoint_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[66])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("session rollup evidence drift must be reported"))?;
+    assert!(
+        error.contains("v066_session_rollup_evidence_checkpoint"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.transcript_evidence_json"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.raw_archive_completed_at_epoch"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[45])?;

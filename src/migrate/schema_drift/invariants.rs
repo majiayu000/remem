@@ -727,4 +727,16 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "preference_reinforcement",
         "idx_memory_preference_reinforcements_eligible",
     ),
+    SchemaInvariant::column(
+        66,
+        "session_rollup_evidence_checkpoint",
+        "session_summaries",
+        "transcript_evidence_json",
+    ),
+    SchemaInvariant::column(
+        66,
+        "session_rollup_evidence_checkpoint",
+        "session_summaries",
+        "raw_archive_completed_at_epoch",
+    ),
 ];

@@ -103,10 +103,14 @@ needed fields and side effects, then removes only the redundant Summary writer.
       evidence is sourced from that exact range rather than the session-wide
       latest capture. The #794 follow-up passes the same selected, byte-bounded
       user/assistant transcript messages into the summarizer and candidate
-      support text, removes exact captured-event duplicates, caps and redacts
-      the prompt block, and fails before the first AI call when that required
-      bounded evidence lacks a captured boundary, cannot be read or parsed, or
-      contains no usable user/assistant message.
+      support text, removes exact captured-event duplicates, and applies the
+      count, byte, and redaction budget once before either consumer. Migration
+      v066 persists that exact-range evidence plus raw archive completion so a
+      persisted-rollup retry does not reread an already-drained source file. A
+      legacy Stop without a boundary skips transcript supplementation when the
+      range has captured user/assistant evidence; without that fallback it
+      fails permanently before AI. Missing, malformed, or unusable required
+      bounded evidence still blocks the first AI call.
       Observed-commit wiring remains blocked by #792.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an

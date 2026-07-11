@@ -82,10 +82,14 @@ current SessionRollup path and the legacy Summary job chain.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered
-      boundary, omits exact text already represented by captured events, and
-      refuses to persist a metadata-only summary when bounded transcript
-      evidence lacks a captured boundary, cannot be read or parsed, or contains
-      no usable user/assistant message.
+      boundary, and omits exact text already represented by captured events.
+      One count- and byte-bounded, redacted evidence slice is shared by the
+      prompt and candidate support path, then persisted with an exact-range raw
+      archive completion checkpoint so retries do not depend on a removed
+      transcript file. A legacy Stop without a captured boundary uses only
+      captured conversational events; without that fallback it fails
+      permanently before AI. Missing, malformed, or unusable required bounded
+      snapshots still block metadata-only summary persistence.
       Compress/Dream follow-up jobs are enqueued only after the rollup is
       persisted, old-version daemon heartbeats and legacy singleton locks do
       not suppress the current Stop fallback worker, a current once-launch

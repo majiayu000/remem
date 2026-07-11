@@ -79,10 +79,13 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   archive content through the Stop-captured transcript byte boundary. The #794
   follow-up passes the same selected user/assistant messages into the rollup
   prompt and candidate support text. Repeated paths use one widest covered
-  boundary; exact captured-event text is omitted; the prompt block is count-
-  and byte-bounded, redacted, and XML-escaped; and a required snapshot
-  with no captured boundary, a read/parse failure, or no usable conversation
-  stops the first AI call rather than persisting a metadata-only summary. The
+  boundary; exact captured-event text is omitted; one count- and byte-bounded,
+  redacted slice feeds both consumers and is persisted with the exact-range raw
+  archive checkpoint. Persisted retries therefore skip an already-completed
+  source read. A legacy snapshot with no boundary uses captured conversational
+  events only, or fails permanently when none exist; a required bounded
+  snapshot read/parse failure or unusable conversation stops the first AI call
+  rather than persisting a metadata-only summary. The
   worker then completes transcript-only
   citation/failure signals, preserves `cwd` and
   `transcript_path` through capture redaction, re-home summary-derived
@@ -235,11 +238,14 @@ Tests: fixture DBs per state; frozen-write detection test.
    covered event range instead of the session-wide latest capture. The selected
    bounded transcript messages also feed the summarizer and candidate support
    text, while exact content already carried by a captured event is rendered
-   once. Transcript prompt rendering is capped at 128 messages, 64 KiB total
-   content, and 8 KiB per message, then redacted and XML-escaped; a required
-   snapshot without a captured boundary, a read/parse failure, or no usable
-   conversation aborts before summary persistence;
-   after a persisted rollup exists, worker side effects re-home
+   once. A shared evidence selection is capped at 128 messages, 64 KiB total
+   content, and 8 KiB per message, then redacted before prompt rendering or
+   candidate support. Migration v066 persists that slice and the exact-range
+   raw archive completion checkpoint. A legacy snapshot without a boundary uses
+   captured conversational events only, or fails permanently when none exist;
+   a required bounded snapshot read/parse failure or unusable conversation
+   aborts before summary persistence. After a persisted rollup exists, worker
+   retries skip completed raw ingest and re-home
    summary-derived candidates, workstream upsert, native-memory sync,
    UserContextCandidate extraction, and Compress/Dream follow-up enqueue.
    Citation/failure retry errors do not suppress those persisted side effects.
@@ -343,7 +349,11 @@ The #794 prompt-evidence follow-up is covered by
 `session_rollup_prompt_includes_only_bounded_transcript_text`,
 `session_rollup_prompt_does_not_duplicate_captured_message_text`,
 `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
-`session_rollup_unbounded_transcript_drains_archive_but_blocks_summary`,
+`session_rollup_unbounded_transcript_without_captured_conversation_fails_permanently`,
+`session_rollup_legacy_unbounded_transcript_uses_captured_assistant_only`,
+`session_rollup_existing_retry_runs_side_effects_when_transcript_disappears`,
+`session_rollup_transcript_support_messages_are_bounded_before_promotion`,
+`session_rollup_retries_incomplete_raw_archive_ingest`,
 `session_rollup_unusable_transcript_fails_before_metadata_only_summary`,
 `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`, and
 `transcript_prompt_is_bounded_redacted_and_xml_safe`.

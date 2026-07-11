@@ -133,7 +133,8 @@ async fn session_rollup_missing_transcript_fails_before_metadata_only_summary() 
 }
 
 #[tokio::test]
-async fn session_rollup_unbounded_transcript_drains_archive_but_blocks_summary() -> Result<()> {
+async fn session_rollup_unbounded_transcript_without_captured_conversation_fails_permanently(
+) -> Result<()> {
     let data_dir =
         crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-unbounded");
     std::fs::create_dir_all(&data_dir.path)?;
@@ -161,9 +162,11 @@ async fn session_rollup_unbounded_transcript_drains_archive_but_blocks_summary()
     .await
     .expect_err("unbounded transcript evidence must keep the rollup retryable");
 
-    assert!(
-        error.to_string().contains("transcript_byte_len"),
-        "{error:#}"
+    let error_text = format!("{error:#}");
+    assert!(error_text.contains("transcript_byte_len"), "{error_text}");
+    assert_eq!(
+        db::classify_failure(&error_text),
+        db::FailureClass::Permanent
     );
     assert_eq!(summary_count(&conn), 0);
     let archived: i64 = conn.query_row(
@@ -173,6 +176,15 @@ async fn session_rollup_unbounded_transcript_drains_archive_but_blocks_summary()
         |row| row.get(0),
     )?;
     assert_eq!(archived, 1);
+    db::mark_extraction_task_failed_or_retry(&conn, task.id, "worker-a", &error_text, 1)?;
+    let (status, attempts, failure_class): (String, i64, Option<String>) = conn.query_row(
+        "SELECT status, attempts, failure_class FROM extraction_tasks WHERE id = ?1",
+        [task.id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(status, "failed");
+    assert_eq!(attempts, 1);
+    assert_eq!(failure_class.as_deref(), Some("permanent"));
     Ok(())
 }
 
@@ -220,6 +232,196 @@ async fn session_rollup_unusable_transcript_fails_before_metadata_only_summary()
         "{error:#}"
     );
     assert_eq!(summary_count(&conn), 0);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_legacy_unbounded_transcript_uses_captured_assistant_only() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-legacy-boundary");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("legacy.jsonl");
+    let captured_assistant = "Legacy Stop recorded the final assistant note.";
+    let captured_assistant_prefix = "Legacy Stop recorded the final assistant";
+    let unbounded_transcript =
+        "This transcript text has no captured boundary and must stay out of the prompt.";
+    std::fs::write(&transcript, transcript_message(unbounded_transcript))?;
+    let mut conn = setup_conn();
+    let session_id = "sess-rollup-prompt-legacy-boundary";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "last_assistant_message": captured_assistant
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let result = process_with_summarizer(&mut conn, &task, |prompt| async move {
+        assert!(prompt.contains(captured_assistant_prefix), "{prompt}");
+        assert!(!prompt.contains(unbounded_transcript), "{prompt}");
+        Ok(xml_response(
+            "Use only safely captured legacy evidence.",
+            "",
+        ))
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::Written);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_existing_retry_runs_side_effects_when_transcript_disappears() -> Result<()>
+{
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new(
+        "session-rollup-existing-missing-transcript",
+    );
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let transcript_text = "Persisted retry transcript evidence.";
+    std::fs::write(&transcript, transcript_message(transcript_text))?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+    let mut conn = setup_conn();
+    let session_id = "sess-rollup-existing-missing-transcript";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_rollup_workstream_after_summary
+         BEFORE INSERT ON workstreams
+         BEGIN
+             SELECT RAISE(FAIL, 'forced workstream failure');
+         END;",
+    )?;
+
+    let first_error = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response_with_structured_fields(
+            "Persist before retrying the remaining side effects.",
+            "Recover persisted rollup side effects",
+            "Persisted retry transcript evidence must stay attributable.",
+            "",
+            "Run durable follow-up jobs.",
+            "",
+            "",
+        ))
+    })
+    .await
+    .expect_err("forced side-effect failure must keep the rollup retryable");
+    assert!(first_error.to_string().contains("workstream"));
+    assert_eq!(summary_count(&conn), 1);
+
+    conn.execute_batch("DROP TRIGGER fail_rollup_workstream_after_summary;")?;
+    std::fs::remove_file(&transcript)?;
+    let retry_result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("existing rollup retry must not call the summarizer")
+    })
+    .await?;
+    assert_eq!(retry_result, SessionRollupResult::AlreadyExists);
+    let workstream_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM workstreams
+         WHERE title = 'Recover persisted rollup side effects'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(workstream_count, 1);
+    let candidate_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates
+         WHERE text LIKE '%Persisted retry transcript evidence must stay attributable.%'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(candidate_count, 1);
+    let followup_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+    assert_eq!(followup_count, 2);
+    let (evidence_json, raw_archive_completed_at_epoch): (Option<String>, Option<i64>) = conn
+        .query_row(
+            "SELECT transcript_evidence_json, raw_archive_completed_at_epoch
+             FROM session_summaries
+             WHERE session_row_id = ?1
+               AND covered_from_event_id = ?2
+               AND covered_to_event_id = ?3",
+            params![
+                task.session_row_id,
+                task.cursor_event_id.unwrap_or(0) + 1,
+                task.high_watermark_event_id
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+    assert!(evidence_json.is_some());
+    assert!(raw_archive_completed_at_epoch.is_some());
+    Ok(())
+}
+
+#[test]
+fn session_rollup_transcript_support_messages_are_bounded_before_promotion() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("session-rollup-support-budget");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let lines = (0..140)
+        .map(|index| {
+            transcript_role_message(
+                "assistant",
+                &format!("support-{index:03} {}", "bounded text ".repeat(120)),
+            )
+        })
+        .collect::<Vec<_>>();
+    std::fs::write(&transcript, lines.join("\n"))?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+    let conn = setup_conn();
+    let session_id = "sess-rollup-support-budget";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    let mut conn = conn;
+    let task = claim_rollup_task(&mut conn)?;
+    let range = load_rollup_range(&conn, &task)?.expect("rollup range should load");
+
+    let evidence = super::super::transcript_evidence::load_prompt_transcript_evidence(&range)?;
+    let messages = evidence.messages;
+
+    assert!(evidence.truncated);
+    assert!(messages.len() <= 128, "{}", messages.len());
+    assert!(
+        messages
+            .iter()
+            .map(|message| message.content.len())
+            .sum::<usize>()
+            <= 64 * 1024
+    );
+    assert!(messages
+        .iter()
+        .all(|message| message.content.len() <= 8 * 1024));
+    assert!(!messages
+        .iter()
+        .any(|message| message.content.starts_with("support-000 ")));
+    assert!(messages
+        .iter()
+        .any(|message| message.content.starts_with("support-139 ")));
     Ok(())
 }
 

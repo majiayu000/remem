@@ -30,14 +30,22 @@ chain, and one mislabeled current surface.
 
 Issue #794 closes the transcript-prompt evidence gap within T7 without
 completing T7: selected Stop transcripts now supply byte-bounded user/assistant
-evidence to the summarizer and candidate support path, repeated paths use one
-widest covered boundary, exact captured-event duplicates are omitted, and
-missing, unbounded, or unusable transcript evidence fails before a metadata-only
+evidence to the summarizer and candidate support path through one shared,
+redacted budget; repeated paths use one widest covered boundary and exact
+captured-event duplicates are omitted. Migration v066 persists the exact-range
+evidence and raw archive checkpoint for side-effect retries. Legacy unbounded
+transcripts are never prompt evidence: captured conversational events provide
+the only compatibility fallback, otherwise the range fails permanently before
+AI. Missing or unusable required bounded evidence fails before a metadata-only
 summary can persist.
 Verification: `session_rollup_prompt_includes_only_bounded_transcript_text`,
 `session_rollup_prompt_does_not_duplicate_captured_message_text`,
 `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
-`session_rollup_unbounded_transcript_drains_archive_but_blocks_summary`,
+`session_rollup_unbounded_transcript_without_captured_conversation_fails_permanently`,
+`session_rollup_legacy_unbounded_transcript_uses_captured_assistant_only`,
+`session_rollup_existing_retry_runs_side_effects_when_transcript_disappears`,
+`session_rollup_transcript_support_messages_are_bounded_before_promotion`,
+`session_rollup_retries_incomplete_raw_archive_ingest`,
 `session_rollup_unusable_transcript_fails_before_metadata_only_summary`, and
 `transcript_prompt_is_bounded_redacted_and_xml_safe`.
 

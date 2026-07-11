@@ -1,16 +1,25 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
 
 use super::parse::RollupOutput;
+use super::transcript_evidence::PromptTranscriptEvidence;
 use super::RollupRange;
+
+pub(super) struct PersistedRollupState {
+    pub(super) transcript_evidence: PromptTranscriptEvidence,
+    pub(super) has_transcript_evidence_snapshot: bool,
+    pub(super) raw_archive_completed: bool,
+}
 
 pub(super) fn persist_session_rollup(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
     output: &RollupOutput,
+    transcript_evidence: &PromptTranscriptEvidence,
+    raw_archive_completed: bool,
 ) -> Result<()> {
     let session_row_id = task
         .session_row_id
@@ -29,14 +38,19 @@ pub(super) fn persist_session_rollup(
         .as_deref()
         .unwrap_or(&fallback_request);
     let discovery_tokens = estimate_discovery_tokens(output);
+    transcript_evidence.validate_for_range(range)?;
+    let transcript_evidence_json = serde_json::to_string(transcript_evidence)
+        .context("serialize bounded transcript evidence for session rollup")?;
+    let raw_archive_completed_at_epoch = raw_archive_completed.then_some(created_at_epoch);
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, created_at, created_at_epoch,
           decisions, learned, next_steps, preferences, discovery_tokens,
           host_id, project_id, session_row_id, summary_text,
-          covered_from_event_id, covered_to_event_id, model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL)",
+          covered_from_event_id, covered_to_event_id, model,
+          transcript_evidence_json, raw_archive_completed_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19)",
         params![
             memory_session_id,
             task.project,
@@ -54,7 +68,9 @@ pub(super) fn persist_session_rollup(
             session_row_id,
             output.summary_text,
             range.from_event_id,
-            range.to_event_id
+            range.to_event_id,
+            transcript_evidence_json,
+            raw_archive_completed_at_epoch
         ],
     )?;
 
@@ -87,6 +103,85 @@ pub(super) fn persist_session_rollup(
     }
 
     tx.commit()?;
+    Ok(())
+}
+
+pub(super) fn load_persisted_rollup_state(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+) -> Result<Option<PersistedRollupState>> {
+    let Some(session_row_id) = task.session_row_id else {
+        return Ok(None);
+    };
+    let row = conn
+        .query_row(
+            "SELECT transcript_evidence_json, raw_archive_completed_at_epoch
+             FROM session_summaries
+             WHERE session_row_id = ?1
+               AND covered_from_event_id = ?2
+               AND covered_to_event_id = ?3
+             LIMIT 1",
+            params![session_row_id, range.from_event_id, range.to_event_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((evidence_json, raw_archive_completed_at_epoch)) = row else {
+        return Ok(None);
+    };
+    let (transcript_evidence, has_transcript_evidence_snapshot) = match evidence_json {
+        Some(json) => (
+            serde_json::from_str::<PromptTranscriptEvidence>(&json)
+                .context("parse persisted bounded transcript evidence for session rollup")?,
+            true,
+        ),
+        None => {
+            crate::log::info(
+                "session-rollup",
+                "legacy persisted rollup has no transcript evidence snapshot; retrying with bounded source fallback enabled",
+            );
+            (PromptTranscriptEvidence::default(), false)
+        }
+    };
+    transcript_evidence.validate_for_range(range)?;
+    Ok(Some(PersistedRollupState {
+        transcript_evidence,
+        has_transcript_evidence_snapshot,
+        raw_archive_completed: raw_archive_completed_at_epoch.is_some(),
+    }))
+}
+
+pub(super) fn mark_raw_archive_completed(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+) -> Result<()> {
+    let session_row_id = task
+        .session_row_id
+        .context("session_rollup task missing session_row_id")?;
+    let updated = conn.execute(
+        "UPDATE session_summaries
+         SET raw_archive_completed_at_epoch = COALESCE(raw_archive_completed_at_epoch, ?1)
+         WHERE session_row_id = ?2
+           AND covered_from_event_id = ?3
+           AND covered_to_event_id = ?4",
+        params![
+            chrono::Utc::now().timestamp(),
+            session_row_id,
+            range.from_event_id,
+            range.to_event_id
+        ],
+    )?;
+    if updated != 1 {
+        anyhow::bail!(
+            "persisted session rollup raw archive checkpoint update matched {updated} rows"
+        );
+    }
     Ok(())
 }
 

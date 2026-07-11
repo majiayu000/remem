@@ -128,10 +128,14 @@ Acceptance:
 - Selected transcript paths use the widest boundary covered by the claimed
   event range and never read bytes appended after that boundary.
 - User/assistant transcript messages enter the rollup prompt as bounded,
-  deterministic, redacted, XML-escaped data anchored to a covered Stop event.
+  deterministic, redacted, XML-escaped data anchored to a covered Stop event;
+  candidate support and persisted retries consume the same bounded slice.
 - Exact text already represented by a captured event is not repeated, and a
-  missing boundary or a missing, malformed, or unusable required snapshot fails
-  before a metadata-only summary can persist.
+  legacy missing boundary may use captured conversational events only. Without
+  that fallback it fails permanently; a missing, malformed, or unusable
+  required bounded snapshot fails before a metadata-only summary can persist.
+- Successful raw ingest and the exact-range evidence slice are checkpointed so
+  remaining side effects can retry after the source transcript disappears.
 
 ## Rollout
 

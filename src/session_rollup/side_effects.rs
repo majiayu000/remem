@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
@@ -8,6 +6,7 @@ use crate::db;
 use crate::workstream::ParsedWorkStream;
 
 use super::persist::rollup_memory_session_id;
+use super::transcript_evidence::PromptTranscriptMessage;
 use super::RollupRange;
 
 #[derive(Debug)]
@@ -22,123 +21,13 @@ struct PersistedRollupFields {
 }
 
 #[derive(Debug, Deserialize)]
-struct StopHookPayload {
+pub(super) struct StopHookPayload {
     #[serde(skip)]
-    source_event_id: i64,
-    cwd: Option<String>,
-    transcript_path: Option<String>,
-    transcript_byte_len: Option<u64>,
-    last_assistant_message: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct PromptTranscriptMessage {
     pub(super) source_event_id: i64,
-    pub(super) role: &'static str,
-    pub(super) content: String,
-}
-
-pub(super) fn load_prompt_transcript_messages(
-    range: &RollupRange,
-) -> Result<Vec<PromptTranscriptMessage>> {
-    let payloads = stop_payloads(range)?;
-    let selected_transcripts = unique_transcript_payload_indices(&payloads);
-    let represented_text = captured_event_text(range);
-    let mut messages = Vec::new();
-
-    for payload_index in selected_transcripts {
-        let payload = &payloads[payload_index];
-        let Some(transcript_path) = stop_transcript_path(payload) else {
-            continue;
-        };
-        let transcript_byte_len = payload.transcript_byte_len.with_context(|| {
-            format!(
-                "bounded transcript prompt evidence for captured event {} requires transcript_byte_len",
-                payload.source_event_id
-            )
-        })?;
-        let content = crate::memory::raw_transcript::read_transcript_content(
-            transcript_path,
-            Some(transcript_byte_len),
-        )
-        .with_context(|| {
-            format!(
-                "read bounded transcript prompt evidence for captured event {}",
-                payload.source_event_id
-            )
-        })?;
-        let mut has_usable_message = false;
-
-        for (line_index, line) in content.lines().enumerate() {
-            let value = serde_json::from_str::<serde_json::Value>(line).with_context(|| {
-                format!(
-                    "parse bounded transcript prompt evidence for captured event {} line {}",
-                    payload.source_event_id,
-                    line_index + 1
-                )
-            })?;
-            let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
-            else {
-                continue;
-            };
-            let text = message.text.trim();
-            if text.is_empty() {
-                continue;
-            }
-            has_usable_message = true;
-            if represented_text.contains(text) {
-                continue;
-            }
-            messages.push(PromptTranscriptMessage {
-                source_event_id: payload.source_event_id,
-                role: message.role,
-                content: text.to_string(),
-            });
-        }
-        if !has_usable_message {
-            anyhow::bail!(
-                "bounded transcript prompt evidence for captured event {} contains no usable user or assistant messages",
-                payload.source_event_id
-            );
-        }
-    }
-    Ok(messages)
-}
-
-fn captured_event_text(range: &RollupRange) -> BTreeSet<String> {
-    let mut text = BTreeSet::new();
-    for event in &range.events {
-        let content = event.content.trim();
-        if !content.is_empty() {
-            text.insert(content.to_string());
-        }
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&event.content) {
-            collect_json_text(&value, &mut text);
-        }
-    }
-    text
-}
-
-fn collect_json_text(value: &serde_json::Value, out: &mut BTreeSet<String>) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            for value in fields.values() {
-                collect_json_text(value, out);
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                collect_json_text(value, out);
-            }
-        }
-        serde_json::Value::String(value) => {
-            let trimmed = value.trim();
-            if !trimmed.is_empty() {
-                out.insert(trimmed.to_string());
-            }
-        }
-        _ => {}
-    }
+    pub(super) cwd: Option<String>,
+    pub(super) transcript_path: Option<String>,
+    pub(super) transcript_byte_len: Option<u64>,
+    pub(super) last_assistant_message: Option<String>,
 }
 
 pub(super) fn drain_raw_archive_from_range(
@@ -254,6 +143,8 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     conn: &Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_messages: &[PromptTranscriptMessage],
+    allow_transcript_source_fallback: bool,
 ) -> Result<()> {
     let Some(session_id) = task.session_id.as_deref() else {
         return Ok(());
@@ -272,8 +163,21 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     )
     .context("session rollup failure-lesson side effect failed")?;
     for payload in &payloads {
-        let assistant_message =
-            clean_field(payload.last_assistant_message.as_deref()).or_else(|| {
+        let assistant_message = clean_field(payload.last_assistant_message.as_deref())
+            .or_else(|| {
+                transcript_messages
+                    .iter()
+                    .rev()
+                    .find(|message| {
+                        message.source_event_id == payload.source_event_id
+                            && message.role == "assistant"
+                    })
+                    .and_then(|message| clean_field(Some(&message.content)))
+            })
+            .or_else(|| {
+                if !allow_transcript_source_fallback {
+                    return None;
+                }
                 payload.transcript_path.as_deref().and_then(|path| {
                     crate::summarize::extract_last_assistant_message_with_limit(
                         path,
@@ -333,7 +237,7 @@ fn latest_stop_payload(range: &RollupRange) -> Option<StopHookPayload> {
     stop_payloads(range).ok()?.pop()
 }
 
-fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
+pub(super) fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
     range
         .events
         .iter()
@@ -359,7 +263,7 @@ fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
         .collect()
 }
 
-fn stop_transcript_path(payload: &StopHookPayload) -> Option<&str> {
+pub(super) fn stop_transcript_path(payload: &StopHookPayload) -> Option<&str> {
     payload
         .transcript_path
         .as_deref()
@@ -376,7 +280,7 @@ fn stop_payload_cwd<'a>(payload: &'a StopHookPayload, project: &'a str) -> &'a s
         .unwrap_or(project)
 }
 
-fn unique_transcript_payload_indices(payloads: &[StopHookPayload]) -> Vec<usize> {
+pub(super) fn unique_transcript_payload_indices(payloads: &[StopHookPayload]) -> Vec<usize> {
     let mut selected: Vec<(String, usize)> = Vec::new();
     for (index, payload) in payloads.iter().enumerate() {
         let Some(path) = stop_transcript_path(payload) else {
