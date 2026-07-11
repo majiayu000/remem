@@ -12,6 +12,7 @@ fn env_lock() -> &'static Mutex<()> {
 
 pub struct ScopedTestDataDir {
     _guard: MutexGuard<'static, ()>,
+    _config_guard: crate::runtime_config::TestEnvGuard,
     previous: Option<OsString>,
     previous_allow_plaintext: Option<OsString>,
     previous_cipher_key: Option<OsString>,
@@ -20,6 +21,9 @@ pub struct ScopedTestDataDir {
 
 impl ScopedTestDataDir {
     pub fn new(label: &str) -> Self {
+        let config_guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("runtime config test lock should acquire");
         let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("REMEM_DATA_DIR");
         let previous_allow_plaintext = std::env::var_os("REMEM_ALLOW_PLAINTEXT_DB");
@@ -39,6 +43,7 @@ impl ScopedTestDataDir {
         std::env::set_var("REMEM_ALLOW_PLAINTEXT_DB", "1");
         Self {
             _guard: guard,
+            _config_guard: config_guard,
             previous,
             previous_allow_plaintext,
             previous_cipher_key,

@@ -140,6 +140,70 @@ fn sweep_builds_global_rules_for_canonical_projects_without_local_memories() -> 
 }
 
 #[test]
+fn sweep_discovers_rerouted_preference_authority_without_prior_rule_state() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("rule-sweep-rerouted-authority");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let source = "/tmp/source-authority";
+    let destination = "/tmp/destination-authority";
+    let conn = db::open_db()?;
+    insert_sweep_preference(&conn, 1, source, "project", "Use bun, not npm", 1)?;
+    conn.execute(
+        "UPDATE memories
+         SET target_project = ?1, owner_scope = 'repo', owner_key = ?1
+         WHERE id = 1",
+        [destination],
+    )?;
+
+    let routing: (String, Option<String>, String, String) = conn.query_row(
+        "SELECT project, target_project, owner_scope, owner_key
+         FROM memories WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        routing,
+        (
+            source.to_string(),
+            Some(destination.to_string()),
+            "repo".to_string(),
+            destination.to_string()
+        )
+    );
+    let prior_destination_state: i64 = conn.query_row(
+        "SELECT
+             (SELECT COUNT(*) FROM jobs
+              WHERE job_type = 'compile_rules' AND project = ?1)
+           + (SELECT COUNT(*) FROM preference_rule_overrides WHERE project = ?1)
+           + (SELECT COUNT(*) FROM preference_rule_diagnostics WHERE project = ?1)
+           + (SELECT COUNT(*) FROM projects WHERE project_path = ?1)",
+        [destination],
+        |row| row.get(0),
+    )?;
+    assert_eq!(prior_destination_state, 0);
+    drop(conn);
+
+    let outcome = run_compile_rules_sweep()?;
+    assert_eq!(outcome.projects_seen, 2);
+    assert_eq!(outcome.failures, 0);
+
+    let source_path = artifact_path_for_project(&db::absolute_data_dir()?, source);
+    let ArtifactLoad::Loaded(source_artifact) = load_artifact_fail_open(source_path) else {
+        anyhow::bail!("source project should retain sweep convergence");
+    };
+    assert!(source_artifact.rules.is_empty());
+
+    let destination_path = artifact_path_for_project(&db::absolute_data_dir()?, destination);
+    let ArtifactLoad::Loaded(destination_artifact) = load_artifact_fail_open(destination_path)
+    else {
+        anyhow::bail!("rerouted authority should receive its compiled rule artifact");
+    };
+    assert_eq!(destination_artifact.rules.len(), 1);
+    assert_eq!(destination_artifact.rules[0].source_memory_id, 1);
+    Ok(())
+}
+
+#[test]
 fn unchanged_artifact_recovery_records_status_before_error_recurs() -> Result<()> {
     let _data_dir = ScopedTestDataDir::new("rule-sweep-unchanged-recovery");
     crate::runtime_config::init_config()?;

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.199` for the GH-671 T3 post-merge corrective:
+  archive and reroute operations recompile both affected preference authorities,
+  replacement overrides follow normalized predicate identity, global preference
+  mutations immediately fan out to registered projects, and failed success
+  diagnostics restore or remove the unpublished compiled artifact.
 - Staged source version `0.5.198` for #794: SessionRollup now supplies
   one shared byte-bounded, redacted transcript evidence slice to the summarizer
   and candidate support path, deduplicates repeated paths and captured-event

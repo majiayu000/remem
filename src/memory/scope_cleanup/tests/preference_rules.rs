@@ -3,7 +3,11 @@ use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
 use crate::db::test_support::ScopedTestDataDir;
-use crate::memory::scope_cleanup::{apply_memory_cleanup_plan, build_preference_cleanup_plan};
+use crate::memory::scope_cleanup::{
+    apply_memory_cleanup_plan, archive_objects, build_preference_cleanup_plan, reroute_objects,
+    ArchiveRequest, ObjectRef, RerouteRequest, TargetProjectUpdate,
+};
+use crate::runtime_config::RuleCompilationConfig;
 
 const PROJECT: &str = "/tmp/preference-cleanup";
 const PREFERENCE: &str = "Use bun, not npm";
@@ -184,6 +188,88 @@ fn cleanup_edited_plan_cannot_adopt_stale_predicate_state() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(override_rows, 0);
+    Ok(())
+}
+
+#[test]
+fn archive_preference_enqueues_rule_removal_without_dropping_reinforcement() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("archive-preference-rule-state");
+    let conn = setup_rule_cleanup()?;
+
+    archive_objects(
+        &conn,
+        &ArchiveRequest {
+            refs: &[ObjectRef::memory(102)],
+            reason: Some("no longer authoritative"),
+            dry_run: false,
+            confirm: true,
+        },
+    )?;
+
+    let state: (String, i64) = conn.query_row(
+        "SELECT m.status, r.reinforcement_count
+         FROM memories m
+         JOIN memory_preference_reinforcements r ON r.memory_id = m.id
+         WHERE m.id = 102",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(state, ("archived".to_string(), 1));
+    assert_pending_compile(&conn, PROJECT)?;
+    Ok(())
+}
+
+#[test]
+fn reroute_preference_moves_override_and_recompiles_both_authorities() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("reroute-preference-rule-state");
+    let conn = setup_rule_cleanup()?;
+    let destination = "/tmp/preference-cleanup-destination";
+
+    reroute_objects(
+        &conn,
+        &RerouteRequest {
+            refs: &[ObjectRef::memory(101)],
+            owner_scope: "repo",
+            owner_key: destination,
+            target_project: TargetProjectUpdate::Set(destination.to_string()),
+            topic_domain: None,
+            context_class: None,
+            routing_confidence: Some(1.0),
+            reason: Some("move repository authority"),
+            dry_run: false,
+            confirm: true,
+        },
+    )?;
+
+    assert_pending_compile(&conn, PROJECT)?;
+    assert_pending_compile(&conn, destination)?;
+    let override_project: String = conn.query_row(
+        "SELECT project FROM preference_rule_overrides WHERE source_memory_id = 101",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(override_project, destination);
+
+    let config = RuleCompilationConfig {
+        enabled: true,
+        min_reinforcement: 1,
+    };
+    let old_rules = crate::rules::compile_project_rules(&conn, PROJECT, config)?.rules;
+    assert!(old_rules.iter().all(|rule| rule.source_memory_id != 101));
+    let destination_rules = crate::rules::compile_project_rules(&conn, destination, config)?.rules;
+    assert_eq!(destination_rules.len(), 1);
+    assert_eq!(destination_rules[0].source_memory_id, 101);
+    Ok(())
+}
+
+fn assert_pending_compile(conn: &Connection, project: &str) -> Result<()> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM jobs
+         WHERE job_type = 'compile_rules' AND project = ?1 AND state = 'pending'",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1, "expected one pending compile for {project}");
     Ok(())
 }
 

@@ -23,6 +23,27 @@ fn setup_test_db() -> Connection {
              created_at_epoch INTEGER NOT NULL,
              updated_at_epoch INTEGER NOT NULL,
              machine_checkable INTEGER NOT NULL DEFAULT 0
+         );
+         CREATE TABLE preference_rule_diagnostics (project TEXT NOT NULL);
+         CREATE TABLE preference_rule_overrides (project TEXT NOT NULL);
+         CREATE TABLE projects (project_path TEXT NOT NULL);
+         CREATE TABLE jobs (
+             id INTEGER PRIMARY KEY,
+             host TEXT NOT NULL,
+             job_type TEXT NOT NULL,
+             project TEXT NOT NULL,
+             session_id TEXT,
+             payload_json TEXT NOT NULL,
+             state TEXT NOT NULL,
+             priority INTEGER NOT NULL,
+             attempt_count INTEGER NOT NULL,
+             max_attempts INTEGER NOT NULL,
+             lease_owner TEXT,
+             lease_expires_epoch INTEGER,
+             next_retry_epoch INTEGER NOT NULL,
+             last_error TEXT,
+             created_at_epoch INTEGER NOT NULL,
+             updated_at_epoch INTEGER NOT NULL
          );",
     )
     .unwrap_or_else(|err| panic!("Failed to create preference reinforcement schema: {err}"));
