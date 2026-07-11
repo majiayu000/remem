@@ -366,6 +366,17 @@ fn load_rule_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
          FROM (
              SELECT DISTINCT project FROM memories
              UNION
+             SELECT DISTINCT CASE
+                        WHEN COALESCE(m.scope, 'project') = 'global' THEN m.project
+                        ELSE COALESCE(
+                            NULLIF(m.target_project, ''),
+                            CASE WHEN m.owner_scope = 'repo' THEN NULLIF(m.owner_key, '') END,
+                            m.project
+                        )
+                    END AS project
+             FROM memories m
+             JOIN memory_preference_reinforcements r ON r.memory_id = m.id
+             UNION
              SELECT DISTINCT project FROM preference_rule_overrides
              UNION
              SELECT DISTINCT project FROM preference_rule_diagnostics
