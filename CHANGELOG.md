@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.197` for the GH-671 T3 correctness follow-up:
+  repeated identical approvals now persist reinforcement, lifecycle changes
+  enqueue non-lossy compilation, overrides follow replacement sources,
+  eligibility enforces stored risk and source trust, project rules retain
+  precedence over global rules, classifier/config/diagnostic failures fail
+  closed, generated messages remain static, and v065 schema drift guards its
+  column and index.
 - Staged source version `0.5.196` for GH-671 T3 preference rule compiler:
   canonical preference reinforcement state (migration `v065_preference_reinforcement`
   wiring the v062 `memory_preference_reinforcements` table via the apply path) and a
