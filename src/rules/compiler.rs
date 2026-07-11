@@ -104,6 +104,21 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         load_artifact_fail_open(&artifact_path),
         ArtifactLoad::Loaded(existing) if existing.rules == artifact.rules
     ) {
+        let latest = latest_compile_diagnostic(&conn, project)
+            .with_context(|| format!("failed to load latest compile diagnostic for {project}"))?;
+        if latest
+            .as_ref()
+            .is_none_or(|(latest_status, _)| latest_status != "ok")
+        {
+            record_diagnostic(
+                &conn,
+                project,
+                "ok",
+                &format!("compiled {rule_count} rule(s)"),
+                Some(rule_count),
+                Some(&artifact_path.display().to_string()),
+            );
+        }
         return Ok(Some(CompileOutcome {
             project: project.to_string(),
             rule_count,
@@ -321,19 +336,7 @@ fn record_diagnostic(
     artifact_path: Option<&str>,
 ) {
     if status != "ok" {
-        match conn
-            .query_row(
-                "SELECT status, COALESCE(message, '')
-                 FROM preference_rule_diagnostics
-                 WHERE project = ?1
-                   AND event_kind = 'compile'
-                 ORDER BY id DESC
-                 LIMIT 1",
-                params![project],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-            )
-            .optional()
-        {
+        match latest_compile_diagnostic(conn, project) {
             Ok(Some((latest_status, latest_message)))
                 if latest_status == status && latest_message == message =>
             {
@@ -366,6 +369,23 @@ fn record_diagnostic(
             &format!("failed to record compile diagnostic for {project}: {error}"),
         );
     }
+}
+
+fn latest_compile_diagnostic(
+    conn: &Connection,
+    project: &str,
+) -> rusqlite::Result<Option<(String, String)>> {
+    conn.query_row(
+        "SELECT status, COALESCE(message, '')
+         FROM preference_rule_diagnostics
+         WHERE project = ?1
+           AND event_kind = 'compile'
+         ORDER BY id DESC
+         LIMIT 1",
+        params![project],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
 }
 
 #[cfg(test)]

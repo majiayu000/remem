@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use super::run_compile_rules_sweep;
+use super::{run_compile_rules_job, run_compile_rules_sweep};
 use crate::db::{self, test_support::ScopedTestDataDir};
 use crate::rules::{artifact_path_for_project, load_artifact_fail_open, ArtifactLoad};
 
@@ -136,5 +136,57 @@ fn sweep_builds_global_rules_for_canonical_projects_without_local_memories() -> 
         anyhow::bail!("canonical project should receive the global rule artifact");
     };
     assert_eq!(artifact.rules.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn unchanged_artifact_recovery_records_status_before_error_recurs() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("rule-sweep-unchanged-recovery");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let project = "/tmp/recovery";
+    let conn = db::open_db()?;
+    insert_sweep_preference(&conn, 1, project, "project", "Use bun, not npm", 1)?;
+    drop(conn);
+
+    let initial = run_compile_rules_job(project)?.expect("initial compile should run");
+    assert!(initial.artifact_changed);
+
+    let conn = db::open_db()?;
+    insert_sweep_preference(&conn, 2, project, "project", "I like clean code", 1)?;
+    drop(conn);
+    assert!(run_compile_rules_job(project).is_err());
+
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_preference_reinforcements
+         SET machine_checkable = 0
+         WHERE memory_id = 2",
+        [],
+    )?;
+    drop(conn);
+    let recovery = run_compile_rules_job(project)?.expect("recovery compile should run");
+    assert!(!recovery.artifact_changed);
+
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_preference_reinforcements
+         SET machine_checkable = 1
+         WHERE memory_id = 2",
+        [],
+    )?;
+    drop(conn);
+    assert!(run_compile_rules_job(project).is_err());
+
+    let conn = db::open_db()?;
+    let mut stmt = conn.prepare(
+        "SELECT status FROM preference_rule_diagnostics
+         WHERE project = ?1
+         ORDER BY id",
+    )?;
+    let statuses = stmt
+        .query_map([project], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(statuses, ["ok", "error", "ok", "error"]);
     Ok(())
 }

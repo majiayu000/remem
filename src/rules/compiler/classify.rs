@@ -164,47 +164,49 @@ fn explicitly_forbids_term(lower: &str, term: &str) -> bool {
 
 fn negates_avoidance(lower: &str, term: &str) -> bool {
     const AVOIDANCE_VERBS: &[&str] = &["avoid", "ban", "exclude", "forbid", "omit"];
-    let tokens = lower
-        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '\'')
-        .filter(|token| !token.is_empty())
-        .collect::<Vec<_>>();
+    lower
+        .split([',', ';', ':', '.', '!', '?', '\n', '\r'])
+        .any(|clause| {
+            let tokens = clause
+                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '\'')
+                .filter(|token| !token.is_empty())
+                .collect::<Vec<_>>();
 
-    tokens.iter().enumerate().any(|(term_index, token)| {
-        if *token != term {
-            return false;
-        }
-        let marker_index = match term_index.checked_sub(1) {
-            Some(index) if tokens[index] == "the" => index.checked_sub(1),
-            index => index,
-        };
-        let Some(marker_index) = marker_index else {
-            return false;
-        };
-        if !AVOIDANCE_VERBS.contains(&tokens[marker_index]) {
-            return false;
-        }
+            tokens.iter().enumerate().any(|(term_index, token)| {
+                if *token != term {
+                    return false;
+                }
+                let marker_index = match term_index.checked_sub(1) {
+                    Some(index) if tokens[index] == "the" => index.checked_sub(1),
+                    index => index,
+                };
+                let Some(marker_index) = marker_index else {
+                    return false;
+                };
+                if !AVOIDANCE_VERBS.contains(&tokens[marker_index]) {
+                    return false;
+                }
 
-        // A negation can be separated from the avoidance verb by auxiliaries
-        // or adverbs ("never explicitly avoid", "no reason to forbid"). In
-        // that case the polarity is unsafe to infer, so classification fails
-        // closed instead of compiling the opposite rule.
-        tokens[marker_index.saturating_sub(4)..marker_index]
-            .iter()
-            .any(|token| {
-                matches!(
-                    *token,
-                    "not"
-                        | "never"
-                        | "no"
-                        | "cannot"
-                        | "cant"
-                        | "dont"
-                        | "hardly"
-                        | "rarely"
-                        | "scarcely"
-                ) || token.ends_with("n't")
+                // Scan the whole clause rather than a fixed token window. If
+                // any earlier lexical negator can scope over the avoidance
+                // verb, polarity is unsafe to infer and classification fails
+                // closed instead of compiling the opposite rule.
+                tokens[..marker_index].iter().any(|token| {
+                    matches!(
+                        *token,
+                        "not"
+                            | "never"
+                            | "no"
+                            | "cannot"
+                            | "cant"
+                            | "dont"
+                            | "hardly"
+                            | "rarely"
+                            | "scarcely"
+                    ) || token.ends_with("n't")
+                })
             })
-    })
+        })
 }
 
 fn contains_word(text: &str, needle: &str) -> bool {
@@ -267,6 +269,7 @@ mod tests {
             "Do not avoid npm; use npm instead of yarn",
             "Never avoid npm; use npm instead of yarn",
             "There is no reason to avoid npm; use npm instead of yarn",
+            "There is no good reason whatsoever to avoid npm; use npm instead of yarn",
             "You shouldn't avoid npm; use npm instead of yarn",
         ] {
             let Some(classification) = classify_preference_predicate(text) else {
@@ -285,6 +288,7 @@ mod tests {
             "Do not avoid the Co-Authored-By commit trailer; always add it",
             "Never forbid the Co-Authored-By commit trailer; always add it",
             "There is no reason to omit the Co-Authored-By commit trailer",
+            "There is no good reason whatsoever to omit the Co-Authored-By commit trailer",
         ] {
             assert!(
                 classify_preference_predicate(text).is_none(),
