@@ -1,7 +1,10 @@
 use crate::adapter::{EventSummary, ParsedHookEvent};
 use crate::db::{self, test_support::ScopedTestDataDir};
 
-use super::{replay_spilled_capture_events, spill_capture_event, SPILL_REASON_DB_OPEN_FAILED};
+use super::{
+    normalize_claimed_spill_records, replay_spill_record, replay_spilled_capture_events,
+    spill_capture_event, CaptureSpillRecord, SPILL_REASON_DB_OPEN_FAILED,
+};
 
 #[test]
 fn replay_spilled_capture_event_records_capture_and_drop_ledger() -> anyhow::Result<()> {
@@ -292,6 +295,118 @@ fn replay_identical_legacy_spills_without_event_ids_preserves_occurrences() -> a
     )?;
     assert_eq!(captured, 2);
     assert_eq!(events, 2);
+    Ok(())
+}
+
+#[test]
+fn replay_identical_legacy_spills_across_claims_preserves_occurrences() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("capture-spill-identical-legacy-cross-claim");
+    let legacy = serde_json::json!({
+        "version": 1,
+        "host": "codex-cli",
+        "event": {
+            "session_id": "session-identical-legacy-cross-claim",
+            "cwd": "/tmp/remem",
+            "project": "/tmp/remem",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/remem/src/lib.rs"},
+            "tool_response": {"ok": true}
+        },
+        "summary": {
+            "event_type": "file_edit",
+            "summary": "Edited src/lib.rs",
+            "detail": null,
+            "files_json": "[\"src/lib.rs\"]",
+            "exit_code": null
+        },
+        "db_error": "database is locked",
+        "created_at_epoch": 1700000000
+    });
+    let path = crate::db::data_dir().join("capture-spill.jsonl");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let conn = db::open_db()?;
+
+    std::fs::write(&path, format!("{legacy}\n"))?;
+    assert_eq!(replay_spilled_capture_events(&conn)?, 1);
+    std::fs::write(&path, format!("{legacy}\n"))?;
+    assert_eq!(replay_spilled_capture_events(&conn)?, 1);
+
+    let captured: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-identical-legacy-cross-claim'",
+        [],
+        |row| row.get(0),
+    )?;
+    let events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM events WHERE session_id = 'session-identical-legacy-cross-claim'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(captured, 2);
+    assert_eq!(events, 2);
+    Ok(())
+}
+
+#[test]
+fn normalized_legacy_spill_identity_survives_orphan_restore() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("capture-spill-legacy-normalized-orphan");
+    let legacy = serde_json::json!({
+        "version": 1,
+        "host": "codex-cli",
+        "event": {
+            "session_id": "session-legacy-normalized-orphan",
+            "cwd": "/tmp/remem",
+            "project": "/tmp/remem",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/remem/src/lib.rs"},
+            "tool_response": {"ok": true}
+        },
+        "summary": {
+            "event_type": "file_edit",
+            "summary": "Edited src/lib.rs",
+            "detail": null,
+            "files_json": "[\"src/lib.rs\"]",
+            "exit_code": null
+        },
+        "db_error": "database is locked",
+        "created_at_epoch": 1700000000
+    });
+    let path = crate::db::data_dir().join("capture-spill.jsonl");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, format!("{legacy}\n"))?;
+    let queue = crate::spill_queue::SpillQueue::new(path.clone())?;
+    let claim = queue
+        .claim(std::time::Duration::ZERO)?
+        .ok_or_else(|| anyhow::anyhow!("legacy spill should be claimable"))?;
+    let raw = std::fs::read_to_string(claim.path())?;
+
+    normalize_claimed_spill_records(claim.path(), &raw)?;
+
+    let normalized = std::fs::read_to_string(claim.path())?;
+    let normalized_record: CaptureSpillRecord =
+        crate::db::spill_crypto::decode_json_line(normalized.trim())?;
+    let normalized_id = normalized_record.event_id.clone();
+    assert_ne!(normalized, raw);
+    assert!(normalized_id.starts_with("tool_result-legacy-spill-"));
+    let conn = db::open_db()?;
+    assert!(replay_spill_record(&conn, &path, &normalized_record)?);
+
+    assert_eq!(queue.restore_orphaned_claims(std::time::Duration::ZERO)?, 1);
+    let restored = std::fs::read_to_string(&path)?;
+    let restored_record: CaptureSpillRecord =
+        crate::db::spill_crypto::decode_json_line(restored.trim())?;
+    assert_eq!(restored_record.event_id, normalized_id);
+
+    assert_eq!(replay_spilled_capture_events(&conn)?, 0);
+    let captured_id: String = conn.query_row(
+        "SELECT event_id FROM captured_events WHERE session_id = 'session-legacy-normalized-orphan'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(captured_id, normalized_id);
     Ok(())
 }
 

@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -189,14 +188,17 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
             return Err(error).with_context(|| format!("read {}", claim.path().display()));
         }
     };
+    let contents = match normalize_claimed_spill_records(claim.path(), &contents) {
+        Ok(contents) => contents,
+        Err(error) => {
+            claim.restore()?;
+            return Err(error).with_context(|| format!("normalize {}", claim.path().display()));
+        }
+    };
     let mut replayed = 0;
     let result = (|| -> Result<()> {
-        let mut legacy_line_occurrences = BTreeMap::<&str, usize>::new();
         for line in contents.lines().filter(|line| !line.trim().is_empty()) {
-            let occurrence = legacy_line_occurrences.entry(line).or_default();
-            let line_occurrence = *occurrence;
-            *occurrence += 1;
-            match parse_spill_record(line, line_occurrence) {
+            match parse_spill_record(line) {
                 Ok(record) => match replay_spill_record(conn, &path, &record) {
                     Ok(true) => replayed += 1,
                     Ok(false) => {}
@@ -219,6 +221,40 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
         );
     }
     Ok(replayed)
+}
+
+fn normalize_claimed_spill_records(path: &Path, contents: &str) -> Result<String> {
+    let mut changed = false;
+    let mut normalized_lines = Vec::new();
+    for (line_index, line) in contents
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .enumerate()
+    {
+        let normalized_line =
+            match crate::db::spill_crypto::decode_json_line::<CaptureSpillRecordCompat>(line) {
+                Ok(record) if record.event_id.is_none() => {
+                    changed = true;
+                    let event_id = unique_legacy_spill_event_id(line)?;
+                    crate::db::spill_crypto::encode_json_line(&record.into_record(event_id))
+                        .with_context(|| {
+                            format!("encode legacy capture spill line {}", line_index + 1)
+                        })?
+                }
+                _ => line.to_string(),
+            };
+        normalized_lines.push(normalized_line);
+    }
+    if !changed {
+        return Ok(contents.to_string());
+    }
+    let mut normalized = normalized_lines.join("\n");
+    if !normalized.is_empty() {
+        normalized.push('\n');
+    }
+    crate::atomic_file::write_atomic(path, normalized.as_bytes())
+        .with_context(|| format!("persist normalized capture spill {}", path.display()))?;
+    Ok(normalized)
 }
 
 fn replay_spill_record(
@@ -312,9 +348,13 @@ fn sanitize_summary(summary: &EventSummary) -> EventSummary {
     }
 }
 
-fn parse_spill_record(line: &str, line_occurrence: usize) -> Result<CaptureSpillRecord> {
+fn parse_spill_record(line: &str) -> Result<CaptureSpillRecord> {
     let record: CaptureSpillRecordCompat = crate::db::spill_crypto::decode_json_line(line)?;
-    Ok(record.into_record(legacy_spill_event_id(line, line_occurrence)))
+    let event_id = record
+        .event_id
+        .clone()
+        .context("capture spill record is missing normalized event_id")?;
+    Ok(record.into_record(event_id))
 }
 
 fn recovered_spill_exists(conn: &Connection, record: &CaptureSpillRecord) -> Result<bool> {
@@ -343,16 +383,15 @@ fn recovered_spill_exists(conn: &Connection, record: &CaptureSpillRecord) -> Res
     Ok(exists)
 }
 
-fn legacy_spill_event_id(line: &str, line_occurrence: usize) -> String {
-    let base = format!(
-        "tool_result-legacy-spill-{:016x}",
+fn unique_legacy_spill_event_id(line: &str) -> Result<String> {
+    let mut nonce = [0_u8; 16];
+    getrandom::fill(&mut nonce)
+        .map_err(|error| anyhow::anyhow!("generate legacy capture spill identity: {error}"))?;
+    let nonce = u128::from_ne_bytes(nonce);
+    Ok(format!(
+        "tool_result-legacy-spill-{:016x}-{nonce:032x}",
         crate::db::deterministic_hash(line.as_bytes())
-    );
-    if line_occurrence == 0 {
-        base
-    } else {
-        format!("{base}-{}", line_occurrence + 1)
-    }
+    ))
 }
 
 fn spill_path() -> PathBuf {

@@ -316,9 +316,11 @@ worker-time `HEAD`, is the authoritative commit source.
 3. Each proven commit is stored atomically with its captured event in the 1:N
    `captured_event_commits` table. Encrypted spill records preserve the same
    typed evidence; replay never re-reads the repository's later `HEAD`.
-   Compatibility rows without `event_id` use a content hash for the first
-   occurrence and a stable per-content occurrence suffix for duplicates; a
-   failed row is rewritten with that explicit identity before retry.
+   Before any database replay, compatibility rows without `event_id` are
+   atomically rewritten in the claimed queue file with a content-scoped,
+   nonce-backed unique identity. Orphan restoration and failed retries retain
+   that explicit identity, while a byte-identical row arriving in a later claim
+   receives a new one.
 4. Captured Git evidence is produced only with a task that deterministically
    consumes it: observed tool events enqueue `ObservationExtract`, and Stop
    events enqueue `SessionRollup`. Each link phase reads every distinct commit
@@ -353,11 +355,12 @@ Rollup-first priority, no evidence, baseline `HEAD` rejection, explicit
 `no_observations`, AI failure, same-range multiple commits, Codex transcript
 byte boundaries, per-call ambiguous and unresolvable candidate isolation,
 later-range isolation, retry after link failure, typed spill replay after
-`HEAD` changes, occurrence-distinct replay of identical legacy spill rows,
-cross-host raw-session collisions, and single-result lookup across multiple
-rollup summaries. Late fixed-ID Stop evidence must also prove link-only worker
-processing without AI calls, new summaries, jobs, or follow-up extraction
-tasks.
+`HEAD` changes, same-claim and cross-claim occurrence-distinct replay of
+identical legacy spill rows, normalized-identity survival through orphan
+restoration, cross-host raw-session collisions, and single-result lookup across
+multiple rollup summaries. Late fixed-ID Stop evidence must also prove
+link-only worker processing without AI calls, new summaries, jobs, or follow-up
+extraction tasks.
 
 ### `pending_observations`
 
