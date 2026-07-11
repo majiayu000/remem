@@ -15,6 +15,11 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::rules::PreferencePredicate;
 
+mod overrides;
+
+pub(crate) use overrides::reconcile_preference_project_change;
+use overrides::transfer_rule_overrides;
+
 /// Persist the reinforcement count for a freshly written preference memory.
 ///
 /// `superseded_ids` are the prior preference memories this write replaces (from
@@ -66,10 +71,8 @@ pub(crate) fn persist_preference_reinforcement(
                     risk_class: prior_risk,
                 })?;
             }
-            transfer_rule_overrides(conn, *id, new_memory_id)?;
-        } else {
-            remove_rule_overrides(conn, *id)?;
         }
+        transfer_rule_overrides(conn, *id, new_memory_id, &prior_text, text)?;
         conn.execute(
             "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
             [id],
@@ -172,11 +175,11 @@ pub(crate) fn reconcile_in_place_preference_update(
     if compatible {
         return Ok(false);
     }
+    transfer_rule_overrides(conn, memory_id, memory_id, previous_text, current_text)?;
     conn.execute(
         "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
         [memory_id],
     )?;
-    remove_rule_overrides(conn, memory_id)?;
     conn.execute(
         "UPDATE memories SET source_candidate_id = NULL WHERE id = ?1",
         [memory_id],
@@ -240,11 +243,11 @@ pub(crate) fn reconcile_cleanup_preference(
                     risk_class,
                 })?;
             }
-            if memory_id != current_memory_id {
-                transfer_rule_overrides(conn, memory_id, current_memory_id)?;
-            }
-        } else {
-            remove_rule_overrides(conn, memory_id)?;
+        }
+        if memory_id != current_memory_id
+            || !crate::memory::operation::same_memory_text(&row.0, final_text)
+        {
+            transfer_rule_overrides(conn, memory_id, current_memory_id, &row.0, final_text)?;
         }
         if memory_id != current_memory_id {
             conn.execute(
@@ -255,7 +258,6 @@ pub(crate) fn reconcile_cleanup_preference(
     }
 
     if !current_compatible {
-        remove_rule_overrides(conn, current_memory_id)?;
         conn.execute(
             "UPDATE memories SET source_candidate_id = NULL WHERE id = ?1",
             [current_memory_id],
@@ -400,102 +402,6 @@ fn preference_predicates(text: &str) -> Vec<PreferencePredicate> {
         .into_iter()
         .map(|classification| classification.predicate)
         .collect()
-}
-
-#[derive(Debug)]
-struct StoredOverride {
-    id: i64,
-    project: String,
-    rule_id: String,
-    disabled: i64,
-    action_override: Option<String>,
-    reason: Option<String>,
-    updated_by: String,
-    updated_at_epoch: i64,
-}
-
-fn transfer_rule_overrides(
-    conn: &Connection,
-    old_memory_id: i64,
-    new_memory_id: i64,
-) -> Result<()> {
-    let old_prefix = format!("pref-{old_memory_id}-");
-    let mut stmt = conn.prepare(
-        "SELECT id, project, rule_id, disabled, action_override, reason,
-                updated_by, updated_at_epoch
-         FROM preference_rule_overrides
-         WHERE source_memory_id = ?1 OR rule_id LIKE ?2
-         ORDER BY updated_at_epoch ASC, id ASC",
-    )?;
-    let rows = stmt.query_map(params![old_memory_id, format!("{old_prefix}%")], |row| {
-        Ok(StoredOverride {
-            id: row.get(0)?,
-            project: row.get(1)?,
-            rule_id: row.get(2)?,
-            disabled: row.get(3)?,
-            action_override: row.get(4)?,
-            reason: row.get(5)?,
-            updated_by: row.get(6)?,
-            updated_at_epoch: row.get(7)?,
-        })
-    })?;
-    let overrides = crate::db::query::collect_rows(rows)?;
-    drop(stmt);
-
-    for stored in overrides {
-        let suffix = stored.rule_id.strip_prefix(&old_prefix).with_context(|| {
-            format!(
-                "override {} references preference memory {} but has no transferable rule suffix",
-                stored.rule_id, old_memory_id
-            )
-        })?;
-        if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
-            bail!(
-                "override {} has an invalid generated rule suffix",
-                stored.rule_id
-            );
-        }
-        let new_rule_id = format!("pref-{new_memory_id}-{suffix}");
-        conn.execute(
-            "INSERT INTO preference_rule_overrides
-             (project, rule_id, source_memory_id, disabled, action_override, reason,
-              updated_by, updated_at_epoch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-             ON CONFLICT(project, rule_id) DO UPDATE SET
-               source_memory_id = excluded.source_memory_id,
-               disabled = excluded.disabled,
-               action_override = excluded.action_override,
-               reason = excluded.reason,
-               updated_by = excluded.updated_by,
-               updated_at_epoch = excluded.updated_at_epoch
-             WHERE excluded.updated_at_epoch >= preference_rule_overrides.updated_at_epoch",
-            params![
-                stored.project,
-                new_rule_id,
-                new_memory_id,
-                stored.disabled,
-                stored.action_override,
-                stored.reason,
-                stored.updated_by,
-                stored.updated_at_epoch,
-            ],
-        )?;
-        conn.execute(
-            "DELETE FROM preference_rule_overrides WHERE id = ?1",
-            [stored.id],
-        )?;
-    }
-    Ok(())
-}
-
-fn remove_rule_overrides(conn: &Connection, memory_id: i64) -> Result<()> {
-    let prefix = format!("pref-{memory_id}-%");
-    conn.execute(
-        "DELETE FROM preference_rule_overrides
-         WHERE source_memory_id = ?1 OR rule_id LIKE ?2",
-        params![memory_id, prefix],
-    )?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -662,6 +568,53 @@ mod tests {
         assert_eq!(row.1, Some(2));
         assert_eq!(row.2, 1);
         assert_eq!(row.3.as_deref(), Some("block"));
+        Ok(())
+    }
+
+    #[test]
+    fn override_transfer_matches_predicate_identity_not_rule_ordinal() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("pref-reinforce-override-identity");
+        let conn = db::open_db()?;
+        let old_text = "Do not add AI-generated-by or Co-authored-by trailers to commits";
+        let new_text = "Do not add Co-authored-by trailer to commits";
+        insert_preference(&conn, 1, old_text)?;
+        insert_preference(&conn, 2, new_text)?;
+        persist_preference_reinforcement(&conn, 1, &[], old_text, "low", None, 100)?;
+        conn.execute(
+            "INSERT INTO preference_rule_overrides
+             (project, rule_id, source_memory_id, disabled, action_override, reason,
+              updated_at_epoch)
+             VALUES ('/tmp/remem', 'pref-1-1', 1, 1, 'block', 'ai override', 150),
+                    ('/tmp/remem', 'pref-1-2', 1, 0, 'block', 'coauthor override', 151)",
+            [],
+        )?;
+
+        persist_preference_reinforcement(&conn, 2, &[1], new_text, "low", None, 200)?;
+
+        let rows = conn
+            .prepare(
+                "SELECT rule_id, source_memory_id, disabled, reason
+                 FROM preference_rule_overrides
+                 ORDER BY rule_id",
+            )?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![(
+                "pref-2-1".to_string(),
+                Some(2),
+                0,
+                Some("coauthor override".to_string())
+            )]
+        );
         Ok(())
     }
 }

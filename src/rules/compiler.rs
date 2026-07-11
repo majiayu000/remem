@@ -5,6 +5,7 @@
 
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
+use std::io::ErrorKind;
 
 use crate::rules::artifact::{CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate};
 use crate::rules::store::{
@@ -133,6 +134,21 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         }));
     }
 
+    let previous_artifact = match snapshot_artifact(&artifact_path) {
+        Ok(previous) => previous,
+        Err(error) => {
+            let message = format!("artifact snapshot failed: {error}");
+            if let Err(diagnostic_error) =
+                record_diagnostic(&conn, project, "error", &message, None, None)
+            {
+                return Err(error.context(format!(
+                    "failed to persist artifact snapshot diagnostic: {diagnostic_error}"
+                )));
+            }
+            return Err(error);
+        }
+    };
+
     if let Err(error) = write_artifact_atomic(&artifact_path, &artifact) {
         let message = format!("artifact write failed: {error}");
         crate::log::error(
@@ -149,20 +165,56 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         return Err(error);
     }
 
-    record_compile_success(
+    if let Err(diagnostic_error) = record_compile_success(
         &conn,
         project,
         rule_count,
         &artifact_path,
         true,
         &conflict_messages,
-    )?;
+    ) {
+        crate::log::error(
+            "rules",
+            &format!(
+                "compile success diagnostic failed for project {project}; restoring previous artifact: {diagnostic_error}"
+            ),
+        );
+        return match restore_artifact(&artifact_path, previous_artifact) {
+            Ok(()) => Err(diagnostic_error
+                .context("compile success diagnostic failed; previous artifact restored")),
+            Err(restore_error) => Err(diagnostic_error.context(format!(
+                "compile success diagnostic failed and previous artifact restoration failed: {restore_error}"
+            ))),
+        };
+    }
     Ok(Some(CompileOutcome {
         project: project.to_string(),
         rule_count,
         artifact_path,
         artifact_changed: true,
     }))
+}
+
+fn snapshot_artifact(path: &std::path::Path) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(path) {
+        Ok(contents) => Ok(Some(contents)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error)
+            .with_context(|| format!("read previous compiled rules artifact {}", path.display())),
+    }
+}
+
+fn restore_artifact(path: &std::path::Path, previous: Option<Vec<u8>>) -> Result<()> {
+    match previous {
+        Some(contents) => crate::atomic_file::write_atomic(path, contents)
+            .with_context(|| format!("restore compiled rules artifact {}", path.display())),
+        None => match std::fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error)
+                .with_context(|| format!("remove unpublished artifact {}", path.display())),
+        },
+    }
 }
 
 /// Pure compile pass used by tests and the worker wrapper.
@@ -271,20 +323,27 @@ fn select_eligible_preferences(
          WHERE m.memory_type = 'preference'
            AND m.status = 'active'
            AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?1)
-           AND m.owner_scope IS NOT NULL
+           AND (
+               (COALESCE(m.scope, 'project') = 'project'
+                AND m.owner_scope = 'repo'
+                AND COALESCE(
+                    NULLIF(m.target_project, ''),
+                    NULLIF(m.owner_key, ''),
+                    m.project
+                ) = ?3)
+               OR
+               (COALESCE(m.scope, 'project') = 'global'
+                AND m.owner_scope IS NOT NULL)
+           )
            AND m.source_trust_class IN ('local_tool_output', 'repo_file', 'user_prompt')
            AND r.machine_checkable = 1
            AND r.risk_class = 'low'
            AND r.reinforcement_count >= ?2
            AND c.risk_class = 'low'
            AND c.review_status IN ('approved', 'edited', 'auto_promoted')
-           AND (
-               (COALESCE(m.scope, 'project') = 'project' AND m.project = ?3)
-               OR COALESCE(m.scope, 'project') = 'global'
-           )
            AND {policy_filter}
          ORDER BY CASE
-                    WHEN COALESCE(m.scope, 'project') = 'project' AND m.project = ?3 THEN 0
+                    WHEN COALESCE(m.scope, 'project') = 'project' THEN 0
                     ELSE 1
                   END,
                   m.updated_at_epoch DESC,

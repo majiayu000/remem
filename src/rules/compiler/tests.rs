@@ -436,6 +436,43 @@ fn project_rule_precedes_newer_global_conflict() -> Result<()> {
 }
 
 #[test]
+fn rerouted_project_rule_precedes_newer_global_conflict() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-rerouted-project-over-global");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            id: 1,
+            project: "/tmp/original-authority",
+            content: "Use bun, not npm",
+            updated_at: 100,
+            ..Default::default()
+        },
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET target_project = ?1, owner_scope = 'repo', owner_key = ?1
+         WHERE id = 1",
+        [PROJECT],
+    )?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            id: 2,
+            project: "/tmp/global-source",
+            content: "Use npm, not bun",
+            scope: "global",
+            owner_scope: Some("user"),
+            updated_at: 200,
+            ..Default::default()
+        },
+    )?;
+
+    assert_eq!(compile(&conn)?, vec!["pref-1-1".to_string()]);
+    Ok(())
+}
+
+#[test]
 fn pure_compile_does_not_write_artifact() -> Result<()> {
     let _dir = ScopedTestDataDir::new("compile-no-write");
     let conn = db::open_db()?;
@@ -480,6 +517,74 @@ fn worker_job_writes_artifact_and_records_diagnostic() -> Result<()> {
     )?;
     assert_eq!(status, "ok");
     assert_eq!(rule_count, 1);
+    Ok(())
+}
+
+#[test]
+fn success_diagnostic_failure_restores_previous_artifact() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-success-diagnostic-rollback");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    insert_pref(&conn, &PrefSpec::default())?;
+    drop(conn);
+
+    let first = run_compile_rules_job(PROJECT)?.expect("initial compilation should succeed");
+    let previous = std::fs::read(&first.artifact_path)?;
+
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memories
+         SET content = 'Use npm, not yarn', updated_at_epoch = updated_at_epoch + 1
+         WHERE id = 1",
+        [],
+    )?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_success_compile_diagnostic
+         BEFORE INSERT ON preference_rule_diagnostics
+         WHEN NEW.event_kind = 'compile' AND NEW.status = 'ok'
+         BEGIN
+             SELECT RAISE(ABORT, 'forced success diagnostic failure');
+         END;",
+    )?;
+    drop(conn);
+
+    let error = run_compile_rules_job(PROJECT)
+        .expect_err("success diagnostic failure must fail artifact publication");
+    assert!(
+        format!("{error:#}").contains("forced success diagnostic failure"),
+        "{error:#}"
+    );
+    assert_eq!(std::fs::read(&first.artifact_path)?, previous);
+    Ok(())
+}
+
+#[test]
+fn success_diagnostic_failure_removes_new_artifact() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-new-artifact-diagnostic-rollback");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    insert_pref(&conn, &PrefSpec::default())?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_success_compile_diagnostic
+         BEFORE INSERT ON preference_rule_diagnostics
+         WHEN NEW.event_kind = 'compile' AND NEW.status = 'ok'
+         BEGIN
+             SELECT RAISE(ABORT, 'forced success diagnostic failure');
+         END;",
+    )?;
+    drop(conn);
+    let artifact_path = artifact_path_for_project(db::absolute_data_dir()?, PROJECT);
+    assert!(!artifact_path.exists());
+
+    let error = run_compile_rules_job(PROJECT)
+        .expect_err("success diagnostic failure must retract a new artifact");
+    assert!(
+        format!("{error:#}").contains("forced success diagnostic failure"),
+        "{error:#}"
+    );
+    assert!(!artifact_path.exists());
     Ok(())
 }
 
