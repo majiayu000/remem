@@ -203,17 +203,25 @@ pub(crate) fn reconcile_cleanup_preference(
         [current_memory_id],
         |row| row.get(0),
     )?;
+    let current_predicates = preference_predicates(&current_text);
     let current_compatible = crate::memory::operation::same_memory_text(&current_text, final_text)
-        || (!final_predicates.is_empty()
-            && preference_predicates(&current_text) == final_predicates);
+        || (!final_predicates.is_empty() && current_predicates == final_predicates);
+    let current_override_compatible = !final_predicates.is_empty()
+        && final_predicates
+            .iter()
+            .any(|predicate| current_predicates.contains(predicate));
     let mut aggregate = ReinforcementAggregate::default();
-    let mut ids = Vec::with_capacity(stale_memory_ids.len() + 1);
-    ids.push(current_memory_id);
-    ids.extend_from_slice(stale_memory_ids);
-    ids.sort_unstable();
-    ids.dedup();
+    let mut stale_ids = stale_memory_ids.to_vec();
+    stale_ids.sort_unstable();
+    stale_ids.dedup();
+    stale_ids.retain(|memory_id| *memory_id != current_memory_id);
 
-    for memory_id in ids {
+    // Transfer the canonical row before compatible stale rows can write
+    // overrides under its rule-id prefix. Otherwise a later canonical transfer
+    // can reinterpret an already-remapped stale override using the canonical
+    // row's old ordinal. Unrelated final predicates still discard stale
+    // provenance rather than adopting it into an edited cleanup plan.
+    for memory_id in std::iter::once(current_memory_id).chain(stale_ids) {
         let row: (String, Option<(i64, Option<String>, i64, i64, String)>) = conn.query_row(
             "SELECT m.content, r.reinforcement_count, r.source_evidence,
                         r.last_reinforced_at_epoch, r.created_at_epoch, r.risk_class
@@ -244,7 +252,9 @@ pub(crate) fn reconcile_cleanup_preference(
                 })?;
             }
         }
-        if memory_id != current_memory_id
+        if memory_id != current_memory_id && !current_override_compatible {
+            overrides::remove_rule_overrides(conn, memory_id)?;
+        } else if memory_id != current_memory_id
             || !crate::memory::operation::same_memory_text(&row.0, final_text)
         {
             transfer_rule_overrides(conn, memory_id, current_memory_id, &row.0, final_text)?;
@@ -613,6 +623,54 @@ mod tests {
                 Some(2),
                 0,
                 Some("coauthor override".to_string())
+            )]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cleanup_preserves_stale_override_when_final_predicates_are_current_subset() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("pref-cleanup-override-subset");
+        let conn = db::open_db()?;
+        let stale_text = "Do not add Co-authored-by trailer to commits";
+        let current_text = "Do not add AI-generated-by or Co-authored-by trailers to commits";
+        insert_preference(&conn, 1, stale_text)?;
+        insert_preference(&conn, 2, current_text)?;
+        conn.execute(
+            "INSERT INTO preference_rule_overrides
+             (project, rule_id, source_memory_id, disabled, action_override, reason,
+              updated_at_epoch)
+             VALUES ('/tmp/remem', 'pref-1-1', 1, 1, 'block',
+                     'keep coauthor override', 150)",
+            [],
+        )?;
+
+        reconcile_cleanup_preference(&conn, 2, &[1], stale_text, 200)?;
+
+        let rows = conn
+            .prepare(
+                "SELECT rule_id, source_memory_id, disabled, action_override, reason
+                 FROM preference_rule_overrides
+                 ORDER BY rule_id",
+            )?
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(
+            rows,
+            vec![(
+                "pref-2-1".to_string(),
+                Some(2),
+                1,
+                Some("block".to_string()),
+                Some("keep coauthor override".to_string()),
             )]
         );
         Ok(())
