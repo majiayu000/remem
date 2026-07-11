@@ -131,8 +131,12 @@ Acceptance:
   metadata for that exact SHA before the event is written or spilled, and
   stores the evidence atomically with the capture event. Explicit quiet commit
   commands remain eligible for ordinary event capture but produce no commit
-  evidence or link. Evidence command parsing is fail-closed: it accepts only
-  literal workdir changes,
+  evidence or link. Success requires a numeric zero exit status or a Claude
+  payload explicitly identified as the success-only `PostToolUse` event;
+  an explicit failure event always wins over contradictory response fields,
+  while unknown status and failure events preserve capture without commit
+  evidence. Evidence command parsing is fail-closed: it accepts only literal
+  workdir changes,
   non-interactive add/commit forms with an explicit message source, safe
   identity configuration, and the documented exact status suffix; environment
   prefixes, arbitrary Git configuration, help/viewer/editor paths, dry runs,
@@ -143,7 +147,9 @@ Acceptance:
   one ambiguous call does not erase earlier proven calls, relative workdirs
   are anchored to the Stop cwd, and an exact trailing `git status --short` is
   supported without accepting environment overrides, Git configuration, help
-  viewers, or arbitrary trailing shell output.
+  viewers, or arbitrary trailing shell output. Codex success comes only from
+  the wrapper status before `Final output:`; status-like command output cannot
+  override a failed wrapper.
 - Deterministic linking uses the exact claimed event range and durable
   `session_row_id`; it does not depend on an LLM result or a synthetic
   observation-session prefix.

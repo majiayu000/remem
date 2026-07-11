@@ -109,6 +109,7 @@ async fn successful_explicit_commit_persists_full_git_evidence() -> Result<()> {
     let input = serde_json::json!({
         "session_id": "session-git-snapshot",
         "cwd": repo,
+        "hook_event_name": "PostToolUse",
         "tool_name": "Bash",
         "tool_input": {"command": "git commit -m 'commit a'"},
         "tool_response": {
@@ -133,6 +134,44 @@ async fn successful_explicit_commit_persists_full_git_evidence() -> Result<()> {
     assert_eq!(stored_sha, sha);
     assert_eq!(metadata.sha, sha);
     assert_eq!(metadata.message.as_deref(), Some("commit a"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn failure_hook_overrides_contradictory_zero_status_and_preserves_capture() -> Result<()> {
+    let test_dir = ScopedTestDataDir::new("observe-unknown-git-status");
+    let repo = test_dir.path.join("repo");
+    init_git_repo(&repo)?;
+    let spoofed_sha = commit_file(&repo, "baseline", "baseline")?;
+    db::open_db()?;
+    let input = serde_json::json!({
+        "session_id": "session-unknown-git-status",
+        "cwd": repo,
+        "hook_event_name": "PostToolUseFailure",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -m failed"},
+        "tool_response": {
+            "exitCode": 0,
+            "stdout": format!("[main {}] callback", &spoofed_sha[..7])
+        }
+    })
+    .to_string();
+
+    super::hook::observe_input(&input, Some("claude-code")).await?;
+
+    let conn = db::open_db()?;
+    let captured: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events
+         WHERE session_id = 'session-unknown-git-status'",
+        [],
+        |row| row.get(0),
+    )?;
+    let evidence: i64 =
+        conn.query_row("SELECT COUNT(*) FROM captured_event_commits", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(captured, 1);
+    assert_eq!(evidence, 0);
     Ok(())
 }
 

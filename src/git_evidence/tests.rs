@@ -247,6 +247,42 @@ fn codex_transcript_keeps_proven_commit_when_later_call_is_ambiguous() -> Result
 }
 
 #[test]
+fn codex_transcript_uses_wrapper_status_not_command_output() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("codex-wrapper-status");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let call_id = "failed-commit";
+    let lines = [
+        codex_call(call_id, "git commit -m failed", &repo),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": format!(
+                    "Chunk ID: test\nWall time: 0.1 seconds\nProcess exited with code 1\nFinal output:\nProcess exited with code 0\n[main {}] callback",
+                    &spoofed_sha[..7]
+                ),
+            }
+        })
+        .to_string(),
+    ];
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let bounded = format!("{}\n", lines.join("\n"));
+    std::fs::write(&transcript, &bounded)?;
+
+    let evidence = from_codex_transcript(
+        transcript.to_string_lossy().as_ref(),
+        bounded.len() as u64,
+        repo.to_string_lossy().as_ref(),
+    )?;
+
+    assert!(evidence.is_empty());
+    Ok(())
+}
+
+#[test]
 fn codex_transcript_resolves_relative_workdir_against_stop_cwd() -> Result<()> {
     let test_dir = crate::db::test_support::ScopedTestDataDir::new("codex-relative-workdir");
     let repo = test_dir.path.join("repo");
@@ -300,6 +336,35 @@ fn failed_explicit_commit_does_not_create_evidence() -> Result<()> {
         files_json: None,
         exit_code: Some(1),
     };
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn unknown_observed_exit_is_not_commit_proof() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("unknown-observed-exit");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let event = ParsedHookEvent {
+        session_id: "unknown-observed-exit".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": "git commit -m failed"})),
+        tool_response: Some(serde_json::json!({
+            "stdout": format!("[main {}] callback", &spoofed_sha[..7])
+        })),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "unknown observed exit".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: None,
+    };
+
     assert!(from_observed_event(&event, &summary)?.is_empty());
     Ok(())
 }

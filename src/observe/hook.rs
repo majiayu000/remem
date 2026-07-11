@@ -5,7 +5,7 @@ use super::spill::{
     spill_capture_event_with_git_evidence, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
     SPILL_REASON_DB_OPEN_FAILED,
 };
-use crate::db;
+use crate::{db, git_evidence};
 use anyhow::Result;
 
 pub async fn observe(host: Option<&str>) -> Result<()> {
@@ -35,7 +35,7 @@ pub(super) async fn observe_input(input: &str, host: Option<&str>) -> Result<()>
         );
         return Ok(());
     };
-    let git_evidence = match crate::git_evidence::from_observed_event(&event, &summary) {
+    let git_evidence = match git_evidence::from_hook(&event, &summary, input, &capture_host) {
         Ok(evidence) => evidence,
         Err(error) => {
             crate::log::error(

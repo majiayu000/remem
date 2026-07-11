@@ -12,7 +12,39 @@ pub(crate) fn from_observed_event(
     event: &ParsedHookEvent,
     summary: &EventSummary,
 ) -> Result<Vec<GitCommitEvidence>> {
-    if event.tool_name != "Bash" || summary.exit_code.is_some_and(|code| code != 0) {
+    from_observed_event_with_success_provenance(event, summary, false)
+}
+
+pub(crate) fn from_hook(
+    event: &ParsedHookEvent,
+    summary: &EventSummary,
+    raw_input: &str,
+    capture_host: &str,
+) -> Result<Vec<GitCommitEvidence>> {
+    let hook_event_name = (capture_host == crate::runtime_config::CLAUDE_HOST)
+        .then(|| serde_json::from_str::<Value>(raw_input).ok())
+        .flatten()
+        .and_then(|value| {
+            value
+                .get("hook_event_name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+        });
+    match hook_event_name.as_deref() {
+        Some("PostToolUse") => from_observed_event_with_success_provenance(event, summary, true),
+        Some("PostToolUseFailure") => Ok(Vec::new()),
+        _ => from_observed_event(event, summary),
+    }
+}
+
+fn from_observed_event_with_success_provenance(
+    event: &ParsedHookEvent,
+    summary: &EventSummary,
+    verified_post_tool_success: bool,
+) -> Result<Vec<GitCommitEvidence>> {
+    let command_succeeded =
+        summary.exit_code == Some(0) || (summary.exit_code.is_none() && verified_post_tool_success);
+    if event.tool_name != "Bash" || !command_succeeded {
         return Ok(Vec::new());
     }
     let Some(command) = event
@@ -198,9 +230,23 @@ fn hook_response_output(response: Option<&Value>) -> String {
 }
 
 fn codex_output_succeeded(output: &str) -> bool {
-    output
-        .lines()
-        .any(|line| line.trim() == "Process exited with code 0")
+    let mut exit_code = None;
+    for line in output.lines() {
+        let line = line.trim();
+        if line == "Final output:" {
+            return exit_code == Some(0);
+        }
+        let Some(raw_code) = line.strip_prefix("Process exited with code ") else {
+            continue;
+        };
+        let Ok(code) = raw_code.parse::<i32>() else {
+            return false;
+        };
+        if exit_code.replace(code).is_some() {
+            return false;
+        }
+    }
+    false
 }
 
 fn commit_candidate_from_output(output: &str) -> Result<Option<String>> {

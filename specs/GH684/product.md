@@ -90,7 +90,10 @@ current SessionRollup path and the legacy Summary job chain.
       runs, interactive add modes, shell expansion, redirection, globbing, and
       process substitution, or unquoted shell comments. Quiet commits remain
       ordinary captured events but cannot create links because they suppress
-      Git's own commit summary.
+      Git's own commit summary. Success requires a zero exit status or Claude's
+      explicitly named success-only `PostToolUse` event; an explicit failure
+      event overrides contradictory fields. Unknown/failure events and
+      status-like text inside Codex command output cannot prove success.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered

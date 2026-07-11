@@ -303,6 +303,12 @@ worker-time `HEAD`, is the authoritative commit source.
 2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
    Stop pairs shell calls and outputs from the captured transcript byte range,
    so one Stop may prove multiple commits without reading bytes appended later.
+   A numeric zero exit proves observed success; when Claude omits that field,
+   only a raw payload explicitly named `PostToolUse` supplies equivalent
+   success provenance. An explicit `PostToolUseFailure` overrides contradictory
+   response fields; other unknown-status or failure events produce no Git
+   evidence. Codex reads exactly one wrapper exit status before `Final output:`;
+   matching text emitted by the command cannot override a failed wrapper.
    Relative transcript workdirs resolve against the Stop cwd, an exact trailing
    `git status --short` does not hide an earlier proven commit, and one
    ambiguous call is logged and skipped without erasing commits already proven
