@@ -20,7 +20,7 @@ fn run_git(repo: &Path, args: &[&str]) -> Result<String> {
 
 fn init_git_repo(path: &Path) -> Result<()> {
     std::fs::create_dir_all(path)?;
-    run_git(path, &["init"])?;
+    run_git(path, &["init", "-b", "main"])?;
     run_git(
         path,
         &["config", "user.email", "remem-test@example.invalid"],
