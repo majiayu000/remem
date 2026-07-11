@@ -138,7 +138,8 @@ Acceptance:
   remaining side effects can retry after the source transcript disappears.
 - Per-Stop citation facts and the original assistant-message hash are persisted
   separately from the lossy prompt slice, so per-message or global prompt
-  eviction cannot change citation usage during a source-free retry.
+  eviction cannot change citation usage during a source-free retry. Distinct
+  Stop boundaries on one repeated path remain distinct citation evidence.
 
 ## Rollout
 

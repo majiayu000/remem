@@ -11,7 +11,9 @@
   `v066_session_rollup_evidence_checkpoint`. Persisted-rollup retries no longer
   depend on a transcript source file after successful raw ingest: per-Stop
   message hashes and parsed citation facts are snapshotted independently of the
-  lossy 8 KiB/64 KiB prompt budget, including Unicode-safe truncation. Legacy Stop
+  lossy 8 KiB/64 KiB prompt budget for every bounded Stop, including repeated
+  path boundaries and Unicode-safe truncation. Early v066 JSON reuses its
+  original bounded message/hash on retry to prevent duplicate usage. Legacy Stop
   payloads without a byte boundary use captured conversational events only, or
   fail permanently before AI when no safe fallback exists. Missing, malformed,
   or unusable required bounded snapshots still fail before metadata-only

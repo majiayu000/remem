@@ -88,7 +88,10 @@ current SessionRollup path and the legacy Summary job chain.
       archive completion checkpoint so retries do not depend on a removed
       transcript file. Per-Stop assistant-message hashes and structured
       citation facts are persisted outside the lossy prompt slice so long-tail
-      or earlier-Stop citations survive prompt eviction and source deletion. A legacy Stop without a captured boundary uses only
+      or earlier-Stop citations survive prompt eviction and source deletion;
+      repeated paths retain facts for each bounded Stop. Early v066 JSON reuses
+      its original bounded hash during retry. A legacy Stop without a captured
+      boundary uses only
       captured conversational events; without that fallback it fails
       permanently before AI. Missing, malformed, or unusable required bounded
       snapshots still block metadata-only summary persistence.

@@ -227,3 +227,172 @@ async fn persisted_citation_evidence_survives_cross_stop_prompt_eviction() -> Re
     assert_eq!(usage_events, 1);
     Ok(())
 }
+
+#[tokio::test]
+async fn persisted_citation_evidence_covers_each_boundary_of_repeated_path() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new(
+        "session-rollup-repeated-path-citation-evidence",
+    );
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("repeated.jsonl");
+    let mut conn = crate::db::open_db()?;
+    let project = "/tmp/remem";
+    let session_id = "sess-rollup-repeated-path-citation-evidence";
+    let earlier_memory = insert_injected_memory(&conn, project, session_id, "earlier-boundary")?;
+    let later_memory = insert_injected_memory(&conn, project, session_id, "later-boundary")?;
+    let earlier_content = [
+        transcript_message(
+            "assistant",
+            "cargo check failed with the same compiler error after the third attempted fix",
+        ),
+        transcript_message(
+            "user",
+            "Lesson: challenge the hypothesis after three consecutive failed fixes",
+        ),
+        transcript_message(
+            "assistant",
+            format!("Earlier boundary.\nMemory citations: memory:#{earlier_memory}"),
+        ),
+    ]
+    .join("\n");
+    std::fs::write(&transcript, &earlier_content)?;
+    capture_transcript_stop(&conn, session_id, &transcript)?;
+
+    let later_content = format!(
+        "{earlier_content}\n{}",
+        transcript_message(
+            "assistant",
+            format!("Later boundary.\nMemory citations: memory:#{later_memory}"),
+        )
+    );
+    std::fs::write(&transcript, later_content)?;
+    capture_transcript_stop(&conn, session_id, &transcript)?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let result = persist_then_retry_without_sources(&mut conn, &task, &[&transcript]).await?;
+
+    assert_eq!(result, SessionRollupResult::AlreadyExists);
+    for memory_id in [earlier_memory, later_memory] {
+        let usage_events: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM memory_usage_events WHERE memory_id = ?1",
+            [memory_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(usage_events, 1, "memory {memory_id} should be cited");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn legacy_v066_citation_message_hash_stays_idempotent() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-v066-citation-hash");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("legacy-v066.jsonl");
+    let mut conn = crate::db::open_db()?;
+    let project = "/tmp/remem";
+    let session_id = "sess-rollup-v066-citation-hash";
+    let memory_id = insert_injected_memory(&conn, project, session_id, "legacy-v066")?;
+    let full_assistant =
+        format!("password=hunter2\nUsed the decision.\nMemory citations: memory:#{memory_id}");
+    std::fs::write(
+        &transcript,
+        [
+            transcript_message(
+                "assistant",
+                "cargo check failed with the same compiler error after the third attempted fix",
+            ),
+            transcript_message(
+                "user",
+                "Lesson: challenge the hypothesis after three consecutive failed fixes",
+            ),
+            transcript_message("assistant", &full_assistant),
+        ]
+        .join("\n"),
+    )?;
+    capture_transcript_stop(&conn, session_id, &transcript)?;
+    let task = claim_rollup_task(&mut conn)?;
+    let range = load_rollup_range(&conn, &task)?
+        .ok_or_else(|| anyhow::anyhow!("rollup range should load"))?;
+    let stop_event_id = range
+        .events
+        .iter()
+        .find(|event| event.event_type == "session_stop")
+        .map(|event| event.id)
+        .ok_or_else(|| anyhow::anyhow!("Stop event should load"))?;
+    conn.execute_batch(
+        "CREATE TRIGGER fail_rollup_v066_citation_lesson
+         BEFORE INSERT ON memory_lesson_feed_events
+         BEGIN
+             SELECT RAISE(FAIL, 'forced v066 citation lesson error');
+         END;",
+    )?;
+    let first = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        Ok(xml_response("Persist the pre-citation rollup state.", ""))
+    })
+    .await;
+    let first_error = match first {
+        Ok(result) => anyhow::bail!("forced side-effect failure returned {result:?}"),
+        Err(error) => error,
+    };
+    assert!(first_error.to_string().contains("failure-lesson"));
+    conn.execute_batch("DROP TRIGGER fail_rollup_v066_citation_lesson;")?;
+
+    let legacy_assistant = crate::adapter::common::redact_sensitive_text(&full_assistant);
+    assert_ne!(legacy_assistant, full_assistant);
+    let legacy_evidence = serde_json::json!({
+        "messages": [{
+            "source_event_id": stop_event_id,
+            "role": "assistant",
+            "content": legacy_assistant
+        }],
+        "truncated": false
+    })
+    .to_string();
+    conn.execute(
+        "UPDATE session_summaries SET transcript_evidence_json = ?1
+         WHERE session_row_id = ?2
+           AND covered_from_event_id = ?3
+           AND covered_to_event_id = ?4",
+        params![
+            legacy_evidence,
+            task.session_row_id,
+            range.from_event_id,
+            range.to_event_id
+        ],
+    )?;
+    crate::summarize::record_stop_memory_citation_usage(
+        &conn,
+        &task.host,
+        project,
+        session_id,
+        &legacy_assistant,
+    )?;
+
+    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("persisted rollup retry must not call the summarizer")
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::AlreadyExists);
+    let citation_events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_citation_events
+         WHERE project = ?1 AND session_id = ?2",
+        params![project, session_id],
+        |row| row.get(0),
+    )?;
+    let usage_events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_usage_events WHERE memory_id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    let access_count: i64 = conn.query_row(
+        "SELECT access_count FROM memories WHERE id = ?1",
+        [memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(citation_events, 1);
+    assert_eq!(usage_events, 1);
+    assert_eq!(access_count, 1);
+    Ok(())
+}

@@ -207,17 +207,22 @@ pub(super) fn load_prompt_transcript_evidence(
     range: &RollupRange,
 ) -> Result<PromptTranscriptEvidence> {
     let payloads = stop_payloads(range)?;
-    let selected_transcripts = unique_transcript_payload_indices(&payloads);
+    let selected_transcripts = unique_transcript_payload_indices(&payloads)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     let represented_text = captured_event_text(range);
     let captured_conversation_available = has_captured_conversation(range, &payloads);
     let mut budget = EvidenceBudget::default();
 
-    for payload_index in selected_transcripts {
-        let payload = &payloads[payload_index];
+    for (payload_index, payload) in payloads.iter().enumerate() {
+        let selected_for_prompt = selected_transcripts.contains(&payload_index);
         let Some(transcript_path) = stop_transcript_path(payload) else {
             continue;
         };
         let Some(transcript_byte_len) = payload.transcript_byte_len else {
+            if !selected_for_prompt {
+                continue;
+            }
             if captured_conversation_available {
                 crate::log::info(
                     "session-rollup",
@@ -266,6 +271,9 @@ pub(super) fn load_prompt_transcript_evidence(
             if message.role == crate::memory::raw_archive::ROLE_ASSISTANT {
                 last_assistant_message = Some(text.to_string());
             }
+            if !selected_for_prompt {
+                continue;
+            }
             let redacted = crate::adapter::common::redact_sensitive_text(text);
             if represented_text.contains(text) || represented_text.contains(redacted.trim()) {
                 continue;
@@ -276,7 +284,7 @@ pub(super) fn load_prompt_transcript_evidence(
                 content: text.to_string(),
             });
         }
-        if !has_usable_message {
+        if selected_for_prompt && !has_usable_message {
             bail!(
                 "bounded transcript prompt evidence for captured event {} contains no usable user or assistant messages",
                 payload.source_event_id

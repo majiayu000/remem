@@ -107,8 +107,10 @@ needed fields and side effects, then removes only the redundant Summary writer.
       count, byte, and redaction budget once before either consumer. Migration
       v066 persists that exact-range evidence plus raw archive completion so a
       persisted-rollup retry does not reread an already-drained source file.
-      Each selected Stop with assistant evidence also persists the final
-      message hash and structured citation facts outside the lossy prompt slice, preserving
+      Each bounded Stop with assistant evidence also persists the final
+      message hash and structured citation facts outside the lossy prompt slice,
+      including every boundary of a repeated path. Early v066 JSON replays its
+      original bounded message hash for upgrade idempotency, preserving
       citation replay after per-message/global eviction or source deletion. A
       legacy Stop without a boundary skips transcript supplementation when the
       range has captured user/assistant evidence; without that fallback it
@@ -151,6 +153,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
       `persisted_citation_evidence_keeps_long_assistant_tail`,
       `persisted_citation_evidence_survives_cross_stop_prompt_eviction`,
+      `persisted_citation_evidence_covers_each_boundary_of_repeated_path`,
+      `legacy_v066_citation_message_hash_stays_idempotent`,
       `total_budget_never_retains_empty_utf8_message`,
       `session_rollup_candidate_evidence_stays_with_claimed_range`,
       `session_rollup_honors_stop_transcript_snapshot_boundary`,

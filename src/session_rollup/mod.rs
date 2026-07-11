@@ -100,8 +100,7 @@ where
             task,
             &range,
             &persisted.transcript_evidence,
-            !persisted.has_transcript_evidence_snapshot
-                || !persisted.transcript_evidence.citation_evidence_complete,
+            !persisted.has_transcript_evidence_snapshot,
         );
         finish_existing_rollup_retry(raw_archive_result, side_effect_result)?;
         return Ok(SessionRollupResult::AlreadyExists);
@@ -158,11 +157,19 @@ fn run_rollup_side_effects(
     transcript_evidence: &transcript_evidence::PromptTranscriptEvidence,
     allow_transcript_source_fallback: bool,
 ) -> Result<()> {
+    // Early v066 snapshots computed citation hashes from their bounded prompt
+    // messages. Replay that exact slice so an upgrade cannot double-count usage.
+    let legacy_transcript_messages = if transcript_evidence.citation_evidence_complete {
+        &[]
+    } else {
+        transcript_evidence.messages.as_slice()
+    };
     let stop_memory_result = side_effects::run_post_archive_stop_memory_side_effects(
         conn,
         task,
         range,
         &transcript_evidence.stop_citations,
+        legacy_transcript_messages,
         allow_transcript_source_fallback,
     );
     let persisted_result = side_effects::run_persisted_rollup_side_effects(
