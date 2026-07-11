@@ -136,6 +136,9 @@ Acceptance:
   required bounded snapshot fails before a metadata-only summary can persist.
 - Successful raw ingest and the exact-range evidence slice are checkpointed so
   remaining side effects can retry after the source transcript disappears.
+- Per-Stop citation facts and the original assistant-message hash are persisted
+  separately from the lossy prompt slice, so per-message or global prompt
+  eviction cannot change citation usage during a source-free retry.
 
 ## Rollout
 

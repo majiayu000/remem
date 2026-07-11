@@ -81,8 +81,11 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   prompt and candidate support text. Repeated paths use one widest covered
   boundary; exact captured-event text is omitted; one count- and byte-bounded,
   redacted slice feeds both consumers and is persisted with the exact-range raw
-  archive checkpoint. Persisted retries therefore skip an already-completed
-  source read. A legacy snapshot with no boundary uses captured conversational
+  archive checkpoint. The final assistant-message hash and structured citation
+  facts for every selected Stop with assistant evidence are persisted outside
+  that lossy prompt budget,
+  so long-tail and earlier-Stop citations remain replayable. Persisted retries
+  therefore skip an already-completed source read. A legacy snapshot with no boundary uses captured conversational
   events only, or fails permanently when none exist; a required bounded
   snapshot read/parse failure or unusable conversation stops the first AI call
   rather than persisting a metadata-only summary. The
@@ -356,7 +359,10 @@ The #794 prompt-evidence follow-up is covered by
 `session_rollup_retries_incomplete_raw_archive_ingest`,
 `session_rollup_unusable_transcript_fails_before_metadata_only_summary`,
 `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`, and
-`transcript_prompt_is_bounded_redacted_and_xml_safe`.
+`transcript_prompt_is_bounded_redacted_and_xml_safe`, plus
+`persisted_citation_evidence_keeps_long_assistant_tail`,
+`persisted_citation_evidence_survives_cross_stop_prompt_eviction`, and
+`total_budget_never_retains_empty_utf8_message`.
 
 ## Open Questions
 

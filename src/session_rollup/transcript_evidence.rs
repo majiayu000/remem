@@ -13,6 +13,8 @@ use super::RollupRange;
 pub(super) const TRANSCRIPT_MESSAGE_CONTENT_LIMIT: usize = 8 * 1024;
 pub(super) const TRANSCRIPT_TOTAL_CONTENT_LIMIT: usize = 64 * 1024;
 pub(super) const TRANSCRIPT_MESSAGE_COUNT_LIMIT: usize = 128;
+const STOP_CITATION_EVIDENCE_COUNT_LIMIT: usize = 1024;
+const STOP_CITATION_MEMORY_ID_LIMIT: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -22,11 +24,23 @@ pub(super) struct PromptTranscriptMessage {
     pub(super) content: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct StopCitationEvidence {
+    pub(super) source_event_id: i64,
+    pub(super) message_hash: String,
+    pub(super) facts: crate::memory::usage::MemoryCitationFacts,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PromptTranscriptEvidence {
     pub(super) messages: Vec<PromptTranscriptMessage>,
     pub(super) truncated: bool,
+    #[serde(default)]
+    pub(super) stop_citations: Vec<StopCitationEvidence>,
+    #[serde(default)]
+    pub(super) citation_evidence_complete: bool,
 }
 
 impl PromptTranscriptEvidence {
@@ -73,6 +87,41 @@ impl PromptTranscriptEvidence {
                 bail!("invalid payload: persisted transcript evidence is not redacted");
             }
         }
+        if self.stop_citations.len() > STOP_CITATION_EVIDENCE_COUNT_LIMIT {
+            bail!("invalid payload: persisted Stop citation evidence exceeds entry budget");
+        }
+        if !self.citation_evidence_complete && !self.stop_citations.is_empty() {
+            bail!("invalid payload: incomplete Stop citation evidence contains entries");
+        }
+        let mut citation_event_ids = BTreeSet::new();
+        for citation in &self.stop_citations {
+            if !stop_event_ids.contains(&citation.source_event_id) {
+                bail!(
+                    "invalid payload: persisted Stop citation evidence event {} is not a Stop event in the exact rollup range",
+                    citation.source_event_id
+                );
+            }
+            if !citation_event_ids.insert(citation.source_event_id) {
+                bail!(
+                    "invalid payload: persisted Stop citation evidence repeats event {}",
+                    citation.source_event_id
+                );
+            }
+            if citation.message_hash.len() != 16
+                || !citation
+                    .message_hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            {
+                bail!("invalid payload: persisted Stop citation evidence has invalid hash");
+            }
+            citation.facts.validate().context(
+                "invalid payload: persisted Stop citation evidence has invalid citation facts",
+            )?;
+            if citation.facts.ids().len() > STOP_CITATION_MEMORY_ID_LIMIT {
+                bail!("invalid payload: persisted Stop citation evidence exceeds memory-id budget");
+            }
+        }
         Ok(())
     }
 }
@@ -110,14 +159,35 @@ impl EvidenceBudget {
                 let keep_bytes = first_len - excess;
                 let shortened =
                     db::truncate_str(&self.evidence.messages[0].content, keep_bytes).to_string();
-                self.total_bytes -= first_len - shortened.len();
-                self.evidence.messages[0].content = shortened;
+                if shortened.is_empty() {
+                    self.total_bytes -= self.evidence.messages.remove(0).content.len();
+                } else {
+                    self.total_bytes -= first_len - shortened.len();
+                    self.evidence.messages[0].content = shortened;
+                }
             }
             self.evidence.truncated = true;
         }
     }
 
-    fn finish(self) -> PromptTranscriptEvidence {
+    fn push_stop_citation(&mut self, source_event_id: i64, assistant_message: &str) -> Result<()> {
+        if self.evidence.stop_citations.len() >= STOP_CITATION_EVIDENCE_COUNT_LIMIT {
+            bail!("invalid payload: Stop citation evidence exceeds entry budget");
+        }
+        let facts = crate::memory::usage::MemoryCitationFacts::from_text(assistant_message);
+        if facts.ids().len() > STOP_CITATION_MEMORY_ID_LIMIT {
+            bail!("invalid payload: Stop citation evidence exceeds memory-id budget");
+        }
+        self.evidence.stop_citations.push(StopCitationEvidence {
+            source_event_id,
+            message_hash: crate::summarize::hash_message(assistant_message),
+            facts,
+        });
+        Ok(())
+    }
+
+    fn finish(mut self) -> PromptTranscriptEvidence {
+        self.evidence.citation_evidence_complete = true;
         self.evidence
     }
 }
@@ -174,6 +244,7 @@ pub(super) fn load_prompt_transcript_evidence(
             )
         })?;
         let mut has_usable_message = false;
+        let mut last_assistant_message = None;
 
         for (line_index, line) in content.lines().enumerate() {
             let value = serde_json::from_str::<serde_json::Value>(line).with_context(|| {
@@ -192,6 +263,9 @@ pub(super) fn load_prompt_transcript_evidence(
                 continue;
             }
             has_usable_message = true;
+            if message.role == crate::memory::raw_archive::ROLE_ASSISTANT {
+                last_assistant_message = Some(text.to_string());
+            }
             let redacted = crate::adapter::common::redact_sensitive_text(text);
             if represented_text.contains(text) || represented_text.contains(redacted.trim()) {
                 continue;
@@ -207,6 +281,9 @@ pub(super) fn load_prompt_transcript_evidence(
                 "bounded transcript prompt evidence for captured event {} contains no usable user or assistant messages",
                 payload.source_event_id
             );
+        }
+        if let Some(assistant_message) = last_assistant_message {
+            budget.push_stop_citation(payload.source_event_id, &assistant_message)?;
         }
     }
     Ok(budget.finish())
@@ -305,6 +382,7 @@ mod tests {
                 content: "bounded conversation text".to_string(),
             }],
             truncated: false,
+            ..PromptTranscriptEvidence::default()
         };
 
         let anchor_error = evidence
@@ -328,5 +406,67 @@ mod tests {
         .expect_err("unknown persisted evidence fields must fail closed");
 
         assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
+    fn legacy_persisted_evidence_without_citation_snapshot_stays_loadable() -> Result<()> {
+        let evidence = serde_json::from_str::<PromptTranscriptEvidence>(
+            r#"{"messages":[],"truncated":false}"#,
+        )?;
+
+        assert!(evidence.stop_citations.is_empty());
+        assert!(!evidence.citation_evidence_complete);
+        evidence.validate_for_range(&range_with_stop())
+    }
+
+    #[test]
+    fn persisted_citation_facts_fail_closed_when_tampered() -> Result<()> {
+        let evidence = serde_json::from_str::<PromptTranscriptEvidence>(
+            r#"{
+                "messages": [],
+                "truncated": false,
+                "stop_citations": [{
+                    "source_event_id": 2,
+                    "message_hash": "0123456789abcdef",
+                    "facts": {"line_present": false, "ids": [7]}
+                }],
+                "citation_evidence_complete": true
+            }"#,
+        )?;
+
+        let Err(error) = evidence.validate_for_range(&range_with_stop()) else {
+            bail!("tampered citation facts unexpectedly passed validation");
+        };
+        assert!(format!("{error:#}").contains("ids require a citation line"));
+        Ok(())
+    }
+
+    #[test]
+    fn total_budget_never_retains_empty_utf8_message() {
+        let messages = std::iter::once(PromptTranscriptMessage {
+            source_event_id: 2,
+            role: "assistant".to_string(),
+            content: "😀".repeat(2048),
+        })
+        .chain((0..7).map(|_| PromptTranscriptMessage {
+            source_event_id: 2,
+            role: "assistant".to_string(),
+            content: "a".repeat(TRANSCRIPT_MESSAGE_CONTENT_LIMIT),
+        }))
+        .chain(std::iter::once(PromptTranscriptMessage {
+            source_event_id: 2,
+            role: "assistant".to_string(),
+            content: "b".repeat(TRANSCRIPT_MESSAGE_CONTENT_LIMIT - 1),
+        }));
+
+        let evidence = bound_prompt_transcript_evidence(messages);
+
+        assert!(evidence.truncated);
+        assert!(evidence
+            .messages
+            .iter()
+            .all(|message| !message.content.is_empty()));
+        let validation = evidence.validate_for_range(&range_with_stop());
+        assert!(validation.is_ok(), "{validation:?}");
     }
 }

@@ -6,7 +6,7 @@ use crate::db;
 use crate::workstream::ParsedWorkStream;
 
 use super::persist::rollup_memory_session_id;
-use super::transcript_evidence::PromptTranscriptMessage;
+use super::transcript_evidence::{PromptTranscriptMessage, StopCitationEvidence};
 use super::RollupRange;
 
 #[derive(Debug)]
@@ -143,7 +143,7 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     conn: &Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
-    transcript_messages: &[PromptTranscriptMessage],
+    stop_citations: &[StopCitationEvidence],
     allow_transcript_source_fallback: bool,
 ) -> Result<()> {
     let Some(session_id) = task.session_id.as_deref() else {
@@ -163,29 +163,7 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     )
     .context("session rollup failure-lesson side effect failed")?;
     for payload in &payloads {
-        let assistant_message = clean_field(payload.last_assistant_message.as_deref())
-            .or_else(|| {
-                transcript_messages
-                    .iter()
-                    .rev()
-                    .find(|message| {
-                        message.source_event_id == payload.source_event_id
-                            && message.role == "assistant"
-                    })
-                    .and_then(|message| clean_field(Some(&message.content)))
-            })
-            .or_else(|| {
-                if !allow_transcript_source_fallback {
-                    return None;
-                }
-                payload.transcript_path.as_deref().and_then(|path| {
-                    crate::summarize::extract_last_assistant_message_with_limit(
-                        path,
-                        payload.transcript_byte_len,
-                    )
-                })
-            });
-        if let Some(message) = assistant_message {
+        if let Some(message) = clean_field(payload.last_assistant_message.as_deref()) {
             crate::summarize::record_stop_memory_citation_usage(
                 conn,
                 &task.host,
@@ -194,6 +172,40 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
                 &message,
             )
             .context("session rollup memory-citation side effect failed")?;
+            continue;
+        }
+        if let Some(citation) = stop_citations
+            .iter()
+            .find(|citation| citation.source_event_id == payload.source_event_id)
+        {
+            crate::summarize::record_stop_memory_citation_evidence(
+                conn,
+                &task.host,
+                &task.project,
+                session_id,
+                &citation.message_hash,
+                &citation.facts,
+            )
+            .context("session rollup persisted memory-citation side effect failed")?;
+            continue;
+        }
+        if allow_transcript_source_fallback {
+            let assistant_message = payload.transcript_path.as_deref().and_then(|path| {
+                crate::summarize::extract_last_assistant_message_with_limit(
+                    path,
+                    payload.transcript_byte_len,
+                )
+            });
+            if let Some(message) = assistant_message {
+                crate::summarize::record_stop_memory_citation_usage(
+                    conn,
+                    &task.host,
+                    &task.project,
+                    session_id,
+                    &message,
+                )
+                .context("session rollup legacy memory-citation side effect failed")?;
+            }
         }
     }
     Ok(())

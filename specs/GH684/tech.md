@@ -106,7 +106,10 @@ needed fields and side effects, then removes only the redundant Summary writer.
       support text, removes exact captured-event duplicates, and applies the
       count, byte, and redaction budget once before either consumer. Migration
       v066 persists that exact-range evidence plus raw archive completion so a
-      persisted-rollup retry does not reread an already-drained source file. A
+      persisted-rollup retry does not reread an already-drained source file.
+      Each selected Stop with assistant evidence also persists the final
+      message hash and structured citation facts outside the lossy prompt slice, preserving
+      citation replay after per-message/global eviction or source deletion. A
       legacy Stop without a boundary skips transcript supplementation when the
       range has captured user/assistant evidence; without that fallback it
       fails permanently before AI. Missing, malformed, or unusable required
@@ -146,6 +149,9 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `session_rollup_prompt_includes_only_bounded_transcript_text`,
       `session_rollup_prompt_does_not_duplicate_captured_message_text`,
       `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
+      `persisted_citation_evidence_keeps_long_assistant_tail`,
+      `persisted_citation_evidence_survives_cross_stop_prompt_eviction`,
+      `total_budget_never_retains_empty_utf8_message`,
       `session_rollup_candidate_evidence_stays_with_claimed_range`,
       `session_rollup_honors_stop_transcript_snapshot_boundary`,
       `session_rollup_retries_transcript_side_effects_without_resummarizing`,

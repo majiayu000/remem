@@ -99,8 +99,9 @@ where
             conn,
             task,
             &range,
-            &persisted.transcript_evidence.messages,
-            !persisted.has_transcript_evidence_snapshot,
+            &persisted.transcript_evidence,
+            !persisted.has_transcript_evidence_snapshot
+                || !persisted.transcript_evidence.citation_evidence_complete,
         );
         finish_existing_rollup_retry(raw_archive_result, side_effect_result)?;
         return Ok(SessionRollupResult::AlreadyExists);
@@ -120,7 +121,7 @@ where
         raw_archive_result.is_ok(),
     )?;
     raw_archive_result?;
-    run_rollup_side_effects(conn, task, &range, &transcript_evidence.messages, false)?;
+    run_rollup_side_effects(conn, task, &range, &transcript_evidence, false)?;
     Ok(SessionRollupResult::Written)
 }
 
@@ -154,18 +155,22 @@ fn run_rollup_side_effects(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
-    transcript_messages: &[transcript_evidence::PromptTranscriptMessage],
+    transcript_evidence: &transcript_evidence::PromptTranscriptEvidence,
     allow_transcript_source_fallback: bool,
 ) -> Result<()> {
     let stop_memory_result = side_effects::run_post_archive_stop_memory_side_effects(
         conn,
         task,
         range,
-        transcript_messages,
+        &transcript_evidence.stop_citations,
         allow_transcript_source_fallback,
     );
-    let persisted_result =
-        side_effects::run_persisted_rollup_side_effects(conn, task, range, transcript_messages);
+    let persisted_result = side_effects::run_persisted_rollup_side_effects(
+        conn,
+        task,
+        range,
+        &transcript_evidence.messages,
+    );
     match (stop_memory_result, persisted_result) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),

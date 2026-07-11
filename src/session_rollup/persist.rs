@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{ensure, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
@@ -38,6 +38,10 @@ pub(super) fn persist_session_rollup(
         .as_deref()
         .unwrap_or(&fallback_request);
     let discovery_tokens = estimate_discovery_tokens(output);
+    ensure!(
+        transcript_evidence.citation_evidence_complete,
+        "invalid payload: new session rollup is missing complete Stop citation evidence"
+    );
     transcript_evidence.validate_for_range(range)?;
     let transcript_evidence_json = serde_json::to_string(transcript_evidence)
         .context("serialize bounded transcript evidence for session rollup")?;
