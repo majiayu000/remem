@@ -2,7 +2,7 @@ use anyhow::Result;
 
 use crate::{db, summarize};
 
-pub(super) async fn run_rule_compilation_sweep() -> Result<usize> {
+pub(super) async fn run_rule_compilation_sweep() -> Result<crate::rules::CompileSweepOutcome> {
     tokio::task::spawn_blocking(crate::rules::run_compile_rules_sweep).await?
 }
 

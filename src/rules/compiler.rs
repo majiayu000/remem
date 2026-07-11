@@ -9,10 +9,12 @@
 //! background worker via [`run_compile_rules_job`]; hooks never compile.
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::rules::artifact::{CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate};
-use crate::rules::store::{artifact_path_for_project, write_artifact_atomic};
+use crate::rules::store::{
+    artifact_path_for_project, load_artifact_fail_open, write_artifact_atomic, ArtifactLoad,
+};
 use crate::runtime_config::{rule_compilation_config, RuleCompilationConfig};
 
 mod classify;
@@ -25,25 +27,49 @@ pub struct CompileOutcome {
     pub project: String,
     pub rule_count: usize,
     pub artifact_path: std::path::PathBuf,
+    pub artifact_changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CompileSweepOutcome {
+    pub projects_seen: usize,
+    pub artifacts_changed: usize,
+    pub failures: usize,
 }
 
 /// Rebuild rule artifacts for every known project. The worker calls this on a
 /// bounded cadence so enabling compilation and source lifecycle changes do not
 /// depend on a new preference write to enqueue a job.
-pub fn run_compile_rules_sweep() -> Result<usize> {
+pub fn run_compile_rules_sweep() -> Result<CompileSweepOutcome> {
     let config = rule_compilation_config()?;
     if !config.enabled {
-        return Ok(0);
+        return Ok(CompileSweepOutcome::default());
     }
 
     let conn = crate::db::open_db()?;
     let projects = load_rule_compilation_projects(&conn)?;
     drop(conn);
 
+    let mut outcome = CompileSweepOutcome {
+        projects_seen: projects.len(),
+        ..Default::default()
+    };
     for project in &projects {
-        run_compile_rules_job(project)?;
+        match run_compile_rules_job(project) {
+            Ok(Some(project_outcome)) => {
+                outcome.artifacts_changed += usize::from(project_outcome.artifact_changed);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                outcome.failures += 1;
+                crate::log::error(
+                    "rules",
+                    &format!("rule compilation sweep failed for project {project}: {error}"),
+                );
+            }
+        }
     }
-    Ok(projects.len())
+    Ok(outcome)
 }
 
 /// Worker-only entry point: gate on config, compile canonical state into the
@@ -73,6 +99,19 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         }
     };
 
+    let rule_count = artifact.rules.len();
+    if matches!(
+        load_artifact_fail_open(&artifact_path),
+        ArtifactLoad::Loaded(existing) if existing.rules == artifact.rules
+    ) {
+        return Ok(Some(CompileOutcome {
+            project: project.to_string(),
+            rule_count,
+            artifact_path,
+            artifact_changed: false,
+        }));
+    }
+
     if let Err(error) = write_artifact_atomic(&artifact_path, &artifact) {
         let message = format!("artifact write failed: {error}");
         record_diagnostic(&conn, project, "error", &message, None, None);
@@ -83,7 +122,6 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         return Err(error);
     }
 
-    let rule_count = artifact.rules.len();
     record_diagnostic(
         &conn,
         project,
@@ -96,6 +134,7 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         project: project.to_string(),
         rule_count,
         artifact_path,
+        artifact_changed: true,
     }))
 }
 
@@ -226,6 +265,8 @@ fn load_rule_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
              SELECT DISTINCT project FROM preference_rule_overrides
              UNION
              SELECT DISTINCT project FROM preference_rule_diagnostics
+             UNION
+             SELECT DISTINCT project_path AS project FROM projects
          )
          WHERE project IS NOT NULL AND TRIM(project) <> ''
          ORDER BY project",
@@ -279,6 +320,28 @@ fn record_diagnostic(
     rule_count: Option<usize>,
     artifact_path: Option<&str>,
 ) {
+    if status != "ok" {
+        match conn
+            .query_row(
+                "SELECT 1 FROM preference_rule_diagnostics
+                 WHERE project = ?1
+                   AND event_kind = 'compile'
+                   AND status = ?2
+                   AND COALESCE(message, '') = COALESCE(?3, '')
+                 LIMIT 1",
+                params![project, status, message],
+                |_| Ok(()),
+            )
+            .optional()
+        {
+            Ok(Some(())) => return,
+            Ok(None) => {}
+            Err(error) => crate::log::error(
+                "rules",
+                &format!("failed to deduplicate compile diagnostic for {project}: {error}"),
+            ),
+        }
+    }
     let now = chrono::Utc::now().timestamp();
     let result = conn.execute(
         "INSERT INTO preference_rule_diagnostics
@@ -301,5 +364,7 @@ fn record_diagnostic(
     }
 }
 
+#[cfg(test)]
+mod sweep_tests;
 #[cfg(test)]
 mod tests;

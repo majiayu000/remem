@@ -9,7 +9,8 @@ pub use artifact::{
 };
 pub use compiler::{
     classify_preference_predicate, compile_project_rules, run_compile_rules_job,
-    run_compile_rules_sweep, CompileOutcome, PreferenceClassification, PreferencePredicate,
+    run_compile_rules_sweep, CompileOutcome, CompileSweepOutcome, PreferenceClassification,
+    PreferencePredicate,
 };
 pub use evaluator::{
     evaluate_artifact, evaluate_artifact_file, EvaluationDiagnostic, EvaluationInput,

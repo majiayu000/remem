@@ -60,6 +60,10 @@ async fn worker_sweep_builds_existing_rules_and_removes_deleted_sources() -> Res
     };
     assert!(artifact.rules.is_empty());
 
+    // An unchanged sweep must not rewrite the artifact or append another
+    // success diagnostic every minute.
+    run(true, 10).await?;
+
     let conn = db::open_db()?;
     let successful_sweeps: i64 = conn
         .query_row(

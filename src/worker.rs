@@ -97,12 +97,31 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     let mut next_rule_compilation_sweep_at = Instant::now();
     loop {
         if Instant::now() >= next_rule_compilation_sweep_at {
-            let compiled_projects = job::run_rule_compilation_sweep().await?;
-            if compiled_projects > 0 {
-                crate::log::info(
+            match job::run_rule_compilation_sweep().await {
+                Ok(outcome) => {
+                    if outcome.failures > 0 {
+                        crate::log::error(
+                            "rules",
+                            &format!(
+                                "rule compilation sweep completed with {}/{} project failure(s)",
+                                outcome.failures, outcome.projects_seen
+                            ),
+                        );
+                    }
+                    if outcome.artifacts_changed > 0 {
+                        crate::log::info(
+                            "rules",
+                            &format!(
+                                "rule compilation sweep rebuilt {}/{} project artifact(s)",
+                                outcome.artifacts_changed, outcome.projects_seen
+                            ),
+                        );
+                    }
+                }
+                Err(error) => crate::log::error(
                     "rules",
-                    &format!("rule compilation sweep rebuilt {compiled_projects} project(s)"),
-                );
+                    &format!("rule compilation sweep skipped after setup failure: {error}"),
+                ),
             }
             next_rule_compilation_sweep_at =
                 Instant::now() + Duration::from_secs(RULE_COMPILATION_SWEEP_INTERVAL_SECS);

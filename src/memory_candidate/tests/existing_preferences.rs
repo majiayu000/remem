@@ -48,7 +48,9 @@ async fn memory_candidate_prompt_includes_existing_project_preferences() -> Resu
     assert_eq!(result, MemoryCandidateResult::NoCandidates);
     let prompt = captured_prompt.lock().expect("prompt lock").clone();
     assert!(prompt.contains("<existing_active_preferences>"));
-    assert!(prompt.contains("Do not emit a new preference candidate"));
+    assert!(prompt.contains("new evidence of the same correction"));
+    assert!(prompt.contains("count an evidence-backed reinforcement"));
+    assert!(prompt.contains("Do not emit unsupported restatements"));
     assert!(prompt.contains("Prefer concise Chinese progress updates"));
     assert!(!prompt.contains("Prefer other project release notes"));
     Ok(())

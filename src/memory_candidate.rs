@@ -751,7 +751,7 @@ fn append_existing_preferences(prompt: &mut String, preferences: &[CandidateProm
     }
     prompt.push_str("<existing_active_preferences>\n");
     prompt.push_str(
-        "These preferences are already active for this project. Do not emit a new preference candidate that merely restates or paraphrases them; emit only net-new preferences, material refinements, or explicit contradictions supported by the observations.\n",
+        "These preferences are already active for this project. When the current observations provide new evidence of the same correction, emit that preference candidate again so remem can count an evidence-backed reinforcement. Do not emit unsupported restatements or paraphrases. Also emit net-new preferences, material refinements, or explicit contradictions supported by the observations.\n",
     );
     for preference in preferences {
         prompt.push_str(&format!(

@@ -110,6 +110,9 @@ fn classify_commit_trailer(lower: &str) -> Option<PreferenceClassification> {
 }
 
 fn explicitly_avoids_manager(lower: &str, manager: &str) -> bool {
+    if negates_avoidance(lower, manager) {
+        return false;
+    }
     [
         format!("not {manager}"),
         format!("not use {manager}"),
@@ -131,6 +134,9 @@ fn explicitly_avoids_manager(lower: &str, manager: &str) -> bool {
 }
 
 fn explicitly_forbids_term(lower: &str, term: &str) -> bool {
+    if negates_avoidance(lower, term) {
+        return false;
+    }
     [
         "avoid",
         "ban",
@@ -148,6 +154,32 @@ fn explicitly_forbids_term(lower: &str, term: &str) -> bool {
         "no",
         "omit",
         "without",
+    ]
+    .iter()
+    .any(|marker| {
+        lower.contains(&format!("{marker} {term}"))
+            || lower.contains(&format!("{marker} the {term}"))
+    })
+}
+
+fn negates_avoidance(lower: &str, term: &str) -> bool {
+    [
+        "do not avoid",
+        "do not ban",
+        "do not exclude",
+        "do not forbid",
+        "do not omit",
+        "don't avoid",
+        "don't ban",
+        "don't forbid",
+        "dont avoid",
+        "dont ban",
+        "dont forbid",
+        "not avoid",
+        "not ban",
+        "not exclude",
+        "not forbid",
+        "not omit",
     ]
     .iter()
     .any(|marker| {
@@ -208,6 +240,27 @@ mod tests {
         assert!(
             classify_preference_predicate("Use the AI-generated-by trailer on commits").is_none()
         );
+    }
+
+    #[test]
+    fn negated_avoidance_is_not_inverted() {
+        let Some(classification) =
+            classify_preference_predicate("Do not avoid npm; use npm instead of yarn")
+        else {
+            panic!("the explicit yarn avoidance should classify");
+        };
+        match classification.predicate {
+            PreferencePredicate::CommandRegex { pattern, .. } => {
+                assert!(pattern.contains("yarn"));
+                assert!(!pattern.contains("npm"));
+            }
+            other => panic!("expected command regex, got {other:?}"),
+        }
+
+        assert!(classify_preference_predicate(
+            "Do not avoid the Co-Authored-By commit trailer; always add it"
+        )
+        .is_none());
     }
 
     #[test]
