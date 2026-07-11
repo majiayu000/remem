@@ -85,7 +85,9 @@ current SessionRollup path and the legacy Summary job chain.
       keeps earlier proven calls when another call is ambiguous, anchors
       relative workdirs to the Stop cwd, recognizes only an exact trailing
       `git status --short`, and makes same-identity spill evidence deterministic
-      and link-only.
+      and link-only. Its fail-closed command grammar rejects environment
+      prefixes, arbitrary Git configuration, help/viewer/editor output, dry
+      runs, and interactive add modes.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered

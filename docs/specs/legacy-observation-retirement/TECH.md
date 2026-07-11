@@ -290,7 +290,12 @@ worker-time `HEAD`, is the authoritative commit source.
 1. `HEAD` presence is not commit evidence. Capture accepts only an explicit,
    successful `git commit` command whose standard Git output proves a SHA, then
    resolves metadata against that exact SHA. Historical commits never inherit
-   the branch of a later `HEAD`.
+   the branch of a later `HEAD`. The accepted shell grammar is fail-closed:
+   literal `cd`, non-interactive `git add`, safe `git -C`, `user.name` /
+   `user.email` identity configuration, and commit arguments with an explicit
+   non-interactive message source. Environment prefixes, arbitrary Git config,
+   help/viewer/pager paths, dry runs, editors, and interactive add modes are
+   rejected as evidence sources.
 2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
    Stop pairs shell calls and outputs from the captured transcript byte range,
    so one Stop may prove multiple commits without reading bytes appended later.

@@ -338,15 +338,9 @@ fn push_token(tokens: &mut Vec<String>, current: &mut String, in_token: &mut boo
 }
 
 fn apply_literal_cd(tokens: &[String], cwd: &mut PathBuf) -> bool {
-    let Some(index) = tokens.iter().position(|token| !is_env_assignment(token)) else {
-        return false;
-    };
-    if tokens.get(index).map(String::as_str) != Some("cd") {
-        return false;
-    }
-    let target = match &tokens[index + 1..] {
-        [target] => target.as_str(),
-        [flag, target] if flag == "--" => target.as_str(),
+    let target = match tokens {
+        [command, target] if command == "cd" => target.as_str(),
+        [command, flag, target] if command == "cd" && flag == "--" => target.as_str(),
         _ => return false,
     };
     let Some(next) = resolve_literal_workdir(cwd, target) else {
@@ -357,7 +351,10 @@ fn apply_literal_cd(tokens: &[String], cwd: &mut PathBuf) -> bool {
 }
 
 fn is_supported_git_add(tokens: &[String]) -> bool {
-    matches!(git_subcommand(tokens, Path::new(".")), Some(("add", _)))
+    let Some(invocation) = parse_git_invocation(tokens, Path::new("."), false) else {
+        return false;
+    };
+    invocation.subcommand == "add" && add_args_are_supported(invocation.args)
 }
 
 fn is_supported_post_commit_segment(tokens: &[String]) -> bool {
@@ -365,16 +362,26 @@ fn is_supported_post_commit_segment(tokens: &[String]) -> bool {
 }
 
 fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {
-    let (subcommand, cwd) = git_subcommand(tokens, base_cwd)?;
-    (subcommand == "commit").then_some(cwd)
+    let invocation = parse_git_invocation(tokens, base_cwd, true)?;
+    (invocation.subcommand == "commit" && commit_args_are_supported(invocation.args))
+        .then_some(invocation.cwd)
 }
 
-fn git_subcommand<'a>(tokens: &'a [String], base_cwd: &Path) -> Option<(&'a str, PathBuf)> {
-    let mut index = tokens.iter().position(|token| !is_env_assignment(token))?;
-    if tokens.get(index).map(String::as_str) != Some("git") {
+struct GitInvocation<'a> {
+    subcommand: &'a str,
+    args: &'a [String],
+    cwd: PathBuf,
+}
+
+fn parse_git_invocation<'a>(
+    tokens: &'a [String],
+    base_cwd: &Path,
+    allow_identity_config: bool,
+) -> Option<GitInvocation<'a>> {
+    if tokens.first().map(String::as_str) != Some("git") {
         return None;
     }
-    index += 1;
+    let mut index = 1;
     let mut cwd = base_cwd.to_path_buf();
     while let Some(token) = tokens.get(index) {
         match token.as_str() {
@@ -383,27 +390,196 @@ fn git_subcommand<'a>(tokens: &'a [String], base_cwd: &Path) -> Option<(&'a str,
                 cwd = resolve_literal_workdir(&cwd, target)?;
                 index += 2;
             }
-            "-c" => index += 2,
-            "-p"
-            | "--paginate"
-            | "-P"
-            | "--no-pager"
-            | "--bare"
-            | "--no-replace-objects"
-            | "--literal-pathspecs"
-            | "--glob-pathspecs"
-            | "--noglob-pathspecs"
-            | "--icase-pathspecs"
-            | "--no-optional-locks" => index += 1,
+            "-c" if allow_identity_config => {
+                let config = tokens.get(index + 1)?;
+                if !is_safe_commit_identity_config(config) {
+                    return None;
+                }
+                index += 2;
+            }
             value if value.starts_with("-C") && value.len() > 2 => {
                 cwd = resolve_literal_workdir(&cwd, &value[2..])?;
                 index += 1;
             }
-            value if value.starts_with("-c") && value.len() > 2 => index += 1,
-            subcommand => return Some((subcommand, cwd)),
+            value if allow_identity_config && value.starts_with("-c") && value.len() > 2 => {
+                if !is_safe_commit_identity_config(&value[2..]) {
+                    return None;
+                }
+                index += 1;
+            }
+            subcommand if !subcommand.starts_with('-') => {
+                return Some(GitInvocation {
+                    subcommand,
+                    args: &tokens[index + 1..],
+                    cwd,
+                })
+            }
+            _ => return None,
         }
     }
     None
+}
+
+fn is_safe_commit_identity_config(config: &str) -> bool {
+    let Some((key, value)) = config.split_once('=') else {
+        return false;
+    };
+    let key = key.to_ascii_lowercase();
+    matches!(key.as_str(), "user.name" | "user.email") && !value.chars().any(char::is_control)
+}
+
+fn commit_args_are_supported(args: &[String]) -> bool {
+    let mut index = 0;
+    let mut has_message_source = false;
+    let mut pathspec_only = false;
+    while let Some(argument) = args.get(index) {
+        if pathspec_only {
+            index += 1;
+            continue;
+        }
+        match argument.as_str() {
+            "--" => {
+                pathspec_only = true;
+                index += 1;
+            }
+            "--message" | "--file" | "--reuse-message" => {
+                if args.get(index + 1).is_none() {
+                    return false;
+                }
+                has_message_source = true;
+                index += 2;
+            }
+            "--author" | "--date" | "--cleanup" | "--trailer" | "--pathspec-from-file" => {
+                if args.get(index + 1).is_none() {
+                    return false;
+                }
+                index += 2;
+            }
+            "--no-edit" => {
+                has_message_source = true;
+                index += 1;
+            }
+            "--all"
+            | "--quiet"
+            | "--amend"
+            | "--allow-empty"
+            | "--allow-empty-message"
+            | "--no-verify"
+            | "--signoff"
+            | "--reset-author"
+            | "--include"
+            | "--only"
+            | "--no-post-rewrite"
+            | "--no-gpg-sign"
+            | "--pathspec-file-nul" => index += 1,
+            value
+                if value.starts_with("--message=")
+                    || value.starts_with("--file=")
+                    || value.starts_with("--reuse-message=")
+                    || value.starts_with("--fixup=") =>
+            {
+                has_message_source = true;
+                index += 1;
+            }
+            value
+                if value.starts_with("--author=")
+                    || value.starts_with("--date=")
+                    || value.starts_with("--cleanup=")
+                    || value.starts_with("--trailer=")
+                    || value.starts_with("--pathspec-from-file=") =>
+            {
+                index += 1;
+            }
+            value if value.starts_with('-') && !value.starts_with("--") => {
+                let Some(next_index) =
+                    consume_commit_short_options(args, index, &mut has_message_source)
+                else {
+                    return false;
+                };
+                index = next_index;
+            }
+            value if value.starts_with('-') => return false,
+            _ => index += 1,
+        }
+    }
+    has_message_source
+}
+
+fn consume_commit_short_options(
+    args: &[String],
+    index: usize,
+    has_message_source: &mut bool,
+) -> Option<usize> {
+    let options = args.get(index)?.strip_prefix('-')?;
+    if options.is_empty() || options.starts_with('-') {
+        return None;
+    }
+    for (offset, option) in options.char_indices() {
+        match option {
+            'a' | 'q' | 'n' | 's' | 'i' | 'o' => {}
+            'm' | 'F' | 'C' => {
+                *has_message_source = true;
+                let value_offset = offset + option.len_utf8();
+                return if value_offset < options.len() {
+                    Some(index + 1)
+                } else {
+                    args.get(index + 1).map(|_| index + 2)
+                };
+            }
+            _ => return None,
+        }
+    }
+    Some(index + 1)
+}
+
+fn add_args_are_supported(args: &[String]) -> bool {
+    let mut index = 0;
+    let mut has_selection = false;
+    let mut pathspec_only = false;
+    while let Some(argument) = args.get(index) {
+        if pathspec_only {
+            has_selection = true;
+            index += 1;
+            continue;
+        }
+        match argument.as_str() {
+            "--" => {
+                pathspec_only = true;
+                index += 1;
+            }
+            "-A" | "--all" | "-u" | "--update" => {
+                has_selection = true;
+                index += 1;
+            }
+            "-N"
+            | "--intent-to-add"
+            | "-f"
+            | "--force"
+            | "--ignore-errors"
+            | "--ignore-missing"
+            | "--renormalize"
+            | "--sparse"
+            | "--pathspec-file-nul" => index += 1,
+            "--pathspec-from-file" => {
+                if args.get(index + 1).is_none() {
+                    return false;
+                }
+                has_selection = true;
+                index += 2;
+            }
+            value if value.starts_with("--pathspec-from-file=") => {
+                has_selection = true;
+                index += 1;
+            }
+            "--chmod=+x" | "--chmod=-x" => index += 1,
+            value if value.starts_with('-') => return false,
+            _ => {
+                has_selection = true;
+                index += 1;
+            }
+        }
+    }
+    has_selection
 }
 
 fn resolve_literal_workdir(base: &Path, target: &str) -> Option<PathBuf> {
@@ -417,18 +593,6 @@ fn resolve_literal_workdir(base: &Path, target: &str) -> Option<PathBuf> {
     } else {
         base.join(target)
     })
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

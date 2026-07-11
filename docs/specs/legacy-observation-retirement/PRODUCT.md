@@ -128,7 +128,12 @@ Acceptance:
 
 - A successful explicit `git commit` result proves the SHA; trusted capture
   resolves metadata for that exact SHA before the event is written or spilled,
-  and stores the evidence atomically with the capture event.
+  and stores the evidence atomically with the capture event. Evidence command
+  parsing is fail-closed: it accepts only literal workdir changes,
+  non-interactive add/commit forms with an explicit message source, safe
+  identity configuration, and the documented exact status suffix; environment
+  prefixes, arbitrary Git configuration, help/viewer/editor paths, dry runs,
+  and interactive add modes produce no evidence.
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
   commit links. A byte-bounded Codex transcript may prove multiple commits;
   one ambiguous call does not erase earlier proven calls, relative workdirs

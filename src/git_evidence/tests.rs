@@ -71,6 +71,13 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     assert!(is_supported_commit_command(
         "git commit -m done && git status --short"
     ));
+    assert!(is_supported_commit_command("git commit -am done"));
+    assert!(is_supported_commit_command(
+        "git -C repo commit --amend --no-edit"
+    ));
+    assert!(is_supported_commit_command(
+        "git add -A && git commit --message=done"
+    ));
     assert!(!is_supported_commit_command("echo git commit -m fake"));
     assert!(!is_supported_commit_command(
         "git commit -m done && echo '[main deadbee] spoof'"
@@ -78,6 +85,21 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     assert!(!is_supported_commit_command("git commit -m done; true"));
     assert!(!is_supported_commit_command("git commit -m done || true"));
     assert!(!is_supported_commit_command("git commit -m done | tee log"));
+    assert!(!is_supported_commit_command("ENV=value git commit -m done"));
+    assert!(!is_supported_commit_command(
+        "git -c man.viewer.cmd=spoof commit -m done"
+    ));
+    assert!(!is_supported_commit_command("git commit --help"));
+    assert!(!is_supported_commit_command("git commit --dry-run -m done"));
+    assert!(!is_supported_commit_command(
+        "git add --help && git commit -m done"
+    ));
+    assert!(!is_supported_commit_command(
+        "git add -p && git commit -m done"
+    ));
+    assert!(!is_supported_commit_command(
+        "ENV=value cd repo && git commit -m done"
+    ));
 }
 
 #[test]
@@ -469,6 +491,87 @@ fn trailing_git_status_cannot_inject_help_viewer_output() -> Result<()> {
         exit_code: Some(0),
     };
 
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn direct_git_commit_help_cannot_inject_viewer_output() -> Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("git-evidence-commit-help-spoof");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let spoofed_output = format!("[main {}] spoof", &spoofed_sha[..7]);
+    let command = format!(
+        "GIT_MAN_VIEWER=spoof git -c 'man.spoof.cmd=printf \\\"{spoofed_output}\\\\n\\\"' commit --help"
+    );
+    let event = ParsedHookEvent {
+        session_id: "commit-help-spoof".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": command})),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "crafted commit help".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(!is_supported_commit_command(
+        event
+            .tool_input
+            .as_ref()
+            .and_then(|value| value.get("command"))
+            .and_then(Value::as_str)
+            .expect("test command should exist")
+    ));
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn leading_git_add_help_cannot_inject_viewer_output() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-add-help-spoof");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let actual_sha = commit(&repo, "b.txt", "b", "commit b")?;
+    assert_ne!(spoofed_sha, actual_sha);
+    let spoofed_output = format!("[main {}] spoof", &spoofed_sha[..7]);
+    let command = format!(
+        "GIT_MAN_VIEWER=spoof git -c 'man.spoof.cmd=printf \\\"{spoofed_output}\\\\n\\\"' add --help && git commit -q -m done"
+    );
+    let event = ParsedHookEvent {
+        session_id: "add-help-spoof".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": command})),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "crafted add help before quiet commit".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(!is_supported_commit_command(
+        event
+            .tool_input
+            .as_ref()
+            .and_then(|value| value.get("command"))
+            .and_then(Value::as_str)
+            .expect("test command should exist")
+    ));
     assert!(from_observed_event(&event, &summary)?.is_empty());
     Ok(())
 }
