@@ -8,6 +8,8 @@
 //! (`machine_checkable`). Counts carry forward only when the old and new text
 //! derive the same safe v1 predicate; accepted exact repeats increment in place.
 
+use std::collections::{BTreeSet, HashSet};
+
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -29,62 +31,70 @@ pub(crate) fn persist_preference_reinforcement(
     now: i64,
 ) -> Result<i64> {
     let new_predicates = preference_predicates(text);
-    let mut carried = 0i64;
-    let mut seen = std::collections::HashSet::with_capacity(superseded_ids.len());
+    let incoming_evidence = parse_source_evidence(source_evidence)?;
+    let mut carried = ReinforcementAggregate::default();
+    let mut seen = HashSet::with_capacity(superseded_ids.len());
     for id in superseded_ids.iter().filter(|id| seen.insert(**id)) {
         if *id == new_memory_id {
             continue;
         }
-        let prior: Option<(i64, String)> = conn
-            .query_row(
-                "SELECT r.reinforcement_count, m.content
-                 FROM memory_preference_reinforcements r
-                 JOIN memories m ON m.id = r.memory_id
-                 WHERE r.memory_id = ?1",
-                [id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .optional()?;
-        if let Some((count, prior_text)) = prior {
-            if !new_predicates.is_empty() && preference_predicates(&prior_text) == new_predicates {
-                carried = carried
-                    .checked_add(count)
-                    .context("preference reinforcement count overflow")?;
-                transfer_rule_overrides(conn, *id, new_memory_id)?;
+        let (prior_text, prior_state): (
+            String,
+            Option<(i64, Option<String>, i64, i64, String)>,
+        ) = conn.query_row(
+            "SELECT m.content, r.reinforcement_count, r.source_evidence,
+                    r.last_reinforced_at_epoch, r.created_at_epoch, r.risk_class
+             FROM memories m
+             LEFT JOIN memory_preference_reinforcements r ON r.memory_id = m.id
+             WHERE m.id = ?1",
+            [id],
+            |row| {
+                let count: Option<i64> = row.get(1)?;
+                let state = if let Some(count) = count {
+                    Some((count, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+                } else {
+                    None
+                };
+                Ok((row.get(0)?, state))
+            },
+        )?;
+        if !new_predicates.is_empty() && preference_predicates(&prior_text) == new_predicates {
+            if let Some((count, evidence, last, created, prior_risk)) = prior_state {
+                carried.absorb(ReinforcementState {
+                    count,
+                    evidence: parse_source_evidence(evidence.as_deref())?,
+                    last_reinforced_at_epoch: last,
+                    created_at_epoch: created,
+                    risk_class: prior_risk,
+                })?;
             }
+            transfer_rule_overrides(conn, *id, new_memory_id)?;
+        } else {
+            remove_rule_overrides(conn, *id)?;
         }
         conn.execute(
             "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
             [id],
         )?;
     }
-    let new_count = carried
-        .checked_add(1)
-        .context("preference reinforcement count overflow")?;
-    let machine_checkable = i64::from(!new_predicates.is_empty());
-    conn.execute(
-        "INSERT INTO memory_preference_reinforcements
-         (memory_id, reinforcement_count, source_evidence,
-          last_reinforced_at_epoch, created_at_epoch, updated_at_epoch,
-          machine_checkable, risk_class)
-         VALUES (?1, ?2, ?3, ?4, ?4, ?4, ?5, ?6)
-         ON CONFLICT(memory_id) DO UPDATE SET
-           reinforcement_count = excluded.reinforcement_count,
-           source_evidence = excluded.source_evidence,
-           last_reinforced_at_epoch = excluded.last_reinforced_at_epoch,
-           updated_at_epoch = excluded.updated_at_epoch,
-           machine_checkable = excluded.machine_checkable,
-           risk_class = excluded.risk_class",
-        params![
-            new_memory_id,
-            new_count,
-            source_evidence,
-            now,
-            machine_checkable,
-            risk_class
-        ],
-    )?;
-    Ok(new_count)
+    let mut state = carried.finish().unwrap_or_else(|| ReinforcementState {
+        count: 1,
+        evidence: BTreeSet::new(),
+        last_reinforced_at_epoch: now,
+        created_at_epoch: now,
+        risk_class: risk_class.to_string(),
+    });
+    if !state.evidence.is_empty() && has_novel_evidence(&state.evidence, &incoming_evidence) {
+        state.count = state
+            .count
+            .checked_add(1)
+            .context("preference reinforcement count overflow")?;
+        state.last_reinforced_at_epoch = now;
+    }
+    state.evidence.extend(incoming_evidence);
+    state.risk_class = restrictive_risk_class(&state.risk_class, risk_class)?.to_string();
+    write_reinforcement_state(conn, new_memory_id, &state, !new_predicates.is_empty(), now)?;
+    Ok(state.count)
 }
 
 /// Count an accepted duplicate correction against its existing authoritative
@@ -98,35 +108,290 @@ pub(crate) fn reinforce_existing_preference(
     now: i64,
 ) -> Result<i64> {
     let machine_checkable = i64::from(!preference_predicates(text).is_empty());
+    let incoming_evidence = parse_source_evidence(source_evidence)?;
+    let stored: Option<(i64, Option<String>, i64, i64, String)> = conn
+        .query_row(
+            "SELECT reinforcement_count, source_evidence, last_reinforced_at_epoch,
+                    created_at_epoch, risk_class
+             FROM memory_preference_reinforcements
+             WHERE memory_id = ?1",
+            [memory_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let had_stored_state = stored.is_some();
+    let mut state = if let Some((count, evidence, last, created, stored_risk)) = stored {
+        ReinforcementState {
+            count,
+            evidence: parse_source_evidence(evidence.as_deref())?,
+            last_reinforced_at_epoch: last,
+            created_at_epoch: created,
+            risk_class: stored_risk,
+        }
+    } else {
+        ReinforcementState {
+            count: 1,
+            evidence: BTreeSet::new(),
+            last_reinforced_at_epoch: now,
+            created_at_epoch: now,
+            risk_class: risk_class.to_string(),
+        }
+    };
+    if had_stored_state && has_novel_evidence(&state.evidence, &incoming_evidence) {
+        state.count = state
+            .count
+            .checked_add(1)
+            .context("preference reinforcement count overflow")?;
+        state.last_reinforced_at_epoch = now;
+    }
+    state.evidence.extend(incoming_evidence);
+    state.risk_class = restrictive_risk_class(&state.risk_class, risk_class)?.to_string();
+    write_reinforcement_state(conn, memory_id, &state, machine_checkable != 0, now)?;
+    Ok(state.count)
+}
+
+/// Remove candidate-derived rule state when an in-place write changes the
+/// deterministic predicate. Exact text and same-predicate rewrites retain the
+/// existing evidence and user override; unrelated or opposing text does not.
+pub(crate) fn reconcile_in_place_preference_update(
+    conn: &Connection,
+    memory_id: i64,
+    previous_text: &str,
+    current_text: &str,
+) -> Result<bool> {
+    let previous = preference_predicates(previous_text);
+    let current = preference_predicates(current_text);
+    let compatible = crate::memory::operation::same_memory_text(previous_text, current_text)
+        || (!current.is_empty() && previous == current);
+    if compatible {
+        return Ok(false);
+    }
+    conn.execute(
+        "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
+        [memory_id],
+    )?;
+    remove_rule_overrides(conn, memory_id)?;
+    conn.execute(
+        "UPDATE memories SET source_candidate_id = NULL WHERE id = ?1",
+        [memory_id],
+    )?;
+    Ok(true)
+}
+
+/// Reconcile rule state while cleanup selects one canonical preference and
+/// stales the rest. Cleanup itself is not new evidence, so it only combines
+/// disjoint, same-predicate evidence and never increments the count.
+pub(crate) fn reconcile_cleanup_preference(
+    conn: &Connection,
+    current_memory_id: i64,
+    stale_memory_ids: &[i64],
+    final_text: &str,
+    now: i64,
+) -> Result<()> {
+    let final_predicates = preference_predicates(final_text);
+    let current_text: String = conn.query_row(
+        "SELECT content FROM memories WHERE id = ?1",
+        [current_memory_id],
+        |row| row.get(0),
+    )?;
+    let current_compatible = crate::memory::operation::same_memory_text(&current_text, final_text)
+        || (!final_predicates.is_empty()
+            && preference_predicates(&current_text) == final_predicates);
+    let mut aggregate = ReinforcementAggregate::default();
+    let mut ids = Vec::with_capacity(stale_memory_ids.len() + 1);
+    ids.push(current_memory_id);
+    ids.extend_from_slice(stale_memory_ids);
+    ids.sort_unstable();
+    ids.dedup();
+
+    for memory_id in ids {
+        let row: (String, Option<(i64, Option<String>, i64, i64, String)>) = conn.query_row(
+            "SELECT m.content, r.reinforcement_count, r.source_evidence,
+                        r.last_reinforced_at_epoch, r.created_at_epoch, r.risk_class
+                 FROM memories m
+                 LEFT JOIN memory_preference_reinforcements r ON r.memory_id = m.id
+                 WHERE m.id = ?1",
+            [memory_id],
+            |row| {
+                let count: Option<i64> = row.get(1)?;
+                let state = if let Some(count) = count {
+                    Some((count, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+                } else {
+                    None
+                };
+                Ok((row.get(0)?, state))
+            },
+        )?;
+        let same_predicate =
+            !final_predicates.is_empty() && preference_predicates(&row.0) == final_predicates;
+        if same_predicate {
+            if let Some((count, evidence, last, created, risk_class)) = row.1 {
+                aggregate.absorb(ReinforcementState {
+                    count,
+                    evidence: parse_source_evidence(evidence.as_deref())?,
+                    last_reinforced_at_epoch: last,
+                    created_at_epoch: created,
+                    risk_class,
+                })?;
+            }
+            if memory_id != current_memory_id {
+                transfer_rule_overrides(conn, memory_id, current_memory_id)?;
+            }
+        } else {
+            remove_rule_overrides(conn, memory_id)?;
+        }
+        if memory_id != current_memory_id {
+            conn.execute(
+                "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
+                [memory_id],
+            )?;
+        }
+    }
+
+    if !current_compatible {
+        remove_rule_overrides(conn, current_memory_id)?;
+        conn.execute(
+            "UPDATE memories SET source_candidate_id = NULL WHERE id = ?1",
+            [current_memory_id],
+        )?;
+    }
+    if let Some(state) = aggregate.finish().filter(|_| !final_predicates.is_empty()) {
+        write_reinforcement_state(conn, current_memory_id, &state, true, now)?;
+    } else {
+        conn.execute(
+            "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
+            [current_memory_id],
+        )?;
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ReinforcementState {
+    count: i64,
+    evidence: BTreeSet<i64>,
+    last_reinforced_at_epoch: i64,
+    created_at_epoch: i64,
+    risk_class: String,
+}
+
+#[derive(Debug, Default)]
+struct ReinforcementAggregate {
+    state: Option<ReinforcementState>,
+}
+
+impl ReinforcementAggregate {
+    fn absorb(&mut self, incoming: ReinforcementState) -> Result<()> {
+        let Some(stored) = self.state.as_mut() else {
+            self.state = Some(incoming);
+            return Ok(());
+        };
+        let disjoint_known_evidence = !stored.evidence.is_empty()
+            && !incoming.evidence.is_empty()
+            && stored.evidence.is_disjoint(&incoming.evidence);
+        stored.count = if disjoint_known_evidence {
+            stored
+                .count
+                .checked_add(incoming.count)
+                .context("preference reinforcement count overflow")?
+        } else {
+            stored.count.max(incoming.count)
+        };
+        stored.evidence.extend(incoming.evidence);
+        stored.last_reinforced_at_epoch = stored
+            .last_reinforced_at_epoch
+            .max(incoming.last_reinforced_at_epoch);
+        stored.created_at_epoch = stored.created_at_epoch.min(incoming.created_at_epoch);
+        stored.risk_class =
+            restrictive_risk_class(&stored.risk_class, &incoming.risk_class)?.to_string();
+        Ok(())
+    }
+
+    fn finish(self) -> Option<ReinforcementState> {
+        self.state
+    }
+}
+
+fn parse_source_evidence(source_evidence: Option<&str>) -> Result<BTreeSet<i64>> {
+    let Some(source_evidence) = source_evidence else {
+        return Ok(BTreeSet::new());
+    };
+    let evidence: Vec<i64> = serde_json::from_str(source_evidence)
+        .context("parse preference reinforcement source evidence")?;
+    if evidence.iter().any(|id| *id <= 0) {
+        bail!("preference reinforcement source evidence must contain positive event ids");
+    }
+    Ok(evidence.into_iter().collect())
+}
+
+fn has_novel_evidence(stored: &BTreeSet<i64>, incoming: &BTreeSet<i64>) -> bool {
+    !incoming.is_empty() && incoming.iter().any(|id| !stored.contains(id))
+}
+
+fn restrictive_risk_class<'a>(left: &'a str, right: &'a str) -> Result<&'a str> {
+    fn rank(value: &str) -> Option<u8> {
+        match value {
+            "low" => Some(0),
+            "medium" => Some(1),
+            "high" => Some(2),
+            "unknown" => Some(3),
+            _ => None,
+        }
+    }
+    let left_rank = rank(left).with_context(|| format!("invalid preference risk class {left}"))?;
+    let right_rank =
+        rank(right).with_context(|| format!("invalid preference risk class {right}"))?;
+    Ok(if left_rank >= right_rank { left } else { right })
+}
+
+fn write_reinforcement_state(
+    conn: &Connection,
+    memory_id: i64,
+    state: &ReinforcementState,
+    machine_checkable: bool,
+    now: i64,
+) -> Result<()> {
+    let source_evidence = if state.evidence.is_empty() {
+        None
+    } else {
+        Some(serde_json::to_string(
+            &state.evidence.iter().copied().collect::<Vec<_>>(),
+        )?)
+    };
     conn.execute(
         "INSERT INTO memory_preference_reinforcements
          (memory_id, reinforcement_count, source_evidence,
           last_reinforced_at_epoch, created_at_epoch, updated_at_epoch,
           machine_checkable, risk_class)
-         VALUES (?1, 1, ?2, ?3, ?3, ?3, ?4, ?5)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(memory_id) DO UPDATE SET
-           reinforcement_count = memory_preference_reinforcements.reinforcement_count + 1,
+           reinforcement_count = excluded.reinforcement_count,
            source_evidence = excluded.source_evidence,
            last_reinforced_at_epoch = excluded.last_reinforced_at_epoch,
+           created_at_epoch = excluded.created_at_epoch,
            updated_at_epoch = excluded.updated_at_epoch,
            machine_checkable = excluded.machine_checkable,
            risk_class = excluded.risk_class",
         params![
             memory_id,
+            state.count,
             source_evidence,
+            state.last_reinforced_at_epoch,
+            state.created_at_epoch,
             now,
-            machine_checkable,
-            risk_class
+            i64::from(machine_checkable),
+            state.risk_class,
         ],
     )?;
-    conn.query_row(
-        "SELECT reinforcement_count
-         FROM memory_preference_reinforcements
-         WHERE memory_id = ?1",
-        [memory_id],
-        |row| row.get(0),
-    )
-    .context("load reinforced existing preference count")
+    Ok(())
 }
 
 fn preference_predicates(text: &str) -> Vec<PreferencePredicate> {
@@ -219,6 +484,16 @@ fn transfer_rule_overrides(
             [stored.id],
         )?;
     }
+    Ok(())
+}
+
+fn remove_rule_overrides(conn: &Connection, memory_id: i64) -> Result<()> {
+    let prefix = format!("pref-{memory_id}-%");
+    conn.execute(
+        "DELETE FROM preference_rule_overrides
+         WHERE source_memory_id = ?1 OR rule_id LIKE ?2",
+        params![memory_id, prefix],
+    )?;
     Ok(())
 }
 

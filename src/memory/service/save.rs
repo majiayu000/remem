@@ -183,6 +183,23 @@ fn save_memory_inner(
                 mark_direct_save_poisoning_metadata(conn, id, acknowledgement)?;
                 return Ok((id, MemoryLifecycleOp::Noop));
             }
+            let previous_preference = if memory_type == "preference" {
+                operation_plan
+                    .target_memory_id
+                    .map(|memory_id| {
+                        conn.query_row(
+                            "SELECT content FROM memories WHERE id = ?1",
+                            [memory_id],
+                            |row| row.get::<_, String>(0),
+                        )
+                        .with_context(|| {
+                            format!("load preference before direct save update id={memory_id}")
+                        })
+                    })
+                    .transpose()?
+            } else {
+                None
+            };
             let result = crate::memory::insert_memory_full_with_operation_log(
                 conn,
                 req.session_id.as_deref(),
@@ -199,6 +216,15 @@ fn save_memory_inner(
                 &operation_input,
                 &operation_plan,
             )?;
+            if let Some(previous_text) = previous_preference {
+                crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &[result.0])?;
+                crate::memory::preference::reinforcement::reconcile_in_place_preference_update(
+                    conn,
+                    result.0,
+                    &previous_text,
+                    &req.text,
+                )?;
+            }
             mark_direct_save_poisoning_metadata(conn, result.0, acknowledgement)?;
             Ok(result)
         })

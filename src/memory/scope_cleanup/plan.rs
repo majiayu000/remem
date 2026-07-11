@@ -151,6 +151,26 @@ pub fn apply_memory_cleanup_plan(
         let canonical = load_target(&tx, current_ref)?;
         let current_snapshot = snapshot_for(&group.row_snapshots, group.current_id)?;
         let merged = group.merged_content.as_deref();
+        let final_text = if let Some(merged) = merged {
+            merged.to_string()
+        } else {
+            tx.query_row(
+                "SELECT content FROM memories WHERE id = ?1",
+                [group.current_id],
+                |row| row.get::<_, String>(0),
+            )?
+        };
+        let affected_ids = std::iter::once(group.current_id)
+            .chain(group.stale_ids.iter().copied())
+            .collect::<Vec<_>>();
+        crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &affected_ids)?;
+        crate::memory::preference::reinforcement::reconcile_cleanup_preference(
+            &tx,
+            group.current_id,
+            &group.stale_ids,
+            &final_text,
+            now,
+        )?;
         let updated = tx.execute(
             "UPDATE memories
              SET content = COALESCE(?1, content),

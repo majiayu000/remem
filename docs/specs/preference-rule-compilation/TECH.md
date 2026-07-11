@@ -17,13 +17,15 @@ Tracking:
   the closed v1 predicate enum, a pure in-memory evaluator, fail-open artifact
   loading for missing/corrupt/unsupported artifacts, stable project artifact
   paths, and atomic artifact writes.
-- GH671-T3 adds canonical evidence-backed reinforcement for identical and
-  same-predicate replacements without transferring confidence across opposing
-  preferences; a closed classifier for package-manager and commit-trailer
+- GH671-T3 adds canonical evidence-backed reinforcement that counts each event
+  set once, carries only disjoint evidence across same-predicate replacements,
+  and clears stale confidence/provenance on opposing direct saves or cleanup
+  rewrites; a closed classifier for package-manager and commit-trailer
   predicates; persisted low-risk, source-trust, and review eligibility;
   project-over-global conflict precedence; lifecycle-triggered non-lossy jobs
-  plus periodic convergence sweeps; same-predicate override transfer; stable
-  diagnostics and artifacts; and worker-only artifact writes. Hook dispatch,
+  plus periodic convergence sweeps; same-predicate override transfer across
+  candidate and cleanup supersession; stable diagnostics and artifacts; and
+  worker-only artifact writes. Hook dispatch,
   rule CLI, doctor output, fixtures, and latency evidence are still pending.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
