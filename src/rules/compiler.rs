@@ -323,19 +323,23 @@ fn record_diagnostic(
     if status != "ok" {
         match conn
             .query_row(
-                "SELECT 1 FROM preference_rule_diagnostics
+                "SELECT status, COALESCE(message, '')
+                 FROM preference_rule_diagnostics
                  WHERE project = ?1
                    AND event_kind = 'compile'
-                   AND status = ?2
-                   AND COALESCE(message, '') = COALESCE(?3, '')
+                 ORDER BY id DESC
                  LIMIT 1",
-                params![project, status, message],
-                |_| Ok(()),
+                params![project],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             )
             .optional()
         {
-            Ok(Some(())) => return,
-            Ok(None) => {}
+            Ok(Some((latest_status, latest_message)))
+                if latest_status == status && latest_message == message =>
+            {
+                return;
+            }
+            Ok(Some(_)) | Ok(None) => {}
             Err(error) => crate::log::error(
                 "rules",
                 &format!("failed to deduplicate compile diagnostic for {project}: {error}"),

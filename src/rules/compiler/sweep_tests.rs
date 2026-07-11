@@ -71,6 +71,40 @@ fn sweep_isolates_project_failures_and_deduplicates_errors() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(errors, 1);
+    conn.execute(
+        "UPDATE memory_preference_reinforcements
+         SET machine_checkable = 0
+         WHERE memory_id = 1",
+        [],
+    )?;
+    drop(conn);
+
+    let recovery = run_compile_rules_sweep()?;
+    assert_eq!(recovery.artifacts_changed, 1);
+    assert_eq!(recovery.failures, 0);
+
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_preference_reinforcements
+         SET machine_checkable = 1
+         WHERE memory_id = 1",
+        [],
+    )?;
+    drop(conn);
+    let recurrence = run_compile_rules_sweep()?;
+    assert_eq!(recurrence.artifacts_changed, 0);
+    assert_eq!(recurrence.failures, 1);
+
+    let conn = db::open_db()?;
+    let mut stmt = conn.prepare(
+        "SELECT status FROM preference_rule_diagnostics
+         WHERE project = '/tmp/a-bad'
+         ORDER BY id",
+    )?;
+    let statuses = stmt
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(statuses, ["error", "ok", "error"]);
     Ok(())
 }
 

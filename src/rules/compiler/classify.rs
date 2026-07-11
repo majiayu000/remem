@@ -163,28 +163,47 @@ fn explicitly_forbids_term(lower: &str, term: &str) -> bool {
 }
 
 fn negates_avoidance(lower: &str, term: &str) -> bool {
-    [
-        "do not avoid",
-        "do not ban",
-        "do not exclude",
-        "do not forbid",
-        "do not omit",
-        "don't avoid",
-        "don't ban",
-        "don't forbid",
-        "dont avoid",
-        "dont ban",
-        "dont forbid",
-        "not avoid",
-        "not ban",
-        "not exclude",
-        "not forbid",
-        "not omit",
-    ]
-    .iter()
-    .any(|marker| {
-        lower.contains(&format!("{marker} {term}"))
-            || lower.contains(&format!("{marker} the {term}"))
+    const AVOIDANCE_VERBS: &[&str] = &["avoid", "ban", "exclude", "forbid", "omit"];
+    let tokens = lower
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '\'')
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+
+    tokens.iter().enumerate().any(|(term_index, token)| {
+        if *token != term {
+            return false;
+        }
+        let marker_index = match term_index.checked_sub(1) {
+            Some(index) if tokens[index] == "the" => index.checked_sub(1),
+            index => index,
+        };
+        let Some(marker_index) = marker_index else {
+            return false;
+        };
+        if !AVOIDANCE_VERBS.contains(&tokens[marker_index]) {
+            return false;
+        }
+
+        // A negation can be separated from the avoidance verb by auxiliaries
+        // or adverbs ("never explicitly avoid", "no reason to forbid"). In
+        // that case the polarity is unsafe to infer, so classification fails
+        // closed instead of compiling the opposite rule.
+        tokens[marker_index.saturating_sub(4)..marker_index]
+            .iter()
+            .any(|token| {
+                matches!(
+                    *token,
+                    "not"
+                        | "never"
+                        | "no"
+                        | "cannot"
+                        | "cant"
+                        | "dont"
+                        | "hardly"
+                        | "rarely"
+                        | "scarcely"
+                ) || token.ends_with("n't")
+            })
     })
 }
 
@@ -244,23 +263,34 @@ mod tests {
 
     #[test]
     fn negated_avoidance_is_not_inverted() {
-        let Some(classification) =
-            classify_preference_predicate("Do not avoid npm; use npm instead of yarn")
-        else {
-            panic!("the explicit yarn avoidance should classify");
-        };
-        match classification.predicate {
-            PreferencePredicate::CommandRegex { pattern, .. } => {
-                assert!(pattern.contains("yarn"));
-                assert!(!pattern.contains("npm"));
+        for text in [
+            "Do not avoid npm; use npm instead of yarn",
+            "Never avoid npm; use npm instead of yarn",
+            "There is no reason to avoid npm; use npm instead of yarn",
+            "You shouldn't avoid npm; use npm instead of yarn",
+        ] {
+            let Some(classification) = classify_preference_predicate(text) else {
+                panic!("the explicit yarn avoidance should classify: {text}");
+            };
+            match classification.predicate {
+                PreferencePredicate::CommandRegex { pattern, .. } => {
+                    assert!(pattern.contains("yarn"), "unexpected rule for {text}");
+                    assert!(!pattern.contains("npm"), "inverted rule for {text}");
+                }
+                other => panic!("expected command regex for {text}, got {other:?}"),
             }
-            other => panic!("expected command regex, got {other:?}"),
         }
 
-        assert!(classify_preference_predicate(
-            "Do not avoid the Co-Authored-By commit trailer; always add it"
-        )
-        .is_none());
+        for text in [
+            "Do not avoid the Co-Authored-By commit trailer; always add it",
+            "Never forbid the Co-Authored-By commit trailer; always add it",
+            "There is no reason to omit the Co-Authored-By commit trailer",
+        ] {
+            assert!(
+                classify_preference_predicate(text).is_none(),
+                "negated trailer avoidance must fail closed: {text}"
+            );
+        }
     }
 
     #[test]
