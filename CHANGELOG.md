@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.198` for the GH-671 T3 post-merge corrective:
+  archive and reroute operations recompile both affected preference authorities,
+  replacement overrides follow normalized predicate identity, global preference
+  mutations immediately fan out to registered projects, and failed success
+  diagnostics restore or remove the unpublished compiled artifact.
 - Staged source version `0.5.197` for the GH-671 T3 correctness follow-up:
   unique evidence reinforces only the same safe predicate; opposing direct
   saves and cleanup rewrites clear stale provenance while same-predicate
