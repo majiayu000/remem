@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{btree_map::Entry, BTreeMap};
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
@@ -72,7 +72,18 @@ pub(crate) fn link_task_range(
                 metadata.sha
             );
         }
-        commits.insert(sha.trim().to_ascii_lowercase(), metadata);
+        match commits.entry(sha.trim().to_ascii_lowercase()) {
+            Entry::Vacant(entry) => {
+                entry.insert(metadata);
+            }
+            Entry::Occupied(mut entry) => {
+                if entry.get().branch.is_none() {
+                    if let Some(branch) = metadata.branch {
+                        entry.get_mut().branch = Some(branch);
+                    }
+                }
+            }
+        }
     }
     let commits = commits.into_values().collect::<Vec<_>>();
     if commits.is_empty() {
@@ -116,4 +127,66 @@ pub(crate) fn link_task_range(
         ),
     );
     Ok(commits)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{CaptureEventInput, ExtractionTaskKind};
+    use crate::git_util::{GitCommitEvidence, GitEvidenceKind};
+
+    fn evidence(branch: Option<&str>) -> GitCommitEvidence {
+        GitCommitEvidence {
+            kind: GitEvidenceKind::ObservedCommit,
+            metadata: GitCommitMetadata {
+                repo_path: "/tmp/remem".to_string(),
+                sha: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+                short_sha: "abcdef1".to_string(),
+                branch: branch.map(str::to_string),
+                message: Some("commit".to_string()),
+                authored_at_epoch: Some(1_700_000_000),
+                changed_files: vec!["src/lib.rs".to_string()],
+            },
+            locator: Some("test".to_string()),
+        }
+    }
+
+    #[test]
+    fn duplicate_range_evidence_preserves_known_capture_branch() -> Result<()> {
+        let mut conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let input = CaptureEventInput {
+            host: "codex-cli",
+            session_id: "duplicate-commit-session",
+            project: "/tmp/remem",
+            cwd: None,
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some("Bash"),
+            content: "{}",
+            task_kind: Some(ExtractionTaskKind::ObservationExtract),
+        };
+        db::record_captured_event_with_id_and_reference_time_and_git_evidence(
+            &conn,
+            &input,
+            Some("branch-rich"),
+            None,
+            &[evidence(Some("main"))],
+        )?;
+        db::record_captured_event_with_id_and_reference_time_and_git_evidence(
+            &conn,
+            &input,
+            Some("branchless"),
+            None,
+            &[evidence(None)],
+        )?;
+        let task = db::claim_next_extraction_task(&mut conn, "worker", 60)?
+            .context("expected observation extraction task")?;
+
+        let linked = link_task_range(&mut conn, &task)?;
+
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].branch.as_deref(), Some("main"));
+        Ok(())
+    }
 }

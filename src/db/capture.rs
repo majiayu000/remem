@@ -1,9 +1,11 @@
+use std::collections::BTreeSet;
+
 use anyhow::{bail, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::ExtractionTaskKind;
 use extraction_task::{
-    coalesce_extraction_task, existing_extraction_task_id, with_capture_savepoint,
+    coalesce_extraction_task, extraction_task_for_replayed_event, with_capture_savepoint,
 };
 
 mod extraction_task;
@@ -185,35 +187,48 @@ fn record_captured_event_inner(
         |row| row.get(0),
     )?;
 
-        if existing_event_row_id.is_none() {
-            for evidence in &sanitized_git_evidence {
-                conn.execute(
-                    "INSERT INTO captured_event_commits
+        let mut inserted_git_evidence_keys = BTreeSet::new();
+        for evidence in &sanitized_git_evidence {
+            let inserted = conn.execute(
+                "INSERT INTO captured_event_commits
                  (event_row_id, sha, metadata_json, evidence_kind, evidence_locator)
-                 VALUES (?1, ?2, ?3, ?4, ?5)",
-                    params![
-                        event_row_id,
-                        evidence.metadata.sha,
-                        serde_json::to_string(&evidence.metadata)?,
-                        evidence.kind.as_str(),
-                        evidence.locator
-                    ],
-                )?;
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(event_row_id, sha, evidence_kind) DO NOTHING",
+                params![
+                    event_row_id,
+                    evidence.metadata.sha,
+                    serde_json::to_string(&evidence.metadata)?,
+                    evidence.kind.as_str(),
+                    evidence.locator
+                ],
+            )?;
+            if inserted > 0 {
+                inserted_git_evidence_keys.insert(format!(
+                    "{}:{}",
+                    evidence.kind.as_str(),
+                    evidence.metadata.sha.trim().to_ascii_lowercase()
+                ));
             }
         }
+        let late_git_evidence_key = (!inserted_git_evidence_keys.is_empty()).then(|| {
+            exact_hash(
+                &inserted_git_evidence_keys
+                    .into_iter()
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        });
 
         let extraction_task_id = if let Some(kind) = input.task_kind {
             if existing_event_row_id.is_some() {
-                match existing_extraction_task_id(conn, identity, kind)? {
-                    Some(task_id) => Some(task_id),
-                    None => Some(coalesce_extraction_task(
-                        conn,
-                        identity,
-                        kind,
-                        event_row_id,
-                        now,
-                    )?),
-                }
+                Some(extraction_task_for_replayed_event(
+                    conn,
+                    identity,
+                    kind,
+                    event_row_id,
+                    late_git_evidence_key.as_deref(),
+                    now,
+                )?)
             } else {
                 Some(coalesce_extraction_task(
                     conn,

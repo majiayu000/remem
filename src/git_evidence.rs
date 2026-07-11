@@ -201,9 +201,8 @@ fn commit_candidate_from_output(output: &str) -> Result<Option<String>> {
     }
 }
 
-#[cfg(test)]
-fn is_supported_commit_command(command: &str) -> Result<bool> {
-    Ok(commit_workdir(command, ".").is_some())
+pub(crate) fn is_supported_commit_command(command: &str) -> bool {
+    commit_workdir(command, ".").is_some()
 }
 
 fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {

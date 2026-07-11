@@ -63,18 +63,15 @@ fn codex_output(call_id: &str, exit_code: i32, output: &str) -> String {
 }
 
 #[test]
-fn commit_command_requires_commit_as_last_success_chained_segment() -> Result<()> {
-    assert!(is_supported_commit_command("git commit -m done")?);
+fn commit_command_requires_commit_as_last_success_chained_segment() {
+    assert!(is_supported_commit_command("git commit -m done"));
     assert!(is_supported_commit_command(
         "git add src/lib.rs && git -c user.name=test commit -m done"
-    )?);
-    assert!(!is_supported_commit_command("echo git commit -m fake")?);
-    assert!(!is_supported_commit_command("git commit -m done; true")?);
-    assert!(!is_supported_commit_command("git commit -m done || true")?);
-    assert!(!is_supported_commit_command(
-        "git commit -m done | tee log"
-    )?);
-    Ok(())
+    ));
+    assert!(!is_supported_commit_command("echo git commit -m fake"));
+    assert!(!is_supported_commit_command("git commit -m done; true"));
+    assert!(!is_supported_commit_command("git commit -m done || true"));
+    assert!(!is_supported_commit_command("git commit -m done | tee log"));
 }
 
 #[test]

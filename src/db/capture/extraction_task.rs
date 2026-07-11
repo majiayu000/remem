@@ -96,17 +96,87 @@ pub(super) fn coalesce_extraction_task(
     )?)
 }
 
-pub(super) fn existing_extraction_task_id(
+pub(super) fn extraction_task_for_replayed_event(
     conn: &Connection,
     identity: IdentityIds,
     kind: ExtractionTaskKind,
-) -> Result<Option<i64>> {
+    event_row_id: i64,
+    late_git_evidence_key: Option<&str>,
+    now: i64,
+) -> Result<i64> {
+    let existing = conn
+        .query_row(
+            "SELECT id, status, cursor_event_id
+         FROM extraction_tasks
+         WHERE idempotency_key = ?1",
+            params![extraction_task_idempotency_key(identity, kind)],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((task_id, status, cursor_event_id)) = existing else {
+        return coalesce_extraction_task(conn, identity, kind, event_row_id, now);
+    };
+    let Some(evidence_key) = late_git_evidence_key else {
+        return Ok(task_id);
+    };
+
+    if status != "processing" && cursor_event_id.unwrap_or(0) < event_row_id {
+        return coalesce_extraction_task(conn, identity, kind, event_row_id, now);
+    }
+
+    enqueue_late_git_evidence_task(conn, identity, kind, event_row_id, evidence_key, now)
+}
+
+fn enqueue_late_git_evidence_task(
+    conn: &Connection,
+    identity: IdentityIds,
+    kind: ExtractionTaskKind,
+    event_row_id: i64,
+    evidence_key: &str,
+    now: i64,
+) -> Result<i64> {
+    let idempotency_key = format!(
+        "{}:{}:{}:{}:late-git-evidence:{}:{}",
+        identity.host_id,
+        identity.project_id,
+        identity.session_row_id,
+        kind.as_str(),
+        event_row_id,
+        evidence_key
+    );
+    conn.execute(
+        "INSERT INTO extraction_tasks
+         (task_kind, host_id, workspace_id, project_id, session_row_id, priority, status,
+          idempotency_key, cursor_event_id, high_watermark_event_id, attempts,
+          next_retry_epoch, lease_owner, lease_expires_epoch, last_error, created_at_epoch,
+          updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'pending', ?7, ?8, ?9, 0, NULL, NULL, NULL, NULL,
+                 ?10, ?10)
+         ON CONFLICT(idempotency_key) DO NOTHING",
+        params![
+            kind.as_str(),
+            identity.host_id,
+            identity.workspace_id,
+            identity.project_id,
+            identity.session_row_id,
+            kind.priority(),
+            idempotency_key,
+            event_row_id.saturating_sub(1),
+            event_row_id,
+            now
+        ],
+    )?;
     conn.query_row(
         "SELECT id FROM extraction_tasks WHERE idempotency_key = ?1",
-        params![extraction_task_idempotency_key(identity, kind)],
+        params![idempotency_key],
         |row| row.get(0),
     )
-    .optional()
     .map_err(Into::into)
 }
 

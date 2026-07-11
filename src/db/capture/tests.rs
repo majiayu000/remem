@@ -1,4 +1,5 @@
 use super::*;
+use anyhow::Context;
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
@@ -273,6 +274,86 @@ fn capture_redacts_sensitive_git_metadata_before_storage() -> Result<()> {
     )?;
     assert!(stored.contains("[REDACTED]"));
     assert!(!stored.contains(secret));
+    Ok(())
+}
+
+#[test]
+fn duplicate_capture_merges_git_evidence_recovered_later() -> Result<()> {
+    let mut conn = setup_conn();
+    let input = CaptureEventInput {
+        host: "claude-code",
+        session_id: "sess-late-git-evidence",
+        project: "/tmp/remem",
+        cwd: None,
+        event_type: "tool_result",
+        role: None,
+        tool_name: Some("Bash"),
+        content: "{}",
+        task_kind: Some(ExtractionTaskKind::ObservationExtract),
+    };
+    let first = record_captured_event_with_id_and_reference_time_and_git_evidence(
+        &conn,
+        &input,
+        Some("late-git-evidence"),
+        None,
+        &[],
+    )?;
+    let first_task_id = first
+        .extraction_task_id
+        .expect("initial capture should enqueue extraction");
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'done', cursor_event_id = high_watermark_event_id
+         WHERE id = ?1",
+        params![first_task_id],
+    )?;
+    let evidence = crate::git_util::GitCommitEvidence {
+        kind: crate::git_util::GitEvidenceKind::ObservedCommit,
+        metadata: crate::git_util::GitCommitMetadata {
+            repo_path: "/tmp/remem".to_string(),
+            sha: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            short_sha: "abcdef1".to_string(),
+            branch: Some("main".to_string()),
+            message: Some("commit".to_string()),
+            authored_at_epoch: Some(1_700_000_000),
+            changed_files: vec!["src/lib.rs".to_string()],
+        },
+        locator: Some("replayed_spill".to_string()),
+    };
+    let second = record_captured_event_with_id_and_reference_time_and_git_evidence(
+        &conn,
+        &input,
+        Some("late-git-evidence"),
+        None,
+        std::slice::from_ref(&evidence),
+    )?;
+    record_captured_event_with_id_and_reference_time_and_git_evidence(
+        &conn,
+        &input,
+        Some("late-git-evidence"),
+        None,
+        &[evidence],
+    )?;
+
+    assert_eq!(first.event_row_id, second.event_row_id);
+    assert_ne!(second.extraction_task_id, Some(first_task_id));
+    let (count, sha, task_count): (i64, String, i64) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(MIN(sha), ''),
+                (SELECT COUNT(*) FROM extraction_tasks)
+         FROM captured_event_commits",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(count, 1);
+    assert_eq!(sha, "abcdef1234567890abcdef1234567890abcdef12");
+    assert_eq!(task_count, 2);
+    let late_task = crate::db::claim_next_extraction_task(&mut conn, "worker", 60)?
+        .context("late evidence should enqueue a bounded extraction task")?;
+    assert_eq!(late_task.cursor_event_id, Some(first.event_row_id - 1));
+    assert_eq!(late_task.high_watermark_event_id, Some(first.event_row_id));
+    let linked = crate::captured_git::link_task_range(&mut conn, &late_task)?;
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0].sha, sha);
     Ok(())
 }
 
