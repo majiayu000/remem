@@ -160,7 +160,11 @@ failed required side effect leaves the extraction task retryable against the
 already-persisted range instead of silently completing with missing memory.
 Transcript-only citation and failure-lesson side effects run after bounded raw
 archive ingest on the worker; their retry errors do not suppress the other
-persisted rollup side effects. When several Stop captures coalesce into one
+persisted rollup side effects. Each bounded Stop with assistant evidence,
+including distinct boundaries of one repeated path, snapshots the final
+message hash and structured citation facts independently of the lossy prompt
+budget. Retries therefore preserve long-tail and earlier-Stop citations after
+the source transcript disappears. When several Stop captures coalesce into one
 range, the worker drains each distinct transcript path at its widest captured
 boundary and preserves pathless hook fallbacks; summary-derived candidates use
 only the covered event IDs and source text from that same range. Stop payloads

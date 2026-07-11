@@ -82,15 +82,27 @@ pub(crate) fn record_stop_memory_citation_usage(
     assistant_msg: &str,
 ) -> Result<()> {
     let usage_msg_hash = hash_message(assistant_msg);
-    let report = crate::memory::usage::record_stop_memory_citations(
+    let facts = crate::memory::usage::MemoryCitationFacts::from_text(assistant_msg);
+    record_stop_memory_citation_evidence(conn, host, project, session_id, &usage_msg_hash, &facts)
+}
+
+pub(crate) fn record_stop_memory_citation_evidence(
+    conn: &rusqlite::Connection,
+    host: &str,
+    project: &str,
+    session_id: &str,
+    message_hash: &str,
+    facts: &crate::memory::usage::MemoryCitationFacts,
+) -> Result<()> {
+    let report = crate::memory::usage::record_stop_memory_citation_facts(
         conn,
         host,
         project,
         session_id,
-        &usage_msg_hash,
-        assistant_msg,
+        message_hash,
+        facts,
     )
-    .context("record Stop-hook memory citations")?;
+    .context("record Stop-hook memory citation evidence")?;
     if report.parsed_count > 0 || report.duplicate_event {
         crate::log::info(
             "summary-job",

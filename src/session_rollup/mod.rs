@@ -4,18 +4,20 @@ mod prompt;
 mod side_effects;
 #[cfg(test)]
 mod tests;
+mod transcript_evidence;
 
 use std::future::Future;
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 
 use crate::db;
 
 const SESSION_ROLLUP_SYSTEM: &str = "\
-You summarize captured development-session events for a memory system.
-Use only the provided events. Preserve concrete facts, decisions, commands,
-files, errors, and outcomes. Do not invent missing details.
+You summarize captured development-session evidence for a memory system.
+Use only the provided events and bounded transcript messages. Preserve concrete
+facts, decisions, commands, files, errors, and outcomes. Do not invent missing
+details.
 
 Also split the events into coherent topic segments. A topic segment is a set of
 events around the same goal, problem, or file area. Use event gap_before,
@@ -86,30 +88,96 @@ where
     let Some(range) = load_rollup_range(conn, task)? else {
         return Ok(SessionRollupResult::EmptyRange);
     };
-    let raw_archive_result = side_effects::drain_raw_archive_from_range(conn, task, &range);
-    if session_rollup_exists(conn, task, &range)? {
-        raw_archive_result?;
-        run_rollup_side_effects(conn, task, &range)?;
+    if let Some(persisted) = persist::load_persisted_rollup_state(conn, task, &range)? {
+        let raw_archive_result = complete_raw_archive_for_existing_rollup(
+            conn,
+            task,
+            &range,
+            persisted.raw_archive_completed,
+        );
+        let side_effect_result = run_rollup_side_effects(
+            conn,
+            task,
+            &range,
+            &persisted.transcript_evidence,
+            !persisted.has_transcript_evidence_snapshot,
+        );
+        finish_existing_rollup_retry(raw_archive_result, side_effect_result)?;
         return Ok(SessionRollupResult::AlreadyExists);
     }
 
-    let prompt = prompt::build_rollup_prompt(task, &range);
+    let raw_archive_result = side_effects::drain_raw_archive_from_range(conn, task, &range);
+    let transcript_evidence = transcript_evidence::load_prompt_transcript_evidence(&range)?;
+    let prompt = prompt::build_rollup_prompt(task, &range, &transcript_evidence);
     let response = summarize(prompt).await?;
     let output = parse::parse_rollup_response(&response, &range)?;
-    persist::persist_session_rollup(conn, task, &range, &output)?;
+    persist::persist_session_rollup(
+        conn,
+        task,
+        &range,
+        &output,
+        &transcript_evidence,
+        raw_archive_result.is_ok(),
+    )?;
     raw_archive_result?;
-    run_rollup_side_effects(conn, task, &range)?;
+    run_rollup_side_effects(conn, task, &range, &transcript_evidence, false)?;
     Ok(SessionRollupResult::Written)
+}
+
+fn complete_raw_archive_for_existing_rollup(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+    already_completed: bool,
+) -> Result<()> {
+    if already_completed {
+        return Ok(());
+    }
+    side_effects::drain_raw_archive_from_range(conn, task, range)?;
+    persist::mark_raw_archive_completed(conn, task, range)
+}
+
+fn finish_existing_rollup_retry(
+    raw_archive_result: Result<()>,
+    side_effect_result: Result<()>,
+) -> Result<()> {
+    match (raw_archive_result, side_effect_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
+        (Err(raw_error), Err(side_error)) => Err(raw_error).context(format!(
+            "persisted rollup side effects also failed: {side_error:#}"
+        )),
+    }
 }
 
 fn run_rollup_side_effects(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_evidence: &transcript_evidence::PromptTranscriptEvidence,
+    allow_transcript_source_fallback: bool,
 ) -> Result<()> {
-    let stop_memory_result =
-        side_effects::run_post_archive_stop_memory_side_effects(conn, task, range);
-    let persisted_result = side_effects::run_persisted_rollup_side_effects(conn, task, range);
+    // Early v066 snapshots computed citation hashes from their bounded prompt
+    // messages. Replay that exact slice so an upgrade cannot double-count usage.
+    let legacy_transcript_messages = if transcript_evidence.citation_evidence_complete {
+        &[]
+    } else {
+        transcript_evidence.messages.as_slice()
+    };
+    let stop_memory_result = side_effects::run_post_archive_stop_memory_side_effects(
+        conn,
+        task,
+        range,
+        &transcript_evidence.stop_citations,
+        legacy_transcript_messages,
+        allow_transcript_source_fallback,
+    );
+    let persisted_result = side_effects::run_persisted_rollup_side_effects(
+        conn,
+        task,
+        range,
+        &transcript_evidence.messages,
+    );
     match (stop_memory_result, persisted_result) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
@@ -185,26 +253,4 @@ fn load_rollup_range(conn: &Connection, task: &db::ExtractionTask) -> Result<Opt
         to_event_id,
         events,
     }))
-}
-
-fn session_rollup_exists(
-    conn: &Connection,
-    task: &db::ExtractionTask,
-    range: &RollupRange,
-) -> Result<bool> {
-    let Some(session_row_id) = task.session_row_id else {
-        return Ok(false);
-    };
-    let existing: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM session_summaries
-             WHERE session_row_id = ?1
-               AND covered_from_event_id = ?2
-               AND covered_to_event_id = ?3
-             LIMIT 1",
-            params![session_row_id, range.from_event_id, range.to_event_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    Ok(existing.is_some())
 }
