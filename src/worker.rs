@@ -1,8 +1,9 @@
 use anyhow::Result;
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, Duration, Instant};
 
-use crate::{db, summarize};
+use crate::db;
 
+mod job;
 mod lock;
 
 // The lease is the maximum time another worker will wait before requeuing a
@@ -16,6 +17,7 @@ const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
 const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
 const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
+const RULE_COMPILATION_SWEEP_INTERVAL_SECS: u64 = 60;
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
@@ -40,59 +42,6 @@ fn record_worker_heartbeat(
         started_at_epoch,
         chrono::Utc::now().timestamp(),
     )
-}
-
-async fn process_job(job: &db::Job) -> Result<()> {
-    match job.job_type {
-        db::JobType::Observation => {
-            crate::log::warn(
-                "worker",
-                &format!(
-                    "skipping legacy observation job id={}; captures are processed via extraction_tasks",
-                    job.id
-                ),
-            );
-            Ok(())
-        }
-        db::JobType::Summary => {
-            anyhow::bail!(
-                "legacy Summary jobs are retired; SessionRollup owns session summary output"
-            )
-        }
-        db::JobType::Compress => {
-            let profile = job_profile(&job.payload_json);
-            summarize::process_compress_job(&job.host, &job.project, profile.as_deref()).await?;
-            Ok(())
-        }
-        db::JobType::Dream => {
-            let profile = job_profile(&job.payload_json);
-            if let Some(profile) = profile.as_deref() {
-                crate::dream::process_dream_job_with_profile(&job.project, Some(profile)).await?;
-            } else {
-                crate::dream::process_dream_job_with_host(&job.project, &job.host).await?;
-            }
-            Ok(())
-        }
-        db::JobType::CompileRules => {
-            let project = job.project.clone();
-            tokio::task::spawn_blocking(move || crate::rules::run_compile_rules_job(&project))
-                .await??;
-            Ok(())
-        }
-    }
-}
-
-fn job_profile(payload_json: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(payload_json)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("remem_ai_profile")
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|profile| !profile.is_empty())
-                .map(str::to_string)
-        })
 }
 
 fn run_idle_embedding_backfill(conn: &rusqlite::Connection) -> Result<bool> {
@@ -145,7 +94,38 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
     }
 
+    let mut next_rule_compilation_sweep_at = Instant::now();
     loop {
+        if Instant::now() >= next_rule_compilation_sweep_at {
+            match job::run_rule_compilation_sweep().await {
+                Ok(outcome) => {
+                    if outcome.failures > 0 {
+                        crate::log::error(
+                            "rules",
+                            &format!(
+                                "rule compilation sweep completed with {}/{} project failure(s)",
+                                outcome.failures, outcome.projects_seen
+                            ),
+                        );
+                    }
+                    if outcome.artifacts_changed > 0 {
+                        crate::log::info(
+                            "rules",
+                            &format!(
+                                "rule compilation sweep rebuilt {}/{} project artifact(s)",
+                                outcome.artifacts_changed, outcome.projects_seen
+                            ),
+                        );
+                    }
+                }
+                Err(error) => crate::log::error(
+                    "rules",
+                    &format!("rule compilation sweep skipped after setup failure: {error}"),
+                ),
+            }
+            next_rule_compilation_sweep_at =
+                Instant::now() + Duration::from_secs(RULE_COMPILATION_SWEEP_INTERVAL_SECS);
+        }
         let mut conn = db::open_db()?;
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
         let recovered = db::requeue_stuck_jobs(&conn)?;
@@ -186,9 +166,11 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                 ),
             );
 
-            let timed =
-                tokio::time::timeout(Duration::from_secs(JOB_TIMEOUT_SECS), process_job(&job))
-                    .await;
+            let timed = tokio::time::timeout(
+                Duration::from_secs(JOB_TIMEOUT_SECS),
+                job::process_job(&job),
+            )
+            .await;
             let conn = db::open_db()?;
             match timed {
                 Ok(Ok(())) => {

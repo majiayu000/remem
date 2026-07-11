@@ -8,7 +8,8 @@ pub use artifact::{
     ARTIFACT_VERSION,
 };
 pub use compiler::{
-    classify_preference_predicate, compile_project_rules, run_compile_rules_job, CompileOutcome,
+    classify_preference_predicate, classify_preference_predicates, compile_project_rules,
+    run_compile_rules_job, run_compile_rules_sweep, CompileOutcome, CompileSweepOutcome,
     PreferenceClassification, PreferencePredicate,
 };
 pub use evaluator::{
@@ -40,7 +41,7 @@ pub(crate) mod test_support {
             },
             predicate: RulePredicate::CommandRegex {
                 pattern: r"(^|\s)npm\s+(install|i|add)\b".to_string(),
-                message: "Preference #123: use bun, not npm".to_string(),
+                message: "Command violates a compiled package-manager preference".to_string(),
             },
         }
     }

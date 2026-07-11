@@ -710,4 +710,21 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::table(63, "procedure_exports", "procedure_exports"),
     SchemaInvariant::index(63, "procedure_exports", "idx_procedure_exports_project"),
     SchemaInvariant::index(63, "procedure_exports", "idx_procedure_exports_memory"),
+    SchemaInvariant::column(
+        65,
+        "preference_reinforcement",
+        "memory_preference_reinforcements",
+        "machine_checkable",
+    ),
+    SchemaInvariant::column(
+        65,
+        "preference_reinforcement",
+        "memory_preference_reinforcements",
+        "risk_class",
+    ),
+    SchemaInvariant::index(
+        65,
+        "preference_reinforcement",
+        "idx_memory_preference_reinforcements_eligible",
+    ),
 ];

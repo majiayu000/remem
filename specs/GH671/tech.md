@@ -17,7 +17,7 @@ Authoritative contract:
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
 | Preference memory | `src/memory/types.rs`, `src/context/render.rs`, `src/context/sections/lessons.rs` | Preferences and lessons are stored and rendered into SessionStart context as prose. | Compiled rules derive from the same authoritative memory layer and must not replace injection. |
-| Reinforcement metadata | `src/memory_candidate/apply.rs`, `src/memory/lesson.rs`, `src/migrations/v017_memory_lessons.sql` | Existing `memory_lessons` reinforcement state is lesson-specific; active `preference` rows do not yet have canonical persisted reinforcement counts. | Eligibility depends on repeated corrections meeting a configured threshold, so implementation must add or wire real preference reinforcement state before compiling preferences. |
+| Reinforcement metadata | `src/memory_candidate/apply.rs`, `src/memory/preference/reinforcement.rs`, `src/migrations/v062_preference_rule_state.sql`, `src/migrations/v065_preference_reinforcement.sql` | Active preferences carry canonical, evidence-backed reinforcement counts plus machine-checkable, risk, and source-evidence state; each event set counts once, disjoint evidence and overrides merge only across the same safe predicate, and opposing direct saves or cleanup rewrites clear stale rule provenance. | Eligibility reads real repeated-correction state without allowing duplicate evidence, contradictory content, or unsafe preferences to inherit confidence. |
 | Suppression and lifecycle | `src/memory/suppression.rs`, `src/memory/lifecycle.rs`, `src/migrations/v051_memory_suppressions_feedback.sql` | Memories can be suppressed or soft-superseded. | Derived rules must disappear when source memories stop being authoritative. |
 | Worker path | `src/worker.rs`, `src/db_job.rs`, `src/summarize.rs` | Background work runs outside interactive hooks. | Rule compilation belongs off the hook hot path. |
 | Hook dispatch and install | `src/cli/dispatch.rs`, `src/install.rs`, hook configuration tests | Hooks inject context and capture observations; Claude PostToolUse is post-execution and Codex command observe is opt-in. | Warning/block enforcement needs a pre-execution Claude Bash hook and honest unsupported behavior elsewhere. |
@@ -26,11 +26,14 @@ Authoritative contract:
 
 ## Proposed Design
 
-Phase 1 implementation status: `SP671-T1` is implemented as state-only
-foundation. `SP671-T2` adds versioned derived artifact structs, the closed v1
-predicate enum, pure evaluator, fail-open artifact loading, stable artifact
-paths, and atomic writes. Runtime compilation, CLI rule management, hook
-dispatch, doctor reporting, fixtures, and latency evidence remain pending.
+Phase 1 implementation status: `SP671-T1` through `SP671-T3` are implemented.
+The state foundation, versioned artifact/evaluator, canonical preference
+reinforcement, deterministic compiler, lifecycle-triggered non-lossy enqueue
+path plus periodic convergence sweeps, same-predicate override transfer,
+persisted low-risk/source-trust/review eligibility, project-over-global
+precedence, stable diagnostics, and worker-only artifact writes are present.
+CLI rule management, hook dispatch, doctor reporting, fixtures, and latency
+evidence remain pending.
 
 - Add a `rules` module with a versioned artifact schema, closed predicate enum,
   pure evaluator, compiler, and atomic artifact writer.
@@ -64,7 +67,7 @@ dispatch, doctor reporting, fixtures, and latency evidence remain pending.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 eligibility | compiler query and predicate classifier | Unit tests for threshold, inactive, ambiguous, low-risk, and scope cases |
+| P1 eligibility | compiler query and predicate classifier | Unit tests for threshold, inactive, ambiguous, low-risk, source trust, and scope cases |
 | P2 provenance | artifact schema and compiler | Schema/unit test asserting provenance fields on every rule |
 | P3 deterministic local evaluation | pure evaluator | Unit test same input/same verdict; evaluator has no DB write path |
 | P4 warning default and opt-in block | compiler plus override merge | Unit tests default action, override action, unsupported block rejection |
@@ -112,7 +115,7 @@ derived artifact.
 
 ## Test Plan
 
-- [ ] Unit tests: config parsing, compiler eligibility, predicate classifier,
+- [x] Unit tests: config parsing, compiler eligibility, predicate classifier,
       preference reinforcement state, conflict resolution, source lifecycle
       removal, artifact atomicity, evaluator determinism, and fail-open
       behavior.

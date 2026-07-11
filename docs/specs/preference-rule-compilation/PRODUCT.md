@@ -1,7 +1,7 @@
 # Preference Rule Compilation Product Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-11
 
 Tracking:
 - Spec/tracking issue: #671
@@ -22,10 +22,14 @@ has learned.
 
 ## Goals
 
-Phase 1 implementation status: the disabled-by-default configuration and
-canonical SQLite state needed for rule compilation are implemented. The
-user-visible behavior in this product contract remains pending until compiler,
-artifact, hook, CLI, doctor, fixture, and latency work lands.
+Phase 1 implementation status: the disabled-by-default configuration,
+canonical SQLite reinforcement state, artifact and evaluator foundation, and
+worker-side compiler are implemented. The compiler uses persisted low-risk,
+source-trust, and review eligibility, combines lifecycle-triggered non-lossy
+jobs with periodic convergence sweeps, preserves same-predicate overrides, and
+resolves project rules ahead of global rules. User-visible hook enforcement,
+CLI management, doctor reporting, fixtures, and latency evidence remain
+pending.
 
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.
@@ -48,14 +52,15 @@ artifact, hook, CLI, doctor, fixture, and latency work lands.
 ## Behavior Invariants
 
 1. Only preferences that are machine-checkable, reinforced at or above a
-   configurable threshold, and low-risk are eligible for compilation.
+   configurable threshold, low-risk, and backed by an accepted persisted source
+   trust class are eligible for compilation.
 2. A compiled rule always records: source memory id, reinforcement count at
    compile time, compile timestamp, and the predicate.
 3. Rule evaluation is deterministic and local: same event input, same verdict,
    no network, no DB write on the hot path.
 4. Default action on match is a visible warning appended to hook output; block
    is opt-in per rule and never the compiled default.
-5. When the source preference is superseded, suppressed, or deleted, the
+5. When the source preference is superseded, suppressed, expired, or deleted, the
    compiled rule is removed on the next compile pass; a stale rule must never
    outlive its source memory by more than one compile cycle.
 6. The user can list, disable, and re-enable compiled rules from the CLI, and
@@ -73,15 +78,16 @@ artifact, hook, CLI, doctor, fixture, and latency work lands.
       measurement noise on the existing latency benchmark.
 - [ ] `remem` CLI lists compiled rules with provenance; disable/enable
       round-trip works and is covered by a test.
-- [ ] Superseding the source preference removes the rule on the next compile
-      pass, covered by a test.
+- [x] Superseding, suppressing, expiring, or deleting the source preference
+      removes the rule on the next compile pass, covered by tests.
 - [ ] Doctor reports compiled-rule count, last compile time, and last
       evaluation error if any.
 
 ## Edge Cases
 
-- Two compiled rules with contradictory predicates: newest source memory wins;
-  the older rule is dropped and the conflict is logged for review.
+- Two compiled rules with contradictory predicates: project scope wins over
+  global scope; within one scope the newest source memory wins. The dropped
+  conflict is logged for review.
 - A rule matching inside quoted or documentation text (for example a prompt
   that merely mentions `npm install`): first implementation only evaluates
   tool-invocation inputs (commands), not prose, to keep false positives low.

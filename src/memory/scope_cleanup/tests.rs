@@ -3,45 +3,15 @@ use crate::memory;
 use anyhow::Result;
 use rusqlite::{params, Connection};
 mod plan;
+mod preference_rules;
 
 const STASH: &str = "/Users/lifcc/Desktop/code/AI/tool/stash";
 const NOW: i64 = 1_780_000_000;
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
-    memory::types::tests_helper::setup_memory_schema(&conn);
-    setup_workstream_schema(&conn);
+    crate::migrate::run_migrations(&conn).unwrap();
     conn
-}
-
-fn setup_workstream_schema(conn: &Connection) {
-    conn.execute_batch(
-        "CREATE TABLE workstreams (
-            id INTEGER PRIMARY KEY,
-            project TEXT NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT,
-            status TEXT NOT NULL DEFAULT 'active',
-            progress TEXT,
-            next_action TEXT,
-            blockers TEXT,
-            created_at_epoch INTEGER NOT NULL,
-            updated_at_epoch INTEGER NOT NULL,
-            completed_at_epoch INTEGER,
-            source_project TEXT,
-            target_project TEXT,
-            owner_scope TEXT,
-            owner_key TEXT,
-            topic_domain TEXT,
-            routing_confidence REAL,
-            routing_reason TEXT,
-            context_class TEXT,
-            expires_at_epoch INTEGER,
-            valid_from_epoch INTEGER,
-            valid_to_epoch INTEGER
-        );",
-    )
-    .unwrap();
 }
 
 fn seed_stash_pollution(conn: &Connection) {

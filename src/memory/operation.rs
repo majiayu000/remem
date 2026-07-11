@@ -340,11 +340,12 @@ fn existing_memory_for_direct_save(
             .query_row(
                 "SELECT id, title, content, status, files, branch, expires_at_epoch FROM memories
                  WHERE project = ?1 AND topic_key = ?2 AND scope = ?3
+                   AND memory_type = ?4
                  ORDER BY CASE status WHEN 'active' THEN 0 ELSE 1 END,
                           updated_at_epoch DESC,
                           id DESC
                  LIMIT 1",
-                params![project, topic_key, scope],
+                params![project, topic_key, scope, memory_type],
                 map_existing_memory,
             )
             .optional()

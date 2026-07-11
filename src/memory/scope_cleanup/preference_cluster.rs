@@ -202,6 +202,7 @@ fn duplicate_cluster_from_members(
                 .iter()
                 .map(|row| row.content.as_str())
                 .collect::<Vec<_>>(),
+            &canonical.content,
         )),
     })
 }
@@ -249,7 +250,22 @@ fn non_empty_cluster_value(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
 
-fn merge_preference_texts(texts: &[&str]) -> String {
+fn merge_preference_texts(texts: &[&str], canonical: &str) -> String {
+    let canonical_predicates = crate::rules::classify_preference_predicates(canonical)
+        .into_iter()
+        .map(|classification| classification.predicate)
+        .collect::<Vec<_>>();
+    if !canonical_predicates.is_empty()
+        && texts.iter().all(|text| {
+            crate::rules::classify_preference_predicates(text)
+                .into_iter()
+                .map(|classification| classification.predicate)
+                .collect::<Vec<_>>()
+                == canonical_predicates
+        })
+    {
+        return canonical.to_string();
+    }
     let mut parts = Vec::new();
     let mut seen = HashSet::new();
     for text in texts {

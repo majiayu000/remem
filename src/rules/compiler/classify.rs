@@ -1,11 +1,9 @@
 //! Deterministic, conservative classification of preference text into v1
-//! predicates. No LLM, no network. The set of recognised patterns is
-//! intentionally narrow to keep false positives near zero; new predicate kinds
-//! require a spec update (see docs/specs/preference-rule-compilation/TECH.md).
+//! predicates. No LLM, no network. The recognised grammar is intentionally
+//! closed so ambiguous natural-language exceptions never become block rules.
 
 /// A predicate template derived from preference text. `conflict_key` groups
-/// contradictory preferences (e.g. two package-manager rules) so the compiler
-/// can keep only the newest source memory on conflict.
+/// contradictory preferences so the compiler keeps one authoritative source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PreferencePredicate {
     CommandRegex {
@@ -29,127 +27,291 @@ impl PreferencePredicate {
     }
 }
 
-/// The classification result: the predicate template plus a short human summary
-/// used to build the rule message.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreferenceClassification {
     pub predicate: PreferencePredicate,
+    /// Static classifier description; never copied from preference text.
     pub summary: String,
 }
 
-/// Known package managers that a preference may ask the agent to avoid.
-const BANNED_MANAGERS: &[(&str, &str)] = &[
+const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
     ("npm", r"(^|\s)npm\s+(install|i|add|ci)\b"),
     ("yarn", r"(^|\s)yarn\s+(add|install)\b"),
+    ("bun", r"(^|\s)bun\s+(add|install)\b"),
+    ("pnpm", r"(^|\s)pnpm\s+(add|install|i)\b"),
 ];
 
-/// Words signalling the preference expresses avoidance / a hard choice.
-const AVOIDANCE_MARKERS: &[&str] = &[
-    "not", "instead", "over", "don't", "dont", "do not", "avoid", "never", "prefer", "use ", "no ",
-    "forbid", "ban", "without",
+const PACKAGE_MANAGERS: &[&str] = &["bun", "deno", "npm", "pnpm", "yarn"];
+
+const PACKAGE_DIRECTIVE_SUFFIXES: &[&str] = &[
+    ", for package installation commands in this project",
+    ", for installing packages in this project",
+    ", for package installation commands",
+    ", for installing packages",
+    ", in this project",
+    " in this project",
+    "",
 ];
 
-/// Commit trailers a preference may forbid.
-const KNOWN_TRAILERS: &[&str] = &[
-    "AI-generated-by",
-    "Co-Authored-By",
-    "Generated-by",
-    "Co-authored-by",
+const TRAILER_DIRECTIVE_SUFFIXES: &[&str] = &[
+    " in git commits",
+    " on git commits",
+    " to git commits",
+    " in commits",
+    " on commits",
+    " to commits",
+    "",
 ];
+
+const TRAILER_ACTIONS: &[&str] = &[
+    "do not add",
+    "do not include",
+    "do not use",
+    "don't add",
+    "don't include",
+    "dont add",
+    "dont include",
+    "never add",
+    "never include",
+    "never use",
+];
+
+const KNOWN_TRAILERS: &[&str] = &["AI-generated-by", "Co-authored-by", "Generated-by"];
 
 pub fn classify_preference_predicate(text: &str) -> Option<PreferenceClassification> {
-    let lower = text.to_lowercase();
-    if let Some(classification) = classify_package_manager(text, &lower) {
-        return Some(classification);
-    }
-    classify_commit_trailer(text, &lower)
+    classify_preference_predicates(text).into_iter().next()
 }
 
-fn classify_package_manager(original: &str, lower: &str) -> Option<PreferenceClassification> {
-    if !has_avoidance_marker(lower) {
-        return None;
+/// Return every deterministic v1 predicate represented by one closed
+/// preference directive. A multi-trailer directive may emit multiple rules.
+pub fn classify_preference_predicates(text: &str) -> Vec<PreferenceClassification> {
+    if crate::memory_candidate::contains_unsafe_memory_marker(text)
+        || crate::adapter::common::redact_sensitive_text(text) != text
+    {
+        return Vec::new();
     }
-    let alternatives = ["bun", "pnpm", "deno", "yarn"];
-    for (banned, pattern) in BANNED_MANAGERS {
-        if !lower.contains(banned) {
-            continue;
-        }
-        // Only compile a genuine "use X, not <banned>" choice: require a
-        // different preferred manager to be named. Prevents banning a manager
-        // that is merely mentioned in passing.
-        let has_preferred_alternative = alternatives
-            .iter()
-            .any(|alt| alt != banned && lower.contains(alt));
-        if has_preferred_alternative {
+    let lower = text.to_lowercase();
+    let mut classifications = classify_package_manager(&lower)
+        .into_iter()
+        .collect::<Vec<_>>();
+    classifications.extend(classify_commit_trailers(&lower));
+    classifications
+}
+
+fn classify_package_manager(lower: &str) -> Option<PreferenceClassification> {
+    for (avoided, pattern) in PACKAGE_MANAGER_PREDICATES {
+        for preferred in PACKAGE_MANAGERS {
+            if preferred == avoided || !directly_prefers_manager(lower, preferred, avoided) {
+                continue;
+            }
             return Some(PreferenceClassification {
                 predicate: PreferencePredicate::CommandRegex {
                     pattern: (*pattern).to_string(),
-                    conflict_key: format!("package-manager:{banned}"),
+                    conflict_key: "package-manager-choice".to_string(),
                 },
-                summary: normalize_summary(original),
+                summary: "Directed package-manager choice".to_string(),
             });
         }
     }
     None
 }
 
-fn classify_commit_trailer(original: &str, lower: &str) -> Option<PreferenceClassification> {
-    if !has_avoidance_marker(lower) {
-        return None;
-    }
+fn directly_prefers_manager(lower: &str, preferred: &str, avoided: &str) -> bool {
+    [
+        format!("use {preferred}, not {avoided}"),
+        format!("use {preferred} instead of {avoided}"),
+        format!("use {preferred} rather than {avoided}"),
+        format!("prefer {preferred} over {avoided}"),
+    ]
+    .iter()
+    .any(|directive| has_exact_directive(lower, directive, PACKAGE_DIRECTIVE_SUFFIXES))
+}
+
+fn classify_commit_trailers(lower: &str) -> Vec<PreferenceClassification> {
     if !(lower.contains("trailer") || lower.contains("commit")) {
-        return None;
+        return Vec::new();
     }
+
+    let mut forbidden = directly_forbidden_trailer_list(lower);
     for trailer in KNOWN_TRAILERS {
-        if lower.contains(&trailer.to_lowercase()) {
-            return Some(PreferenceClassification {
-                predicate: PreferencePredicate::CommitTrailerForbidden {
-                    trailer: (*trailer).to_string(),
-                    conflict_key: format!("trailer:{}", trailer.to_lowercase()),
-                },
-                summary: normalize_summary(original),
-            });
+        if directly_forbids_term(lower, &trailer.to_lowercase())
+            || directly_rejects_trailer_choice(lower, trailer)
+        {
+            forbidden.push((*trailer).to_string());
         }
     }
-    None
+    forbidden.sort();
+    forbidden.dedup();
+    forbidden
+        .into_iter()
+        .map(|trailer| PreferenceClassification {
+            predicate: PreferencePredicate::CommitTrailerForbidden {
+                conflict_key: format!("trailer:{}", trailer.to_lowercase()),
+                trailer,
+            },
+            summary: "Forbidden commit trailer".to_string(),
+        })
+        .collect()
 }
 
-fn has_avoidance_marker(lower: &str) -> bool {
-    AVOIDANCE_MARKERS
+fn directly_forbids_term(lower: &str, term: &str) -> bool {
+    TRAILER_ACTIONS.iter().any(|action| {
+        [
+            format!("{action} {term} trailer"),
+            format!("{action} the {term} trailer"),
+            format!("{action} {term} commit trailer"),
+            format!("{action} the {term} commit trailer"),
+        ]
         .iter()
-        .any(|marker| lower.contains(marker))
+        .any(|directive| has_exact_directive(lower, directive, TRAILER_DIRECTIVE_SUFFIXES))
+    })
 }
 
-fn normalize_summary(text: &str) -> String {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    const MAX: usize = 120;
-    if collapsed.chars().count() > MAX {
-        let truncated: String = collapsed.chars().take(MAX).collect();
-        format!("{truncated}…")
-    } else {
-        collapsed
+fn directly_rejects_trailer_choice(lower: &str, avoided: &str) -> bool {
+    KNOWN_TRAILERS.iter().any(|preferred| {
+        !preferred.eq_ignore_ascii_case(avoided)
+            && [
+                format!(
+                    "use {}, not {}, in commit trailers",
+                    preferred.to_lowercase(),
+                    avoided.to_lowercase()
+                ),
+                format!(
+                    "prefer {} over {} in commit trailers",
+                    preferred.to_lowercase(),
+                    avoided.to_lowercase()
+                ),
+            ]
+            .iter()
+            .any(|directive| has_exact_directive(lower, directive, &[""]))
+    })
+}
+
+fn directly_forbidden_trailer_list(lower: &str) -> Vec<String> {
+    let Some(statement) = normalized_single_statement(lower) else {
+        return Vec::new();
+    };
+    for action in TRAILER_ACTIONS {
+        let Some(rest) = statement.strip_prefix(&format!("{action} ")) else {
+            continue;
+        };
+        for suffix in TRAILER_DIRECTIVE_SUFFIXES {
+            let Some(body) = rest.strip_suffix(suffix) else {
+                continue;
+            };
+            let Some(list) = body
+                .strip_suffix(" commit trailers")
+                .or_else(|| body.strip_suffix(" trailers"))
+            else {
+                continue;
+            };
+            let names = list.split(" or ").collect::<Vec<_>>();
+            if names.len() < 2 {
+                continue;
+            }
+            let mut canonical = Vec::with_capacity(names.len());
+            for name in names {
+                let Some(trailer) = KNOWN_TRAILERS
+                    .iter()
+                    .find(|trailer| trailer.eq_ignore_ascii_case(name))
+                else {
+                    canonical.clear();
+                    break;
+                };
+                canonical.push((*trailer).to_string());
+            }
+            canonical.sort();
+            canonical.dedup();
+            if canonical.len() >= 2 {
+                return canonical;
+            }
+        }
     }
+    Vec::new()
+}
+
+fn has_exact_directive(lower: &str, directive: &str, allowed_suffixes: &[&str]) -> bool {
+    normalized_single_statement(lower)
+        .and_then(|statement| statement.strip_prefix(directive))
+        .is_some_and(|suffix| allowed_suffixes.contains(&suffix))
+}
+
+fn normalized_single_statement(lower: &str) -> Option<&str> {
+    let statement = lower.trim().trim_end_matches(['.', '!', '?']).trim_end();
+    if statement
+        .chars()
+        .any(|ch| [';', ':', '.', '!', '?', '\n', '\r'].contains(&ch))
+    {
+        return None;
+    }
+    Some(statement)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn classifies_use_bun_not_npm() {
-        let classification =
-            classify_preference_predicate("Use bun, not npm, for installing packages")
-                .expect("package-manager preference should classify");
-        match classification.predicate {
-            PreferencePredicate::CommandRegex {
-                pattern,
-                conflict_key,
-            } => {
-                assert!(pattern.contains("npm"));
-                assert_eq!(conflict_key, "package-manager:npm");
-            }
-            other => panic!("expected command regex, got {other:?}"),
+    fn command_pattern(text: &str) -> String {
+        match classify_preference_predicate(text)
+            .unwrap_or_else(|| panic!("expected classification for {text}"))
+            .predicate
+        {
+            PreferencePredicate::CommandRegex { pattern, .. } => pattern,
+            other => panic!("expected command regex for {text}, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn package_manager_direction_covers_supported_managers() {
+        for (text, banned) in [
+            ("Use npm, not yarn", "yarn"),
+            ("Prefer yarn over bun", "bun"),
+            ("Use bun instead of pnpm", "pnpm"),
+            ("Use pnpm, not npm", "npm"),
+        ] {
+            assert!(
+                command_pattern(text).contains(banned),
+                "{text} banned the wrong manager"
+            );
+        }
+        assert!(classify_preference_predicate("Do not use npm; use pnpm").is_none());
+    }
+
+    #[test]
+    fn canonical_package_directive_with_project_suffix_classifies() {
+        let classification = classify_preference_predicate(
+            "Use bun, not npm, for package installation commands in this project.",
+        )
+        .expect("closed package-manager preference should classify");
+        assert!(matches!(
+            classification.predicate,
+            PreferencePredicate::CommandRegex { ref pattern, .. } if pattern.contains("npm")
+        ));
+    }
+
+    #[test]
+    fn ambiguous_multiclause_preferences_fail_closed() {
+        for text in [
+            "Do not avoid npm; use npm instead of yarn",
+            "Never, under any circumstances, avoid npm; use npm instead of yarn",
+            "Use bun, not npm; unless CI requires npm",
+            "Use bun, not npm. Actually use npm for CI",
+            "Never add the Co-authored-by trailer. Except for pair-authored commits",
+            "There is no good reason, whatsoever, to omit the Co-authored-by trailer",
+        ] {
+            assert!(
+                classify_preference_predicate(text).is_none(),
+                "must fail closed: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn positive_commit_trailer_direction_is_not_forbidden() {
+        assert!(
+            classify_preference_predicate("Use the Co-authored-by trailer for paired commits")
+                .is_none()
+        );
     }
 
     #[test]
@@ -157,22 +319,48 @@ mod tests {
         let classification =
             classify_preference_predicate("Never add the AI-generated-by trailer to git commits")
                 .expect("commit trailer preference should classify");
-        match classification.predicate {
-            PreferencePredicate::CommitTrailerForbidden {
-                trailer,
-                conflict_key,
-            } => {
-                assert_eq!(trailer, "AI-generated-by");
-                assert_eq!(conflict_key, "trailer:ai-generated-by");
-            }
-            other => panic!("expected commit trailer, got {other:?}"),
-        }
+        assert!(matches!(
+            classification.predicate,
+            PreferencePredicate::CommitTrailerForbidden { ref trailer, .. }
+                if trailer == "AI-generated-by"
+        ));
     }
 
     #[test]
-    fn ambiguous_preference_is_not_machine_checkable() {
+    fn trailer_choice_forbids_only_the_negative_direction() {
+        let trailers = classify_preference_predicates(
+            "Use AI-generated-by, not Co-authored-by, in commit trailers",
+        )
+        .into_iter()
+        .filter_map(|classification| match classification.predicate {
+            PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
+            PreferencePredicate::CommandRegex { .. } => None,
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(trailers, ["Co-authored-by"]);
+    }
+
+    #[test]
+    fn classifies_each_forbidden_trailer_in_closed_list() {
+        let trailers = classify_preference_predicates(
+            "Do not add AI-generated-by or Co-authored-by trailers to commits",
+        )
+        .into_iter()
+        .filter_map(|classification| match classification.predicate {
+            PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
+            PreferencePredicate::CommandRegex { .. } => None,
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(trailers, ["AI-generated-by", "Co-authored-by"]);
+    }
+
+    #[test]
+    fn ambiguous_or_sensitive_preference_is_not_machine_checkable() {
         assert!(classify_preference_predicate("I like clean code and short functions").is_none());
-        // Mentions npm but with no preferred alternative or avoidance choice.
         assert!(classify_preference_predicate("npm is a package manager").is_none());
+        assert!(classify_preference_predicate(
+            "Use bun, not npm; the API key is sk-testsecret123456"
+        )
+        .is_none());
     }
 }

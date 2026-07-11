@@ -12,5 +12,13 @@ ALTER TABLE memory_preference_reinforcements
     ADD COLUMN machine_checkable INTEGER NOT NULL DEFAULT 0
     CHECK (machine_checkable IN (0, 1));
 
+ALTER TABLE memory_preference_reinforcements
+    ADD COLUMN risk_class TEXT NOT NULL DEFAULT 'unknown'
+    CHECK (risk_class IN ('low', 'medium', 'high', 'unknown'));
+
 CREATE INDEX IF NOT EXISTS idx_memory_preference_reinforcements_eligible
-    ON memory_preference_reinforcements(machine_checkable, reinforcement_count DESC);
+    ON memory_preference_reinforcements(
+        machine_checkable,
+        risk_class,
+        reinforcement_count DESC
+    );

@@ -151,7 +151,7 @@ mod tests {
             parsed.rules[0].predicate,
             RulePredicate::CommandRegex {
                 pattern: r"(^|\s)npm\s+(install|i|add)\b".to_string(),
-                message: "Preference #123: use bun, not npm".to_string()
+                message: "Command violates a compiled package-manager preference".to_string()
             }
         );
         parsed.validate()?;

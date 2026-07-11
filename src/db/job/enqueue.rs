@@ -12,6 +12,11 @@ pub fn enqueue_job(
     payload_json: &str,
     priority: i64,
 ) -> Result<i64> {
+    // A compile job that is already processing may have read canonical state
+    // before the lifecycle mutation which triggered this enqueue. Keep one
+    // pending successor instead of deduplicating against that processing row,
+    // otherwise the update can be lost when the old worker marks itself done.
+    let dedup_processing = i64::from(job_type != JobType::CompileRules);
     let existing: Option<i64> = conn
         .query_row(
             "SELECT id FROM jobs
@@ -19,10 +24,16 @@ pub fn enqueue_job(
                AND job_type = ?2
                AND project = ?3
                AND COALESCE(session_id, '') = COALESCE(?4, '')
-               AND state IN ('pending', 'processing')
-             ORDER BY id DESC
+               AND (state = 'pending' OR (?5 = 1 AND state = 'processing'))
+             ORDER BY CASE state WHEN 'pending' THEN 0 ELSE 1 END, id DESC
              LIMIT 1",
-            params![host, job_type.as_str(), project, session_id],
+            params![
+                host,
+                job_type.as_str(),
+                project,
+                session_id,
+                dedup_processing
+            ],
             |row| row.get(0),
         )
         .optional()?;

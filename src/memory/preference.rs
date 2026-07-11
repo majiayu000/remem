@@ -1,3 +1,4 @@
+pub(crate) mod compilation;
 pub(crate) mod consolidation;
 pub(crate) mod reinforcement;
 

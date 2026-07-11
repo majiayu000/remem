@@ -142,6 +142,7 @@ pub fn govern_memories(
     let target_status = req.action.target_status();
     let tx = conn.unchecked_transaction()?;
     let mut affected = Vec::with_capacity(ids.len());
+    let mut rule_source_ids = Vec::new();
     for id in ids {
         let target = load_target(&tx, req.project, id)?;
         if req.action == MemoryGovernanceAction::AcknowledgePattern {
@@ -160,6 +161,9 @@ pub fn govern_memories(
         });
         if req.dry_run {
             continue;
+        }
+        if req.action != MemoryGovernanceAction::AcknowledgePattern {
+            rule_source_ids.push(target.id);
         }
         let now = chrono::Utc::now().timestamp();
         let updated = if req.action == MemoryGovernanceAction::AcknowledgePattern {
@@ -195,6 +199,7 @@ pub fn govern_memories(
         }
         insert_audit_event(&tx, req, &target, new_status, reason.as_deref(), now)?;
     }
+    crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &rule_source_ids)?;
     tx.commit()?;
     Ok(GovernMemoryResult {
         dry_run: req.dry_run,

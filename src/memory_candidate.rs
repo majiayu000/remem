@@ -455,6 +455,7 @@ fn persist_candidate_rows(
             &tx,
             source.project_id,
             candidate,
+            &evidence_json,
             expires_at_epoch.is_some(),
             now,
         )? {
@@ -624,6 +625,7 @@ fn candidate_exists(
     conn: &Connection,
     project_id: i64,
     candidate: &ParsedMemoryCandidate,
+    evidence_json: &str,
     candidate_has_ttl: bool,
     now_epoch: i64,
 ) -> Result<bool> {
@@ -635,9 +637,10 @@ fn candidate_exists(
                AND memory_type = ?3
                AND topic_key = ?4
                AND text = ?5
+               AND (?6 = 0 OR evidence_event_ids = ?7)
                AND (
-                    ?6 = 0
-                    OR (expires_at_epoch IS NOT NULL AND expires_at_epoch > ?7)
+                    ?8 = 0
+                    OR (expires_at_epoch IS NOT NULL AND expires_at_epoch > ?9)
                )
              LIMIT 1",
             params![
@@ -646,6 +649,12 @@ fn candidate_exists(
                 candidate.memory_type,
                 candidate.topic_key,
                 candidate.text,
+                if candidate.memory_type == "preference" {
+                    1_i64
+                } else {
+                    0_i64
+                },
+                evidence_json,
                 if candidate_has_ttl { 1_i64 } else { 0_i64 },
                 now_epoch
             ],
@@ -742,7 +751,7 @@ fn append_existing_preferences(prompt: &mut String, preferences: &[CandidateProm
     }
     prompt.push_str("<existing_active_preferences>\n");
     prompt.push_str(
-        "These preferences are already active for this project. Do not emit a new preference candidate that merely restates or paraphrases them; emit only net-new preferences, material refinements, or explicit contradictions supported by the observations.\n",
+        "These preferences are already active for this project. When the current observations provide new evidence of the same correction, emit that preference candidate again so remem can count an evidence-backed reinforcement. Do not emit unsupported restatements or paraphrases. Also emit net-new preferences, material refinements, or explicit contradictions supported by the observations.\n",
     );
     for preference in preferences {
         prompt.push_str(&format!(
