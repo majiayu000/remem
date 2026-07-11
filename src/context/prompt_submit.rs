@@ -697,6 +697,7 @@ mod tests {
 
     #[test]
     fn prompt_submit_p95_latency_stays_under_budget() -> Result<()> {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("prompt-submit-latency");
         let conn = setup_prompt_submit_conn()?;
         let project = "/tmp/remem-prompt-submit-latency";
         insert_prompt_submit_memory(
