@@ -1,14 +1,10 @@
 use anyhow::Result;
+use rusqlite::Connection;
 
 use super::{save_memory, SaveMemoryRequest};
 use crate::db::{self, test_support::ScopedTestDataDir};
 
-#[test]
-fn opposite_direct_save_drops_candidate_rule_state_and_enqueues_compile() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("direct-save-opposite-preference-rule-state");
-    crate::runtime_config::init_config()?;
-    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
-    let conn = db::open_db()?;
+fn seed_compilable_preference(conn: &Connection) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_candidates
          (id, scope, memory_type, topic_key, text, evidence_event_ids,
@@ -45,6 +41,16 @@ fn opposite_direct_save_drops_candidate_rule_state_and_enqueues_compile() -> Res
          VALUES ('proj', 'pref-1-1', 1, 1, 'block', 'user', 4)",
         [],
     )?;
+    Ok(())
+}
+
+#[test]
+fn opposite_direct_save_drops_candidate_rule_state_and_enqueues_compile() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("direct-save-opposite-preference-rule-state");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    seed_compilable_preference(&conn)?;
 
     let saved = save_memory(
         &conn,
@@ -88,5 +94,59 @@ fn opposite_direct_save_drops_candidate_rule_state_and_enqueues_compile() -> Res
         |row| row.get(0),
     )?;
     assert_eq!(compile_jobs, 1);
+    Ok(())
+}
+
+#[test]
+fn cross_type_direct_save_does_not_overwrite_preference_rule_source() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("direct-save-cross-type-preference-rule-state");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    seed_compilable_preference(&conn)?;
+
+    let saved = save_memory(
+        &conn,
+        &SaveMemoryRequest {
+            text: "npm and bun are installed in this repository".to_string(),
+            title: Some("Installed package managers".to_string()),
+            project: Some("proj".to_string()),
+            topic_key: Some("package-manager-choice".to_string()),
+            memory_type: Some("discovery".to_string()),
+            scope: Some("project".to_string()),
+            local_copy_enabled: Some(false),
+            ..SaveMemoryRequest::default()
+        },
+    )?;
+
+    assert_ne!(
+        saved.id, 1,
+        "different memory types must not share an upsert row"
+    );
+    let original: (String, String, Option<i64>) = conn.query_row(
+        "SELECT memory_type, content, source_candidate_id FROM memories WHERE id = 1",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        original,
+        (
+            "preference".to_string(),
+            "Use bun, not npm".to_string(),
+            Some(1)
+        )
+    );
+    let state_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_preference_reinforcements WHERE memory_id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    let override_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM preference_rule_overrides WHERE source_memory_id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(state_rows, 1);
+    assert_eq!(override_rows, 1);
     Ok(())
 }

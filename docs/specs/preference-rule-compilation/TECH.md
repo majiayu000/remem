@@ -20,7 +20,8 @@ Tracking:
 - GH671-T3 adds canonical evidence-backed reinforcement that counts each event
   set once, carries only disjoint evidence across same-predicate replacements,
   and clears stale confidence/provenance on opposing direct saves or cleanup
-  rewrites; a closed classifier for package-manager and commit-trailer
+  rewrites; same-topic direct saves remain isolated by memory type; a closed
+  classifier for package-manager and commit-trailer
   predicates; persisted low-risk, source-trust, and review eligibility;
   project-over-global conflict precedence; lifecycle-triggered non-lossy jobs
   plus periodic convergence sweeps; same-predicate override transfer across

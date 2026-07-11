@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
 
 use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::scope_cleanup::{apply_memory_cleanup_plan, build_preference_cleanup_plan};
@@ -134,4 +135,60 @@ fn cleanup_predicate_change_drops_prior_rule_provenance() -> Result<()> {
     )?;
     assert_eq!(compile_jobs, 1);
     Ok(())
+}
+
+#[test]
+fn cleanup_edited_plan_cannot_adopt_stale_predicate_state() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("cleanup-edited-plan-stale-predicate");
+    let conn = setup_rule_cleanup()?;
+    let mut plan = build_preference_cleanup_plan(&conn, PROJECT)?;
+    let replacement = "Use npm, not bun";
+    conn.execute(
+        "UPDATE memories SET content = ?1 WHERE id = 101",
+        [replacement],
+    )?;
+    conn.execute(
+        "UPDATE memory_candidates SET text = ?1 WHERE id = 11",
+        [replacement],
+    )?;
+    let group = plan.groups.first_mut().context("cleanup group")?;
+    group.merged_content = Some(replacement.to_string());
+    group
+        .row_snapshots
+        .iter_mut()
+        .find(|snapshot| snapshot.id == 101)
+        .context("stale cleanup snapshot")?
+        .content_sha256 = content_sha256(replacement);
+
+    apply_memory_cleanup_plan(&conn, &plan)?;
+
+    let reinforcement_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_preference_reinforcements
+         WHERE memory_id IN (101, 102)",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(
+        reinforcement_rows, 0,
+        "canonical predicate drift must not adopt stale-row confidence"
+    );
+    let source_candidate_id: Option<i64> = conn.query_row(
+        "SELECT source_candidate_id FROM memories WHERE id = 102",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(source_candidate_id, None);
+    let override_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM preference_rule_overrides",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(override_rows, 0);
+    Ok(())
+}
+
+fn content_sha256(content: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(content.as_bytes());
+    format!("{:x}", hasher.finalize())
 }

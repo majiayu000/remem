@@ -261,7 +261,10 @@ pub(crate) fn reconcile_cleanup_preference(
             [current_memory_id],
         )?;
     }
-    if let Some(state) = aggregate.finish().filter(|_| !final_predicates.is_empty()) {
+    if let Some(state) = aggregate
+        .finish()
+        .filter(|_| current_compatible && !final_predicates.is_empty())
+    {
         write_reinforcement_state(conn, current_memory_id, &state, true, now)?;
     } else {
         conn.execute(
