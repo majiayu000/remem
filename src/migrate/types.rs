@@ -332,8 +332,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 66,
+        name: "session_rollup_evidence_checkpoint",
+        sql: include_str!("../migrations/v066_session_rollup_evidence_checkpoint.sql"),
+    },
+    Migration {
+        version: 67,
         name: "capture_git_evidence",
-        sql: include_str!("../migrations/v066_capture_git_evidence.sql"),
+        sql: include_str!("../migrations/v067_capture_git_evidence.sql"),
     },
 ];
 

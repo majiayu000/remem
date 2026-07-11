@@ -40,18 +40,26 @@ jobs:
     strategy:
       matrix:
         include:
+          # local-onnx is disabled on Intel macOS: ort/ONNX Runtime ships no
+          # prebuilt binaries for x86_64-apple-darwin, so the build cannot
+          # link it. Embedding falls back to the feature-hash provider there
+          # and the degradation is visible in `remem status` / `remem doctor`.
           - target: x86_64-apple-darwin
             os: macos-latest
             name: remem-darwin-x64
+            cargo_flags: --no-default-features
           - target: aarch64-apple-darwin
             os: macos-latest
             name: remem-darwin-arm64
+            cargo_flags: ""
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: remem-linux-x64
+            cargo_flags: ""
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: remem-linux-arm64
+            cargo_flags: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6.0.2
@@ -62,12 +70,14 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          # g++-aarch64-linux-gnu provides the aarch64 libstdc++ that the
+          # statically linked ort/ONNX Runtime (C++) needs at link time.
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
       - name: Package binary
         run: |
           cd target/${{ matrix.target }}/release

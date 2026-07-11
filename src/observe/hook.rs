@@ -6,7 +6,7 @@ use super::spill::{
     SPILL_REASON_DB_OPEN_FAILED,
 };
 use crate::db;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 pub async fn observe(host: Option<&str>) -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
@@ -35,13 +35,19 @@ pub(super) async fn observe_input(input: &str, host: Option<&str>) -> Result<()>
         );
         return Ok(());
     };
-    let git_evidence =
-        crate::git_evidence::from_observed_event(&event, &summary).with_context(|| {
-            format!(
-                "capture explicit commit evidence host={} session={} project={}",
-                capture_host, event.session_id, event.project
-            )
-        })?;
+    let git_evidence = match crate::git_evidence::from_observed_event(&event, &summary) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            crate::log::error(
+                "observe",
+                &format!(
+                    "commit evidence extraction failed; capturing event without commit evidence host={} session={} project={}: {error:#}",
+                    capture_host, event.session_id, event.project
+                ),
+            );
+            Vec::new()
+        }
+    };
     if let Some(reason) = event_skip_reason(adapter, &event, !git_evidence.is_empty()) {
         let detail = skip_detail(&event);
         record_capture_drop_lossy(Some(&capture_host), Some(&event), reason, detail.as_deref());
@@ -272,9 +278,14 @@ fn capture_event_content_with_git_evidence(
     summary: &crate::adapter::EventSummary,
     git_evidence: &[crate::git_util::GitCommitEvidence],
 ) -> String {
+    let detected_branch = git_evidence
+        .is_empty()
+        .then(|| event.cwd.as_deref().and_then(db::detect_git_branch))
+        .flatten();
     let git_branch = git_evidence
         .first()
-        .and_then(|evidence| evidence.metadata.branch.as_deref());
+        .and_then(|evidence| evidence.metadata.branch.as_deref())
+        .or(detected_branch.as_deref());
     serde_json::json!({
         "summary": &summary.summary,
         "event_type": &summary.event_type,

@@ -6,6 +6,7 @@ use crate::db;
 use crate::workstream::ParsedWorkStream;
 
 use super::persist::rollup_memory_session_id;
+use super::transcript_evidence::{PromptTranscriptMessage, StopCitationEvidence};
 use super::RollupRange;
 
 #[derive(Debug)]
@@ -20,11 +21,13 @@ struct PersistedRollupFields {
 }
 
 #[derive(Debug, Deserialize)]
-struct StopHookPayload {
-    cwd: Option<String>,
-    transcript_path: Option<String>,
-    transcript_byte_len: Option<u64>,
-    last_assistant_message: Option<String>,
+pub(super) struct StopHookPayload {
+    #[serde(skip)]
+    pub(super) source_event_id: i64,
+    pub(super) cwd: Option<String>,
+    pub(super) transcript_path: Option<String>,
+    pub(super) transcript_byte_len: Option<u64>,
+    pub(super) last_assistant_message: Option<String>,
 }
 
 pub(super) fn drain_raw_archive_from_range(
@@ -140,6 +143,9 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     conn: &Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    stop_citations: &[StopCitationEvidence],
+    legacy_transcript_messages: &[PromptTranscriptMessage],
+    allow_transcript_source_fallback: bool,
 ) -> Result<()> {
     let Some(session_id) = task.session_id.as_deref() else {
         return Ok(());
@@ -158,16 +164,7 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     )
     .context("session rollup failure-lesson side effect failed")?;
     for payload in &payloads {
-        let assistant_message =
-            clean_field(payload.last_assistant_message.as_deref()).or_else(|| {
-                payload.transcript_path.as_deref().and_then(|path| {
-                    crate::summarize::extract_last_assistant_message_with_limit(
-                        path,
-                        payload.transcript_byte_len,
-                    )
-                })
-            });
-        if let Some(message) = assistant_message {
+        if let Some(message) = clean_field(payload.last_assistant_message.as_deref()) {
             crate::summarize::record_stop_memory_citation_usage(
                 conn,
                 &task.host,
@@ -176,6 +173,58 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
                 &message,
             )
             .context("session rollup memory-citation side effect failed")?;
+            continue;
+        }
+        if let Some(citation) = stop_citations
+            .iter()
+            .find(|citation| citation.source_event_id == payload.source_event_id)
+        {
+            crate::summarize::record_stop_memory_citation_evidence(
+                conn,
+                &task.host,
+                &task.project,
+                session_id,
+                &citation.message_hash,
+                &citation.facts,
+            )
+            .context("session rollup persisted memory-citation side effect failed")?;
+            continue;
+        }
+        if let Some(message) = legacy_transcript_messages
+            .iter()
+            .rev()
+            .find(|message| {
+                message.source_event_id == payload.source_event_id && message.role == "assistant"
+            })
+            .and_then(|message| clean_field(Some(&message.content)))
+        {
+            crate::summarize::record_stop_memory_citation_usage(
+                conn,
+                &task.host,
+                &task.project,
+                session_id,
+                &message,
+            )
+            .context("session rollup legacy v066 memory-citation side effect failed")?;
+            continue;
+        }
+        if allow_transcript_source_fallback {
+            let assistant_message = payload.transcript_path.as_deref().and_then(|path| {
+                crate::summarize::extract_last_assistant_message_with_limit(
+                    path,
+                    payload.transcript_byte_len,
+                )
+            });
+            if let Some(message) = assistant_message {
+                crate::summarize::record_stop_memory_citation_usage(
+                    conn,
+                    &task.host,
+                    &task.project,
+                    session_id,
+                    &message,
+                )
+                .context("session rollup legacy memory-citation side effect failed")?;
+            }
         }
     }
     Ok(())
@@ -185,6 +234,7 @@ pub(super) fn run_persisted_rollup_side_effects(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_messages: &[PromptTranscriptMessage],
 ) -> Result<()> {
     let session_row_id = task
         .session_row_id
@@ -198,7 +248,7 @@ pub(super) fn run_persisted_rollup_side_effects(
     let cwd = rollup_cwd(task, range);
 
     upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields)?;
-    promote_rollup_candidates(conn, task, range, &fields)?;
+    promote_rollup_candidates(conn, task, range, transcript_messages, &fields)?;
     sync_native_memory(conn, &cwd, &task.project)?;
     enqueue_user_context_followup(conn, task, range)?;
     enqueue_summary_followup_jobs(conn, task, session_id)?;
@@ -217,7 +267,7 @@ fn latest_stop_payload(range: &RollupRange) -> Option<StopHookPayload> {
     stop_payloads(range).ok()?.pop()
 }
 
-fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
+pub(super) fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
     range
         .events
         .iter()
@@ -227,18 +277,23 @@ fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
                 return None;
             }
             Some(
-                serde_json::from_str::<StopHookPayload>(&event.content).with_context(|| {
-                    format!(
-                        "invalid session_stop payload for captured event {}",
-                        event.id
-                    )
-                }),
+                serde_json::from_str::<StopHookPayload>(&event.content)
+                    .map(|mut payload| {
+                        payload.source_event_id = event.id;
+                        payload
+                    })
+                    .with_context(|| {
+                        format!(
+                            "invalid session_stop payload for captured event {}",
+                            event.id
+                        )
+                    }),
             )
         })
         .collect()
 }
 
-fn stop_transcript_path(payload: &StopHookPayload) -> Option<&str> {
+pub(super) fn stop_transcript_path(payload: &StopHookPayload) -> Option<&str> {
     payload
         .transcript_path
         .as_deref()
@@ -255,7 +310,7 @@ fn stop_payload_cwd<'a>(payload: &'a StopHookPayload, project: &'a str) -> &'a s
         .unwrap_or(project)
 }
 
-fn unique_transcript_payload_indices(payloads: &[StopHookPayload]) -> Vec<usize> {
+pub(super) fn unique_transcript_payload_indices(payloads: &[StopHookPayload]) -> Vec<usize> {
     let mut selected: Vec<(String, usize)> = Vec::new();
     for (index, payload) in payloads.iter().enumerate() {
         let Some(path) = stop_transcript_path(payload) else {
@@ -407,6 +462,7 @@ fn promote_rollup_candidates(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_messages: &[PromptTranscriptMessage],
     fields: &PersistedRollupFields,
 ) -> Result<()> {
     let session_id = task
@@ -424,6 +480,11 @@ fn promote_rollup_candidates(
         .map(|event| event.content.trim())
         .filter(|content| !content.is_empty())
         .map(str::to_string)
+        .chain(
+            transcript_messages
+                .iter()
+                .map(|message| message.content.clone()),
+        )
         .collect::<Vec<_>>();
     let count = crate::memory::promote::promote_summary_to_memory_candidates_with_evidence(
         conn,
@@ -537,6 +598,7 @@ mod stop_payload_selection_tests {
 
     fn payload(path: &str, transcript_byte_len: Option<u64>) -> StopHookPayload {
         StopHookPayload {
+            source_event_id: 0,
             cwd: None,
             transcript_path: Some(path.to_string()),
             transcript_byte_len,

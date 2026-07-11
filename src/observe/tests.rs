@@ -112,7 +112,6 @@ async fn successful_explicit_commit_persists_full_git_evidence() -> Result<()> {
         "tool_name": "Bash",
         "tool_input": {"command": "git commit -m 'commit a'"},
         "tool_response": {
-            "exitCode": 0,
             "stdout": format!("[main (root-commit) {}] commit a\n", &sha[..7])
         }
     })
@@ -160,6 +159,46 @@ async fn ordinary_edit_does_not_link_baseline_head() -> Result<()> {
         row.get(0)
     })?;
     assert_eq!(count, 0);
+    let branch: Option<String> = conn.query_row(
+        "SELECT json_extract(content_text, '$.git_branch')
+         FROM captured_events
+         WHERE session_id = 'session-baseline-not-evidence'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(branch.as_deref(), Some("main"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn unresolvable_commit_evidence_preserves_observed_capture() -> Result<()> {
+    let test_dir = ScopedTestDataDir::new("observe-unresolvable-git-evidence");
+    let missing_repo = test_dir.path.join("missing-repo");
+    db::open_db()?;
+    let input = serde_json::json!({
+        "session_id": "session-unresolvable-git-evidence",
+        "cwd": missing_repo,
+        "tool_name": "Bash",
+        "tool_input": {"command": "git commit -m done"},
+        "tool_response": {"stdout": "[main deadbeef] done"}
+    })
+    .to_string();
+
+    super::hook::observe_input(&input, Some("claude-code")).await?;
+
+    let conn = db::open_db()?;
+    let captured: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events
+         WHERE session_id = 'session-unresolvable-git-evidence'",
+        [],
+        |row| row.get(0),
+    )?;
+    let evidence: i64 =
+        conn.query_row("SELECT COUNT(*) FROM captured_event_commits", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(captured, 1);
+    assert_eq!(evidence, 0);
     Ok(())
 }
 

@@ -54,7 +54,7 @@ pub(super) async fn summarize_input(
         }
     };
     let prepared_hook: SummarizeInput = serde_json::from_str(&captured_input)?;
-    let git_evidence = summary_git_evidence(&host, &prepared_hook, &cwd)?;
+    let git_evidence = summary_git_evidence_or_empty(&host, &prepared_hook, &cwd);
     let input = captured_input.as_str();
     let conn = match time_result(&mut timings, "open_db_for_hook", db::open_db_for_hook) {
         Ok(conn) => conn,
@@ -90,7 +90,7 @@ pub(super) async fn summarize_input(
             Some(&host),
             profile,
             SummaryPayloadOrigin::Live,
-            &git_evidence,
+            Some(&git_evidence),
         )
     })?;
     let current_identity =
@@ -115,7 +115,7 @@ pub(super) async fn summarize_input(
                 record.host.as_deref(),
                 record.profile.as_deref(),
                 SummaryPayloadOrigin::Replay,
-                &record.git_evidence,
+                Some(&record.git_evidence),
             )
         })
     }) {
@@ -159,7 +159,7 @@ pub(super) fn enqueue_summary_payload(
     profile: Option<&str>,
     origin: SummaryPayloadOrigin,
 ) -> Result<()> {
-    enqueue_summary_payload_with_git_evidence(conn, input, host, profile, origin, &[])
+    enqueue_summary_payload_with_git_evidence(conn, input, host, profile, origin, None)
 }
 
 pub(super) fn enqueue_summary_payload_with_git_evidence(
@@ -168,7 +168,7 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
     host: Option<&str>,
     profile: Option<&str>,
     origin: SummaryPayloadOrigin,
-    provided_git_evidence: &[crate::git_util::GitCommitEvidence],
+    provided_git_evidence: Option<&[crate::git_util::GitCommitEvidence]>,
 ) -> Result<()> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
@@ -203,11 +203,11 @@ pub(super) fn enqueue_summary_payload_with_git_evidence(
     };
     let prepared_hook: SummarizeInput = serde_json::from_str(&summary_payload)?;
     let discovered_git_evidence;
-    let git_evidence = if provided_git_evidence.is_empty() {
-        discovered_git_evidence = summary_git_evidence(&host, &prepared_hook, &cwd)?;
-        discovered_git_evidence.as_slice()
+    let git_evidence = if let Some(provided) = provided_git_evidence {
+        provided
     } else {
-        provided_git_evidence
+        discovered_git_evidence = summary_git_evidence_or_empty(&host, &prepared_hook, &cwd);
+        discovered_git_evidence.as_slice()
     };
     let replay_event_id = origin
         .is_replay()
@@ -278,6 +278,26 @@ fn summary_git_evidence(
         return Ok(Vec::new());
     };
     crate::git_evidence::from_codex_transcript(transcript_path, byte_limit, cwd)
+}
+
+fn summary_git_evidence_or_empty(
+    host: &str,
+    hook: &SummarizeInput,
+    cwd: &str,
+) -> Vec<crate::git_util::GitCommitEvidence> {
+    match summary_git_evidence(host, hook, cwd) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "commit evidence extraction failed; preserving Stop capture without commit evidence host={host} session={}: {error:#}",
+                    hook.session_id.as_deref().unwrap_or("unknown")
+                ),
+            );
+            Vec::new()
+        }
+    }
 }
 
 fn effective_cwd(hook: &SummarizeInput) -> Result<String> {

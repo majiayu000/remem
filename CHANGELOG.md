@@ -3,13 +3,29 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.5.198` for GH-792 observed commit traceability:
+- Staged source version `0.5.200` for GH-792 observed commit traceability:
   successful explicit `git commit` results prove SHAs through Claude hook
   output or a byte-bounded Codex transcript, typed evidence is stored atomically
   and survives the shared encrypted spill queue, deterministic extraction
   phases link every commit in the exact claimed range by durable
   `session_row_id`, cross-host raw session collisions remain distinct, retries
-  stay idempotent, and ordinary Stop events never infer from a later `HEAD`.
+  stay idempotent, missing or ambiguous proof never drops the surrounding
+  capture, and ordinary Stop events never infer from a later `HEAD`.
+- Staged source version `0.5.198` for #794: SessionRollup now supplies
+  one shared byte-bounded, redacted transcript evidence slice to the summarizer
+  and candidate support path, deduplicates repeated paths and captured-event
+  text, excludes bytes appended after Stop, and persists the exact-range slice
+  plus raw-archive completion checkpoint through migration
+  `v066_session_rollup_evidence_checkpoint`. Persisted-rollup retries no longer
+  depend on a transcript source file after successful raw ingest: per-Stop
+  message hashes and parsed citation facts are snapshotted independently of the
+  lossy 8 KiB/64 KiB prompt budget for every bounded Stop, including repeated
+  path boundaries and Unicode-safe truncation. Early v066 JSON reuses its
+  original bounded message/hash on retry to prevent duplicate usage. Legacy Stop
+  payloads without a byte boundary use captured conversational events only, or
+  fail permanently before AI when no safe fallback exists. Missing, malformed,
+  or unusable required bounded snapshots still fail before metadata-only
+  summaries can persist.
 - Staged source version `0.5.197` for the GH-671 T3 correctness follow-up:
   unique evidence reinforces only the same safe predicate; opposing direct
   saves and cleanup rewrites clear stale provenance while same-predicate

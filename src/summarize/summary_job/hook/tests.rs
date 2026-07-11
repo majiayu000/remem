@@ -276,6 +276,69 @@ async fn summarize_hook_spills_when_transcript_snapshot_fails() -> anyhow::Resul
 }
 
 #[tokio::test]
+async fn unresolvable_commit_evidence_does_not_drop_stop_capture() -> anyhow::Result<()> {
+    let test_dir = ScopedTestDataDir::new("summary-hook-unresolvable-git-evidence");
+    let conn = db::open_db()?;
+    let now = chrono::Utc::now().timestamp();
+    db::upsert_worker_heartbeat(
+        &conn,
+        "worker-daemon",
+        i64::from(std::process::id()),
+        now,
+        now,
+    )?;
+    drop(conn);
+    let missing_repo = test_dir.path.join("missing-repo");
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let call = serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "function_call",
+            "name": "exec_command",
+            "call_id": "commit-call",
+            "arguments": serde_json::json!({
+                "cmd": "git commit -m done",
+                "workdir": missing_repo,
+            }).to_string(),
+        }
+    });
+    let output = serde_json::json!({
+        "type": "response_item",
+        "payload": {
+            "type": "function_call_output",
+            "call_id": "commit-call",
+            "output": "Process exited with code 0\nFinal output:\n[main deadbeef] done",
+        }
+    });
+    std::fs::write(&transcript, format!("{call}\n{output}\n"))?;
+    let input = serde_json::json!({
+        "session_id": "sess-stop-unresolvable-git-evidence",
+        "cwd": test_dir.path,
+        "transcript_path": transcript,
+        "last_assistant_message": "finished"
+    })
+    .to_string();
+
+    summarize_input(&input, Some("codex-cli"), None).await?;
+
+    let conn = db::open_db()?;
+    let captured: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events
+         WHERE session_id = 'sess-stop-unresolvable-git-evidence'
+           AND event_type = 'session_stop'",
+        [],
+        |row| row.get(0),
+    )?;
+    let evidence: i64 =
+        conn.query_row("SELECT COUNT(*) FROM captured_event_commits", [], |row| {
+            row.get(0)
+        })?;
+    assert_eq!(captured, 1);
+    assert_eq!(evidence, 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn summarize_hook_runs_stop_side_effects_without_summary_job() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("summary-hook-side-effects");
     let conn = db::open_db()?;

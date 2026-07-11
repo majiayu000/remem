@@ -11,7 +11,7 @@ pub(super) struct SummarizeInput {
     pub last_assistant_message: Option<String>,
 }
 
-pub(super) fn hash_message(msg: &str) -> String {
+pub(crate) fn hash_message(msg: &str) -> String {
     let mut hasher = DefaultHasher::new();
     msg.hash(&mut hasher);
     format!("{:016x}", hasher.finish())

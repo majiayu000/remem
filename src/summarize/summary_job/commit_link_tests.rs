@@ -72,7 +72,7 @@ fn replayed_stop_spill_uses_spilled_commit_evidence_when_head_moves() -> Result<
             record.host.as_deref(),
             record.profile.as_deref(),
             super::replay::SummaryPayloadOrigin::Replay,
-            &record.git_evidence,
+            Some(&record.git_evidence),
         )
     })?;
     assert_eq!(replayed, 1);

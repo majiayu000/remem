@@ -7,7 +7,7 @@ use super::MIGRATIONS;
 fn capture_git_evidence_migration_preserves_legacy_links() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-    for migration in &MIGRATIONS[..65] {
+    for migration in &MIGRATIONS[..66] {
         conn.execute_batch(migration.sql)?;
     }
     conn.execute(
@@ -75,8 +75,8 @@ fn capture_git_evidence_migration_preserves_legacy_links() -> Result<()> {
         [commit_id],
     )?;
 
-    let migration = &MIGRATIONS[65];
-    assert_eq!(migration.version, 66);
+    let migration = &MIGRATIONS[66];
+    assert_eq!(migration.version, 67);
     conn.execute_batch(migration.sql)?;
 
     let legacy: (i64, Option<i64>, String, String, String) = conn.query_row(

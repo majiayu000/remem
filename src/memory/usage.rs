@@ -1,7 +1,8 @@
 use std::collections::{BTreeSet, HashMap};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::params;
+use serde::{Deserialize, Serialize};
 
 const CITATION_PREFIX: &str = "Memory citations:";
 pub(crate) const STOP_CITATION_SOURCE: &str = "stop_citation";
@@ -25,41 +26,67 @@ pub(crate) struct MemoryUsageFeedbackStats {
     pub usage_events: i64,
 }
 
-struct ParsedMemoryCitations {
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct MemoryCitationFacts {
     line_present: bool,
     ids: Vec<i64>,
+}
+
+impl MemoryCitationFacts {
+    pub(crate) fn from_text(text: &str) -> Self {
+        let mut ids = BTreeSet::new();
+        let mut line_present = false;
+        for line in text.lines() {
+            let Some(rest) = line.trim().strip_prefix(CITATION_PREFIX) else {
+                continue;
+            };
+            line_present = true;
+            for token in rest.split_whitespace() {
+                let cleaned = token.trim_matches(|ch: char| {
+                    ch == ',' || ch == ';' || ch == '.' || ch == ')' || ch == ']' || ch == '}'
+                });
+                let Some(raw_id) = cleaned.strip_prefix("memory:#") else {
+                    continue;
+                };
+                if let Ok(id) = raw_id.parse::<i64>() {
+                    if id > 0 {
+                        ids.insert(id);
+                    }
+                }
+            }
+        }
+        Self {
+            line_present,
+            ids: ids.into_iter().collect(),
+        }
+    }
+
+    pub(crate) fn ids(&self) -> &[i64] {
+        &self.ids
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        if !self.line_present && !self.ids.is_empty() {
+            bail!("invalid memory citation facts: ids require a citation line");
+        }
+        if self.ids.iter().any(|id| *id <= 0) {
+            bail!("invalid memory citation facts: ids must be positive");
+        }
+        if self.ids.windows(2).any(|pair| pair[0] >= pair[1]) {
+            bail!("invalid memory citation facts: ids must be unique and sorted");
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn citation_contract_line() -> &'static str {
     "When using injected memories, end with `Memory citations: memory:#<id> ...`; otherwise `Memory citations: none`."
 }
 
-fn parse_memory_citations(text: &str) -> ParsedMemoryCitations {
-    let mut ids = BTreeSet::new();
-    let mut line_present = false;
-    for line in text.lines() {
-        let Some(rest) = line.trim().strip_prefix(CITATION_PREFIX) else {
-            continue;
-        };
-        line_present = true;
-        for token in rest.split_whitespace() {
-            let cleaned = token.trim_matches(|ch: char| {
-                ch == ',' || ch == ';' || ch == '.' || ch == ')' || ch == ']' || ch == '}'
-            });
-            let Some(raw_id) = cleaned.strip_prefix("memory:#") else {
-                continue;
-            };
-            if let Ok(id) = raw_id.parse::<i64>() {
-                if id > 0 {
-                    ids.insert(id);
-                }
-            }
-        }
-    }
-    ParsedMemoryCitations {
-        line_present,
-        ids: ids.into_iter().collect(),
-    }
+#[cfg(test)]
+fn parse_memory_citations(text: &str) -> MemoryCitationFacts {
+    MemoryCitationFacts::from_text(text)
 }
 
 pub(crate) fn record_stop_memory_citations(
@@ -70,6 +97,18 @@ pub(crate) fn record_stop_memory_citations(
     message_hash: &str,
     assistant_message: &str,
 ) -> Result<MemoryUsageReport> {
+    let facts = MemoryCitationFacts::from_text(assistant_message);
+    record_stop_memory_citation_facts(conn, host, project, session_id, message_hash, &facts)
+}
+
+pub(crate) fn record_stop_memory_citation_facts(
+    conn: &rusqlite::Connection,
+    host: &str,
+    project: &str,
+    session_id: &str,
+    message_hash: &str,
+    facts: &MemoryCitationFacts,
+) -> Result<MemoryUsageReport> {
     record_memory_citations(
         conn,
         host,
@@ -77,7 +116,7 @@ pub(crate) fn record_stop_memory_citations(
         session_id,
         STOP_CITATION_SOURCE,
         message_hash,
-        assistant_message,
+        facts,
     )
 }
 
@@ -89,19 +128,13 @@ fn record_memory_citations(
     session_id: &str,
     source: &str,
     message_hash: &str,
-    assistant_message: &str,
+    facts: &MemoryCitationFacts,
 ) -> Result<MemoryUsageReport> {
+    facts.validate()?;
     conn.execute_batch("SAVEPOINT remem_memory_usage")
         .context("begin memory usage savepoint")?;
-    let result = record_memory_citations_inner(
-        conn,
-        host,
-        project,
-        session_id,
-        source,
-        message_hash,
-        assistant_message,
-    );
+    let result =
+        record_memory_citations_inner(conn, host, project, session_id, source, message_hash, facts);
     match result {
         Ok(report) => {
             conn.execute_batch("RELEASE SAVEPOINT remem_memory_usage")
@@ -131,9 +164,8 @@ fn record_memory_citations_inner(
     session_id: &str,
     source: &str,
     message_hash: &str,
-    assistant_message: &str,
+    parsed: &MemoryCitationFacts,
 ) -> Result<MemoryUsageReport> {
-    let parsed = parse_memory_citations(assistant_message);
     let injected = injected_memory_items(conn, host, project, session_id, &parsed.ids)?;
     let status = citation_status(parsed.ids.len(), injected.len());
     let now = chrono::Utc::now().timestamp();

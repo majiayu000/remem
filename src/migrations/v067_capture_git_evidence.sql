@@ -1,4 +1,4 @@
--- v066_capture_git_evidence: persist explicit, capture-time commit evidence
+-- v067_capture_git_evidence: persist explicit, capture-time commit evidence
 -- separately from event content and key links by the durable capture session.
 
 CREATE TABLE captured_event_commits (

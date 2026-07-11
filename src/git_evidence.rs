@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use regex::Regex;
@@ -11,7 +12,7 @@ pub(crate) fn from_observed_event(
     event: &ParsedHookEvent,
     summary: &EventSummary,
 ) -> Result<Vec<GitCommitEvidence>> {
-    if event.tool_name != "Bash" || summary.exit_code != Some(0) {
+    if event.tool_name != "Bash" || summary.exit_code.is_some_and(|code| code != 0) {
         return Ok(Vec::new());
     }
     let Some(command) = event
@@ -22,20 +23,22 @@ pub(crate) fn from_observed_event(
     else {
         return Ok(Vec::new());
     };
-    if !is_supported_commit_command(command)? {
+    let Some(base_cwd) = event.cwd.as_deref() else {
         return Ok(Vec::new());
-    }
+    };
+    let Some(cwd) = commit_workdir(command, base_cwd) else {
+        return Ok(Vec::new());
+    };
     let output = hook_response_output(event.tool_response.as_ref());
-    let candidate = commit_candidate_from_output(&output)?;
-    let cwd = event
-        .cwd
-        .as_deref()
-        .context("successful git commit hook event omitted cwd")?;
+    let Some(candidate) = commit_candidate_from_output(&output)? else {
+        return Ok(Vec::new());
+    };
+    let cwd = cwd.to_string_lossy();
     Ok(vec![GitCommitEvidence {
         kind: GitEvidenceKind::ObservedCommit,
-        metadata: crate::git_util::resolve_commit_metadata(cwd, &candidate).with_context(|| {
-            format!("resolve successful git commit candidate {candidate} from hook event")
-        })?,
+        metadata: crate::git_util::resolve_commit_metadata(&cwd, &candidate).with_context(
+            || format!("resolve successful git commit candidate {candidate} from hook event"),
+        )?,
         locator: Some("post_tool_use".to_string()),
     }])
 }
@@ -93,9 +96,12 @@ pub(crate) fn from_codex_transcript(
                 if !codex_output_succeeded(output) {
                     continue;
                 }
-                let candidate = commit_candidate_from_output(output).with_context(|| {
+                let Some(candidate) = commit_candidate_from_output(output).with_context(|| {
                     format!("parse successful git commit output call_id={call_id}")
-                })?;
+                })?
+                else {
+                    continue;
+                };
                 let metadata = crate::git_util::resolve_commit_metadata(&call.cwd, &candidate)
                     .with_context(|| {
                         format!(
@@ -146,19 +152,18 @@ fn parse_commit_call(payload: &Value, fallback_cwd: &str) -> Result<Option<Commi
     else {
         return Ok(None);
     };
-    if !is_supported_commit_command(command)? {
-        return Ok(None);
-    }
-    let cwd = arguments
+    let base_cwd = arguments
         .get("workdir")
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or(fallback_cwd)
-        .to_string();
+        .unwrap_or(fallback_cwd);
+    let Some(cwd) = commit_workdir(command, base_cwd) else {
+        return Ok(None);
+    };
     Ok(Some(CommitCall {
         call_id: call_id.to_string(),
-        cwd,
+        cwd: cwd.to_string_lossy().into_owned(),
     }))
 }
 
@@ -182,7 +187,7 @@ fn codex_output_succeeded(output: &str) -> bool {
         .any(|line| line.trim() == "Process exited with code 0")
 }
 
-fn commit_candidate_from_output(output: &str) -> Result<String> {
+fn commit_candidate_from_output(output: &str) -> Result<Option<String>> {
     let pattern = Regex::new(r"(?m)^\[[^\]\r\n]*[ \t]([0-9a-fA-F]{7,64})\][^\r\n]*$")?;
     let candidates = pattern
         .captures_iter(output)
@@ -190,21 +195,30 @@ fn commit_candidate_from_output(output: &str) -> Result<String> {
         .map(|value| value.as_str().to_ascii_lowercase())
         .collect::<BTreeSet<_>>();
     match candidates.len() {
-        1 => Ok(candidates.into_iter().next().unwrap_or_default()),
-        0 => bail!("successful git commit output omitted a standard commit SHA line"),
+        1 => Ok(candidates.into_iter().next()),
+        0 => Ok(None),
         count => bail!("successful git commit output contained {count} commit SHA candidates"),
     }
 }
 
+#[cfg(test)]
 fn is_supported_commit_command(command: &str) -> Result<bool> {
-    let parsed = parse_shell_command(command)?;
+    Ok(commit_workdir(command, ".").is_some())
+}
+
+fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
+    let parsed = parse_shell_command(command).ok()?;
     if parsed.separators.iter().any(|separator| separator != "&&") {
-        return Ok(false);
+        return None;
     }
-    Ok(parsed
-        .segments
-        .last()
-        .is_some_and(|tokens| git_commit_segment(tokens)))
+    let (commit_segment, leading_segments) = parsed.segments.split_last()?;
+    let mut cwd = PathBuf::from(base_cwd);
+    for segment in leading_segments {
+        if !apply_literal_cd(segment, &mut cwd) {
+            return None;
+        }
+    }
+    git_commit_workdir(commit_segment, &cwd)
 }
 
 #[derive(Debug, Default)]
@@ -295,19 +309,41 @@ fn push_token(tokens: &mut Vec<String>, current: &mut String, in_token: &mut boo
     }
 }
 
-fn git_commit_segment(tokens: &[String]) -> bool {
-    let Some(mut index) = tokens.iter().position(|token| !is_env_assignment(token)) else {
+fn apply_literal_cd(tokens: &[String], cwd: &mut PathBuf) -> bool {
+    let Some(index) = tokens.iter().position(|token| !is_env_assignment(token)) else {
+        return true;
+    };
+    if tokens.get(index).map(String::as_str) != Some("cd") {
+        return true;
+    }
+    let target = match &tokens[index + 1..] {
+        [target] => target.as_str(),
+        [flag, target] if flag == "--" => target.as_str(),
+        _ => return false,
+    };
+    let Some(next) = resolve_literal_workdir(cwd, target) else {
         return false;
     };
+    *cwd = next;
+    true
+}
+
+fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {
+    let mut index = tokens.iter().position(|token| !is_env_assignment(token))?;
     if tokens.get(index).map(String::as_str) != Some("git") {
-        return false;
+        return None;
     }
     index += 1;
+    let mut cwd = base_cwd.to_path_buf();
     while let Some(token) = tokens.get(index) {
         match token.as_str() {
-            "commit" => return true,
-            "-C" | "-c" | "--exec-path" | "--git-dir" | "--work-tree" | "--namespace"
-            | "--super-prefix" => index += 2,
+            "commit" => return Some(cwd),
+            "-C" => {
+                let target = tokens.get(index + 1)?;
+                cwd = resolve_literal_workdir(&cwd, target)?;
+                index += 2;
+            }
+            "-c" => index += 2,
             "-p"
             | "--paginate"
             | "-P"
@@ -319,21 +355,28 @@ fn git_commit_segment(tokens: &[String]) -> bool {
             | "--noglob-pathspecs"
             | "--icase-pathspecs"
             | "--no-optional-locks" => index += 1,
-            value
-                if value.starts_with("-C")
-                    || value.starts_with("-c")
-                    || value.starts_with("--exec-path=")
-                    || value.starts_with("--git-dir=")
-                    || value.starts_with("--work-tree=")
-                    || value.starts_with("--namespace=")
-                    || value.starts_with("--super-prefix=") =>
-            {
-                index += 1
+            value if value.starts_with("-C") && value.len() > 2 => {
+                cwd = resolve_literal_workdir(&cwd, &value[2..])?;
+                index += 1;
             }
-            _ => return false,
+            value if value.starts_with("-c") && value.len() > 2 => index += 1,
+            _ => return None,
         }
     }
-    false
+    None
+}
+
+fn resolve_literal_workdir(base: &Path, target: &str) -> Option<PathBuf> {
+    if target.is_empty() || target.starts_with('~') || target.contains('$') || target.contains('`')
+    {
+        return None;
+    }
+    let target = Path::new(target);
+    Some(if target.is_absolute() {
+        target.to_path_buf()
+    } else {
+        base.join(target)
+    })
 }
 
 fn is_env_assignment(token: &str) -> bool {

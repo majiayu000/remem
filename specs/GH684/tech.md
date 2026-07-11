@@ -25,7 +25,6 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 | `observations_fts` | migrations triggers, timeline anchor search | Current trigger-maintained search index. | Keep with `observations`. |
 | `session_summaries` | `src/session_rollup/`, `src/db/summarize/session/`, context/timeline/user-context readers | Load-bearing table with duplicate writers. | Retire legacy Summary job chain, not the table. |
 | Stop hook side effects | `src/summarize/summary_job/`, `src/session_rollup/`, `src/worker.rs` | Summary path formerly owned other behaviors. | Preserve Compress/Dream/raw/citation/failure/candidate/native-memory side effects by re-homing each to Stop capture or SessionRollup worker side effects before removal. |
-| Observed commit evidence | `src/observe/`, `src/git_evidence.rs`, `src/captured_git.rs`, `src/git_trace.rs` | Current Rollup linker runs before its source and uses a different synthetic identity. | Accept only successful explicit commit results, persist 1:N typed evidence atomically, link the exact task range by `session_row_id`, and never infer from ordinary Stop or worker-time `HEAD`. |
 
 ## Design Rules
 
@@ -34,7 +33,6 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 - Drop migrations are guarded and refuse silent data loss.
 - `observations` wording changes are accuracy fixes, not deprecations.
 - Summary retirement is gated by field-level equivalence fixtures.
-- Commit traceability is deterministic capture provenance, not an LLM output.
 
 ## Proposed Design
 
@@ -50,11 +48,6 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
    `pending migrate-legacy` as the explicit migration path.
 7. Keep MCP and architecture docs from describing live observations as legacy.
 8. Ship any table drop only after a deprecation window and a guarded migration.
-9. Move observed-commit linking out of SessionRollup and into deterministic,
-   range-bounded phases owned by capture tasks. Prove commits from Claude Bash
-   results or byte-bounded Codex transcripts, persist 1:N typed evidence
-   atomically through spill replay, derive the rollup memory identity from
-   `session_row_id`, and surface link failures through extraction health.
 
 ## Product-to-Test Mapping
 
@@ -64,7 +57,6 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 | Legacy state visible | doctor/status | fixture DB doctor tests |
 | Summary equivalence | summarize/session_rollup | row-shape/content fixture tests |
 | Stop side effects preserved | Stop hook / worker | regression tests for Compress, Dream, raw, citation, candidates, native memory |
-| Commit trace is real and idempotent | observe / evidence parser / capture task / git trace | explicit-result-to-link, baseline rejection, bounded transcript, multi-range, retry, typed spill replay, and cross-host identity tests |
 | Pending queue safe retire | pending admin/migrations | real-db confirmation plus migration tests |
 | Wording fixed | MCP/docs | description tests or docs review |
 | Drops guarded | migrate/schema drift | guarded-drop refusal tests |
@@ -109,9 +101,22 @@ needed fields and side effects, then removes only the redundant Summary writer.
       archive ingest covers every Stop payload coalesced into the claimed range,
       deduplicates repeated transcript paths, and summary-derived candidate
       evidence is sourced from that exact range rather than the session-wide
-      latest capture.
-      Remaining blockers are #792, #794, #795, and #796; each has an independent
-      acceptance contract and must land without broadening the others.
+      latest capture. The #794 follow-up passes the same selected, byte-bounded
+      user/assistant transcript messages into the summarizer and candidate
+      support text, removes exact captured-event duplicates, and applies the
+      count, byte, and redaction budget once before either consumer. Migration
+      v066 persists that exact-range evidence plus raw archive completion so a
+      persisted-rollup retry does not reread an already-drained source file.
+      Each bounded Stop with assistant evidence also persists the final
+      message hash and structured citation facts outside the lossy prompt slice,
+      including every boundary of a repeated path. Early v066 JSON replays its
+      original bounded message hash for upgrade idempotency, preserving
+      citation replay after per-message/global eviction or source deletion. A
+      legacy Stop without a boundary skips transcript supplementation when the
+      range has captured user/assistant evidence; without that fallback it
+      fails permanently before AI. Missing, malformed, or unusable required
+      bounded evidence still blocks the first AI call.
+      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, and retries remain idempotent. T7 remains open for #795 and #796.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary
@@ -129,8 +134,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `transcript_path` plus its captured byte boundary for worker-side raw
       archive ingest, persisted SessionRollup side effects re-home
       summary-derived candidates, workstream upsert, native memory sync, and
-      follow-up scheduling. Full T7 completion remains blocked by #792, #794,
-      #795, and #796. Old-version daemon heartbeats and legacy singleton locks do not
+      follow-up scheduling plus exact-range observed commit linking. Full T7
+      completion remains blocked by #795 and #796. Old-version daemon heartbeats and legacy singleton locks do not
       suppress the current Stop fallback worker, current once-launch
       heartbeats prevent overlapping fallback workers, workers claim
       extraction tasks before Compress/Dream jobs, and the worker rejects
@@ -143,11 +148,22 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `session_rollup_worker_drains_raw_archive_from_stop_payload`,
       `session_rollup_drains_every_coalesced_stop_payload`,
       `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`,
+      `session_rollup_prompt_includes_only_bounded_transcript_text`,
+      `session_rollup_prompt_does_not_duplicate_captured_message_text`,
+      `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
+      `persisted_citation_evidence_keeps_long_assistant_tail`,
+      `persisted_citation_evidence_survives_cross_stop_prompt_eviction`,
+      `persisted_citation_evidence_covers_each_boundary_of_repeated_path`,
+      `legacy_v066_citation_message_hash_stays_idempotent`,
+      `total_budget_never_retains_empty_utf8_message`,
       `session_rollup_candidate_evidence_stays_with_claimed_range`,
       `session_rollup_honors_stop_transcript_snapshot_boundary`,
       `session_rollup_retries_transcript_side_effects_without_resummarizing`,
       `session_rollup_rehomes_finalize_side_effects`,
       `session_rollup_enqueues_followup_jobs_after_rollup`,
+      `captured_commit_evidence_links_exact_range`,
+      `captured_commit_link_retry_is_idempotent`,
+      `replayed_observe_spill_preserves_commit_snapshot_when_head_moves`,
       `replay_capture_failure_is_preserved_once_by_replay_layer`,
       `replay_capture_is_idempotent_without_hook_followup_jobs`,
       `duplicate_fixed_event_id_does_not_revive_done_task`,
@@ -161,13 +177,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `legacy_surfaces_ignore_upgrade_summary_rejections_but_report_worker_rejections`,
       `upgrade_summary_rejections_are_not_actionable_but_worker_rejections_are`.
 - [ ] Pending legacy migration and guarded-drop tests.
-- [x] #792 commit evidence tests prove explicit successful-result capture,
-      baseline `HEAD` rejection, exact-range deterministic linking,
-      byte-bounded multi-commit transcripts, retry and multi-range idempotency,
-      typed spill replay after `HEAD` changes, cross-host row identity, and
-      latest-summary lookup without duplicate rows.
 - [x] MCP/docs wording verification.
-- [x] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
+- [ ] `cargo fmt --check`, `cargo check`, focused tests, and `cargo test`
       before merge readiness.
 
 ## Rollback Plan

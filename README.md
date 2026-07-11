@@ -382,6 +382,11 @@ api_key_env = "OPENAI_API_KEY"
 model_dir = ""            # future local model cache; defaults under REMEM_DATA_DIR
 ```
 
+On Intel macOS (`darwin-x64`) release binaries, the `local` ONNX provider is
+not compiled in because ONNX Runtime ships no prebuilt library for that
+platform; embedding falls back to `feature-hash` (or `api` if configured), and
+`remem status` / `remem doctor` report the provider state explicitly.
+
 Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
 `REMEM_EMBEDDINGS_PROVIDER`, `REMEM_EMBEDDINGS_FALLBACK`,
 `REMEM_EMBEDDINGS_MODEL`, `REMEM_EMBEDDINGS_MODEL_DIR`,

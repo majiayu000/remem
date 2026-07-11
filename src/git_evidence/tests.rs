@@ -80,14 +80,14 @@ fn commit_command_requires_commit_as_last_success_chained_segment() -> Result<()
 #[test]
 fn parses_standard_git_commit_output_candidate() -> Result<()> {
     assert_eq!(
-        commit_candidate_from_output("[main (root-commit) a1b2c3d] first\n")?,
-        "a1b2c3d"
+        commit_candidate_from_output("[main (root-commit) a1b2c3d] first\n")?.as_deref(),
+        Some("a1b2c3d")
     );
     assert_eq!(
-        commit_candidate_from_output("[detached HEAD deadbeef] amend\n")?,
-        "deadbeef"
+        commit_candidate_from_output("[detached HEAD deadbeef] amend\n")?.as_deref(),
+        Some("deadbeef")
     );
-    assert!(commit_candidate_from_output("[main abcd] too short\n").is_err());
+    assert!(commit_candidate_from_output("[main abcd] too short\n")?.is_none());
     Ok(())
 }
 
@@ -173,5 +173,123 @@ fn failed_explicit_commit_does_not_create_evidence() -> Result<()> {
         exit_code: Some(1),
     };
     assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn successful_commit_without_sha_proof_is_not_an_extraction_error() -> Result<()> {
+    let event = ParsedHookEvent {
+        session_id: "quiet-commit".to_string(),
+        cwd: Some("/tmp".to_string()),
+        project: "/tmp".to_string(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": "git commit -q -m done"})),
+        tool_response: Some(serde_json::json!({"stdout": ""})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "quiet commit".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn unsupported_shell_syntax_is_not_a_commit_extraction_error() -> Result<()> {
+    let event = ParsedHookEvent {
+        session_id: "ordinary-shell".to_string(),
+        cwd: Some("/tmp".to_string()),
+        project: "/tmp".to_string(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": "echo ok;"})),
+        tool_response: Some(serde_json::json!({"stdout": "ok"})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "ordinary shell".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn observed_commit_resolves_git_dash_c_effective_workdir() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-dash-c");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let event = ParsedHookEvent {
+        session_id: "dash-c".to_string(),
+        cwd: Some(test_dir.path.to_string_lossy().into_owned()),
+        project: test_dir.path.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({
+            "command": format!("git -C {} commit -m done", repo.display())
+        })),
+        tool_response: Some(serde_json::json!({
+            "stdout": format!("[main {}] commit a", &sha[..7])
+        })),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "commit".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    let evidence = from_observed_event(&event, &summary)?;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
+    assert_eq!(
+        Path::new(&evidence[0].metadata.repo_path),
+        repo.canonicalize()?
+    );
+    Ok(())
+}
+
+#[test]
+fn observed_commit_resolves_chained_cd_effective_workdir() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-chained-cd");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let event = ParsedHookEvent {
+        session_id: "chained-cd".to_string(),
+        cwd: Some(test_dir.path.to_string_lossy().into_owned()),
+        project: test_dir.path.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": "cd repo && git commit -m done"})),
+        tool_response: Some(serde_json::json!({
+            "stdout": format!("[main {}] commit a", &sha[..7])
+        })),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "commit".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    let evidence = from_observed_event(&event, &summary)?;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
+    assert_eq!(
+        Path::new(&evidence[0].metadata.repo_path),
+        repo.canonicalize()?
+    );
     Ok(())
 }

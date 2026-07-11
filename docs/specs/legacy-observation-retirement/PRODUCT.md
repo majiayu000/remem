@@ -50,9 +50,7 @@ Costs of the dual path:
 
 - No second rewrite. `current-memory-contracts/` explicitly forbids it; this
   spec converges surfaces onto the pipeline that already won.
-- No second capture rewrite. Correctness fixes may add deterministic provenance
-  to the capture ledger, but they must not remove LLM extraction, infer intent,
-  or replace captured evidence with worker-time state.
+- No behavior change to the capture-ledger path itself.
 - No silent dropping of tables in a routine migration. Every drop ships with
   its own migration, release note, and doctor pre-check.
 - Timeline and context features do not lose capability; they change data
@@ -138,8 +136,33 @@ Acceptance:
   observation-session prefix.
 - Every distinct commit in a range is linked, while no evidence produces no
   link. Retries and later ranges do not duplicate links.
-- A captured commit that cannot be validated or linked leaves a diagnosable
+- Missing or ambiguous commit proof never drops the surrounding capture.
+  Evidence that was durably captured but cannot be linked remains a visible
   extraction failure instead of a successful no-op.
+
+### Bounded Rollup Evidence
+
+As a user, a transcript-backed Stop capture produces a summary from the actual
+conversation text captured at that Stop boundary rather than from transcript
+path metadata alone.
+
+Acceptance:
+
+- Selected transcript paths use the widest boundary covered by the claimed
+  event range and never read bytes appended after that boundary.
+- User/assistant transcript messages enter the rollup prompt as bounded,
+  deterministic, redacted, XML-escaped data anchored to a covered Stop event;
+  candidate support and persisted retries consume the same bounded slice.
+- Exact text already represented by a captured event is not repeated, and a
+  legacy missing boundary may use captured conversational events only. Without
+  that fallback it fails permanently; a missing, malformed, or unusable
+  required bounded snapshot fails before a metadata-only summary can persist.
+- Successful raw ingest and the exact-range evidence slice are checkpointed so
+  remaining side effects can retry after the source transcript disappears.
+- Per-Stop citation facts and the original assistant-message hash are persisted
+  separately from the lossy prompt slice, so per-message or global prompt
+  eviction cannot change citation usage during a source-free retry. Distinct
+  Stop boundaries on one repeated path remain distinct citation evidence.
 
 ## Rollout
 
