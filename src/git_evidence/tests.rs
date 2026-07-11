@@ -63,12 +63,18 @@ fn codex_output(call_id: &str, exit_code: i32, output: &str) -> String {
 }
 
 #[test]
-fn commit_command_requires_commit_as_last_success_chained_segment() {
+fn commit_command_allows_only_attributable_success_chained_segments() {
     assert!(is_supported_commit_command("git commit -m done"));
     assert!(is_supported_commit_command(
         "git add src/lib.rs && git -c user.name=test commit -m done"
     ));
+    assert!(is_supported_commit_command(
+        "git commit -m done && git status --short"
+    ));
     assert!(!is_supported_commit_command("echo git commit -m fake"));
+    assert!(!is_supported_commit_command(
+        "git commit -m done && echo '[main deadbee] spoof'"
+    ));
     assert!(!is_supported_commit_command("git commit -m done; true"));
     assert!(!is_supported_commit_command("git commit -m done || true"));
     assert!(!is_supported_commit_command("git commit -m done | tee log"));
@@ -145,6 +151,83 @@ fn codex_transcript_captures_multiple_successful_commits_within_boundary() -> Re
         .find(|item| item.metadata.sha == sha_b)
         .and_then(|item| item.metadata.branch.as_deref())
         .is_some());
+    Ok(())
+}
+
+#[test]
+fn codex_transcript_keeps_proven_commit_when_later_call_is_ambiguous() -> Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("codex-commit-evidence-ambiguous");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let other_candidate = if &sha[..7] == "deadbee" {
+        "cafebab"
+    } else {
+        "deadbee"
+    };
+    let lines = [
+        codex_call("call-proven", "git commit -m 'commit a'", &repo),
+        codex_output(
+            "call-proven",
+            0,
+            &format!("[main (root-commit) {}] commit a", &sha[..7]),
+        ),
+        codex_call("call-ambiguous", "git commit -m ambiguous", &repo),
+        codex_output(
+            "call-ambiguous",
+            0,
+            &format!(
+                "[main {}] first candidate\n[main {other_candidate}] second candidate",
+                &sha[..7]
+            ),
+        ),
+    ];
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let bounded = format!("{}\n", lines.join("\n"));
+    std::fs::write(&transcript, &bounded)?;
+
+    let evidence = from_codex_transcript(
+        transcript.to_string_lossy().as_ref(),
+        bounded.len() as u64,
+        repo.to_string_lossy().as_ref(),
+    )?;
+
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
+    Ok(())
+}
+
+#[test]
+fn codex_transcript_resolves_relative_workdir_against_stop_cwd() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("codex-relative-workdir");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let lines = [
+        codex_call("call-relative", "git commit -m done", Path::new("repo")),
+        codex_output(
+            "call-relative",
+            0,
+            &format!("[main (root-commit) {}] commit a", &sha[..7]),
+        ),
+    ];
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let bounded = format!("{}\n", lines.join("\n"));
+    std::fs::write(&transcript, &bounded)?;
+
+    let evidence = from_codex_transcript(
+        transcript.to_string_lossy().as_ref(),
+        bounded.len() as u64,
+        test_dir.path.to_string_lossy().as_ref(),
+    )?;
+
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
+    assert_eq!(
+        Path::new(&evidence[0].metadata.repo_path),
+        repo.canonicalize()?
+    );
     Ok(())
 }
 
@@ -320,5 +403,38 @@ fn observed_commit_resolves_chained_cd_effective_workdir() -> Result<()> {
         Path::new(&evidence[0].metadata.repo_path),
         repo.canonicalize()?
     );
+    Ok(())
+}
+
+#[test]
+fn observed_commit_allows_trailing_git_status() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-status-after");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let event = ParsedHookEvent {
+        session_id: "status-after-commit".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({
+            "command": "git commit -m done && git status --short"
+        })),
+        tool_response: Some(serde_json::json!({
+            "stdout": format!("[main {}] commit a", &sha[..7])
+        })),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "commit followed by status".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    let evidence = from_observed_event(&event, &summary)?;
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
     Ok(())
 }

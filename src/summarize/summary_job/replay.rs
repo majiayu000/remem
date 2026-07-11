@@ -22,6 +22,19 @@ pub(super) fn replay_capture_event_id(
     format!("session_stop-spill-{suffix}")
 }
 
+pub(super) fn replay_git_evidence_event_id(
+    host: &str,
+    project: &str,
+    session_id: &str,
+    input: &str,
+    evidence_content: &str,
+) -> String {
+    let seed = format!("{host}\n{project}\n{session_id}\n{input}\n{evidence_content}");
+    let digest = crate::db::content_identity_hash(seed.as_bytes());
+    let suffix = digest.rsplit(':').next().unwrap_or(digest.as_str());
+    format!("commit_evidence-spill-{suffix}")
+}
+
 #[cfg(test)]
 mod tests {
     use crate::db::{self, test_support::ScopedTestDataDir};

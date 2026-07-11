@@ -130,7 +130,10 @@ Acceptance:
   resolves metadata for that exact SHA before the event is written or spilled,
   and stores the evidence atomically with the capture event.
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
-  commit links. A byte-bounded Codex transcript may prove multiple commits.
+  commit links. A byte-bounded Codex transcript may prove multiple commits;
+  one ambiguous call does not erase earlier proven calls, relative workdirs
+  are anchored to the Stop cwd, and a safe trailing `git status` is supported
+  without accepting arbitrary trailing shell output.
 - Deterministic linking uses the exact claimed event range and durable
   `session_row_id`; it does not depend on an LLM result or a synthetic
   observation-session prefix.
@@ -139,6 +142,8 @@ Acceptance:
 - If idempotent replay recovers evidence only after the original extraction
   cursor passed its event, a bounded link-only task consumes that evidence
   without rerunning model extraction, summaries, or their side effects.
+  Same-identity Stop spill retries use one deterministic evidence event and
+  the same link-only path.
 - Missing or ambiguous commit proof never drops the surrounding capture.
   Evidence that was durably captured but cannot be linked remains a visible
   extraction failure instead of a successful no-op.

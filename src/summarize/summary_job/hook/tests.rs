@@ -3,7 +3,8 @@ use std::sync::Mutex;
 use crate::db::{self, test_support::ScopedTestDataDir};
 
 use super::{
-    record_summary_capture_event, resolve_hook_host, summarize_input, summary_payload_with_cwd,
+    record_replayed_git_evidence_only, record_summary_capture_event, resolve_hook_host,
+    summarize_input, summary_payload_with_cwd,
 };
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -434,6 +435,66 @@ async fn summarize_hook_replays_same_session_spill_for_different_project() -> an
     )?;
     assert_eq!(event_count, 2);
     assert!(!super::super::spill::summary_spill_path().exists());
+    Ok(())
+}
+
+#[test]
+fn replayed_same_identity_git_evidence_is_idempotent_and_link_only() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("summary-replayed-git-evidence-link-only");
+    let mut conn = db::open_db()?;
+    let sha = "abcdef1234567890abcdef1234567890abcdef12";
+    let record: super::super::spill::SummaryHookSpillRecord =
+        serde_json::from_value(serde_json::json!({
+            "version": 2,
+            "input": serde_json::json!({
+                "session_id": "sess-replayed-git-evidence-link-only",
+                "cwd": "/tmp/remem"
+            }).to_string(),
+            "host": "codex-cli",
+            "profile": null,
+            "git_evidence": [{
+                "kind": "observed_commit",
+                "metadata": {
+                    "repo_path": "/tmp/remem",
+                    "sha": sha,
+                    "short_sha": "abcdef1",
+                    "branch": "main",
+                    "message": "commit",
+                    "authored_at_epoch": 1_700_000_000,
+                    "changed_files": ["src/lib.rs"]
+                },
+                "locator": "replayed_spill"
+            }],
+            "db_error": "database unavailable",
+            "created_at_epoch": 1_700_000_000
+        }))?;
+
+    record_replayed_git_evidence_only(&conn, &record)?;
+    record_replayed_git_evidence_only(&conn, &record)?;
+
+    let event_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events
+         WHERE session_id = 'sess-replayed-git-evidence-link-only'
+           AND event_type = 'commit_evidence'",
+        [],
+        |row| row.get(0),
+    )?;
+    let task_kinds: Vec<String> = {
+        let mut statement = conn.prepare("SELECT task_kind FROM extraction_tasks ORDER BY id")?;
+        let rows = statement
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        rows
+    };
+    assert_eq!(event_count, 1);
+    assert_eq!(task_kinds, vec!["captured_git_link"]);
+
+    let task = db::claim_next_extraction_task(&mut conn, "worker-replayed-link", 60)?
+        .expect("replayed evidence should enqueue link-only work");
+    assert_eq!(task.task_kind, db::ExtractionTaskKind::CapturedGitLink);
+    let linked = crate::captured_git::link_task_range(&mut conn, &task)?;
+    assert_eq!(linked.len(), 1);
+    assert_eq!(linked[0].sha, sha);
     Ok(())
 }
 

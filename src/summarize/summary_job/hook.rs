@@ -9,7 +9,7 @@ use crate::perf::{format_phase_timings, push_elapsed, time_result, PhaseTiming};
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 use super::host::resolve_hook_host;
-use super::replay::{replay_capture_event_id, SummaryPayloadOrigin};
+use super::replay::{replay_capture_event_id, replay_git_evidence_event_id, SummaryPayloadOrigin};
 use super::spill::{
     replay_spilled_summary_hook_payloads, spill_summary_hook_payload,
     spill_summary_hook_payload_with_git_evidence,
@@ -434,17 +434,20 @@ fn record_replayed_git_evidence_only(
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(record.host.as_deref())?;
-    let shas = record
+    let mut shas = record
         .git_evidence
         .iter()
         .map(|evidence| evidence.metadata.sha.as_str())
         .collect::<Vec<_>>();
+    shas.sort_unstable();
+    shas.dedup();
     let content = serde_json::json!({
         "source": "replayed_stop_commit_evidence",
         "commit_shas": shas,
     })
     .to_string();
-    let event_id = db::unique_capture_event_id("commit_evidence", &content);
+    let event_id =
+        replay_git_evidence_event_id(&host, &project, session_id, &record.input, &content);
     db::record_captured_event_with_id_and_reference_time_and_git_evidence(
         conn,
         &db::CaptureEventInput {
@@ -456,7 +459,7 @@ fn record_replayed_git_evidence_only(
             role: None,
             tool_name: None,
             content: &content,
-            task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
+            task_kind: Some(db::ExtractionTaskKind::CapturedGitLink),
         },
         Some(&event_id),
         None,

@@ -96,11 +96,18 @@ pub(crate) fn from_codex_transcript(
                 if !codex_output_succeeded(output) {
                     continue;
                 }
-                let Some(candidate) = commit_candidate_from_output(output).with_context(|| {
-                    format!("parse successful git commit output call_id={call_id}")
-                })?
-                else {
-                    continue;
+                let candidate = match commit_candidate_from_output(output) {
+                    Ok(Some(candidate)) => candidate,
+                    Ok(None) => continue,
+                    Err(error) => {
+                        crate::log::error(
+                            "git-evidence",
+                            &format!(
+                                "skipped ambiguous successful commit output call_id={call_id}: {error}"
+                            ),
+                        );
+                        continue;
+                    }
                 };
                 let metadata = crate::git_util::resolve_commit_metadata(&call.cwd, &candidate)
                     .with_context(|| {
@@ -152,13 +159,22 @@ fn parse_commit_call(payload: &Value, fallback_cwd: &str) -> Result<Option<Commi
     else {
         return Ok(None);
     };
-    let base_cwd = arguments
+    let workdir = arguments
         .get("workdir")
         .and_then(Value::as_str)
         .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(fallback_cwd);
-    let Some(cwd) = commit_workdir(command, base_cwd) else {
+        .filter(|value| !value.is_empty());
+    let base_cwd = match workdir {
+        Some(workdir) => {
+            let Some(resolved) = resolve_literal_workdir(Path::new(fallback_cwd), workdir) else {
+                return Ok(None);
+            };
+            resolved
+        }
+        None => PathBuf::from(fallback_cwd),
+    };
+    let base_cwd = base_cwd.to_string_lossy();
+    let Some(cwd) = commit_workdir(command, base_cwd.as_ref()) else {
         return Ok(None);
     };
     Ok(Some(CommitCall {
@@ -210,18 +226,27 @@ fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
     if parsed.separators.iter().any(|separator| separator != "&&") {
         return None;
     }
-    let (commit_segment, leading_segments) = parsed.segments.split_last()?;
     let mut cwd = PathBuf::from(base_cwd);
-    for segment in leading_segments {
-        if apply_literal_cd(segment, &mut cwd) {
-            continue;
+    let mut commit_cwd = None;
+    for segment in &parsed.segments {
+        if commit_cwd.is_none() {
+            if apply_literal_cd(segment, &mut cwd) {
+                continue;
+            }
+            if is_supported_git_add(segment) {
+                continue;
+            }
+            if let Some(resolved) = git_commit_workdir(segment, &cwd) {
+                commit_cwd = Some(resolved);
+                continue;
+            }
+            return None;
         }
-        if is_supported_git_add(segment) {
-            continue;
+        if !is_supported_post_commit_segment(segment, &cwd) {
+            return None;
         }
-        return None;
     }
-    git_commit_workdir(commit_segment, &cwd)
+    commit_cwd
 }
 
 #[derive(Debug, Default)]
@@ -333,6 +358,10 @@ fn apply_literal_cd(tokens: &[String], cwd: &mut PathBuf) -> bool {
 
 fn is_supported_git_add(tokens: &[String]) -> bool {
     matches!(git_subcommand(tokens, Path::new(".")), Some(("add", _)))
+}
+
+fn is_supported_post_commit_segment(tokens: &[String], cwd: &Path) -> bool {
+    matches!(git_subcommand(tokens, cwd), Some(("status", _)))
 }
 
 fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {

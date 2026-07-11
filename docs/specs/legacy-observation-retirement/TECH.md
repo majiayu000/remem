@@ -294,6 +294,10 @@ worker-time `HEAD`, is the authoritative commit source.
 2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
    Stop pairs shell calls and outputs from the captured transcript byte range,
    so one Stop may prove multiple commits without reading bytes appended later.
+   Relative transcript workdirs resolve against the Stop cwd, an allowlisted
+   trailing `git status` does not hide an earlier proven commit, and one
+   ambiguous call is logged and skipped without erasing commits already proven
+   by other calls in the same boundary.
 3. Each proven commit is stored atomically with its captured event in the 1:N
    `captured_event_commits` table. Encrypted spill records preserve the same
    typed evidence; replay never re-reads the repository's later `HEAD`.
@@ -307,6 +311,9 @@ worker-time `HEAD`, is the authoritative commit source.
    enqueues an idempotent, single-event `captured_git_link` task. The worker
    performs only deterministic linking for this task: it must not call AI,
    write a summary, rerun rollup side effects, or enqueue follow-up work.
+   Same-identity Stop spill recovery also uses a content-derived event ID and
+   this link-only task so a retry cannot duplicate the synthetic event or run
+   ObservationExtract.
 6. The link phase runs independently of model extraction. AI timeout,
    malformed output, explicit `no_observations`, dedup, and zero inserts cannot
    erase an already captured deterministic commit relationship.
