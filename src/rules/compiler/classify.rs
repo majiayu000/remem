@@ -68,13 +68,10 @@ pub fn classify_preference_predicate(text: &str) -> Option<PreferenceClassificat
 
 fn classify_package_manager(lower: &str) -> Option<PreferenceClassification> {
     for (avoided, pattern) in PACKAGE_MANAGER_PREDICATES {
-        if !contains_word(lower, avoided) || !explicitly_avoids_manager(lower, avoided) {
-            continue;
-        }
-        let has_preferred_alternative = PACKAGE_MANAGERS
-            .iter()
-            .any(|manager| manager != avoided && contains_word(lower, manager));
-        if has_preferred_alternative {
+        for preferred in PACKAGE_MANAGERS {
+            if preferred == avoided || !directly_prefers_manager(lower, preferred, avoided) {
+                continue;
+            }
             return Some(PreferenceClassification {
                 predicate: PreferencePredicate::CommandRegex {
                     pattern: (*pattern).to_string(),
@@ -90,13 +87,24 @@ fn classify_package_manager(lower: &str) -> Option<PreferenceClassification> {
     None
 }
 
+fn directly_prefers_manager(lower: &str, preferred: &str, avoided: &str) -> bool {
+    [
+        format!("use {preferred}, not {avoided}"),
+        format!("use {preferred} instead of {avoided}"),
+        format!("use {preferred} rather than {avoided}"),
+        format!("prefer {preferred} over {avoided}"),
+    ]
+    .iter()
+    .any(|directive| has_unambiguous_directive(lower, directive))
+}
+
 fn classify_commit_trailer(lower: &str) -> Option<PreferenceClassification> {
     if !(lower.contains("trailer") || lower.contains("commit")) {
         return None;
     }
     for trailer in KNOWN_TRAILERS {
         let trailer_lower = trailer.to_lowercase();
-        if explicitly_forbids_term(lower, &trailer_lower) {
+        if directly_forbids_term(lower, &trailer_lower) {
             return Some(PreferenceClassification {
                 predicate: PreferencePredicate::CommitTrailerForbidden {
                     trailer: (*trailer).to_string(),
@@ -109,109 +117,58 @@ fn classify_commit_trailer(lower: &str) -> Option<PreferenceClassification> {
     None
 }
 
-fn explicitly_avoids_manager(lower: &str, manager: &str) -> bool {
-    if negates_avoidance(lower, manager) {
-        return false;
-    }
+fn directly_forbids_term(lower: &str, term: &str) -> bool {
     [
-        format!("not {manager}"),
-        format!("not use {manager}"),
-        format!("don't use {manager}"),
-        format!("dont use {manager}"),
-        format!("do not use {manager}"),
-        format!("avoid {manager}"),
-        format!("never use {manager}"),
-        format!("no {manager}"),
-        format!("without {manager}"),
-        format!("ban {manager}"),
-        format!("forbid {manager}"),
-        format!("instead of {manager}"),
-        format!("rather than {manager}"),
+        format!("do not add {term}"),
+        format!("do not add the {term}"),
+        format!("do not include {term}"),
+        format!("do not include the {term}"),
+        format!("do not use {term}"),
+        format!("do not use the {term}"),
+        format!("don't add {term}"),
+        format!("don't add the {term}"),
+        format!("don't include {term}"),
+        format!("don't include the {term}"),
+        format!("dont add {term}"),
+        format!("dont add the {term}"),
+        format!("dont include {term}"),
+        format!("dont include the {term}"),
+        format!("never add {term}"),
+        format!("never add the {term}"),
+        format!("never include {term}"),
+        format!("never include the {term}"),
+        format!("never use {term}"),
+        format!("never use the {term}"),
     ]
     .iter()
-    .any(|phrase| lower.contains(phrase))
-        || (lower.contains("prefer ") && lower.contains(&format!(" over {manager}")))
+    .any(|directive| has_unambiguous_directive(lower, directive))
 }
 
-fn explicitly_forbids_term(lower: &str, term: &str) -> bool {
-    if negates_avoidance(lower, term) {
-        return false;
-    }
-    [
-        "avoid",
-        "ban",
-        "do not add",
-        "do not include",
-        "do not use",
-        "don't add",
-        "don't include",
-        "dont add",
-        "dont include",
-        "exclude",
-        "forbid",
-        "never add",
-        "never include",
-        "no",
-        "omit",
-        "without",
-    ]
-    .iter()
-    .any(|marker| {
-        lower.contains(&format!("{marker} {term}"))
-            || lower.contains(&format!("{marker} the {term}"))
-    })
-}
-
-fn negates_avoidance(lower: &str, term: &str) -> bool {
-    const AVOIDANCE_VERBS: &[&str] = &["avoid", "ban", "exclude", "forbid", "omit"];
+fn has_unambiguous_directive(lower: &str, directive: &str) -> bool {
     lower
-        .split([',', ';', ':', '.', '!', '?', '\n', '\r'])
+        .split([';', '.', '!', '?', '\n', '\r'])
+        .map(str::trim)
         .any(|clause| {
-            let tokens = clause
-                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-' && ch != '\'')
+            let Some(remainder) = clause.strip_prefix(directive) else {
+                return false;
+            };
+            if remainder
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+            {
+                return false;
+            }
+            !remainder
+                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '\'')
                 .filter(|token| !token.is_empty())
-                .collect::<Vec<_>>();
-
-            tokens.iter().enumerate().any(|(term_index, token)| {
-                if *token != term {
-                    return false;
-                }
-                let marker_index = match term_index.checked_sub(1) {
-                    Some(index) if tokens[index] == "the" => index.checked_sub(1),
-                    index => index,
-                };
-                let Some(marker_index) = marker_index else {
-                    return false;
-                };
-                if !AVOIDANCE_VERBS.contains(&tokens[marker_index]) {
-                    return false;
-                }
-
-                // Scan the whole clause rather than a fixed token window. If
-                // any earlier lexical negator can scope over the avoidance
-                // verb, polarity is unsafe to infer and classification fails
-                // closed instead of compiling the opposite rule.
-                tokens[..marker_index].iter().any(|token| {
+                .any(|token| {
                     matches!(
-                        *token,
-                        "not"
-                            | "never"
-                            | "no"
-                            | "cannot"
-                            | "cant"
-                            | "dont"
-                            | "hardly"
-                            | "rarely"
-                            | "scarcely"
+                        token,
+                        "not" | "never" | "no" | "cannot" | "cant" | "dont" | "unless" | "except"
                     ) || token.ends_with("n't")
                 })
-            })
         })
-}
-
-fn contains_word(text: &str, needle: &str) -> bool {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
-        .any(|word| word == needle)
 }
 
 #[cfg(test)]
@@ -271,6 +228,7 @@ mod tests {
             "There is no reason to avoid npm; use npm instead of yarn",
             "There is no good reason whatsoever to avoid npm; use npm instead of yarn",
             "You shouldn't avoid npm; use npm instead of yarn",
+            "Never, under any circumstances, avoid npm; use npm instead of yarn",
         ] {
             let Some(classification) = classify_preference_predicate(text) else {
                 panic!("the explicit yarn avoidance should classify: {text}");
@@ -289,6 +247,7 @@ mod tests {
             "Never forbid the Co-Authored-By commit trailer; always add it",
             "There is no reason to omit the Co-Authored-By commit trailer",
             "There is no good reason whatsoever to omit the Co-Authored-By commit trailer",
+            "There is no good reason, whatsoever, to omit the Co-Authored-By commit trailer",
         ] {
             assert!(
                 classify_preference_predicate(text).is_none(),
@@ -327,5 +286,11 @@ mod tests {
         assert!(classify_preference_predicate("I like clean code and short functions").is_none());
         // Mentions npm but with no preferred alternative or avoidance choice.
         assert!(classify_preference_predicate("npm is a package manager").is_none());
+        assert!(classify_preference_predicate(
+            "Never, under any circumstances, avoid npm; yarn remains available"
+        )
+        .is_none());
+        assert!(classify_preference_predicate("Not only npm but yarn").is_none());
+        assert!(classify_preference_predicate("Never use bun instead of npm").is_none());
     }
 }

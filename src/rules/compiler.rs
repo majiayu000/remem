@@ -87,7 +87,13 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
     let data_dir = crate::db::absolute_data_dir()?;
     let artifact_path = artifact_path_for_project(&data_dir, project);
 
-    let artifact = match compile_project_rules(&conn, project, config) {
+    let mut conflict_messages = Vec::new();
+    let artifact = match compile_project_rules_with_conflicts(
+        &conn,
+        project,
+        config,
+        &mut conflict_messages,
+    ) {
         Ok(artifact) => artifact,
         Err(error) => {
             record_diagnostic(&conn, project, "error", &error.to_string(), None, None);
@@ -104,21 +110,14 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         load_artifact_fail_open(&artifact_path),
         ArtifactLoad::Loaded(existing) if existing.rules == artifact.rules
     ) {
-        let latest = latest_compile_diagnostic(&conn, project)
-            .with_context(|| format!("failed to load latest compile diagnostic for {project}"))?;
-        if latest
-            .as_ref()
-            .is_none_or(|(latest_status, _)| latest_status != "ok")
-        {
-            record_diagnostic(
-                &conn,
-                project,
-                "ok",
-                &format!("compiled {rule_count} rule(s)"),
-                Some(rule_count),
-                Some(&artifact_path.display().to_string()),
-            );
-        }
+        record_compile_success(
+            &conn,
+            project,
+            rule_count,
+            &artifact_path,
+            false,
+            &conflict_messages,
+        )?;
         return Ok(Some(CompileOutcome {
             project: project.to_string(),
             rule_count,
@@ -137,14 +136,14 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
         return Err(error);
     }
 
-    record_diagnostic(
+    record_compile_success(
         &conn,
         project,
-        "ok",
-        &format!("compiled {rule_count} rule(s)"),
-        Some(rule_count),
-        Some(&artifact_path.to_string_lossy()),
-    );
+        rule_count,
+        &artifact_path,
+        true,
+        &conflict_messages,
+    )?;
     Ok(Some(CompileOutcome {
         project: project.to_string(),
         rule_count,
@@ -159,6 +158,15 @@ pub fn compile_project_rules(
     conn: &Connection,
     project: &str,
     config: RuleCompilationConfig,
+) -> Result<CompiledRulesArtifact> {
+    compile_project_rules_with_conflicts(conn, project, config, &mut Vec::new())
+}
+
+fn compile_project_rules_with_conflicts(
+    conn: &Connection,
+    project: &str,
+    config: RuleCompilationConfig,
+    conflict_messages: &mut Vec<String>,
 ) -> Result<CompiledRulesArtifact> {
     let now = chrono::Utc::now().timestamp();
     let eligible = select_eligible_preferences(conn, project, config.min_reinforcement, now)?;
@@ -177,17 +185,10 @@ pub fn compile_project_rules(
         })?;
         let conflict_key = classification.predicate.conflict_key();
         if !seen_conflicts.insert(conflict_key.clone()) {
-            record_diagnostic(
-                conn,
-                project,
-                "warn",
-                &format!(
-                    "dropped preference #{} superseded by newer conflicting rule ({conflict_key})",
-                    pref.memory_id
-                ),
-                None,
-                None,
-            );
+            conflict_messages.push(format!(
+                "dropped preference #{} superseded by newer conflicting rule ({conflict_key})",
+                pref.memory_id
+            ));
             continue;
         }
 
@@ -369,6 +370,50 @@ fn record_diagnostic(
             &format!("failed to record compile diagnostic for {project}: {error}"),
         );
     }
+}
+
+fn record_compile_success(
+    conn: &Connection,
+    project: &str,
+    rule_count: usize,
+    artifact_path: &std::path::Path,
+    artifact_changed: bool,
+    conflict_messages: &[String],
+) -> Result<()> {
+    if !conflict_messages.is_empty() {
+        let mut conflicts = conflict_messages.to_vec();
+        conflicts.sort();
+        record_diagnostic(
+            conn,
+            project,
+            "warn",
+            &format!(
+                "compiled {rule_count} rule(s) with conflicts: {}",
+                conflicts.join("; ")
+            ),
+            Some(rule_count),
+            Some(&artifact_path.display().to_string()),
+        );
+        return Ok(());
+    }
+
+    let latest = latest_compile_diagnostic(conn, project)
+        .with_context(|| format!("failed to load latest compile diagnostic for {project}"))?;
+    if artifact_changed
+        || latest
+            .as_ref()
+            .is_none_or(|(latest_status, _)| latest_status != "ok")
+    {
+        record_diagnostic(
+            conn,
+            project,
+            "ok",
+            &format!("compiled {rule_count} rule(s)"),
+            Some(rule_count),
+            Some(&artifact_path.display().to_string()),
+        );
+    }
+    Ok(())
 }
 
 fn latest_compile_diagnostic(

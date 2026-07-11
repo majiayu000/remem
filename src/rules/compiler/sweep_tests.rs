@@ -190,3 +190,62 @@ fn unchanged_artifact_recovery_records_status_before_error_recurs() -> Result<()
     assert_eq!(statuses, ["ok", "error", "ok", "error"]);
     Ok(())
 }
+
+#[test]
+fn persistent_conflict_warning_is_bounded_and_records_recovery() -> Result<()> {
+    let _data_dir = ScopedTestDataDir::new("rule-sweep-conflict-warning");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let project = "/tmp/conflict";
+    let conn = db::open_db()?;
+    insert_sweep_preference(&conn, 1, project, "project", "Use bun, not npm", 1)?;
+    insert_sweep_preference(&conn, 2, project, "project", "Use npm, not yarn", 1)?;
+    drop(conn);
+
+    let initial = run_compile_rules_job(project)?.expect("initial compile should run");
+    assert!(initial.artifact_changed);
+    for _ in 0..3 {
+        let unchanged = run_compile_rules_job(project)?.expect("repeat compile should run");
+        assert!(!unchanged.artifact_changed);
+    }
+
+    let conn = db::open_db()?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM preference_rule_diagnostics WHERE project = ?1",
+        [project],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 1);
+    conn.execute(
+        "UPDATE memory_preference_reinforcements
+         SET machine_checkable = 0
+         WHERE memory_id = 1",
+        [],
+    )?;
+    drop(conn);
+    let recovery = run_compile_rules_job(project)?.expect("recovery compile should run");
+    assert!(!recovery.artifact_changed);
+
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_preference_reinforcements
+         SET machine_checkable = 1
+         WHERE memory_id = 1",
+        [],
+    )?;
+    drop(conn);
+    let recurrence = run_compile_rules_job(project)?.expect("recurrence compile should run");
+    assert!(!recurrence.artifact_changed);
+
+    let conn = db::open_db()?;
+    let mut stmt = conn.prepare(
+        "SELECT status FROM preference_rule_diagnostics
+         WHERE project = ?1
+         ORDER BY id",
+    )?;
+    let statuses = stmt
+        .query_map([project], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    assert_eq!(statuses, ["warn", "ok", "warn"]);
+    Ok(())
+}
