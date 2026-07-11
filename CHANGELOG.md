@@ -3,13 +3,15 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.5.197` for GH-671 T3 compiler review hardening:
-  evidence-backed repeats reinforce the same safe preference without carrying
-  confidence across contradictions; only reviewed, low-risk, non-sensitive
-  preferences compile; project rules override global rules; conservative
-  polarity classification fails closed on negated avoidance; periodic worker
-  sweeps isolate project failures, converge canonical projects, avoid unchanged
-  artifact/diagnostic churn, and preserve error recovery plus recurrence history.
+- Staged source version `0.5.197` for the GH-671 T3 correctness follow-up:
+  unique evidence reinforces only the same safe predicate; opposing direct
+  saves and cleanup rewrites clear stale provenance while same-predicate
+  overrides survive; lifecycle changes enqueue non-lossy compilation and
+  periodic sweeps converge canonical projects; reviewed low-risk trusted
+  preferences compile with project-over-global precedence; conservative
+  classification and config/diagnostic paths fail closed; unchanged artifacts
+  do not churn; generated messages remain static; and v065 schema drift guards
+  its eligibility columns and index.
 - Staged source version `0.5.196` for GH-671 T3 preference rule compiler:
   canonical preference reinforcement state (migration `v065_preference_reinforcement`
   wiring the v062 `memory_preference_reinforcements` table via the apply path) and a
