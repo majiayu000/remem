@@ -132,8 +132,9 @@ Acceptance:
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
   commit links. A byte-bounded Codex transcript may prove multiple commits;
   one ambiguous call does not erase earlier proven calls, relative workdirs
-  are anchored to the Stop cwd, and a safe trailing `git status` is supported
-  without accepting arbitrary trailing shell output.
+  are anchored to the Stop cwd, and an exact trailing `git status --short` is
+  supported without accepting environment overrides, Git configuration, help
+  viewers, or arbitrary trailing shell output.
 - Deterministic linking uses the exact claimed event range and durable
   `session_row_id`; it does not depend on an LLM result or a synthetic
   observation-session prefix.

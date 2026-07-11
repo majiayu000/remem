@@ -242,7 +242,7 @@ fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
             }
             return None;
         }
-        if !is_supported_post_commit_segment(segment, &cwd) {
+        if !is_supported_post_commit_segment(segment) {
             return None;
         }
     }
@@ -360,8 +360,8 @@ fn is_supported_git_add(tokens: &[String]) -> bool {
     matches!(git_subcommand(tokens, Path::new(".")), Some(("add", _)))
 }
 
-fn is_supported_post_commit_segment(tokens: &[String], cwd: &Path) -> bool {
-    matches!(git_subcommand(tokens, cwd), Some(("status", _)))
+fn is_supported_post_commit_segment(tokens: &[String]) -> bool {
+    matches!(tokens, [git, status, short] if git == "git" && status == "status" && short == "--short")
 }
 
 fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {

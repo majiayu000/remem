@@ -438,3 +438,37 @@ fn observed_commit_allows_trailing_git_status() -> Result<()> {
     assert_eq!(evidence[0].metadata.sha, sha);
     Ok(())
 }
+
+#[test]
+fn trailing_git_status_cannot_inject_help_viewer_output() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-status-spoof");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let actual_sha = commit(&repo, "b.txt", "b", "commit b")?;
+    assert_ne!(spoofed_sha, actual_sha);
+    let spoofed_output = format!("[main {}] spoof", &spoofed_sha[..7]);
+    let command = format!(
+        "git commit -q -m done && GIT_MAN_VIEWER=spoof git -c 'man.spoof.cmd=printf \\\"{spoofed_output}\\\\n\\\"' status --help"
+    );
+    assert!(!is_supported_commit_command(&command));
+    let event = ParsedHookEvent {
+        session_id: "status-help-spoof".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": command})),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "quiet commit followed by crafted status help".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}

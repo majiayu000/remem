@@ -83,9 +83,9 @@ current SessionRollup path and the legacy Summary job chain.
       evidence recovered after a completed cursor uses bounded link-only work
       and never replays SessionRollup AI or side effects. Transcript evidence
       keeps earlier proven calls when another call is ambiguous, anchors
-      relative workdirs to the Stop cwd, recognizes an allowlisted trailing
-      `git status`, and makes same-identity spill evidence deterministic and
-      link-only.
+      relative workdirs to the Stop cwd, recognizes only an exact trailing
+      `git status --short`, and makes same-identity spill evidence deterministic
+      and link-only.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered

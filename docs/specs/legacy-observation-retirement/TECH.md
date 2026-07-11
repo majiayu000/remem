@@ -294,8 +294,8 @@ worker-time `HEAD`, is the authoritative commit source.
 2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
    Stop pairs shell calls and outputs from the captured transcript byte range,
    so one Stop may prove multiple commits without reading bytes appended later.
-   Relative transcript workdirs resolve against the Stop cwd, an allowlisted
-   trailing `git status` does not hide an earlier proven commit, and one
+   Relative transcript workdirs resolve against the Stop cwd, an exact trailing
+   `git status --short` does not hide an earlier proven commit, and one
    ambiguous call is logged and skipped without erasing commits already proven
    by other calls in the same boundary.
 3. Each proven commit is stored atomically with its captured event in the 1:N
