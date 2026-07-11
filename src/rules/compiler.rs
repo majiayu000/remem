@@ -1,14 +1,9 @@
 //! Worker-side preference rule compiler (SP671-T3).
 //!
-//! The compiler reads canonical SQLite state (active preference memories +
-//! their persisted reinforcement counts), keeps only eligible machine-checkable
-//! preferences, merges user overrides, drops rules whose source memory is no
-//! longer authoritative (superseded / suppressed / expired / deleted),
-//! resolves contradictory predicates in favour of the newest source memory,
-//! and writes the derived artifact. Artifact writes happen ONLY from the
-//! background worker via [`run_compile_rules_job`]; hooks never compile.
+//! Canonical SQLite state is compiled only by the background worker. Hooks
+//! read the derived artifact and never perform DB, network, or LLM work.
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::rules::artifact::{CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate};
@@ -19,9 +14,14 @@ use crate::runtime_config::{rule_compilation_config, RuleCompilationConfig};
 
 mod classify;
 
-pub use classify::{classify_preference_predicate, PreferenceClassification, PreferencePredicate};
+pub use classify::{
+    classify_preference_predicate, classify_preference_predicates, PreferenceClassification,
+    PreferencePredicate,
+};
 
-/// Outcome of a worker compile pass for one project.
+const PACKAGE_MANAGER_MESSAGE: &str = "Command violates a compiled package-manager preference";
+const COMMIT_TRAILER_MESSAGE: &str = "Commit message violates a compiled trailer preference";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompileOutcome {
     pub project: String,
@@ -37,9 +37,8 @@ pub struct CompileSweepOutcome {
     pub failures: usize,
 }
 
-/// Rebuild rule artifacts for every known project. The worker calls this on a
-/// bounded cadence so enabling compilation and source lifecycle changes do not
-/// depend on a new preference write to enqueue a job.
+/// Rebuild artifacts for every known project on a bounded cadence. One bad
+/// project is isolated so it cannot stop unrelated memory work.
 pub fn run_compile_rules_sweep() -> Result<CompileSweepOutcome> {
     let config = rule_compilation_config()?;
     if !config.enabled {
@@ -72,12 +71,8 @@ pub fn run_compile_rules_sweep() -> Result<CompileSweepOutcome> {
     Ok(outcome)
 }
 
-/// Worker-only entry point: gate on config, compile canonical state into the
-/// derived artifact, and persist it atomically. Returns `Ok(None)` when rule
-/// compilation is disabled by config (disabled-by-default).
-///
-/// U-29: a compile or write failure is recorded at error level in the
-/// `preference_rule_diagnostics` table and propagated, never swallowed.
+/// Worker-only entry point. Failures are durably recorded and propagated;
+/// unchanged successful artifacts and diagnostics are not rewritten.
 pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
     let config = rule_compilation_config()?;
     if !config.enabled {
@@ -96,7 +91,19 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
     ) {
         Ok(artifact) => artifact,
         Err(error) => {
-            record_diagnostic(&conn, project, "error", &error.to_string(), None, None);
+            if let Err(diagnostic_error) =
+                record_diagnostic(&conn, project, "error", &error.to_string(), None, None)
+            {
+                crate::log::error(
+                    "rules",
+                    &format!(
+                        "compile and diagnostic persistence failed for project {project}: {diagnostic_error}"
+                    ),
+                );
+                return Err(error.context(format!(
+                    "failed to persist compile diagnostic: {diagnostic_error}"
+                )));
+            }
             crate::log::error(
                 "rules",
                 &format!("compile failed for project {project}: {error}"),
@@ -128,11 +135,17 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
 
     if let Err(error) = write_artifact_atomic(&artifact_path, &artifact) {
         let message = format!("artifact write failed: {error}");
-        record_diagnostic(&conn, project, "error", &message, None, None);
         crate::log::error(
             "rules",
             &format!("compile artifact write failed for project {project}: {error}"),
         );
+        if let Err(diagnostic_error) =
+            record_diagnostic(&conn, project, "error", &message, None, None)
+        {
+            return Err(error.context(format!(
+                "failed to persist artifact write diagnostic: {diagnostic_error}"
+            )));
+        }
         return Err(error);
     }
 
@@ -152,8 +165,7 @@ pub fn run_compile_rules_job(project: &str) -> Result<Option<CompileOutcome>> {
     }))
 }
 
-/// Pure compile pass: build the artifact from canonical state without writing
-/// anything. Used by the worker entry point and by tests; never writes files.
+/// Pure compile pass used by tests and the worker wrapper.
 pub fn compile_project_rules(
     conn: &Connection,
     project: &str,
@@ -172,55 +184,68 @@ fn compile_project_rules_with_conflicts(
     let eligible = select_eligible_preferences(conn, project, config.min_reinforcement, now)?;
     let overrides = load_overrides(conn, project)?;
 
-    // Rows arrive project-before-global, then newest-source-first. Resolve
-    // conflicts by keeping the first authoritative rule per conflict key.
-    let mut seen_conflicts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // Rows are project-before-global and newest-first. One source may emit
+    // several distinct trailer rules, but a later source cannot replace a
+    // conflict family already claimed by the authoritative earlier source.
+    let mut conflict_sources = std::collections::HashMap::<String, i64>::new();
     let mut rules = Vec::new();
     for pref in eligible {
-        let classification = classify_preference_predicate(&pref.content).with_context(|| {
-            format!(
-                "preference #{} is marked machine_checkable but no safe v1 predicate can be derived",
+        let classifications = classify_preference_predicates(&pref.content);
+        if classifications.is_empty() {
+            bail!(
+                "preference memory {} is marked machine_checkable but no safe v1 predicate can be derived",
                 pref.memory_id
-            )
-        })?;
-        let conflict_key = classification.predicate.conflict_key();
-        if !seen_conflicts.insert(conflict_key.clone()) {
-            conflict_messages.push(format!(
-                "dropped preference #{} superseded by newer conflicting rule ({conflict_key})",
-                pref.memory_id
-            ));
-            continue;
+            );
         }
 
-        let rule_id = format!("pref-{}-1", pref.memory_id);
-        let message = format!("Preference #{}: {}", pref.memory_id, classification.summary);
-        let predicate = match classification.predicate {
-            PreferencePredicate::CommandRegex { pattern, .. } => {
-                RulePredicate::CommandRegex { pattern, message }
+        for (index, classification) in classifications.into_iter().enumerate() {
+            let conflict_key = classification.predicate.conflict_key();
+            match conflict_sources.get(&conflict_key) {
+                Some(source_memory_id) if *source_memory_id != pref.memory_id => {
+                    conflict_messages.push(format!(
+                        "dropped preference #{} behind authoritative conflicting rule ({conflict_key})",
+                        pref.memory_id
+                    ));
+                    continue;
+                }
+                Some(_) => {}
+                None => {
+                    conflict_sources.insert(conflict_key, pref.memory_id);
+                }
             }
-            PreferencePredicate::CommitTrailerForbidden { trailer, .. } => {
-                RulePredicate::CommitTrailerForbidden { trailer, message }
-            }
-        };
-        let override_state =
-            overrides
-                .get(&rule_id)
-                .cloned()
-                .unwrap_or(crate::rules::RuleOverrideState {
-                    disabled: false,
-                    action_override: None,
-                });
-        rules.push(CompiledRule {
-            rule_id,
-            source_memory_id: pref.memory_id,
-            reinforcement_count: pref.reinforcement_count,
-            action: RuleAction::Warn,
-            override_state,
-            predicate,
-        });
+
+            let rule_id = format!("pref-{}-{}", pref.memory_id, index + 1);
+            let predicate = match classification.predicate {
+                PreferencePredicate::CommandRegex { pattern, .. } => RulePredicate::CommandRegex {
+                    pattern,
+                    message: PACKAGE_MANAGER_MESSAGE.to_string(),
+                },
+                PreferencePredicate::CommitTrailerForbidden { trailer, .. } => {
+                    RulePredicate::CommitTrailerForbidden {
+                        trailer,
+                        message: COMMIT_TRAILER_MESSAGE.to_string(),
+                    }
+                }
+            };
+            let override_state =
+                overrides
+                    .get(&rule_id)
+                    .cloned()
+                    .unwrap_or(crate::rules::RuleOverrideState {
+                        disabled: false,
+                        action_override: None,
+                    });
+            rules.push(CompiledRule {
+                rule_id,
+                source_memory_id: pref.memory_id,
+                reinforcement_count: pref.reinforcement_count,
+                action: RuleAction::Warn,
+                override_state,
+                predicate,
+            });
+        }
     }
 
-    // Stable ordering for deterministic artifacts.
     rules.sort_by(|a, b| a.rule_id.cmp(&b.rule_id));
     Ok(CompiledRulesArtifact::new(now, rules))
 }
@@ -247,6 +272,7 @@ fn select_eligible_preferences(
            AND m.status = 'active'
            AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?1)
            AND m.owner_scope IS NOT NULL
+           AND m.source_trust_class IN ('local_tool_output', 'repo_file', 'user_prompt')
            AND r.machine_checkable = 1
            AND r.risk_class = 'low'
            AND r.reinforcement_count >= ?2
@@ -257,7 +283,10 @@ fn select_eligible_preferences(
                OR COALESCE(m.scope, 'project') = 'global'
            )
            AND {policy_filter}
-         ORDER BY CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 1 ELSE 0 END,
+         ORDER BY CASE
+                    WHEN COALESCE(m.scope, 'project') = 'project' AND m.project = ?3 THEN 0
+                    ELSE 1
+                  END,
                   m.updated_at_epoch DESC,
                   m.id DESC"
     );
@@ -281,6 +310,8 @@ fn load_rule_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
              SELECT DISTINCT project FROM preference_rule_overrides
              UNION
              SELECT DISTINCT project FROM preference_rule_diagnostics
+             UNION
+             SELECT DISTINCT project FROM jobs WHERE job_type = 'compile_rules'
              UNION
              SELECT DISTINCT project_path AS project FROM projects
          )
@@ -312,9 +343,7 @@ fn load_overrides(
         let action_override = match action_override.as_deref() {
             Some("warn") => Some(RuleAction::Warn),
             Some("block") => Some(RuleAction::Block),
-            Some(other) => {
-                anyhow::bail!("invalid action_override '{other}' for rule {rule_id}");
-            }
+            Some(other) => bail!("invalid action_override '{other}' for rule {rule_id}"),
             None => None,
         };
         map.insert(
@@ -335,23 +364,16 @@ fn record_diagnostic(
     message: &str,
     rule_count: Option<usize>,
     artifact_path: Option<&str>,
-) {
-    if status != "ok" {
-        match latest_compile_diagnostic(conn, project) {
-            Ok(Some((latest_status, latest_message)))
-                if latest_status == status && latest_message == message =>
-            {
-                return;
-            }
-            Ok(Some(_)) | Ok(None) => {}
-            Err(error) => crate::log::error(
-                "rules",
-                &format!("failed to deduplicate compile diagnostic for {project}: {error}"),
-            ),
-        }
+) -> Result<()> {
+    if status != "ok"
+        && latest_compile_diagnostic(conn, project)?.is_some_and(
+            |(latest_status, latest_message)| latest_status == status && latest_message == message,
+        )
+    {
+        return Ok(());
     }
     let now = chrono::Utc::now().timestamp();
-    let result = conn.execute(
+    conn.execute(
         "INSERT INTO preference_rule_diagnostics
          (project, event_kind, status, message, rule_id, artifact_path, rule_count, occurred_at_epoch)
          VALUES (?1, 'compile', ?2, ?3, NULL, ?4, ?5, ?6)",
@@ -363,13 +385,9 @@ fn record_diagnostic(
             rule_count.map(|count| count as i64),
             now
         ],
-    );
-    if let Err(error) = result {
-        crate::log::error(
-            "rules",
-            &format!("failed to record compile diagnostic for {project}: {error}"),
-        );
-    }
+    )
+    .with_context(|| format!("persist compile diagnostic for {project}"))?;
+    Ok(())
 }
 
 fn record_compile_success(
@@ -383,7 +401,8 @@ fn record_compile_success(
     if !conflict_messages.is_empty() {
         let mut conflicts = conflict_messages.to_vec();
         conflicts.sort();
-        record_diagnostic(
+        conflicts.dedup();
+        return record_diagnostic(
             conn,
             project,
             "warn",
@@ -394,11 +413,10 @@ fn record_compile_success(
             Some(rule_count),
             Some(&artifact_path.display().to_string()),
         );
-        return Ok(());
     }
 
     let latest = latest_compile_diagnostic(conn, project)
-        .with_context(|| format!("failed to load latest compile diagnostic for {project}"))?;
+        .with_context(|| format!("load latest compile diagnostic for {project}"))?;
     if artifact_changed
         || latest
             .as_ref()
@@ -411,7 +429,7 @@ fn record_compile_success(
             &format!("compiled {rule_count} rule(s)"),
             Some(rule_count),
             Some(&artifact_path.display().to_string()),
-        );
+        )?;
     }
     Ok(())
 }

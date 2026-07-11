@@ -50,6 +50,13 @@ fn preference_rule_state_migration_creates_rows_and_indexes() -> Result<()> {
          VALUES (1, 3, 20, 10, 20)",
         [],
     )?;
+    let machine_checkable: i64 = conn.query_row(
+        "SELECT machine_checkable
+         FROM memory_preference_reinforcements WHERE memory_id = 1",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(machine_checkable, 0);
     conn.execute(
         "INSERT INTO preference_rule_overrides
          (project, rule_id, source_memory_id, disabled, action_override, updated_at_epoch)

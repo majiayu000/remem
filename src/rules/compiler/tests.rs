@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use super::{compile_project_rules, run_compile_rules_job};
@@ -29,6 +29,7 @@ struct PrefSpec<'a> {
     machine_checkable: i64,
     risk_class: &'a str,
     review_status: &'a str,
+    source_trust_class: &'a str,
 }
 
 impl Default for PrefSpec<'_> {
@@ -46,6 +47,7 @@ impl Default for PrefSpec<'_> {
             machine_checkable: 1,
             risk_class: "low",
             review_status: "auto_promoted",
+            source_trust_class: "local_tool_output",
         }
     }
 }
@@ -54,23 +56,27 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_candidates
          (id, scope, memory_type, topic_key, text, evidence_event_ids,
-          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
-         VALUES (?1, ?2, 'preference', 'package-manager', ?3, '[1]',
-                 0.95, ?4, ?5, 1, ?6)",
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
+          source_trust_class)
+         VALUES (?1, ?2, 'preference', ?3, ?4, '[1]',
+                 0.95, ?5, ?6, 1, ?7, ?8)",
         params![
             spec.id,
             spec.scope,
+            format!("preference-{}", spec.id),
             spec.content,
             spec.risk_class,
             spec.review_status,
             spec.updated_at,
+            spec.source_trust_class,
         ],
     )?;
     conn.execute(
         "INSERT INTO memories
          (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
-          status, scope, owner_scope, owner_key, expires_at_epoch, source_candidate_id)
-         VALUES (?1, ?2, 'pref', ?3, 'preference', 1, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+          status, scope, owner_scope, owner_key, expires_at_epoch, source_candidate_id,
+          source_trust_class)
+         VALUES (?1, ?2, 'pref', ?3, 'preference', 1, ?4, ?5, ?6, ?7, ?8, ?9, ?1, ?10)",
         params![
             spec.id,
             spec.project,
@@ -81,7 +87,7 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
             spec.owner_scope,
             spec.owner_scope.map(|_| PROJECT),
             spec.expires_at,
-            spec.id,
+            spec.source_trust_class,
         ],
     )?;
     conn.execute(
@@ -122,6 +128,44 @@ fn eligible_preference_compiles_with_warn_default() -> Result<()> {
     assert!(!rule.override_state.disabled);
     assert!(rule.override_state.action_override.is_none());
     assert!(matches!(rule.predicate, RulePredicate::CommandRegex { .. }));
+    match &rule.predicate {
+        RulePredicate::CommandRegex { message, .. } => {
+            assert_eq!(
+                message,
+                "Command violates a compiled package-manager preference"
+            )
+        }
+        RulePredicate::CommitTrailerForbidden { .. } => unreachable!(),
+    }
+    let serialized = serde_json::to_string(&artifact)?;
+    assert!(!serialized.contains("Use bun, not npm"));
+    Ok(())
+}
+
+#[test]
+fn multiple_forbidden_trailers_compile_to_stable_rules() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-multiple-trailers");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            content: "Do not add AI-generated-by or Co-authored-by trailers to commits",
+            ..Default::default()
+        },
+    )?;
+
+    let artifact = compile_project_rules(&conn, PROJECT, config(3))?;
+    let ids = artifact
+        .rules
+        .iter()
+        .map(|rule| rule.rule_id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, vec!["pref-1-1", "pref-1-2"]);
+    assert!(artifact.rules.iter().all(|rule| matches!(
+        &rule.predicate,
+        RulePredicate::CommitTrailerForbidden { message, .. }
+            if message == "Commit message violates a compiled trailer preference"
+    )));
     Ok(())
 }
 
@@ -232,7 +276,7 @@ fn unreviewed_preference_is_not_compiled() -> Result<()> {
 }
 
 #[test]
-fn machine_checkable_state_drift_is_an_error() -> Result<()> {
+fn machine_checkable_state_drift_fails_compilation() -> Result<()> {
     let _dir = ScopedTestDataDir::new("compile-classification-drift");
     let conn = db::open_db()?;
     insert_pref(
@@ -243,10 +287,39 @@ fn machine_checkable_state_drift_is_an_error() -> Result<()> {
             ..Default::default()
         },
     )?;
-    let error = compile(&conn)
-        .err()
-        .context("classification drift must fail the compile pass")?;
-    assert!(error.to_string().contains("marked machine_checkable"));
+    let error = compile_project_rules(&conn, PROJECT, config(3))
+        .expect_err("canonical machine_checkable drift must fail closed");
+    assert!(error.to_string().contains("machine_checkable"), "{error:#}");
+    Ok(())
+}
+
+#[test]
+fn non_low_risk_preference_is_not_compiled() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-risk");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            risk_class: "medium",
+            ..Default::default()
+        },
+    )?;
+    assert!(compile(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn untrusted_preference_is_not_compiled() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-trust");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            source_trust_class: "external_content",
+            ..Default::default()
+        },
+    )?;
+    assert!(compile(&conn)?.is_empty());
     Ok(())
 }
 
@@ -349,9 +422,10 @@ fn project_rule_precedes_newer_global_conflict() -> Result<()> {
         &conn,
         &PrefSpec {
             id: 2,
-            project: "/tmp/other",
-            content: "Prefer pnpm over npm",
+            project: "/tmp/global-source",
+            content: "Use npm, not bun",
             scope: "global",
+            owner_scope: Some("user"),
             updated_at: 200,
             ..Default::default()
         },

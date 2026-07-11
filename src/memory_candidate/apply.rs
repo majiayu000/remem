@@ -128,7 +128,10 @@ pub(super) fn promote_candidate_to_memory_with_route(
                     Some(evidence_json),
                     now,
                 )?;
-                maybe_enqueue_rule_compilation(conn, &memory_project)?;
+                crate::memory::preference::compilation::enqueue_for_memory_ids(
+                    conn,
+                    &[existing.id],
+                )?;
             }
             let plan = MemoryOperationPlan::new(
                 MemoryLifecycleOp::Noop,
@@ -196,7 +199,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
                 Some(evidence_json),
                 now,
             )?;
-            maybe_enqueue_rule_compilation(conn, &memory_project)?;
+            crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &[memory_id])?;
         }
         let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(memory_id))?;
         crate::memory::edge::insert_memory_edge(
@@ -585,44 +588,6 @@ fn refresh_memory_entities(conn: &Connection, id: i64, title: &str, content: &st
     let entities = crate::retrieval::entity::extract_entities(title, content);
     crate::retrieval::entity::refresh_memory_entities(conn, id, &entities)
         .with_context(|| format!("entity refresh failed for memory id={id}"))
-}
-
-/// Enqueue a background rule-compilation job for `project` when enabled.
-///
-/// Compilation and artifact writes happen only in the worker; this merely
-/// schedules that work. A configured feature that cannot read its config or
-/// enqueue work must fail visibly instead of leaving a stale/missing artifact.
-fn maybe_enqueue_rule_compilation(conn: &Connection, project: &str) -> Result<()> {
-    let enabled = match crate::runtime_config::rule_compilation_config() {
-        Ok(config) => config.enabled,
-        Err(error) => {
-            crate::log::error(
-                "rules",
-                &format!("rule compilation enqueue config unreadable: {error}"),
-            );
-            return Err(error).context("read rule compilation config before enqueue");
-        }
-    };
-    if !enabled {
-        return Ok(());
-    }
-    if let Err(error) = crate::db::enqueue_job(
-        conn,
-        "worker",
-        crate::db::JobType::CompileRules,
-        project,
-        None,
-        "{}",
-        100,
-    ) {
-        crate::log::error(
-            "rules",
-            &format!("failed to enqueue rule compilation for {project}: {error}"),
-        );
-        return Err(error)
-            .with_context(|| format!("enqueue rule compilation for project {project}"));
-    }
-    Ok(())
 }
 
 fn soft_supersede_routed(

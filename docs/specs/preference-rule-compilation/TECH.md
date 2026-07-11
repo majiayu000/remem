@@ -1,7 +1,7 @@
 # Preference Rule Compilation Technical Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-11
 
 Tracking:
 - Spec/tracking issue: #671
@@ -17,11 +17,14 @@ Tracking:
   the closed v1 predicate enum, a pure in-memory evaluator, fail-open artifact
   loading for missing/corrupt/unsupported artifacts, stable project artifact
   paths, and atomic artifact writes.
-- GH671-T3 adds canonical repeated-preference reinforcement, conservative v1
-  classification, low-risk/review eligibility, user override merging,
-  project-over-global conflict resolution, lifecycle sweeps, and worker-only
-  atomic artifact writes. Hook dispatch, rule CLI, doctor output, fixtures,
-  and latency evidence are still pending.
+- GH671-T3 adds canonical evidence-backed reinforcement for identical and
+  same-predicate replacements without transferring confidence across opposing
+  preferences; a closed classifier for package-manager and commit-trailer
+  predicates; persisted low-risk, source-trust, and review eligibility;
+  project-over-global conflict precedence; lifecycle-triggered non-lossy jobs
+  plus periodic convergence sweeps; same-predicate override transfer; stable
+  diagnostics and artifacts; and worker-only artifact writes. Hook dispatch,
+  rule CLI, doctor output, fixtures, and latency evidence are still pending.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
@@ -67,7 +70,7 @@ resolved `REMEM_DATA_DIR` / `db::absolute_data_dir()` location:
       "predicate": {
         "kind": "command_regex",
         "pattern": "(^|\\s)npm (install|i|add)\\b",
-        "message": "Preference #123: use bun, not npm"
+        "message": "Command violates a compiled package-manager preference"
       }
     }
   ]
@@ -88,18 +91,26 @@ Nothing else. New kinds require a spec update.
 ### Compilation pass (worker side)
 
 1. Select preferences with `status='active'`, reinforcement_count >=
-   `rule_compile_min_reinforcement` (default 3), owner scope resolved, and a
-   compilable pattern.
+   `rule_compile_min_reinforcement` (default 3), owner scope resolved,
+   originating candidate `risk_class='low'`, a persisted source trust class of
+   `local_tool_output`, `repo_file`, or `user_prompt`, and a compilable pattern.
 2. Compilability is deterministic: a preference qualifies only if its
-   structured metadata (or a conservative pattern table for common cases such
-   as package-manager choice) yields a predicate; no LLM speculation in the
-   first implementation.
+   structured metadata (or a conservative pattern table for directed
+   npm/yarn/bun/pnpm choices and forbidden commit trailers) yields a predicate;
+   no LLM speculation in the first implementation. One source may produce
+   multiple trailer predicates.
 3. Drop rules whose source memory is superseded, suppressed, expired, or
-   deleted. Contradictory predicates: keep the rule with the newest source
-   memory, log the conflict.
-4. Load user overrides from canonical SQLite state, then write the artifact
-   atomically (temp file + rename). The artifact is never the source of truth
-   for disabled/enabled/action override state.
+   deleted. Project-scoped predicates take precedence over global predicates;
+   within the same scope the newest source wins and the conflict is logged.
+4. Load user overrides from canonical SQLite state, transfer source-bound
+   overrides when a replacement memory becomes authoritative, then write the
+   artifact atomically (temp file + rename). The artifact is never the source of truth
+   for disabled/enabled/action override state. Artifact messages use static
+   predicate-kind wording and never copy arbitrary preference text.
+5. Preference apply, suppression, unsuppression, expiry, supersession, and
+   deletion schedule compilation jobs. A mutation arriving while compilation
+   is processing leaves one pending successor so canonical-state changes are
+   not lost.
 
 ### Hook evaluation
 
@@ -140,7 +151,7 @@ error.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 eligibility gating | worker compile pass | unit test: below-threshold preference not compiled |
+| P1 eligibility gating | worker compile pass | unit tests: threshold, activity, risk, trust, machine-checkability, and scope precedence |
 | P2 provenance | artifact schema | unit test: every rule has source_memory_id |
 | P3 deterministic eval | hook evaluator | unit test: same input, same verdict; no DB handle in evaluator |
 | P4 warn default | compile pass | unit test: compiled action is warn unless user override exists |
@@ -183,7 +194,7 @@ hook-side writes.
 
 ## Test Plan
 
-- [ ] Unit tests: compile eligibility, conflict resolution, supersession
+- [x] Unit tests: compile eligibility, conflict resolution, supersession
       removal, artifact atomicity, evaluator determinism, fail-open.
 - [ ] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before

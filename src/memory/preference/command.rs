@@ -56,9 +56,12 @@ pub fn add_preference(conn: &Connection, project: &str, text: &str, global: bool
 }
 
 pub fn remove_preference(conn: &Connection, id: i64) -> Result<bool> {
-    let count = conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &[id])?;
+    let count = tx.execute(
         "UPDATE memories SET status = 'archived' WHERE id = ?1 AND memory_type = 'preference'",
         params![id],
     )?;
+    tx.commit()?;
     Ok(count > 0)
 }

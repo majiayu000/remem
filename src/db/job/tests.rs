@@ -88,6 +88,59 @@ fn enqueue_job_dedupe_includes_host() {
 }
 
 #[test]
+fn compile_rules_enqueue_keeps_one_pending_successor_while_processing() {
+    let conn = setup_conn();
+    let processing = enqueue_job(
+        &conn,
+        "worker",
+        JobType::CompileRules,
+        "alpha",
+        None,
+        "{}",
+        100,
+    )
+    .expect("first compile enqueue should succeed");
+    conn.execute(
+        "UPDATE jobs SET state = 'processing' WHERE id = ?1",
+        params![processing],
+    )
+    .expect("compile job should enter processing");
+
+    let successor = enqueue_job(
+        &conn,
+        "worker",
+        JobType::CompileRules,
+        "alpha",
+        None,
+        "{}",
+        100,
+    )
+    .expect("lifecycle update should enqueue a successor");
+    let duplicate = enqueue_job(
+        &conn,
+        "worker",
+        JobType::CompileRules,
+        "alpha",
+        None,
+        "{}",
+        100,
+    )
+    .expect("pending successor should deduplicate");
+
+    assert_ne!(successor, processing);
+    assert_eq!(duplicate, successor);
+    let states: (i64, i64) = conn
+        .query_row(
+            "SELECT SUM(state = 'processing'), SUM(state = 'pending')
+             FROM jobs WHERE job_type = 'compile_rules' AND project = 'alpha'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("compile job states should load");
+    assert_eq!(states, (1, 1));
+}
+
+#[test]
 fn claim_next_job_picks_highest_priority_ready_job() {
     let mut conn = setup_conn();
     let low = enqueue_job(
