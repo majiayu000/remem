@@ -873,7 +873,6 @@ frequently than the returned `cache.ttl_secs`; use
 | `/api/v1/memories/{id}?include_suppressed=` | GET | Rich memory detail with entities and edges |
 | `/api/v1/memories` | POST | Save memory |
 | `/api/v1/user/recall` | POST | Task-aware user-context recall with source and drop reasons |
-- [JMT x402 Agent Tools](https://jmt-x402-proxy.jmthomasofficial.workers.dev) — 25 paid x402 endpoints on Base mainnet: web search, AI analysis, crypto/stock data, SEC filings, company intel, news, sentiment, macro dashboard. $0.001-$0.15/call USDC. Local LLM-powered.
 
 ### Web read-model endpoints
 
