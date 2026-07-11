@@ -130,8 +130,8 @@ Acceptance:
 - User/assistant transcript messages enter the rollup prompt as bounded,
   deterministic, redacted, XML-escaped data anchored to a covered Stop event.
 - Exact text already represented by a captured event is not repeated, and a
-  missing or malformed required snapshot fails before a metadata-only summary
-  can persist.
+  missing boundary or a missing, malformed, or unusable required snapshot fails
+  before a metadata-only summary can persist.
 
 ## Rollout
 

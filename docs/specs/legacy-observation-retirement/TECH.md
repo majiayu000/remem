@@ -81,8 +81,9 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   prompt and candidate support text. Repeated paths use one widest covered
   boundary; exact captured-event text is omitted; the prompt block is count-
   and byte-bounded, redacted, and XML-escaped; and a required snapshot
-  read/parse failure stops the first AI call rather than persisting a
-  metadata-only summary. The worker then completes transcript-only
+  with no captured boundary, a read/parse failure, or no usable conversation
+  stops the first AI call rather than persisting a metadata-only summary. The
+  worker then completes transcript-only
   citation/failure signals, preserves `cwd` and
   `transcript_path` through capture redaction, re-home summary-derived
   candidates, workstream upsert, native-memory sync, and UserContextCandidate
@@ -236,7 +237,8 @@ Tests: fixture DBs per state; frozen-write detection test.
    text, while exact content already carried by a captured event is rendered
    once. Transcript prompt rendering is capped at 128 messages, 64 KiB total
    content, and 8 KiB per message, then redacted and XML-escaped; a required
-   snapshot read/parse failure aborts before summary persistence;
+   snapshot without a captured boundary, a read/parse failure, or no usable
+   conversation aborts before summary persistence;
    after a persisted rollup exists, worker side effects re-home
    summary-derived candidates, workstream upsert, native-memory sync,
    UserContextCandidate extraction, and Compress/Dream follow-up enqueue.
@@ -341,6 +343,8 @@ The #794 prompt-evidence follow-up is covered by
 `session_rollup_prompt_includes_only_bounded_transcript_text`,
 `session_rollup_prompt_does_not_duplicate_captured_message_text`,
 `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
+`session_rollup_unbounded_transcript_drains_archive_but_blocks_summary`,
+`session_rollup_unusable_transcript_fails_before_metadata_only_summary`,
 `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`, and
 `transcript_prompt_is_bounded_redacted_and_xml_safe`.
 

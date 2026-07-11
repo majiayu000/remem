@@ -51,9 +51,15 @@ pub(super) fn load_prompt_transcript_messages(
         let Some(transcript_path) = stop_transcript_path(payload) else {
             continue;
         };
+        let transcript_byte_len = payload.transcript_byte_len.with_context(|| {
+            format!(
+                "bounded transcript prompt evidence for captured event {} requires transcript_byte_len",
+                payload.source_event_id
+            )
+        })?;
         let content = crate::memory::raw_transcript::read_transcript_content(
             transcript_path,
-            payload.transcript_byte_len,
+            Some(transcript_byte_len),
         )
         .with_context(|| {
             format!(
@@ -61,6 +67,7 @@ pub(super) fn load_prompt_transcript_messages(
                 payload.source_event_id
             )
         })?;
+        let mut has_usable_message = false;
 
         for (line_index, line) in content.lines().enumerate() {
             let value = serde_json::from_str::<serde_json::Value>(line).with_context(|| {
@@ -75,7 +82,11 @@ pub(super) fn load_prompt_transcript_messages(
                 continue;
             };
             let text = message.text.trim();
-            if text.is_empty() || represented_text.contains(text) {
+            if text.is_empty() {
+                continue;
+            }
+            has_usable_message = true;
+            if represented_text.contains(text) {
                 continue;
             }
             messages.push(PromptTranscriptMessage {
@@ -83,6 +94,12 @@ pub(super) fn load_prompt_transcript_messages(
                 role: message.role,
                 content: text.to_string(),
             });
+        }
+        if !has_usable_message {
+            anyhow::bail!(
+                "bounded transcript prompt evidence for captured event {} contains no usable user or assistant messages",
+                payload.source_event_id
+            );
         }
     }
     Ok(messages)

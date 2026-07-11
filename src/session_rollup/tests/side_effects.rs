@@ -264,6 +264,7 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
         &transcript,
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"archived assistant turn"}]}}"#,
     )?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
     let mut conn = crate::db::open_db()?;
     custom_capture(
         &conn,
@@ -273,7 +274,8 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
         &serde_json::json!({
             "session_id": "sess-rollup-raw",
             "cwd": "/tmp/remem",
-            "transcript_path": transcript
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
         })
         .to_string(),
     )?;
@@ -644,6 +646,7 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
         &transcript,
         r#"{"type":"assistant","message":{"content":[{"type":"text","text":"retry archived assistant turn"}]}}"#,
     )?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
     let mut conn = crate::db::open_db()?;
     custom_capture(
         &conn,
@@ -653,7 +656,8 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
         &serde_json::json!({
             "session_id": "sess-rollup-raw-retry",
             "cwd": "/tmp/remem",
-            "transcript_path": transcript
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
         })
         .to_string(),
     )?;

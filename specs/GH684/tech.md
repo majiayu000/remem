@@ -105,7 +105,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
       user/assistant transcript messages into the summarizer and candidate
       support text, removes exact captured-event duplicates, caps and redacts
       the prompt block, and fails before the first AI call when that required
-      bounded evidence cannot be read or parsed.
+      bounded evidence lacks a captured boundary, cannot be read or parsed, or
+      contains no usable user/assistant message.
       Observed-commit wiring remains blocked by #792.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an

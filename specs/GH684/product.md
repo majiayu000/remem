@@ -84,7 +84,8 @@ current SessionRollup path and the legacy Summary job chain.
       `transcript_byte_len`, deduplicates repeated paths at the widest covered
       boundary, omits exact text already represented by captured events, and
       refuses to persist a metadata-only summary when bounded transcript
-      evidence cannot be read or parsed.
+      evidence lacks a captured boundary, cannot be read or parsed, or contains
+      no usable user/assistant message.
       Compress/Dream follow-up jobs are enqueued only after the rollup is
       persisted, old-version daemon heartbeats and legacy singleton locks do
       not suppress the current Stop fallback worker, a current once-launch

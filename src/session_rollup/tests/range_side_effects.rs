@@ -133,6 +133,97 @@ async fn session_rollup_missing_transcript_fails_before_metadata_only_summary() 
 }
 
 #[tokio::test]
+async fn session_rollup_unbounded_transcript_drains_archive_but_blocks_summary() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-unbounded");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("legacy.jsonl");
+    let transcript_text = "legacy transcript still belongs in the raw archive";
+    std::fs::write(&transcript, transcript_message(transcript_text))?;
+    let mut conn = setup_conn();
+    let session_id = "sess-rollup-prompt-unbounded";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let error = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("summarizer must not run without a captured transcript boundary")
+    })
+    .await
+    .expect_err("unbounded transcript evidence must keep the rollup retryable");
+
+    assert!(
+        error.to_string().contains("transcript_byte_len"),
+        "{error:#}"
+    );
+    assert_eq!(summary_count(&conn), 0);
+    let archived: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages
+         WHERE session_id = ?1 AND content = ?2",
+        params![session_id, transcript_text],
+        |row| row.get(0),
+    )?;
+    assert_eq!(archived, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_unusable_transcript_fails_before_metadata_only_summary() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-unusable");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("unusable.jsonl");
+    std::fs::write(
+        &transcript,
+        serde_json::json!({
+            "type": "assistant",
+            "message": {"content": []}
+        })
+        .to_string(),
+    )?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+    let mut conn = setup_conn();
+    let session_id = "sess-rollup-prompt-unusable";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let error = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("summarizer must not run without usable transcript evidence")
+    })
+    .await
+    .expect_err("unusable transcript evidence must keep the rollup retryable");
+
+    assert!(
+        error
+            .to_string()
+            .contains("no usable user or assistant messages"),
+        "{error:#}"
+    );
+    assert_eq!(summary_count(&conn), 0);
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_rollup_candidate_evidence_stays_with_claimed_range() -> Result<()> {
     let mut conn = setup_conn();
     let session_id = "sess-rollup-candidate-range";
