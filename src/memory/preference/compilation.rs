@@ -14,6 +14,15 @@ struct AffectedPreference {
     global: bool,
 }
 
+const PREFERENCE_AUTHORITY_PROJECT_SQL: &str = "CASE
+       WHEN COALESCE(m.scope, 'project') = 'global' THEN m.project
+       ELSE COALESCE(
+           NULLIF(m.target_project, ''),
+           CASE WHEN m.owner_scope = 'repo' THEN NULLIF(m.owner_key, '') END,
+           m.project
+       )
+   END";
+
 const SUPPRESSION_TARGET_MATCH_SQL: &str = "(
        (?1 = 'memory' AND ?2 IS NOT NULL AND m.id = ?2)
     OR (?1 = 'topic_key' AND ?3 IS NOT NULL AND m.topic_key = ?3)
@@ -63,7 +72,8 @@ pub(crate) fn enqueue_for_memory_ids(conn: &Connection, memory_ids: &[i64]) -> R
         return Ok(());
     }
     let sql = format!(
-        "SELECT m.project, COALESCE(m.scope, 'project') = 'global'
+        "SELECT {PREFERENCE_AUTHORITY_PROJECT_SQL},
+                COALESCE(m.scope, 'project') = 'global'
          FROM memories m
          JOIN memory_preference_reinforcements r ON r.memory_id = m.id
          WHERE m.memory_type = 'preference' AND m.id IN ({placeholders})"
@@ -102,7 +112,8 @@ pub(crate) fn enqueue_for_suppression_targets(
             continue;
         }
         let affected_sql = format!(
-            "SELECT m.project, COALESCE(m.scope, 'project') = 'global'
+            "SELECT {PREFERENCE_AUTHORITY_PROJECT_SQL},
+                    COALESCE(m.scope, 'project') = 'global'
              FROM memories m
              JOIN memory_preference_reinforcements r ON r.memory_id = m.id
              WHERE m.memory_type = 'preference'
@@ -125,6 +136,11 @@ fn enqueue_affected(conn: &Connection, affected: Vec<AffectedPreference>) -> Res
     if affected.is_empty() {
         return Ok(());
     }
+    let config = crate::runtime_config::rule_compilation_config()
+        .context("read rule compilation config before enqueue")?;
+    if !config.enabled {
+        return Ok(());
+    }
     let has_global = affected.iter().any(|preference| preference.global);
     let mut projects = affected
         .into_iter()
@@ -144,7 +160,16 @@ fn known_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
          UNION
          SELECT project FROM jobs WHERE job_type = 'compile_rules'
          UNION
-         SELECT m.project
+         SELECT project_path FROM projects
+         UNION
+         SELECT CASE
+                    WHEN COALESCE(m.scope, 'project') = 'global' THEN m.project
+                    ELSE COALESCE(
+                        NULLIF(m.target_project, ''),
+                        CASE WHEN m.owner_scope = 'repo' THEN NULLIF(m.owner_key, '') END,
+                        m.project
+                    )
+                END
          FROM memories m
          JOIN memory_preference_reinforcements r ON r.memory_id = m.id",
     )?;
@@ -260,6 +285,54 @@ mod tests {
             crate::db::query::collect_rows(rows)?,
             vec!["/consumer".to_string(), "/source".to_string()]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn global_preference_fans_out_to_registered_project_without_rule_state() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("global-preference-project-registry");
+        crate::runtime_config::init_config()?;
+        crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+        let conn = crate::db::open_db()?;
+        conn.execute(
+            "INSERT INTO workspaces
+             (id, root_path, created_at_epoch, updated_at_epoch)
+             VALUES (1, '/workspace', 1, 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO projects
+             (id, workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+             VALUES (1, 1, '/consumer-without-state', 'consumer', 1, 1)",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
+              status, scope)
+             VALUES (1, '/source', 'Preference', 'Use bun, not npm', 'preference',
+                     1, 1, 'active', 'global')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO memory_preference_reinforcements
+             (memory_id, reinforcement_count, last_reinforced_at_epoch,
+              created_at_epoch, updated_at_epoch, machine_checkable)
+             VALUES (1, 3, 1, 1, 1, 1)",
+            [],
+        )?;
+
+        enqueue_for_memory_ids(&conn, &[1])?;
+
+        let registered: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs
+             WHERE job_type = 'compile_rules'
+               AND project = '/consumer-without-state'
+               AND state = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(registered, 1);
         Ok(())
     }
 }

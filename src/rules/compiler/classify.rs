@@ -292,6 +292,9 @@ mod tests {
     #[test]
     fn ambiguous_multiclause_preferences_fail_closed() {
         for text in [
+            "Never omit Co-authored-by",
+            "Prefer bun, but do not forbid npm",
+            "Do not add AI-generated-by and use Co-authored-by",
             "Do not avoid npm; use npm instead of yarn",
             "Never, under any circumstances, avoid npm; use npm instead of yarn",
             "Use bun, not npm; unless CI requires npm",
