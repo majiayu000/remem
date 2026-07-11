@@ -126,14 +126,18 @@ to whatever `HEAD` happens to be later.
 
 Acceptance:
 
-- A successful explicit `git commit` result proves the SHA; trusted capture
-  resolves metadata for that exact SHA before the event is written or spilled,
-  and stores the evidence atomically with the capture event. Evidence command
-  parsing is fail-closed: it accepts only literal workdir changes,
+- A successful explicit, non-quiet `git commit` result proves the SHA only when
+  the command's standard Git summary contains it; trusted capture resolves
+  metadata for that exact SHA before the event is written or spilled, and
+  stores the evidence atomically with the capture event. Explicit quiet commit
+  commands remain eligible for ordinary event capture but produce no commit
+  evidence or link. Evidence command parsing is fail-closed: it accepts only
+  literal workdir changes,
   non-interactive add/commit forms with an explicit message source, safe
   identity configuration, and the documented exact status suffix; environment
   prefixes, arbitrary Git configuration, help/viewer/editor paths, dry runs,
-  and interactive add modes produce no evidence.
+  interactive add modes, shell expansion, redirection, globbing, and process
+  substitution produce no evidence.
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
   commit links. A byte-bounded Codex transcript may prove multiple commits;
   one ambiguous call does not erase earlier proven calls, relative workdirs

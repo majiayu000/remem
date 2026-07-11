@@ -26,7 +26,7 @@ pub(crate) fn from_observed_event(
     let Some(base_cwd) = event.cwd.as_deref() else {
         return Ok(Vec::new());
     };
-    let Some(cwd) = commit_workdir(command, base_cwd) else {
+    let Some(cwd) = commit_workdir(command, base_cwd, false) else {
         return Ok(Vec::new());
     };
     let output = hook_response_output(event.tool_response.as_ref());
@@ -174,7 +174,7 @@ fn parse_commit_call(payload: &Value, fallback_cwd: &str) -> Result<Option<Commi
         None => PathBuf::from(fallback_cwd),
     };
     let base_cwd = base_cwd.to_string_lossy();
-    let Some(cwd) = commit_workdir(command, base_cwd.as_ref()) else {
+    let Some(cwd) = commit_workdir(command, base_cwd.as_ref(), false) else {
         return Ok(None);
     };
     Ok(Some(CommitCall {
@@ -218,12 +218,12 @@ fn commit_candidate_from_output(output: &str) -> Result<Option<String>> {
 }
 
 pub(crate) fn is_supported_commit_command(command: &str) -> bool {
-    commit_workdir(command, ".").is_some()
+    commit_workdir(command, ".", true).is_some()
 }
 
-fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
+fn commit_workdir(command: &str, base_cwd: &str, allow_quiet: bool) -> Option<PathBuf> {
     let parsed = parse_shell_command(command).ok()?;
-    if parsed.separators.iter().any(|separator| separator != "&&") {
+    if parsed.has_unmodeled_syntax || parsed.separators.iter().any(|separator| separator != "&&") {
         return None;
     }
     let mut cwd = PathBuf::from(base_cwd);
@@ -236,7 +236,7 @@ fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
             if is_supported_git_add(segment) {
                 continue;
             }
-            if let Some(resolved) = git_commit_workdir(segment, &cwd) {
+            if let Some(resolved) = git_commit_workdir(segment, &cwd, allow_quiet) {
                 commit_cwd = Some(resolved);
                 continue;
             }
@@ -253,6 +253,7 @@ fn commit_workdir(command: &str, base_cwd: &str) -> Option<PathBuf> {
 struct ParsedShellCommand {
     segments: Vec<Vec<String>>,
     separators: Vec<String>,
+    has_unmodeled_syntax: bool,
 }
 
 fn parse_shell_command(command: &str) -> Result<ParsedShellCommand> {
@@ -275,9 +276,19 @@ fn parse_shell_command(command: &str) -> Result<ParsedShellCommand> {
                 }
                 '\\' => {
                     in_token = true;
-                    if let Some(next) = chars.next() {
+                    let Some(next) = chars.next() else {
+                        bail!("trailing shell escape in commit command");
+                    };
+                    if matches!(next, '\n' | '\r') {
+                        parsed.has_unmodeled_syntax = true;
+                    } else {
                         current.push(next);
                     }
+                }
+                '$' | '`' | '<' | '>' | '*' | '?' | '[' | ']' | '{' | '}' | '(' | ')' => {
+                    parsed.has_unmodeled_syntax = true;
+                    current.push(ch);
+                    in_token = true;
                 }
                 ';' | '|' | '&' | '\n' => {
                     push_token(&mut tokens, &mut current, &mut in_token);
@@ -309,9 +320,21 @@ fn parse_shell_command(command: &str) -> Result<ParsedShellCommand> {
             ShellQuote::Double => match ch {
                 '"' => quote = ShellQuote::None,
                 '\\' => {
-                    if let Some(next) = chars.next() {
-                        current.push(next);
+                    let Some(next) = chars.next() else {
+                        bail!("trailing shell escape in commit command");
+                    };
+                    match next {
+                        '\n' | '\r' => parsed.has_unmodeled_syntax = true,
+                        '$' | '`' | '"' | '\\' => current.push(next),
+                        _ => {
+                            current.push('\\');
+                            current.push(next);
+                        }
                     }
+                }
+                '$' | '`' => {
+                    parsed.has_unmodeled_syntax = true;
+                    current.push(ch);
                 }
                 _ => current.push(ch),
             },
@@ -361,9 +384,9 @@ fn is_supported_post_commit_segment(tokens: &[String]) -> bool {
     matches!(tokens, [git, status, short] if git == "git" && status == "status" && short == "--short")
 }
 
-fn git_commit_workdir(tokens: &[String], base_cwd: &Path) -> Option<PathBuf> {
+fn git_commit_workdir(tokens: &[String], base_cwd: &Path, allow_quiet: bool) -> Option<PathBuf> {
     let invocation = parse_git_invocation(tokens, base_cwd, true)?;
-    (invocation.subcommand == "commit" && commit_args_are_supported(invocation.args))
+    (invocation.subcommand == "commit" && commit_args_are_supported(invocation.args, allow_quiet))
         .then_some(invocation.cwd)
 }
 
@@ -428,7 +451,7 @@ fn is_safe_commit_identity_config(config: &str) -> bool {
     matches!(key.as_str(), "user.name" | "user.email") && !value.chars().any(char::is_control)
 }
 
-fn commit_args_are_supported(args: &[String]) -> bool {
+fn commit_args_are_supported(args: &[String], allow_quiet: bool) -> bool {
     let mut index = 0;
     let mut has_message_source = false;
     let mut pathspec_only = false;
@@ -459,8 +482,8 @@ fn commit_args_are_supported(args: &[String]) -> bool {
                 has_message_source = true;
                 index += 1;
             }
+            "--quiet" if allow_quiet => index += 1,
             "--all"
-            | "--quiet"
             | "--amend"
             | "--allow-empty"
             | "--allow-empty-message"
@@ -492,7 +515,7 @@ fn commit_args_are_supported(args: &[String]) -> bool {
             }
             value if value.starts_with('-') && !value.starts_with("--") => {
                 let Some(next_index) =
-                    consume_commit_short_options(args, index, &mut has_message_source)
+                    consume_commit_short_options(args, index, &mut has_message_source, allow_quiet)
                 else {
                     return false;
                 };
@@ -509,6 +532,7 @@ fn consume_commit_short_options(
     args: &[String],
     index: usize,
     has_message_source: &mut bool,
+    allow_quiet: bool,
 ) -> Option<usize> {
     let options = args.get(index)?.strip_prefix('-')?;
     if options.is_empty() || options.starts_with('-') {
@@ -516,7 +540,8 @@ fn consume_commit_short_options(
     }
     for (offset, option) in options.char_indices() {
         match option {
-            'a' | 'q' | 'n' | 's' | 'i' | 'o' => {}
+            'a' | 'n' | 's' | 'i' | 'o' => {}
+            'q' if allow_quiet => {}
             'm' | 'F' | 'C' => {
                 *has_message_source = true;
                 let value_offset = offset + option.len_utf8();

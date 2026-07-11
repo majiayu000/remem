@@ -288,14 +288,18 @@ The successful command result, not an LLM observation, ordinary Stop event, or
 worker-time `HEAD`, is the authoritative commit source.
 
 1. `HEAD` presence is not commit evidence. Capture accepts only an explicit,
-   successful `git commit` command whose standard Git output proves a SHA, then
-   resolves metadata against that exact SHA. Historical commits never inherit
-   the branch of a later `HEAD`. The accepted shell grammar is fail-closed:
+   successful, non-quiet `git commit` command whose standard Git summary proves
+   a SHA, then resolves metadata against that exact SHA. Explicit quiet commit
+   commands remain eligible for ordinary event capture but cannot create
+   commit evidence or links because Git suppresses that summary. Historical
+   commits never inherit the branch of a later `HEAD`. The accepted shell
+   grammar is fail-closed:
    literal `cd`, non-interactive `git add`, safe `git -C`, `user.name` /
    `user.email` identity configuration, and commit arguments with an explicit
    non-interactive message source. Environment prefixes, arbitrary Git config,
-   help/viewer/pager paths, dry runs, editors, and interactive add modes are
-   rejected as evidence sources.
+   help/viewer/pager paths, dry runs, editors, interactive add modes, shell
+   expansion, redirection, globbing, and process substitution are rejected as
+   evidence sources.
 2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
    Stop pairs shell calls and outputs from the captured transcript byte range,
    so one Stop may prove multiple commits without reading bytes appended later.

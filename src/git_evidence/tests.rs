@@ -72,6 +72,10 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
         "git commit -m done && git status --short"
     ));
     assert!(is_supported_commit_command("git commit -am done"));
+    assert!(is_supported_commit_command("git commit -q -m done"));
+    assert!(is_supported_commit_command(
+        "git commit --quiet --message=done"
+    ));
     assert!(is_supported_commit_command(
         "git -C repo commit --amend --no-edit"
     ));
@@ -99,6 +103,19 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     ));
     assert!(!is_supported_commit_command(
         "ENV=value cd repo && git commit -m done"
+    ));
+    assert!(!is_supported_commit_command(
+        "git commit -m done > /dev/null"
+    ));
+    assert!(!is_supported_commit_command("git commit -m done < message"));
+    assert!(!is_supported_commit_command("git commit -m done $OPTS"));
+    assert!(!is_supported_commit_command(
+        "git commit -m done \"$(helper)\""
+    ));
+    assert!(!is_supported_commit_command("git commit -m done *"));
+    assert!(!is_supported_commit_command("git commit -m done <(helper)"));
+    assert!(!is_supported_commit_command(
+        "git commit -m done [ab] {one,two}"
     ));
 }
 
@@ -572,6 +589,67 @@ fn leading_git_add_help_cannot_inject_viewer_output() -> Result<()> {
             .and_then(Value::as_str)
             .expect("test command should exist")
     ));
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn quiet_commit_callback_output_is_not_commit_proof() -> Result<()> {
+    let test_dir = crate::db::test_support::ScopedTestDataDir::new("git-evidence-quiet-callback");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let spoofed_output = format!("[main {}] callback", &spoofed_sha[..7]);
+    let command = "git commit -q -m done";
+    assert!(is_supported_commit_command(command));
+    let event = ParsedHookEvent {
+        session_id: "quiet-callback-spoof".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": command})),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "quiet commit callback output".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
+    assert!(from_observed_event(&event, &summary)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn redirected_commit_summary_cannot_leave_callback_as_proof() -> Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("git-evidence-redirected-summary");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let spoofed_sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let spoofed_output = format!("[main {}] callback", &spoofed_sha[..7]);
+    let command = "git commit -m done > /dev/null";
+    assert!(!is_supported_commit_command(command));
+    let event = ParsedHookEvent {
+        session_id: "redirected-summary-spoof".to_string(),
+        cwd: Some(repo.to_string_lossy().into_owned()),
+        project: repo.to_string_lossy().into_owned(),
+        reference_time_epoch: None,
+        tool_name: "Bash".to_string(),
+        tool_input: Some(serde_json::json!({"command": command})),
+        tool_response: Some(serde_json::json!({"stdout": spoofed_output})),
+    };
+    let summary = EventSummary {
+        event_type: "bash".to_string(),
+        summary: "redirected commit summary".to_string(),
+        detail: None,
+        files_json: None,
+        exit_code: Some(0),
+    };
+
     assert!(from_observed_event(&event, &summary)?.is_empty());
     Ok(())
 }
