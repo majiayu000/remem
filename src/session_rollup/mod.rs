@@ -5,6 +5,8 @@ mod side_effects;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use persist::rollup_memory_session_id;
+
 use std::future::Future;
 
 use anyhow::{Context, Result};
@@ -86,6 +88,7 @@ where
     let Some(range) = load_rollup_range(conn, task)? else {
         return Ok(SessionRollupResult::EmptyRange);
     };
+    crate::captured_git::link_task_range(conn, task)?;
     let raw_archive_result = side_effects::drain_raw_archive_from_range(conn, task, &range);
     if session_rollup_exists(conn, task, &range)? {
         raw_archive_result?;

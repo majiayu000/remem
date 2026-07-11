@@ -1,8 +1,32 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::IdentityIds;
 use crate::db::ExtractionTaskKind;
+
+pub(super) fn with_capture_savepoint<T>(
+    conn: &Connection,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("SAVEPOINT remem_capture_event_task")
+        .context("start capture event/task savepoint")?;
+    match operation() {
+        Ok(value) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_capture_event_task")
+                .context("release capture event/task savepoint")?;
+            Ok(value)
+        }
+        Err(error) => match conn.execute_batch(
+            "ROLLBACK TO SAVEPOINT remem_capture_event_task;
+             RELEASE SAVEPOINT remem_capture_event_task;",
+        ) {
+            Ok(()) => Err(error),
+            Err(rollback_error) => Err(error.context(format!(
+                "capture event/task savepoint rollback also failed: {rollback_error}"
+            ))),
+        },
+    }
+}
 
 pub(super) fn coalesce_extraction_task(
     conn: &Connection,
@@ -105,6 +129,82 @@ mod tests {
         let conn = Connection::open_in_memory().expect("in-memory db should open");
         crate::migrate::run_migrations(&conn).expect("migrations should run");
         conn
+    }
+
+    fn capture_counts(conn: &Connection) -> Result<(i64, i64, i64, i64, i64, i64, i64)> {
+        Ok((
+            conn.query_row("SELECT COUNT(*) FROM hosts", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM workspaces", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM projects", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM event_blobs", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?,
+            conn.query_row("SELECT COUNT(*) FROM extraction_tasks", [], |row| {
+                row.get(0)
+            })?,
+        ))
+    }
+
+    #[test]
+    fn task_insert_failure_rolls_back_capture_event_and_identity() -> Result<()> {
+        let conn = setup_conn();
+        let baseline = capture_counts(&conn)?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_capture_task
+             BEFORE INSERT ON extraction_tasks
+             BEGIN
+               SELECT RAISE(FAIL, 'forced capture task failure');
+             END;",
+        )?;
+        let large_content = "evidence".repeat(4_000);
+        let input = CaptureEventInput {
+            host: "codex-cli",
+            session_id: "savepoint-session",
+            project: "/tmp/remem-savepoint",
+            cwd: None,
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some("Bash"),
+            content: &large_content,
+            task_kind: Some(ExtractionTaskKind::ObservationExtract),
+        };
+
+        let error = record_captured_event_with_id(&conn, &input, Some("savepoint-event"))
+            .expect_err("task failure must roll back capture unit");
+        assert!(error.to_string().contains("forced capture task failure"));
+        assert_eq!(capture_counts(&conn)?, baseline);
+
+        conn.execute_batch("DROP TRIGGER fail_capture_task")?;
+        let outcome = record_captured_event_with_id(&conn, &input, Some("savepoint-event"))?;
+        assert!(outcome.extraction_task_id.is_some());
+        assert_eq!(capture_counts(&conn)?.5, baseline.5 + 1);
+        assert_eq!(capture_counts(&conn)?.6, baseline.6 + 1);
+        Ok(())
+    }
+
+    #[test]
+    fn capture_savepoint_nests_inside_outer_transaction() -> Result<()> {
+        let conn = setup_conn();
+        let baseline = capture_counts(&conn)?;
+        let tx = conn.unchecked_transaction()?;
+        record_captured_event_with_id(
+            &tx,
+            &CaptureEventInput {
+                host: "codex-cli",
+                session_id: "nested-savepoint-session",
+                project: "/tmp/remem-savepoint",
+                cwd: None,
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some("Bash"),
+                content: "nested capture",
+                task_kind: Some(ExtractionTaskKind::ObservationExtract),
+            },
+            Some("nested-savepoint-event"),
+        )?;
+        tx.rollback()?;
+        assert_eq!(capture_counts(&conn)?, baseline);
+        Ok(())
     }
 
     #[test]

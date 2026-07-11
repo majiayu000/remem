@@ -7,6 +7,7 @@ pub(super) struct SummarizeInput {
     pub session_id: Option<String>,
     pub cwd: Option<String>,
     pub transcript_path: Option<String>,
+    pub transcript_byte_len: Option<u64>,
     pub last_assistant_message: Option<String>,
 }
 

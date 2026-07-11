@@ -50,7 +50,9 @@ Costs of the dual path:
 
 - No second rewrite. `current-memory-contracts/` explicitly forbids it; this
   spec converges surfaces onto the pipeline that already won.
-- No behavior change to the capture-ledger path itself.
+- No second capture rewrite. Correctness fixes may add deterministic provenance
+  to the capture ledger, but they must not remove LLM extraction, infer intent,
+  or replace captured evidence with worker-time state.
 - No silent dropping of tables in a routine migration. Every drop ships with
   its own migration, release note, and doctor pre-check.
 - Timeline and context features do not lose capability; they change data
@@ -116,6 +118,28 @@ Acceptance:
 
 - Migration commands are idempotent and report migrated/skipped counts.
 - A drop migration refuses to run while unmigrated valuable rows remain.
+
+### Durable Commit Traceability
+
+As a user, a commit shown by `remem why` or the commit lookup tools is linked
+to my coding session only when remem captured real Git evidence for that event.
+The link must survive delayed processing and spill replay without being changed
+to whatever `HEAD` happens to be later.
+
+Acceptance:
+
+- A successful explicit `git commit` result proves the SHA; trusted capture
+  resolves metadata for that exact SHA before the event is written or spilled,
+  and stores the evidence atomically with the capture event.
+- Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
+  commit links. A byte-bounded Codex transcript may prove multiple commits.
+- Deterministic linking uses the exact claimed event range and durable
+  `session_row_id`; it does not depend on an LLM result or a synthetic
+  observation-session prefix.
+- Every distinct commit in a range is linked, while no evidence produces no
+  link. Retries and later ranges do not duplicate links.
+- A captured commit that cannot be validated or linked leaves a diagnosable
+  extraction failure instead of a successful no-op.
 
 ## Rollout
 

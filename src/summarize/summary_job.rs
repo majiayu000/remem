@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod commit_link_tests;
 mod hook;
 mod host;
 mod persist;

@@ -330,6 +330,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "preference_reinforcement",
         sql: include_str!("../migrations/v065_preference_reinforcement.sql"),
     },
+    Migration {
+        version: 66,
+        name: "capture_git_evidence",
+        sql: include_str!("../migrations/v066_capture_git_evidence.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

@@ -37,6 +37,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "sessions",
     "event_blobs",
     "captured_events",
+    "captured_event_commits",
     "extraction_tasks",
     "memory_candidates",
     "rule_candidates",

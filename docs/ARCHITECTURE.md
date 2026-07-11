@@ -35,7 +35,7 @@
 │  captured_events → extraction_tasks → observations         │
 │  memories (decision/bugfix/preference/discovery/...)       │
 │  session_summaries    workstreams    FTS5 full-text index   │
-│  summarize_cooldown   ai_usage_events                      │
+│  git_commits ↔ git_commit_sessions    ai_usage_events       │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -50,6 +50,14 @@ slice: hooks write append-only `captured_events`, large evidence goes to
 host/project/session/task kind. This ledger is evidence and scheduling state;
 durable memory is still created only after extraction, candidate review, and
 promotion.
+
+Only successful explicit `git commit` calls produce linkable Git evidence.
+Claude PostToolUse reads the successful Bash result; Codex Stop reads the
+byte-bounded transcript and pairs shell calls with successful outputs. The
+resolved metadata for each proven SHA is stored in `captured_event_commits`
+before database open/spill. Deterministic worker phases consume only the exact
+claimed event range, key links by `session_row_id`, and never infer a commit
+from an ordinary Stop event or worker-time `HEAD`.
 
 ## Module Overview (~9000 lines Rust)
 
@@ -132,6 +140,7 @@ Stop hook fires
        │
        ├─ SessionRollup
        │    ├─ Load the captured_events range
+       │    ├─ Idempotently link every proven Git commit in that range
        │    ├─ Ingest raw transcript through the Stop-captured byte boundary
        │    ├─ Finalize transcript-backed citations + failure lessons
        │    ├─ AI → semantic summary + topic segments
@@ -141,6 +150,7 @@ Stop hook fires
        │
        ├─ ObservationExtract
        │    ├─ Load captured_events + prior semantic rollup context
+       │    ├─ Idempotently link every proven Git commit in that range
        │    ├─ AI → structured observations
        │    ├─ File overlap detection → mark old observations stale
        │    └─ Enqueue memory/graph/rule candidate follow-ups
@@ -502,7 +512,17 @@ Retention matrix:
 -- Raw capture ledger
 captured_events (host_id, workspace_id, project_id, session_row_id, session_id,
                  event_id, event_type, role, tool_name, content_text,
-                 content_blob_id, content_hash, created_at_epoch)
+                 content_blob_id, content_hash, created_at_epoch,
+                 reference_time_epoch)
+
+-- One event can prove multiple explicit commits; snapshots are not linkable
+captured_event_commits (event_row_id, sha, metadata_json, evidence_kind,
+                        evidence_locator)
+
+-- Capture-time Git provenance; session_row_id prevents cross-host raw-ID collisions
+git_commits (project, repo_path, sha, short_sha, branch, message, changed_files)
+git_commit_sessions (commit_id, session_row_id, session_id, memory_session_id,
+                     source, linked_at_epoch)
 
 -- Reliable extraction scheduler
 extraction_tasks (task_kind, host_id, workspace_id, project_id, session_row_id,

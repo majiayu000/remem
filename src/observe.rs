@@ -1,3 +1,4 @@
+mod filter;
 mod hook;
 mod native;
 mod parse;

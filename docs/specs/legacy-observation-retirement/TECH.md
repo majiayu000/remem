@@ -68,7 +68,7 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
      (`src/worker.rs`) → `finalize_summarize`
      (`src/db/summarize/session/finalize.rs`, DELETE+INSERT).
 - The implemented GH684-T7 slices retire the legacy enqueue path, but full T7
-  completion remains blocked by observed-commit wiring in #792. Stop hooks record the
+  completion remains blocked by #792, #794, #795, and #796. Stop hooks record the
   `SessionRollup` extraction task and no longer enqueue Summary, Compress, or
   Dream jobs directly. If capture-ledger recording fails, the hook spills the
   payload and skips follow-up work instead of relying on legacy Summary
@@ -82,6 +82,9 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   candidates, workstream upsert, native-memory sync, and UserContextCandidate
   extraction, then enqueue Compress/Dream jobs only after rollup persistence.
   Observed-commit linking is not yet connected end to end and remains #792.
+  The bounded transcript prompt gap (#794), native-memory failure isolation
+  (#795), and retry-safe follow-up scheduling (#796) are separate remaining
+  ownership gaps and must not be folded into the #792 implementation.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -134,7 +137,7 @@ Existing Implementation Facts above):
 | `observations` | `reclassify-current` — live intermediate of the extraction pipeline; GH684-T8 fixed the "legacy" MCP wording |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
-| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; implemented GH684-T7 slices move Compress/Dream follow-ups behind persisted SessionRollup processing while stopping new Summary job enqueue; #792 still blocks full T7 completion |
+| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; implemented GH684-T7 slices move Compress/Dream follow-ups behind persisted SessionRollup processing while stopping new Summary job enqueue; #792, #794, #795, and #796 still block full T7 completion |
 
 Remaining Phase 1 analysis before freeze decisions execute:
 
@@ -207,8 +210,10 @@ Tests: fixture DBs per state; frozen-write detection test.
    worker side effects own byte-bounded raw archive ingest, transcript-only
    citations/failure lessons, summary-derived candidate finalization,
    workstream upsert, native-memory sync, UserContextCandidate extraction, and
-   Compress/Dream enqueue after rollup persistence. Observed-commit linking is
-   the remaining ownership gap tracked by #792.
+   Compress/Dream enqueue after rollup persistence. Remaining ownership gaps
+   are tracked independently by #792 (observed commits), #794 (bounded
+   transcript prompt evidence), #795 (native-memory failure isolation), and
+   #796 (follow-up scheduling idempotency).
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
    upgrade time. Migration v064 marks non-terminal and retryable failed Summary
    jobs as failed permanent, clears lease/retry state, and records an explicit
@@ -230,7 +235,7 @@ Tests: fixture DBs per state; frozen-write detection test.
    summary-derived candidates, workstream upsert, native-memory sync,
    UserContextCandidate extraction, and Compress/Dream follow-up enqueue.
    Citation/failure retry errors do not suppress those persisted side effects.
-   Observed-commit linking remains blocked by #792. When the current stop payload succeeds,
+   Full T7 completion remains blocked by #792, #794, #795, and #796. When the current stop payload succeeds,
    older same-host/project/session spills are skipped during replay, but same
    `session_id` spills from other projects still replay. Replayed Stop captures
    use a stable capture event ID derived from host/project/session/payload so a
@@ -251,6 +256,49 @@ Tests: fixture DBs per state; frozen-write detection test.
    conversion lacks an authoritative legacy payload-to-SessionRollup contract.
 5. Doctor: a `session_summaries` row written by anything other than the
    rollup path after freeze is an error finding.
+
+### Observed Commit Contract (#792)
+
+The successful command result, not an LLM observation, ordinary Stop event, or
+worker-time `HEAD`, is the authoritative commit source.
+
+1. `HEAD` presence is not commit evidence. Capture accepts only an explicit,
+   successful `git commit` command whose standard Git output proves a SHA, then
+   resolves metadata against that exact SHA. Historical commits never inherit
+   the branch of a later `HEAD`.
+2. Claude PostToolUse extracts evidence from a successful Bash result. Codex
+   Stop pairs shell calls and outputs from the captured transcript byte range,
+   so one Stop may prove multiple commits without reading bytes appended later.
+3. Each proven commit is stored atomically with its captured event in the 1:N
+   `captured_event_commits` table. Encrypted spill records preserve the same
+   typed evidence; replay never re-reads the repository's later `HEAD`.
+4. Captured Git evidence is produced only with a task that deterministically
+   consumes it: observed tool events enqueue `ObservationExtract`, and Stop
+   events enqueue `SessionRollup`. Each link phase reads every distinct commit
+   from its exact `(host_id, project_id, session_row_id,
+   cursor_event_id..high_watermark_event_id]` range.
+5. The link phase runs independently of model extraction. AI timeout,
+   malformed output, explicit `no_observations`, dedup, and zero inserts cannot
+   erase an already captured deterministic commit relationship.
+6. `session_row_id` is the canonical internal identity. The content-session ID
+   remains user-facing, while the link's memory-session ID is derived centrally
+   as `capture-rollup-{session_row_id}` so commit lookup can join the latest
+   rollup summary. Link storage preserves `session_row_id` so equal raw session
+   strings from different hosts cannot overwrite one another.
+7. Captured evidence requires a full hexadecimal SHA and matching serialized
+   metadata. Missing evidence is a normal zero-link result; malformed evidence
+   or a failed link returns an error containing the range, row identity, and
+   SHA so the extraction retry/replay and doctor surfaces remain actionable.
+8. Link and lookup behavior is idempotent across retries, multiple event
+   ranges, and multiple commits in one range. Summary lookup selects one latest
+   rollup row per link rather than multiplying results for historical ranges.
+
+Required regression coverage: capture to link end to end under the existing
+Rollup-first priority, no evidence, baseline `HEAD` rejection, explicit
+`no_observations`, AI failure, same-range multiple commits, Codex transcript
+byte boundaries, later-range isolation, retry after link failure, typed spill
+replay after `HEAD` changes, cross-host raw-session collisions, and
+single-result lookup across multiple rollup summaries.
 
 ### `pending_observations`
 

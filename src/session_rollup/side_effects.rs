@@ -197,7 +197,6 @@ pub(super) fn run_persisted_rollup_side_effects(
     let fields = load_persisted_rollup_fields(conn, session_row_id, range)?;
     let cwd = rollup_cwd(task, range);
 
-    link_observed_commits(conn, &task.project, session_id, &memory_session_id)?;
     upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields)?;
     promote_rollup_candidates(conn, task, range, &fields)?;
     sync_native_memory(conn, &cwd, &task.project)?;
@@ -371,28 +370,6 @@ fn load_persisted_rollup_fields(
     )
     .optional()?
     .context("persisted session rollup row missing")
-}
-
-fn link_observed_commits(
-    conn: &Connection,
-    project: &str,
-    session_id: &str,
-    memory_session_id: &str,
-) -> Result<()> {
-    let linked = crate::git_trace::link_observed_commits_for_session(
-        conn,
-        project,
-        session_id,
-        memory_session_id,
-    )
-    .context("failed to link observed commits for session rollup")?;
-    if linked > 0 {
-        crate::log::info(
-            "session-rollup",
-            &format!("linked {linked} observed commit(s) project={project} session={session_id}"),
-        );
-    }
-    Ok(())
 }
 
 fn upsert_rollup_workstream(

@@ -8,18 +8,27 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const HEAD_AUTHORED_AT_ARGS: &[&str] = &["show", "-s", "--format=%at", "HEAD"];
-const HEAD_CHANGED_FILES_ARGS: &[&str] = &[
-    "diff-tree",
-    "--root",
-    "-m",
-    "--no-commit-id",
-    "--name-only",
-    "-r",
-    "HEAD",
-];
+use anyhow::{bail, Context, Result};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+const COMMIT_METADATA_FORMAT: &str = "--format=%H%x00%h%x00%at%x00%s";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GitEvidenceKind {
+    ObservedCommit,
+    TerminalSnapshot,
+}
+
+impl GitEvidenceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ObservedCommit => "observed_commit",
+            Self::TerminalSnapshot => "terminal_snapshot",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct GitCommitMetadata {
     pub repo_path: String,
     pub sha: String,
@@ -28,6 +37,13 @@ pub struct GitCommitMetadata {
     pub message: Option<String>,
     pub authored_at_epoch: Option<i64>,
     pub changed_files: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GitCommitEvidence {
+    pub kind: GitEvidenceKind,
+    pub metadata: GitCommitMetadata,
+    pub locator: Option<String>,
 }
 
 impl GitCommitMetadata {
@@ -99,52 +115,121 @@ pub fn short_sha_for(sha: &str) -> String {
     sha.chars().take(7).collect()
 }
 
-pub fn detect_commit_metadata(cwd: &str) -> Option<GitCommitMetadata> {
-    let repo_path = resolve_toplevel(Path::new(cwd))?;
-    let sha = git_stdout(cwd, &["rev-parse", "HEAD"])?;
-    let sha = sha.trim();
+pub fn detect_commit_metadata(cwd: &str) -> Result<Option<GitCommitMetadata>> {
+    let Some(_) = resolve_toplevel(Path::new(cwd)) else {
+        return Ok(None);
+    };
+    let sha = git_stdout_required(cwd, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let sha = sha.trim().to_ascii_lowercase();
     if sha.is_empty() {
-        return None;
+        bail!("git returned an empty HEAD commit in {cwd}");
     }
 
-    let short_sha = git_stdout(cwd, &["rev-parse", "--short", "HEAD"])
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| short_sha_for(sha));
-    let branch = git_stdout(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .and_then(|value| parse_branch_output(&value));
-    let message = git_stdout(cwd, &["show", "-s", "--format=%s", "HEAD"])
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let authored_at_epoch = git_stdout(cwd, HEAD_AUTHORED_AT_ARGS)
-        .and_then(|value| parse_authored_epoch_output(&value));
-    let changed_files = git_stdout(cwd, HEAD_CHANGED_FILES_ARGS)
-        .map(|value| parse_changed_files_output(&value))
-        .unwrap_or_default();
+    let metadata = resolve_commit_metadata(cwd, &sha)?;
+    let final_sha = git_stdout_required(cwd, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    if !final_sha.trim().eq_ignore_ascii_case(&sha) {
+        bail!("git HEAD changed while capturing commit metadata in {cwd}");
+    }
+    Ok(Some(metadata))
+}
 
-    Some(GitCommitMetadata {
+pub fn resolve_commit_metadata(cwd: &str, commitish: &str) -> Result<GitCommitMetadata> {
+    let repo_path = resolve_toplevel(Path::new(cwd))
+        .with_context(|| format!("resolve Git repository for commit evidence in {cwd}"))?;
+    let commit_ref = format!("{}^{{commit}}", commitish.trim());
+    let sha = git_stdout_required(cwd, &["rev-parse", "--verify", &commit_ref])?;
+    let sha = sha.trim().to_ascii_lowercase();
+    if sha.is_empty() {
+        bail!("git returned an empty commit for evidence {commitish}");
+    }
+    let raw_metadata = git_stdout_required(cwd, &["show", "-s", COMMIT_METADATA_FORMAT, &sha])?;
+    let mut fields = raw_metadata.trim_end_matches(['\r', '\n']).splitn(4, '\0');
+    let resolved_sha = fields
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let short_sha = fields
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let authored_at_epoch = fields
+        .next()
+        .and_then(parse_authored_epoch_output)
+        .context("git commit metadata omitted authored epoch")?;
+    let message = fields
+        .next()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    if resolved_sha != sha || short_sha.is_empty() || !sha.starts_with(&short_sha) {
+        bail!("git returned inconsistent metadata for captured commit {sha}");
+    }
+
+    let current_head = git_stdout_required(cwd, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    let branch = if current_head.trim().eq_ignore_ascii_case(&sha) {
+        parse_branch_output(&git_stdout_required(cwd, &["branch", "--show-current"])?)
+    } else {
+        None
+    };
+    let changed_files = parse_changed_files_output(&git_stdout_required(
+        cwd,
+        &[
+            "diff-tree",
+            "--root",
+            "-m",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            &sha,
+        ],
+    )?);
+    Ok(sanitize_commit_metadata(GitCommitMetadata {
         repo_path: repo_path.to_string_lossy().to_string(),
-        sha: sha.to_string(),
+        sha,
         short_sha,
         branch,
         message,
-        authored_at_epoch,
+        authored_at_epoch: Some(authored_at_epoch),
         changed_files,
-    })
+    }))
 }
 
-fn git_stdout(cwd: &str, args: &[&str]) -> Option<String> {
+pub fn sanitize_commit_metadata(mut metadata: GitCommitMetadata) -> GitCommitMetadata {
+    metadata.branch = metadata
+        .branch
+        .map(|value| crate::adapter::common::redact_sensitive_text(&value));
+    metadata.message = metadata
+        .message
+        .map(|value| crate::adapter::common::redact_sensitive_text(&value));
+    metadata.changed_files = metadata
+        .changed_files
+        .into_iter()
+        .map(|value| crate::adapter::common::redact_sensitive_text(&value))
+        .collect();
+    metadata
+}
+
+fn git_stdout_required(cwd: &str, args: &[&str]) -> Result<String> {
     let output = Command::new("git")
         .args(args)
         .current_dir(cwd)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .output()
-        .ok()?;
+        .with_context(|| format!("run git {} in {cwd}", args.join(" ")))?;
     if !output.status.success() {
-        return None;
+        let stderr_text = String::from_utf8_lossy(&output.stderr);
+        let stderr = crate::db::truncate_str(&stderr_text, 400);
+        bail!(
+            "git {} failed in {cwd} with status {}: {stderr}",
+            args.join(" "),
+            output.status
+        );
     }
-    Some(String::from_utf8_lossy(&output.stdout).to_string())
+    String::from_utf8(output.stdout)
+        .with_context(|| format!("git {} returned non-UTF-8 output", args.join(" ")))
 }
 
 #[cfg(test)]
@@ -191,13 +276,11 @@ mod tests {
     }
 
     #[test]
-    fn metadata_detection_uses_author_time_and_root_merge_diff_args() {
-        assert_eq!(
-            HEAD_AUTHORED_AT_ARGS,
-            ["show", "-s", "--format=%at", "HEAD"]
-        );
-        assert!(HEAD_CHANGED_FILES_ARGS.contains(&"--root"));
-        assert!(HEAD_CHANGED_FILES_ARGS.contains(&"-m"));
+    fn metadata_detection_uses_one_anchored_metadata_format() {
+        assert!(COMMIT_METADATA_FORMAT.contains("%H"));
+        assert!(COMMIT_METADATA_FORMAT.contains("%h"));
+        assert!(COMMIT_METADATA_FORMAT.contains("%at"));
+        assert!(COMMIT_METADATA_FORMAT.contains("%s"));
     }
 
     #[test]
