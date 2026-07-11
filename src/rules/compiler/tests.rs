@@ -491,6 +491,9 @@ fn pure_compile_does_not_write_artifact() -> Result<()> {
 
 #[test]
 fn worker_job_writes_artifact_and_records_diagnostic() -> Result<()> {
+    let _config_guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("runtime config test lock should acquire");
     let _dir = ScopedTestDataDir::new("compile-worker-write");
     crate::runtime_config::init_config()?;
     crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
@@ -522,6 +525,9 @@ fn worker_job_writes_artifact_and_records_diagnostic() -> Result<()> {
 
 #[test]
 fn success_diagnostic_failure_restores_previous_artifact() -> Result<()> {
+    let _config_guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("runtime config test lock should acquire");
     let _dir = ScopedTestDataDir::new("compile-success-diagnostic-rollback");
     crate::runtime_config::init_config()?;
     crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
@@ -561,6 +567,9 @@ fn success_diagnostic_failure_restores_previous_artifact() -> Result<()> {
 
 #[test]
 fn success_diagnostic_failure_removes_new_artifact() -> Result<()> {
+    let _config_guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("runtime config test lock should acquire");
     let _dir = ScopedTestDataDir::new("compile-new-artifact-diagnostic-rollback");
     crate::runtime_config::init_config()?;
     crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
@@ -590,6 +599,9 @@ fn success_diagnostic_failure_removes_new_artifact() -> Result<()> {
 
 #[test]
 fn disabled_config_skips_compilation() -> Result<()> {
+    let _config_guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .expect("runtime config test lock should acquire");
     let _dir = ScopedTestDataDir::new("compile-disabled");
     crate::runtime_config::init_config()?;
     // Default config is disabled.

@@ -75,6 +75,7 @@ pub(crate) fn enqueue_for_memory_ids(conn: &Connection, memory_ids: &[i64]) -> R
         "SELECT {PREFERENCE_AUTHORITY_PROJECT_SQL},
                 COALESCE(m.scope, 'project') = 'global'
          FROM memories m
+         JOIN memory_preference_reinforcements r ON r.memory_id = m.id
          WHERE m.memory_type = 'preference' AND m.id IN ({placeholders})"
     );
     let mut stmt = conn.prepare(&sql)?;
