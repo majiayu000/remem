@@ -101,7 +101,11 @@ needed fields and side effects, then removes only the redundant Summary writer.
       archive ingest covers every Stop payload coalesced into the claimed range,
       deduplicates repeated transcript paths, and summary-derived candidate
       evidence is sourced from that exact range rather than the session-wide
-      latest capture.
+      latest capture. The #794 follow-up passes the same selected, byte-bounded
+      user/assistant transcript messages into the summarizer and candidate
+      support text, removes exact captured-event duplicates, caps and redacts
+      the prompt block, and fails before the first AI call when that required
+      bounded evidence cannot be read or parsed.
       Observed-commit wiring remains blocked by #792.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
@@ -134,6 +138,9 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `session_rollup_worker_drains_raw_archive_from_stop_payload`,
       `session_rollup_drains_every_coalesced_stop_payload`,
       `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`,
+      `session_rollup_prompt_includes_only_bounded_transcript_text`,
+      `session_rollup_prompt_does_not_duplicate_captured_message_text`,
+      `session_rollup_missing_transcript_fails_before_metadata_only_summary`,
       `session_rollup_candidate_evidence_stays_with_claimed_range`,
       `session_rollup_honors_stop_transcript_snapshot_boundary`,
       `session_rollup_retries_transcript_side_effects_without_resummarizing`,

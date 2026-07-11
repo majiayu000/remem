@@ -117,6 +117,22 @@ Acceptance:
 - Migration commands are idempotent and report migrated/skipped counts.
 - A drop migration refuses to run while unmigrated valuable rows remain.
 
+### Bounded Rollup Evidence
+
+As a user, a transcript-backed Stop capture produces a summary from the actual
+conversation text captured at that Stop boundary rather than from transcript
+path metadata alone.
+
+Acceptance:
+
+- Selected transcript paths use the widest boundary covered by the claimed
+  event range and never read bytes appended after that boundary.
+- User/assistant transcript messages enter the rollup prompt as bounded,
+  deterministic, redacted, XML-escaped data anchored to a covered Stop event.
+- Exact text already represented by a captured event is not repeated, and a
+  missing or malformed required snapshot fails before a metadata-only summary
+  can persist.
+
 ## Rollout
 
 1. Inventory + per-surface decisions (spec-only deliverable inside this

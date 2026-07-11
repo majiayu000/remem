@@ -76,8 +76,14 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   same-session spills so the current capture remains authoritative. The hook
   keeps immediately available memory-citation recording and failure-lesson
   distillation after capture. Worker-side SessionRollup side effects drain raw
-  archive content through the Stop-captured transcript byte boundary, complete
-  transcript-only citation/failure signals, preserve `cwd` and
+  archive content through the Stop-captured transcript byte boundary. The #794
+  follow-up passes the same selected user/assistant messages into the rollup
+  prompt and candidate support text. Repeated paths use one widest covered
+  boundary; exact captured-event text is omitted; the prompt block is count-
+  and byte-bounded, redacted, and XML-escaped; and a required snapshot
+  read/parse failure stops the first AI call rather than persisting a
+  metadata-only summary. The worker then completes transcript-only
+  citation/failure signals, preserves `cwd` and
   `transcript_path` through capture redaction, re-home summary-derived
   candidates, workstream upsert, native-memory sync, and UserContextCandidate
   extraction, then enqueue Compress/Dream jobs only after rollup persistence.
@@ -225,7 +231,12 @@ Tests: fixture DBs per state; frozen-write detection test.
    boundary so the SessionRollup worker cannot consume later appended turns;
    coalesced rollups drain every covered Stop payload, deduplicate repeated
    transcript paths, and bind summary-derived candidate evidence to the exact
-   covered event range instead of the session-wide latest capture;
+   covered event range instead of the session-wide latest capture. The selected
+   bounded transcript messages also feed the summarizer and candidate support
+   text, while exact content already carried by a captured event is rendered
+   once. Transcript prompt rendering is capped at 128 messages, 64 KiB total
+   content, and 8 KiB per message, then redacted and XML-escaped; a required
+   snapshot read/parse failure aborts before summary persistence;
    after a persisted rollup exists, worker side effects re-home
    summary-derived candidates, workstream upsert, native-memory sync,
    UserContextCandidate extraction, and Compress/Dream follow-up enqueue.
@@ -325,6 +336,13 @@ cargo test
 Plus per-phase: equivalence fixtures (Phase 3), migration idempotency +
 guarded-drop tests (Phase 4), and a dogfood-database dry run recorded in the
 epic before each drop ships.
+
+The #794 prompt-evidence follow-up is covered by
+`session_rollup_prompt_includes_only_bounded_transcript_text`,
+`session_rollup_prompt_does_not_duplicate_captured_message_text`,
+`session_rollup_missing_transcript_fails_before_metadata_only_summary`,
+`session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`, and
+`transcript_prompt_is_bounded_redacted_and_xml_safe`.
 
 ## Open Questions
 

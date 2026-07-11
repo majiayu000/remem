@@ -13,9 +13,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use crate::db;
 
 const SESSION_ROLLUP_SYSTEM: &str = "\
-You summarize captured development-session events for a memory system.
-Use only the provided events. Preserve concrete facts, decisions, commands,
-files, errors, and outcomes. Do not invent missing details.
+You summarize captured development-session evidence for a memory system.
+Use only the provided events and bounded transcript messages. Preserve concrete
+facts, decisions, commands, files, errors, and outcomes. Do not invent missing
+details.
 
 Also split the events into coherent topic segments. A topic segment is a set of
 events around the same goal, problem, or file area. Use event gap_before,
@@ -87,18 +88,19 @@ where
         return Ok(SessionRollupResult::EmptyRange);
     };
     let raw_archive_result = side_effects::drain_raw_archive_from_range(conn, task, &range);
+    let transcript_messages = side_effects::load_prompt_transcript_messages(&range)?;
     if session_rollup_exists(conn, task, &range)? {
         raw_archive_result?;
-        run_rollup_side_effects(conn, task, &range)?;
+        run_rollup_side_effects(conn, task, &range, &transcript_messages)?;
         return Ok(SessionRollupResult::AlreadyExists);
     }
 
-    let prompt = prompt::build_rollup_prompt(task, &range);
+    let prompt = prompt::build_rollup_prompt(task, &range, &transcript_messages);
     let response = summarize(prompt).await?;
     let output = parse::parse_rollup_response(&response, &range)?;
     persist::persist_session_rollup(conn, task, &range, &output)?;
     raw_archive_result?;
-    run_rollup_side_effects(conn, task, &range)?;
+    run_rollup_side_effects(conn, task, &range, &transcript_messages)?;
     Ok(SessionRollupResult::Written)
 }
 
@@ -106,10 +108,12 @@ fn run_rollup_side_effects(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_messages: &[side_effects::PromptTranscriptMessage],
 ) -> Result<()> {
     let stop_memory_result =
         side_effects::run_post_archive_stop_memory_side_effects(conn, task, range);
-    let persisted_result = side_effects::run_persisted_rollup_side_effects(conn, task, range);
+    let persisted_result =
+        side_effects::run_persisted_rollup_side_effects(conn, task, range, transcript_messages);
     match (stop_memory_result, persisted_result) {
         (Ok(()), Ok(())) => Ok(()),
         (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),

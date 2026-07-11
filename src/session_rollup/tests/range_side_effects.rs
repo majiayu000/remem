@@ -11,6 +11,127 @@ fn transcript_message(text: &str) -> String {
     .to_string()
 }
 
+fn transcript_role_message(role: &str, text: &str) -> String {
+    serde_json::json!({
+        "type": role,
+        "message": {"content": [{"type": "text", "text": text}]}
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn session_rollup_prompt_includes_only_bounded_transcript_text() -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-transcript");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let before_user = transcript_role_message(
+        "user",
+        "transcript-only request: preserve the captured Stop boundary",
+    );
+    let before_assistant = transcript_role_message(
+        "assistant",
+        "Decision: keep SessionRollup prompts grounded in bounded transcript text.",
+    );
+    let after_stop = transcript_role_message(
+        "assistant",
+        "appended after Stop: this text must not enter the rollup prompt",
+    );
+    std::fs::write(&transcript, format!("{before_user}\n{before_assistant}\n"))?;
+    let transcript_byte_len = std::fs::metadata(&transcript)?.len();
+
+    let mut conn = setup_conn();
+    let session_id = "sess-rollup-prompt-transcript";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": transcript_byte_len
+        })
+        .to_string(),
+    )?;
+    std::fs::write(
+        &transcript,
+        format!("{before_user}\n{before_assistant}\n{after_stop}\n"),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let result = process_with_summarizer(&mut conn, &task, |prompt| async move {
+        assert!(
+            prompt.contains("transcript-only request: preserve the captured Stop boundary"),
+            "bounded user transcript text missing from prompt: {prompt}"
+        );
+        assert!(
+            prompt.contains(
+                "Decision: keep SessionRollup prompts grounded in bounded transcript text."
+            ),
+            "bounded assistant transcript text missing from prompt: {prompt}"
+        );
+        assert!(!prompt.contains("appended after Stop"), "{prompt}");
+        Ok(xml_response_with_structured_fields(
+            "Use bounded transcript evidence.",
+            "Preserve the captured Stop boundary.",
+            "Decision: keep SessionRollup prompts grounded in bounded transcript text.",
+            "",
+            "",
+            "",
+            "",
+        ))
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::Written);
+    let candidate_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_candidates
+         WHERE text LIKE '%Decision: keep SessionRollup prompts grounded in bounded transcript text.%'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(candidate_count, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_missing_transcript_fails_before_metadata_only_summary() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-missing");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("missing.jsonl");
+    let mut conn = setup_conn();
+    let session_id = "sess-rollup-prompt-missing";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": 42
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let error = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("summarizer must not run without bounded transcript evidence")
+    })
+    .await
+    .expect_err("missing transcript must keep the rollup retryable");
+
+    assert!(
+        error
+            .to_string()
+            .contains("read bounded transcript prompt evidence"),
+        "{error:#}"
+    );
+    assert_eq!(summary_count(&conn), 0);
+    Ok(())
+}
+
 #[tokio::test]
 async fn session_rollup_candidate_evidence_stays_with_claimed_range() -> Result<()> {
     let mut conn = setup_conn();
@@ -123,7 +244,14 @@ async fn session_rollup_drains_every_coalesced_stop_payload() -> Result<()> {
     }
     let task = claim_rollup_task(&mut conn)?;
 
-    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+    let result = process_with_summarizer(&mut conn, &task, |prompt| async move {
+        let first = prompt
+            .find("first transcript stop")
+            .expect("first transcript text should reach the prompt");
+        let second = prompt
+            .find("second transcript stop")
+            .expect("second transcript text should reach the prompt");
+        assert!(first < second, "{prompt}");
         Ok(xml_response("Drain all coalesced Stop payloads.", ""))
     })
     .await?;
@@ -203,7 +331,10 @@ async fn session_rollup_deduplicates_same_transcript_at_widest_stop_boundary() -
     std::fs::write(&transcript, format!("{first}\n{second}\n{after}\n"))?;
     let task = claim_rollup_task(&mut conn)?;
 
-    let result = process_with_summarizer(&mut conn, &task, |_prompt| async {
+    let result = process_with_summarizer(&mut conn, &task, |prompt| async move {
+        assert_eq!(prompt.matches("first shared transcript stop").count(), 1);
+        assert_eq!(prompt.matches("second shared transcript stop").count(), 1);
+        assert!(!prompt.contains("after shared Stop boundary"));
         Ok(xml_response("Use the widest covered Stop boundary.", ""))
     })
     .await?;
@@ -226,5 +357,55 @@ async fn session_rollup_deduplicates_same_transcript_at_widest_stop_boundary() -
         ]
     );
     assert!(!archived.contains(&"after shared Stop boundary".to_string()));
+    Ok(())
+}
+
+#[tokio::test]
+async fn session_rollup_prompt_does_not_duplicate_captured_message_text() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("session-rollup-prompt-dedup");
+    std::fs::create_dir_all(&data_dir.path)?;
+    let transcript = data_dir.path.join("transcript.jsonl");
+    let captured_text = "captured user request must appear once";
+    let transcript_only_text = "transcript-only assistant outcome";
+    std::fs::write(
+        &transcript,
+        format!(
+            "{}\n{}\n",
+            serde_json::json!({
+                "type": "user",
+                "message": {"content": [{"type": "text", "text": captured_text}]}
+            }),
+            transcript_message(transcript_only_text)
+        ),
+    )?;
+    let boundary = std::fs::metadata(&transcript)?.len();
+    let session_id = "sess-rollup-prompt-dedup";
+    let mut conn = setup_conn();
+    capture(&conn, session_id, "user_prompt_submit", captured_text)?;
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": transcript,
+            "transcript_byte_len": boundary
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+
+    let result = process_with_summarizer(&mut conn, &task, |prompt| async move {
+        assert_eq!(prompt.matches(captured_text).count(), 1, "{prompt}");
+        assert_eq!(prompt.matches(transcript_only_text).count(), 1, "{prompt}");
+        Ok(xml_response(
+            "Deduplicate captured and transcript evidence.",
+            "",
+        ))
+    })
+    .await?;
+
+    assert_eq!(result, SessionRollupResult::Written);
     Ok(())
 }

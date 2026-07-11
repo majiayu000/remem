@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Deserialize;
@@ -21,10 +23,105 @@ struct PersistedRollupFields {
 
 #[derive(Debug, Deserialize)]
 struct StopHookPayload {
+    #[serde(skip)]
+    source_event_id: i64,
     cwd: Option<String>,
     transcript_path: Option<String>,
     transcript_byte_len: Option<u64>,
     last_assistant_message: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PromptTranscriptMessage {
+    pub(super) source_event_id: i64,
+    pub(super) role: &'static str,
+    pub(super) content: String,
+}
+
+pub(super) fn load_prompt_transcript_messages(
+    range: &RollupRange,
+) -> Result<Vec<PromptTranscriptMessage>> {
+    let payloads = stop_payloads(range)?;
+    let selected_transcripts = unique_transcript_payload_indices(&payloads);
+    let represented_text = captured_event_text(range);
+    let mut messages = Vec::new();
+
+    for payload_index in selected_transcripts {
+        let payload = &payloads[payload_index];
+        let Some(transcript_path) = stop_transcript_path(payload) else {
+            continue;
+        };
+        let content = crate::memory::raw_transcript::read_transcript_content(
+            transcript_path,
+            payload.transcript_byte_len,
+        )
+        .with_context(|| {
+            format!(
+                "read bounded transcript prompt evidence for captured event {}",
+                payload.source_event_id
+            )
+        })?;
+
+        for (line_index, line) in content.lines().enumerate() {
+            let value = serde_json::from_str::<serde_json::Value>(line).with_context(|| {
+                format!(
+                    "parse bounded transcript prompt evidence for captured event {} line {}",
+                    payload.source_event_id,
+                    line_index + 1
+                )
+            })?;
+            let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
+            else {
+                continue;
+            };
+            let text = message.text.trim();
+            if text.is_empty() || represented_text.contains(text) {
+                continue;
+            }
+            messages.push(PromptTranscriptMessage {
+                source_event_id: payload.source_event_id,
+                role: message.role,
+                content: text.to_string(),
+            });
+        }
+    }
+    Ok(messages)
+}
+
+fn captured_event_text(range: &RollupRange) -> BTreeSet<String> {
+    let mut text = BTreeSet::new();
+    for event in &range.events {
+        let content = event.content.trim();
+        if !content.is_empty() {
+            text.insert(content.to_string());
+        }
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&event.content) {
+            collect_json_text(&value, &mut text);
+        }
+    }
+    text
+}
+
+fn collect_json_text(value: &serde_json::Value, out: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            for value in fields.values() {
+                collect_json_text(value, out);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                collect_json_text(value, out);
+            }
+        }
+        serde_json::Value::String(value) => {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                out.insert(trimmed.to_string());
+            }
+        }
+        _ => {}
+    }
 }
 
 pub(super) fn drain_raw_archive_from_range(
@@ -185,6 +282,7 @@ pub(super) fn run_persisted_rollup_side_effects(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_messages: &[PromptTranscriptMessage],
 ) -> Result<()> {
     let session_row_id = task
         .session_row_id
@@ -199,7 +297,7 @@ pub(super) fn run_persisted_rollup_side_effects(
 
     link_observed_commits(conn, &task.project, session_id, &memory_session_id)?;
     upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields)?;
-    promote_rollup_candidates(conn, task, range, &fields)?;
+    promote_rollup_candidates(conn, task, range, transcript_messages, &fields)?;
     sync_native_memory(conn, &cwd, &task.project)?;
     enqueue_user_context_followup(conn, task, range)?;
     enqueue_summary_followup_jobs(conn, task, session_id)?;
@@ -228,12 +326,17 @@ fn stop_payloads(range: &RollupRange) -> Result<Vec<StopHookPayload>> {
                 return None;
             }
             Some(
-                serde_json::from_str::<StopHookPayload>(&event.content).with_context(|| {
-                    format!(
-                        "invalid session_stop payload for captured event {}",
-                        event.id
-                    )
-                }),
+                serde_json::from_str::<StopHookPayload>(&event.content)
+                    .map(|mut payload| {
+                        payload.source_event_id = event.id;
+                        payload
+                    })
+                    .with_context(|| {
+                        format!(
+                            "invalid session_stop payload for captured event {}",
+                            event.id
+                        )
+                    }),
             )
         })
         .collect()
@@ -430,6 +533,7 @@ fn promote_rollup_candidates(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
+    transcript_messages: &[PromptTranscriptMessage],
     fields: &PersistedRollupFields,
 ) -> Result<()> {
     let session_id = task
@@ -447,6 +551,11 @@ fn promote_rollup_candidates(
         .map(|event| event.content.trim())
         .filter(|content| !content.is_empty())
         .map(str::to_string)
+        .chain(
+            transcript_messages
+                .iter()
+                .map(|message| message.content.clone()),
+        )
         .collect::<Vec<_>>();
     let count = crate::memory::promote::promote_summary_to_memory_candidates_with_evidence(
         conn,
@@ -560,6 +669,7 @@ mod stop_payload_selection_tests {
 
     fn payload(path: &str, transcript_byte_len: Option<u64>) -> StopHookPayload {
         StopHookPayload {
+            source_event_id: 0,
             cwd: None,
             transcript_path: Some(path.to_string()),
             transcript_byte_len,

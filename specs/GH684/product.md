@@ -79,6 +79,12 @@ current SessionRollup path and the legacy Summary job chain.
       cite only captured events inside the persisted rollup range. Persisted
       rollups re-home summary-derived candidates, workstream upsert, and
       native-memory sync; observed-commit linking remains blocked by #792.
+      The #794 follow-up also feeds user/assistant text from each selected Stop
+      transcript snapshot into the rollup prompt through the captured
+      `transcript_byte_len`, deduplicates repeated paths at the widest covered
+      boundary, omits exact text already represented by captured events, and
+      refuses to persist a metadata-only summary when bounded transcript
+      evidence cannot be read or parsed.
       Compress/Dream follow-up jobs are enqueued only after the rollup is
       persisted, old-version daemon heartbeats and legacy singleton locks do
       not suppress the current Stop fallback worker, a current once-launch
@@ -99,6 +105,9 @@ current SessionRollup path and the legacy Summary job chain.
 - Multiple Stop captures coalesced into one rollup must not lose earlier
   transcript or hook-fallback messages, and later captures outside the claimed
   range must not become evidence for the earlier rollup's candidates.
+- Transcript prompt evidence must remain bounded, deterministic, redacted, and
+  XML-escaped; every supplemental message stays anchored to a Stop event inside
+  the claimed range.
 - Drop migrations must refuse to run while unmigrated valuable rows remain.
 - Current reader surfaces must not lose context, timeline, or `why` behavior.
 

@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.198` for #794: SessionRollup now supplies
+  byte-bounded transcript user/assistant text to the summarizer and candidate
+  support path, deduplicates repeated paths and captured-event text, caps and
+  sanitizes supplemental prompt evidence, excludes bytes appended after Stop,
+  and fails before persisting metadata-only summaries when required transcript
+  evidence cannot be read or parsed.
 - Staged source version `0.5.197` for the GH-671 T3 correctness follow-up:
   unique evidence reinforces only the same safe predicate; opposing direct
   saves and cleanup rewrites clear stale provenance while same-predicate
