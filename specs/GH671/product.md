@@ -23,11 +23,11 @@ remem owns both the memory store and the hook surfaces, so high-confidence,
 machine-checkable corrections can become local runtime checks instead of
 remaining recall-only prose.
 
-Phase 1 implementation status: this issue currently has the state foundation
-only. It adds disabled-by-default configuration and canonical SQLite state for
-preference reinforcement, user overrides, and diagnostics. User-visible rule
-compilation, hook warnings/blocks, CLI rule management, and doctor reporting
-remain pending and #671 must stay open.
+Phase 1 implementation status: `SP671-T1` through `SP671-T3` are implemented.
+That includes disabled-by-default configuration, canonical SQLite state,
+deterministic worker-side compilation, and derived artifact writing. Hook
+warnings/blocks, CLI rule management, doctor reporting, fixtures, and latency
+evidence remain pending, so #671 must stay open.
 
 ## Goals
 
@@ -56,8 +56,8 @@ remain pending and #671 must stay open.
 ## Behavior Invariants
 
 1. P1: A preference is eligible only when it is active, reinforced at or above
-   the configured threshold, low-risk, project-scoped or explicitly
-   global-scoped, and machine-checkable.
+   the configured threshold, low-risk, sourced from an existing trusted source
+   class, project-scoped or explicitly global-scoped, and machine-checkable.
 2. P2: Every compiled rule records source memory id, reinforcement count at
    compile time, compile timestamp, predicate kind, predicate data, action, and
    user override state.
@@ -88,15 +88,16 @@ remain pending and #671 must stay open.
       and source memory for each compiled rule.
 - [ ] Disable, enable, and `set-action warn|block` round trips are covered by
       tests and take effect after the next artifact build without restart.
-- [ ] Superseding, suppressing, expiring, or deleting a source preference
+- [x] Superseding, suppressing, expiring, or deleting a source preference
       removes the derived rule on the next compile pass.
 - [ ] Doctor reports compiled-rule count, last compile time, host enforcement
       capability, and the most recent compile or evaluation error.
 
 ## Edge Cases
 
-- Contradictory rules: keep the newest authoritative source memory and log the
-  dropped conflict for review.
+- Contradictory rules: project scope wins over global scope; within the same
+  scope, keep the newest authoritative source memory and log the dropped
+  conflict for review.
 - Quoted examples and documentation text: v1 evaluates supported tool command
   input, not arbitrary prose, to avoid false positives.
 - Global preferences: eligible only when global scope is explicit; project

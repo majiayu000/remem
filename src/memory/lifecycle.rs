@@ -391,7 +391,17 @@ pub fn ttl_metadata(
 }
 
 pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
-    Ok(conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let mut stmt = tx.prepare(
+        "SELECT id FROM memories
+         WHERE status = 'active'
+           AND expires_at_epoch IS NOT NULL
+           AND expires_at_epoch <= ?1",
+    )?;
+    let rows = stmt.query_map(params![now_epoch], |row| row.get::<_, i64>(0))?;
+    let expiring_ids = crate::db::query::collect_rows(rows)?;
+    drop(stmt);
+    let changed = tx.execute(
         "UPDATE memories
          SET status = 'stale',
              valid_to_epoch = COALESCE(valid_to_epoch, ?1),
@@ -400,7 +410,10 @@ pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize
            AND expires_at_epoch IS NOT NULL
            AND expires_at_epoch <= ?1",
         params![now_epoch],
-    )?)
+    )?;
+    crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &expiring_ids)?;
+    tx.commit()?;
+    Ok(changed)
 }
 
 pub fn count_expired_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
@@ -441,6 +454,8 @@ pub fn soft_supersede(
             ));
         }
     }
+
+    crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &targets)?;
 
     let mut changed = 0usize;
     let now = chrono::Utc::now().timestamp();

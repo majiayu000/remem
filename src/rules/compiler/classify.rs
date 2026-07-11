@@ -29,106 +29,209 @@ impl PreferencePredicate {
     }
 }
 
-/// The classification result: the predicate template plus a short human summary
-/// used to build the rule message.
+/// The classification result for one derived predicate.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreferenceClassification {
     pub predicate: PreferencePredicate,
+    /// Static classifier description. This never contains preference text and
+    /// is not used as an artifact message.
     pub summary: String,
 }
 
-/// Known package managers that a preference may ask the agent to avoid.
-const BANNED_MANAGERS: &[(&str, &str)] = &[
-    ("npm", r"(^|\s)npm\s+(install|i|add|ci)\b"),
-    ("yarn", r"(^|\s)yarn\s+(add|install)\b"),
-];
+struct PackageManager {
+    name: &'static str,
+    install_pattern: &'static str,
+}
 
-/// Words signalling the preference expresses avoidance / a hard choice.
-const AVOIDANCE_MARKERS: &[&str] = &[
-    "not", "instead", "over", "don't", "dont", "do not", "avoid", "never", "prefer", "use ", "no ",
-    "forbid", "ban", "without",
+/// Closed v1 package-manager vocabulary. A rule is emitted only when one
+/// manager is positively selected and a different manager is explicitly
+/// rejected.
+const PACKAGE_MANAGERS: &[PackageManager] = &[
+    PackageManager {
+        name: "npm",
+        install_pattern: r"(^|\s)npm\s+(install|i|add|ci)\b",
+    },
+    PackageManager {
+        name: "yarn",
+        install_pattern: r"(^|\s)yarn\s+(add|install)\b",
+    },
+    PackageManager {
+        name: "bun",
+        install_pattern: r"(^|\s)bun\s+(add|install)\b",
+    },
+    PackageManager {
+        name: "pnpm",
+        install_pattern: r"(^|\s)pnpm\s+(add|install|i)\b",
+    },
 ];
 
 /// Commit trailers a preference may forbid.
-const KNOWN_TRAILERS: &[&str] = &[
-    "AI-generated-by",
-    "Co-Authored-By",
-    "Generated-by",
-    "Co-authored-by",
-];
+const KNOWN_TRAILERS: &[&str] = &["AI-generated-by", "Co-authored-by", "Generated-by"];
 
 pub fn classify_preference_predicate(text: &str) -> Option<PreferenceClassification> {
+    classify_preference_predicates(text).into_iter().next()
+}
+
+/// Return every deterministic v1 predicate represented by `text`. Multiple
+/// forbidden trailers may be carried by one preference and receive stable rule
+/// suffixes in the compiler.
+pub fn classify_preference_predicates(text: &str) -> Vec<PreferenceClassification> {
     let lower = text.to_lowercase();
-    if let Some(classification) = classify_package_manager(text, &lower) {
-        return Some(classification);
-    }
-    classify_commit_trailer(text, &lower)
+    let mut classifications = classify_package_managers(&lower);
+    classifications.extend(classify_commit_trailers(&lower));
+    classifications
 }
 
-fn classify_package_manager(original: &str, lower: &str) -> Option<PreferenceClassification> {
-    if !has_avoidance_marker(lower) {
-        return None;
-    }
-    let alternatives = ["bun", "pnpm", "deno", "yarn"];
-    for (banned, pattern) in BANNED_MANAGERS {
-        if !lower.contains(banned) {
-            continue;
-        }
-        // Only compile a genuine "use X, not <banned>" choice: require a
-        // different preferred manager to be named. Prevents banning a manager
-        // that is merely mentioned in passing.
-        let has_preferred_alternative = alternatives
+fn classify_package_managers(lower: &str) -> Vec<PreferenceClassification> {
+    let tokens = directional_tokens(lower);
+    let mut preferred = std::collections::BTreeSet::new();
+    let mut rejected = std::collections::BTreeSet::new();
+
+    for (index, token) in tokens.iter().enumerate() {
+        let Some(manager) = PACKAGE_MANAGERS
             .iter()
-            .any(|alt| alt != banned && lower.contains(alt));
-        if has_preferred_alternative {
-            return Some(PreferenceClassification {
-                predicate: PreferencePredicate::CommandRegex {
-                    pattern: (*pattern).to_string(),
-                    conflict_key: format!("package-manager:{banned}"),
-                },
-                summary: normalize_summary(original),
-            });
+            .find(|manager| manager.name == token)
+        else {
+            continue;
+        };
+        if manager_is_rejected(&tokens, index) {
+            rejected.insert(manager.name);
+        } else if manager_is_preferred(&tokens, index) {
+            preferred.insert(manager.name);
         }
     }
-    None
-}
 
-fn classify_commit_trailer(original: &str, lower: &str) -> Option<PreferenceClassification> {
-    if !has_avoidance_marker(lower) {
-        return None;
+    // More than one positively selected manager is ambiguous. A rejected
+    // manager must be distinct from the single selected manager.
+    if preferred.len() != 1 {
+        return Vec::new();
     }
-    if !(lower.contains("trailer") || lower.contains("commit")) {
-        return None;
-    }
-    for trailer in KNOWN_TRAILERS {
-        if lower.contains(&trailer.to_lowercase()) {
-            return Some(PreferenceClassification {
-                predicate: PreferencePredicate::CommitTrailerForbidden {
-                    trailer: (*trailer).to_string(),
-                    conflict_key: format!("trailer:{}", trailer.to_lowercase()),
-                },
-                summary: normalize_summary(original),
-            });
-        }
-    }
-    None
-}
-
-fn has_avoidance_marker(lower: &str) -> bool {
-    AVOIDANCE_MARKERS
+    let selected = preferred.iter().next().copied();
+    PACKAGE_MANAGERS
         .iter()
-        .any(|marker| lower.contains(marker))
+        .filter(|manager| rejected.contains(manager.name) && Some(manager.name) != selected)
+        .map(|manager| PreferenceClassification {
+            predicate: PreferencePredicate::CommandRegex {
+                pattern: manager.install_pattern.to_string(),
+                conflict_key: "package-manager-choice".to_string(),
+            },
+            summary: "Directed package-manager choice".to_string(),
+        })
+        .collect()
 }
 
-fn normalize_summary(text: &str) -> String {
-    let collapsed = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    const MAX: usize = 120;
-    if collapsed.chars().count() > MAX {
-        let truncated: String = collapsed.chars().take(MAX).collect();
-        format!("{truncated}…")
-    } else {
-        collapsed
+fn classify_commit_trailers(lower: &str) -> Vec<PreferenceClassification> {
+    if !(lower.contains("trailer") || lower.contains("commit")) {
+        return Vec::new();
     }
+    let clauses = direction_clauses(lower);
+    KNOWN_TRAILERS
+        .iter()
+        .filter(|trailer| {
+            let trailer = trailer.to_lowercase();
+            clauses
+                .iter()
+                .any(|clause| trailer_is_rejected(clause, &trailer))
+        })
+        .map(|trailer| PreferenceClassification {
+            predicate: PreferencePredicate::CommitTrailerForbidden {
+                trailer: (*trailer).to_string(),
+                conflict_key: format!("trailer:{}", trailer.to_lowercase()),
+            },
+            summary: "Forbidden commit trailer".to_string(),
+        })
+        .collect()
+}
+
+fn directional_tokens(text: &str) -> Vec<String> {
+    text.replace("don't", "dont")
+        .replace("do not", "do-not")
+        .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '-')
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn manager_is_rejected(tokens: &[String], index: usize) -> bool {
+    let previous = |offset: usize| index.checked_sub(offset).and_then(|at| tokens.get(at));
+    matches!(
+        previous(1).map(String::as_str),
+        Some("not" | "avoid" | "never" | "without" | "no" | "ban" | "forbid" | "do-not" | "dont")
+    ) || (previous(1).is_some_and(|token| token == "use")
+        && matches!(
+            previous(2).map(String::as_str),
+            Some("not" | "never" | "avoid" | "do-not" | "dont")
+        ))
+        || (previous(1).is_some_and(|token| token == "than")
+            && previous(2).is_some_and(|token| token == "rather"))
+        || previous(1).is_some_and(|token| token == "over")
+        || (previous(1).is_some_and(|token| token == "of")
+            && previous(2).is_some_and(|token| token == "instead"))
+}
+
+fn manager_is_preferred(tokens: &[String], index: usize) -> bool {
+    let previous = |offset: usize| index.checked_sub(offset).and_then(|at| tokens.get(at));
+    let next = |offset: usize| tokens.get(index + offset);
+    let preceded_by_choice = matches!(
+        previous(1).map(String::as_str),
+        Some("use" | "prefer" | "choose" | "favor" | "favour")
+    );
+    let choice_is_negated = matches!(
+        previous(2).map(String::as_str),
+        Some("not" | "never" | "avoid" | "do-not" | "dont")
+    );
+    (preceded_by_choice && !choice_is_negated)
+        || next(1).is_some_and(|token| token == "over")
+        || (next(1).is_some_and(|token| token == "instead")
+            && next(2).is_some_and(|token| token == "of"))
+        || (next(1).is_some_and(|token| token == "rather")
+            && next(2).is_some_and(|token| token == "than"))
+}
+
+fn direction_clauses(lower: &str) -> Vec<String> {
+    lower
+        .replace(" however ", ";")
+        .replace(" but ", ";")
+        .split([';', '\n'])
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn clause_has_negative_direction(clause: &str) -> bool {
+    let tokens = directional_tokens(clause);
+    tokens.iter().any(|token| {
+        matches!(
+            token.as_str(),
+            "avoid"
+                | "never"
+                | "without"
+                | "forbid"
+                | "forbidden"
+                | "ban"
+                | "banned"
+                | "no"
+                | "dont"
+                | "do-not"
+        )
+    }) || tokens.windows(2).any(|pair| {
+        pair.first().is_some_and(|token| token == "not")
+            && pair
+                .get(1)
+                .is_some_and(|token| matches!(token.as_str(), "add" | "append" | "include" | "use"))
+    })
+}
+
+fn trailer_is_rejected(clause: &str, trailer: &str) -> bool {
+    let tokens = directional_tokens(clause);
+    let has_trailer = tokens.iter().any(|token| token == trailer);
+    has_trailer
+        && (clause_has_negative_direction(clause)
+            || tokens
+                .iter()
+                .enumerate()
+                .any(|(index, token)| token == trailer && manager_is_rejected(&tokens, index)))
 }
 
 #[cfg(test)]
@@ -146,7 +249,7 @@ mod tests {
                 conflict_key,
             } => {
                 assert!(pattern.contains("npm"));
-                assert_eq!(conflict_key, "package-manager:npm");
+                assert_eq!(conflict_key, "package-manager-choice");
             }
             other => panic!("expected command regex, got {other:?}"),
         }
@@ -174,5 +277,62 @@ mod tests {
         assert!(classify_preference_predicate("I like clean code and short functions").is_none());
         // Mentions npm but with no preferred alternative or avoidance choice.
         assert!(classify_preference_predicate("npm is a package manager").is_none());
+    }
+
+    #[test]
+    fn package_manager_direction_covers_supported_managers() {
+        for (text, banned) in [
+            ("Use npm, not yarn", "yarn"),
+            ("Prefer yarn over bun", "bun"),
+            ("Use bun instead of pnpm", "pnpm"),
+            ("Do not use npm; use pnpm", "npm"),
+        ] {
+            let classification = classify_preference_predicate(text)
+                .unwrap_or_else(|| panic!("expected classification for {text}"));
+            match classification.predicate {
+                PreferencePredicate::CommandRegex { pattern, .. } => {
+                    assert!(pattern.contains(banned), "{text} banned the wrong manager");
+                }
+                other => panic!("expected command regex for {text}, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn positive_commit_trailer_direction_is_not_forbidden() {
+        assert!(
+            classify_preference_predicate("Use the Co-authored-by trailer for paired commits")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn trailer_choice_forbids_only_the_negative_direction() {
+        let classifications = classify_preference_predicates(
+            "Use AI-generated-by, not Co-authored-by, in commit trailers",
+        );
+        let trailers = classifications
+            .into_iter()
+            .filter_map(|classification| match classification.predicate {
+                PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
+                PreferencePredicate::CommandRegex { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(trailers, vec!["Co-authored-by"]);
+    }
+
+    #[test]
+    fn classifies_each_forbidden_trailer_in_a_multi_trailer_preference() {
+        let classifications = classify_preference_predicates(
+            "Do not add AI-generated-by or Co-authored-by trailers to commits",
+        );
+        let trailers = classifications
+            .into_iter()
+            .filter_map(|classification| match classification.predicate {
+                PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
+                PreferencePredicate::CommandRegex { .. } => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(trailers, vec!["AI-generated-by", "Co-authored-by"]);
     }
 }

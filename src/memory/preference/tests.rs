@@ -1,6 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::suppression::{create_suppression, parse_target, SuppressRequest};
 use crate::memory::{self, Memory};
 
@@ -14,6 +15,17 @@ fn setup_test_db() -> Connection {
     let conn = Connection::open_in_memory()
         .unwrap_or_else(|err| panic!("Failed to open in-memory db: {err}"));
     crate::memory::types::tests_helper::setup_memory_schema(&conn);
+    conn.execute_batch(
+        "CREATE TABLE memory_preference_reinforcements (
+             memory_id INTEGER PRIMARY KEY,
+             reinforcement_count INTEGER NOT NULL,
+             last_reinforced_at_epoch INTEGER NOT NULL,
+             created_at_epoch INTEGER NOT NULL,
+             updated_at_epoch INTEGER NOT NULL,
+             machine_checkable INTEGER NOT NULL DEFAULT 0
+         );",
+    )
+    .unwrap_or_else(|err| panic!("Failed to create preference reinforcement schema: {err}"));
     conn
 }
 
@@ -663,6 +675,26 @@ fn test_add_and_remove_preference() -> Result<()> {
 
     let prefs = memory::get_memories_by_type(&conn, "test/proj", "preference", 10)?;
     assert!(prefs.is_empty());
+    Ok(())
+}
+
+#[test]
+fn remove_compilable_preference_enqueues_rule_recompilation() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("preference-remove-compile");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = crate::db::open_db()?;
+    let id = add_preference(&conn, "/repo", "Use bun, not npm", false)?;
+    super::reinforcement::persist_preference_reinforcement(&conn, id, &[], "Use bun, not npm", 10)?;
+
+    assert!(remove_preference(&conn, id)?);
+    let pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM jobs
+         WHERE job_type = 'compile_rules' AND project = '/repo' AND state = 'pending'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(pending, 1);
     Ok(())
 }
 

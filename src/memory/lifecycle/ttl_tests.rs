@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use rusqlite::Connection;
 
 use super::*;
+use crate::db::test_support::ScopedTestDataDir;
 use crate::memory::insert_memory;
 use crate::memory::tests_helper::setup_memory_schema;
 use crate::retrieval::search::search_with_branch;
@@ -126,6 +127,39 @@ fn ttl_expiry_marks_current_fact_stale_without_deleting_it() -> Result<()> {
         content,
         "Local dev server is currently running at localhost:3000."
     );
+    Ok(())
+}
+
+#[test]
+fn preference_expiry_enqueues_rule_recompilation() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("preference-expiry-compile");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = crate::db::open_db()?;
+    conn.execute(
+        "INSERT INTO memories
+         (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
+          status, scope, expires_at_epoch)
+         VALUES (1, '/repo', 'Preference', 'Use bun, not npm', 'preference',
+                 1, 1, 'active', 'project', 100)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_preference_reinforcements
+         (memory_id, reinforcement_count, last_reinforced_at_epoch,
+          created_at_epoch, updated_at_epoch, machine_checkable)
+         VALUES (1, 3, 1, 1, 1, 1)",
+        [],
+    )?;
+
+    assert_eq!(expire_active_memories(&conn, 101)?, 1);
+    let pending: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM jobs
+         WHERE job_type = 'compile_rules' AND project = '/repo' AND state = 'pending'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(pending, 1);
     Ok(())
 }
 
@@ -387,6 +421,16 @@ fn hash_like_topic_update_replaces_same_semantic_state_key_and_moves_current_poi
 {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn);
+    conn.execute_batch(
+        "CREATE TABLE memory_preference_reinforcements (
+             memory_id INTEGER PRIMARY KEY,
+             reinforcement_count INTEGER NOT NULL,
+             last_reinforced_at_epoch INTEGER NOT NULL,
+             created_at_epoch INTEGER NOT NULL,
+             updated_at_epoch INTEGER NOT NULL,
+             machine_checkable INTEGER NOT NULL DEFAULT 0
+         );",
+    )?;
     let project = "test-lifecycle";
     let add = apply_add(
         &conn,

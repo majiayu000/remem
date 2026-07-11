@@ -8,7 +8,7 @@
 //! (`machine_checkable`). Counts carry forward across supersession so that
 //! reinforcing an existing preference increments its canonical count.
 
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// Persist the reinforcement count for a freshly written preference memory.
@@ -24,8 +24,18 @@ pub(crate) fn persist_preference_reinforcement(
     text: &str,
     now: i64,
 ) -> Result<i64> {
-    let mut carried = 0i64;
-    for id in superseded_ids {
+    let mut carried: i64 = conn
+        .query_row(
+            "SELECT reinforcement_count
+             FROM memory_preference_reinforcements
+             WHERE memory_id = ?1",
+            [new_memory_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(0);
+    let mut seen = std::collections::HashSet::with_capacity(superseded_ids.len());
+    for id in superseded_ids.iter().filter(|id| seen.insert(**id)) {
         if *id == new_memory_id {
             continue;
         }
@@ -38,14 +48,20 @@ pub(crate) fn persist_preference_reinforcement(
                 |row| row.get(0),
             )
             .optional()?;
-        carried += prior.unwrap_or(0);
+        carried = carried
+            .checked_add(prior.unwrap_or(0))
+            .context("preference reinforcement count overflow while carrying replacement state")?;
+        transfer_rule_overrides(conn, *id, new_memory_id)?;
         conn.execute(
             "DELETE FROM memory_preference_reinforcements WHERE memory_id = ?1",
             [id],
         )?;
     }
-    let new_count = carried + 1;
-    let machine_checkable = i64::from(crate::rules::classify_preference_predicate(text).is_some());
+    let new_count = carried
+        .checked_add(1)
+        .context("preference reinforcement count overflow")?;
+    let machine_checkable =
+        i64::from(!crate::rules::classify_preference_predicates(text).is_empty());
     conn.execute(
         "INSERT INTO memory_preference_reinforcements
          (memory_id, reinforcement_count, source_evidence,
@@ -59,6 +75,92 @@ pub(crate) fn persist_preference_reinforcement(
         params![new_memory_id, new_count, now, machine_checkable],
     )?;
     Ok(new_count)
+}
+
+#[derive(Debug)]
+struct StoredOverride {
+    id: i64,
+    project: String,
+    rule_id: String,
+    disabled: i64,
+    action_override: Option<String>,
+    reason: Option<String>,
+    updated_by: String,
+    updated_at_epoch: i64,
+}
+
+fn transfer_rule_overrides(
+    conn: &Connection,
+    old_memory_id: i64,
+    new_memory_id: i64,
+) -> Result<()> {
+    let old_prefix = format!("pref-{old_memory_id}-");
+    let mut stmt = conn.prepare(
+        "SELECT id, project, rule_id, disabled, action_override, reason,
+                updated_by, updated_at_epoch
+         FROM preference_rule_overrides
+         WHERE source_memory_id = ?1 OR rule_id LIKE ?2
+         ORDER BY updated_at_epoch ASC, id ASC",
+    )?;
+    let rows = stmt.query_map(params![old_memory_id, format!("{old_prefix}%")], |row| {
+        Ok(StoredOverride {
+            id: row.get(0)?,
+            project: row.get(1)?,
+            rule_id: row.get(2)?,
+            disabled: row.get(3)?,
+            action_override: row.get(4)?,
+            reason: row.get(5)?,
+            updated_by: row.get(6)?,
+            updated_at_epoch: row.get(7)?,
+        })
+    })?;
+    let overrides = crate::db::query::collect_rows(rows)?;
+    drop(stmt);
+
+    for stored in overrides {
+        let suffix = stored.rule_id.strip_prefix(&old_prefix).with_context(|| {
+            format!(
+                "override {} references preference memory {} but has no transferable rule suffix",
+                stored.rule_id, old_memory_id
+            )
+        })?;
+        if suffix.is_empty() || !suffix.chars().all(|ch| ch.is_ascii_digit()) {
+            bail!(
+                "override {} has an invalid generated rule suffix",
+                stored.rule_id
+            );
+        }
+        let new_rule_id = format!("pref-{new_memory_id}-{suffix}");
+        conn.execute(
+            "INSERT INTO preference_rule_overrides
+             (project, rule_id, source_memory_id, disabled, action_override, reason,
+              updated_by, updated_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(project, rule_id) DO UPDATE SET
+               source_memory_id = excluded.source_memory_id,
+               disabled = excluded.disabled,
+               action_override = excluded.action_override,
+               reason = excluded.reason,
+               updated_by = excluded.updated_by,
+               updated_at_epoch = excluded.updated_at_epoch
+             WHERE excluded.updated_at_epoch >= preference_rule_overrides.updated_at_epoch",
+            params![
+                stored.project,
+                new_rule_id,
+                new_memory_id,
+                stored.disabled,
+                stored.action_override,
+                stored.reason,
+                stored.updated_by,
+                stored.updated_at_epoch,
+            ],
+        )?;
+        conn.execute(
+            "DELETE FROM preference_rule_overrides WHERE id = ?1",
+            [stored.id],
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -140,6 +242,59 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(checkable, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn identical_reinforcement_increments_existing_memory() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("pref-reinforce-identical");
+        let conn = db::open_db()?;
+        insert_preference(&conn, 1, "Use bun, not npm")?;
+
+        assert_eq!(
+            persist_preference_reinforcement(&conn, 1, &[], "Use bun, not npm", 100)?,
+            1
+        );
+        assert_eq!(
+            persist_preference_reinforcement(&conn, 1, &[], "Use bun, not npm", 200)?,
+            2
+        );
+        let stored: i64 = conn.query_row(
+            "SELECT reinforcement_count
+             FROM memory_preference_reinforcements WHERE memory_id = 1",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(stored, 2);
+        Ok(())
+    }
+
+    #[test]
+    fn override_follows_replacement_memory() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("pref-reinforce-override");
+        let conn = db::open_db()?;
+        insert_preference(&conn, 1, "Use bun, not npm")?;
+        insert_preference(&conn, 2, "Use bun, not npm")?;
+        persist_preference_reinforcement(&conn, 1, &[], "Use bun, not npm", 100)?;
+        conn.execute(
+            "INSERT INTO preference_rule_overrides
+             (project, rule_id, source_memory_id, disabled, action_override, updated_at_epoch)
+             VALUES ('/tmp/remem', 'pref-1-1', 1, 1, 'block', 150)",
+            [],
+        )?;
+
+        persist_preference_reinforcement(&conn, 2, &[1], "Use bun, not npm", 200)?;
+
+        let row: (String, Option<i64>, i64, Option<String>) = conn.query_row(
+            "SELECT rule_id, source_memory_id, disabled, action_override
+             FROM preference_rule_overrides WHERE project = '/tmp/remem'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )?;
+        assert_eq!(row.0, "pref-2-1");
+        assert_eq!(row.1, Some(2));
+        assert_eq!(row.2, 1);
+        assert_eq!(row.3.as_deref(), Some("block"));
         Ok(())
     }
 }
