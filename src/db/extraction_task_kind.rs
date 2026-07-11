@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExtractionTaskKind {
+    CapturedGitLink,
     SessionRollup,
     ObservationExtract,
     MemoryCandidate,
@@ -14,6 +15,7 @@ pub enum ExtractionTaskKind {
 impl ExtractionTaskKind {
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::CapturedGitLink => "captured_git_link",
             Self::SessionRollup => "session_rollup",
             Self::ObservationExtract => "observation_extract",
             Self::MemoryCandidate => "memory_candidate",
@@ -26,6 +28,7 @@ impl ExtractionTaskKind {
 
     pub fn from_db(raw: &str) -> Result<Self> {
         match raw {
+            "captured_git_link" => Ok(Self::CapturedGitLink),
             "session_rollup" => Ok(Self::SessionRollup),
             "observation_extract" => Ok(Self::ObservationExtract),
             "memory_candidate" => Ok(Self::MemoryCandidate),
@@ -39,6 +42,7 @@ impl ExtractionTaskKind {
 
     pub(crate) fn priority(self) -> i64 {
         match self {
+            Self::CapturedGitLink => 5,
             Self::SessionRollup => 10,
             Self::ObservationExtract => 20,
             Self::UserContextCandidate => 30,

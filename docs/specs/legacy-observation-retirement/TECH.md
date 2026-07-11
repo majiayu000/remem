@@ -302,19 +302,24 @@ worker-time `HEAD`, is the authoritative commit source.
    events enqueue `SessionRollup`. Each link phase reads every distinct commit
    from its exact `(host_id, project_id, session_row_id,
    cursor_event_id..high_watermark_event_id]` range.
-5. The link phase runs independently of model extraction. AI timeout,
+5. A duplicate fixed event atomically merges newly recovered evidence. If the
+   original task is processing or its cursor already passed that event, capture
+   enqueues an idempotent, single-event `captured_git_link` task. The worker
+   performs only deterministic linking for this task: it must not call AI,
+   write a summary, rerun rollup side effects, or enqueue follow-up work.
+6. The link phase runs independently of model extraction. AI timeout,
    malformed output, explicit `no_observations`, dedup, and zero inserts cannot
    erase an already captured deterministic commit relationship.
-6. `session_row_id` is the canonical internal identity. The content-session ID
+7. `session_row_id` is the canonical internal identity. The content-session ID
    remains user-facing, while the link's memory-session ID is derived centrally
    as `capture-rollup-{session_row_id}` so commit lookup can join the latest
    rollup summary. Link storage preserves `session_row_id` so equal raw session
    strings from different hosts cannot overwrite one another.
-7. Captured evidence requires a full hexadecimal SHA and matching serialized
+8. Captured evidence requires a full hexadecimal SHA and matching serialized
    metadata. Missing evidence is a normal zero-link result; malformed evidence
    or a failed link returns an error containing the range, row identity, and
    SHA so the extraction retry/replay and doctor surfaces remain actionable.
-8. Link and lookup behavior is idempotent across retries, multiple event
+9. Link and lookup behavior is idempotent across retries, multiple event
    ranges, and multiple commits in one range. Summary lookup selects one latest
    rollup row per link rather than multiplying results for historical ranges.
 
@@ -323,7 +328,9 @@ Rollup-first priority, no evidence, baseline `HEAD` rejection, explicit
 `no_observations`, AI failure, same-range multiple commits, Codex transcript
 byte boundaries, later-range isolation, retry after link failure, typed spill
 replay after `HEAD` changes, cross-host raw-session collisions, and
-single-result lookup across multiple rollup summaries.
+single-result lookup across multiple rollup summaries. Late fixed-ID Stop
+evidence must also prove link-only worker processing without AI calls, new
+summaries, jobs, or follow-up extraction tasks.
 
 ### `pending_observations`
 

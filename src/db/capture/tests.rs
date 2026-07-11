@@ -349,6 +349,7 @@ fn duplicate_capture_merges_git_evidence_recovered_later() -> Result<()> {
     assert_eq!(task_count, 2);
     let late_task = crate::db::claim_next_extraction_task(&mut conn, "worker", 60)?
         .context("late evidence should enqueue a bounded extraction task")?;
+    assert_eq!(late_task.task_kind, ExtractionTaskKind::CapturedGitLink);
     assert_eq!(late_task.cursor_event_id, Some(first.event_row_id - 1));
     assert_eq!(late_task.high_watermark_event_id, Some(first.event_row_id));
     let linked = crate::captured_git::link_task_range(&mut conn, &late_task)?;

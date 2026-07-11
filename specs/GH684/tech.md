@@ -116,7 +116,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       range has captured user/assistant evidence; without that fallback it
       fails permanently before AI. Missing, malformed, or unusable required
       bounded evidence still blocks the first AI call.
-      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, and retries remain idempotent. T7 remains open for #795 and #796.
+      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, late fixed-ID evidence uses a bounded `captured_git_link` task without replaying AI/rollup side effects, and retries remain idempotent. T7 remains open for #795 and #796.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary

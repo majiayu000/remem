@@ -136,6 +136,9 @@ Acceptance:
   observation-session prefix.
 - Every distinct commit in a range is linked, while no evidence produces no
   link. Retries and later ranges do not duplicate links.
+- If idempotent replay recovers evidence only after the original extraction
+  cursor passed its event, a bounded link-only task consumes that evidence
+  without rerunning model extraction, summaries, or their side effects.
 - Missing or ambiguous commit proof never drops the surrounding capture.
   Evidence that was durably captured but cannot be linked remains a visible
   extraction failure instead of a successful no-op.

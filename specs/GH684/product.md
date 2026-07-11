@@ -79,7 +79,9 @@ current SessionRollup path and the legacy Summary job chain.
       rollups re-home summary-derived candidates, workstream upsert, and
       native-memory sync. The #792 slice captures only command-result-proven
       commits, preserves typed evidence through spill/replay, and links every
-      commit from the exact claimed ObservationExtract or SessionRollup range.
+      commit from the exact claimed ObservationExtract or SessionRollup range;
+      evidence recovered after a completed cursor uses bounded link-only work
+      and never replays SessionRollup AI or side effects.
       The #794 follow-up also feeds user/assistant text from each selected Stop
       transcript snapshot into the rollup prompt through the captured
       `transcript_byte_len`, deduplicates repeated paths at the widest covered

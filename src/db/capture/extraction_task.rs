@@ -130,17 +130,17 @@ pub(super) fn extraction_task_for_replayed_event(
         return coalesce_extraction_task(conn, identity, kind, event_row_id, now);
     }
 
-    enqueue_late_git_evidence_task(conn, identity, kind, event_row_id, evidence_key, now)
+    enqueue_late_git_evidence_task(conn, identity, event_row_id, evidence_key, now)
 }
 
 fn enqueue_late_git_evidence_task(
     conn: &Connection,
     identity: IdentityIds,
-    kind: ExtractionTaskKind,
     event_row_id: i64,
     evidence_key: &str,
     now: i64,
 ) -> Result<i64> {
+    let kind = ExtractionTaskKind::CapturedGitLink;
     let idempotency_key = format!(
         "{}:{}:{}:{}:late-git-evidence:{}:{}",
         identity.host_id,
