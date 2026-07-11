@@ -45,6 +45,26 @@ const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
 
 const PACKAGE_MANAGERS: &[&str] = &["bun", "deno", "npm", "pnpm", "yarn"];
 
+const PACKAGE_DIRECTIVE_SUFFIXES: &[&str] = &[
+    "",
+    " in this project",
+    ", in this project",
+    ", for installing packages",
+    ", for installing packages in this project",
+    ", for package installation commands",
+    ", for package installation commands in this project",
+];
+
+const TRAILER_DIRECTIVE_SUFFIXES: &[&str] = &[
+    "",
+    " in commits",
+    " in git commits",
+    " on commits",
+    " on git commits",
+    " to commits",
+    " to git commits",
+];
+
 /// Commit trailers a preference may forbid.
 const KNOWN_TRAILERS: &[&str] = &[
     "AI-generated-by",
@@ -95,7 +115,7 @@ fn directly_prefers_manager(lower: &str, preferred: &str, avoided: &str) -> bool
         format!("prefer {preferred} over {avoided}"),
     ]
     .iter()
-    .any(|directive| has_unambiguous_directive(lower, directive))
+    .any(|directive| has_exact_directive(lower, directive, PACKAGE_DIRECTIVE_SUFFIXES))
 }
 
 fn classify_commit_trailer(lower: &str) -> Option<PreferenceClassification> {
@@ -118,57 +138,41 @@ fn classify_commit_trailer(lower: &str) -> Option<PreferenceClassification> {
 }
 
 fn directly_forbids_term(lower: &str, term: &str) -> bool {
-    [
-        format!("do not add {term}"),
-        format!("do not add the {term}"),
-        format!("do not include {term}"),
-        format!("do not include the {term}"),
-        format!("do not use {term}"),
-        format!("do not use the {term}"),
-        format!("don't add {term}"),
-        format!("don't add the {term}"),
-        format!("don't include {term}"),
-        format!("don't include the {term}"),
-        format!("dont add {term}"),
-        format!("dont add the {term}"),
-        format!("dont include {term}"),
-        format!("dont include the {term}"),
-        format!("never add {term}"),
-        format!("never add the {term}"),
-        format!("never include {term}"),
-        format!("never include the {term}"),
-        format!("never use {term}"),
-        format!("never use the {term}"),
-    ]
-    .iter()
-    .any(|directive| has_unambiguous_directive(lower, directive))
+    const ACTIONS: &[&str] = &[
+        "do not add",
+        "do not include",
+        "do not use",
+        "don't add",
+        "don't include",
+        "dont add",
+        "dont include",
+        "never add",
+        "never include",
+        "never use",
+    ];
+    ACTIONS.iter().any(|action| {
+        [
+            format!("{action} {term} trailer"),
+            format!("{action} the {term} trailer"),
+            format!("{action} {term} commit trailer"),
+            format!("{action} the {term} commit trailer"),
+        ]
+        .iter()
+        .any(|directive| has_exact_directive(lower, directive, TRAILER_DIRECTIVE_SUFFIXES))
+    })
 }
 
-fn has_unambiguous_directive(lower: &str, directive: &str) -> bool {
-    lower
-        .split([';', '.', '!', '?', '\n', '\r'])
-        .map(str::trim)
-        .any(|clause| {
-            let Some(remainder) = clause.strip_prefix(directive) else {
-                return false;
-            };
-            if remainder
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '-')
-            {
-                return false;
-            }
-            !remainder
-                .split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '\'')
-                .filter(|token| !token.is_empty())
-                .any(|token| {
-                    matches!(
-                        token,
-                        "not" | "never" | "no" | "cannot" | "cant" | "dont" | "unless" | "except"
-                    ) || token.ends_with("n't")
-                })
-        })
+fn has_exact_directive(lower: &str, directive: &str, allowed_suffixes: &[&str]) -> bool {
+    let statement = lower.trim().trim_end_matches(['.', '!', '?']).trim_end();
+    if statement
+        .chars()
+        .any(|ch| [';', ':', '.', '!', '?', '\n', '\r'].contains(&ch))
+    {
+        return false;
+    }
+    statement
+        .strip_prefix(directive)
+        .is_some_and(|suffix| allowed_suffixes.contains(&suffix))
 }
 
 #[cfg(test)]
@@ -221,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn negated_avoidance_is_not_inverted() {
+    fn ambiguous_multiclause_preferences_fail_closed() {
         for text in [
             "Do not avoid npm; use npm instead of yarn",
             "Never avoid npm; use npm instead of yarn",
@@ -229,17 +233,13 @@ mod tests {
             "There is no good reason whatsoever to avoid npm; use npm instead of yarn",
             "You shouldn't avoid npm; use npm instead of yarn",
             "Never, under any circumstances, avoid npm; use npm instead of yarn",
+            "Use bun, not npm; unless CI requires npm",
+            "Use bun, not npm. Actually use npm for CI",
         ] {
-            let Some(classification) = classify_preference_predicate(text) else {
-                panic!("the explicit yarn avoidance should classify: {text}");
-            };
-            match classification.predicate {
-                PreferencePredicate::CommandRegex { pattern, .. } => {
-                    assert!(pattern.contains("yarn"), "unexpected rule for {text}");
-                    assert!(!pattern.contains("npm"), "inverted rule for {text}");
-                }
-                other => panic!("expected command regex for {text}, got {other:?}"),
-            }
+            assert!(
+                classify_preference_predicate(text).is_none(),
+                "ambiguous package-manager preference must fail closed: {text}"
+            );
         }
 
         for text in [
@@ -248,6 +248,7 @@ mod tests {
             "There is no reason to omit the Co-Authored-By commit trailer",
             "There is no good reason whatsoever to omit the Co-Authored-By commit trailer",
             "There is no good reason, whatsoever, to omit the Co-Authored-By commit trailer",
+            "Never add the Co-Authored-By trailer. Except for pair-authored commits",
         ] {
             assert!(
                 classify_preference_predicate(text).is_none(),
