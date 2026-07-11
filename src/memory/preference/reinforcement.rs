@@ -38,26 +38,24 @@ pub(crate) fn persist_preference_reinforcement(
         if *id == new_memory_id {
             continue;
         }
-        let (prior_text, prior_state): (
-            String,
-            Option<(i64, Option<String>, i64, i64, String)>,
-        ) = conn.query_row(
-            "SELECT m.content, r.reinforcement_count, r.source_evidence,
+        let (prior_text, prior_state): (String, Option<(i64, Option<String>, i64, i64, String)>) =
+            conn.query_row(
+                "SELECT m.content, r.reinforcement_count, r.source_evidence,
                     r.last_reinforced_at_epoch, r.created_at_epoch, r.risk_class
              FROM memories m
              LEFT JOIN memory_preference_reinforcements r ON r.memory_id = m.id
              WHERE m.id = ?1",
-            [id],
-            |row| {
-                let count: Option<i64> = row.get(1)?;
-                let state = if let Some(count) = count {
-                    Some((count, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
-                } else {
-                    None
-                };
-                Ok((row.get(0)?, state))
-            },
-        )?;
+                [id],
+                |row| {
+                    let count: Option<i64> = row.get(1)?;
+                    let state = if let Some(count) = count {
+                        Some((count, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
+                    } else {
+                        None
+                    };
+                    Ok((row.get(0)?, state))
+                },
+            )?;
         if !new_predicates.is_empty() && preference_predicates(&prior_text) == new_predicates {
             if let Some((count, evidence, last, created, prior_risk)) = prior_state {
                 carried.absorb(ReinforcementState {
