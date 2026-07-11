@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -190,12 +191,12 @@ pub(super) fn replay_spilled_capture_events(conn: &Connection) -> Result<usize> 
     };
     let mut replayed = 0;
     let result = (|| -> Result<()> {
-        for (line_index, line) in contents
-            .lines()
-            .filter(|line| !line.trim().is_empty())
-            .enumerate()
-        {
-            match parse_spill_record(line, line_index) {
+        let mut legacy_line_occurrences = BTreeMap::<&str, usize>::new();
+        for line in contents.lines().filter(|line| !line.trim().is_empty()) {
+            let occurrence = legacy_line_occurrences.entry(line).or_default();
+            let line_occurrence = *occurrence;
+            *occurrence += 1;
+            match parse_spill_record(line, line_occurrence) {
                 Ok(record) => match replay_spill_record(conn, &path, &record) {
                     Ok(true) => replayed += 1,
                     Ok(false) => {}
@@ -311,9 +312,9 @@ fn sanitize_summary(summary: &EventSummary) -> EventSummary {
     }
 }
 
-fn parse_spill_record(line: &str, line_index: usize) -> Result<CaptureSpillRecord> {
+fn parse_spill_record(line: &str, line_occurrence: usize) -> Result<CaptureSpillRecord> {
     let record: CaptureSpillRecordCompat = crate::db::spill_crypto::decode_json_line(line)?;
-    Ok(record.into_record(legacy_spill_event_id(line, line_index)))
+    Ok(record.into_record(legacy_spill_event_id(line, line_occurrence)))
 }
 
 fn recovered_spill_exists(conn: &Connection, record: &CaptureSpillRecord) -> Result<bool> {
@@ -342,11 +343,16 @@ fn recovered_spill_exists(conn: &Connection, record: &CaptureSpillRecord) -> Res
     Ok(exists)
 }
 
-fn legacy_spill_event_id(line: &str, _line_index: usize) -> String {
-    format!(
+fn legacy_spill_event_id(line: &str, line_occurrence: usize) -> String {
+    let base = format!(
         "tool_result-legacy-spill-{:016x}",
         crate::db::deterministic_hash(line.as_bytes())
-    )
+    );
+    if line_occurrence == 0 {
+        base
+    } else {
+        format!("{base}-{}", line_occurrence + 1)
+    }
 }
 
 fn spill_path() -> PathBuf {

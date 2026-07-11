@@ -144,7 +144,8 @@ Acceptance:
   substitution, or unquoted shell comments produce no evidence.
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
   commit links. A byte-bounded Codex transcript may prove multiple commits;
-  one ambiguous call does not erase earlier proven calls, relative workdirs
+  one ambiguous call or one call whose candidate metadata cannot be resolved
+  is logged and skipped without erasing earlier proven calls. Relative workdirs
   are anchored to the Stop cwd, and an exact trailing `git status --short` is
   supported without accepting environment overrides, Git configuration, help
   viewers, or arbitrary trailing shell output. Codex success comes only from
@@ -159,7 +160,9 @@ Acceptance:
   cursor passed its event, a bounded link-only task consumes that evidence
   without rerunning model extraction, summaries, or their side effects.
   Same-identity Stop spill retries use one deterministic evidence event and
-  the same link-only path.
+  the same link-only path. Legacy capture-spill rows without an `event_id`
+  receive stable, occurrence-distinct identities, so byte-identical historical
+  rows do not collapse and a failed replay keeps the identity assigned to it.
 - Missing or ambiguous commit proof never drops the surrounding capture.
   Evidence that was durably captured but cannot be linked remains a visible
   extraction failure instead of a successful no-op.

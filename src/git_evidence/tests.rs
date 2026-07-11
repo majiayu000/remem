@@ -247,6 +247,43 @@ fn codex_transcript_keeps_proven_commit_when_later_call_is_ambiguous() -> Result
 }
 
 #[test]
+fn codex_transcript_keeps_proven_commit_when_later_metadata_is_unresolvable() -> Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("codex-commit-evidence-unresolvable");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let missing_repo = test_dir.path.join("missing");
+    let lines = [
+        codex_call("call-proven", "git commit -m 'commit a'", &repo),
+        codex_output(
+            "call-proven",
+            0,
+            &format!("[main (root-commit) {}] commit a", &sha[..7]),
+        ),
+        codex_call(
+            "call-unresolvable",
+            "git commit -m unresolvable",
+            &missing_repo,
+        ),
+        codex_output("call-unresolvable", 0, "[main deadbee] unresolvable"),
+    ];
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let bounded = format!("{}\n", lines.join("\n"));
+    std::fs::write(&transcript, &bounded)?;
+
+    let evidence = from_codex_transcript(
+        transcript.to_string_lossy().as_ref(),
+        bounded.len() as u64,
+        repo.to_string_lossy().as_ref(),
+    )?;
+
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
+    Ok(())
+}
+
+#[test]
 fn codex_transcript_uses_wrapper_status_not_command_output() -> Result<()> {
     let test_dir = crate::db::test_support::ScopedTestDataDir::new("codex-wrapper-status");
     let repo = test_dir.path.join("repo");

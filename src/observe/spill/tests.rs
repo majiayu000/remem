@@ -247,6 +247,55 @@ fn replay_legacy_spill_without_event_id() -> anyhow::Result<()> {
 }
 
 #[test]
+fn replay_identical_legacy_spills_without_event_ids_preserves_occurrences() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("capture-spill-identical-legacy-replay");
+    let legacy = serde_json::json!({
+        "version": 1,
+        "host": "codex-cli",
+        "event": {
+            "session_id": "session-identical-legacy-spill",
+            "cwd": "/tmp/remem",
+            "project": "/tmp/remem",
+            "tool_name": "Edit",
+            "tool_input": {"file_path": "/tmp/remem/src/lib.rs"},
+            "tool_response": {"ok": true}
+        },
+        "summary": {
+            "event_type": "file_edit",
+            "summary": "Edited src/lib.rs",
+            "detail": null,
+            "files_json": "[\"src/lib.rs\"]",
+            "exit_code": null
+        },
+        "db_error": "database is locked",
+        "created_at_epoch": 1700000000
+    });
+    let path = crate::db::data_dir().join("capture-spill.jsonl");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, format!("{legacy}\n{legacy}\n"))?;
+    let conn = db::open_db()?;
+
+    let replayed = replay_spilled_capture_events(&conn)?;
+
+    assert_eq!(replayed, 2);
+    let captured: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM captured_events WHERE session_id = 'session-identical-legacy-spill'",
+        [],
+        |row| row.get(0),
+    )?;
+    let events: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM events WHERE session_id = 'session-identical-legacy-spill'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(captured, 2);
+    assert_eq!(events, 2);
+    Ok(())
+}
+
+#[test]
 fn replay_legacy_spill_preserves_synthesized_id_after_partial_failure() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("capture-spill-legacy-stable-id");
     let legacy = serde_json::json!({

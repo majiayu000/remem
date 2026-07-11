@@ -311,11 +311,14 @@ worker-time `HEAD`, is the authoritative commit source.
    matching text emitted by the command cannot override a failed wrapper.
    Relative transcript workdirs resolve against the Stop cwd, an exact trailing
    `git status --short` does not hide an earlier proven commit, and one
-   ambiguous call is logged and skipped without erasing commits already proven
-   by other calls in the same boundary.
+   ambiguous call or unresolvable candidate is logged and skipped without
+   erasing commits already proven by other calls in the same boundary.
 3. Each proven commit is stored atomically with its captured event in the 1:N
    `captured_event_commits` table. Encrypted spill records preserve the same
    typed evidence; replay never re-reads the repository's later `HEAD`.
+   Compatibility rows without `event_id` use a content hash for the first
+   occurrence and a stable per-content occurrence suffix for duplicates; a
+   failed row is rewritten with that explicit identity before retry.
 4. Captured Git evidence is produced only with a task that deterministically
    consumes it: observed tool events enqueue `ObservationExtract`, and Stop
    events enqueue `SessionRollup`. Each link phase reads every distinct commit
@@ -348,11 +351,13 @@ worker-time `HEAD`, is the authoritative commit source.
 Required regression coverage: capture to link end to end under the existing
 Rollup-first priority, no evidence, baseline `HEAD` rejection, explicit
 `no_observations`, AI failure, same-range multiple commits, Codex transcript
-byte boundaries, later-range isolation, retry after link failure, typed spill
-replay after `HEAD` changes, cross-host raw-session collisions, and
-single-result lookup across multiple rollup summaries. Late fixed-ID Stop
-evidence must also prove link-only worker processing without AI calls, new
-summaries, jobs, or follow-up extraction tasks.
+byte boundaries, per-call ambiguous and unresolvable candidate isolation,
+later-range isolation, retry after link failure, typed spill replay after
+`HEAD` changes, occurrence-distinct replay of identical legacy spill rows,
+cross-host raw-session collisions, and single-result lookup across multiple
+rollup summaries. Late fixed-ID Stop evidence must also prove link-only worker
+processing without AI calls, new summaries, jobs, or follow-up extraction
+tasks.
 
 ### `pending_observations`
 

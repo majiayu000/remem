@@ -141,12 +141,23 @@ pub(crate) fn from_codex_transcript(
                         continue;
                     }
                 };
-                let metadata = crate::git_util::resolve_commit_metadata(&call.cwd, &candidate)
+                let metadata = match crate::git_util::resolve_commit_metadata(&call.cwd, &candidate)
                     .with_context(|| {
                         format!(
                             "resolve successful git commit candidate {candidate} call_id={call_id}"
                         )
-                    })?;
+                    }) {
+                    Ok(metadata) => metadata,
+                    Err(error) => {
+                        crate::log::error(
+                            "git-evidence",
+                            &format!(
+                                "skipped unresolved successful commit call_id={call_id} candidate={candidate}: {error:#}"
+                            ),
+                        );
+                        continue;
+                    }
+                };
                 evidence
                     .entry(metadata.sha.clone())
                     .or_insert_with(|| GitCommitEvidence {
