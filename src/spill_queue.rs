@@ -244,7 +244,7 @@ fn process_alive(pid: i64) -> bool {
     }
     #[cfg(not(unix))]
     {
-        true
+        false
     }
 }
 

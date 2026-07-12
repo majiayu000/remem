@@ -136,21 +136,22 @@ Acceptance:
   an explicit failure event always wins over contradictory response fields,
   while unknown status and failure events preserve capture without commit
   evidence. Evidence command parsing is fail-closed: it accepts only literal
-  workdir changes,
-  non-interactive add/commit forms with an explicit message source, safe
-  identity configuration, and the documented exact status suffix; environment
-  prefixes, arbitrary Git configuration, help/viewer/editor paths, dry runs,
-  interactive add modes, shell expansion, redirection, globbing, and process
-  substitution, or unquoted shell comments produce no evidence.
+  workdir changes, non-interactive add/commit forms with an explicit message
+  source (including ordinary `--fixup <commit>` autosquash commits), safe
+  identity configuration, and the documented exact status suffix;
+  editor-opening amend/reword fixups, environment prefixes, arbitrary Git
+  configuration, help/viewer/editor paths, dry runs, interactive add modes,
+  shell expansion, redirection, globbing, process substitution, or unquoted
+  shell comments produce no evidence.
 - Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
   commit links. A byte-bounded Codex transcript may prove multiple commits;
-  one ambiguous call or one call whose candidate metadata cannot be resolved
-  is logged and skipped without erasing earlier proven calls. Relative workdirs
-  are anchored to the Stop cwd, and an exact trailing `git status --short` is
-  supported without accepting environment overrides, Git configuration, help
-  viewers, or arbitrary trailing shell output. Codex success comes only from
-  the wrapper status before `Final output:`; status-like command output cannot
-  override a failed wrapper.
+  one ambiguous call, malformed shell call, or call whose candidate metadata
+  cannot be resolved is logged and skipped without erasing earlier proven
+  calls. Relative workdirs are anchored to the Stop cwd, and an exact trailing
+  `git status --short` is supported without accepting environment overrides,
+  Git configuration, help viewers, or arbitrary trailing shell output. Codex
+  success comes only from the wrapper status before `Final output:`;
+  status-like command output cannot override a failed wrapper.
 - Deterministic linking uses the exact claimed event range and durable
   `session_row_id`; it does not depend on an LLM result or a synthetic
   observation-session prefix.
@@ -163,6 +164,8 @@ Acceptance:
   the same link-only path. Legacy capture-spill rows without an `event_id`
   receive stable, occurrence-distinct identities, so byte-identical historical
   rows do not collapse and a failed replay keeps the identity assigned to it.
+  On platforms without process-liveness probing, orphan claims use the same
+  minimum-age gate instead of being treated as permanently live.
 - Missing or ambiguous commit proof never drops the surrounding capture.
   Evidence that was durably captured but cannot be linked remains a visible
   extraction failure instead of a successful no-op.

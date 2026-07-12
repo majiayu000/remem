@@ -87,3 +87,24 @@ fn stale_orphan_claim_is_restored() -> Result<()> {
     assert!(!orphan.exists());
     Ok(())
 }
+
+#[test]
+fn old_dead_claim_is_restored_after_minimum_age() -> Result<()> {
+    let (_data_dir, queue) = queue("spill-queue-old-dead-orphan")?;
+    let orphan = queue
+        .active_path
+        .with_file_name("capture-spill.replay-99999999-0-0.jsonl");
+    std::fs::create_dir_all(orphan.parent().context("orphan path should have parent")?)?;
+    std::fs::write(&orphan, "orphan-a\n")?;
+
+    assert_eq!(queue.restore_orphaned_claims(Duration::from_secs(60))?, 1);
+    assert_eq!(std::fs::read_to_string(&queue.active_path)?, "orphan-a\n");
+    assert!(!orphan.exists());
+    Ok(())
+}
+
+#[cfg(not(unix))]
+#[test]
+fn non_unix_process_liveness_uses_age_only_fallback() {
+    assert!(!process_alive(i64::from(std::process::id())));
+}

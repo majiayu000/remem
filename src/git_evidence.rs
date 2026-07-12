@@ -109,11 +109,25 @@ pub(crate) fn from_codex_transcript(
             continue;
         };
         match payload.get("type").and_then(Value::as_str) {
-            Some("function_call") => {
-                if let Some(call) = parse_commit_call(payload, fallback_cwd)? {
+            Some("function_call") => match parse_commit_call(payload, fallback_cwd) {
+                Ok(Some(call)) => {
                     calls.insert(call.call_id.clone(), call);
                 }
-            }
+                Ok(None) => {}
+                Err(error) => {
+                    let call_id = payload
+                        .get("call_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing>");
+                    crate::log::error(
+                        "git-evidence",
+                        &format!(
+                            "skipped malformed Codex shell call line={} call_id={call_id}: {error:#}",
+                            line_index + 1
+                        ),
+                    );
+                }
+            },
             Some("function_call_output") => {
                 let Some(call_id) = payload.get("call_id").and_then(Value::as_str) else {
                     continue;
@@ -534,6 +548,16 @@ fn commit_args_are_supported(args: &[String], allow_quiet: bool) -> bool {
                 has_message_source = true;
                 index += 2;
             }
+            "--fixup" => {
+                let Some(target) = args.get(index + 1) else {
+                    return false;
+                };
+                if !is_non_interactive_fixup_target(target) {
+                    return false;
+                }
+                has_message_source = true;
+                index += 2;
+            }
             "--author" | "--date" | "--cleanup" | "--trailer" | "--pathspec-from-file" => {
                 if args.get(index + 1).is_none() {
                     return false;
@@ -560,9 +584,15 @@ fn commit_args_are_supported(args: &[String], allow_quiet: bool) -> bool {
             value
                 if value.starts_with("--message=")
                     || value.starts_with("--file=")
-                    || value.starts_with("--reuse-message=")
-                    || value.starts_with("--fixup=") =>
+                    || value.starts_with("--reuse-message=") =>
             {
+                has_message_source = true;
+                index += 1;
+            }
+            value if value.starts_with("--fixup=") => {
+                if !is_non_interactive_fixup_target(&value["--fixup=".len()..]) {
+                    return false;
+                }
                 has_message_source = true;
                 index += 1;
             }
@@ -588,6 +618,10 @@ fn commit_args_are_supported(args: &[String], allow_quiet: bool) -> bool {
         }
     }
     has_message_source
+}
+
+fn is_non_interactive_fixup_target(target: &str) -> bool {
+    !target.is_empty() && !target.starts_with("amend:") && !target.starts_with("reword:")
 }
 
 fn consume_commit_short_options(

@@ -82,19 +82,22 @@ current SessionRollup path and the legacy Summary job chain.
       commit from the exact claimed ObservationExtract or SessionRollup range;
       evidence recovered after a completed cursor uses bounded link-only work
       and never replays SessionRollup AI or side effects. Transcript evidence
-      keeps earlier proven calls when another call is ambiguous or its
-      candidate metadata cannot be resolved, anchors relative workdirs to the
-      Stop cwd, recognizes only an exact trailing `git status --short`, and
-      makes same-identity spill evidence deterministic and link-only. Legacy
-      spill rows without an `event_id` receive stable, occurrence-distinct
-      identities so byte-identical rows do not collapse and failed replay
-      preserves the assigned identity. Its fail-closed command grammar rejects
-      environment prefixes, arbitrary Git configuration, help/viewer/editor
-      output, dry runs, interactive add modes, shell expansion, redirection,
-      globbing, and
-      process substitution, or unquoted shell comments. Quiet commits remain
-      ordinary captured events but cannot create links because they suppress
-      Git's own commit summary. Success requires a zero exit status or Claude's
+      keeps earlier proven calls when another shell call is ambiguous,
+      malformed, or its candidate metadata cannot be resolved, anchors relative
+      workdirs to the Stop cwd, recognizes only an exact trailing
+      `git status --short`, and makes same-identity spill evidence deterministic
+      and link-only. Legacy spill rows without an `event_id` receive stable,
+      occurrence-distinct identities so byte-identical rows do not collapse
+      and failed replay
+      preserves the assigned identity; platforms without PID liveness restore
+      orphan claims after the minimum-age gate. Its fail-closed command grammar
+      accepts ordinary spaced/equal `--fixup` commits but rejects editor-opening
+      amend/reword fixups, environment prefixes, arbitrary Git configuration,
+      help/viewer/editor output, dry runs, interactive add modes, shell
+      expansion, redirection, globbing, process substitution, or unquoted shell
+      comments. Quiet commits remain ordinary captured events but cannot create
+      links because they suppress Git's own commit summary. Success requires a
+      zero exit status or Claude's
       explicitly named success-only `PostToolUse` event; an explicit failure
       event overrides contradictory fields. Unknown/failure events and
       status-like text inside Codex command output cannot prove success.

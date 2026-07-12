@@ -76,6 +76,8 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     assert!(is_supported_commit_command(
         "git commit --quiet --message=done"
     ));
+    assert!(is_supported_commit_command("git commit --fixup HEAD"));
+    assert!(is_supported_commit_command("git commit --fixup=HEAD"));
     assert!(is_supported_commit_command(
         "git -C repo commit --amend --no-edit"
     ));
@@ -101,6 +103,13 @@ fn commit_command_allows_only_attributable_success_chained_segments() {
     ));
     assert!(!is_supported_commit_command("git commit --help"));
     assert!(!is_supported_commit_command("git commit --dry-run -m done"));
+    assert!(!is_supported_commit_command("git commit --fixup"));
+    assert!(!is_supported_commit_command(
+        "git commit --fixup amend:HEAD"
+    ));
+    assert!(!is_supported_commit_command(
+        "git commit --fixup=reword:HEAD"
+    ));
     assert!(!is_supported_commit_command(
         "git add --help && git commit -m done"
     ));
@@ -267,6 +276,55 @@ fn codex_transcript_keeps_proven_commit_when_later_metadata_is_unresolvable() ->
             &missing_repo,
         ),
         codex_output("call-unresolvable", 0, "[main deadbee] unresolvable"),
+    ];
+    let transcript = test_dir.path.join("rollout.jsonl");
+    let bounded = format!("{}\n", lines.join("\n"));
+    std::fs::write(&transcript, &bounded)?;
+
+    let evidence = from_codex_transcript(
+        transcript.to_string_lossy().as_ref(),
+        bounded.len() as u64,
+        repo.to_string_lossy().as_ref(),
+    )?;
+
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].metadata.sha, sha);
+    Ok(())
+}
+
+#[test]
+fn codex_transcript_keeps_proven_commit_when_later_shell_calls_are_malformed() -> Result<()> {
+    let test_dir =
+        crate::db::test_support::ScopedTestDataDir::new("codex-commit-evidence-malformed-call");
+    let repo = test_dir.path.join("repo");
+    init_repo(&repo)?;
+    let sha = commit(&repo, "a.txt", "a", "commit a")?;
+    let lines = [
+        codex_call("call-proven", "git commit -m 'commit a'", &repo),
+        codex_output(
+            "call-proven",
+            0,
+            &format!("[main (root-commit) {}] commit a", &sha[..7]),
+        ),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "exec_command",
+                "call_id": "call-object-arguments",
+                "arguments": {"cmd": "git commit -m malformed"}
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "type": "response_item",
+            "payload": {
+                "type": "function_call",
+                "name": "shell",
+                "call_id": "call-missing-arguments"
+            }
+        })
+        .to_string(),
     ];
     let transcript = test_dir.path.join("rollout.jsonl");
     let bounded = format!("{}\n", lines.join("\n"));

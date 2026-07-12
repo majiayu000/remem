@@ -296,7 +296,9 @@ worker-time `HEAD`, is the authoritative commit source.
    grammar is fail-closed:
    literal `cd`, non-interactive `git add`, safe `git -C`, `user.name` /
    `user.email` identity configuration, and commit arguments with an explicit
-   non-interactive message source. Environment prefixes, arbitrary Git config,
+   non-interactive message source. Ordinary `--fixup <commit>` and
+   `--fixup=<commit>` forms are accepted; `amend:` / `reword:` fixups that open
+   an editor are rejected. Environment prefixes, arbitrary Git config,
    help/viewer/pager paths, dry runs, editors, interactive add modes, shell
    expansion, redirection, globbing, process substitution, and unquoted shell
    comments are rejected as evidence sources.
@@ -311,8 +313,9 @@ worker-time `HEAD`, is the authoritative commit source.
    matching text emitted by the command cannot override a failed wrapper.
    Relative transcript workdirs resolve against the Stop cwd, an exact trailing
    `git status --short` does not hide an earlier proven commit, and one
-   ambiguous call or unresolvable candidate is logged and skipped without
-   erasing commits already proven by other calls in the same boundary.
+   ambiguous call, malformed shell call, or unresolvable candidate is logged
+   and skipped without erasing commits already proven by other calls in the
+   same boundary.
 3. Each proven commit is stored atomically with its captured event in the 1:N
    `captured_event_commits` table. Encrypted spill records preserve the same
    typed evidence; replay never re-reads the repository's later `HEAD`.
@@ -320,7 +323,8 @@ worker-time `HEAD`, is the authoritative commit source.
    atomically rewritten in the claimed queue file with a content-scoped,
    nonce-backed unique identity. Orphan restoration and failed retries retain
    that explicit identity, while a byte-identical row arriving in a later claim
-   receives a new one.
+   receives a new one. Unix hosts protect live claims with PID liveness;
+   platforms without that probe restore claims only after the minimum-age gate.
 4. Captured Git evidence is produced only with a task that deterministically
    consumes it: observed tool events enqueue `ObservationExtract`, and Stop
    events enqueue `SessionRollup`. Each link phase reads every distinct commit
@@ -353,12 +357,13 @@ worker-time `HEAD`, is the authoritative commit source.
 Required regression coverage: capture to link end to end under the existing
 Rollup-first priority, no evidence, baseline `HEAD` rejection, explicit
 `no_observations`, AI failure, same-range multiple commits, Codex transcript
-byte boundaries, per-call ambiguous and unresolvable candidate isolation,
-later-range isolation, retry after link failure, typed spill replay after
-`HEAD` changes, same-claim and cross-claim occurrence-distinct replay of
-identical legacy spill rows, normalized-identity survival through orphan
-restoration, cross-host raw-session collisions, and single-result lookup across
-multiple rollup summaries. Late fixed-ID Stop evidence must also prove
+byte boundaries, ordinary spaced/equal `--fixup` forms, per-call ambiguous,
+malformed, and unresolvable candidate isolation, later-range isolation, retry
+after link failure, typed spill replay after `HEAD` changes, same-claim and
+cross-claim occurrence-distinct replay of identical legacy spill rows,
+normalized-identity survival through orphan restoration, non-Unix age-based
+orphan recovery, cross-host raw-session collisions, and single-result lookup
+across multiple rollup summaries. Late fixed-ID Stop evidence must also prove
 link-only worker processing without AI calls, new summaries, jobs, or follow-up
 extraction tasks.
 
