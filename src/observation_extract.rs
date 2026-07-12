@@ -153,6 +153,7 @@ where
     let Some(range) = load_evidence_range(conn, task)? else {
         return Ok(ObservationExtractResult::EmptyRange);
     };
+    let captured_commits = crate::captured_git::link_task_range(conn, task)?;
 
     let prompt = build_extract_prompt(task, &range);
     let response = extract(prompt).await?;
@@ -164,7 +165,8 @@ where
         ObservationExtractResponse::Observations(observations) => observations,
     };
 
-    let inserted = persist_observations(conn, task, &range, &observations)?;
+    let inserted =
+        persist_observations_with_commits(conn, task, &range, &observations, &captured_commits)?;
     promote_verified_procedures(conn, task)?;
     db::enqueue_followup_extraction_task(
         conn,
@@ -320,11 +322,22 @@ impl SessionSummaryContext {
     }
 }
 
+#[cfg(test)]
 fn persist_observations(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &EvidenceRange,
     observations: &[ParsedObservation],
+) -> Result<usize> {
+    persist_observations_with_commits(conn, task, range, observations, &[])
+}
+
+fn persist_observations_with_commits(
+    conn: &mut Connection,
+    task: &db::ExtractionTask,
+    range: &EvidenceRange,
+    observations: &[ParsedObservation],
+    captured_commits: &[crate::git_util::GitCommitMetadata],
 ) -> Result<usize> {
     let session_row_id = task
         .session_row_id
@@ -336,6 +349,10 @@ fn persist_observations(
     let memory_session_id = format!("capture-observation-{session_row_id}");
     let evidence_json = serde_json::to_string(&range.event_ids)?;
     let reference_time_epoch = range.reference_time_epoch();
+    let observation_commit = match captured_commits {
+        [metadata] => Some(metadata),
+        _ => None,
+    };
     let mut prepared = Vec::with_capacity(observations.len());
     let mut accepted_batch_texts = Vec::new();
     for observation in observations {
@@ -393,8 +410,8 @@ fn persist_observations(
             files_modified_json.as_deref(),
             None,
             (text.len() as i64) / 4,
-            None,
-            None,
+            observation_commit.and_then(|metadata| metadata.branch.as_deref()),
+            observation_commit.map(|metadata| metadata.sha.as_str()),
         )?;
         tx.execute(
             "UPDATE observations
@@ -513,5 +530,7 @@ fn eval_task(
     }
 }
 
+#[cfg(test)]
+mod commit_link_tests;
 #[cfg(test)]
 mod tests;

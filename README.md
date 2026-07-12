@@ -347,6 +347,11 @@ Remem is meant for the parts that should not depend on manual upkeep:
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,
   and memory-AI token/cost accounting.
+- **Commit/session traceability**: successful explicit `git commit` results
+  prove SHAs; trusted hook capture resolves those exact commits and links them
+  to the durable session identity. Delayed workers and spill replay reuse that
+  typed evidence; ordinary Stop events and missing evidence never guess from a
+  later `HEAD`.
 - **Current-memory accountability**: staleness labels, temporal facts,
   source-anchor checks, injection item audit rows, and citation/usage events
   show why a memory is current, stale, dropped, abstained, cited, or ignored.

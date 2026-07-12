@@ -189,7 +189,7 @@ pub(super) fn mark_raw_archive_completed(
     Ok(())
 }
 
-pub(super) fn rollup_memory_session_id(session_row_id: i64) -> String {
+pub(crate) fn rollup_memory_session_id(session_row_id: i64) -> String {
     format!("capture-rollup-{session_row_id}")
 }
 

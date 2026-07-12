@@ -402,6 +402,129 @@ async fn worker_processes_session_rollup_task_on_codex_stub() -> anyhow::Result<
 
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
+async fn late_session_stop_evidence_links_without_replaying_rollup() -> anyhow::Result<()> {
+    let _data_dir = ScopedTestDataDir::new("worker-late-session-stop-git-link");
+    configure_codex_stub("/tmp/remem-missing-codex-for-late-git-link")?;
+    let conn = db::open_db()?;
+    let input = db::CaptureEventInput {
+        host: "codex-cli",
+        session_id: "sess-late-session-stop-git-link",
+        project: "/tmp/remem",
+        cwd: None,
+        event_type: "session_stop",
+        role: None,
+        tool_name: None,
+        content: r#"{"session_id":"sess-late-session-stop-git-link"}"#,
+        task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+    };
+    let first = db::record_captured_event_with_id_and_reference_time_and_git_evidence(
+        &conn,
+        &input,
+        Some("late-session-stop-git-link"),
+        None,
+        &[],
+    )?;
+    let rollup_task_id = first
+        .extraction_task_id
+        .expect("initial Stop should enqueue SessionRollup");
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'done', cursor_event_id = high_watermark_event_id
+         WHERE id = ?1",
+        params![rollup_task_id],
+    )?;
+    let evidence = crate::git_util::GitCommitEvidence {
+        kind: crate::git_util::GitEvidenceKind::ObservedCommit,
+        metadata: crate::git_util::GitCommitMetadata {
+            repo_path: "/tmp/remem".to_string(),
+            sha: "abcdef1234567890abcdef1234567890abcdef12".to_string(),
+            short_sha: "abcdef1".to_string(),
+            branch: Some("main".to_string()),
+            message: Some("late commit evidence".to_string()),
+            authored_at_epoch: Some(1_700_000_000),
+            changed_files: vec!["src/lib.rs".to_string()],
+        },
+        locator: Some("replayed_stop".to_string()),
+    };
+    let second = db::record_captured_event_with_id_and_reference_time_and_git_evidence(
+        &conn,
+        &input,
+        Some("late-session-stop-git-link"),
+        None,
+        std::slice::from_ref(&evidence),
+    )?;
+    db::record_captured_event_with_id_and_reference_time_and_git_evidence(
+        &conn,
+        &input,
+        Some("late-session-stop-git-link"),
+        None,
+        &[evidence],
+    )?;
+    let link_task_id = second
+        .extraction_task_id
+        .expect("late evidence should enqueue link-only compensation");
+    anyhow::ensure!(link_task_id != rollup_task_id);
+    let (task_kind, cursor, high_watermark, task_count): (String, i64, i64, i64) = conn.query_row(
+        "SELECT task_kind, cursor_event_id, high_watermark_event_id,
+                    (SELECT COUNT(*) FROM extraction_tasks)
+             FROM extraction_tasks
+             WHERE id = ?1",
+        params![link_task_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    anyhow::ensure!(task_kind == "captured_git_link", "got {task_kind}");
+    anyhow::ensure!(cursor == first.event_row_id - 1);
+    anyhow::ensure!(high_watermark == first.event_row_id);
+    anyhow::ensure!(
+        task_count == 2,
+        "duplicate replay created {task_count} tasks"
+    );
+    drop(conn);
+
+    anyhow::ensure!(
+        crate::extraction_worker::run_next("worker-late-git-link", 60, 60).await?,
+        "link-only task should be processed"
+    );
+
+    let conn = db::open_db()?;
+    let (status, final_cursor, final_high_watermark): (String, i64, i64) = conn.query_row(
+        "SELECT status, cursor_event_id, high_watermark_event_id
+         FROM extraction_tasks
+         WHERE id = ?1",
+        params![link_task_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    let summary_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM session_summaries", [], |row| {
+            row.get(0)
+        })?;
+    let job_count: i64 = conn.query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))?;
+    let extraction_task_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM extraction_tasks", [], |row| {
+            row.get(0)
+        })?;
+    let (link_count, linked_sha): (i64, String) = conn.query_row(
+        "SELECT COUNT(*), COALESCE(MIN(commits.sha), '')
+         FROM git_commit_sessions links
+         JOIN git_commits commits ON commits.id = links.commit_id",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    anyhow::ensure!(status == "done", "link task status was {status}");
+    anyhow::ensure!(final_cursor == final_high_watermark);
+    anyhow::ensure!(summary_count == 0, "link-only task wrote a summary");
+    anyhow::ensure!(job_count == 0, "link-only task enqueued {job_count} jobs");
+    anyhow::ensure!(
+        extraction_task_count == 2,
+        "link-only task enqueued follow-up extraction work"
+    );
+    anyhow::ensure!(link_count == 1);
+    anyhow::ensure!(linked_sha == "abcdef1234567890abcdef1234567890abcdef12");
+    Ok(())
+}
+
+#[allow(clippy::await_holding_lock)]
+#[tokio::test]
 async fn worker_processes_observation_extract_task_on_codex_stub() -> anyhow::Result<()> {
     let _data_dir = ScopedTestDataDir::new("worker-observation-extract");
     let stub_codex = std::env::temp_dir().join(format!(

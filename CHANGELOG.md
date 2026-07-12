@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.200` for GH-792 observed commit traceability:
+  successful explicit `git commit` results prove SHAs through Claude hook
+  output or a byte-bounded Codex transcript, typed evidence is stored atomically
+  and survives the shared encrypted spill queue, deterministic extraction
+  phases link every commit in the exact claimed range by durable
+  `session_row_id`, cross-host raw session collisions remain distinct, retries
+  stay idempotent, missing or ambiguous proof never drops the surrounding
+  capture, and ordinary Stop events never infer from a later `HEAD`.
 - Staged source version `0.5.199` for the GH-671 T3 post-merge corrective:
   archive and reroute operations recompile both affected preference authorities,
   replacement overrides follow normalized predicate identity, global preference

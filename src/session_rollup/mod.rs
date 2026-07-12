@@ -6,6 +6,8 @@ mod side_effects;
 mod tests;
 mod transcript_evidence;
 
+pub(crate) use persist::rollup_memory_session_id;
+
 use std::future::Future;
 
 use anyhow::{Context, Result};
@@ -88,6 +90,7 @@ where
     let Some(range) = load_rollup_range(conn, task)? else {
         return Ok(SessionRollupResult::EmptyRange);
     };
+    crate::captured_git::link_task_range(conn, task)?;
     if let Some(persisted) = persist::load_persisted_rollup_state(conn, task, &range)? {
         let raw_archive_result = complete_raw_archive_for_existing_rollup(
             conn,

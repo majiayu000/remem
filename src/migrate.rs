@@ -6,6 +6,8 @@ mod state;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_capture_git_evidence;
+#[cfg(test)]
 mod tests_compression_provenance;
 #[cfg(test)]
 mod tests_content_identity;

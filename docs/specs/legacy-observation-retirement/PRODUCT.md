@@ -117,6 +117,59 @@ Acceptance:
 - Migration commands are idempotent and report migrated/skipped counts.
 - A drop migration refuses to run while unmigrated valuable rows remain.
 
+### Durable Commit Traceability
+
+As a user, a commit shown by `remem why` or the commit lookup tools is linked
+to my coding session only when remem captured real Git evidence for that event.
+The link must survive delayed processing and spill replay without being changed
+to whatever `HEAD` happens to be later.
+
+Acceptance:
+
+- A successful explicit, non-quiet `git commit` result proves the SHA only when
+  the command's standard Git summary contains it; trusted capture resolves
+  metadata for that exact SHA before the event is written or spilled, and
+  stores the evidence atomically with the capture event. Explicit quiet commit
+  commands remain eligible for ordinary event capture but produce no commit
+  evidence or link. Success requires a numeric zero exit status or a Claude
+  payload explicitly identified as the success-only `PostToolUse` event;
+  an explicit failure event always wins over contradictory response fields,
+  while unknown status and failure events preserve capture without commit
+  evidence. Evidence command parsing is fail-closed: it accepts only literal
+  workdir changes, non-interactive add/commit forms with an explicit message
+  source (including ordinary `--fixup <commit>` autosquash commits), safe
+  identity configuration, and the documented exact status suffix;
+  editor-opening amend/reword fixups, environment prefixes, arbitrary Git
+  configuration, help/viewer/editor paths, dry runs, interactive add modes,
+  shell expansion, redirection, globbing, process substitution, or unquoted
+  shell comments produce no evidence.
+- Ordinary edits, Stop events, and a repository's baseline `HEAD` do not create
+  commit links. A byte-bounded Codex transcript may prove multiple commits;
+  one ambiguous call, malformed shell call, or call whose candidate metadata
+  cannot be resolved is logged and skipped without erasing earlier proven
+  calls. Relative workdirs are anchored to the Stop cwd, and an exact trailing
+  `git status --short` is supported without accepting environment overrides,
+  Git configuration, help viewers, or arbitrary trailing shell output. Codex
+  success comes only from the wrapper status before `Final output:`;
+  status-like command output cannot override a failed wrapper.
+- Deterministic linking uses the exact claimed event range and durable
+  `session_row_id`; it does not depend on an LLM result or a synthetic
+  observation-session prefix.
+- Every distinct commit in a range is linked, while no evidence produces no
+  link. Retries and later ranges do not duplicate links.
+- If idempotent replay recovers evidence only after the original extraction
+  cursor passed its event, a bounded link-only task consumes that evidence
+  without rerunning model extraction, summaries, or their side effects.
+  Same-identity Stop spill retries use one deterministic evidence event and
+  the same link-only path. Legacy capture-spill rows without an `event_id`
+  receive stable, occurrence-distinct identities, so byte-identical historical
+  rows do not collapse and a failed replay keeps the identity assigned to it.
+  On platforms without process-liveness probing, orphan claims use the same
+  minimum-age gate instead of being treated as permanently live.
+- Missing or ambiguous commit proof never drops the surrounding capture.
+  Evidence that was durably captured but cannot be linked remains a visible
+  extraction failure instead of a successful no-op.
+
 ### Bounded Rollup Evidence
 
 As a user, a transcript-backed Stop capture produces a summary from the actual

@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use rusqlite::types::Type;
-use rusqlite::{params, Connection, Row};
+use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::{Deserialize, Serialize};
 
 use crate::git_util::{short_sha_for, GitCommitMetadata};
@@ -165,7 +165,14 @@ pub fn link_commit_to_session(conn: &Connection, input: &CommitLinkInput<'_>) ->
     }
 
     let commit_id = upsert_commit_metadata(conn, &input.metadata)?;
-    link_session_to_commit_id(conn, commit_id, session_id, input.memory_session_id, source)?;
+    link_session_to_commit_id(
+        conn,
+        commit_id,
+        None,
+        session_id,
+        input.memory_session_id,
+        source,
+    )?;
     Ok(commit_id)
 }
 
@@ -197,6 +204,47 @@ pub fn link_git_metadata_to_session(
     )
 }
 
+pub fn link_captured_git_metadata_to_session(
+    conn: &Connection,
+    project: &str,
+    session_row_id: i64,
+    session_id: &str,
+    memory_session_id: &str,
+    metadata: &GitCommitMetadata,
+) -> Result<i64> {
+    validate_capture_session_identity(conn, project, session_row_id, session_id)?;
+    let full_sha = validate_full_commit_sha(&metadata.sha)?;
+    let short_sha = metadata.short_sha.trim().to_ascii_lowercase();
+    if short_sha.len() < 7
+        || !short_sha.bytes().all(|byte| byte.is_ascii_hexdigit())
+        || !full_sha.starts_with(&short_sha)
+    {
+        bail!("captured Git metadata short SHA does not match full SHA {full_sha}");
+    }
+    let commit_id = upsert_commit_metadata(
+        conn,
+        &CommitMetadataInput {
+            project,
+            repo_path: Some(&metadata.repo_path),
+            sha: &full_sha,
+            short_sha: Some(&short_sha),
+            branch: metadata.branch.as_deref(),
+            message: metadata.message.as_deref(),
+            authored_at_epoch: metadata.authored_at_epoch,
+            changed_files: &metadata.changed_files,
+        },
+    )?;
+    link_session_to_commit_id(
+        conn,
+        commit_id,
+        Some(session_row_id),
+        session_id,
+        Some(memory_session_id),
+        "capture_git_evidence",
+    )?;
+    Ok(commit_id)
+}
+
 pub fn link_observed_commit_to_session(
     conn: &Connection,
     project: &str,
@@ -221,6 +269,7 @@ pub fn link_observed_commit_to_session(
         link_session_to_commit_id(
             conn,
             commit_id,
+            None,
             session_id,
             Some(memory_session_id),
             "observations",
@@ -360,23 +409,104 @@ fn find_existing_commit_id(
 fn link_session_to_commit_id(
     conn: &Connection,
     commit_id: i64,
+    session_row_id: Option<i64>,
     session_id: &str,
     memory_session_id: Option<&str>,
     source: &str,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
+    if let Some(session_row_id) = session_row_id {
+        promote_exact_legacy_link(
+            conn,
+            commit_id,
+            session_row_id,
+            session_id,
+            memory_session_id,
+        )?;
+        conn.execute(
+            "INSERT INTO git_commit_sessions
+             (commit_id, session_row_id, session_id, memory_session_id, source, linked_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(commit_id, session_row_id) WHERE session_row_id IS NOT NULL DO UPDATE SET
+               session_id = excluded.session_id,
+               memory_session_id = COALESCE(excluded.memory_session_id, git_commit_sessions.memory_session_id),
+               source = CASE
+                 WHEN git_commit_sessions.source IN ('git_metadata', 'capture_git_evidence')
+                   THEN git_commit_sessions.source
+                 WHEN excluded.source IN ('git_metadata', 'capture_git_evidence')
+                   THEN excluded.source
+                 ELSE excluded.source
+               END",
+            params![
+                commit_id,
+                session_row_id,
+                session_id,
+                memory_session_id,
+                source,
+                now
+            ],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO git_commit_sessions
+             (commit_id, session_row_id, session_id, memory_session_id, source, linked_at_epoch)
+             VALUES (?1, NULL, ?2, ?3, ?4, ?5)
+             ON CONFLICT(commit_id, session_id) WHERE session_row_id IS NULL DO UPDATE SET
+               memory_session_id = COALESCE(excluded.memory_session_id, git_commit_sessions.memory_session_id),
+               source = CASE
+                 WHEN git_commit_sessions.source IN ('git_metadata', 'capture_git_evidence')
+                   THEN git_commit_sessions.source
+                 WHEN excluded.source IN ('git_metadata', 'capture_git_evidence')
+                   THEN excluded.source
+                 ELSE excluded.source
+               END",
+            params![commit_id, session_id, memory_session_id, source, now],
+        )?;
+    }
+    Ok(())
+}
+
+fn promote_exact_legacy_link(
+    conn: &Connection,
+    commit_id: i64,
+    session_row_id: i64,
+    session_id: &str,
+    memory_session_id: Option<&str>,
+) -> Result<()> {
+    let expected_memory_session_id = format!("capture-rollup-{session_row_id}");
+    if memory_session_id != Some(expected_memory_session_id.as_str()) {
+        return Ok(());
+    }
     conn.execute(
-        "INSERT INTO git_commit_sessions
-         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(commit_id, session_id) DO UPDATE SET
-           memory_session_id = COALESCE(excluded.memory_session_id, git_commit_sessions.memory_session_id),
-           source = CASE
-             WHEN git_commit_sessions.source = 'git_metadata' THEN git_commit_sessions.source
-             WHEN excluded.source = 'git_metadata' THEN excluded.source
-             ELSE excluded.source
-           END",
-        params![commit_id, session_id, memory_session_id, source, now],
+        "DELETE FROM git_commit_sessions
+         WHERE commit_id = ?1
+           AND session_row_id IS NULL
+           AND session_id = ?2
+           AND memory_session_id = ?3
+           AND EXISTS (
+             SELECT 1 FROM git_commit_sessions durable
+             WHERE durable.commit_id = ?1 AND durable.session_row_id = ?4
+           )",
+        params![
+            commit_id,
+            session_id,
+            expected_memory_session_id,
+            session_row_id
+        ],
+    )?;
+    conn.execute(
+        "UPDATE git_commit_sessions
+         SET session_row_id = ?4
+         WHERE commit_id = ?1
+           AND session_row_id IS NULL
+           AND session_id = ?2
+           AND memory_session_id = ?3",
+        params![
+            commit_id,
+            session_id,
+            expected_memory_session_id,
+            session_row_id
+        ],
     )?;
     Ok(())
 }
@@ -466,9 +596,16 @@ where
                 ss.preferences, ss.created_at_epoch
          FROM git_commit_sessions l
          JOIN git_commits c ON c.id = l.commit_id
-         LEFT JOIN session_summaries ss
-           ON ss.memory_session_id = l.memory_session_id
-          AND ss.project = c.project
+         LEFT JOIN session_summaries ss ON ss.id = (
+           SELECT latest.id
+           FROM session_summaries latest
+           WHERE latest.memory_session_id = l.memory_session_id
+             AND latest.project = c.project
+           ORDER BY COALESCE(latest.covered_to_event_id, 0) DESC,
+                    latest.created_at_epoch DESC,
+                    latest.id DESC
+           LIMIT 1
+         )
          {where_clause}
          ORDER BY COALESCE(c.authored_at_epoch, c.updated_at_epoch) DESC, c.id DESC
          LIMIT ?{}",
@@ -498,9 +635,16 @@ fn linked_sessions_for_commit(
                 ss.request, ss.completed, ss.decisions, ss.learned, ss.next_steps,
                 ss.preferences, ss.created_at_epoch
          FROM git_commit_sessions l
-         LEFT JOIN session_summaries ss
-           ON ss.memory_session_id = l.memory_session_id
-          AND ss.project = ?2
+         LEFT JOIN session_summaries ss ON ss.id = (
+           SELECT latest.id
+           FROM session_summaries latest
+           WHERE latest.memory_session_id = l.memory_session_id
+             AND latest.project = ?2
+           ORDER BY COALESCE(latest.covered_to_event_id, 0) DESC,
+                    latest.created_at_epoch DESC,
+                    latest.id DESC
+           LIMIT 1
+         )
          WHERE l.commit_id = ?1
          ORDER BY l.linked_at_epoch DESC",
     )?;
@@ -514,6 +658,41 @@ fn normalize_sha(raw: &str) -> Result<String> {
         bail!("commit SHA is required");
     }
     Ok(sha.to_string())
+}
+
+fn validate_full_commit_sha(raw: &str) -> Result<String> {
+    let sha = raw.trim().to_ascii_lowercase();
+    if !matches!(sha.len(), 40 | 64) || !sha.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        bail!("captured commit SHA must be a full 40- or 64-character hexadecimal hash");
+    }
+    Ok(sha)
+}
+
+fn validate_capture_session_identity(
+    conn: &Connection,
+    project: &str,
+    session_row_id: i64,
+    session_id: &str,
+) -> Result<()> {
+    let identity = conn
+        .query_row(
+            "SELECT sessions.session_id, projects.project_path
+             FROM sessions
+             JOIN projects ON projects.id = sessions.project_id
+             WHERE sessions.id = ?1",
+            [session_row_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let Some((stored_session_id, stored_project)) = identity else {
+        bail!("captured commit session_row_id {session_row_id} does not exist");
+    };
+    if stored_session_id != session_id || stored_project != project {
+        bail!(
+            "captured commit identity mismatch for session_row_id {session_row_id}: expected project={project} session={session_id}, stored project={stored_project} session={stored_session_id}"
+        );
+    }
+    Ok(())
 }
 
 fn commit_from_row(row: &Row<'_>) -> rusqlite::Result<GitCommitRecord> {
@@ -574,260 +753,4 @@ fn changed_files_from_row(row: &Row<'_>, idx: usize) -> rusqlite::Result<Vec<Str
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use rusqlite::Connection;
-
-    fn migrated_db() -> Result<Connection> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
-        crate::migrate::run_migrations(&conn)?;
-        Ok(conn)
-    }
-
-    fn metadata_input<'a>(changed_files: &'a [String]) -> CommitMetadataInput<'a> {
-        CommitMetadataInput {
-            project: "proj",
-            repo_path: Some("/repo"),
-            sha: "abcdef1234567890abcdef1234567890abcdef12",
-            short_sha: Some("abcdef1"),
-            branch: Some("main"),
-            message: Some("Add traceability"),
-            authored_at_epoch: Some(1_700_000_000),
-            changed_files,
-        }
-    }
-
-    #[test]
-    fn link_lookup_and_session_reverse_lookup_are_idempotent() -> Result<()> {
-        let conn = migrated_db()?;
-        let changed_files = vec!["src/lib.rs".to_string(), "README.md".to_string()];
-        let input = CommitLinkInput {
-            metadata: metadata_input(&changed_files),
-            session_id: "content-session-1",
-            memory_session_id: Some("mem-session-1"),
-            source: "git_metadata",
-        };
-
-        let first_id = link_commit_to_session(&conn, &input)?;
-        let second_id = link_commit_to_session(&conn, &input)?;
-        assert_eq!(first_id, second_id);
-
-        let link_count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM git_commit_sessions WHERE commit_id = ?1",
-            [first_id],
-            |row| row.get(0),
-        )?;
-        assert_eq!(link_count, 1);
-
-        let full = lookup_commit(
-            &conn,
-            Some("proj"),
-            "abcdef1234567890abcdef1234567890abcdef12",
-        )?;
-        assert_eq!(full.len(), 1);
-        assert_eq!(full[0].git.short_sha, "abcdef1");
-        assert_eq!(full[0].git.changed_files, changed_files);
-        assert_eq!(full[0].sessions.len(), 1);
-        assert_eq!(full[0].sessions[0].session_id, "content-session-1");
-
-        let short = lookup_commit(&conn, Some("proj"), "abcdef1")?;
-        assert_eq!(short.len(), 1);
-        assert_eq!(short[0].git.sha, full[0].git.sha);
-
-        let session_commits = commits_for_session(&conn, Some("proj"), "content-session-1", 10)?;
-        assert_eq!(session_commits.len(), 1);
-        assert_eq!(session_commits[0].git.short_sha, "abcdef1");
-
-        let memory_session_commits = commits_for_session(&conn, Some("proj"), "mem-session-1", 10)?;
-        assert_eq!(memory_session_commits.len(), 1);
-        assert_eq!(
-            memory_session_commits[0].link.memory_session_id.as_deref(),
-            Some("mem-session-1")
-        );
-
-        link_observed_commit_to_session(
-            &conn,
-            "proj",
-            "content-session-2",
-            "mem-session-2",
-            "abcdef1",
-            Some("main"),
-            None,
-        )?;
-        let commit_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM git_commits", [], |row| row.get(0))?;
-        assert_eq!(commit_count, 1);
-        let relinked = lookup_commit(&conn, Some("proj"), "abcdef1")?;
-        assert_eq!(relinked[0].sessions.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn full_metadata_upgrades_existing_short_sha_record() -> Result<()> {
-        let conn = migrated_db()?;
-        link_observed_commit_to_session(
-            &conn,
-            "proj",
-            "content-session-1",
-            "mem-session-1",
-            "abcdef1",
-            Some("main"),
-            None,
-        )?;
-
-        let changed_files = vec!["src/git_trace.rs".to_string()];
-        link_commit_to_session(
-            &conn,
-            &CommitLinkInput {
-                metadata: metadata_input(&changed_files),
-                session_id: "content-session-2",
-                memory_session_id: Some("mem-session-2"),
-                source: "git_metadata",
-            },
-        )?;
-
-        let commit_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM git_commits", [], |row| row.get(0))?;
-        assert_eq!(commit_count, 1);
-        let results = lookup_commit(
-            &conn,
-            Some("proj"),
-            "abcdef1234567890abcdef1234567890abcdef12",
-        )?;
-        assert_eq!(results.len(), 1);
-        assert_eq!(results[0].git.short_sha, "abcdef1");
-        assert_eq!(results[0].git.changed_files, changed_files);
-        assert_eq!(results[0].sessions.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn full_metadata_upgrades_existing_long_abbrev_record() -> Result<()> {
-        let conn = migrated_db()?;
-        link_observed_commit_to_session(
-            &conn,
-            "proj",
-            "content-session-1",
-            "mem-session-1",
-            "abcdef123456",
-            Some("main"),
-            None,
-        )?;
-
-        let changed_files = vec!["src/git_trace.rs".to_string()];
-        link_commit_to_session(
-            &conn,
-            &CommitLinkInput {
-                metadata: metadata_input(&changed_files),
-                session_id: "content-session-2",
-                memory_session_id: Some("mem-session-2"),
-                source: "git_metadata",
-            },
-        )?;
-
-        let commit_count: i64 =
-            conn.query_row("SELECT COUNT(*) FROM git_commits", [], |row| row.get(0))?;
-        assert_eq!(commit_count, 1);
-        let results = lookup_commit(
-            &conn,
-            Some("proj"),
-            "abcdef1234567890abcdef1234567890abcdef12",
-        )?;
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].git.sha,
-            "abcdef1234567890abcdef1234567890abcdef12"
-        );
-        assert_eq!(results[0].git.short_sha, "abcdef1");
-        assert_eq!(results[0].sessions.len(), 2);
-        Ok(())
-    }
-
-    #[test]
-    fn relink_preserves_git_metadata_source() -> Result<()> {
-        let conn = migrated_db()?;
-        let changed_files = vec!["src/git_trace.rs".to_string()];
-        link_observed_commit_to_session(
-            &conn,
-            "proj",
-            "content-session-1",
-            "mem-session-1",
-            "abcdef1",
-            Some("main"),
-            None,
-        )?;
-        link_commit_to_session(
-            &conn,
-            &CommitLinkInput {
-                metadata: metadata_input(&changed_files),
-                session_id: "content-session-1",
-                memory_session_id: Some("mem-session-1"),
-                source: "git_metadata",
-            },
-        )?;
-        link_observed_commit_to_session(
-            &conn,
-            "proj",
-            "content-session-1",
-            "mem-session-1",
-            "abcdef1",
-            Some("main"),
-            None,
-        )?;
-
-        let source: String = conn.query_row(
-            "SELECT source
-             FROM git_commit_sessions
-             WHERE session_id = 'content-session-1'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(source, "git_metadata");
-        Ok(())
-    }
-
-    #[test]
-    fn commit_metadata_without_link_returns_no_sessions() -> Result<()> {
-        let conn = migrated_db()?;
-        let changed_files = Vec::new();
-        let commit_id = upsert_commit_metadata(&conn, &metadata_input(&changed_files))?;
-        assert!(commit_id > 0);
-
-        let results = lookup_commit(&conn, Some("proj"), "abcdef1")?;
-        assert_eq!(results.len(), 1);
-        assert!(results[0].sessions.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn summary_is_memory_derived_and_optional() -> Result<()> {
-        let conn = migrated_db()?;
-        let changed_files = Vec::new();
-        conn.execute(
-            "INSERT INTO session_summaries
-             (memory_session_id, project, request, completed, created_at, created_at_epoch)
-             VALUES ('mem-session-1', 'proj', 'Need traceability', 'Linked commits',
-                     '2026-01-01T00:00:00Z', 1)",
-            [],
-        )?;
-        link_commit_to_session(
-            &conn,
-            &CommitLinkInput {
-                metadata: metadata_input(&changed_files),
-                session_id: "content-session-1",
-                memory_session_id: Some("mem-session-1"),
-                source: "git_metadata",
-            },
-        )?;
-
-        let results = lookup_commit(&conn, Some("proj"), "abcdef1")?;
-        let summary = results[0].sessions[0]
-            .summary
-            .as_ref()
-            .expect("linked summary should be returned");
-        assert_eq!(summary.request.as_deref(), Some("Need traceability"));
-        assert_eq!(summary.completed.as_deref(), Some("Linked commits"));
-        Ok(())
-    }
-}
+mod tests;

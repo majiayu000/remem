@@ -126,6 +126,11 @@ pub(crate) async fn run_next(
 
 async fn process_extraction_task(task: &db::ExtractionTask) -> Result<ExtractionTaskOutcome> {
     match task.task_kind {
+        db::ExtractionTaskKind::CapturedGitLink => {
+            let mut conn = db::open_db()?;
+            crate::captured_git::link_task_range(&mut conn, task)?;
+            Ok(ExtractionTaskOutcome::Done { to_event_id: None })
+        }
         db::ExtractionTaskKind::SessionRollup => {
             crate::session_rollup::process(task).await?;
             Ok(ExtractionTaskOutcome::Done { to_event_id: None })
