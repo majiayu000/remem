@@ -144,8 +144,11 @@ needed fields and side effects, then removes only the redundant Summary writer.
       retries after terminal jobs, preserves failure diagnostics, rolls back
       partial enqueue attempts, and permits a new range to schedule again.
       Historical exact ranges retain an error-visible `legacy_unknown` state
-      because their prior Dream decision is not provable; new decisions persist
-      the Compress job id plus Dream disposition and referenced job id.
+      because their prior Dream decision is not provable. The column default
+      protects late inserts from pre-v068 workers, current writers explicitly
+      initialize genuinely new ranges, and v068 requeues pre-upgrade processing
+      leases. New decisions persist the Compress job id plus Dream disposition
+      and referenced job id.
       GH684-T7 is complete. Old-version daemon heartbeats and legacy singleton locks do not
       suppress the current Stop fallback worker, current once-launch
       heartbeats prevent overlapping fallback workers, workers claim
@@ -183,6 +186,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `session_rollup_followup_scheduling_rolls_back_partial_enqueue`,
       `dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift`,
       `v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs`,
+      `v068_late_v067_rollup_defaults_legacy_unknown_and_requeues_claim`,
       `captured_commit_evidence_links_exact_range`,
       `captured_commit_link_retry_is_idempotent`,
       `replayed_observe_spill_preserves_commit_snapshot_when_head_moves`,

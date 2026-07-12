@@ -237,7 +237,10 @@ Tests: fixture DBs per state; frozen-write detection test.
    v068 atomically stores the exact-range scheduling checkpoint with the
    Compress/Dream decision, preserves terminal job diagnostics on retry, and
    marks pre-v068 exact ranges `legacy_unknown` rather than inventing state or
-   replacement jobs. New decisions persist exact Compress/Dream job
+   replacement jobs. A safe column default also covers late inserts from
+   already-running old workers; current writers explicitly initialize new
+   ranges and the migration requeues pre-upgrade processing leases. New
+   decisions persist exact Compress/Dream job
    attribution and distinguish Dream enqueue, inflight coalescing, and recent
    completion suppression.
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at

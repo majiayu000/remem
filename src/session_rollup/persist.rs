@@ -53,8 +53,11 @@ pub(super) fn persist_session_rollup(
           decisions, learned, next_steps, preferences, discovery_tokens,
           host_id, project_id, session_row_id, summary_text,
           covered_from_event_id, covered_to_event_id, model,
-          transcript_evidence_json, raw_archive_completed_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19)",
+          transcript_evidence_json, raw_archive_completed_at_epoch,
+          followup_scheduling_state, followup_scheduling_completed_at_epoch,
+          followup_compress_job_id, followup_dream_disposition,
+          followup_dream_job_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19, NULL, NULL, NULL, NULL, NULL)",
         params![
             memory_session_id,
             task.project,

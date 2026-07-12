@@ -129,7 +129,9 @@ current SessionRollup path and the legacy Summary job chain.
       retries preserve terminal Compress/Dream history while new ranges remain
       eligible for their own scheduling decision. Pre-v068 exact ranges retain
       an error-visible `legacy_unknown` decision instead of inferred replacement
-      jobs, while new decisions retain exact Compress/Dream job attribution and
+      jobs, including ranges inserted late by an already-running old worker;
+      v068 requeues those processing leases. New decisions retain exact
+      Compress/Dream job attribution and
       distinguish enqueued, inflight-coalesced, and cooldown-suppressed Dream
       outcomes.
 - [x] MCP/docs wording stops calling live `observations` legacy.

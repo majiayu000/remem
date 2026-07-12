@@ -186,7 +186,10 @@ Migration v068 makes follow-up scheduling an exact-range transaction. New
 ranges persist their Compress job id and one structured Dream outcome with its
 referenced job id. Exact ranges created before v068 are marked
 `legacy_unknown`; retries report manual reconciliation at error level and do
-not infer replacement work from terminal job history.
+not infer replacement work from terminal job history. The same default applies
+when an already-running pre-v068 worker inserts its range after migration;
+current writers explicitly initialize new ranges and v068 requeues old
+processing leases so the upgraded worker owns completion.
 Migration v064 permanently rejects queued legacy Summary jobs and requeues any
 SessionRollup lease held across the binary upgrade. Readers continue to hide
 synthetic `Captured event range ...` fallback titles. The unused legacy

@@ -378,8 +378,9 @@ fn v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs() ->
     conn.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, session_row_id,
-          covered_from_event_id, covered_to_event_id)
-         VALUES ('new-rollup', '/tmp/remem', 8, 21, 30)",
+          covered_from_event_id, covered_to_event_id,
+          followup_scheduling_state, followup_dream_disposition)
+         VALUES ('new-rollup', '/tmp/remem', 8, 21, 30, NULL, NULL)",
         [],
     )?;
     let new_state: (Option<String>, Option<String>) = conn.query_row(
@@ -403,6 +404,118 @@ fn v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs() ->
             "done".to_string(),
             "failed".to_string(),
             Some("historical terminal dream".to_string()),
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn v068_late_v067_rollup_defaults_legacy_unknown_and_requeues_claim() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_schema_with_pending_migrations_from(&conn, 68)?;
+    let capture = crate::db::record_captured_event(
+        &conn,
+        &crate::db::CaptureEventInput {
+            host: "codex-cli",
+            session_id: "late-v067-rollup",
+            project: "/tmp/remem",
+            cwd: Some("/tmp/remem"),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content: r#"{"session_id":"late-v067-rollup","cwd":"/tmp/remem"}"#,
+            task_kind: Some(crate::db::ExtractionTaskKind::SessionRollup),
+        },
+    )?;
+    let task_id = capture
+        .extraction_task_id
+        .ok_or_else(|| anyhow::anyhow!("capture should enqueue a SessionRollup task"))?;
+    let session_row_id: i64 = conn.query_row(
+        "SELECT session_row_id FROM extraction_tasks WHERE id = ?1",
+        [task_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'processing', attempts = 4,
+             lease_owner = 'worker-v067', lease_expires_epoch = 1700001000
+         WHERE id = ?1",
+        [task_id],
+    )?;
+
+    run_migrations(&conn)?;
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('late-v067-rollup', '/tmp/remem', ?1, 1, 1)",
+        [session_row_id],
+    )?;
+    let compress_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Compress,
+        "/tmp/remem",
+        None,
+        "{}",
+        200,
+    )?;
+    let dream_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Dream,
+        "/tmp/remem",
+        None,
+        "{}",
+        300,
+    )?;
+    conn.execute(
+        "UPDATE jobs SET state = 'done' WHERE id = ?1",
+        [compress_job_id],
+    )?;
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'failed', attempt_count = max_attempts,
+             last_error = 'late v067 terminal dream', failure_class = 'permanent'
+         WHERE id = ?1",
+        [dream_job_id],
+    )?;
+
+    let late_state: (Option<String>, Option<String>) = conn.query_row(
+        "SELECT followup_scheduling_state, followup_dream_disposition
+         FROM session_summaries
+         WHERE memory_session_id = 'late-v067-rollup'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(
+        late_state,
+        (
+            Some("legacy_unknown".to_string()),
+            Some("legacy_unknown".to_string()),
+        )
+    );
+    let task_state: (String, i64, Option<String>, Option<i64>) = conn.query_row(
+        "SELECT status, attempts, lease_owner, lease_expires_epoch
+         FROM extraction_tasks WHERE id = ?1",
+        [task_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(task_state, ("pending".to_string(), 0, None, None));
+    let terminal_jobs: (String, String, Option<String>) = conn.query_row(
+        "SELECT compress.state, dream.state, dream.last_error
+         FROM jobs compress, jobs dream
+         WHERE compress.id = ?1 AND dream.id = ?2",
+        params![compress_job_id, dream_job_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        terminal_jobs,
+        (
+            "done".to_string(),
+            "failed".to_string(),
+            Some("late v067 terminal dream".to_string()),
         )
     );
     Ok(())

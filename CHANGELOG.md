@@ -10,6 +10,8 @@
   back cleanly, and a genuinely new event range can still schedule new
   maintenance work. Historical exact ranges are marked `legacy_unknown` and
   reported at error level instead of receiving inferred replacement jobs;
+  v067 writers that finish after migration inherit the same safe default and
+  their pre-upgrade processing leases are requeued;
   newly completed decisions persist the Compress job id plus the exact Dream
   disposition and referenced job id.
 - Staged source version `0.5.202` for the MCP registry launch fixes: ships the
