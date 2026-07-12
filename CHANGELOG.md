@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.202` for the MCP registry launch fixes: ships the
+  shortened `server.json` description (#808), the real-session recall demo
+  assets (#809), and the README hero swap (#810) in a tagged release so the
+  `publish-mcp-registry` job can complete its first successful publish.
 - Staged source version `0.5.201` for #795: automatic SessionRollup native-memory
   mirroring now reports filesystem failures at error level with project,
   session-row, and exact event-range identity without blocking the persisted
