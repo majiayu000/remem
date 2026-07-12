@@ -3,6 +3,29 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db::job::JobType;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DreamEnqueueDecision {
+    Enqueued(i64),
+    CoalescedInflight(i64),
+    SuppressedRecentDone(i64),
+}
+
+impl DreamEnqueueDecision {
+    pub fn disposition(self) -> &'static str {
+        match self {
+            Self::Enqueued(_) => "enqueued",
+            Self::CoalescedInflight(_) => "coalesced_inflight",
+            Self::SuppressedRecentDone(_) => "suppressed_recent_done",
+        }
+    }
+
+    pub fn job_id(self) -> i64 {
+        match self {
+            Self::Enqueued(id) | Self::CoalescedInflight(id) | Self::SuppressedRecentDone(id) => id,
+        }
+    }
+}
+
 pub fn enqueue_job(
     conn: &Connection,
     host: &str,
@@ -68,7 +91,7 @@ pub fn maybe_enqueue_dream_job(
     payload_json: &str,
     priority: i64,
     cooldown_secs: i64,
-) -> Result<Option<i64>> {
+) -> Result<DreamEnqueueDecision> {
     let incoming_profile = dream_profile_key(payload_json);
     let inflight: Option<(i64, String, String)> = conn
         .query_row(
@@ -101,7 +124,7 @@ pub fn maybe_enqueue_dream_job(
                 params![host, payload_json, priority, now, id],
             )?;
         }
-        return Ok(None);
+        return Ok(DreamEnqueueDecision::CoalescedInflight(id));
     }
 
     let now = chrono::Utc::now().timestamp();
@@ -120,8 +143,8 @@ pub fn maybe_enqueue_dream_job(
             |row| row.get(0),
         )
         .optional()?;
-    if recent_done.is_some() {
-        return Ok(None);
+    if let Some(id) = recent_done {
+        return Ok(DreamEnqueueDecision::SuppressedRecentDone(id));
     }
 
     enqueue_job(
@@ -133,7 +156,7 @@ pub fn maybe_enqueue_dream_job(
         payload_json,
         priority,
     )
-    .map(Some)
+    .map(DreamEnqueueDecision::Enqueued)
 }
 
 fn dream_profile_key(payload_json: &str) -> Option<String> {

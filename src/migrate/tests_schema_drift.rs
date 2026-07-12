@@ -277,29 +277,134 @@ fn dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift() -> Re
         error.contains("column session_summaries.followup_scheduling_completed_at_epoch"),
         "got: {error}"
     );
+    assert!(
+        error.contains("column session_summaries.followup_scheduling_state"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_compress_job_id"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_dream_disposition"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_dream_job_id"),
+        "got: {error}"
+    );
     Ok(())
 }
 
 #[test]
-fn v068_leaves_unproven_historical_followup_decisions_unset() -> Result<()> {
+fn v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_schema_with_pending_migrations_from(&conn, 68)?;
     conn.execute(
-        "INSERT INTO session_summaries (memory_session_id, project)
-         VALUES ('historical-rollup', '/tmp/remem')",
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('historical-rollup', '/tmp/remem', 7, 10, 20)",
         [],
+    )?;
+    let compress_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Compress,
+        "/tmp/remem",
+        None,
+        "{}",
+        200,
+    )?;
+    let dream_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Dream,
+        "/tmp/remem",
+        None,
+        "{}",
+        300,
+    )?;
+    conn.execute(
+        "UPDATE jobs SET state = 'done' WHERE id = ?1",
+        [compress_job_id],
+    )?;
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'failed', attempt_count = max_attempts,
+             last_error = 'historical terminal dream', failure_class = 'permanent'
+         WHERE id = ?1",
+        [dream_job_id],
     )?;
 
     run_migrations(&conn)?;
 
-    let checkpoint: Option<i64> = conn.query_row(
-        "SELECT followup_scheduling_completed_at_epoch
+    let historical: (
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT followup_scheduling_state,
+                followup_scheduling_completed_at_epoch,
+                followup_compress_job_id,
+                followup_dream_disposition,
+                followup_dream_job_id
          FROM session_summaries
          WHERE memory_session_id = 'historical-rollup'",
         [],
-        |row| row.get(0),
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
     )?;
-    assert_eq!(checkpoint, None);
+    assert_eq!(
+        historical,
+        (
+            Some("legacy_unknown".to_string()),
+            None,
+            None,
+            Some("legacy_unknown".to_string()),
+            None,
+        )
+    );
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('new-rollup', '/tmp/remem', 8, 21, 30)",
+        [],
+    )?;
+    let new_state: (Option<String>, Option<String>) = conn.query_row(
+        "SELECT followup_scheduling_state, followup_dream_disposition
+         FROM session_summaries
+         WHERE memory_session_id = 'new-rollup'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(new_state, (None, None));
+    let historical_jobs: (String, String, Option<String>) = conn.query_row(
+        "SELECT compress.state, dream.state, dream.last_error
+         FROM jobs compress, jobs dream
+         WHERE compress.id = ?1 AND dream.id = ?2",
+        params![compress_job_id, dream_job_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        historical_jobs,
+        (
+            "done".to_string(),
+            "failed".to_string(),
+            Some("historical terminal dream".to_string()),
+        )
+    );
     Ok(())
 }
 

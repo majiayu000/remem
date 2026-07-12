@@ -236,7 +236,10 @@ Tests: fixture DBs per state; frozen-write detection test.
    with exact-range identity but do not block durable follow-ups. Migration
    v068 atomically stores the exact-range scheduling checkpoint with the
    Compress/Dream decision, preserves terminal job diagnostics on retry, and
-   leaves unproven historical checkpoints NULL rather than inventing state.
+   marks pre-v068 exact ranges `legacy_unknown` rather than inventing state or
+   replacement jobs. New decisions persist exact Compress/Dream job
+   attribution and distinguish Dream enqueue, inflight coalescing, and recent
+   completion suppression.
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
    upgrade time. Migration v064 marks non-terminal and retryable failed Summary
    jobs as failed permanent, clears lease/retry state, and records an explicit
@@ -272,7 +275,8 @@ Tests: fixture DBs per state; frozen-write detection test.
    error-visible; explicit synchronization remains fallible. The #796
    regressions prove one transactionally complete scheduling decision per
    exact range, including completed Compress, failed Dream, cooldown-expired
-   Dream, rollback, and new range cases. GH684-T7 is complete. When the current
+   Dream, rollback, new ranges, upgrade ambiguity, and durable Dream
+   disposition/job attribution. GH684-T7 is complete. When the current
    stop payload succeeds,
    older same-host/project/session spills are skipped during replay, but same
    `session_id` spills from other projects still replay. Replayed Stop captures

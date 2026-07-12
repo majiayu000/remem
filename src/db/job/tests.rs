@@ -1,7 +1,8 @@
 use rusqlite::{params, Connection};
 
 use super::{
-    claim_next_job, enqueue_job, mark_job_failed_or_retry, maybe_enqueue_dream_job, JobType,
+    claim_next_job, enqueue_job, mark_job_failed_or_retry, maybe_enqueue_dream_job,
+    DreamEnqueueDecision, JobType,
 };
 use crate::migrate::MIGRATIONS;
 
@@ -12,6 +13,13 @@ fn setup_conn() -> Connection {
             .expect("schema migration should load");
     }
     conn
+}
+
+fn expect_enqueued(decision: DreamEnqueueDecision) -> i64 {
+    match decision {
+        DreamEnqueueDecision::Enqueued(id) => id,
+        other => panic!("expected a newly enqueued Dream job, got {other:?}"),
+    }
 }
 
 #[test]
@@ -324,13 +332,14 @@ fn mark_job_failed_or_retry_marks_failed_when_exhausted() {
 #[test]
 fn maybe_enqueue_dream_job_dedups_inflight_job() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     let second = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
         .expect("second dream enqueue should succeed");
 
-    assert_eq!(second, None);
+    assert_eq!(second, DreamEnqueueDecision::CoalescedInflight(first));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
         .expect("job count should load");
@@ -348,13 +357,14 @@ fn maybe_enqueue_dream_job_dedups_inflight_job() {
 #[test]
 fn maybe_enqueue_dream_job_dedups_inflight_across_hosts_for_project() {
     let conn = setup_conn();
-    maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     let second = maybe_enqueue_dream_job(&conn, "claude-code", "alpha", "{}", 300, 3600)
         .expect("second dream enqueue should succeed");
 
-    assert_eq!(second, None);
+    assert_eq!(second, DreamEnqueueDecision::CoalescedInflight(first));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
         .expect("job count should load");
@@ -364,15 +374,16 @@ fn maybe_enqueue_dream_job_dedups_inflight_across_hosts_for_project() {
 #[test]
 fn maybe_enqueue_dream_job_upgrades_pending_payload_for_profile_override() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     let profile_payload = r#"{"remem_ai_profile":"quality"}"#;
 
     let second = maybe_enqueue_dream_job(&conn, "claude-code", "alpha", profile_payload, 100, 3600)
         .expect("profile dream enqueue should succeed");
 
-    assert_eq!(second, None);
+    assert_eq!(second, DreamEnqueueDecision::CoalescedInflight(first));
     let row: (String, String, i64) = conn
         .query_row(
             "SELECT host, payload_json, priority FROM jobs WHERE id = ?1",
@@ -388,9 +399,10 @@ fn maybe_enqueue_dream_job_upgrades_pending_payload_for_profile_override() {
 #[test]
 fn maybe_enqueue_dream_job_skips_recent_done_job() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     conn.execute(
         "UPDATE jobs SET state = 'done' WHERE id = ?1",
         params![first],
@@ -400,7 +412,7 @@ fn maybe_enqueue_dream_job_skips_recent_done_job() {
     let second = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
         .expect("second dream enqueue should succeed");
 
-    assert_eq!(second, None);
+    assert_eq!(second, DreamEnqueueDecision::SuppressedRecentDone(first));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
         .expect("job count should load");
@@ -410,9 +422,10 @@ fn maybe_enqueue_dream_job_skips_recent_done_job() {
 #[test]
 fn maybe_enqueue_dream_job_skips_recent_done_across_hosts_for_same_profile() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     conn.execute(
         "UPDATE jobs SET state = 'done' WHERE id = ?1",
         params![first],
@@ -422,7 +435,7 @@ fn maybe_enqueue_dream_job_skips_recent_done_across_hosts_for_same_profile() {
     let second = maybe_enqueue_dream_job(&conn, "claude-code", "alpha", "{}", 300, 3600)
         .expect("second dream enqueue should succeed");
 
-    assert_eq!(second, None);
+    assert_eq!(second, DreamEnqueueDecision::SuppressedRecentDone(first));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
         .expect("job count should load");
@@ -432,9 +445,10 @@ fn maybe_enqueue_dream_job_skips_recent_done_across_hosts_for_same_profile() {
 #[test]
 fn maybe_enqueue_dream_job_skips_recent_done_with_different_profile_for_project_cooldown() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     conn.execute(
         "UPDATE jobs SET state = 'done' WHERE id = ?1",
         params![first],
@@ -451,7 +465,7 @@ fn maybe_enqueue_dream_job_skips_recent_done_with_different_profile_for_project_
     )
     .expect("profile dream enqueue should succeed");
 
-    assert_eq!(second, None);
+    assert_eq!(second, DreamEnqueueDecision::SuppressedRecentDone(first));
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM jobs", [], |row| row.get(0))
         .expect("job count should load");
@@ -461,18 +475,20 @@ fn maybe_enqueue_dream_job_skips_recent_done_with_different_profile_for_project_
 #[test]
 fn maybe_enqueue_dream_job_allows_old_done_job() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     conn.execute(
         "UPDATE jobs SET state = 'done', updated_at_epoch = ?2 WHERE id = ?1",
         params![first, chrono::Utc::now().timestamp() - 7200],
     )
     .expect("job state should update");
 
-    let second = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("second dream enqueue should succeed")
-        .expect("old done dream should not block new enqueue");
+    let second = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("second dream enqueue should succeed"),
+    );
 
     assert_ne!(first, second);
     let count: i64 = conn
@@ -484,18 +500,20 @@ fn maybe_enqueue_dream_job_allows_old_done_job() {
 #[test]
 fn maybe_enqueue_dream_job_allows_failed_job_retry_visibility() {
     let conn = setup_conn();
-    let first = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("first dream enqueue should succeed")
-        .expect("first dream enqueue should create a job");
+    let first = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("first dream enqueue should succeed"),
+    );
     conn.execute(
         "UPDATE jobs SET state = 'failed' WHERE id = ?1",
         params![first],
     )
     .expect("job state should update");
 
-    let second = maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
-        .expect("second dream enqueue should succeed")
-        .expect("failed dream should not block new enqueue");
+    let second = expect_enqueued(
+        maybe_enqueue_dream_job(&conn, "codex-cli", "alpha", "{}", 300, 3600)
+            .expect("second dream enqueue should succeed"),
+    );
 
     assert_ne!(first, second);
 }

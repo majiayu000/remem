@@ -127,7 +127,11 @@ current SessionRollup path and the legacy Summary job chain.
       #796 exact-range follow-up scheduling slices are implemented. Automatic
       mirror failures stay error-visible without blocking durable follow-ups;
       retries preserve terminal Compress/Dream history while new ranges remain
-      eligible for their own scheduling decision.
+      eligible for their own scheduling decision. Pre-v068 exact ranges retain
+      an error-visible `legacy_unknown` decision instead of inferred replacement
+      jobs, while new decisions retain exact Compress/Dream job attribution and
+      distinguish enqueued, inflight-coalesced, and cooldown-suppressed Dream
+      outcomes.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
