@@ -766,4 +766,10 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "capture_git_evidence",
         "idx_git_commit_sessions_session_row",
     ),
+    SchemaInvariant::column(
+        68,
+        "session_rollup_followup_checkpoint",
+        "session_summaries",
+        "followup_scheduling_completed_at_epoch",
+    ),
 ];

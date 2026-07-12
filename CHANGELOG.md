@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.203` for #796: migration v068 records one
+  exact-range SessionRollup follow-up scheduling decision in the same SQLite
+  transaction as Compress and Dream enqueueing, so retries cannot replace
+  completed or failed jobs, partial enqueue failures roll back cleanly, and a
+  genuinely new event range can still schedule new maintenance work.
 - Staged source version `0.5.202` for the MCP registry launch fixes: ships the
   shortened `server.json` description (#808), the real-session recall demo
   assets (#809), and the README hero swap (#810) in a tagged release so the

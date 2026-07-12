@@ -259,6 +259,51 @@ fn dry_run_pending_reports_v066_session_rollup_evidence_checkpoint_drift() -> Re
 }
 
 #[test]
+fn dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[68])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("session rollup follow-up drift must be reported"))?;
+    assert!(
+        error.contains("v068_session_rollup_followup_checkpoint"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_scheduling_completed_at_epoch"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn v068_leaves_unproven_historical_followup_decisions_unset() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_schema_with_pending_migrations_from(&conn, 68)?;
+    conn.execute(
+        "INSERT INTO session_summaries (memory_session_id, project)
+         VALUES ('historical-rollup', '/tmp/remem')",
+        [],
+    )?;
+
+    run_migrations(&conn)?;
+
+    let checkpoint: Option<i64> = conn.query_row(
+        "SELECT followup_scheduling_completed_at_epoch
+         FROM session_summaries
+         WHERE memory_session_id = 'historical-rollup'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(checkpoint, None);
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[45])?;

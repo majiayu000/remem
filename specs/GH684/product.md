@@ -57,7 +57,7 @@ current SessionRollup path and the legacy Summary job chain.
       retirement.
 - [ ] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
-- [ ] In-flight `JobType::Summary` upgrade handling is implemented and tested:
+- [x] In-flight `JobType::Summary` upgrade handling is implemented and tested:
       non-terminal legacy Summary jobs are rejected as permanent failures by
       migration v064, and already-claimed Summary jobs are rejected by the
       worker before the retired AI/finalize path can run. Stop hooks no longer
@@ -123,10 +123,11 @@ current SessionRollup path and the legacy Summary job chain.
       heartbeat prevents overlapping fallback workers, workers run
       SessionRollup extraction before Compress/Dream jobs, and terminal Summary
       history plus non-summary jobs are preserved. The #792 observed-commit,
-      #794 bounded prompt-evidence, and #795 native-memory failure-isolation
-      slices are implemented: automatic mirror failures stay error-visible
-      without blocking durable follow-ups. #796 follow-up scheduling
-      idempotency still blocks full T7 completion.
+      #794 bounded prompt-evidence, #795 native-memory failure-isolation, and
+      #796 exact-range follow-up scheduling slices are implemented. Automatic
+      mirror failures stay error-visible without blocking durable follow-ups;
+      retries preserve terminal Compress/Dream history while new ranges remain
+      eligible for their own scheduling decision.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
