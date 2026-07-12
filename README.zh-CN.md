@@ -14,7 +14,7 @@
 [![npm](https://img.shields.io/npm/v/%40remem-ai%2Fremem)](https://www.npmjs.com/package/@remem-ai/remem)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-![Remem Memory terminal demo](assets/remem-demo.gif)
+![Remem 记忆接续演示 — 新会话直接接上上周的 bug 修复](assets/remem-recall-demo.gif)
 
 ## 你会得到什么
 
