@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.majiayu000/remem",
-  "description": "Local-first persistent memory for Claude Code and Codex: automatic capture, LLM distillation, SQLite storage, auditable recall.",
+  "description": "Local-first automatic memory for Claude Code and Codex: capture, distill, recall from SQLite.",
   "repository": {
     "url": "https://github.com/majiayu000/remem",
     "source": "github"
