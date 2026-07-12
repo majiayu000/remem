@@ -16,7 +16,7 @@ external database.
 [![npm](https://img.shields.io/npm/v/%40remem-ai%2Fremem)](https://www.npmjs.com/package/@remem-ai/remem)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-![Remem Memory terminal demo](assets/remem-demo.gif)
+![Remem recall demo — a new Claude Code session picks up last week's bug fix](assets/remem-recall-demo.gif)
 
 ## What You Get
 
