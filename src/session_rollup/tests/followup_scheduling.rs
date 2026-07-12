@@ -162,6 +162,44 @@ async fn session_rollup_followup_scheduling_preserves_failed_dream_for_same_rang
 }
 
 #[tokio::test]
+async fn session_rollup_followup_scheduling_survives_expired_dream_cooldown_before_retry(
+) -> Result<()> {
+    let data_dir =
+        crate::db::test_support::ScopedTestDataDir::new("rollup-followup-dream-cooldown-retry");
+    let mut conn = crate::db::open_db()?;
+    let task = persist_rollup_with_retryable_stop_failure(
+        &mut conn,
+        &data_dir,
+        "sess-followup-dream-cooldown-retry",
+    )
+    .await?;
+    let expired_at_epoch = chrono::Utc::now().timestamp() - crate::dream::DREAM_COOLDOWN_SECS - 1;
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'done', updated_at_epoch = ?1
+         WHERE job_type = 'dream'",
+        [expired_at_epoch],
+    )?;
+
+    let retry = process_with_summarizer(&mut conn, &task, |_prompt| async {
+        anyhow::bail!("persisted retry must not call the summarizer")
+    })
+    .await?;
+
+    assert_eq!(retry, SessionRollupResult::AlreadyExists);
+    assert_eq!(job_count(&conn, "compress")?, 1);
+    assert_eq!(job_count(&conn, "dream")?, 1);
+    let retained_dream: (String, i64) = conn.query_row(
+        "SELECT state, updated_at_epoch FROM jobs WHERE job_type = 'dream'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(retained_dream, ("done".to_string(), expired_at_epoch));
+    assert!(followup_checkpoint(&conn, &task)?.is_some());
+    Ok(())
+}
+
+#[tokio::test]
 async fn session_rollup_new_range_gets_new_followup_scheduling_decision() -> Result<()> {
     let data_dir = crate::db::test_support::ScopedTestDataDir::new("rollup-followup-new-range");
     let mut conn = crate::db::open_db()?;

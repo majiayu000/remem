@@ -173,6 +173,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `native_memory_write_failure_does_not_block_durable_rollup_followups`,
       `session_rollup_followup_scheduling_survives_completed_compress_before_retry`,
       `session_rollup_followup_scheduling_preserves_failed_dream_for_same_range`,
+      `session_rollup_followup_scheduling_survives_expired_dream_cooldown_before_retry`,
       `session_rollup_new_range_gets_new_followup_scheduling_decision`,
       `session_rollup_followup_scheduling_rolls_back_partial_enqueue`,
       `dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift`,

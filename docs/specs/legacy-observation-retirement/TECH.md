@@ -271,8 +271,9 @@ Tests: fixture DBs per state; frozen-write detection test.
    not suppress UserContextCandidate, Compress, or Dream work while remaining
    error-visible; explicit synchronization remains fallible. The #796
    regressions prove one transactionally complete scheduling decision per
-   exact range, including completed Compress, failed Dream, rollback, and new
-   range cases. GH684-T7 is complete. When the current stop payload succeeds,
+   exact range, including completed Compress, failed Dream, cooldown-expired
+   Dream, rollback, and new range cases. GH684-T7 is complete. When the current
+   stop payload succeeds,
    older same-host/project/session spills are skipped during replay, but same
    `session_id` spills from other projects still replay. Replayed Stop captures
    use a stable capture event ID derived from host/project/session/payload so a

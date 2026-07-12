@@ -607,7 +607,7 @@ fn enqueue_summary_followup_jobs(
         );
     }
     let payload = followup_payload(task.ai_profile.as_deref())?;
-    db::enqueue_job(
+    let compress_job_id = db::enqueue_job(
         &tx,
         &task.host,
         db::JobType::Compress,
@@ -616,7 +616,7 @@ fn enqueue_summary_followup_jobs(
         &payload,
         200,
     )?;
-    db::maybe_enqueue_dream_job(
+    let dream_job_id = db::maybe_enqueue_dream_job(
         &tx,
         &task.host,
         &task.project,
@@ -624,12 +624,20 @@ fn enqueue_summary_followup_jobs(
         300,
         crate::dream::DREAM_COOLDOWN_SECS,
     )?;
+    let dream_outcome = if dream_job_id.is_some() {
+        "enqueued"
+    } else {
+        "coalesced_or_cooldown"
+    };
     tx.commit()?;
     crate::log::info(
         "session-rollup",
         &format!(
-            "QUEUED session_rollup_followups session={session_id} project={} session_row_id={session_row_id} event_range={}..{} legacy_pending_observations={ready_pending}",
-            task.project, range.from_event_id, range.to_event_id
+            "COMMITTED session_rollup_followup_decision session={session_id} project={} session_row_id={session_row_id} event_range={}..{} compress_job_id={compress_job_id} dream_outcome={dream_outcome} dream_job_id={} legacy_pending_observations={ready_pending}",
+            task.project,
+            range.from_event_id,
+            range.to_event_id,
+            dream_job_id.map_or_else(|| "none".to_string(), |id| id.to_string())
         ),
     );
     Ok(())
