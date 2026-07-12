@@ -116,7 +116,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       range has captured user/assistant evidence; without that fallback it
       fails permanently before AI. Missing, malformed, or unusable required
       bounded evidence still blocks the first AI call.
-      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, relative transcript workdirs are anchored to the Stop cwd, and a fail-closed non-interactive Git grammar accepts ordinary spaced/equal `--fixup` commits while rejecting editor-opening fixups, configurable output, shell expansion, redirection, globbing, process substitution, unquoted shell comments, and quiet commits as evidence sources while retaining quiet event capture and exact trailing `git status --short`. Observed success requires exit zero or Claude's explicitly named success-only `PostToolUse`, while explicit failure events override contradictory fields; Codex accepts only its wrapper status before `Final output:`, so status-like command output cannot override failure. An ambiguous, malformed, or unresolvable call is logged and skipped without erasing earlier proof; legacy spill rows without `event_id` receive stable occurrence-distinct identities, and non-Unix orphan claims use the minimum-age fallback. Late or same-identity replay evidence uses deterministic bounded `captured_git_link` work without replaying AI/rollup side effects. T7 remains open for #795 and #796.
+      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, relative transcript workdirs are anchored to the Stop cwd, and a fail-closed non-interactive Git grammar accepts ordinary spaced/equal `--fixup` commits while rejecting editor-opening fixups, configurable output, shell expansion, redirection, globbing, process substitution, unquoted shell comments, and quiet commits as evidence sources while retaining quiet event capture and exact trailing `git status --short`. Observed success requires exit zero or Claude's explicitly named success-only `PostToolUse`, while explicit failure events override contradictory fields; Codex accepts only its wrapper status before `Final output:`, so status-like command output cannot override failure. An ambiguous, malformed, or unresolvable call is logged and skipped without erasing earlier proof; legacy spill rows without `event_id` receive stable occurrence-distinct identities, and non-Unix orphan claims use the minimum-age fallback. Late or same-identity replay evidence uses deterministic bounded `captured_git_link` work without replaying AI/rollup side effects. #795 makes automatic native-memory mirroring error-visible but non-blocking after rollup persistence; T7 remains open for #796.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary
@@ -134,8 +134,12 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `transcript_path` plus its captured byte boundary for worker-side raw
       archive ingest, persisted SessionRollup side effects re-home
       summary-derived candidates, workstream upsert, native memory sync, and
-      follow-up scheduling plus exact-range observed commit linking. Full T7
-      completion remains blocked by #795 and #796. Old-version daemon heartbeats and legacy singleton locks do not
+      follow-up scheduling plus exact-range observed commit linking. Automatic
+      native-memory filesystem failures remain visible at error level with
+      exact-range identity but no longer suppress UserContextCandidate,
+      Compress, or Dream follow-ups, as covered by
+      `native_memory_write_failure_does_not_block_durable_rollup_followups`.
+      Full T7 completion remains blocked by #796. Old-version daemon heartbeats and legacy singleton locks do not
       suppress the current Stop fallback worker, current once-launch
       heartbeats prevent overlapping fallback workers, workers claim
       extraction tasks before Compress/Dream jobs, and the worker rejects

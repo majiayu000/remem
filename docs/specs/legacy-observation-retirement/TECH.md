@@ -68,7 +68,7 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
      (`src/worker.rs`) → `finalize_summarize`
      (`src/db/summarize/session/finalize.rs`, DELETE+INSERT).
 - The implemented GH684-T7 slices retire the legacy enqueue path, but full T7
-  completion remains blocked by #795 and #796. Stop hooks record the
+  completion remains blocked by #796. Stop hooks record the
   `SessionRollup` extraction task and no longer enqueue Summary, Compress, or
   Dream jobs directly. If capture-ledger recording fails, the hook spills the
   payload and skips follow-up work instead of relying on legacy Summary
@@ -98,9 +98,11 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   extraction, then enqueue Compress/Dream jobs only after rollup persistence.
   The #792 slice connects command-result-proven commit evidence end to end
   through exact-range ObservationExtract and SessionRollup linking. The #794
-  bounded transcript prompt evidence is also implemented. Native-memory
-  failure isolation (#795) and retry-safe follow-up scheduling (#796) remain
-  separate ownership gaps.
+  bounded transcript prompt evidence is also implemented. The #795 slice makes
+  automatic native-memory mirroring error-visible but non-blocking after
+  rollup persistence, so filesystem failures do not suppress
+  UserContextCandidate, Compress, or Dream follow-ups. Retry-safe follow-up
+  scheduling (#796) remains the final ownership gap.
 - Readers are load-bearing current features: context injection sessions
   section + data-version hint, user-context recall/extraction/summary,
   timeline, `remem why`, observation-extract context, status/doctor.
@@ -153,7 +155,7 @@ Existing Implementation Facts above):
 | `observations` | `reclassify-current` — live intermediate of the extraction pipeline; GH684-T8 fixed the "legacy" MCP wording |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
-| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; implemented GH684-T7 slices move Compress/Dream follow-ups behind persisted SessionRollup processing while stopping new Summary job enqueue; #792 and #794 are implemented, while #795 and #796 still block full T7 completion |
+| legacy summary writer (former Summary enqueue helper → `JobType::Summary` → `finalize_summarize`) | `retire-summary-only` — the Summary job was the dual-writer duplicating `SessionRollup`; implemented GH684-T7 slices move Compress/Dream follow-ups behind persisted SessionRollup processing while stopping new Summary job enqueue; #792, #794, and #795 are implemented, while #796 still blocks full T7 completion |
 
 Remaining Phase 1 analysis before freeze decisions execute:
 
@@ -226,10 +228,12 @@ Tests: fixture DBs per state; frozen-write detection test.
    worker side effects own byte-bounded raw archive ingest, transcript-only
    citations/failure lessons, summary-derived candidate finalization,
    workstream upsert, native-memory sync, UserContextCandidate extraction, and
-   Compress/Dream enqueue after rollup persistence. The #792 observed-commit
-   and #794 bounded transcript prompt-evidence slices are implemented;
-   remaining ownership gaps are tracked independently by #795 (native-memory
-   failure isolation) and #796 (follow-up scheduling idempotency).
+   Compress/Dream enqueue after rollup persistence. The #792 observed-commit,
+   #794 bounded transcript prompt-evidence, and #795 native-memory failure
+   isolation slices are implemented. Automatic native-memory filesystem
+   failures remain visible at error level with exact-range identity but do not
+   block durable follow-ups; #796 tracks the remaining follow-up scheduling
+   idempotency gap.
 4. GH684-T7 chooses rejection for in-flight legacy `JobType::Summary` jobs at
    upgrade time. Migration v064 marks non-terminal and retryable failed Summary
    jobs as failed permanent, clears lease/retry state, and records an explicit
@@ -260,7 +264,10 @@ Tests: fixture DBs per state; frozen-write detection test.
    summary-derived candidates, workstream upsert, native-memory sync,
    UserContextCandidate extraction, and Compress/Dream follow-up enqueue.
    Citation/failure retry errors do not suppress those persisted side effects.
-   Full T7 completion remains blocked by #795 and #796. When the current stop payload succeeds,
+   The #795 regression proves automatic native-memory filesystem failures do
+   not suppress UserContextCandidate, Compress, or Dream work while remaining
+   error-visible; explicit synchronization remains fallible. Full T7
+   completion remains blocked by #796. When the current stop payload succeeds,
    older same-host/project/session spills are skipped during replay, but same
    `session_id` spills from other projects still replay. Replayed Stop captures
    use a stable capture event ID derived from host/project/session/payload so a

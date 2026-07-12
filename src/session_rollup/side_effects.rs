@@ -249,7 +249,15 @@ pub(super) fn run_persisted_rollup_side_effects(
 
     upsert_rollup_workstream(conn, &task.project, &memory_session_id, &fields)?;
     promote_rollup_candidates(conn, task, range, transcript_messages, &fields)?;
-    sync_native_memory(conn, &cwd, &task.project)?;
+    if let Err(error) = sync_native_memory(conn, &cwd, &task.project) {
+        crate::log::error(
+            "session-rollup",
+            &format!(
+                "optional native memory sync failed; continuing persisted rollup side effects: project={} session_row_id={session_row_id} event_range={}..{} error={error:#}",
+                task.project, range.from_event_id, range.to_event_id
+            ),
+        );
+    }
     enqueue_user_context_followup(conn, task, range)?;
     enqueue_summary_followup_jobs(conn, task, session_id)?;
     Ok(())

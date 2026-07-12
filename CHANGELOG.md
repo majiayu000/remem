@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.201` for #795: automatic SessionRollup native-memory
+  mirroring now reports filesystem failures at error level with project,
+  session-row, and exact event-range identity without blocking the persisted
+  UserContextCandidate, Compress, or Dream follow-ups; explicit native-memory
+  synchronization remains fallible.
 - Staged source version `0.5.200` for GH-792 observed commit traceability:
   successful explicit `git commit` results prove SHAs through Claude hook
   output or a byte-bounded Codex transcript, typed evidence is stored atomically
