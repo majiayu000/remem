@@ -340,6 +340,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "capture_git_evidence",
         sql: include_str!("../migrations/v067_capture_git_evidence.sql"),
     },
+    Migration {
+        version: 68,
+        name: "session_rollup_followup_checkpoint",
+        sql: include_str!("../migrations/v068_session_rollup_followup_checkpoint.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

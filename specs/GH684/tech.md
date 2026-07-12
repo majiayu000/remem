@@ -91,7 +91,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
 - [x] Context, timeline, and user-context regression tests prove semantic
       rollup rows feed summary readers while synthetic `Captured event range`
       fallback titles stay hidden from user-facing context.
-- [ ] Stop-hook side-effect regression tests cover the implemented ownership
+- [x] Stop-hook side-effect regression tests cover the implemented ownership
       split before `JobType::Summary` retirement: the Stop hook owns immediately
       available memory citations and failure lessons after capture, while
       SessionRollup worker side effects own byte-bounded raw archive ingest plus
@@ -116,7 +116,7 @@ needed fields and side effects, then removes only the redundant Summary writer.
       range has captured user/assistant evidence; without that fallback it
       fails permanently before AI. Missing, malformed, or unusable required
       bounded evidence still blocks the first AI call.
-      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, relative transcript workdirs are anchored to the Stop cwd, and a fail-closed non-interactive Git grammar accepts ordinary spaced/equal `--fixup` commits while rejecting editor-opening fixups, configurable output, shell expansion, redirection, globbing, process substitution, unquoted shell comments, and quiet commits as evidence sources while retaining quiet event capture and exact trailing `git status --short`. Observed success requires exit zero or Claude's explicitly named success-only `PostToolUse`, while explicit failure events override contradictory fields; Codex accepts only its wrapper status before `Final output:`, so status-like command output cannot override failure. An ambiguous, malformed, or unresolvable call is logged and skipped without erasing earlier proof; legacy spill rows without `event_id` receive stable occurrence-distinct identities, and non-Unix orphan claims use the minimum-age fallback. Late or same-identity replay evidence uses deterministic bounded `captured_git_link` work without replaying AI/rollup side effects. #795 makes automatic native-memory mirroring error-visible but non-blocking after rollup persistence; T7 remains open for #796.
+      PR #798 closes #792: migration v067 stores typed capture-time commit evidence, exact-range linking uses durable `session_row_id`, relative transcript workdirs are anchored to the Stop cwd, and a fail-closed non-interactive Git grammar accepts ordinary spaced/equal `--fixup` commits while rejecting editor-opening fixups, configurable output, shell expansion, redirection, globbing, process substitution, unquoted shell comments, and quiet commits as evidence sources while retaining quiet event capture and exact trailing `git status --short`. Observed success requires exit zero or Claude's explicitly named success-only `PostToolUse`, while explicit failure events override contradictory fields; Codex accepts only its wrapper status before `Final output:`, so status-like command output cannot override failure. An ambiguous, malformed, or unresolvable call is logged and skipped without erasing earlier proof; legacy spill rows without `event_id` receive stable occurrence-distinct identities, and non-Unix orphan claims use the minimum-age fallback. Late or same-identity replay evidence uses deterministic bounded `captured_git_link` work without replaying AI/rollup side effects. #795 makes automatic native-memory mirroring error-visible but non-blocking after rollup persistence. Migration v068 closes #796 with an atomic exact-range Compress/Dream scheduling decision, explicit legacy ambiguity, and durable job/disposition attribution; GH684-T7 is complete.
 - [x] Upgrade handling rejects non-terminal legacy `JobType::Summary` jobs
       instead of draining the retired AI path or converting payloads without an
       authoritative contract; migration v064 preserves terminal Summary
@@ -139,7 +139,17 @@ needed fields and side effects, then removes only the redundant Summary writer.
       exact-range identity but no longer suppress UserContextCandidate,
       Compress, or Dream follow-ups, as covered by
       `native_memory_write_failure_does_not_block_durable_rollup_followups`.
-      Full T7 completion remains blocked by #796. Old-version daemon heartbeats and legacy singleton locks do not
+      Migration v068 records one scheduling decision per persisted range in
+      the same transaction as both maintenance job decisions, skips same-range
+      retries after terminal jobs, preserves failure diagnostics, rolls back
+      partial enqueue attempts, and permits a new range to schedule again.
+      Historical exact ranges retain an error-visible `legacy_unknown` state
+      because their prior Dream decision is not provable. The column default
+      protects late inserts from pre-v068 workers, current writers explicitly
+      initialize genuinely new ranges, and v068 requeues pre-upgrade processing
+      leases. New decisions persist the Compress job id plus Dream disposition
+      and referenced job id.
+      GH684-T7 is complete. Old-version daemon heartbeats and legacy singleton locks do not
       suppress the current Stop fallback worker, current once-launch
       heartbeats prevent overlapping fallback workers, workers claim
       extraction tasks before Compress/Dream jobs, and the worker rejects
@@ -165,6 +175,18 @@ needed fields and side effects, then removes only the redundant Summary writer.
       `session_rollup_retries_transcript_side_effects_without_resummarizing`,
       `session_rollup_rehomes_finalize_side_effects`,
       `session_rollup_enqueues_followup_jobs_after_rollup`,
+      `native_memory_write_failure_does_not_block_durable_rollup_followups`,
+      `session_rollup_followup_scheduling_survives_completed_compress_before_retry`,
+      `session_rollup_followup_scheduling_preserves_failed_dream_for_same_range`,
+      `session_rollup_followup_scheduling_survives_expired_dream_cooldown_before_retry`,
+      `session_rollup_new_range_gets_new_followup_scheduling_decision`,
+      `session_rollup_new_range_persists_coalesced_inflight_dream_attribution`,
+      `session_rollup_new_range_persists_recent_done_dream_suppression_attribution`,
+      `session_rollup_upgrade_preserves_historical_unknown_followups_after_terminal_jobs`,
+      `session_rollup_followup_scheduling_rolls_back_partial_enqueue`,
+      `dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift`,
+      `v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs`,
+      `v068_late_v067_rollup_defaults_legacy_unknown_and_requeues_claim`,
       `captured_commit_evidence_links_exact_range`,
       `captured_commit_link_retry_is_idempotent`,
       `replayed_observe_spill_preserves_commit_snapshot_when_head_moves`,

@@ -259,7 +259,7 @@ pub(super) fn run_persisted_rollup_side_effects(
         );
     }
     enqueue_user_context_followup(conn, task, range)?;
-    enqueue_summary_followup_jobs(conn, task, session_id)?;
+    enqueue_summary_followup_jobs(conn, task, range, session_id)?;
     Ok(())
 }
 
@@ -540,12 +540,89 @@ fn enqueue_user_context_followup(
 }
 
 fn enqueue_summary_followup_jobs(
-    conn: &Connection,
+    conn: &mut Connection,
     task: &db::ExtractionTask,
+    range: &RollupRange,
     session_id: &str,
 ) -> Result<()> {
-    let ready_pending =
-        db::count_pending_for_identity(conn, &task.host, &task.project, session_id)?;
+    let session_row_id = task
+        .session_row_id
+        .context("session rollup follow-up scheduling requires session_row_id")?;
+    let completed_at_epoch = chrono::Utc::now().timestamp();
+    let tx = conn.transaction()?;
+    let claimed = tx.execute(
+        "UPDATE session_summaries
+         SET followup_scheduling_state = 'claimed'
+         WHERE session_row_id = ?1
+           AND covered_from_event_id = ?2
+           AND covered_to_event_id = ?3
+           AND followup_scheduling_state IS NULL",
+        params![session_row_id, range.from_event_id, range.to_event_id],
+    )?;
+    if claimed == 0 {
+        let checkpoint = tx
+            .query_row(
+                "SELECT followup_scheduling_state,
+                        followup_scheduling_completed_at_epoch,
+                        followup_compress_job_id,
+                        followup_dream_disposition,
+                        followup_dream_job_id
+                 FROM session_summaries
+                 WHERE session_row_id = ?1
+                   AND covered_from_event_id = ?2
+                   AND covered_to_event_id = ?3",
+                params![session_row_id, range.from_event_id, range.to_event_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                        row.get::<_, Option<i64>>(2)?,
+                        row.get::<_, Option<String>>(3)?,
+                        row.get::<_, Option<i64>>(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        match checkpoint {
+            Some((
+                Some(state),
+                Some(scheduled_at_epoch),
+                Some(compress_job_id),
+                Some(dream_disposition),
+                Some(dream_job_id),
+            )) if state == "completed" => {
+                crate::log::info(
+                    "session-rollup",
+                    &format!(
+                        "SKIPPED session_rollup_followups already_scheduled session={session_id} project={} session_row_id={session_row_id} event_range={}..{} scheduled_at_epoch={scheduled_at_epoch} compress_job_id={compress_job_id} dream_disposition={dream_disposition} dream_job_id={dream_job_id}",
+                        task.project, range.from_event_id, range.to_event_id,
+                    ),
+                );
+                return Ok(());
+            }
+            Some((Some(state), None, None, Some(dream_disposition), None))
+                if state == "legacy_unknown" && dream_disposition == "legacy_unknown" =>
+            {
+                crate::log::error(
+                    "session-rollup",
+                    &format!(
+                        "SKIPPED session_rollup_followups manual_reconciliation_required=true session={session_id} project={} session_row_id={session_row_id} event_range={}..{} scheduling_state=legacy_unknown dream_disposition=legacy_unknown",
+                        task.project, range.from_event_id, range.to_event_id,
+                    ),
+                );
+                return Ok(());
+            }
+            Some(record) => anyhow::bail!(
+                "persisted session rollup follow-up checkpoint is inconsistent: {record:?}"
+            ),
+            None => anyhow::bail!("persisted session rollup follow-up checkpoint row is missing"),
+        }
+    }
+    if claimed != 1 {
+        anyhow::bail!("persisted session rollup follow-up checkpoint claim matched {claimed} rows");
+    }
+
+    let ready_pending = db::count_pending_for_identity(&tx, &task.host, &task.project, session_id)?;
     if ready_pending > 0 {
         crate::log::warn(
             "session-rollup",
@@ -555,8 +632,8 @@ fn enqueue_summary_followup_jobs(
         );
     }
     let payload = followup_payload(task.ai_profile.as_deref())?;
-    db::enqueue_job(
-        conn,
+    let compress_job_id = db::enqueue_job(
+        &tx,
         &task.host,
         db::JobType::Compress,
         &task.project,
@@ -564,19 +641,50 @@ fn enqueue_summary_followup_jobs(
         &payload,
         200,
     )?;
-    db::maybe_enqueue_dream_job(
-        conn,
+    let dream_decision = db::maybe_enqueue_dream_job(
+        &tx,
         &task.host,
         &task.project,
         &payload,
         300,
         crate::dream::DREAM_COOLDOWN_SECS,
     )?;
+    let dream_disposition = dream_decision.disposition();
+    let dream_job_id = dream_decision.job_id();
+    let completed = tx.execute(
+        "UPDATE session_summaries
+         SET followup_scheduling_state = 'completed',
+             followup_scheduling_completed_at_epoch = ?1,
+             followup_compress_job_id = ?2,
+             followup_dream_disposition = ?3,
+             followup_dream_job_id = ?4
+         WHERE session_row_id = ?5
+           AND covered_from_event_id = ?6
+           AND covered_to_event_id = ?7
+           AND followup_scheduling_state = 'claimed'",
+        params![
+            completed_at_epoch,
+            compress_job_id,
+            dream_disposition,
+            dream_job_id,
+            session_row_id,
+            range.from_event_id,
+            range.to_event_id
+        ],
+    )?;
+    if completed != 1 {
+        anyhow::bail!(
+            "persisted session rollup follow-up checkpoint completion matched {completed} rows"
+        );
+    }
+    tx.commit()?;
     crate::log::info(
         "session-rollup",
         &format!(
-            "QUEUED session_rollup_followups session={session_id} project={} legacy_pending_observations={ready_pending}",
-            task.project
+            "COMMITTED session_rollup_followup_decision session={session_id} project={} session_row_id={session_row_id} event_range={}..{} compress_job_id={compress_job_id} dream_disposition={dream_disposition} dream_job_id={dream_job_id} legacy_pending_observations={ready_pending}",
+            task.project,
+            range.from_event_id,
+            range.to_event_id,
         ),
     );
     Ok(())

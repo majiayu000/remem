@@ -72,7 +72,7 @@ fn job_payloads(conn: &Connection, job_type: &str) -> Result<Vec<String>> {
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-fn insert_injected_test_memory(
+pub(super) fn insert_injected_test_memory(
     conn: &Connection,
     project: &str,
     session_id: &str,
@@ -117,7 +117,7 @@ fn transcript_message(role: &str, text: impl Into<String>) -> String {
     .to_string()
 }
 
-fn failure_citation_transcript(memory_id: i64) -> String {
+pub(super) fn failure_citation_transcript(memory_id: i64) -> String {
     [
         transcript_message(
             "assistant",
