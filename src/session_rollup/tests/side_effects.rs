@@ -5,19 +5,19 @@ use rusqlite::params;
 
 use super::*;
 
-struct EnvVarGuard {
+pub(super) struct EnvVarGuard {
     key: &'static str,
     previous: Option<std::ffi::OsString>,
 }
 
 impl EnvVarGuard {
-    fn set_path(key: &'static str, value: &Path) -> Self {
+    pub(super) fn set_path(key: &'static str, value: &Path) -> Self {
         let previous = std::env::var_os(key);
         unsafe { std::env::set_var(key, value) };
         Self { key, previous }
     }
 
-    fn remove(key: &'static str) -> Self {
+    pub(super) fn remove(key: &'static str) -> Self {
         let previous = std::env::var_os(key);
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
@@ -33,7 +33,7 @@ impl Drop for EnvVarGuard {
     }
 }
 
-fn custom_capture(
+pub(super) fn custom_capture(
     conn: &Connection,
     session_id: &str,
     project: &str,
@@ -59,7 +59,7 @@ fn custom_capture(
         .ok_or_else(|| anyhow::anyhow!("expected extraction task id"))
 }
 
-fn job_types(conn: &Connection) -> Result<Vec<String>> {
+pub(super) fn job_types(conn: &Connection) -> Result<Vec<String>> {
     let mut stmt = conn.prepare("SELECT job_type FROM jobs ORDER BY id ASC")?;
     let rows = stmt.query_map([], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)

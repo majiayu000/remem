@@ -122,10 +122,11 @@ current SessionRollup path and the legacy Summary job chain.
       not suppress the current Stop fallback worker, a current once-launch
       heartbeat prevents overlapping fallback workers, workers run
       SessionRollup extraction before Compress/Dream jobs, and terminal Summary
-      history plus non-summary jobs are preserved. The #792 observed-commit and
-      #794 bounded prompt-evidence slices are implemented; #795 native-memory
-      failure isolation and #796 follow-up scheduling idempotency still block
-      full T7 completion.
+      history plus non-summary jobs are preserved. The #792 observed-commit,
+      #794 bounded prompt-evidence, and #795 native-memory failure-isolation
+      slices are implemented: automatic mirror failures stay error-visible
+      without blocking durable follow-ups. #796 follow-up scheduling
+      idempotency still blocks full T7 completion.
 - [x] MCP/docs wording stops calling live `observations` legacy.
 - [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
