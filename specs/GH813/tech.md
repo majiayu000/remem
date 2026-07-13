@@ -53,6 +53,10 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 - 扩展 review artifact，至少要求 `reviewer_lane`（或等价独立身份）、`head_sha`、
   `review_started_at`、`review_completed_at`、终态和 verdict。取消、失败、空输出与
   superseded 必须是可区分状态。
+- review artifact 对每个 superseded head 携带 `prior_findings`：稳定 finding ID、来源
+  head、`resolved|unresolved|obsolete` 状态及 resolved/obsolete 证据。gate 读取上一有效
+  artifact 并验证新 artifact 完整覆盖旧 findings；缺项、重复/冲突状态、无关闭证据或
+  unresolved 均 fail closed。
 - `review_json_gate` 校验终态、时间顺序、非空结果和 exact head，而不只校验 verdict 文本。
 - `github_pr_evidence` 从经 schema/gate 验证的 artifact 生成 `review_source` 和完成证据；
   merge-ready 路径不再接受裸字符串作为独立审查证明。
@@ -68,10 +72,16 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
   head；外部 merge 缺少该链时输出 machine-readable violation 和 required follow-up。
 - self-review evidence 只有在存在可验证的 reviewer-lane failure、同一 PR/head 的独立
   人类授权且后续仍有 human final review 时才有效；否则 fail closed。
+- thread rollup 对 resolved actionable reviewer/human thread 保留 resolver identity、
+  verified role 和授权来源；只有原 reviewer、带可验证 re-review evidence 的 successor
+  reviewer lane 或获授权 human maintainer 可清除阻塞。resolver 缺失、unknown、
+  implementer、orchestrator 或 coordinator 的 resolved thread 仍 fail closed。
 - 增加 fixture：pending、failed、cancelled、empty、stale head、review-after-merge、
-  unresolved thread、artifact unreadable、伪造 source、无授权 self-review、缺失/冲突
-  enforcement classification、pre-merge 缺失未来 dispatch 的正例、dispatch-before-gate，
-  以及外部 merge 无证据链。
+  prior finding 缺失/无状态/状态仍为 unresolved/无 resolved-or-obsolete 证据、
+  unresolved thread、由 implementer/orchestrator/coordinator/unknown resolver 解决的
+  actionable thread、无 re-review evidence 的 successor reviewer resolver、artifact
+  unreadable、伪造 source、无授权 self-review、缺失/冲突 enforcement classification、
+  pre-merge 缺失未来 dispatch 的正例、dispatch-before-gate，以及外部 merge 无证据链。
 
 ### 3. remem 同步与仓库流程说明
 
@@ -101,8 +111,8 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 | `B-004` | compiler tests | 正例、逐维反例和关键交叉反例在同一实现 PR 通过 |
 | `B-005` | typed parsing/query policy | unknown trust/risk/review/scope/lifecycle fixtures 均 ineligible |
 | `B-006` | upstream review schema/json gate/evidence | pending、failed、cancelled、empty、unreadable artifact 均阻止 merge-ready |
-| `B-007` | upstream evidence/pr gate | stale-head fixture 失败；新 head exact review 通过 |
-| `B-008` | upstream PR evidence/thread rollup | unresolved reviewer/human thread fixture 失败 |
+| `B-007` | upstream review artifact/evidence/pr gate | stale-head、新 head 遗漏 prior finding、carry-forward 后仍 unresolved、resolved/obsolete 无证据 fixtures 失败；完整 carry-forward + 有关闭证据 + exact-head review 通过 |
+| `B-008` | upstream PR evidence/thread rollup | unresolved reviewer/human thread、implementer/orchestrator/coordinator/unknown resolver，以及 successor reviewer 缺 re-review evidence 的 fixtures 失败；原 reviewer、有 re-review evidence 的 successor reviewer lane、获授权 human maintainer resolver 通过 |
 | `B-009` | upstream pre-merge PR gate plus merge wrapper/closure audit | pre-merge 无 dispatch 证据仍可通过；gate-before-review、dispatch-before-gate、head mismatch fixtures 失败 |
 | `B-010` | upstream executable closure audit synced into remem | 缺少合规 review 链的 merged fixture 输出 machine-readable violation/required follow-up |
 | `B-011` | protection status evidence、CONTRIBUTING | 无 protection 时仅报告 advisory；管理员设置由 live API/拒绝 merge 证据验证 |
@@ -156,8 +166,9 @@ evidence 层；旧 artifact 只保留历史审计用途，不可用于新的 mer
 - [ ] Rust focused tests：`cargo test rules::compiler -- --nocapture` 覆盖完整资格行为矩阵、
       unknown values 与关键交叉状态。
 - [ ] SpecRail upstream tests：machine-readable enforcement classification、review artifact
-      lifecycle、exact head、完成时间、thread、pre-merge no-dispatch 正例、post-dispatch/
-      closure-audit 负例，以及受限 self-review 恢复路径。
+      lifecycle、exact head、prior-findings carry-forward（含 unresolved 阻断）、完成时间、
+      thread resolver role 与 successor re-review evidence、pre-merge no-dispatch 正例、
+      post-dispatch/closure-audit 负例，以及受限 self-review 恢复路径。
 - [ ] Sync verification：`scripts/sync-specrail-checks.sh --verify`。
 - [ ] Workflow checks：`python3 checks/check_workflow.py --repo .` 与
       `python3 checks/check_workflow.py --repo . --spec-dir specs/GH813`。
