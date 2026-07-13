@@ -27,9 +27,10 @@ Phase 1 implementation status: `SP671-T1` through `SP671-T3` are implemented.
 That includes disabled-by-default configuration, canonical SQLite state,
 evidence-backed reinforcement, the artifact/evaluator foundation, and
 deterministic worker-side compilation driven by lifecycle jobs and periodic
-convergence sweeps. Hook warnings/blocks, CLI rule management, doctor
-reporting, fixtures, and latency evidence remain pending, so #671 must stay
-open.
+convergence sweeps. GH-813 identified that global ownership is still filtered
+too broadly; its exact owner correction and exhaustive eligibility matrix,
+hook warnings/blocks, CLI rule management, doctor reporting, fixtures, and
+latency evidence remain pending, so #671 must stay open.
 
 ## Goals
 
@@ -59,8 +60,9 @@ open.
 
 1. P1: Eligibility is conjunctive and closed. A source is eligible only when
    its memory type is `preference`; it is active and unexpired; scope is
-   `project` with `owner_scope='repo'` and a non-empty target/owner key equal
-   to the current project (or an equal legacy `project` fallback), or scope is
+   `project` with `owner_scope='repo'` and the resolved target
+   `COALESCE(NULLIF(target_project, ''), NULLIF(owner_key, ''), project)` equal
+   to the current project, or scope is
    `global` with `owner_scope='user'`, `owner_key='user:default'`, and no
    project target; source trust is `local_tool_output`, `repo_file`, or
    `user_prompt`; reinforcement is machine-checkable, at or above the threshold,

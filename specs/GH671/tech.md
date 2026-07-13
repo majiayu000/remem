@@ -35,6 +35,11 @@ precedence, stable diagnostics, and worker-only artifact writes are present.
 CLI rule management, hook dispatch, doctor reporting, fixtures, and latency
 evidence remain pending.
 
+GH-813 identified one remaining T3 eligibility correction: the current global
+branch accepts any non-null `owner_scope`; it must require the canonical
+`user` / `user:default` / no-target combination before the closed eligibility
+contract is complete.
+
 - Add a `rules` module with a versioned artifact schema, closed predicate enum,
   pure evaluator, compiler, and atomic artifact writer.
 - Add a migration for canonical override and diagnostic state, for example
@@ -48,8 +53,9 @@ evidence remain pending.
   and default threshold `3`.
 - Express the P1 eligibility boundary as a typed, closed policy. SQL remains
   parameterized and supplies the relevant rows/fields, while the policy treats
-  memory type, lifecycle/expiry, the exact project/repo or global/user ownership
-  combinations, source trust,
+  memory type, lifecycle/expiry, project/repo ownership with resolved-target
+  precedence `target_project` then `owner_key` then legacy `project`, the exact
+  global/user ownership combination, source trust,
   machine-checkability, threshold, reinforcement risk, originating candidate
   risk, candidate review status, and suppression/policy state as independent
   inputs. Policy evaluation must succeed and find no matching active memory/

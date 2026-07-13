@@ -6,11 +6,13 @@ GH-813
 
 ## 用户问题
 
-GH-671 的 T3 实现链（#791 → #797 → #801）最终在 `main` 上达到了正确状态，
+GH-671 的 T3 实现链（#791 → #797 → #801）修复了 issue 已记录的三类问题，
 但经历了“先合并、后由独立审查发现问题、再补丁修复”的三轮过程。第一次合并时，
 自动执行规则的资格边界没有被完整写成封闭契约；后续 PR 又能在独立审查尚未完成时
 被外部合并。结果是高风险或未审查的偏好曾短暂具备被编译为自动规则的可能，且
-仓库的本地流程无法证明审查在合并前已经完成。
+仓库的本地流程无法证明审查在合并前已经完成。把资格边界写成封闭契约后又暴露出一个
+现存缺口：global 分支只要求 `owner_scope` 非空，仍可能接受 malformed/legacy owner，
+因此 #813 也必须交付这一小型 correctness fix，不能只做漂移预防。
 
 对“把记忆内容提升为自动执行或自动阻止行为”的功能，这类缺口会直接降低用户对
 记忆系统的信任。资格边界、独立审查和合并证据必须在第一次实现中同时成立，而不是
@@ -30,7 +32,8 @@ GH-671 的 T3 实现链（#791 → #797 → #801）最终在 `main` 上达到了
 
 ## 非目标
 
-- 不回滚 #791、#797 或 #801；当前 `main` 的 eligibility 实现视为正确基线。
+- 不回滚 #791、#797 或 #801 已修复的 risk、directionality 和 override 语义；只针对新
+  发现的 global-owner 过宽问题做 fail-closed 修正。
 - 不在本 spec PR 中修改运行时代码、GitHub 权限、branch protection 或 ruleset。
 - 不允许 agent 获得最终批准、合并或仓库权限管理权。
 - 不用脆弱的 SQL 文本或空白快照代替行为契约测试。
@@ -39,13 +42,15 @@ GH-671 的 T3 实现链（#791 → #797 → #801）最终在 `main` 上达到了
 ## Behavior Invariants
 
 1. `B-001`：任何把记忆、用户输入或提取内容提升为自动执行、自动阻止或确定性强制
-   行为的变更，都必须标记为 `enforcement_sensitive`；实现开始前必须存在已批准的
-   Product/Tech eligibility 契约。
+   行为的变更，都必须在 machine-readable workflow/PR evidence 中标记为
+   `enforcement_sensitive`；实现开始前必须存在已批准的 Product/Tech eligibility 契约。
+   缺少标记、与敏感 spec/path registry 冲突，或标记为 sensitive 却无批准契约时，route/
+   PR gate 必须阻止推进。
 2. `B-002`：eligibility 契约必须显式列出所有参与判定的维度和封闭 allowlist。对
    preference-rule compilation，唯一允许组合是：memory type=`preference`；status=
-   `active` 且未过期；scope=`project` 时 owner=`repo` 且解析出的 target/owner/project 等于
-   当前项目，或 scope=`global` 时 `owner_scope='user'`、`owner_key='user:default'` 且没有
-   project target；source
+   `active` 且未过期；scope=`project` 时 `owner_scope='repo'`，并按
+   `target_project → owner_key → legacy project` 取第一个非空值后等于当前项目；scope=
+   `global` 时 `owner_scope='user'`、`owner_key='user:default'` 且没有 project target；source
    trust 属于 `local_tool_output|repo_file|user_prompt`；machine-checkable=true；
    reinforcement 达到阈值；reinforcement risk 和 originating candidate risk 分别为
    `low`；candidate review status 属于 `approved|edited|auto_promoted`；policy evaluation
@@ -66,9 +71,10 @@ GH-671 的 T3 实现链（#791 → #797 → #801）最终在 `main` 上达到了
    并显式复核上一轮未解决 findings。
 8. `B-008`：未解决的 reviewer 或 human actionable thread 阻止 merge-ready；agent
    不得代替 reviewer 或 human 将其标记为已解决。
-9. `B-009`：merge gate 必须在独立审查完成之后、实际 merge dispatch 之前查询，且
-   review、CI、thread 和 merge gate 都必须绑定同一 final head。对
-   `enforcement_sensitive` PR 不存在 fast-path 例外。
+9. `B-009`：pre-merge gate 必须在独立审查完成之后、实际 merge dispatch 之前完成，且
+   review、CI、thread 和 gate 都必须绑定同一 final head。merge-ready 判断不要求尚未产生
+   的 dispatch 证据；merge wrapper 或 closure audit 在 dispatch 后验证 gate completion
+   早于 dispatch。对 `enforcement_sensitive` PR 不存在 fast-path 例外。
 10. `B-010`：如果外部或管理员在证据不完整时完成合并，closure audit 必须把它记录为
     gate violation 并创建或保留修复工作；不得仅因 PR 已合并就报告合规完成。
 11. `B-011`：仓库必须如实记录服务端 branch protection/ruleset 是否存在。没有服务端
@@ -89,6 +95,9 @@ GH-671 的 T3 实现链（#791 → #797 → #801）最终在 `main` 上达到了
       coverage 检查失败，且测试不依赖 SQL 文本格式。
 - [ ] merge evidence 不能只接受调用方提供的 `review_source` 字符串；它必须读取经
       schema 校验、绑定 final head 且有完成状态/时间的独立审查产物。
+- [ ] workflow/check schema 存储 machine-readable `enforcement_sensitive` 分类；route/
+      PR gate tests 证明敏感 registry 命中但标记缺失/为 false、标记为 true 但无批准 spec
+      时都 fail closed。
 - [ ] 自动化负例覆盖：审查仍在运行、审查失败或取消、审查为空、head 已变化、审查在
       merge 之后完成、存在 unresolved thread、审查产物不可读。
 - [ ] `CONTRIBUTING.md` 说明 `enforcement_sensitive` 无 fast path，并明确 advisory

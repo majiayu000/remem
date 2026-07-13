@@ -28,6 +28,11 @@ Tracking:
   candidate and cleanup supersession; stable diagnostics and artifacts; and
   worker-only artifact writes. Hook dispatch,
   rule CLI, doctor output, fixtures, and latency evidence are still pending.
+- The current compiler still accepts any non-null `owner_scope` for a global
+  row. GH-813 tightens that existing gap to the canonical
+  `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
+  until that implementation lands, malformed or legacy global ownership is not
+  proven fail-closed.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
@@ -95,8 +100,9 @@ Nothing else. New kinds require a spec update.
 
 1. Evaluate a typed, closed eligibility policy before classification. The
    policy requires memory type `preference`; active and unexpired lifecycle;
-   `project` scope with `owner_scope='repo'` and a resolved target equal to the
-   current project, or `global` scope with `owner_scope='user'`,
+   `project` scope with `owner_scope='repo'` and
+   `COALESCE(NULLIF(target_project, ''), NULLIF(owner_key, ''), project)` equal
+   to the current project, or `global` scope with `owner_scope='user'`,
    `owner_key='user:default'`, and no project target; source trust in
    `local_tool_output`, `repo_file`, or
    `user_prompt`; machine-checkable reinforcement at or above

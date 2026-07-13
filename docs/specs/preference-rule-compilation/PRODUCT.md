@@ -27,9 +27,11 @@ canonical SQLite reinforcement state, artifact and evaluator foundation, and
 worker-side compiler are implemented. The compiler uses persisted low-risk,
 source-trust, and review eligibility, combines lifecycle-triggered non-lossy
 jobs with periodic convergence sweeps, preserves same-predicate overrides, and
-resolves project rules ahead of global rules. User-visible hook enforcement,
-CLI management, doctor reporting, fixtures, and latency evidence remain
-pending.
+resolves project rules ahead of global rules. GH-813 identified that the
+global-owner filter still accepts any non-null owner scope; the exact
+`user`/`user:default`/no-target correction and exhaustive eligibility matrix
+remain pending alongside user-visible hook enforcement, CLI management,
+doctor reporting, fixtures, and latency evidence.
 
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.
@@ -54,8 +56,9 @@ pending.
 1. Compilation eligibility is a closed, conjunctive contract. A source is
    eligible only when all of the following are true: memory type is
    `preference`; status is `active` and not expired; scope is `project` with
-   `owner_scope='repo'` and a non-empty `target_project` or `owner_key` equal
-   to the current project (legacy fallback `project` must also equal it), or
+   `owner_scope='repo'` and the single resolved target
+   `COALESCE(NULLIF(target_project, ''), NULLIF(owner_key, ''), project)` equal
+   to the current project, or
    scope is `global` with `owner_scope='user'`, `owner_key='user:default'`, and
    no project target; source trust is one of
    `local_tool_output`, `repo_file`, or `user_prompt`; reinforcement state is
