@@ -51,13 +51,18 @@ Product: `product.md`
 remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 
 - 扩展 review artifact，至少要求 `reviewer_lane`（或等价独立身份）、`head_sha`、
-  `review_started_at`、`review_completed_at`、终态和 verdict。取消、失败、空输出与
-  superseded 必须是可区分状态。
+  `review_started_at`、`review_completed_at`、终态、verdict 和结构化 findings。只有显式
+  clean/non-blocking verdict 且 current-head artifact 中没有 blocking/actionable finding 时，
+  review evidence 才能参与 merge-ready 判定；`changes_requested`、任何 blocking verdict，
+  或仅存在于 artifact 而没有对应 GitHub thread 的 current-head actionable finding 都必须
+  fail closed。取消、失败、空输出与 superseded 必须是可区分状态。
 - review artifact 对每个 superseded head 携带 `prior_findings`：稳定 finding ID、来源
   head、`resolved|unresolved|obsolete` 状态及 resolved/obsolete 证据。gate 读取上一有效
   artifact 并验证新 artifact 完整覆盖旧 findings；缺项、重复/冲突状态、无关闭证据或
   unresolved 均 fail closed。
-- `review_json_gate` 校验终态、时间顺序、非空结果和 exact head，而不只校验 verdict 文本。
+- `review_json_gate` 校验终态、时间顺序、非空结果、exact head、verdict allowlist 和
+  current-head findings rollup，而不只校验 verdict 文本；thread rollup clean 不能覆盖
+  artifact 自身的 blocking/actionable finding。
 - `github_pr_evidence` 从经 schema/gate 验证的 artifact 生成 `review_source` 和完成证据；
   merge-ready 路径不再接受裸字符串作为独立审查证明。
 - workflow/checkpoint/PR-evidence schema 增加 machine-readable
@@ -69,14 +74,17 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
   rollup 与 PR current head；它不要求未来的 merge dispatch 证据。
 - 上游提供可执行 closure-audit/merge-wrapper 检查（随 SpecRail lock 同步），在 dispatch
   evidence 存在后验证 `gate_completed_at < merge_dispatched_at <= merged_at` 和同一 final
-  head；外部 merge 缺少该链时输出 machine-readable violation 和 required follow-up。
+  head；外部 merge 缺少该链时输出 schema-valid machine-readable violation 和
+  `required_follow_up` payload。上游 `SP813-T3` 只拥有检测与 payload contract，不直接写
+  remem 的 GitHub issue。
 - self-review evidence 只有在存在可验证的 reviewer-lane failure、同一 PR/head 的独立
   人类授权且后续仍有 human final review 时才有效；否则 fail closed。
 - thread rollup 对 resolved actionable reviewer/human thread 保留 resolver identity、
   verified role 和授权来源；只有原 reviewer、带可验证 re-review evidence 的 successor
   reviewer lane 或获授权 human maintainer 可清除阻塞。resolver 缺失、unknown、
   implementer、orchestrator 或 coordinator 的 resolved thread 仍 fail closed。
-- 增加 fixture：pending、failed、cancelled、empty、stale head、review-after-merge、
+- 增加 fixture：pending、failed、cancelled、empty、`changes_requested`、其他 blocking
+  verdict、current-head artifact-only actionable finding、stale head、review-after-merge、
   prior finding 缺失/无状态/状态仍为 unresolved/无 resolved-or-obsolete 证据、
   unresolved thread、由 implementer/orchestrator/coordinator/unknown resolver 解决的
   actionable thread、无 re-review evidence 的 successor reviewer resolver、artifact
@@ -89,9 +97,13 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
   禁止在 remem 内对 synced 文件做永久性手改。
 - 在 `CONTRIBUTING.md` 增加 `enforcement_sensitive` 分类、无 fast path、exact-head review
   顺序和 agent 权限边界。避免修改 `AGENTS.md`，除非维护者另行要求高上下文规则变更。
-- 同步并接入上游可执行 closure audit；如果已合并 PR 缺少合规 review completion 链，
-  输出 gate violation 和 required-follow-up artifact，由有 GitHub 写权限的控制器创建或
-  保留 issue/任务。
+- 同步并接入上游可执行 closure audit；`SP813-T5` 的 remem workflow integration controller
+  是 durable follow-up 的实现 owner。它在已合并 PR 缺少合规 review completion 链时消费
+  上游 `required_follow_up` payload，通过 GitHub Issues API 创建、重新打开或复用一个
+  durable issue，并以 `repository + pr_number + final_head_sha + violation_code` 作为稳定
+  幂等键。controller 必须回读 issue number、URL、open state 和幂等键，并把它们写回 closure
+  evidence；只有本地产物而没有可回读的 issue/queue item 不算 follow-up 已保留。GitHub API
+  不可用、权限不足或写入/回读失败时必须返回 error/blocked，不能把 artifact 当作持久化成功。
 
 ### 4. GitHub 服务端保护的人类边界
 
@@ -110,11 +122,11 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 | `B-003` | compiler query/policy | table-driven 单变量反例全部不产生 compiled rule |
 | `B-004` | compiler tests | 正例、逐维反例和关键交叉反例在同一实现 PR 通过 |
 | `B-005` | typed parsing/query policy | unknown trust/risk/review/scope/lifecycle fixtures 均 ineligible |
-| `B-006` | upstream review schema/json gate/evidence | pending、failed、cancelled、empty、unreadable artifact 均阻止 merge-ready |
+| `B-006` | upstream review schema/json gate/evidence | 只有 clean/non-blocking verdict 且 current-head 无 blocking/actionable finding 才可进入 merge-ready；pending、failed、cancelled、empty、unreadable、`changes_requested`、其他 blocking verdict 和 artifact-only actionable finding fixtures 均失败 |
 | `B-007` | upstream review artifact/evidence/pr gate | stale-head、新 head 遗漏 prior finding、carry-forward 后仍 unresolved、resolved/obsolete 无证据 fixtures 失败；完整 carry-forward + 有关闭证据 + exact-head review 通过 |
 | `B-008` | upstream PR evidence/thread rollup | unresolved reviewer/human thread、implementer/orchestrator/coordinator/unknown resolver，以及 successor reviewer 缺 re-review evidence 的 fixtures 失败；原 reviewer、有 re-review evidence 的 successor reviewer lane、获授权 human maintainer resolver 通过 |
 | `B-009` | upstream pre-merge PR gate plus merge wrapper/closure audit | pre-merge 无 dispatch 证据仍可通过；gate-before-review、dispatch-before-gate、head mismatch fixtures 失败 |
-| `B-010` | upstream executable closure audit synced into remem | 缺少合规 review 链的 merged fixture 输出 machine-readable violation/required follow-up |
+| `B-010` | `SP813-T3` upstream closure-audit payload + `SP813-T5` remem workflow integration controller | merged violation 先输出 schema-valid `required_follow_up`；controller 按稳定幂等键创建/复用并回读 open GitHub issue。写入/回读失败和 artifact-only follow-up fixtures 均阻止 closure；重复运行复用同一 issue |
 | `B-011` | protection status evidence、CONTRIBUTING | 无 protection 时仅报告 advisory；管理员设置由 live API/拒绝 merge 证据验证 |
 | `B-012` | review artifact lifecycle/runtime ledger | cancelled、superseded 与并发 current-head 终态 fixtures |
 | `B-013` | runtime ledger/PR evidence self-review recovery | 无 lane failure、无同 head 人类授权或缺 human final review 的 fixtures 失败 |
@@ -128,12 +140,14 @@ preference + reinforcement/candidate state + suppression policy
   -> compiled rule or explicit ineligible result
 
 reviewer lane
-  -> schema-valid terminal review artifact bound to head SHA
+  -> schema-valid terminal clean/non-blocking review artifact bound to head SHA
+     with zero current-head blocking/actionable findings
   -> GitHub PR evidence + CI/thread evidence on same head
   -> pre-merge PR gate completes after review (no future dispatch required)
   -> human merge authorization / server-side required check
   -> merge wrapper records dispatch, or closure audit detects an external merge
-  -> compliant merge evidence or machine-readable violation/follow-up
+  -> compliant merge evidence or machine-readable violation/required_follow_up payload
+  -> remem workflow integration controller creates/reuses and reads back a durable GitHub issue
 ```
 
 本变更不新增 remem 用户数据表。review artifact 的格式迁移发生在 SpecRail workflow
@@ -166,9 +180,14 @@ evidence 层；旧 artifact 只保留历史审计用途，不可用于新的 mer
 - [ ] Rust focused tests：`cargo test rules::compiler -- --nocapture` 覆盖完整资格行为矩阵、
       unknown values 与关键交叉状态。
 - [ ] SpecRail upstream tests：machine-readable enforcement classification、review artifact
-      lifecycle、exact head、prior-findings carry-forward（含 unresolved 阻断）、完成时间、
+      lifecycle、clean/non-blocking verdict、current-head zero-blocking-findings、exact head、
+      prior-findings carry-forward（含 unresolved 阻断）、完成时间、
       thread resolver role 与 successor re-review evidence、pre-merge no-dispatch 正例、
+      `changes_requested`/blocking verdict/artifact-only actionable finding 负例、
       post-dispatch/closure-audit 负例，以及受限 self-review 恢复路径。
+- [ ] Durable follow-up integration：外部违规 merge 的 `required_follow_up` 通过 remem
+      controller 创建/复用并回读 open GitHub issue；重复运行保持同一幂等键和 issue，API
+      写入/回读失败或只有 artifact 时 closure 保持 blocked。
 - [ ] Sync verification：`scripts/sync-specrail-checks.sh --verify`。
 - [ ] Workflow checks：`python3 checks/check_workflow.py --repo .` 与
       `python3 checks/check_workflow.py --repo . --spec-dir specs/GH813`。
