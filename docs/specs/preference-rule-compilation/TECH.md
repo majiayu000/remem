@@ -28,6 +28,11 @@ Tracking:
   candidate and cleanup supersession; stable diagnostics and artifacts; and
   worker-only artifact writes. Hook dispatch,
   rule CLI, doctor output, fixtures, and latency evidence are still pending.
+- The current compiler still accepts any non-null `owner_scope` for a global
+  row. GH-813 tightens that existing gap to the canonical
+  `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
+  until that implementation lands, malformed or legacy global ownership is not
+  proven fail-closed.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
@@ -93,10 +98,23 @@ Nothing else. New kinds require a spec update.
 
 ### Compilation pass (worker side)
 
-1. Select preferences with `status='active'`, reinforcement_count >=
-   `rule_compile_min_reinforcement` (default 3), owner scope resolved,
-   originating candidate `risk_class='low'`, a persisted source trust class of
-   `local_tool_output`, `repo_file`, or `user_prompt`, and a compilable pattern.
+1. Evaluate a typed, closed eligibility policy before classification. The
+   policy requires memory type `preference`; active and unexpired lifecycle;
+   `project` scope with `owner_scope='repo'` and
+   `COALESCE(NULLIF(target_project, ''), NULLIF(owner_key, ''), project)` equal
+   to the current project, or `global` scope with `owner_scope='user'`,
+   `owner_key='user:default'`, and no project target; source trust in
+   `local_tool_output`, `repo_file`, or
+   `user_prompt`; machine-checkable reinforcement at or above
+   `rule_compile_min_reinforcement` (default 3); reinforcement risk `low`;
+   originating candidate risk `low`; candidate review status in `approved`,
+   `edited`, or `auto_promoted`; successful policy evaluation; and no matching
+   `active` memory/topic-key/entity/pattern suppression. Candidate and
+   reinforcement risk are separate inputs. Unknown database values, malformed
+   suppression state, and unclassified enum variants fail closed with a
+   diagnostic. SQL remains
+   parameterized and supplies the fields/range; it is not the only expression
+   of the safety contract.
 2. Compilability is deterministic: a preference qualifies only if its
    structured metadata (or a conservative pattern table for directed
    npm/yarn/bun/pnpm choices and forbidden commit trailers) yields a predicate;
@@ -154,7 +172,7 @@ error.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 eligibility gating | worker compile pass | unit tests: threshold, activity, risk, trust, machine-checkability, and scope precedence |
+| P1 eligibility gating | typed eligibility policy plus worker compile pass | one complete positive fixture; table-driven single-dimension negatives for type, lifecycle, expiry, scope/owner/project, trust, machine-checkability, threshold, independent reinforcement/candidate risk, review status, and suppression; unknown/closed-enum coverage; critical cross-state cases |
 | P2 provenance | artifact schema | unit test: every rule has source_memory_id |
 | P3 deterministic eval | hook evaluator | unit test: same input, same verdict; no DB handle in evaluator |
 | P4 warn default | compile pass | unit test: compiled action is warn unless user override exists |
@@ -197,8 +215,14 @@ hook-side writes.
 
 ## Test Plan
 
-- [x] Unit tests: compile eligibility, conflict resolution, supersession
-      removal, artifact atomicity, evaluator determinism, fail-open.
+- [x] Existing unit tests: basic compile eligibility, conflict resolution,
+      supersession removal, artifact atomicity, evaluator determinism, and
+      fail-open behavior.
+- [ ] Exhaustive eligibility contract tests: one eligible baseline,
+      independently mutable candidate and reinforcement risk, one negative per
+      dimension, unknown values, closed-enum completeness, and critical
+      cross-state cases. Tests remain behavior-based and do not snapshot the
+      SQL/WHERE text.
 - [ ] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
