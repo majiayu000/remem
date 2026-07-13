@@ -57,9 +57,19 @@ open.
 
 ## Behavior Invariants
 
-1. P1: A preference is eligible only when it is active, reinforced at or above
-   the configured threshold, low-risk, sourced from an existing trusted source
-   class, project-scoped or explicitly global-scoped, and machine-checkable.
+1. P1: Eligibility is conjunctive and closed. A source is eligible only when
+   its memory type is `preference`; it is active and unexpired; scope is
+   `project` with `owner_scope='repo'` and a non-empty target/owner key equal
+   to the current project (or an equal legacy `project` fallback), or scope is
+   `global` with `owner_scope='user'`, `owner_key='user:default'`, and no
+   project target; source trust is `local_tool_output`, `repo_file`, or
+   `user_prompt`; reinforcement is machine-checkable, at or above the threshold,
+   and independently `low` risk; the originating candidate is independently
+   `low` risk with review status `approved`, `edited`, or `auto_promoted`;
+   policy evaluation succeeds; and no matching `active` memory/topic-key/
+   entity/pattern suppression exists. Unknown owner/scope/policy values,
+   malformed suppression state, and all other missing or newly introduced
+   values are ineligible until the contract and tests explicitly classify them.
 2. P2: Every compiled rule records source memory id, reinforcement count at
    compile time, compile timestamp, predicate kind, predicate data, action, and
    user override state.
@@ -84,6 +94,10 @@ open.
 - [ ] Repeated-correction fixtures cover package-manager choice, forbidden
       commit trailers, and forbidden commands; violations warn with compiled
       rules and do not warn without them.
+- [ ] Compiler eligibility has one complete positive fixture, independent
+      negative coverage for every eligibility dimension, and critical
+      cross-state coverage; candidate risk and reinforcement risk are
+      independently mutable and tests do not snapshot SQL text.
 - [ ] p95 hook latency with rule evaluation enabled is unchanged within
       measurement noise on the existing latency benchmark.
 - [ ] `remem rules list` shows provenance, effective action, disabled state,

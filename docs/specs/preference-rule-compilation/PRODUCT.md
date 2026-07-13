@@ -51,9 +51,21 @@ pending.
 
 ## Behavior Invariants
 
-1. Only preferences that are machine-checkable, reinforced at or above a
-   configurable threshold, low-risk, and backed by an accepted persisted source
-   trust class are eligible for compilation.
+1. Compilation eligibility is a closed, conjunctive contract. A source is
+   eligible only when all of the following are true: memory type is
+   `preference`; status is `active` and not expired; scope is `project` with
+   `owner_scope='repo'` and a non-empty `target_project` or `owner_key` equal
+   to the current project (legacy fallback `project` must also equal it), or
+   scope is `global` with `owner_scope='user'`, `owner_key='user:default'`, and
+   no project target; source trust is one of
+   `local_tool_output`, `repo_file`, or `user_prompt`; reinforcement state is
+   machine-checkable, at or above the configured threshold, and independently
+   `low` risk; the originating candidate is independently `low` risk with
+   review status `approved`, `edited`, or `auto_promoted`; and policy evaluation
+   succeeds with no matching `active` suppression targeting the memory,
+   topic key, entity, or pattern. Unknown owner/scope/policy values, malformed
+   suppression state, or any other missing or newly introduced value is
+   ineligible until this contract and its tests explicitly classify it.
 2. A compiled rule always records: source memory id, reinforcement count at
    compile time, compile timestamp, and the predicate.
 3. Rule evaluation is deterministic and local: same event input, same verdict,
@@ -78,6 +90,11 @@ pending.
       measurement noise on the existing latency benchmark.
 - [ ] `remem` CLI lists compiled rules with provenance; disable/enable
       round-trip works and is covered by a test.
+- [ ] Compiler eligibility has one complete positive fixture, independent
+      negative coverage for every eligibility dimension, and critical
+      cross-state coverage. Candidate risk and reinforcement risk are
+      independently mutable; coverage is behavioral and does not snapshot SQL
+      text.
 - [x] Superseding, suppressing, expiring, or deleting the source preference
       removes the rule on the next compile pass, covered by tests.
 - [ ] Doctor reports compiled-rule count, last compile time, and last

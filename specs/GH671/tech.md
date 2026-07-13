@@ -46,6 +46,16 @@ evidence remain pending.
 - Add config for `rule_compilation_enabled` and
   `rule_compile_min_reinforcement` with disabled-by-default rollout behavior
   and default threshold `3`.
+- Express the P1 eligibility boundary as a typed, closed policy. SQL remains
+  parameterized and supplies the relevant rows/fields, while the policy treats
+  memory type, lifecycle/expiry, the exact project/repo or global/user ownership
+  combinations, source trust,
+  machine-checkability, threshold, reinforcement risk, originating candidate
+  risk, candidate review status, and suppression/policy state as independent
+  inputs. Policy evaluation must succeed and find no matching active memory/
+  topic-key/entity/pattern suppression. Unknown values and malformed policy
+  state fail closed with diagnostics; candidate and reinforcement risk must not
+  share one test fixture field.
 - Compile only deterministic v1 predicates:
   `command_regex` and `commit_trailer_forbidden`. New predicate kinds require
   a spec update.
@@ -67,7 +77,7 @@ evidence remain pending.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 eligibility | compiler query and predicate classifier | Unit tests for threshold, inactive, ambiguous, low-risk, source trust, and scope cases |
+| P1 eligibility | typed eligibility policy, compiler query, and predicate classifier | One complete positive fixture; table-driven single-dimension negatives including independently mutable reinforcement/candidate risk; exact review/trust allowlists; unknown/closed-enum completeness; critical cross-state cases; no SQL text snapshots |
 | P2 provenance | artifact schema and compiler | Schema/unit test asserting provenance fields on every rule |
 | P3 deterministic local evaluation | pure evaluator | Unit test same input/same verdict; evaluator has no DB write path |
 | P4 warning default and opt-in block | compiler plus override merge | Unit tests default action, override action, unsupported block rejection |
@@ -119,6 +129,10 @@ derived artifact.
       preference reinforcement state, conflict resolution, source lifecycle
       removal, artifact atomicity, evaluator determinism, and fail-open
       behavior.
+- [ ] Exhaustive P1 matrix: one eligible baseline, independent candidate and
+      reinforcement risk, one negative per eligibility dimension, exact
+      owner/trust/review allowlists, unknown values, closed-enum completeness,
+      policy failure, and critical cross-state cases without SQL text snapshots.
 - [ ] CLI tests: `rules list`, `disable`, `enable`, and `set-action` across
       artifact deletion and recompile.
 - [ ] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
