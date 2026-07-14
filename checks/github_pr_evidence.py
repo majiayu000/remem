@@ -11,6 +11,15 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from github_evidence_common import EvidenceError
+from github_issue_reference import (
+    normalize_closing_issue_numbers,
+    normalize_issue_reference,
+    normalize_linked_issue,
+    references_partial_issue,
+    relation_snapshot,
+)
+
 
 PR_VIEW_FIELDS = [
     "number",
@@ -18,6 +27,7 @@ PR_VIEW_FIELDS = [
     "isDraft",
     "headRefOid",
     "mergeStateStatus",
+    "body",
     "closingIssuesReferences",
     "statusCheckRollup",
     "reviews",
@@ -56,10 +66,6 @@ REVIEW_SOURCES = {"independent_lane", "self_review"}
 LANE_FAILURE_KINDS = {"usage_limit", "crash", "zero_output", "closed", "other"}
 
 
-class EvidenceError(ValueError):
-    """Raised when GitHub evidence cannot be collected or normalized."""
-
-
 def parse_github_repo(raw: str) -> tuple[str, str]:
     value = raw.strip()
     if not REPO_PATTERN.fullmatch(value):
@@ -77,6 +83,16 @@ def parse_pr_number(raw: str) -> int:
         raise argparse.ArgumentTypeError("PR number must be a positive integer") from exc
     if value <= 0:
         raise argparse.ArgumentTypeError("PR number must be a positive integer")
+    return value
+
+
+def parse_issue_number(raw: str) -> int:
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("issue number must be a positive integer") from exc
+    if value <= 0:
+        raise argparse.ArgumentTypeError("issue number must be a positive integer")
     return value
 
 
@@ -119,6 +135,20 @@ def collect_pr_view(github_repo: str, pr_number: int) -> dict[str, Any]:
     )
 
 
+def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
+    return run_gh_json(
+        [
+            "issue",
+            "view",
+            str(issue_number),
+            "--repo",
+            github_repo,
+            "--json",
+            "number,state,url",
+        ]
+    )
+
+
 def collect_review_threads(owner: str, name: str, pr_number: int) -> dict[str, Any]:
     return run_gh_json(
         [
@@ -150,7 +180,7 @@ def _require_list(value: Any, field: str) -> list[Any]:
 
 def _require_positive_int(payload: dict[str, Any], field: str) -> int:
     value = payload.get(field)
-    if not isinstance(value, int) or value <= 0:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         raise EvidenceError(f"{field} must be a positive integer")
     return value
 
@@ -177,12 +207,6 @@ def _read_json_file(path: str, field: str) -> Any:
         raise EvidenceError(f"cannot read {field} file {path}: {exc}") from exc
     except json.JSONDecodeError as exc:
         raise EvidenceError(f"{field} file is not valid JSON: {exc.msg}") from exc
-
-
-def _coerce_optional_positive_int(value: Any) -> int | None:
-    if isinstance(value, int) and value > 0:
-        return value
-    return None
 
 
 def _first_comment_url(thread: dict[str, Any]) -> str | None:
@@ -369,17 +393,6 @@ def normalize_review_threads(
     return normalized
 
 
-def normalize_linked_issue(value: Any) -> int | None:
-    if not isinstance(value, list):
-        raise EvidenceError("closingIssuesReferences must be a list")
-    for item in value:
-        if isinstance(item, dict):
-            number = _coerce_optional_positive_int(item.get("number"))
-            if number is not None:
-                return number
-    return None
-
-
 def build_human_authorization(
     actor: str | None,
     source: str | None,
@@ -469,8 +482,15 @@ def build_evidence(
     lane_failures: list[dict[str, str]] | None = None,
     self_review_authorization: dict[str, str] | None = None,
     resolver_roles: dict[str, str] | None = None,
+    expected_issue: int | None = None,
+    issue_payload: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     head_sha = _require_string(pr_payload, "headRefOid")
+    linked_issue, issue_reference = normalize_issue_reference(
+        pr_payload,
+        expected_issue,
+        issue_payload,
+    )
     evidence: dict[str, Any] = {
         "pr": _require_positive_int(pr_payload, "number"),
         "state": _require_string(pr_payload, "state").upper(),
@@ -482,12 +502,14 @@ def build_evidence(
         .replace("+00:00", "Z"),
         "gate_query_head_sha": head_sha,
         "merge_state": _require_string(pr_payload, "mergeStateStatus").upper(),
-        "linked_issue": normalize_linked_issue(pr_payload.get("closingIssuesReferences")),
+        "linked_issue": linked_issue,
         "checks": normalize_checks(pr_payload.get("statusCheckRollup")),
         "reviews": normalize_reviews(pr_payload.get("reviews")),
         "review_threads": normalize_review_threads(threads_payload, resolver_roles),
         "lane_failures": lane_failures or [],
     }
+    if issue_reference is not None:
+        evidence["issue_reference"] = issue_reference
     if review_source is not None:
         source = review_source.strip()
         if source not in REVIEW_SOURCES:
@@ -518,17 +540,42 @@ def collect_evidence(
     lane_failures: list[dict[str, str]] | None = None,
     self_review_authorization: dict[str, str] | None = None,
     resolver_roles: dict[str, str] | None = None,
+    expected_issue: int | None = None,
 ) -> dict[str, Any]:
+    if expected_issue is not None and (
+        not isinstance(expected_issue, int)
+        or isinstance(expected_issue, bool)
+        or expected_issue <= 0
+    ):
+        raise EvidenceError("expected issue must be a positive integer")
     owner, name = parse_github_repo(github_repo)
     pr_payload_before = collect_pr_view(github_repo, pr_number)
     head_sha_before = _require_string(pr_payload_before, "headRefOid")
+    relation_snapshot_before = relation_snapshot(pr_payload_before)
     threads_payload = collect_review_threads(owner, name, pr_number)
+
+    issue_payload = None
+    closing_issue_numbers = list(relation_snapshot_before[1])
+    if expected_issue is not None and expected_issue not in closing_issue_numbers:
+        body = relation_snapshot_before[0]
+        if not references_partial_issue(body, expected_issue):
+            raise EvidenceError(
+                f"PR body must contain a standalone Refs #{expected_issue} directive"
+            )
+        issue_payload = collect_issue_view(github_repo, expected_issue)
+
     pr_payload_after = collect_pr_view(github_repo, pr_number)
     head_sha_after = _require_string(pr_payload_after, "headRefOid")
     if head_sha_before != head_sha_after:
         raise EvidenceError(
             "PR head changed while collecting gate evidence; rerun PR evidence collection"
         )
+    relation_snapshot_after = relation_snapshot(pr_payload_after)
+    if relation_snapshot_before != relation_snapshot_after:
+        raise EvidenceError(
+            "PR issue relation changed while collecting gate evidence; rerun PR evidence collection"
+        )
+
     return build_evidence(
         pr_payload_after,
         threads_payload,
@@ -539,6 +586,8 @@ def collect_evidence(
         lane_failures,
         self_review_authorization,
         resolver_roles,
+        expected_issue,
+        issue_payload,
     )
 
 
@@ -548,6 +597,11 @@ def main() -> int:
     )
     parser.add_argument("--github-repo", required=True, help="GitHub repository as OWNER/REPO")
     parser.add_argument("--pr", required=True, type=parse_pr_number, help="Pull request number")
+    parser.add_argument(
+        "--issue",
+        type=parse_issue_number,
+        help="Expected linked issue; required to verify a non-closing Refs directive",
+    )
     parser.add_argument("--authorization-actor", help="Human authorizing merge")
     parser.add_argument("--authorization-source", help="Where authorization was recorded")
     parser.add_argument("--authorization-summary", help="Short authorization summary")
@@ -597,6 +651,7 @@ def main() -> int:
             lane_failures,
             self_review_authorization,
             resolver_roles,
+            args.issue,
         )
     except EvidenceError as exc:
         print(f"error: {exc}", file=sys.stderr)

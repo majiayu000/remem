@@ -1,6 +1,6 @@
 {
   "upstream_repo": "https://github.com/majiayu000/specrail",
-  "upstream_sha": "423ce3f1ce2fcc4bf102094d44353efb4120b95a",
+  "upstream_sha": "75628b21ef676691344e1671f953644ef36da46e",
   "excluded": [
     "checks/check_workflow.py"
   ],
@@ -11,19 +11,27 @@
     },
     {
       "path": "checks/github_duplicate_evidence.py",
-      "sha256": "48c7e746cd8cf50ead5b7f084d5e4f31a153468e87105e4f50c69c7e5b53aaa7"
+      "sha256": "eab228a33d84a43cde1ba3587d5edde50993ae11c5c5a522ee8d01b64b284d55"
+    },
+    {
+      "path": "checks/github_evidence_common.py",
+      "sha256": "46a28a0064c39291d76847b4250071fa0cfaeb48dcd8374acffa0d65e9158c05"
     },
     {
       "path": "checks/github_issue_evidence.py",
-      "sha256": "fb9c84933203b971672b27b0d31834371d94682843d408b2503b7f517d760678"
+      "sha256": "cbeec2fe91fa5bfe40a855f5148d85f8880d10d8c2bbe91ef607094a50b6608e"
+    },
+    {
+      "path": "checks/github_issue_reference.py",
+      "sha256": "52e7e9c2bdb6c6ca3fe60e83ead98ec1892af7434442bbb859821ecf46729200"
     },
     {
       "path": "checks/github_pr_evidence.py",
-      "sha256": "73d8ce683bdbf7a26fd66041f5edb749a4936c17070f8d25c2019b199313eb74"
+      "sha256": "c2eff0eae0c90ace041b2a994e85fe8cc98f55deb7b320f7caaca6f1f510f022"
     },
     {
       "path": "checks/pr_gate.py",
-      "sha256": "91612efbfd24869955b828e96760e30c2b6ffaa51bdad67aae0ca7b1c6412be3"
+      "sha256": "df3c6ca555b22f976d09a961d9945705530f302f2578208bac909805626a0405"
     },
     {
       "path": "checks/review_json_gate.py",
@@ -31,11 +39,11 @@
     },
     {
       "path": "checks/route_gate.py",
-      "sha256": "d5e96a2a76f8d4ddf950b2fe5429dcf742d8cefcdae5fd813489721483fa345b"
+      "sha256": "80277a491b8e1001339ab35b9bcde7311fd176f42bca5c1a4cdb86e8f480af8b"
     },
     {
       "path": "checks/runtime_gate_rules.py",
-      "sha256": "126709740105c7c43c476f7fa18790363eff69e548cf5dabab650f70dfb64711"
+      "sha256": "74b2901f13ba59eee9b7d95687732b13552e57412b08ea5000c8a2b06872e2f5"
     },
     {
       "path": "checks/runtime_ledger_gate.py",
@@ -43,7 +51,7 @@
     },
     {
       "path": "checks/specrail_lib.py",
-      "sha256": "f288d4f383a5315ea78776940d5d91c0e9a05eb89d0746ee9a1885afe5d26136"
+      "sha256": "b6139fd8c2961b2457eb1794250b1e0c02ab67ea58a0b2f324a85eb2755bfec0"
     },
     {
       "path": "schemas/duplicate_work_evidence.schema.json",
@@ -51,7 +59,7 @@
     },
     {
       "path": "schemas/pr_review_gate.schema.json",
-      "sha256": "9d1330ae2a619da097e5dae36eb7f3da3ba1f07b802367384f04a21b3027ce27"
+      "sha256": "1a165144eec09b93ed8b794704d27b15ef3f943f8826d35fe289ff08021337eb"
     },
     {
       "path": "schemas/review_result.schema.json",

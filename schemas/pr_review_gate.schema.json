@@ -35,6 +35,47 @@
       "type": ["integer", "null"],
       "minimum": 1
     },
+    "issue_reference": {
+      "type": "object",
+      "required": [
+        "number",
+        "kind",
+        "source",
+        "verified",
+        "closing_issue_numbers"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "enum": ["closing", "partial"]
+        },
+        "source": {
+          "enum": ["closingIssuesReferences", "pr_body"]
+        },
+        "verified": {
+          "type": "boolean"
+        },
+        "state": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1
+        },
+        "closing_issue_numbers": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
     "head_sha": {
       "type": "string",
       "minLength": 7

@@ -10,9 +10,8 @@ import json
 import re
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
-
 
 SCHEMA_ANNOTATION_KEYS = {"$id", "$schema", "description", "title"}
 SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
@@ -386,6 +385,199 @@ def render_artifact_path(config: PackConfig, artifact: str, issue: int | None) -
     )
 
 
+def validated_artifact_path(
+    config: PackConfig,
+    artifact: str,
+    issue: int,
+) -> PurePosixPath:
+    rendered = render_artifact_path(config, artifact, issue)
+    label = f"workflow.yaml: artifacts.{artifact}"
+    if not rendered:
+        raise SpecRailError(f"{label} is required")
+    return validated_repo_relative_path(rendered, label=label)
+
+
+def validated_repo_relative_path(raw: str, *, label: str) -> PurePosixPath:
+    if "\\" in raw:
+        raise SpecRailError(f"{label} must use repo-relative POSIX paths")
+    candidate = PurePosixPath(raw.rstrip("/"))
+    windows_candidate = PureWindowsPath(raw.rstrip("/"))
+    has_windows_drive_component = any(":" in part for part in candidate.parts)
+    if (
+        candidate.is_absolute()
+        or windows_candidate.drive
+        or has_windows_drive_component
+        or ".." in candidate.parts
+    ):
+        raise SpecRailError(f"{label} must stay within the repository")
+    if "{" in raw or "}" in raw:
+        raise SpecRailError(f"{label} contains an unsupported placeholder")
+    return candidate
+
+
+def spec_packet_root(config: PackConfig) -> PurePosixPath:
+    template = artifact_templates(config).get("spec_packet")
+    if not template:
+        raise SpecRailError("workflow.yaml: artifacts.spec_packet is required")
+    if "{issue_number}" not in template and "{work_id}" not in template:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet must contain "
+            "{issue_number} or {work_id}"
+        )
+    first = validated_artifact_path(config, "spec_packet", 1)
+    second = validated_artifact_path(config, "spec_packet", 2)
+    if first.name != "GH1" or second.name != "GH2":
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet must render its final directory "
+            "as GH<number>"
+        )
+    if first.parent != second.parent:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet parent directory must not depend "
+            "on the issue number"
+        )
+    return first.parent
+
+
+def _spec_packet_artifact_paths(config: PackConfig, issue: int) -> dict[str, str]:
+    packet = validated_artifact_path(config, "spec_packet", issue)
+    paths = {"spec_packet": packet.as_posix()}
+    expected_files = {
+        "product_spec": "product.md",
+        "tech_spec": "tech.md",
+        "task_plan": "tasks.md",
+    }
+    for artifact, filename in expected_files.items():
+        path = validated_artifact_path(config, artifact, issue)
+        expected = packet / filename
+        if path != expected:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} must render inside "
+                f"artifacts.spec_packet as {filename}"
+            )
+        paths[artifact] = path.as_posix()
+    return paths
+
+
+def spec_packet_artifact_paths(
+    config: PackConfig,
+    issue: int,
+    *,
+    repo: Path | None = None,
+) -> dict[str, str]:
+    configured_root = spec_packet_root(config)
+    probe_paths = {
+        probe_issue: _spec_packet_artifact_paths(config, probe_issue)
+        for probe_issue in (1, 2)
+    }
+    paths = probe_paths.get(issue) or _spec_packet_artifact_paths(config, issue)
+    if repo is not None:
+        _validate_resolved_spec_packet_paths(repo, configured_root, paths)
+    return paths
+
+
+def resolve_path(path: Path, *, label: str) -> Path:
+    missing_parts: list[str] = []
+    try:
+        candidate = path.absolute()
+        while True:
+            try:
+                candidate.lstat()
+            except FileNotFoundError:
+                parent = candidate.parent
+                if parent == candidate:
+                    raise
+                missing_parts.append(candidate.name)
+                candidate = parent
+                continue
+            break
+        resolved_path = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise SpecRailError(f"{label} could not be resolved: {exc}") from exc
+    return resolved_path.joinpath(*reversed(missing_parts))
+
+
+def resolve_repo_path(repo: Path, raw: str | PurePosixPath, *, label: str) -> Path:
+    relative_path = validated_repo_relative_path(str(raw), label=label)
+    resolved_repo = resolve_path(repo, label="repository")
+    resolved_path = resolve_path(
+        resolved_repo.joinpath(*relative_path.parts),
+        label=label,
+    )
+    try:
+        resolved_path.relative_to(resolved_repo)
+    except ValueError as exc:
+        raise SpecRailError(f"{label} resolves outside the repository") from exc
+    return resolved_path
+
+
+def resolve_spec_packet_root(repo: Path, configured_root: PurePosixPath) -> Path:
+    resolved_repo = resolve_path(repo, label="repository")
+    resolved_root = resolve_repo_path(
+        repo,
+        configured_root,
+        label="workflow.yaml: configured spec packet root",
+    )
+    expected_root = resolved_repo.joinpath(*configured_root.parts)
+    if resolved_root != expected_root:
+        raise SpecRailError(
+            "workflow.yaml: configured spec packet root must preserve its "
+            "configured identity after resolution"
+        )
+    return resolved_root
+
+
+def _validate_resolved_spec_packet_paths(
+    repo: Path,
+    configured_root: PurePosixPath,
+    paths: dict[str, str],
+) -> None:
+    resolved_root = resolve_spec_packet_root(repo, configured_root)
+    resolved_packet = resolve_repo_path(
+        repo,
+        paths["spec_packet"],
+        label="workflow.yaml: artifacts.spec_packet",
+    )
+    try:
+        resolved_packet.relative_to(resolved_root)
+    except ValueError as exc:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet resolves outside the "
+            "configured spec packet root"
+        ) from exc
+
+    expected_packet = resolved_root / PurePosixPath(paths["spec_packet"]).name
+    if resolved_packet != expected_packet:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet does not preserve its "
+            "configured packet identity after resolution"
+        )
+
+    expected_files = {
+        "product_spec": "product.md",
+        "tech_spec": "tech.md",
+        "task_plan": "tasks.md",
+    }
+    for artifact, filename in expected_files.items():
+        resolved_artifact = resolve_repo_path(
+            repo,
+            paths[artifact],
+            label=f"workflow.yaml: artifacts.{artifact}",
+        )
+        try:
+            resolved_artifact.relative_to(resolved_packet)
+        except ValueError as exc:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} resolves outside the "
+                "configured spec packet"
+            ) from exc
+        if resolved_artifact != resolved_packet / filename:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} does not preserve its "
+                "configured artifact identity after resolution"
+            )
+
+
 def infer_state(config: PackConfig, state: str | None, labels: list[str]) -> tuple[str | None, list[str]]:
     if state:
         return state, [f"state provided explicitly: {state}"]
@@ -455,51 +647,6 @@ def validate_action_policy(config: PackConfig) -> list[str]:
         for state in allowed_from:
             if str(state) not in states:
                 errors.append(f"workflow.yaml: action {route} references unknown state {state}")
-    return errors
-
-
-def validate_template_parity(repo: Path) -> list[str]:
-    errors: list[str] = []
-    root = repo / "templates"
-    zh = root / "zh-CN"
-    base_files = sorted(path.name for path in root.glob("*.md"))
-    zh_files = sorted(path.name for path in zh.glob("*.md")) if zh.is_dir() else []
-    for name in base_files:
-        if name not in zh_files:
-            errors.append(f"templates/zh-CN: missing localized template {name}")
-    for name in zh_files:
-        if name not in base_files:
-            errors.append(f"templates/zh-CN/{name}: no matching base template")
-    stable_tokens = ["GH-", "ready_to_spec", "ready_to_implement"]
-    for name in ["issue_feature.md", "product_spec.md", "tech_spec.md", "pull_request.md"]:
-        for rel in [Path("templates") / name, Path("templates/zh-CN") / name]:
-            path = repo / rel
-            if not path.is_file():
-                continue
-            text = read_text(path)
-            for token in stable_tokens:
-                if token in read_text(repo / "templates" / name) and token not in text:
-                    errors.append(f"{rel}: missing stable token {token}")
-    return errors
-
-
-def validate_json_schemas(repo: Path) -> list[str]:
-    errors: list[str] = []
-    schema_dir = repo / "schemas"
-    if not schema_dir.is_dir():
-        return ["missing schemas/ directory"]
-    for path in sorted(schema_dir.glob("*.schema.json")):
-        try:
-            data = json.loads(read_text(path))
-        except json.JSONDecodeError as exc:
-            errors.append(f"{path.relative_to(repo)}: invalid JSON: {exc.msg}")
-            continue
-        if "$schema" not in data:
-            errors.append(f"{path.relative_to(repo)}: missing $schema")
-        if "title" not in data:
-            errors.append(f"{path.relative_to(repo)}: missing title")
-        if data.get("type") != "object":
-            errors.append(f"{path.relative_to(repo)}: top-level type must be object")
     return errors
 
 
