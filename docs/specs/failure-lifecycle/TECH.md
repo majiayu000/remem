@@ -90,7 +90,14 @@ archived source; no pending work may retain an archived marker.
   `next_retry_epoch`; no-range transient failures therefore have an explicit
   recovery path instead of staying actionable forever.
 - `jobs`: re-enqueue the failed job by setting `state='pending'`, clearing
-  lease fields, and setting `next_retry_epoch`.
+  lease fields, and setting `next_retry_epoch`. If the same active job identity
+  already exists, keep that canonical work active and leave the source as
+  `failed` with `failure_class='permanent'` and `next_retry_epoch=0`. Preserve
+  the source's real `attempt_count`, error, timestamps, payload, and id; append
+  only a bounded non-secret canonical marker to `last_error`. The worker logs
+  safe source/canonical ids and identity kind, never the original error text.
+  This collision is a successful convergence result for the candidate, not a
+  fabricated exhausted attempt or a successful completion of the source.
 
 ### 3. Retention / archiving
 

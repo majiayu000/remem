@@ -15,15 +15,18 @@ GH-818
 labels，没有 readiness label；也没有 maintainer `spec_approval` 证据。不得把本 spec packet
 的存在视为批准。
 
-本地 deterministic gate：
+本地 deterministic gate 必须使用 GitHub 当前事实生成的可信 evidence，不得用 `--state`
+伪造 readiness：
 
 ```bash
-python3 checks/route_gate.py --repo . --route implement --issue 818 --state ready_to_implement --json
+python3 checks/github_issue_evidence.py --github-repo majiayu000/remem --issue 818 --json > /tmp/gh818-issue-evidence.json
+python3 checks/github_duplicate_evidence.py --github-repo majiayu000/remem --issue 818 --json > /tmp/gh818-duplicate-evidence.json
+python3 checks/route_gate.py --repo . --route implement --issue 818 --evidence /tmp/gh818-issue-evidence.json --duplicate-evidence /tmp/gh818-duplicate-evidence.json --json
 ```
 
-当前结果为 `needs_human`，`duplicate_work_gate.missing=["duplicate_evidence"]`。Issue body 中的
-去重说明是有用背景，但不能替代 gate 要求的 machine-readable evidence。开始任何实现前
-必须全部满足：
+当前可信 issue evidence 没有 readiness label，结果必须保持 `needs_human`。Issue body 中的
+readiness/去重说明是有用背景，但不能替代可信 label/state 与 machine-readable duplicate
+evidence。开始任何实现前必须全部满足：
 
 - maintainer 设置实际 readiness state/label 为 `ready_to_implement`；
 - maintainer 留下明确 `spec_approval`；
@@ -38,6 +41,7 @@ python3 checks/route_gate.py --repo . --route implement --issue 818 --state read
 - [ ] `SP818-T1` — v069 migration 与 schema contract — Owner: migration lane agent；Done when: 见下；Verify: 见下
   - Owner: migration lane agent；human review required。
   - Exclusive files: `src/migrations/v069_job_queue_atomicity.sql`、`src/migrate/types.rs`、
+    `src/migrate/run.rs`、
     `src/migrate/schema_drift/invariants.rs`、`src/migrate/tests_job_queue_atomicity.rs`、
     `src/migrate.rs`。
   - Dependencies: readiness label、`spec_approval`、duplicate evidence、implement route gate
@@ -50,8 +54,10 @@ python3 checks/route_gate.py --repo . --route implement --issue 818 --state read
     主证据，在 2000-char 上限内先为完整、确定性的 migration duplicate marker 预留空间再
     截断/追加；只有原 error 为 NULL/empty 时才单独存 marker。marker 包含 duplicate/canonical
     ids、identity kind、manual-review flag，migration 日志不输出原 error/payload。验证零重复后
-    创建三个 partial UNIQUE indexes；terminal/archive history 不变，schema drift 声明完整，
-    任一失败整体回滚。
+    创建三个 partial UNIQUE indexes；v069 SQL 成功后、`mark_applied` 前，
+    `run_post_migration_hook`（或等价 Rust hook）按 marker 统计各 identity kind 的 reconciled
+    与 manual-review 数量并只记录计数；hook 查询/日志准备失败使整个 migration transaction
+    回滚。terminal/archive history 不变，schema drift 声明完整，任一失败整体回滚。
   - Verify:
     - `cargo test --no-default-features v069_reconciles_active_job_duplicates_before_unique_indexes -- --nocapture`
     - `cargo test --no-default-features v069_replays_pending_dream_duplicates_with_current_profile_predicate -- --nocapture`
@@ -59,6 +65,7 @@ python3 checks/route_gate.py --repo . --route implement --issue 818 --state read
     - `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`
     - `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`
     - `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture`
+    - `cargo test --no-default-features v069_post_migration_hook_logs_conflict_counts_without_payload -- --nocapture`
     - `cargo test --no-default-features job_queue_atomicity_migration_rolls_back_all_changes_on_validation_error -- --nocapture`
     - `cargo test --no-default-features validate_schema_invariants_is_clean_after_current_migrations -- --nocapture`
 
@@ -74,8 +81,12 @@ python3 checks/route_gate.py --repo . --route implement --issue 818 --state read
     在同一 write transaction 中读取；拒绝路径所有持久化字段不变；attempt 分支无
     read-update TOCTOU。CompileRules retry/expired release 逐行处理：无 successor 时 guarded
     回到 pending，有 successor 时保留它为唯一 pending canonical、应用 retry ready time/priority
-    并把 predecessor 留作 exhausted permanent failure；原始或既有截断 `last_error` 是主证据，
-    2000-char 内确定性追加 canonical marker，日志不输出原错误。一次 collision 不得触发
+    并把 predecessor 留作 permanent failure；worker retry collision 写入本次真实失败对应的
+    `next_attempt=attempt_count+1`，expired-lease collision 不代表一次新执行，保持当前计数；两者
+    都不得写成 `max_attempts`。`failure_class='permanent'` 与 `next_retry_epoch=0` 已足以阻止再次
+    auto-retry。原始或既有截断 `last_error` 是主证据，2000-char 内确定性追加 canonical marker。
+    state API 返回结构化
+    coalesced result 供 T4 worker 消费；T2 不直接输出原错误日志。一次 collision 不得触发
     UNIQUE error、反复 auto-retry 或阻止其他 expired jobs recovery。
   - Verify:
     - `cargo test --no-default-features lease_owned_job_transitions_require_current_unexpired_lease -- --nocapture`
@@ -115,23 +126,27 @@ python3 checks/route_gate.py --repo . --route implement --issue 818 --state read
     `src/db/query/stats/tests.rs`、`src/doctor/database.rs`、`src/doctor/tests.rs`、
     `src/cli/actions/query/status.rs`、`src/cli/actions/query/status/types.rs`、
     `src/cli/actions/query/status/tests.rs`、`src/db/failure_lifecycle/maintenance.rs`、
-    `src/db/failure_lifecycle/tests.rs`、`docs/specs/failure-lifecycle/TECH.md`。
+    `src/db/failure_lifecycle/tests.rs`、`docs/specs/failure-lifecycle/PRODUCT.md`、
+    `docs/specs/failure-lifecycle/TECH.md`。
   - Dependencies: `SP818-T2`, `SP818-T3`；必须在 T3 identity classifier、claim 与 Summary
     rejection API 稳定且 `src/db/job/tests.rs` ownership 已留在 T3 后开始，不得触碰 T2/T3
     exclusive files。
   - Covers: `B-004`, `B-005`, `B-006`, `B-009`, `B-010`, `B-011`, `B-012`, `B-013`,
     `B-014`。
-  - Done when: transition error 以 error level 传播且无 done/retry success signal；shared stats
+  - Done when: transition error 以 error level 传播且无 done/retry success signal；worker 消费
+    T2 的 structured coalesced result，只记录 safe marker、source/canonical ids 与 identity kind，
+    不输出原始 retry error；shared stats
     仍以 persisted row 计算 processing/stuck/actionable failed；status text/JSON 与 doctor 使用
     同一口径；job auto-recovery 先取 bounded candidate list，再逐 row transaction/savepoint
     处理 ordinary、Dream、CompileRules collision。无 active 时 requeue source；collision 时按
-    Tech Spec 收敛 canonical work，source 保持 failed/auditable、attempt exhausted 且不再重复
-    retry，既有截断 `last_error` 作为主证据并在 2000-char 内确定性追加 marker；一条 collision
+    Tech Spec 收敛 canonical work，source 保持 failed/auditable、保留真实 `attempt_count` 且不再
+    重复 retry，既有截断 `last_error` 作为主证据并在 2000-char 内确定性追加 marker；一条 collision
     不回滚无关 recoveries，unexpected DB error 仍明确失败。migration conflicts 进入现有
     failure lifecycle；仅作 fixture 的 Summary enqueue 改为合适 non-retired type，真正的
     Summary retirement tests 继续直接构造历史 row；current failure contract 已记录新语义。
   - Verify:
     - `cargo test --no-default-features worker_transition_conflict_logs_error_without_done_or_retry_success -- --nocapture`
+    - `cargo test --no-default-features worker_compile_rules_retry_collision_logs_safe_coalesced_result -- --nocapture`
     - `cargo test --no-default-features lease_transition_failure_remains_visible_in_status_and_doctor -- --nocapture`
     - `cargo test --no-default-features check_pending_queue_reports_shared_counts -- --nocapture`
     - `cargo test --no-default-features cli_status_renders_action_block_for_runtime_failures -- --nocapture`
@@ -139,6 +154,7 @@ python3 checks/route_gate.py --repo . --route implement --issue 818 --state read
     - `cargo test --no-default-features worker_rejects_legacy_summary_job_without_retry -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle -- --nocapture`
 
 ## 并行拆分

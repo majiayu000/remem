@@ -56,6 +56,11 @@ surface that #381/#383 evidence collection depends on.
 - Worker logs every automatic retry with class, attempt number, and backoff;
   exhaustion and archiving transitions are logged at error/info respectively
   (U-29: no silent state changes).
+- If a due failed job collides with equivalent active work, that canonical
+  work carries execution forward. The source remains a failed, permanent,
+  queryable audit row with its real attempt count unchanged and does not enter
+  automatic retry again; logs identify the safe source/canonical ids without
+  exposing the original error text.
 - `remem cleanup --archived-failures[=<days>]` purges archived rows older
   than the horizon, reporting what was removed.
 
@@ -68,6 +73,10 @@ surface that #381/#383 evidence collection depends on.
 - Seeded permanent failure never auto-retries and archives after the window;
   headline counters drop while the row remains queryable until explicit
   cleanup and aggregate history remains queryable after cleanup.
+- A seeded job retry that collides with equivalent active work converges on the
+  canonical active job, preserves the source error and real attempt count in a
+  permanent failed row, emits only safe collision metadata, and does not retry
+  that source again.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.
