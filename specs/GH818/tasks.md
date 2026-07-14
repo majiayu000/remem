@@ -50,8 +50,10 @@ evidence。开始任何实现前必须全部满足：
   - Done when: v069 在一个 migration transaction 内退休 late active Summary、按 Tech Spec
     稳定选择 ordinary/Dream/CompileRules survivor；pending Dream 按
     `(created_at_epoch ASC,id ASC)` 重放 current profile predicate，processing Dream payload
-    不改写；redundant active rows 变为可见 permanent failures，其既有截断 `last_error` 保持为
-    主证据，在 2000-char 上限内先为完整、确定性的 migration duplicate marker 预留空间再
+    不改写；redundant active rows 变为可见 permanent failures，保留各自真实 `attempt_count`
+    不变，并由 `failure_class='permanent'` 与 `next_retry_epoch=0` 阻止重试，不得把计数提升到
+    `max_attempts` 伪造 exhausted；其既有截断 `last_error` 保持为主证据，在 2000-char 上限内
+    先为完整、确定性的 migration duplicate marker 预留空间再
     截断/追加；只有原 error 为 NULL/empty 时才单独存 marker。marker 包含 duplicate/canonical
     ids、identity kind、manual-review flag，migration 日志不输出原 error/payload。验证零重复后
     创建三个 partial UNIQUE indexes；v069 SQL 成功后、`mark_applied` 前，
@@ -64,6 +66,7 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features v069_does_not_rewrite_processing_dream_payload -- --nocapture`
     - `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`
     - `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`
+    - `cargo test --no-default-features v069_preserves_redundant_active_attempt_count -- --nocapture`
     - `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture`
     - `cargo test --no-default-features v069_post_migration_hook_logs_conflict_counts_without_payload -- --nocapture`
     - `cargo test --no-default-features job_queue_atomicity_migration_rolls_back_all_changes_on_validation_error -- --nocapture`
@@ -231,7 +234,9 @@ shared file 一旦需要修改，先暂停对应 lanes、更新 ownership 和 de
   确定性追加；测试和日志证据不得打印原始 error/payload。
 - v069 duplicate rows 同样不得覆盖既有 `last_error`：ordinary existing-error 与
   near-2000-char fixtures 必须同时保留 error prefix 和完整 migration marker；marker 单独存储
-  只适用于 NULL/empty error，日志禁止输出原 error。
+  只适用于 NULL/empty error，日志禁止输出原 error。migration fixture 还必须用
+  `attempt_count < max_attempts` 的 redundant active row 断言真实 attempt evidence 原值保留，
+  禁止以伪造 exhausted 代替 `failure_class='permanent'` 的 retry gate。
 - 不重新设计 `extraction_tasks`，不恢复 Summary，不加入 process mutex，不新增平行 failure
   ledger。
 - Migration/worker/auth-like execution integrity 属于高风险区域：禁止打印 payload/secrets，
