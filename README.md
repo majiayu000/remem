@@ -18,6 +18,8 @@ external database.
 
 ![Remem recall demo — a new Claude Code session picks up last week's bug fix](assets/remem-recall-demo.gif)
 
+*Real Claude Code session on a demo repo: a brand-new session recalls last week's root cause, commit, and open TODO — with memory citations, zero re-explaining.*
+
 ## What You Get
 
 - Claude Code, OpenAI Codex, and Codex CLI remember project decisions across sessions.
@@ -72,6 +74,10 @@ It preserves third-party hooks, does not write `.claude.json` MCP settings, and
 does not initialize the runtime store or API token.
 
 ## Success Check
+
+![remem install and SessionStart context injection](assets/remem-demo.gif)
+
+*What `remem install` configures, and what a new Codex session receives at SessionStart. The demo uses a temp HOME and temp database; no private memories are shown.*
 
 Start a new Claude Code or Codex CLI session after installation. remem should
 inject relevant project memory at session start and summarize durable memory
