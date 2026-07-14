@@ -132,10 +132,14 @@ struct EvidenceBudget {
     total_bytes: usize,
 }
 
+fn truncate_redacted_text(redacted: &str, max_bytes: usize) -> &str {
+    db::truncate_str(redacted, max_bytes).trim_end()
+}
+
 impl EvidenceBudget {
     fn push(&mut self, mut message: PromptTranscriptMessage) {
         let redacted = crate::adapter::common::redact_sensitive_text(&message.content);
-        let bounded = db::truncate_str(&redacted, TRANSCRIPT_MESSAGE_CONTENT_LIMIT);
+        let bounded = truncate_redacted_text(&redacted, TRANSCRIPT_MESSAGE_CONTENT_LIMIT);
         if bounded.len() < redacted.len() {
             self.evidence.truncated = true;
         }
@@ -158,7 +162,8 @@ impl EvidenceBudget {
             } else {
                 let keep_bytes = first_len - excess;
                 let shortened =
-                    db::truncate_str(&self.evidence.messages[0].content, keep_bytes).to_string();
+                    truncate_redacted_text(&self.evidence.messages[0].content, keep_bytes)
+                        .to_string();
                 if shortened.is_empty() {
                     self.total_bytes -= self.evidence.messages.remove(0).content.len();
                 } else {
@@ -447,6 +452,21 @@ mod tests {
         };
         assert!(format!("{error:#}").contains("ids require a citation line"));
         Ok(())
+    }
+
+    #[test]
+    fn per_message_budget_keeps_redaction_idempotent_at_whitespace_boundary() {
+        let content = format!("{} tail", "a".repeat(TRANSCRIPT_MESSAGE_CONTENT_LIMIT - 1));
+        let evidence = bound_prompt_transcript_evidence([PromptTranscriptMessage {
+            source_event_id: 2,
+            role: "user".to_string(),
+            content,
+        }]);
+
+        assert!(evidence.truncated);
+        assert!(evidence.messages[0].content.len() <= TRANSCRIPT_MESSAGE_CONTENT_LIMIT);
+        let validation = evidence.validate_for_range(&range_with_stop());
+        assert!(validation.is_ok(), "{validation:?}");
     }
 
     #[test]
