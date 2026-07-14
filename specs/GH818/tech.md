@@ -288,15 +288,19 @@ WAL、foreign keys 和 30s busy timeout；两个线程在 `Barrier` 后调用真
   migration marker 同时保留；
 - `v069_truncates_near_limit_duplicate_last_error_without_losing_marker`，使用接近/达到 2000-char
   的既有 error，证明确定性截断后总长不超过 2000、error prefix 与完整 marker 仍保留；
-- `v069_preserves_redundant_active_attempt_count`，fixture 将 redundant active row 的
-  `attempt_count` 设为小于 `max_attempts` 的非零值，证明迁移后计数原值不变，并由
-  `failure_class='permanent'` 与 `next_retry_epoch=0` 阻止重试而不伪造 exhausted；
+- `v069_preserves_redundant_active_attempt_count_without_reporting_exhaustion`，fixture 将
+  redundant active row 的 `attempt_count` 设为小于 `max_attempts` 的非零值，证明迁移后计数
+  原值不变，并由 `failure_class='permanent'` 与 `next_retry_epoch=0` 阻止重试；随后查询 shared
+  failure stats，证明 migration conflict 不增加 exhausted count；
 - `failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row`，同一 bounded batch
   同时包含 ordinary active、Dream pending、Dream processing、CompileRules pending、仅有
   CompileRules processing 以及无 collision row，验证每条 source/canonical 与 batch progress。
-- `failure_lifecycle_auto_recovery_keeps_legacy_summary_terminal_history`，同一 fixture 放入
-  due-like failed Summary 与可恢复的 ordinary row，断言 Summary 的全部持久化审计字段原值不变、
-  从未回到 pending，而 ordinary row 仍正常恢复。
+- `failure_lifecycle_auto_recovery_excludes_legacy_summary_and_recovers_ordinary`，同一 batch 放入
+  due-like failed Summary 与可恢复的 ordinary row，断言 candidate query 排除 Summary、其全部
+  persisted fields 原值不变，而 ordinary row 仍正常恢复；
+- `failure_lifecycle_per_row_guard_preserves_legacy_summary`，直接调用 transaction-scoped per-row
+  helper（或等价 injected-candidate seam）传入 Summary id，断言返回明确 retired/skipped result、
+  每个 persisted field byte/value 不变，且 `requeued`/`coalesced` counters 均不增加。
 
 ## Product-to-Test Mapping
 
@@ -310,11 +314,11 @@ WAL、foreign keys 和 30s busy timeout；两个线程在 `Barrier` 后调用真
 | `B-006` one CompileRules processing plus one unclaimable successor and collision-safe recovery | CompileRules UNIQUE index, enqueue core, `claim.rs`, retry/expired recovery, safe worker result logging | `cargo test --no-default-features claim_next_job_skips_compile_rules_successor_while_predecessor_processing -- --nocapture`; `cargo test --no-default-features compile_rules_retry_collision_coalesces_to_pending_successor -- --nocapture`; `cargo test --no-default-features worker_compile_rules_retry_collision_logs_safe_coalesced_result -- --nocapture`; `cargo test --no-default-features release_expired_compile_rules_collision_preserves_unrelated_job_progress -- --nocapture` |
 | `B-007` ordinary concurrent canonical id | ordinary transaction wrapper | `cargo test --no-default-features enqueue_job_two_wal_connections_coalesce_ordinary_identity -- --nocapture` |
 | `B-008` concurrent CompileRules successor/initial enqueue | CompileRules transaction core | `cargo test --no-default-features compile_rules_two_wal_connections_share_one_pending_successor -- --nocapture` and `compile_rules_two_wal_connections_create_one_initial_pending` |
-| `B-009` compatible deterministic duplicate reconciliation, including Dream serialized semantics and existing error/attempt evidence | `v069_job_queue_atomicity.sql`, migration fixtures | `cargo test --no-default-features v069_reconciles_active_job_duplicates_before_unique_indexes -- --nocapture`; `cargo test --no-default-features v069_replays_pending_dream_duplicates_with_current_profile_predicate -- --nocapture`; `cargo test --no-default-features v069_does_not_rewrite_processing_dream_payload -- --nocapture`; `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`; `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`; `cargo test --no-default-features v069_preserves_redundant_active_attempt_count -- --nocapture` |
+| `B-009` compatible deterministic duplicate reconciliation, including Dream serialized semantics and existing error/attempt evidence without false exhaustion reporting | `v069_job_queue_atomicity.sql`, migration fixtures, shared failure stats | `cargo test --no-default-features v069_reconciles_active_job_duplicates_before_unique_indexes -- --nocapture`; `cargo test --no-default-features v069_replays_pending_dream_duplicates_with_current_profile_predicate -- --nocapture`; `cargo test --no-default-features v069_does_not_rewrite_processing_dream_payload -- --nocapture`; `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`; `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`; `cargo test --no-default-features v069_preserves_redundant_active_attempt_count_without_reporting_exhaustion -- --nocapture` |
 | `B-010` terminal/history preservation and idempotent applied migration | v069 terminal exclusion, migration registry | `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture` |
 | `B-011` no success signal after transition error | `src/worker.rs`, worker log fixture | `cargo test --no-default-features worker_transition_conflict_logs_error_without_done_or_retry_success -- --nocapture` |
 | `B-012` persisted truth plus isolated identity-aware auto-recovery | `failure_lifecycle/maintenance.rs`, shared stats/status/doctor fixtures | `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`; `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`; `cargo test --no-default-features lease_transition_failure_remains_visible_in_status_and_doctor -- --nocapture` |
-| `B-013` Summary remains retired | v069 Summary pre-pass, existing v064/worker guards, failure-lifecycle candidate/per-row guards | `cargo test --no-default-features legacy_summary_upgrade_rejects_non_terminal_jobs -- --nocapture`; `cargo test --no-default-features worker_rejects_legacy_summary_job_without_retry -- --nocapture`; `cargo test --no-default-features failure_lifecycle_auto_recovery_keeps_legacy_summary_terminal_history -- --nocapture` |
+| `B-013` Summary remains retired | v069 Summary pre-pass, existing v064/worker guards, failure-lifecycle candidate/per-row guards | `cargo test --no-default-features legacy_summary_upgrade_rejects_non_terminal_jobs -- --nocapture`; `cargo test --no-default-features worker_rejects_legacy_summary_job_without_retry -- --nocapture`; `cargo test --no-default-features failure_lifecycle_auto_recovery_excludes_legacy_summary_and_recovers_ordinary -- --nocapture`; `cargo test --no-default-features failure_lifecycle_per_row_guard_preserves_legacy_summary -- --nocapture` |
 | `B-014` busy/conflict/diagnostic/migration errors fail closed | enqueue/state transaction error tests, migration rollback fixture | `cargo test --no-default-features job_queue_atomicity_errors_roll_back_without_assumed_success -- --nocapture` |
 
 ## 数据流

@@ -66,7 +66,7 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features v069_does_not_rewrite_processing_dream_payload -- --nocapture`
     - `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`
     - `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`
-    - `cargo test --no-default-features v069_preserves_redundant_active_attempt_count -- --nocapture`
+    - `cargo test --no-default-features v069_preserves_redundant_active_attempt_count_without_reporting_exhaustion -- --nocapture`
     - `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture`
     - `cargo test --no-default-features v069_post_migration_hook_logs_conflict_counts_without_payload -- --nocapture`
     - `cargo test --no-default-features job_queue_atomicity_migration_rolls_back_all_changes_on_validation_error -- --nocapture`
@@ -143,8 +143,10 @@ evidence。开始任何实现前必须全部满足：
     同一口径；job auto-recovery 先取 bounded candidate list，再逐 row transaction/savepoint
     处理 retired Summary guard 以及 ordinary、Dream、CompileRules collision。candidate query
     排除 Summary，逐 row classifier 也必须在 generic no-active requeue 前保持任何意外 Summary
-    source 的全部 terminal audit fields 不变，且不计入 requeued/coalesced；仅非 Summary 无 active
-    时 requeue source。collision 时按 Tech Spec 收敛 canonical work，source 保持
+    source 的全部 terminal audit fields 不变，返回明确 retired/skipped result，且不计入
+    requeued/coalesced；仅非 Summary 无 active 时 requeue source。普通 batch fixture 必须同时
+    证明排除 Summary 后无关 ordinary recovery 仍前进；另用 transaction-scoped per-row helper 或
+    等价 injected-candidate seam 精确覆盖 defense-in-depth guard。collision 时按 Tech Spec 收敛 canonical work，source 保持
     failed/auditable、保留真实 `attempt_count` 且不再
     重复 retry，既有截断 `last_error` 作为主证据并在 2000-char 内确定性追加 marker；一条 collision
     不回滚无关 recoveries，unexpected DB error 仍明确失败。migration conflicts 进入现有
@@ -158,7 +160,8 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features cli_status_renders_action_block_for_runtime_failures -- --nocapture`
     - `cargo test --no-default-features legacy_summary_upgrade_rejects_non_terminal_jobs -- --nocapture`
     - `cargo test --no-default-features worker_rejects_legacy_summary_job_without_retry -- --nocapture`
-    - `cargo test --no-default-features failure_lifecycle_auto_recovery_keeps_legacy_summary_terminal_history -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_auto_recovery_excludes_legacy_summary_and_recovers_ordinary -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_per_row_guard_preserves_legacy_summary -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`

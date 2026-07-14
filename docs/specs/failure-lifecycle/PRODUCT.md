@@ -61,6 +61,10 @@ surface that #381/#383 evidence collection depends on.
   queryable audit row with its real attempt count unchanged and does not enter
   automatic retry again; logs identify the safe source/canonical ids without
   exposing the original error text.
+- Retired legacy Summary jobs never enter generic job auto-recovery. Candidate
+  selection excludes them, and the per-row recovery guard returns an explicit
+  retired/skipped outcome for any defensive direct input while leaving every
+  persisted audit field and recovery counter unchanged.
 - `remem cleanup --archived-failures[=<days>]` purges archived rows older
   than the horizon, reporting what was removed.
 
@@ -77,6 +81,10 @@ surface that #381/#383 evidence collection depends on.
   canonical active job, preserves the source error and real attempt count in a
   permanent failed row, emits only safe collision metadata, and does not retry
   that source again.
+- A batch containing a due-like retired Summary and an unrelated retryable job
+  excludes the Summary while recovering the unrelated job. Direct per-row
+  Summary input is skipped explicitly with byte/value-identical persisted
+  fields and no requeued/coalesced count.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.

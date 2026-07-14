@@ -89,7 +89,13 @@ archived source; no pending work may retain an archived marker.
   directly by setting `status='pending'`, clearing lease fields, and setting
   `next_retry_epoch`; no-range transient failures therefore have an explicit
   recovery path instead of staying actionable forever.
-- `jobs`: re-enqueue the failed job by setting `state='pending'`, clearing
+- `jobs`: exclude retired legacy Summary rows from candidate selection before
+  generic recovery. The transaction-scoped per-row classifier must also check
+  Summary before active-identity lookup and return an explicit retired/skipped
+  result for defensive direct input. In both paths, preserve every persisted
+  field byte/value; do not set permanent, change retry time, append a marker,
+  execute the job, or increment `requeued`/`coalesced` counters. For non-retired
+  job types, re-enqueue the failed job by setting `state='pending'`, clearing
   lease fields, and setting `next_retry_epoch`. If the same active job identity
   already exists, keep that canonical work active and leave the source as
   `failed` with `failure_class='permanent'` and `next_retry_epoch=0`. Preserve
