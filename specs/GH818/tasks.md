@@ -60,6 +60,8 @@ evidence。开始任何实现前必须全部满足：
     `run_post_migration_hook`（或等价 Rust hook）按 marker 统计各 identity kind 的 reconciled
     与 manual-review 数量并只记录计数；hook 查询/日志准备失败使整个 migration transaction
     回滚。terminal/archive history 不变，schema drift 声明完整，任一失败整体回滚。
+    非 Summary `processing` row 的 NULL lease expiry 必须在 survivor selection 前规范为已过期，
+    使既有 stuck stats 与 expired recovery 可发现，且不得改写其他 persisted fields。
   - Verify:
     - `cargo test --no-default-features v069_reconciles_active_job_duplicates_before_unique_indexes -- --nocapture`
     - `cargo test --no-default-features v069_replays_pending_dream_duplicates_with_current_profile_predicate -- --nocapture`
@@ -67,6 +69,7 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`
     - `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`
     - `cargo test --no-default-features v069_preserves_redundant_active_attempt_count_without_reporting_exhaustion -- --nocapture`
+    - `cargo test --no-default-features v069_normalizes_null_processing_lease_to_expired_before_survivor_selection -- --nocapture`
     - `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture`
     - `cargo test --no-default-features v069_post_migration_hook_logs_conflict_counts_without_payload -- --nocapture`
     - `cargo test --no-default-features job_queue_atomicity_migration_rolls_back_all_changes_on_validation_error -- --nocapture`
@@ -74,8 +77,8 @@ evidence。开始任何实现前必须全部满足：
 
 - [ ] `SP818-T2` — lease-owned state CAS 与 collision-aware release — Owner: state lane agent；Done when: 见下；Verify: 见下
   - Owner: state lane agent；human review required。
-  - Exclusive files: `src/db/job/state.rs`、`src/db/job/tests.rs`。在 T2 完成前，其他 lane 不得
-    写 `src/db/job/tests.rs`。
+  - Exclusive files: `src/db/job/state.rs`、`src/db/job.rs`、`src/db/job/tests.rs`。在 T2 完成前，
+    其他 lane 不得写这些文件；T2 必须在 facade 中 re-export structured coalesced result。
   - Dependencies: readiness label、`spec_approval`、duplicate evidence、implement route gate
     通过。
   - Covers: `B-001`, `B-002`, `B-003`, `B-006`, `B-012`, `B-014`。
@@ -100,11 +103,12 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features release_expired_compile_rules_collision_preserves_unrelated_job_progress -- --nocapture`
 
 - [ ] `SP818-T3` — atomic enqueue、三类 identity 与 claim eligibility — Owner: enqueue lane agent；Done when: 见下；Verify: 见下
-  - Owner: enqueue lane agent；T2 后接管 `src/db/job/tests.rs`。
+  - Owner: enqueue lane agent；T2 后接管 `src/db/job.rs` 与 `src/db/job/tests.rs`。
   - Exclusive files: `src/db/job/enqueue.rs`、`src/db/job/claim.rs`、`src/db/job.rs`、
     `src/db/job/tests.rs`、`src/session_rollup/side_effects.rs`。其他调用点仅在编译证明必须适配
     时先更新 ownership 表，不得并发写入。
-  - Dependencies: `SP818-T1`, `SP818-T2`；`src/db/job/tests.rs` ownership 已从 T2 移交。
+  - Dependencies: `SP818-T1`, `SP818-T2`；`src/db/job.rs` 与 `src/db/job/tests.rs` ownership
+    已从 T2 移交。
   - Covers: `B-004`, `B-005`, `B-006`, `B-007`, `B-008`, `B-013`, `B-014`。
   - Done when: public wrapper 与 transaction-scoped core 不产生 nested transaction；ordinary
     NULL-session、project-wide Dream、CompileRules state slots 与 v069 indexes 一致；所有
@@ -129,7 +133,8 @@ evidence。开始任何实现前必须全部满足：
     `src/db/query/stats/tests.rs`、`src/doctor/database.rs`、`src/doctor/tests.rs`、
     `src/cli/actions/query/status.rs`、`src/cli/actions/query/status/types.rs`、
     `src/cli/actions/query/status/tests.rs`、`src/db/failure_lifecycle/maintenance.rs`、
-    `src/db/failure_lifecycle/tests.rs`、`docs/specs/failure-lifecycle/PRODUCT.md`、
+    `src/db/failure_lifecycle.rs`、`src/db/failure_lifecycle/tests.rs`、
+    `docs/specs/failure-lifecycle/PRODUCT.md`、
     `docs/specs/failure-lifecycle/TECH.md`。
   - Dependencies: `SP818-T2`, `SP818-T3`；必须在 T3 identity classifier、claim 与 Summary
     rejection API 稳定且 `src/db/job/tests.rs` ownership 已留在 T3 后开始，不得触碰 T2/T3
@@ -176,13 +181,14 @@ evidence。开始任何实现前必须全部满足：
 | Lane | 可并行阶段 | Exclusive ownership | Merge point |
 | --- | --- | --- | --- |
 | Migration | `SP818-T1` | 仅 T1 列出的 migration/schema files | T1 tests 通过后交给 T3 消费 schema contract |
-| State | `SP818-T2` | `state.rs` + `src/db/job/tests.rs` | T2 完成后显式把 `tests.rs` ownership 移交 T3 |
-| Claim/enqueue | `SP818-T3` | `claim.rs`、enqueue files，并从 T2 接收 `src/db/job/tests.rs` | T1/T2 均完成后启动；完成后冻结 identity/claim contract |
+| State | `SP818-T2` | `state.rs` + `src/db/job.rs` + `src/db/job/tests.rs` | T2 完成后显式把 facade/tests ownership 移交 T3 |
+| Claim/enqueue | `SP818-T3` | `claim.rs`、enqueue files，并从 T2 接收 `src/db/job.rs`/`tests.rs` | T1/T2 均完成后启动；完成后冻结 identity/claim contract |
 | Observability/recovery | `SP818-T4` | 仅 T4 列出的 worker/stats/doctor/status/failure lifecycle/docs files | T3 完成后启动；不得与 T2/T3 并行写 shared files |
 
-`SP818-T3` 不与 T2 并行，因为二者顺序共享 `src/db/job/tests.rs`；T2 完成后必须显式移交给
-T3，T4 不拥有该文件。`SP818-T4` 在 T3 后开始，独占
-`src/db/failure_lifecycle/maintenance.rs` 与 `src/db/failure_lifecycle/tests.rs`。任何未列出的
+`SP818-T3` 不与 T2 并行，因为二者顺序共享 `src/db/job.rs` 与 `src/db/job/tests.rs`；T2 完成后
+必须显式移交给 T3，T4 不拥有这些文件。`SP818-T4` 在 T3 后开始，独占
+`src/db/failure_lifecycle.rs`、`src/db/failure_lifecycle/maintenance.rs` 与
+`src/db/failure_lifecycle/tests.rs`。任何未列出的
 shared file 一旦需要修改，先暂停对应 lanes、更新 ownership 和 dependencies，再继续；禁止
 两个 agent 同时写同一文件。
 
@@ -203,6 +209,9 @@ shared file 一旦需要修改，先暂停对应 lanes、更新 ownership 和 de
     - `python3 checks/check_workflow.py --repo .`
     - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH818`
     - `cargo fmt --check`
+    - `cargo check`
+    - `cargo test`
+    - `cargo clippy -- -D warnings`
     - `cargo check --no-default-features`
     - `cargo test --no-default-features`
     - `cargo clippy --no-default-features -- -D warnings`
@@ -234,8 +243,9 @@ shared file 一旦需要修改，先暂停对应 lanes、更新 ownership 和 de
 - Tech Spec 已固定 migration survivor/Dream profile replay、CompileRules claim/retry/expiry
   coalescing，以及 failure auto-recovery 的逐 row identity contract；实现不得重新打开这些
   选择，除非 maintainer 先修改并批准 Product/Tech contract。
-- File ownership 顺序：T2 独占 `state.rs` + `src/db/job/tests.rs`，完成后把 job tests 移交 T3；
-  T3 独占 `claim.rs`/enqueue/job tests；T4 只在 T3 后独占 failure lifecycle maintenance/tests
+- File ownership 顺序：T2 独占 `state.rs` + `src/db/job.rs` + `src/db/job/tests.rs`，完成后把
+  job facade/tests 移交 T3；T3 独占 `claim.rs`/enqueue/job facade/tests；T4 只在 T3 后独占
+  failure lifecycle parent/maintenance/tests
   和 observability files。不存在同时共享 writable file 的获批 lane。
 - Coalesced source 的原始/既有截断 `last_error` 必须保留为主证据，marker 在 2000-char 内
   确定性追加；测试和日志证据不得打印原始 error/payload。
