@@ -209,36 +209,65 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             }
         }
         PendingAction::RetryExtractionRanges {
+            id,
             project,
             limit,
             dry_run,
         } => {
             if dry_run {
                 let conn = db::open_db_read_only()?;
-                let count =
-                    db::count_retryable_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Would requeue {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::ensure_extraction_replay_range_retryable(&conn, range_id)?;
+                    println!("Would requeue exhausted extraction range {range_id}.");
+                } else {
+                    let count = db::count_retryable_extraction_replay_ranges(
+                        &conn,
+                        project.as_deref(),
+                        limit,
+                    )?;
+                    println!("Would requeue {} exhausted extraction range(s).", count);
+                }
             } else {
                 let conn = db::open_db()?;
-                let count = db::retry_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Requeued {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::retry_extraction_replay_range(&conn, range_id)?;
+                    println!("Requeued exhausted extraction range {range_id}.");
+                } else {
+                    let count =
+                        db::retry_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                    println!("Requeued {} exhausted extraction range(s).", count);
+                }
             }
         }
         PendingAction::QuarantineExtractionRanges {
+            id,
             project,
             limit,
             dry_run,
         } => {
             if dry_run {
                 let conn = db::open_db_read_only()?;
-                let count =
-                    db::count_retryable_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Would quarantine {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::ensure_extraction_replay_range_retryable(&conn, range_id)?;
+                    println!("Would quarantine exhausted extraction range {range_id}.");
+                } else {
+                    let count = db::count_retryable_extraction_replay_ranges(
+                        &conn,
+                        project.as_deref(),
+                        limit,
+                    )?;
+                    println!("Would quarantine {} exhausted extraction range(s).", count);
+                }
             } else {
                 let conn = db::open_db()?;
-                let count =
-                    db::quarantine_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Quarantined {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::quarantine_extraction_replay_range(&conn, range_id)?;
+                    println!("Quarantined exhausted extraction range {range_id}.");
+                } else {
+                    let count =
+                        db::quarantine_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                    println!("Quarantined {} exhausted extraction range(s).", count);
+                }
             }
         }
     }

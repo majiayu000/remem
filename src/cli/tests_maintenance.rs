@@ -2,7 +2,7 @@ use super::query_types::{
     ProfileSnapshotFormatArg, UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg,
     UserClaimsAction, UserProfileAction, UserReviewAction, UserSummaryAction,
 };
-use super::types::{Cli, Commands, EmbeddingAction, UserAction};
+use super::types::{Cli, Commands, EmbeddingAction, PendingAction, UserAction};
 use clap::Parser;
 
 #[test]
@@ -41,6 +41,44 @@ fn cli_parses_cleanup_archived_failures_custom_horizon() {
             archived_failures, ..
         } => assert_eq!(archived_failures, Some(30)),
         _ => panic!("expected cleanup command"),
+    }
+}
+
+#[test]
+fn cli_parses_exact_extraction_replay_range_operations() {
+    let retry = Cli::parse_from([
+        "remem",
+        "pending",
+        "retry-extraction-ranges",
+        "--id",
+        "42",
+        "--dry-run",
+    ]);
+    match retry.command {
+        Commands::Pending {
+            action: PendingAction::RetryExtractionRanges { id, dry_run, .. },
+        } => {
+            assert_eq!(id, Some(42));
+            assert!(dry_run);
+        }
+        _ => panic!("expected exact extraction range retry"),
+    }
+
+    let quarantine = Cli::parse_from([
+        "remem",
+        "pending",
+        "quarantine-extraction-ranges",
+        "--id",
+        "43",
+    ]);
+    match quarantine.command {
+        Commands::Pending {
+            action: PendingAction::QuarantineExtractionRanges { id, dry_run, .. },
+        } => {
+            assert_eq!(id, Some(43));
+            assert!(!dry_run);
+        }
+        _ => panic!("expected exact extraction range quarantine"),
     }
 }
 
