@@ -34,6 +34,8 @@ SYNCED_FILES=(
   "schemas/pr_review_gate.schema.json"
   "schemas/review_result.schema.json"
   "schemas/runtime_checkpoint.schema.json"
+  "templates/tranche_checkpoint.md"
+  "templates/zh-CN/tranche_checkpoint.md"
 )
 
 write_lock() {

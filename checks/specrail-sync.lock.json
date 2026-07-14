@@ -84,6 +84,14 @@
     {
       "path": "schemas/runtime_checkpoint.schema.json",
       "sha256": "2f464bf99a967d66a57324c120a5ef9a0ce469dd4ea07d55b3ce31cc18a86091"
+    },
+    {
+      "path": "templates/tranche_checkpoint.md",
+      "sha256": "c5960430d9d4aedf0c4edc93e9bf7def8819f46585a5c63ad5a9460d02a08de6"
+    },
+    {
+      "path": "templates/zh-CN/tranche_checkpoint.md",
+      "sha256": "9d006f0396e290bb7cf8d813c148c433abdfaa29280e8434947f5041a2336e30"
     }
   ]
 }

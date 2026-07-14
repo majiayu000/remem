@@ -18,14 +18,34 @@ ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PREFLIGHT = ROOT / "scripts" / "ci" / "check_pr_preflight.py"
 SYNC_SCRIPT = ROOT / "scripts" / "sync-specrail-checks.sh"
+WORKFLOW_CHECK = ROOT / "checks" / "check_workflow.py"
 WIRING_TEST = ("python3", "scripts/ci/test_specrail_gate_wiring.py")
 SYNC_VERIFY = ("scripts/sync-specrail-checks.sh", "--verify")
+TRANCHE_TEMPLATES = (
+    "templates/tranche_checkpoint.md",
+    "templates/zh-CN/tranche_checkpoint.md",
+)
 
 
 def load_preflight() -> ModuleType:
     spec = importlib.util.spec_from_file_location("_remem_pr_preflight", PREFLIGHT)
     if spec is None or spec.loader is None:
         raise AssertionError(f"cannot load {PREFLIGHT.relative_to(ROOT)}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_workflow_check() -> ModuleType:
+    checks_dir = str(WORKFLOW_CHECK.parent)
+    if checks_dir not in sys.path:
+        sys.path.insert(0, checks_dir)
+    spec = importlib.util.spec_from_file_location(
+        "_remem_workflow_check", WORKFLOW_CHECK
+    )
+    if spec is None or spec.loader is None:
+        raise AssertionError(f"cannot load {WORKFLOW_CHECK.relative_to(ROOT)}")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -103,6 +123,78 @@ def assert_managed_import_smoke() -> None:
         assert "specrail_missing_import_smoke" in completed.stderr
 
 
+def assert_missing_tranche_template_fails() -> None:
+    lock = json.loads(
+        (ROOT / "checks" / "specrail-sync.lock.json").read_text(encoding="utf-8")
+    )
+    managed_paths = {entry["path"] for entry in lock["files"]}
+    assert set(TRANCHE_TEMPLATES) <= managed_paths, (
+        "both tranche templates must be sync-managed"
+    )
+
+    with tempfile.TemporaryDirectory(prefix="remem-specrail-template-smoke-") as raw:
+        repo = Path(raw)
+        target_script = repo / "scripts" / "sync-specrail-checks.sh"
+        target_script.parent.mkdir(parents=True)
+        shutil.copy2(SYNC_SCRIPT, target_script)
+
+        lock_path = repo / "checks" / "specrail-sync.lock.json"
+        lock_path.parent.mkdir(parents=True)
+        shutil.copy2(ROOT / "checks" / "specrail-sync.lock.json", lock_path)
+        for entry in lock["files"]:
+            source = ROOT / entry["path"]
+            target = repo / entry["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+        missing = repo / TRANCHE_TEMPLATES[0]
+        missing.unlink()
+        completed = subprocess.run(
+            [str(target_script), "--verify"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode != 0, "missing tranche template must fail --verify"
+        assert f"MISSING: {TRANCHE_TEMPLATES[0]}" in completed.stdout
+
+
+def assert_trusted_asset_validators() -> None:
+    module = load_workflow_check()
+
+    def run_with_helper(source: str) -> list[str]:
+        with tempfile.TemporaryDirectory(prefix="remem-specrail-validator-smoke-") as raw:
+            runner = Path(raw) / "checks" / "check_workflow.py"
+            runner.parent.mkdir(parents=True)
+            runner.write_text("# validation runner\n", encoding="utf-8")
+            runner.with_name("pack_asset_validation.py").write_text(
+                source,
+                encoding="utf-8",
+            )
+            original_file = module.__file__
+            module.__file__ = str(runner)
+            try:
+                return module.validate_pack_assets(ROOT)
+            finally:
+                module.__file__ = original_file
+
+    assert run_with_helper("def validate_json_schemas(repo):\n    return []\n") == [
+        "trusted pack asset validation missing callable validator(s): "
+        "validate_template_parity"
+    ]
+    assert run_with_helper("def validate_template_parity(repo):\n    return []\n") == [
+        "trusted pack asset validation missing callable validator(s): "
+        "validate_json_schemas"
+    ]
+    assert run_with_helper(
+        "def validate_json_schemas(repo):\n"
+        "    return ['schema marker']\n"
+        "def validate_template_parity(repo):\n"
+        "    return ['template marker']\n"
+    ) == ["schema marker", "template marker"]
+
+
 def main() -> int:
     assert_ordered(ci_run_commands(), "CI")
 
@@ -111,6 +203,8 @@ def main() -> int:
     preflight_commands = [tuple(command) for _name, command in steps]
     assert_ordered(preflight_commands, "fast/full preflight")
     assert_managed_import_smoke()
+    assert_missing_tranche_template_fails()
+    assert_trusted_asset_validators()
 
     print("SpecRail gate wiring test passed")
     return 0

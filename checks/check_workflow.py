@@ -43,12 +43,14 @@ REQUIRED_FILES = [
     "templates/tech_spec.md",
     "templates/tasks.md",
     "templates/pull_request.md",
+    "templates/tranche_checkpoint.md",
     "templates/zh-CN/issue_bug.md",
     "templates/zh-CN/issue_feature.md",
     "templates/zh-CN/product_spec.md",
     "templates/zh-CN/tech_spec.md",
     "templates/zh-CN/tasks.md",
     "templates/zh-CN/pull_request.md",
+    "templates/zh-CN/tranche_checkpoint.md",
     "review/agent_first_review.md",
     "review/human_final_review.md",
     "policies/security_disclosure.md",
@@ -133,7 +135,7 @@ def validate_tokens(repo: Path) -> list[str]:
 
 
 def validate_pack_assets(repo: Path) -> list[str]:
-    """Load the trusted helper for the SpecRail-owned schema contract."""
+    """Load the trusted helper for SpecRail-owned schemas and templates."""
 
     helper_path = Path(__file__).with_name("pack_asset_validation.py")
     if not helper_path.is_file():
@@ -151,12 +153,21 @@ def validate_pack_assets(repo: Path) -> list[str]:
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         validate_json_schemas = getattr(module, "validate_json_schemas", None)
-        if not callable(validate_json_schemas):
+        validate_template_parity = getattr(module, "validate_template_parity", None)
+        missing_validators = [
+            name
+            for name, validator in (
+                ("validate_json_schemas", validate_json_schemas),
+                ("validate_template_parity", validate_template_parity),
+            )
+            if not callable(validator)
+        ]
+        if missing_validators:
             return [
-                "trusted pack asset validation must define callable "
-                "validate_json_schemas"
+                "trusted pack asset validation missing callable validator(s): "
+                + ", ".join(missing_validators)
             ]
-        return validate_json_schemas(repo)
+        return validate_json_schemas(repo) + validate_template_parity(repo)
     except Exception as exc:
         return [f"cannot run trusted pack asset validation: {exc}"]
 
