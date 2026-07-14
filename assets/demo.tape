@@ -46,10 +46,6 @@ Type "clear"
 Enter
 Show
 
-Type "echo 'Demo uses a temp HOME + temp database; no private memories are shown.'"
-Enter
-Sleep 2s
-
 Type "remem install --target codex"
 Enter
 Sleep 3s

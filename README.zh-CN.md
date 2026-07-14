@@ -16,6 +16,8 @@
 
 ![Remem 记忆接续演示 — 新会话直接接上上周的 bug 修复](assets/remem-recall-demo.gif)
 
+*真实 Claude Code 会话（demo 仓库）：全新会话直接回忆出上周的根因、commit 和待办 TODO，并附记忆引用，无需重新解释。*
+
 ## 你会得到什么
 
 - Claude Code 和 Codex CLI 能跨会话记住项目决策。
@@ -60,6 +62,10 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 需要验证或排障时再运行 `remem doctor`。
 
 ## 成功检查
+
+![remem install 与 SessionStart 上下文注入](assets/remem-demo.gif)
+
+*`remem install` 配置了什么，以及新 Codex 会话在 SessionStart 收到的内容。demo 使用临时 HOME 和临时数据库，不会展示任何私人记忆。*
 
 安装后启动一个新的 Claude Code 或 Codex CLI 会话。remem 应该在
 SessionStart 时注入相关项目记忆，并在会话结束后总结耐久记忆。然后运行：

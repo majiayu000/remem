@@ -51,4 +51,4 @@ Sleep 12s
 
 Type "echo 'Root cause, commit, open TODO - recalled, cited, zero re-explaining.'"
 Enter
-Sleep 4s
+Sleep 12s
