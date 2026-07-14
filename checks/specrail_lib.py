@@ -24,6 +24,7 @@ SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
     "minItems",
     "minLength",
     "minimum",
+    "pattern",
     "properties",
     "required",
     "type",
@@ -256,6 +257,19 @@ def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> Non
             raise SpecRailError(f"{path}: minLength requires a string instance")
         if len(data) < int(schema["minLength"]):
             raise SpecRailError(f"{path}: string is shorter than minLength")
+
+    if "pattern" in schema:
+        if not isinstance(data, str):
+            raise SpecRailError(f"{path}: pattern requires a string instance")
+        pattern = schema["pattern"]
+        if not isinstance(pattern, str):
+            raise SpecRailError(f"{path}: pattern must be a string")
+        try:
+            matched = re.search(pattern, data)
+        except re.error as exc:
+            raise SpecRailError(f"{path}: invalid pattern: {exc}") from exc
+        if matched is None:
+            raise SpecRailError(f"{path}: string does not match pattern")
 
     if "minItems" in schema:
         if not isinstance(data, list):

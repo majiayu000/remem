@@ -14,6 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from sensitive_enforcement import evaluate_sensitive_evidence, sensitive_registry
+from specrail_lib import PackConfig, SpecRailError, load_pack, resolve_path
+
 
 CHECK_PASS_CONCLUSIONS = {"SUCCESS"}
 CLEAN_MERGE_STATES = {"CLEAN"}
@@ -454,12 +457,18 @@ def _ordering_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], lis
     return satisfied, missing, reasons
 
 
-def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
+def evaluate_pr_gate(
+    evidence: dict[str, Any],
+    repo: Path | None = None,
+    config: PackConfig | None = None,
+) -> dict[str, Any]:
     """Evaluate merge-readiness evidence and return a stable decision object."""
 
     reasons: list[str] = []
     satisfied: list[str] = []
     missing: list[str] = []
+    sensitive_classification: dict[str, Any] | None = None
+    sensitive_reasons: list[str] = []
 
     if _positive_int(evidence.get("pr")):
         satisfied.append(f"pr: {evidence['pr']}")
@@ -527,6 +536,47 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
     satisfied.extend(auth_satisfied)
     missing.extend(auth_missing)
 
+    has_sensitive_evidence = any(
+        key in evidence
+        for key in [
+            "enforcement_sensitive",
+            "sensitive_classification",
+            "approved_spec",
+        ]
+    )
+    if config is None and repo is not None:
+        config = load_pack(resolve_path(repo, label="repository"))
+    if config is not None:
+        registry = sensitive_registry(config)
+        has_sensitive_evidence = has_sensitive_evidence or bool(
+            registry["paths"] or registry["specs"]
+        )
+    if has_sensitive_evidence:
+        if repo is None:
+            sensitive_reasons.append(
+                "repository checkout is required to revalidate enforcement-sensitive evidence"
+            )
+        elif config is None:
+            sensitive_reasons.append(
+                "workflow configuration is required to revalidate enforcement-sensitive evidence"
+            )
+        else:
+            sensitive_classification, sensitive_satisfied, sensitive_reasons = (
+                evaluate_sensitive_evidence(
+                    config,
+                    resolve_path(repo, label="repository"),
+                    evidence,
+                    expected_source="github_changed_files",
+                    issue=evidence.get("linked_issue"),
+                    expected_base_ref=evidence.get("base_ref"),
+                    expected_base_head=evidence.get("base_sha"),
+                )
+            )
+            satisfied.extend(sensitive_satisfied)
+        if sensitive_reasons:
+            reasons.extend(sensitive_reasons)
+            missing.append("sensitive_enforcement")
+
     deterministic_missing = [item for item in missing if not item.startswith("human_authorization")]
     if reasons or deterministic_missing:
         decision = "blocked"
@@ -550,6 +600,14 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
         "review_source": evidence.get("review_source"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),
         "gate_query_head_sha": evidence.get("gate_query_head_sha"),
+        "enforcement_sensitive": bool(
+            evidence.get("enforcement_sensitive") is True
+            or (
+                sensitive_classification
+                and sensitive_classification.get("enforcement_sensitive")
+            )
+        ),
+        "sensitive_classification": sensitive_classification,
         "reasons": sorted(set(reasons)),
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
@@ -596,7 +654,8 @@ def main() -> int:
 
     try:
         evidence = _load_json(Path(args.evidence))
-        result = evaluate_pr_gate(evidence)
+        repo = resolve_path(Path(args.repo), label="repository")
+        result = evaluate_pr_gate(evidence, repo=repo, config=load_pack(repo))
     except ValueError as exc:
         result = {
             "decision": "blocked",

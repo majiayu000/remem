@@ -16,8 +16,11 @@ LOCK_FILE="$REPO_ROOT/checks/specrail-sync.lock.json"
 SYNCED_FILES=(
   "checks/duplicate_work_gate.py"
   "checks/github_duplicate_evidence.py"
+  "checks/github_evidence_common.py"
   "checks/github_issue_evidence.py"
+  "checks/github_issue_reference.py"
   "checks/github_pr_evidence.py"
+  "checks/pack_asset_validation.py"
   "checks/pr_gate.py"
   "checks/review_json_gate.py"
   "checks/route_gate.py"
@@ -88,8 +91,13 @@ print(f"ok: {len(lock['files'])} files match lock (upstream {lock['upstream_sha'
 PY
 }
 
+verify_workflow() {
+  python3 "$REPO_ROOT/checks/check_workflow.py" --repo "$REPO_ROOT"
+}
+
 if [[ "${1:-}" == "--verify" ]]; then
   verify_lock
+  verify_workflow
   exit 0
 fi
 
@@ -104,3 +112,4 @@ for rel in "${SYNCED_FILES[@]}"; do
   cp "$UPSTREAM/$rel" "$REPO_ROOT/$rel"
 done
 write_lock "$upstream_sha"
+verify_workflow

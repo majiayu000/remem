@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import json
 import re
 import sys
 from pathlib import Path
@@ -13,11 +15,9 @@ from specrail_lib import (
     load_pack,
     read_text,
     validate_action_policy,
-    validate_json_schemas,
     validate_labels,
     validate_state_graph,
     validate_skills_lock,
-    validate_template_parity,
 )
 
 
@@ -30,6 +30,7 @@ REQUIRED_FILES = [
     "checks/check_workflow.py",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
+    "checks/pack_asset_validation.py",
     "checks/pr_gate.py",
     "checks/route_gate.py",
     "checks/review_json_gate.py",
@@ -128,6 +129,88 @@ def validate_tokens(repo: Path) -> list[str]:
         for token in tokens:
             if token not in text:
                 errors.append(f"{rel}: missing token {token!r}")
+    return errors
+
+
+def validate_pack_assets(repo: Path) -> list[str]:
+    """Load the trusted helper for the SpecRail-owned schema contract."""
+
+    helper_path = Path(__file__).with_name("pack_asset_validation.py")
+    if not helper_path.is_file():
+        return [
+            "cannot load trusted pack asset validation: "
+            "checks/pack_asset_validation.py is missing"
+        ]
+    try:
+        spec = importlib.util.spec_from_file_location(
+            "_specrail_trusted_pack_asset_validation",
+            helper_path,
+        )
+        if spec is None or spec.loader is None:
+            return ["cannot load trusted pack asset validation: no module loader"]
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        validate_json_schemas = getattr(module, "validate_json_schemas", None)
+        if not callable(validate_json_schemas):
+            return [
+                "trusted pack asset validation must define callable "
+                "validate_json_schemas"
+            ]
+        return validate_json_schemas(repo)
+    except Exception as exc:
+        return [f"cannot run trusted pack asset validation: {exc}"]
+
+
+def validate_all_json_schemas(repo: Path) -> list[str]:
+    """Preserve remem's validation of schemas beyond the SpecRail-owned set."""
+
+    errors: list[str] = []
+    schema_dir = repo / "schemas"
+    if not schema_dir.is_dir():
+        return ["missing schemas/ directory"]
+    for path in sorted(schema_dir.glob("*.schema.json")):
+        relative_path = path.relative_to(repo)
+        try:
+            data = json.loads(read_text(path))
+        except json.JSONDecodeError as exc:
+            errors.append(f"{relative_path}: invalid JSON: {exc.msg}")
+            continue
+        if not isinstance(data, dict):
+            errors.append(f"{relative_path}: top-level JSON must be an object")
+            continue
+        if "$schema" not in data:
+            errors.append(f"{relative_path}: missing $schema")
+        if "title" not in data:
+            errors.append(f"{relative_path}: missing title")
+        if data.get("type") != "object":
+            errors.append(f"{relative_path}: top-level type must be object")
+    return errors
+
+
+def validate_template_parity(repo: Path) -> list[str]:
+    """Validate the complete template surface adopted by remem."""
+
+    errors: list[str] = []
+    root = repo / "templates"
+    zh = root / "zh-CN"
+    base_files = sorted(path.name for path in root.glob("*.md"))
+    zh_files = sorted(path.name for path in zh.glob("*.md")) if zh.is_dir() else []
+    for name in base_files:
+        if name not in zh_files:
+            errors.append(f"templates/zh-CN: missing localized template {name}")
+    for name in zh_files:
+        if name not in base_files:
+            errors.append(f"templates/zh-CN/{name}: no matching base template")
+    stable_tokens = ["GH-", "ready_to_spec", "ready_to_implement"]
+    for name in ["issue_feature.md", "product_spec.md", "tech_spec.md", "pull_request.md"]:
+        for rel in [Path("templates") / name, Path("templates/zh-CN") / name]:
+            path = repo / rel
+            if not path.is_file():
+                continue
+            text = read_text(path)
+            for token in stable_tokens:
+                if token in read_text(repo / "templates" / name) and token not in text:
+                    errors.append(f"{rel}: missing stable token {token}")
     return errors
 
 
@@ -266,7 +349,8 @@ def main() -> int:
         config = load_pack(repo)
         errors.extend(validate_required_files(repo))
         errors.extend(validate_tokens(repo))
-        errors.extend(validate_json_schemas(repo))
+        errors.extend(validate_pack_assets(repo))
+        errors.extend(validate_all_json_schemas(repo))
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))

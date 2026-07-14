@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from github_evidence_common import EvidenceError, json_object
 from github_pr_evidence import (
-    EvidenceError,
     _require_positive_int,
     _require_string,
     parse_github_repo,
@@ -60,7 +60,7 @@ def parse_issue_number(raw: str) -> int:
 
 
 def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
-    return run_gh_json(
+    return json_object(run_gh_json(
         [
             "issue",
             "view",
@@ -70,7 +70,7 @@ def collect_issue_view(github_repo: str, issue_number: int) -> dict[str, Any]:
             "--json",
             ",".join(ISSUE_VIEW_FIELDS),
         ]
-    )
+    ), "gh issue view response")
 
 
 def _optional_body(payload: dict[str, Any]) -> str:
