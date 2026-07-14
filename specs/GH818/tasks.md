@@ -141,8 +141,11 @@ evidence。开始任何实现前必须全部满足：
     不输出原始 retry error；shared stats
     仍以 persisted row 计算 processing/stuck/actionable failed；status text/JSON 与 doctor 使用
     同一口径；job auto-recovery 先取 bounded candidate list，再逐 row transaction/savepoint
-    处理 ordinary、Dream、CompileRules collision。无 active 时 requeue source；collision 时按
-    Tech Spec 收敛 canonical work，source 保持 failed/auditable、保留真实 `attempt_count` 且不再
+    处理 retired Summary guard 以及 ordinary、Dream、CompileRules collision。candidate query
+    排除 Summary，逐 row classifier 也必须在 generic no-active requeue 前保持任何意外 Summary
+    source 的全部 terminal audit fields 不变，且不计入 requeued/coalesced；仅非 Summary 无 active
+    时 requeue source。collision 时按 Tech Spec 收敛 canonical work，source 保持
+    failed/auditable、保留真实 `attempt_count` 且不再
     重复 retry，既有截断 `last_error` 作为主证据并在 2000-char 内确定性追加 marker；一条 collision
     不回滚无关 recoveries，unexpected DB error 仍明确失败。migration conflicts 进入现有
     failure lifecycle；仅作 fixture 的 Summary enqueue 改为合适 non-retired type，真正的
@@ -155,6 +158,7 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features cli_status_renders_action_block_for_runtime_failures -- --nocapture`
     - `cargo test --no-default-features legacy_summary_upgrade_rejects_non_terminal_jobs -- --nocapture`
     - `cargo test --no-default-features worker_rejects_legacy_summary_job_without_retry -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_auto_recovery_keeps_legacy_summary_terminal_history -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`
@@ -238,7 +242,8 @@ shared file 一旦需要修改，先暂停对应 lanes、更新 ownership 和 de
   `attempt_count < max_attempts` 的 redundant active row 断言真实 attempt evidence 原值保留，
   禁止以伪造 exhausted 代替 `failure_class='permanent'` 的 retry gate。
 - 不重新设计 `extraction_tasks`，不恢复 Summary，不加入 process mutex，不新增平行 failure
-  ledger。
+  ledger。failure-lifecycle recovery 必须在 generic no-active requeue 前排除 retired Summary，
+  并以 regression fixture 证明其 terminal audit history 原值保留且不阻塞 ordinary recovery。
 - Migration/worker/auth-like execution integrity 属于高风险区域：禁止打印 payload/secrets，
   所有 SQL 参数化，必须 human review。
 - 目前仍无 implementation authorization。只有实际 readiness label、`spec_approval`、

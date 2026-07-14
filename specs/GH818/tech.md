@@ -211,7 +211,12 @@ hook 查询或日志准备失败必须返回错误并使整个 v069 回滚；foc
 条 rows。它先按既有 due order 读取 bounded candidate ids，然后逐条在独立 transaction 或
 savepoint 内重新验证 eligibility，并按与 enqueue 完全相同的 identity classifier 处理：
 
-- 没有 active identity：source failed row 正常 requeue 为 pending。
+- Retired Summary guard 必须先于 generic requeue：candidate selection 排除
+  `job_type='summary'`，逐 row classifier 也必须在查询 active identity 前拒绝恢复任何意外进入
+  batch 的 Summary。该 row 保持 failed terminal audit history，state、attempt、error、failure
+  class、archive/timestamp 与 payload fields 全部不改，不计入 `requeued` 或 `coalesced`；不得因
+  没有 active Summary identity 而回到 pending。
+- 非 Summary 且没有 active identity：source failed row 正常 requeue 为 pending。
 - Ordinary 已有 active：active row 吸收待执行工作；source 保持 failed/auditable，保留真实
   `attempt_count`，设置 `failure_class='permanent'`、`next_retry_epoch=0` 与固定、非 secret 的
   `[auto_recovery_coalesced_to_canonical id=<canonical_id>]` marker，使其永久不再符合 auto-retry。
@@ -289,6 +294,9 @@ WAL、foreign keys 和 30s busy timeout；两个线程在 `Barrier` 后调用真
 - `failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row`，同一 bounded batch
   同时包含 ordinary active、Dream pending、Dream processing、CompileRules pending、仅有
   CompileRules processing 以及无 collision row，验证每条 source/canonical 与 batch progress。
+- `failure_lifecycle_auto_recovery_keeps_legacy_summary_terminal_history`，同一 fixture 放入
+  due-like failed Summary 与可恢复的 ordinary row，断言 Summary 的全部持久化审计字段原值不变、
+  从未回到 pending，而 ordinary row 仍正常恢复。
 
 ## Product-to-Test Mapping
 
@@ -306,7 +314,7 @@ WAL、foreign keys 和 30s busy timeout；两个线程在 `Barrier` 后调用真
 | `B-010` terminal/history preservation and idempotent applied migration | v069 terminal exclusion, migration registry | `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture` |
 | `B-011` no success signal after transition error | `src/worker.rs`, worker log fixture | `cargo test --no-default-features worker_transition_conflict_logs_error_without_done_or_retry_success -- --nocapture` |
 | `B-012` persisted truth plus isolated identity-aware auto-recovery | `failure_lifecycle/maintenance.rs`, shared stats/status/doctor fixtures | `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`; `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`; `cargo test --no-default-features lease_transition_failure_remains_visible_in_status_and_doctor -- --nocapture` |
-| `B-013` Summary remains retired | v069 Summary pre-pass, existing v064/worker guards | `cargo test --no-default-features legacy_summary_upgrade_rejects_non_terminal_jobs -- --nocapture` and `worker_rejects_legacy_summary_job_without_retry` |
+| `B-013` Summary remains retired | v069 Summary pre-pass, existing v064/worker guards, failure-lifecycle candidate/per-row guards | `cargo test --no-default-features legacy_summary_upgrade_rejects_non_terminal_jobs -- --nocapture`; `cargo test --no-default-features worker_rejects_legacy_summary_job_without_retry -- --nocapture`; `cargo test --no-default-features failure_lifecycle_auto_recovery_keeps_legacy_summary_terminal_history -- --nocapture` |
 | `B-014` busy/conflict/diagnostic/migration errors fail closed | enqueue/state transaction error tests, migration rollback fixture | `cargo test --no-default-features job_queue_atomicity_errors_roll_back_without_assumed_success -- --nocapture` |
 
 ## 数据流
@@ -356,7 +364,8 @@ processing CompileRules retry / expired release
 ```text
 select bounded stable due candidate ids
   -> isolated transaction/savepoint per source
-     -> no active identity: requeue source
+     -> retired Summary: keep terminal audit row unchanged; never requeue
+     -> non-Summary with no active identity: requeue source
      -> expected collision: converge to canonical + mark source permanent with auditable diagnostic while preserving its stored attempt_count
      -> unexpected DB error: rollback current source and return error loudly
   -> one expected collision never rolls back unrelated recoveries
@@ -431,8 +440,9 @@ foreground open_db
       marker、manual-review diagnostics、schema invariant、all-or-nothing rollback；mixed
       ordinary/Dream/CompileRules failure
       auto-recovery batch；worker/status/doctor shared-truth fixtures。
-- [ ] Regression tests: v064 Summary retirement、failure lifecycle archive/actionable counts、
-      SessionRollup Compress/Dream attribution、existing Dream and CompileRules tests。
+- [ ] Regression tests: v064 Summary retirement、failure lifecycle 不恢复 retired Summary 且不阻塞
+      ordinary recovery、failure lifecycle archive/actionable counts、SessionRollup Compress/Dream
+      attribution、existing Dream and CompileRules tests。
 - [ ] Deterministic gates: `python3 checks/check_workflow.py --repo . --spec-dir specs/GH818`，
       `cargo fmt --check`，`cargo check --no-default-features`，
       `cargo test --no-default-features`。
