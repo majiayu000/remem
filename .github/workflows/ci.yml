@@ -10,6 +10,10 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
+      - name: Test SpecRail gate wiring
+        run: python3 scripts/ci/test_specrail_gate_wiring.py
+      - name: Verify SpecRail sync runtime contract
+        run: scripts/sync-specrail-checks.sh --verify
       - name: Check plugin version sync
         run: python3 scripts/ci/check_plugin_version_sync.py
       - name: Check public surface
