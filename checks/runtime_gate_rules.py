@@ -161,6 +161,9 @@ def _validate_self_review_authorization(
     label: str,
     errors: list[str],
 ) -> None:
+    lane_failures = raw_item.get("lane_failures")
+    if not isinstance(lane_failures, list) or not lane_failures:
+        errors.append(f"{label}: self_review requires recorded lane_failures")
     value = raw_item.get("self_review_authorization")
     if not isinstance(value, dict):
         errors.append(f"{label}: self_review requires self_review_authorization")

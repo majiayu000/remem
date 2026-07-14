@@ -36,7 +36,7 @@ def _non_empty_string(value: Any) -> bool:
 
 
 def _positive_int(value: Any) -> bool:
-    return isinstance(value, int) and value > 0
+    return isinstance(value, int) and not isinstance(value, bool) and value > 0
 
 
 def _parse_timestamp(value: str, field: str) -> datetime | None:
@@ -183,6 +183,80 @@ def _review_source_items(evidence: dict[str, Any]) -> tuple[list[str], list[str]
     return satisfied, missing, reasons
 
 
+def _issue_reference_items(
+    evidence: dict[str, Any],
+) -> tuple[list[str], list[str], list[str]]:
+    satisfied: list[str] = []
+    missing: list[str] = []
+    reasons: list[str] = []
+
+    if "issue_reference" not in evidence:
+        return satisfied, missing, reasons
+    relation = evidence["issue_reference"]
+    if not isinstance(relation, dict):
+        reasons.append("issue_reference must be an object")
+        return satisfied, missing, reasons
+
+    allowed_fields = {
+        "number",
+        "kind",
+        "source",
+        "verified",
+        "state",
+        "url",
+        "closing_issue_numbers",
+    }
+    unknown_fields = sorted(set(relation) - allowed_fields)
+    if unknown_fields:
+        reasons.append(
+            "issue_reference contains unsupported fields: " + ", ".join(unknown_fields)
+        )
+
+    number = relation.get("number")
+    if not _positive_int(number):
+        missing.append("issue_reference.number")
+    elif number != evidence.get("linked_issue"):
+        reasons.append("issue_reference.number must match linked_issue")
+
+    if relation.get("verified") is not True:
+        reasons.append("issue_reference.verified must be true")
+
+    closing_issue_numbers = relation.get("closing_issue_numbers")
+    valid_closing_numbers = isinstance(closing_issue_numbers, list) and all(
+        _positive_int(item) for item in closing_issue_numbers
+    )
+    if not valid_closing_numbers:
+        reasons.append("issue_reference.closing_issue_numbers must be a list of positive integers")
+        closing_issue_numbers = []
+    elif len(set(closing_issue_numbers)) != len(closing_issue_numbers):
+        reasons.append("issue_reference.closing_issue_numbers must not contain duplicates")
+
+    kind = relation.get("kind")
+    source = relation.get("source")
+    if kind == "partial":
+        if source != "pr_body":
+            reasons.append("issue_reference partial source must be pr_body")
+        if relation.get("state") != "OPEN":
+            reasons.append("issue_reference partial state must be OPEN")
+        if _positive_int(number) and number in closing_issue_numbers:
+            reasons.append("issue_reference partial target must not be closing")
+    elif kind == "closing":
+        if source != "closingIssuesReferences":
+            reasons.append(
+                "issue_reference closing source must be closingIssuesReferences"
+            )
+        if _positive_int(number) and number not in closing_issue_numbers:
+            reasons.append(
+                "issue_reference closing target must appear in closing_issue_numbers"
+            )
+    else:
+        reasons.append("issue_reference.kind must be one of: closing, partial")
+
+    if not missing and not reasons:
+        satisfied.append(f"issue_reference: verified {kind} GH-{number}")
+    return satisfied, missing, reasons
+
+
 def _merge_record_items(evidence: dict[str, Any]) -> tuple[list[str], list[str], list[str]]:
     satisfied: list[str] = []
     missing: list[str] = []
@@ -271,6 +345,10 @@ def _review_source_items(evidence: dict[str, Any]) -> tuple[list[str], list[str]
     if normalized == "independent_lane":
         satisfied.append("review_source: independent_lane")
         return satisfied, missing, reasons
+
+    failures = evidence.get("lane_failures")
+    if not isinstance(failures, list) or not failures:
+        reasons.append("self_review requires recorded lane_failures from a reported reviewer lane failure")
 
     auth_satisfied, auth_missing = _self_review_authorization_item(evidence)
     satisfied.append("review_source: self_review")
@@ -421,7 +499,14 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
     else:
         missing.append("merge_state")
 
-    for checker in [_check_items, _review_items, _thread_items, _review_source_items, _merge_record_items]:
+    for checker in [
+        _check_items,
+        _review_items,
+        _thread_items,
+        _review_source_items,
+        _issue_reference_items,
+        _merge_record_items,
+    ]:
         checker_satisfied, checker_missing, checker_reasons = checker(evidence)
         satisfied.extend(checker_satisfied)
         missing.extend(checker_missing)
@@ -460,6 +545,7 @@ def evaluate_pr_gate(evidence: dict[str, Any]) -> dict[str, Any]:
         "decision": decision,
         "pr": evidence.get("pr"),
         "linked_issue": evidence.get("linked_issue"),
+        "issue_reference": evidence.get("issue_reference"),
         "head_sha": evidence.get("head_sha"),
         "review_source": evidence.get("review_source"),
         "gate_query_completed_at": evidence.get("gate_query_completed_at"),

@@ -7,6 +7,7 @@ import argparse
 import json
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 from github_pr_evidence import (
@@ -16,7 +17,13 @@ from github_pr_evidence import (
     parse_github_repo,
     run_gh_json,
 )
-from specrail_lib import TERMINAL_BLOCKING_STATES
+from specrail_lib import (
+    TERMINAL_BLOCKING_STATES,
+    SpecRailError,
+    load_pack,
+    resolve_path,
+    spec_packet_artifact_paths,
+)
 
 
 ISSUE_VIEW_FIELDS = [
@@ -143,7 +150,19 @@ def default_artifacts(issue_number: int) -> dict[str, str]:
     }
 
 
-def build_issue_evidence(issue_payload: dict[str, Any]) -> dict[str, Any]:
+def configured_artifacts(repo: Path, issue_number: int) -> dict[str, str]:
+    config = load_pack(repo)
+    paths = spec_packet_artifact_paths(config, issue_number, repo=repo)
+    return {
+        name: paths[name]
+        for name in ["product_spec", "tech_spec", "task_plan"]
+    }
+
+
+def build_issue_evidence(
+    issue_payload: dict[str, Any],
+    artifacts: dict[str, str] | None = None,
+) -> dict[str, Any]:
     issue_number = _require_positive_int(issue_payload, "number")
     title = _require_string(issue_payload, "title")
     github_state = _require_string(issue_payload, "state").upper()
@@ -161,28 +180,46 @@ def build_issue_evidence(issue_payload: dict[str, Any]) -> dict[str, Any]:
         "labels": labels,
         "url": url,
         "title": title,
-        "artifacts": default_artifacts(issue_number),
+        "artifacts": default_artifacts(issue_number) if artifacts is None else artifacts,
     }
 
 
-def collect_issue_evidence(github_repo: str, issue_number: int) -> dict[str, Any]:
+def collect_issue_evidence(
+    github_repo: str,
+    issue_number: int,
+    repo: Path,
+) -> dict[str, Any]:
     parse_github_repo(github_repo)
+    artifacts = configured_artifacts(repo, issue_number)
     issue_payload = collect_issue_view(github_repo, issue_number)
-    return build_issue_evidence(issue_payload)
+    payload_issue_number = _require_positive_int(issue_payload, "number")
+    if payload_issue_number != issue_number:
+        raise EvidenceError(
+            f"issue number mismatch: expected {issue_number}, got {payload_issue_number}"
+        )
+    return build_issue_evidence(
+        issue_payload,
+        artifacts,
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Collect read-only GitHub issue evidence for SpecRail route_gate.py."
     )
+    parser.add_argument("--repo", default=".", help="SpecRail pack or adopted repo root")
     parser.add_argument("--github-repo", required=True, help="GitHub repository as OWNER/REPO")
     parser.add_argument("--issue", required=True, type=parse_issue_number, help="Issue number")
     parser.add_argument("--json", action="store_true", help="Print JSON output")
     args = parser.parse_args()
 
     try:
-        evidence = collect_issue_evidence(args.github_repo, args.issue)
-    except EvidenceError as exc:
+        evidence = collect_issue_evidence(
+            args.github_repo,
+            args.issue,
+            resolve_path(Path(args.repo), label="repository"),
+        )
+    except (EvidenceError, SpecRailError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

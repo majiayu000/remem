@@ -11,13 +11,11 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from github_evidence_common import EvidenceError
+
 
 PR_LIST_FIELDS = ["number", "headRefName", "title", "body", "state"]
 REPO_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-
-
-class EvidenceError(ValueError):
-    """Raised when duplicate work evidence cannot be collected or normalized."""
 
 
 def parse_github_repo(raw: str) -> str:
