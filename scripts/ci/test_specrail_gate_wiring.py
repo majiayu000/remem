@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import json
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import ModuleType
 
@@ -12,6 +17,7 @@ from types import ModuleType
 ROOT = Path(__file__).resolve().parents[2]
 CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 PREFLIGHT = ROOT / "scripts" / "ci" / "check_pr_preflight.py"
+SYNC_SCRIPT = ROOT / "scripts" / "sync-specrail-checks.sh"
 WIRING_TEST = ("python3", "scripts/ci/test_specrail_gate_wiring.py")
 SYNC_VERIFY = ("scripts/sync-specrail-checks.sh", "--verify")
 
@@ -48,6 +54,55 @@ def assert_ordered(commands: list[tuple[str, ...]], label: str) -> None:
     )
 
 
+def assert_managed_import_smoke() -> None:
+    sync_text = SYNC_SCRIPT.read_text(encoding="utf-8")
+    import_smoke_calls = sum(
+        line.strip() == "verify_python_imports" for line in sync_text.splitlines()
+    )
+    assert import_smoke_calls == 2, (
+        "sync and --verify must both execute the managed Python import smoke"
+    )
+
+    with tempfile.TemporaryDirectory(prefix="remem-specrail-import-smoke-") as raw:
+        repo = Path(raw)
+        target_script = repo / "scripts" / "sync-specrail-checks.sh"
+        target_script.parent.mkdir(parents=True)
+        shutil.copy2(SYNC_SCRIPT, target_script)
+
+        lock_path = repo / "checks" / "specrail-sync.lock.json"
+        lock_path.parent.mkdir(parents=True)
+        lock = json.loads(
+            (ROOT / "checks" / "specrail-sync.lock.json").read_text(encoding="utf-8")
+        )
+        for entry in lock["files"]:
+            source = ROOT / entry["path"]
+            target = repo / entry["path"]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+
+        broken = repo / "checks" / "duplicate_work_gate.py"
+        broken.write_text(
+            broken.read_text(encoding="utf-8")
+            + "\nimport specrail_missing_import_smoke\n",
+            encoding="utf-8",
+        )
+        for entry in lock["files"]:
+            if entry["path"] == "checks/duplicate_work_gate.py":
+                entry["sha256"] = hashlib.sha256(broken.read_bytes()).hexdigest()
+                break
+        lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
+
+        completed = subprocess.run(
+            [str(target_script), "--verify"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert completed.returncode != 0, "missing managed helper must fail --verify"
+        assert "specrail_missing_import_smoke" in completed.stderr
+
+
 def main() -> int:
     assert_ordered(ci_run_commands(), "CI")
 
@@ -55,6 +110,7 @@ def main() -> int:
     steps = module.fast_steps("origin/main", "HEAD")
     preflight_commands = [tuple(command) for _name, command in steps]
     assert_ordered(preflight_commands, "fast/full preflight")
+    assert_managed_import_smoke()
 
     print("SpecRail gate wiring test passed")
     return 0

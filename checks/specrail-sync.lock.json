@@ -14,6 +14,10 @@
       "sha256": "eab228a33d84a43cde1ba3587d5edde50993ae11c5c5a522ee8d01b64b284d55"
     },
     {
+      "path": "checks/github_approved_spec_evidence.py",
+      "sha256": "ea45b35e684d87d0692a68a833005abb3995e36478fb1ee79ad79f9807cf0785"
+    },
+    {
       "path": "checks/github_evidence_common.py",
       "sha256": "5494a59c862957cbfd8dc1c1399f18dbc84025b615e85fbe02a29bdfde6fb6ab"
     },
@@ -28,6 +32,10 @@
     {
       "path": "checks/github_pr_evidence.py",
       "sha256": "0db583bc37535b99954221fcae714e8efb9e41f5b7c6ae695a457514118b20c2"
+    },
+    {
+      "path": "checks/github_pr_snapshot.py",
+      "sha256": "ccc3dd834b07043c3f8b7f8d44cb893ad8e462ded0b2f62d8aae871f80549e12"
     },
     {
       "path": "checks/pack_asset_validation.py",
@@ -52,6 +60,10 @@
     {
       "path": "checks/runtime_ledger_gate.py",
       "sha256": "6fe626cfd436a421416446b2bbd5e1f1dfebe66662cb9887354d303a779db090"
+    },
+    {
+      "path": "checks/sensitive_enforcement.py",
+      "sha256": "75f8fb814610b2a2957b8ff3d6a34d93ad460d1bedb541285df9fb306cc51d1f"
     },
     {
       "path": "checks/specrail_lib.py",

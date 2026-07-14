@@ -16,16 +16,19 @@ LOCK_FILE="$REPO_ROOT/checks/specrail-sync.lock.json"
 SYNCED_FILES=(
   "checks/duplicate_work_gate.py"
   "checks/github_duplicate_evidence.py"
+  "checks/github_approved_spec_evidence.py"
   "checks/github_evidence_common.py"
   "checks/github_issue_evidence.py"
   "checks/github_issue_reference.py"
   "checks/github_pr_evidence.py"
+  "checks/github_pr_snapshot.py"
   "checks/pack_asset_validation.py"
   "checks/pr_gate.py"
   "checks/review_json_gate.py"
   "checks/route_gate.py"
   "checks/runtime_gate_rules.py"
   "checks/runtime_ledger_gate.py"
+  "checks/sensitive_enforcement.py"
   "checks/specrail_lib.py"
   "schemas/duplicate_work_evidence.schema.json"
   "schemas/pr_review_gate.schema.json"
@@ -62,17 +65,21 @@ PY
 }
 
 verify_lock() {
-  python3 - "$LOCK_FILE" <<'PY'
+  python3 - "$LOCK_FILE" "${SYNCED_FILES[@]}" <<'PY'
 import hashlib
 import json
 import os
 import sys
 
-lock_path = sys.argv[1]
+lock_path, *expected_files = sys.argv[1:]
 repo_root = os.path.dirname(os.path.dirname(os.path.abspath(lock_path)))
 with open(lock_path) as fh:
     lock = json.load(fh)
 failed = False
+locked_files = [entry["path"] for entry in lock["files"]]
+if locked_files != expected_files:
+    print("DRIFT: sync script managed set does not match lock")
+    failed = True
 for entry in lock["files"]:
     path = os.path.join(repo_root, entry["path"])
     if not os.path.exists(path):
@@ -91,12 +98,46 @@ print(f"ok: {len(lock['files'])} files match lock (upstream {lock['upstream_sha'
 PY
 }
 
+verify_python_imports() {
+  python3 - "$LOCK_FILE" "$REPO_ROOT" <<'PY'
+import importlib
+import json
+import sys
+from pathlib import Path
+
+lock_path = Path(sys.argv[1])
+repo_root = Path(sys.argv[2])
+with lock_path.open(encoding="utf-8") as fh:
+    lock = json.load(fh)
+
+checks_dir = repo_root / "checks"
+sys.path.insert(0, str(checks_dir))
+for entry in lock["files"]:
+    relative_path = Path(entry["path"])
+    if relative_path.parent != Path("checks") or relative_path.suffix != ".py":
+        continue
+    module_name = relative_path.stem
+    try:
+        importlib.import_module(module_name)
+    except BaseException as exc:
+        print(
+            f"IMPORT FAILED: {entry['path']}: "
+            f"{type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from exc
+
+print("ok: managed SpecRail Python import closure")
+PY
+}
+
 verify_workflow() {
   python3 "$REPO_ROOT/checks/check_workflow.py" --repo "$REPO_ROOT"
 }
 
 if [[ "${1:-}" == "--verify" ]]; then
   verify_lock
+  verify_python_imports
   verify_workflow
   exit 0
 fi
@@ -112,4 +153,5 @@ for rel in "${SYNCED_FILES[@]}"; do
   cp "$UPSTREAM/$rel" "$REPO_ROOT/$rel"
 done
 write_lock "$upstream_sha"
+verify_python_imports
 verify_workflow
