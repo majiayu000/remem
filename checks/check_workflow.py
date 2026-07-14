@@ -19,6 +19,7 @@ from specrail_lib import (
     validate_state_graph,
     validate_skills_lock,
 )
+from sensitive_enforcement import validate_sensitive_registry
 
 
 REQUIRED_FILES = [
@@ -365,6 +366,7 @@ def main() -> int:
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
+        errors.extend(validate_sensitive_registry(config))
         errors.extend(validate_skills_lock(repo))
         errors.extend(validate_template_parity(repo))
         for spec_dir in select_spec_packet_dirs(

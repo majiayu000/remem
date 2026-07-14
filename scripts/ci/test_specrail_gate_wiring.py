@@ -25,6 +25,23 @@ TRANCHE_TEMPLATES = (
     "templates/tranche_checkpoint.md",
     "templates/zh-CN/tranche_checkpoint.md",
 )
+WORKFLOW_PACK_DIRS = (
+    "checks",
+    "policies",
+    "review",
+    "schemas",
+    "skills",
+    "templates",
+    "tools",
+)
+WORKFLOW_PACK_FILES = (
+    "AGENT_USAGE.md",
+    "AGENTS.md",
+    "labels.yaml",
+    "skills-lock.json",
+    "states.yaml",
+    "workflow.yaml",
+)
 
 
 def load_preflight() -> ModuleType:
@@ -195,6 +212,106 @@ def assert_trusted_asset_validators() -> None:
     ) == ["schema marker", "template marker"]
 
 
+def copy_workflow_pack(repo: Path) -> None:
+    for relative_path in WORKFLOW_PACK_DIRS:
+        shutil.copytree(
+            ROOT / relative_path,
+            repo / relative_path,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+    for relative_path in WORKFLOW_PACK_FILES:
+        shutil.copy2(ROOT / relative_path, repo / relative_path)
+    target_script = repo / "scripts" / "sync-specrail-checks.sh"
+    target_script.parent.mkdir(parents=True)
+    shutil.copy2(SYNC_SCRIPT, target_script)
+
+
+def assert_invalid_sensitive_registries_fail() -> None:
+    invalid_registries = (
+        (
+            "scalar paths",
+            '    paths: "src/**"\n',
+            "enforcement.sensitive_registry.paths must be a list",
+        ),
+        (
+            "scalar specs",
+            '    specs: "specs/**"\n',
+            "enforcement.sensitive_registry.specs must be a list",
+        ),
+        (
+            "unknown key",
+            "    branches:\n      - main\n",
+            "enforcement.sensitive_registry contains unsupported fields: branches",
+        ),
+        (
+            "escaping path",
+            '    paths:\n      - "../secrets/**"\n',
+            "enforcement.sensitive_registry.paths[1] must stay within the repository",
+        ),
+        (
+            "absolute path",
+            '    paths:\n      - "/etc/**"\n',
+            "enforcement.sensitive_registry.paths[1] must stay within the repository",
+        ),
+        (
+            "Windows drive path",
+            '    paths:\n      - "C:/secrets/**"\n',
+            "enforcement.sensitive_registry.paths[1] must stay within the repository",
+        ),
+        (
+            "empty pattern",
+            '    paths:\n      - ""\n',
+            "enforcement.sensitive_registry.paths[1] must be a non-empty string",
+        ),
+    )
+
+    with tempfile.TemporaryDirectory(prefix="remem-specrail-registry-smoke-") as raw:
+        repo = Path(raw)
+        copy_workflow_pack(repo)
+        baseline = (repo / "workflow.yaml").read_text(encoding="utf-8")
+        for label, registry, expected_error in invalid_registries:
+            (repo / "workflow.yaml").write_text(
+                baseline
+                + "\n"
+                + "enforcement:\n"
+                + "  sensitive_registry:\n"
+                + registry,
+                encoding="utf-8",
+            )
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    str(repo / "checks" / "check_workflow.py"),
+                    "--repo",
+                    str(repo),
+                ],
+                cwd=repo,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            assert completed.returncode != 0, (
+                f"invalid sensitive registry unexpectedly passed: {label}"
+            )
+            assert expected_error in completed.stdout, (
+                f"invalid sensitive registry did not report {label}: "
+                f"{completed.stdout}{completed.stderr}"
+            )
+
+        sync_completed = subprocess.run(
+            [str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert sync_completed.returncode != 0, (
+            "sync --verify must fail an invalid sensitive registry"
+        )
+        assert "SpecRail check passed" not in sync_completed.stdout
+        assert invalid_registries[-1][2] in sync_completed.stdout
+
+
 def main() -> int:
     assert_ordered(ci_run_commands(), "CI")
 
@@ -205,6 +322,7 @@ def main() -> int:
     assert_managed_import_smoke()
     assert_missing_tranche_template_fails()
     assert_trusted_asset_validators()
+    assert_invalid_sensitive_registries_fail()
 
     print("SpecRail gate wiring test passed")
     return 0
