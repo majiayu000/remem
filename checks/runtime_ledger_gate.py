@@ -25,7 +25,7 @@ from runtime_gate_rules import (
     _validate_self_review_authorization,
     _validate_tranche_mix,
 )
-from specrail_lib import PackConfig, SPEC_STATUSES, load_pack, resolve_path
+from specrail_lib import SPEC_STATUSES
 
 
 MERGE_READY_STATES = {"complete", "merge_ready", "ready_to_merge", "merged"}
@@ -97,20 +97,6 @@ def _item_label(item: dict[str, Any], index: int) -> str:
     return f"item #{index}"
 
 
-def _validate_enforcement_sensitive(
-    item: dict[str, Any], label: str, errors: list[str]
-) -> None:
-    if "enforcement_sensitive" not in item:
-        return
-    value = item["enforcement_sensitive"]
-    if value is None:
-        return
-    if not isinstance(value, bool):
-        errors.append(
-            f"{label}: enforcement_sensitive must be a boolean or null when present"
-        )
-
-
 def _is_yes(value: Any) -> bool:
     if value is True:
         return True
@@ -168,25 +154,18 @@ def _validate_pr_gate_artifact(
     evidence: Any,
     label: str,
     errors: list[str],
-    repo: Path | None,
-    config: PackConfig | None,
-) -> dict[str, Any] | None:
+) -> None:
     path = _resolve_local_evidence_path(evidence)
     if path is None:
-        if raw_item.get("enforcement_sensitive") is True:
-            errors.append(
-                f"{label}: sensitive item requires local machine-readable "
-                "pr_gate evidence"
-            )
-        return None
+        return
     payload = _load_local_json(path, f"{label}: pr_gate", errors)
     if payload is None:
-        return None
+        return
 
     if "decision" in payload:
         result = payload
     else:
-        result = evaluate_pr_gate(payload, repo=repo, config=config)
+        result = evaluate_pr_gate(payload)
 
     if result.get("decision") != "allowed":
         reasons = result.get("reasons")
@@ -200,13 +179,6 @@ def _validate_pr_gate_artifact(
     item_head = raw_item.get("head_sha")
     if item_head and result.get("head_sha") and result.get("head_sha") != item_head:
         errors.append(f"{label}: pr_gate evidence head_sha must match item head_sha")
-    if raw_item.get("enforcement_sensitive") is True and result.get(
-        "enforcement_sensitive"
-    ) is not True:
-        errors.append(
-            f"{label}: sensitive item requires enforcement-sensitive pr_gate evidence"
-        )
-    return result
 
 
 def _thread_dispatch_gate(data: dict[str, Any]) -> dict[str, Any]:
@@ -356,13 +328,6 @@ def _validate_full_queue_checkpoint(
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
-        _validate_enforcement_sensitive(raw_item, label, errors)
-        if raw_item.get("enforcement_sensitive") is True and not raw_item.get(
-            "approved_spec_evidence"
-        ):
-            errors.append(
-                f"{label}: enforcement-sensitive item requires approved_spec_evidence"
-            )
         spec_status = _validate_spec_status(
             raw_item.get("spec_status"),
             label,
@@ -383,9 +348,7 @@ def _validate_full_queue_checkpoint(
                 )
 
 
-def evaluate_checkpoint(
-    data: dict[str, Any], *, repo: Path | None = None, config: PackConfig | None = None
-) -> dict[str, Any]:
+def evaluate_checkpoint(data: dict[str, Any]) -> dict[str, Any]:
     errors: list[str] = []
     warnings: list[str] = []
     satisfied: list[str] = []
@@ -474,7 +437,6 @@ def evaluate_checkpoint(
             errors.append(f"{label}: state is required")
         if not raw_item.get("next_action"):
             errors.append(f"{label}: next_action is required")
-        _validate_enforcement_sensitive(raw_item, label, errors)
         if queue_mode == "full_queue_drain" and (raw_item.get("issue") or raw_item.get("pr")):
             spec_status = _validate_spec_status(
                 raw_item.get("spec_status"),
@@ -588,9 +550,7 @@ def evaluate_checkpoint(
             if not pr_gate.get("evidence"):
                 errors.append(f"{label}: merge-ready state requires pr_gate evidence")
             else:
-                _validate_pr_gate_artifact(
-                    raw_item, pr_gate.get("evidence"), label, errors, repo, config
-                )
+                _validate_pr_gate_artifact(raw_item, pr_gate.get("evidence"), label, errors)
             if not pr_gate.get("checked_at"):
                 errors.append(f"{label}: merge-ready state requires pr_gate checked_at")
             if pr_gate.get("head_sha") != head_sha:
@@ -629,16 +589,12 @@ def evaluate_checkpoint(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Evaluate a SpecRail runtime checkpoint.")
     parser.add_argument("--checkpoint", required=True, help="Path to runtime checkpoint JSON")
-    parser.add_argument("--repo", help="Repository root for raw sensitive PR evidence")
     parser.add_argument("--json", action="store_true", help="Print machine-readable result")
     args = parser.parse_args()
 
     try:
         data = _load_json(Path(args.checkpoint))
-        repo = resolve_path(Path(args.repo), label="repository") if args.repo else None
-        result = evaluate_checkpoint(
-            data, repo=repo, config=load_pack(repo) if repo is not None else None
-        )
+        result = evaluate_checkpoint(data)
     except ValueError as exc:
         result = {
             "decision": "blocked",

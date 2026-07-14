@@ -112,7 +112,7 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
             ["python3", "scripts/ci/test_specrail_gate_wiring.py"],
         ),
         (
-            "Verify SpecRail sync runtime contract",
+            "Verify synced SpecRail checks",
             ["scripts/sync-specrail-checks.sh", "--verify"],
         ),
         ("Check plugin version sync", ["python3", "scripts/ci/check_plugin_version_sync.py"]),

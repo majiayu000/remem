@@ -16,26 +16,20 @@ LOCK_FILE="$REPO_ROOT/checks/specrail-sync.lock.json"
 SYNCED_FILES=(
   "checks/duplicate_work_gate.py"
   "checks/github_duplicate_evidence.py"
-  "checks/github_approved_spec_evidence.py"
   "checks/github_evidence_common.py"
   "checks/github_issue_evidence.py"
   "checks/github_issue_reference.py"
   "checks/github_pr_evidence.py"
-  "checks/github_pr_snapshot.py"
-  "checks/pack_asset_validation.py"
   "checks/pr_gate.py"
   "checks/review_json_gate.py"
   "checks/route_gate.py"
   "checks/runtime_gate_rules.py"
   "checks/runtime_ledger_gate.py"
-  "checks/sensitive_enforcement.py"
   "checks/specrail_lib.py"
   "schemas/duplicate_work_evidence.schema.json"
   "schemas/pr_review_gate.schema.json"
   "schemas/review_result.schema.json"
   "schemas/runtime_checkpoint.schema.json"
-  "templates/tranche_checkpoint.md"
-  "templates/zh-CN/tranche_checkpoint.md"
 )
 
 write_lock() {
@@ -78,11 +72,19 @@ repo_root = os.path.dirname(os.path.dirname(os.path.abspath(lock_path)))
 with open(lock_path) as fh:
     lock = json.load(fh)
 failed = False
-locked_files = [entry["path"] for entry in lock["files"]]
-if locked_files != expected_files:
-    print("DRIFT: sync script managed set does not match lock")
+entries = lock.get("files")
+if not isinstance(entries, list):
+    print("INVALID: lock files must be a list")
+    sys.exit(1)
+lock_files = [entry.get("path") for entry in entries if isinstance(entry, dict)]
+if len(lock_files) != len(entries) or lock_files != expected_files:
+    print("INVALID: sync managed file list does not match lock")
+    print(f"script: {expected_files}")
+    print(f"lock:   {lock_files}")
     failed = True
-for entry in lock["files"]:
+for entry in entries:
+    if not isinstance(entry, dict):
+        continue
     path = os.path.join(repo_root, entry["path"])
     if not os.path.exists(path):
         print(f"MISSING: {entry['path']}")
@@ -118,13 +120,11 @@ for entry in lock["files"]:
     relative_path = Path(entry["path"])
     if relative_path.parent != Path("checks") or relative_path.suffix != ".py":
         continue
-    module_name = relative_path.stem
     try:
-        importlib.import_module(module_name)
+        importlib.import_module(relative_path.stem)
     except BaseException as exc:
         print(
-            f"IMPORT FAILED: {entry['path']}: "
-            f"{type(exc).__name__}: {exc}",
+            f"IMPORT FAILED: {entry['path']}: {type(exc).__name__}: {exc}",
             file=sys.stderr,
         )
         raise SystemExit(1) from exc
@@ -155,5 +155,6 @@ for rel in "${SYNCED_FILES[@]}"; do
   cp "$UPSTREAM/$rel" "$REPO_ROOT/$rel"
 done
 write_lock "$upstream_sha"
+verify_lock
 verify_python_imports
 verify_workflow

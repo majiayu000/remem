@@ -23,9 +23,7 @@ SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
     "items",
     "minItems",
     "minLength",
-    "minProperties",
     "minimum",
-    "pattern",
     "properties",
     "required",
     "type",
@@ -259,41 +257,11 @@ def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> Non
         if len(data) < int(schema["minLength"]):
             raise SpecRailError(f"{path}: string is shorter than minLength")
 
-    if "pattern" in schema:
-        if not isinstance(data, str):
-            raise SpecRailError(f"{path}: pattern requires a string instance")
-        pattern = schema["pattern"]
-        if not isinstance(pattern, str):
-            raise SpecRailError(f"{path}: pattern must be a string")
-        try:
-            matched = re.search(pattern, data)
-        except re.error as exc:
-            raise SpecRailError(f"{path}: invalid pattern: {exc}") from exc
-        if matched is None:
-            raise SpecRailError(f"{path}: string does not match pattern")
-
     if "minItems" in schema:
         if not isinstance(data, list):
             raise SpecRailError(f"{path}: minItems requires an array instance")
         if len(data) < int(schema["minItems"]):
             raise SpecRailError(f"{path}: array is shorter than minItems")
-
-    if "minProperties" in schema:
-        threshold = schema["minProperties"]
-        if (
-            isinstance(threshold, bool)
-            or not isinstance(threshold, int)
-            or threshold < 0
-        ):
-            raise SpecRailError(
-                f"{path}: minProperties must be a non-negative integer"
-            )
-        if not isinstance(data, dict):
-            raise SpecRailError(f"{path}: minProperties requires an object instance")
-        if len(data) < threshold:
-            raise SpecRailError(
-                f"{path}: object has fewer properties than minProperties"
-            )
 
     if "minimum" in schema:
         if not _json_type_matches(data, "number"):
