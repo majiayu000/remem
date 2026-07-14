@@ -741,6 +741,9 @@ pub(in crate::cli) enum PendingAction {
     },
     /// Requeue exhausted extraction event ranges.
     RetryExtractionRanges {
+        /// Requeue exactly one range by ID.
+        #[arg(long, conflicts_with_all = ["project", "limit"])]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
         #[arg(long, short = 'n', default_value = "100")]
@@ -750,6 +753,9 @@ pub(in crate::cli) enum PendingAction {
     },
     /// Quarantine exhausted extraction event ranges.
     QuarantineExtractionRanges {
+        /// Quarantine exactly one range by ID.
+        #[arg(long, conflicts_with_all = ["project", "limit"])]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
         #[arg(long, short = 'n', default_value = "100")]

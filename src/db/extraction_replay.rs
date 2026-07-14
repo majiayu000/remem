@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use rusqlite::{params, Connection};
 use serde::Serialize;
 
@@ -88,6 +88,7 @@ pub fn count_retryable_extraction_replay_ranges(
 fn query_retryable_replay_range_ids(
     conn: &Connection,
     project: Option<&str>,
+    range_id: Option<i64>,
     limit: i64,
 ) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare(
@@ -103,11 +104,47 @@ fn query_retryable_replay_range_ids(
                AND t.status IN ('pending', 'processing')
            )
            AND (?1 IS NULL OR p.project_path = ?1)
+           AND (?2 IS NULL OR r.id = ?2)
          ORDER BY r.updated_at_epoch ASC, r.id ASC
-         LIMIT ?2",
+         LIMIT ?3",
     )?;
-    let rows = stmt.query_map(params![project, limit.max(1)], |row| row.get::<_, i64>(0))?;
+    let rows = stmt.query_map(params![project, range_id, limit.max(1)], |row| {
+        row.get::<_, i64>(0)
+    })?;
     crate::db::query::collect_rows(rows)
+}
+
+pub fn ensure_extraction_replay_range_retryable(conn: &Connection, range_id: i64) -> Result<()> {
+    ensure!(range_id > 0, "extraction replay range id must be positive");
+    let range_ids = query_retryable_replay_range_ids(conn, None, Some(range_id), 1)?;
+    ensure!(
+        range_ids == [range_id],
+        "extraction replay range {range_id} is not retryable"
+    );
+    Ok(())
+}
+
+pub fn retry_extraction_replay_range(conn: &Connection, range_id: i64) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    ensure_extraction_replay_range_retryable(&tx, range_id)?;
+    enqueue_replay_extraction_task(&tx, range_id)?;
+    tx.commit()?;
+    Ok(())
+}
+
+pub fn quarantine_extraction_replay_range(conn: &Connection, range_id: i64) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    ensure_extraction_replay_range_retryable(&tx, range_id)?;
+    let now = chrono::Utc::now().timestamp();
+    tx.execute(
+        "UPDATE extraction_replay_ranges
+         SET status = 'quarantined', updated_at_epoch = ?1
+         WHERE id = ?2",
+        params![now, range_id],
+    )?;
+    clear_terminal_failures_for_quiesced_range(&tx, range_id, now)?;
+    tx.commit()?;
+    Ok(())
 }
 
 pub fn retry_extraction_replay_ranges(
@@ -116,7 +153,7 @@ pub fn retry_extraction_replay_ranges(
     limit: i64,
 ) -> Result<usize> {
     let tx = conn.unchecked_transaction()?;
-    let range_ids = query_retryable_replay_range_ids(&tx, project, limit)?;
+    let range_ids = query_retryable_replay_range_ids(&tx, project, None, limit)?;
     for range_id in &range_ids {
         enqueue_replay_extraction_task(&tx, *range_id)?;
     }
@@ -130,7 +167,7 @@ pub fn quarantine_extraction_replay_ranges(
     limit: i64,
 ) -> Result<usize> {
     let tx = conn.unchecked_transaction()?;
-    let range_ids = query_retryable_replay_range_ids(&tx, project, limit)?;
+    let range_ids = query_retryable_replay_range_ids(&tx, project, None, limit)?;
     let now = chrono::Utc::now().timestamp();
     for range_id in &range_ids {
         tx.execute(
