@@ -8,8 +8,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::{
-    artifact_path_for_project, evaluate_artifact_file, EvaluationInput, EvaluationVerdict,
-    RuleMatch,
+    artifact_path_for_project, evaluate_artifact_file, EvaluationDiagnosticCode, EvaluationInput,
+    EvaluationVerdict, RuleMatch,
 };
 
 #[derive(Debug, Deserialize)]
@@ -24,8 +24,10 @@ struct PreToolUsePayload {
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuleHookEvaluation {
     pub session_id: Option<String>,
+    pub project: Option<String>,
     pub output: Option<Value>,
     pub diagnostics: Vec<String>,
+    pub diagnostic_codes: Vec<EvaluationDiagnosticCode>,
 }
 
 pub fn session_id_hint(raw: &str) -> Option<String> {
@@ -52,8 +54,10 @@ pub fn evaluate_pre_tool_use(
     if !enabled {
         return Ok(RuleHookEvaluation {
             session_id: session_id_hint(raw),
+            project: None,
             output: None,
             diagnostics: Vec::new(),
+            diagnostic_codes: Vec::new(),
         });
     }
 
@@ -84,6 +88,11 @@ pub fn evaluate_pre_tool_use(
             command: command.to_string(),
         },
     );
+    let diagnostic_codes = outcome
+        .diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect::<Vec<_>>();
     let diagnostics = outcome
         .diagnostics
         .into_iter()
@@ -92,16 +101,31 @@ pub fn evaluate_pre_tool_use(
     if !diagnostics.is_empty() {
         return Ok(RuleHookEvaluation {
             session_id: payload.session_id,
+            project: Some(project),
             output: None,
             diagnostics,
+            diagnostic_codes,
         });
     }
 
     Ok(RuleHookEvaluation {
         session_id: payload.session_id,
+        project: Some(project),
         output: render_hook_output(outcome.verdict, &outcome.matches),
         diagnostics,
+        diagnostic_codes,
     })
+}
+
+pub fn sync_evaluation_diagnostic(data_dir: &Path, evaluated: &RuleHookEvaluation) -> Result<()> {
+    let Some(project) = evaluated.project.as_deref() else {
+        return Ok(());
+    };
+    if evaluated.diagnostics.is_empty() {
+        super::clear_evaluation_error(data_dir, project)
+    } else {
+        super::record_evaluation_error(data_dir, project, &evaluated.diagnostic_codes)
+    }
 }
 
 fn render_hook_output(verdict: EvaluationVerdict, matches: &[RuleMatch]) -> Option<Value> {

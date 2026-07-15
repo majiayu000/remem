@@ -91,6 +91,35 @@ fn missing_artifact_fails_open_with_diagnostic() -> Result<()> {
     assert!(evaluated.output.is_none());
     assert_eq!(evaluated.diagnostics.len(), 1);
     assert!(evaluated.diagnostics[0].contains("artifact missing"));
+    sync_evaluation_diagnostic(&data_dir, &evaluated)?;
+    let project_key = crate::db::project_from_cwd(&project.to_string_lossy());
+    let record = crate::rules::load_evaluation_error(&data_dir, &project_key)?
+        .context("evaluation diagnostic sidecar")?;
+    assert_eq!(
+        record.codes,
+        vec![crate::rules::EvaluationDiagnosticCode::ArtifactMissing]
+    );
+    Ok(())
+}
+
+#[test]
+fn successful_evaluation_clears_prior_error_sidecar() -> Result<()> {
+    let data_dir = test_dir("hook-recovery-data");
+    let project = test_dir("hook-recovery-project");
+    std::fs::create_dir_all(&project)?;
+    let input = hook_input(&project, "session-recovery", "npm install");
+
+    let failed = evaluate_pre_tool_use(&input, Some("claude-code"), &data_dir, true)?;
+    sync_evaluation_diagnostic(&data_dir, &failed)?;
+    write_rule(&data_dir, &project, RuleAction::Warn)?;
+    let recovered = evaluate_pre_tool_use(&input, Some("claude-code"), &data_dir, true)?;
+    sync_evaluation_diagnostic(&data_dir, &recovered)?;
+
+    let project_key = crate::db::project_from_cwd(&project.to_string_lossy());
+    assert_eq!(
+        crate::rules::load_evaluation_error(&data_dir, &project_key)?,
+        None
+    );
     Ok(())
 }
 

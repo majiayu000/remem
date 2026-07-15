@@ -138,12 +138,24 @@ fn run_rules_eval(host: Option<RuleHostArg>) -> Result<()> {
         }
     };
     if !evaluated.diagnostics.is_empty() {
+        let diagnostic_sync = rules::sync_evaluation_diagnostic(&data_dir, &evaluated);
+        let mut diagnostics = evaluated.diagnostics;
+        if let Err(error) = diagnostic_sync {
+            diagnostics.push(format!("persist evaluation diagnostic: {error:#}"));
+        }
         rules::log_evaluation_error_once(
             &data_dir,
             evaluated.session_id.as_deref(),
-            &evaluated.diagnostics.join("; "),
+            &diagnostics.join("; "),
         );
         return Ok(());
+    }
+    if let Err(error) = rules::sync_evaluation_diagnostic(&data_dir, &evaluated) {
+        rules::log_evaluation_error_once(
+            &data_dir,
+            evaluated.session_id.as_deref(),
+            &format!("clear recovered evaluation diagnostic: {error:#}"),
+        );
     }
     if let Some(output) = evaluated.output {
         match serde_json::to_string(&output) {

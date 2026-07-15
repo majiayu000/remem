@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::rules::artifact::{CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate};
-use crate::rules::store::{load_artifact_fail_open, ArtifactLoad};
+use crate::rules::store::{load_artifact_fail_open, ArtifactLoad, ArtifactLoadErrorKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationInput {
@@ -32,8 +34,31 @@ pub struct RuleMatch {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationDiagnostic {
+    pub code: EvaluationDiagnosticCode,
     pub status: EvaluationDiagnosticStatus,
     pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvaluationDiagnosticCode {
+    ArtifactMissing,
+    ArtifactRead,
+    ArtifactParse,
+    ArtifactValidate,
+    RuleEvaluation,
+}
+
+impl EvaluationDiagnosticCode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactMissing => "artifact_missing",
+            Self::ArtifactRead => "artifact_read",
+            Self::ArtifactParse => "artifact_parse",
+            Self::ArtifactValidate => "artifact_validate",
+            Self::RuleEvaluation => "rule_evaluation",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,6 +86,7 @@ pub fn evaluate_artifact(
             }),
             Ok(false) => {}
             Err(message) => diagnostics.push(EvaluationDiagnostic {
+                code: EvaluationDiagnosticCode::RuleEvaluation,
                 status: EvaluationDiagnosticStatus::Error,
                 message,
             }),
@@ -88,14 +114,24 @@ pub fn evaluate_artifact_file(
 ) -> EvaluationOutcome {
     match load_artifact_fail_open(path) {
         ArtifactLoad::Loaded(artifact) => evaluate_artifact(&artifact, input),
-        ArtifactLoad::FailOpen { message, .. } => EvaluationOutcome {
+        ArtifactLoad::FailOpen { kind, message } => EvaluationOutcome {
             verdict: EvaluationVerdict::Allow,
             matches: Vec::new(),
             diagnostics: vec![EvaluationDiagnostic {
+                code: diagnostic_code_for_artifact_error(kind),
                 status: EvaluationDiagnosticStatus::Error,
                 message,
             }],
         },
+    }
+}
+
+fn diagnostic_code_for_artifact_error(kind: ArtifactLoadErrorKind) -> EvaluationDiagnosticCode {
+    match kind {
+        ArtifactLoadErrorKind::Missing => EvaluationDiagnosticCode::ArtifactMissing,
+        ArtifactLoadErrorKind::Read => EvaluationDiagnosticCode::ArtifactRead,
+        ArtifactLoadErrorKind::Parse => EvaluationDiagnosticCode::ArtifactParse,
+        ArtifactLoadErrorKind::Validate => EvaluationDiagnosticCode::ArtifactValidate,
     }
 }
 

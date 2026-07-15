@@ -1,5 +1,6 @@
 mod artifact;
 mod compiler;
+mod diagnostics;
 mod evaluator;
 mod hook;
 mod management;
@@ -14,12 +15,17 @@ pub use compiler::{
     run_compile_rules_job, run_compile_rules_sweep, CompileOutcome, CompileSweepOutcome,
     PreferenceClassification, PreferencePredicate,
 };
+pub use diagnostics::{
+    clear_evaluation_error, evaluation_error_path, load_evaluation_error, record_evaluation_error,
+    EvaluationErrorRecord,
+};
 pub use evaluator::{
-    evaluate_artifact, evaluate_artifact_file, EvaluationDiagnostic, EvaluationInput,
-    EvaluationOutcome, EvaluationVerdict, RuleMatch,
+    evaluate_artifact, evaluate_artifact_file, EvaluationDiagnostic, EvaluationDiagnosticCode,
+    EvaluationInput, EvaluationOutcome, EvaluationVerdict, RuleMatch,
 };
 pub use hook::{
-    evaluate_pre_tool_use, log_evaluation_error_once, session_id_hint, RuleHookEvaluation,
+    evaluate_pre_tool_use, log_evaluation_error_once, session_id_hint, sync_evaluation_diagnostic,
+    RuleHookEvaluation,
 };
 pub use management::{list_project_rules, set_rule_action, set_rule_disabled, ProjectRules};
 pub use store::{
