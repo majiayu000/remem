@@ -14,6 +14,8 @@ const EVALUATION_MARKER_DIR: &str = ".evaluation-error-sessions";
 #[serde(deny_unknown_fields)]
 struct EvaluationErrorMarker {
     version: u32,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    recovered_corruption: bool,
     records: Vec<EvaluationErrorRecord>,
 }
 
@@ -21,6 +23,7 @@ impl Default for EvaluationErrorMarker {
     fn default() -> Self {
         Self {
             version: EVALUATION_DIAGNOSTIC_VERSION,
+            recovered_corruption: false,
             records: Vec::new(),
         }
     }
@@ -68,12 +71,21 @@ pub(crate) fn upsert_evaluation_error_record(
     let project_key = project.map(|project| project_key(data_dir, project));
     let (mut marker, should_log) = match fs::read(marker_path) {
         Ok(contents) if contents.is_empty() => (EvaluationErrorMarker::default(), false),
-        Ok(contents) => {
-            let marker: EvaluationErrorMarker = serde_json::from_slice(&contents)
-                .context("parse evaluation error session marker")?;
-            validate_marker(&marker)?;
-            (marker, false)
-        }
+        Ok(contents) => match serde_json::from_slice(&contents)
+            .context("parse evaluation error session marker")
+            .and_then(|marker| {
+                validate_marker(&marker)?;
+                Ok(marker)
+            }) {
+            Ok(marker) => (marker, false),
+            Err(_) => (
+                EvaluationErrorMarker {
+                    recovered_corruption: true,
+                    ..EvaluationErrorMarker::default()
+                },
+                false,
+            ),
+        },
         Err(error) if error.kind() == ErrorKind::NotFound => {
             (EvaluationErrorMarker::default(), true)
         }
@@ -162,6 +174,7 @@ pub(crate) fn load_evaluation_error(
             snapshot.corrupt_markers += 1;
             continue;
         }
+        snapshot.corrupt_markers += usize::from(marker.recovered_corruption);
         for record in marker
             .records
             .into_iter()
@@ -360,6 +373,42 @@ mod tests {
             snapshot.latest.context("valid marker")?.codes,
             vec![EvaluationDiagnosticCode::ArtifactParse]
         );
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_session_marker_is_recovered_without_relogging() -> Result<()> {
+        let data_dir = test_dir("evaluation-error-corrupt-recovery");
+        let marker = evaluation_marker_dir(&data_dir).join("session-hash");
+        fs::create_dir_all(marker.parent().context("marker directory")?)?;
+        fs::write(&marker, b"{private-corrupt-payload")?;
+
+        assert!(!upsert_evaluation_error_record(
+            &marker,
+            &data_dir,
+            Some("/repo"),
+            &[EvaluationDiagnosticCode::ArtifactMissing],
+        )?);
+        let snapshot = load_evaluation_error(&data_dir, "/repo")?;
+        assert_eq!(snapshot.corrupt_markers, 1);
+        assert_eq!(
+            snapshot.latest.context("recovered marker")?.codes,
+            vec![EvaluationDiagnosticCode::ArtifactMissing]
+        );
+        assert!(!upsert_evaluation_error_record(
+            &marker,
+            &data_dir,
+            Some("/repo/two"),
+            &[EvaluationDiagnosticCode::ArtifactParse],
+        )?);
+        assert_eq!(
+            load_evaluation_error(&data_dir, "/repo/two")?
+                .latest
+                .context("second project record")?
+                .codes,
+            vec![EvaluationDiagnosticCode::ArtifactParse]
+        );
+        assert!(!fs::read_to_string(marker)?.contains("private-corrupt-payload"));
         Ok(())
     }
 
