@@ -114,11 +114,19 @@ fn overrides_round_trip_through_artifact_deletion_and_recompile() -> Result<()> 
     std::fs::remove_file(artifact_path_for_project(&scoped.path, PROJECT))?;
     let regenerated = worker_rebuild(&scoped.path)?;
     assert!(regenerated.rules[0].override_state.disabled);
+    assert_eq!(
+        regenerated.rules[0].override_state.action_override,
+        Some(RuleAction::Warn)
+    );
     assert_eq!(regenerated.rules[0].effective_action(), RuleAction::Warn);
 
     set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", false)?;
     let enabled = worker_rebuild(&scoped.path)?;
     assert!(!enabled.rules[0].override_state.disabled);
+    assert_eq!(
+        enabled.rules[0].override_state.action_override,
+        Some(RuleAction::Warn)
+    );
     assert_eq!(enabled.rules[0].effective_action(), RuleAction::Warn);
     Ok(())
 }
