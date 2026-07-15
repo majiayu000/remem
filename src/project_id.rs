@@ -29,7 +29,7 @@ pub fn canonical_project_root(cwd: &str) -> PathBuf {
     canonical_project_root_with_resolver(
         &canonical_cwd,
         git_environment_requires_resolver(),
-        |path| crate::git_util::resolve_toplevel(path),
+        crate::git_util::resolve_toplevel,
     )
 }
 
