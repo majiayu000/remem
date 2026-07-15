@@ -5,10 +5,10 @@ Date: 2026-07-15
 
 Tracking:
 - Spec/tracking issue: #823
-- Product spec: docs/specs/cursor-hook-protocol/PRODUCT.md
+- Product spec: specs/GH823/product.md
 - Epic: #821 · Prerequisite PoC: #822
-- Review round: 3, the final autonomous spec-fix round; later findings require
-  an explicit human decision before another change.
+- Readiness: blocked on #822 real-host evidence and human approval; Cursor
+  summarize is additionally blocked on #825's verified transcript reader.
 
 ## Existing Implementation Facts
 
@@ -113,10 +113,17 @@ its blocked state.
   apply the same total single-root validation plus platform normalization used
   for `sessionStart`; the verified normalized root becomes cwd/project. Missing
   or wrong-typed identity, `[]`, `[""]`, mixed-empty, multi-root, or unverified
-  platform shapes return non-zero with zero writes. `tool_output` arrives
-  JSON-stringified — decode once, and on decode failure store the raw string
-  rather than dropping the event. Tool-name mapping table lives in one place;
-  unknown names pass through verbatim (B-007), never remapped.
+  platform shapes return non-zero with zero writes. Both `tool_input` and
+  `tool_output` arrive JSON-stringified. Before any classification or filter,
+  validate the encoded UTF-8 byte length, decode exactly once, serialize the
+  decoded JSON canonically, and validate that decoded byte length against one
+  numeric `CURSOR_TOOL_FIELD_MAX_BYTES` frozen by the #822 evidence and human
+  approval. Invalid nested JSON or either over-limit representation returns
+  non-zero before capture, spill, adapter dispatch, or raw-data diagnostics.
+  Tool-name mapping lives in one place; unknown names bypass known-tool
+  classification but still use the existing generic capture path with the
+  original `tool_name` and decoded input/output. They are never remapped or
+  discarded after diagnosis (B-007, B-015).
 - `src/summarize`: accept the Cursor `stop` shape only after #822 verifies its
   exact fields. Map required non-empty `conversation_id` to
   `SummarizeInput.session_id` before the existing missing-session early return,
@@ -127,13 +134,37 @@ its blocked state.
   or if the verified field is absent, blank, multi-root, or ambiguous, return
   non-zero before any enqueue, spill, or database write. After verification,
   map only one validated root/cwd to remem project identity; never fall back to
-  the process cwd or `CURSOR_PROJECT_DIR`. Decision (B-008): `aborted`/`error`
-  still preserve already captured events; the LLM summary call runs for
-  `completed` and `aborted`, and is skipped with an error-level log for `error`.
-  This decision remains subject to the real payload evidence.
+  the process cwd or `CURSOR_PROJECT_DIR`. #825 is a separate hard prerequisite:
+  until its Cursor reader is merged and approved, discard/defer Cursor
+  `transcript_path` inside the Cursor-specific parser and return explicit
+  unsupported/non-zero before calling `read_transcript_content()`, enqueueing,
+  spilling, or invoking an LLM. A Cursor path must never be passed to the
+  existing Claude/Codex parser merely because it is a string. After #825 lands,
+  decision (B-008): `aborted`/`error` still preserve already captured events;
+  the LLM summary call runs for `completed` and `aborted`, and is skipped with
+  an error-level log for `error`. This decision remains subject to the real
+  payload evidence.
 - Apply the same explicit error result to Cursor `postToolUse` and `stop`:
   malformed or contract-incomplete input returns non-zero, emits no stdout, and
   performs no partial adapter dispatch, enqueue, spill, or database write.
+
+### 2a. Cursor privacy boundary (B-014)
+
+- Add one Cursor-specific payload sanitization boundary immediately after the
+  outer JSON object is recognized and before canonical event construction or
+  any raw-payload preview. Drop `user_email` and any other #822-observed direct
+  user PII fields; do not copy them into a generic extras map. Parse errors log
+  only field names/types and a generated correlation id, never the raw Cursor
+  object.
+- Downstream capture, database, spill, adapter, and summary code accepts only
+  the sanitized canonical event. No unsanitized payload reference or clone may
+  cross that boundary. This ordering makes database-open failure safe: the
+  spill record is built from the already sanitized event.
+- Tests place a unique email sentinel in every valid and malformed Cursor event
+  fixture, force normal capture, capture persistence failure, spill replay,
+  adapter/LLM invocation, and parse failure, then scan database fields, spill
+  bytes (after test-only decode where encryption is enabled), logs, adapter
+  request bodies, prompts, and produced summaries for sentinel absence.
 
 ### 3. Stdout rendering (B-003, B-004, B-005)
 
@@ -176,13 +207,16 @@ not silent.
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
-| B-007 observe maps verified identity before postToolUse capture; unknown tool_name never rewritten | Cursor parser + `src/observe/hook.rs` + adapter boundary | fixture maps `conversation_id` and normalized sole root to session/cwd/project before capture; missing/wrong identity, invalid root matrix, and unverified path shapes exit non-zero with zero writes; `SomethingNew` remains verbatim and JSON-stringified `tool_output` is decoded |
-| B-008 stop maps conversation and verified project identity; statuses preserve prior capture | `src/summarize` + #822 | PoC records the stop project-root field/type; fixtures require `conversation_id` plus one verified root/cwd and assert remem session/project identity; before verification and for missing/blank/multi-root identity, subprocess tests assert non-zero and zero writes/enqueues/spills; valid fixtures cover `completed` / `aborted` / `error` decisions |
+| B-007 observe maps verified identity before postToolUse capture; unknown tool_name uses verbatim generic capture | Cursor parser + `src/observe/hook.rs` + adapter boundary | fixture maps identity before capture; `SomethingNew` remains verbatim, bypasses known-tool classification, and still persists decoded generic input/output; no diagnostic-and-drop branch exists |
+| B-008 stop maps identity; #825 gates transcript reads | Cursor parser + `src/summarize` + #822 + #825 | before #825, a valid-looking Cursor path returns explicit unsupported/non-zero and a spy proves no Claude/Codex transcript read, enqueue, spill, or LLM call; after both prerequisites, fixtures cover identity and `completed` / `aborted` / `error` |
 | B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
 | B-011 DB host value is `cursor` | shared host parser + capture/enqueue/persistence boundaries | `as_db_value()` unit test plus DB integration tests proving only canonical `cursor` reaches each hook-origin host column |
 | B-012 real-agent marker gate | #822 PoC evidence | unique synthetic marker appears in a real Cursor agent's model-visible context; stdout-only marker is failure and blocks injection |
 | B-013 invalid and multi-root arrays remain fail-closed | context/observe/summarize parsing + #822/human gate | each event fixture covers `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots and returns non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
+| B-014 user_email/PII removed before every sink | Cursor sanitization boundary + capture/spill/adapter/summarize paths | unique email sentinel is absent from DB, decoded spill fixture, logs/errors, adapter request, LLM prompt, and generated summary across success and forced-failure paths |
+| B-015 bounded nested JSON decode precedes classification | Cursor parser + generic/known-tool dispatch | encoded and canonical-decoded lengths at the approved limit succeed; either form one byte over and malformed nested JSON fail with zero writes/calls; classification spies prove decode completed first |
+| B-016 real MCP event gate | #822 PoC evidence | one real MCP call records whether postToolUse fires; separate instrumented beforeMCPExecution/afterMCPExecution probes record fire/no-fire, ordering, and sanitized payloads; docs-only inference fails the gate |
 
 ## Risks
 
@@ -206,6 +240,13 @@ not silent.
 - R6. Treating a valid host as valid for every command can activate unsupported
   side effects. The shared parser and dispatch support matrix are separate, and
   Cursor session-init is explicitly rejected before execution.
+- R7. Cursor account PII such as `user_email` can leak through generic capture,
+  spill, error previews, or LLM prompts unless removed before canonicalization;
+  B-014 makes the sanitized event the only downstream representation.
+- R8. Nested JSON strings can expand during decode or alter classification.
+  B-015 bounds encoded and decoded forms and requires decode before dispatch.
+- R9. MCP hook names do not prove that hooks fire or share tool-event payloads.
+  B-016 permits mappings only from instrumented real-host evidence.
 
 ## Verification Plan
 
@@ -215,7 +256,13 @@ not silent.
   - capture exact event names and payload field names/types for `sessionStart`,
     `postToolUse`, `stop`, and any observed `preCompact`, including exact
     conversation/project-root fields on `postToolUse` and `stop`;
-  - invoke real Cursor tools and record their exact `tool_name` values;
+  - invoke real Cursor tools and record their exact `tool_name` values; record
+    encoded and decoded tool-field sizes and propose the numeric
+    `CURSOR_TOOL_FIELD_MAX_BYTES` for human approval;
+  - invoke at least one real MCP tool and record whether `postToolUse` arrives;
+    separately instrument and exercise `beforeMCPExecution` and
+    `afterMCPExecution`, recording fire/no-fire, sanitized payloads, and ordering
+    without inferring a mapping;
   - compare foreground and background-agent sessions and record whether hooks
     fire and whether context becomes model-visible;
   - emit a unique synthetic marker from the hook and verify that a real Cursor
@@ -235,14 +282,20 @@ not silent.
     non-zero, empty stdout, and zero prompt/capture side effects;
   - exercise missing, blank, single-root/cwd, and multi-root project identity on
     `stop`; keep summarize blocked until the field is verified and fail closed
-    without process-cwd or `CURSOR_PROJECT_DIR` fallback.
+    without process-cwd or `CURSOR_PROJECT_DIR` fallback; before #825, prove a
+    Cursor path cannot reach the Claude/Codex transcript reader.
 - After the PoC gate passes, pipe its sanitized payload fixtures through
   `remem context --host cursor`, `remem observe --host cursor`, and
   `remem summarize --host cursor`; assert exact stdout, exit status, and
   persistence outcomes.
+- Run the B-014 sentinel suite through capture success, forced database-open
+  spill, replay, parse error, adapter request, and LLM fake-provider paths.
+- Run B-015 malformed, exact-limit, encoded-over-limit, and
+  decoded-expansion-over-limit cases before classifier invocation.
 
 ## Rollback
 
 Runtime-only change behind the `--host cursor` value; nothing writes it until
-#824 ships. Rollback is reverting the PR; no data migration is involved
+#824 ships. Cursor summarize also stays unwired until #825 ships. Rollback is
+reverting the PR; no data migration is involved
 (B-011 values only appear once #824 installs hooks).

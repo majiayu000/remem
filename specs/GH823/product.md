@@ -8,8 +8,8 @@ Tracking:
 - Epic: #821
 - Blocking prerequisite: #822 (Cursor hooks contract PoC; open questions below are gated on it)
 - Related runtime surfaces: `remem context`, `remem observe`, `remem summarize`, host identity
-- Review round: 3, the final autonomous spec-fix round; any later finding
-  requires an explicit human decision before another change.
+- This packet remains blocked on the real-host evidence and human approval in
+  #822. No implementation task may start from this draft alone.
 
 ## Problem
 
@@ -40,7 +40,9 @@ hook JSON output, reusing the existing host-profile mechanism
 
 - N1. No install-side changes (`hooks.json`, `mcp.json`, `InstallTarget`,
   `HookStrategy`); those belong to #824.
-- N2. No Cursor transcript file format parsing; that belongs to #825.
+- N2. No Cursor transcript file format parsing; that belongs to #825. Cursor
+  `stop` summarization is therefore blocked on #825 and must not reuse the
+  Claude/Codex raw transcript reader in the interim.
 - N3. No project-level `.cursor/hooks.json` support.
 - N4. No re-design of what context is injected; the rendered context body is
   host-independent and unchanged.
@@ -103,10 +105,14 @@ hook JSON output, reusing the existing host-profile mechanism
    arrays fail non-zero with no adapter dispatch or write. #822 must confirm the
    real field types and a sanitized Windows fixture before implementation. A
    valid payload also parses `tool_name`, `tool_input`, and `tool_output`
-   (JSON-stringified per Cursor docs) into the existing observe event model. An
-   unrecognized `tool_name` is recorded as-is or explicitly skipped with a
-   diagnostic; it must never be silently rewritten to a different tool class
-   (the #817 failure class).
+   (JSON-stringified per Cursor docs) into the existing observe event model.
+   Both stringified fields are decoded exactly once under the #822-approved
+   byte limit before any tool classification, filtering, capture, or adapter
+   dispatch; malformed or over-limit fields fail closed with zero writes. An
+   unrecognized `tool_name` follows the existing generic-capture contract: it
+   is recorded verbatim with the decoded generic input/output and is never
+   skipped, silently rewritten, or forced through a known-tool classifier (the
+   #817 failure class).
 8. B-008 When invoked with a Cursor `stop` payload, `remem summarize` maps the
    required non-empty Cursor `conversation_id` to remem's canonical
    `session_id` before enqueueing or persistence. #822 must also identify the
@@ -115,11 +121,15 @@ hook JSON output, reusing the existing host-profile mechanism
    multi-root, or otherwise ambiguous, summarize fails with a non-zero exit and
    performs no write, enqueue, or spill. After verification, only one validated
    root/cwd is mapped to the remem project; the hook process cwd and
-   `CURSOR_PROJECT_DIR` are never fallbacks. A valid event runs the same
-   summarize entry as a Claude `Stop` hook. `status` values `aborted` and
-   `error` must not discard capture that was already persisted; whether they
-   suppress the LLM summary call is an explicit decision recorded in the tech
-   spec, not an accident.
+   `CURSOR_PROJECT_DIR` are never fallbacks. Even after #822 verifies the stop
+   identity fields, Cursor summarize remains unavailable until #825 lands a
+   verified Cursor transcript reader. Before that prerequisite, the
+   `transcript_path` field is stripped/deferred at the Cursor boundary and must
+   never reach the existing Claude/Codex raw transcript parser, enqueue, spill,
+   or LLM summarization path. After #825, `status` values `aborted` and `error`
+   must not discard capture that was already persisted; whether they suppress
+   the LLM summary call is an explicit decision recorded in the tech spec, not
+   an accident.
 9. B-009 A stdin payload that is not valid JSON, that is missing fields
    required by the Cursor event contract, or whose `hook_event_name` is unknown
    or mismatched with the invoked command, fails closed: error-level log with
@@ -146,8 +156,29 @@ hook JSON output, reusing the existing host-profile mechanism
     `["", "/repo"]`, `["/repo", ""]`, and arrays containing two non-empty
     roots all fail closed before output, capture, enqueue, or spill.
     Implementation must not discard blank elements and then pick the remaining
-    root, silently pick the first root, merge projects, or use the hook process
-    cwd.
+   root, silently pick the first root, merge projects, or use the hook process
+   cwd.
+14. B-014 Cursor identity metadata that is not part of remem's canonical event
+    identity, including `user_email`, is removed or irreversibly redacted at
+    the outer Cursor payload boundary. It must not appear in canonical capture
+    events, database rows, spill files, logs/error previews, adapter requests,
+    LLM prompts, or model output. Tests use a unique email sentinel and inspect
+    every one of those sinks, including the database-open-failure spill path.
+15. B-015 Cursor's JSON-stringified `tool_input` and `tool_output` are decoded
+    exactly once before tool-name mapping, known-tool classification, generic
+    capture, or filtering. #822 records and human approval freezes a numeric
+    `CURSOR_TOOL_FIELD_MAX_BYTES` applying to both the encoded string and its
+    decoded canonical JSON representation. Invalid nested JSON, encoded input
+    above the limit, or decoded expansion above the limit fails non-zero with
+    no capture, enqueue, spill, adapter call, or diagnostic containing raw
+    payload data. Boundary tests cover exactly-at-limit and one-byte-over data.
+16. B-016 #822 must invoke at least one real MCP tool through the tested Cursor
+    build and record whether `postToolUse` arrives for that invocation. It must
+    separately instrument and exercise real `beforeMCPExecution` and
+    `afterMCPExecution` hooks, recording their emitted payloads, ordering, and
+    whether each hook actually fires. Documentation names or guessed mappings
+    are not evidence. Until this probe is complete and human-approved, no MCP
+    event is mapped to a remem capture event and #823/#824 stay blocked.
 
 ## Boundary Checklist
 
@@ -161,8 +192,9 @@ hook JSON output, reusing the existing host-profile mechanism
 | Illegal state transitions | covered: B-006 (session-init cannot silently claim Claude semantics) |
 | Compatibility / migration | covered: B-001 (closed-set host values), B-011 (DB host value), B-013 (multi-root blocked) |
 | Degradation / fallback | covered: B-005, B-006, B-007 (no silent rewrite), B-008 |
-| Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully) |
+| Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully), B-014 (PII sentinel absent), B-016 (real MCP probe) |
 | Cancellation / interruption / partial completion | covered: B-008 (aborted/error stop payloads) |
+| Resource exhaustion / payload expansion | covered: B-015 (encoded and decoded byte limits) |
 
 ## Open Questions (gated on #822)
 
@@ -181,18 +213,27 @@ hook JSON output, reusing the existing host-profile mechanism
 - Q4. The model-visible behavior and practical size/truncation limit of
   `additional_context`, including a boundary test around the largest accepted
   synthetic context.
+- Q5. For a real MCP invocation, whether `postToolUse` fires at all; whether
+  `beforeMCPExecution` and `afterMCPExecution` fire; their exact payloads and
+  ordering; and whether any of them contains the canonical identity and tool
+  fields required for capture. The answer must come from instrumentation of the
+  tested Cursor build, not from event-name analogy.
 
 ## Acceptance Criteria
 
-- A-1. All B-001..B-013 have automated verification per the tech spec mapping.
+- A-1. All B-001..B-016 have automated verification per the tech spec mapping.
 - A-2. `cargo test` passes with zero changes to existing Claude/Codex
   protocol tests.
 - A-3. #822 records the real Cursor version, exact event payloads, the
   `postToolUse` and `stop` conversation/project-root fields and types, sanitized
   Windows root fixtures, observed tool names, background-agent behavior,
-  `preCompact` behavior, and context size behavior. The four open questions are
+  `preCompact` behavior, context size behavior, the bounded nested-tool-field
+  limit, and the real MCP hook behavior in B-016/Q5. The five open questions are
   answered or explicitly parked behind a human-approved fail-closed downgrade
   before implementation starts.
 - A-4. #822 proves a unique synthetic marker is visible to a real Cursor agent.
   If it does not, Cursor injection is recorded as blocked and no implementation
   or installation path claims injection support.
+- A-5. A unique `user_email` sentinel is absent from capture, database, spill,
+  log/error, adapter, LLM-request, and model-output fixtures, and Cursor `stop`
+  cannot call any Claude/Codex transcript parser before #825 is merged.
