@@ -60,6 +60,84 @@ def write_lock(lock_path: Path, lock: dict[str, object]) -> None:
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 
 
+def set_nested(value: dict[str, object], path: tuple[str, ...], replacement: object) -> None:
+    target = value
+    for key in path[:-1]:
+        child = target[key]
+        assert isinstance(child, dict), f"test fixture path {path!r} is not an object"
+        target = child
+    target[path[-1]] = replacement
+
+
+def assert_malformed_schema_bodies_fail_closed() -> None:
+    cases = (
+        ("properties", ("properties",), [], "$.properties must be an object"),
+        (
+            "property schema",
+            ("properties", "name"),
+            [],
+            "$.properties.name must be an object",
+        ),
+        (
+            "items",
+            ("properties", "required_human_gates", "items"),
+            [],
+            "$.properties.required_human_gates.items must be an object",
+        ),
+        (
+            "additionalProperties",
+            ("additionalProperties",),
+            [],
+            "$.additionalProperties must be a boolean or object",
+        ),
+        (
+            "required shape",
+            ("required",),
+            ["name", 7],
+            "$.required must be an array of strings",
+        ),
+        (
+            "required declaration",
+            ("required",),
+            ["name", "undeclared"],
+            "$.required references undeclared property 'undeclared'",
+        ),
+    )
+
+    with tempfile.TemporaryDirectory(prefix="remem-specrail-schema-body-") as raw:
+        repo = Path(raw)
+        copy_pack(repo)
+        schema_path = repo / "schemas" / "flow_manifest.schema.json"
+        baseline_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+        for label, path, replacement, expected_error in cases:
+            malformed = json.loads(json.dumps(baseline_schema))
+            set_nested(malformed, path, replacement)
+            schema_path.write_text(
+                json.dumps(malformed, indent=2) + "\n",
+                encoding="utf-8",
+            )
+
+            workflow_check = run(
+                [sys.executable, str(repo / "checks" / "check_workflow.py"), "--repo", str(repo)],
+                cwd=repo,
+            )
+            assert workflow_check.returncode != 0, (
+                f"malformed {label} must fail the workflow check"
+            )
+            assert expected_error in workflow_check.stdout
+
+            sync_verify = run(
+                [str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"],
+                cwd=repo,
+            )
+            assert sync_verify.returncode != 0, (
+                f"malformed {label} must fail sync verification"
+            )
+            assert "files match lock" in sync_verify.stdout
+            assert expected_error in sync_verify.stdout
+
+
 def assert_runtime_verifier() -> None:
     with tempfile.TemporaryDirectory(prefix="remem-specrail-wiring-") as raw:
         repo = Path(raw)
@@ -129,6 +207,7 @@ def main() -> int:
         run([str(SYNC_SCRIPT), "--verify"], cwd=ROOT),
         "repository sync verifier",
     )
+    assert_malformed_schema_bodies_fail_closed()
     assert_runtime_verifier()
     print("SpecRail gate wiring test passed")
     return 0
