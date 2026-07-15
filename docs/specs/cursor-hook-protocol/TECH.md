@@ -7,6 +7,8 @@ Tracking:
 - Spec/tracking issue: #823
 - Product spec: docs/specs/cursor-hook-protocol/PRODUCT.md
 - Epic: #821 · Prerequisite PoC: #822
+- Review round: 3, the final autonomous spec-fix round; later findings require
+  an explicit human decision before another change.
 
 ## Existing Implementation Facts
 
@@ -52,8 +54,9 @@ External-contract candidates for #822 to verify, not implementation facts:
 the official [Cursor Hooks documentation](https://cursor.com/docs/hooks)
 (rechecked 2026-07-15) and review evidence describe JSON hook payloads with
 `transcript_path`, `sessionStart`, `postToolUse`, and `stop` fields; review
-evidence additionally reports `conversation_id` on `stop`. Documentation is
-not proof of the installed Cursor version's emitted payloads or model-visible
+evidence additionally reports conversation and workspace identity on
+`postToolUse` and `stop`. Documentation is not proof of the installed Cursor
+version's emitted payloads, platform-specific path forms, or model-visible
 behavior. #822 must record the exact real-host payloads and prove whether
 top-level `additional_context` reaches a real agent before this design leaves
 its blocked state.
@@ -66,10 +69,13 @@ its blocked state.
   extend `parse()` and its error message's valid-value list.
 - Introduce one exact hook-host parser shared by the `context`, `session-init`,
   `observe`, and `summarize` CLI boundaries and by hook persistence entrypoints.
-  Its accepted values are exactly `claude-code`, `codex-cli`, and `cursor`.
+  Its recognized values are exactly `claude-code`, `codex-cli`, and `cursor`.
   `runtime_config::normalize_host()` and `HostKind::Unknown` are not validation
   boundaries; aliases and arbitrary strings must fail before rendering,
   adapter dispatch, config creation, enqueueing, or database writes.
+- Recognition is distinct from command support: after exact host parsing,
+  dispatch rejects `session-init --host cursor` as unsupported before prompt
+  capture, context generation, stdout, or any other side effect.
 - `src/context/host.rs`: add `HostKind::Cursor` and a
   `CursorContextProfile`; `resolve_profile()` dispatches it. Profile policy
   (gating, budget) starts identical to `ClaudeCodeContextProfile` unless #822
@@ -83,23 +89,41 @@ its blocked state.
   or wrong field types return an error to CLI dispatch. Context generation is
   not called, the process exits non-zero, stdout remains empty, and no current
   cwd/CLI fallback is permitted.
+- The Cursor input model requires `hook_event_name` and validates it before
+  dispatch: `context` accepts only exact `sessionStart`, `observe` only exact
+  `postToolUse`, and `summarize` only exact `stop`. Unknown values and
+  event/command mismatches return non-zero before adapter or renderer selection;
+  they never fall through to plain-text or Claude-shaped output.
 - Cursor `sessionStart` requires a non-empty `session_id` and a
   `workspace_roots` array whose total length is exactly one and whose sole
   string is non-empty after trimming. Map only that trimmed
   `workspace_roots[0]` to invocation `cwd`, then derive project identity from
   it. `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two-non-empty-root
-  arrays all fail closed. Do not filter blank entries before validating length,
-  silently select a root, use the hook process cwd, or use an unverified
-  `CURSOR_PROJECT_DIR`. The base `transcript_path` remains null-tolerant.
-- `src/observe/hook.rs`: accept the Cursor `postToolUse` shape. `tool_output`
-  arrives JSON-stringified — decode once, and on decode failure store the raw
-  string rather than dropping the event. Tool-name mapping table lives in one
-  place; unknown names pass through verbatim (B-007), never remapped.
+  arrays all fail closed. After structural validation, pass the trimmed sole
+  root through one platform-aware normalizer before canonical path, git-root,
+  or project derivation. The accepted Windows `/c:/...` conversion is frozen
+  only from a sanitized #822 real-host fixture; unverified shapes fail closed
+  and raw path identity is never persisted. Do not filter blank entries before
+  validating length, silently select a root, use the hook process cwd, or use
+  an unverified `CURSOR_PROJECT_DIR`. The base `transcript_path` remains
+  null-tolerant.
+- `src/observe/hook.rs`: accept the Cursor `postToolUse` shape only after #822
+  verifies the exact identity field types. Before adapter dispatch or capture,
+  map required non-empty `conversation_id` to the canonical `session_id` and
+  apply the same total single-root validation plus platform normalization used
+  for `sessionStart`; the verified normalized root becomes cwd/project. Missing
+  or wrong-typed identity, `[]`, `[""]`, mixed-empty, multi-root, or unverified
+  platform shapes return non-zero with zero writes. `tool_output` arrives
+  JSON-stringified — decode once, and on decode failure store the raw string
+  rather than dropping the event. Tool-name mapping table lives in one place;
+  unknown names pass through verbatim (B-007), never remapped.
 - `src/summarize`: accept the Cursor `stop` shape only after #822 verifies its
   exact fields. Map required non-empty `conversation_id` to
   `SummarizeInput.session_id` before the existing missing-session early return,
   enqueue, spill identity, or persistence paths. #822 must also record the
-  exact project-root field/type emitted on `stop`. Until that evidence exists,
+  exact project-root field/type emitted on `stop`. Apply the same total
+  single-root validation and platform-aware normalization before project
+  derivation. Until that evidence exists,
   or if the verified field is absent, blank, multi-root, or ambiguous, return
   non-zero before any enqueue, spill, or database write. After verification,
   map only one validated root/cwd to remem project identity; never fall back to
@@ -114,10 +138,13 @@ its blocked state.
 ### 3. Stdout rendering (B-003, B-004, B-005)
 
 - `src/context/render.rs`: alongside `is_codex_session_start_hook()`, add the
-  Cursor branch in `context_stdout_for_invocation()`: when
-  `HostKind::Cursor` + sessionStart source, emit
+  Cursor branch in `context_stdout_for_invocation()`: only when the strict
+  parser has validated `HostKind::Cursor` plus exact
+  `hook_event_name: "sessionStart"`, emit
   `{"additional_context": "<ansi-stripped body>"}` and nothing else. Empty
   context body → empty stdout (existing early return already does this).
+  Unknown or command-mismatched events never reach this function and cannot
+  receive plain-text or Claude-shaped fallback output.
 - The rendered body is the existing host-independent context; no new
   instruction text is added (B-004). Add a regression test asserting the
   Cursor payload contains none of the GH668 instruction markers.
@@ -130,28 +157,32 @@ its blocked state.
 
 Decision for the product spec's B-006: option (a) — `session-init` is NOT
 wired on Cursor unless #822 disproves the documented permit/block-only
-`beforeSubmitPrompt` contract. Running session-init purely for side effects
-would duplicate the proposed `sessionStart` capture path. `remem doctor` host
-diagnostics (surface added in #824) reports
-"session-init: not supported on cursor" so the gap is visible, not silent.
+`beforeSubmitPrompt` contract and a later human-approved spec changes the
+decision. The CLI dispatch entry accepts `cursor` as a recognized host value
+but returns an explicit unsupported-command error and non-zero exit before
+prompt-event persistence, context generation, stdout, enqueue, or spill.
+Running session-init purely for side effects would duplicate the proposed
+`sessionStart` capture path. `remem doctor` host diagnostics (surface added in
+#824) reports "session-init: not supported on cursor" so the gap is visible,
+not silent.
 
 ## Product-to-Test Mapping
 
 | Behavior invariant | Implementation area | Verification |
 |---|---|---|
-| B-001 `cursor` accepted; every hook command rejects aliases/unknown/empty before side effects | shared hook-host parser + `src/cli/dispatch.rs` + context/observe/summarize entrypoints | unit tests for all four commands and persistence entrypoints: exact three values accepted; `curser`, `unknown`, aliases, and empty rejected with the same closed-set error and no write |
-| B-002 sessionStart maps one workspace root; null transcript_path valid | `src/context/invocation.rs` | `len == 1` plus trimmed non-empty root maps to cwd/project; null/absent transcript path succeeds; fixtures `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots fail without current-cwd/env fallback |
-| B-003 additional_context JSON on stdout, other hosts unchanged | `src/context/render.rs` | new render test: Cursor sessionStart → top-level `additional_context`; existing Codex/Claude render tests untouched and green |
+| B-001 canonical host recognition plus per-command support | shared hook-host parser + `src/cli/dispatch.rs` + hook entrypoints | exact three host values parse; aliases/unknown/empty fail at all commands and persistence boundaries; `session-init --host cursor` returns explicit unsupported/non-zero before prompt write, stdout, or any side effect |
+| B-002 sessionStart maps one normalized workspace root; null transcript_path valid | `src/context/invocation.rs` + platform path normalizer | `len == 1` plus trimmed non-empty #822-backed root normalizes before cwd/git/project derivation; sanitized Windows `/c:/...` fixture proves conversion; unknown path shapes and `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots fail without raw identity persistence or cwd/env fallback |
+| B-003 exact event discriminator drives additional_context JSON | Cursor parser + `src/context/render.rs` | exact `hook_event_name: "sessionStart"` on context emits top-level `additional_context`; missing/unknown/mismatched events exit non-zero with empty stdout and no plain-text/Claude fallback; other hosts remain green |
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
-| B-006 session-init not wired, doctor-visible | design decision + #824 doctor surface | assert no UserPromptSubmit-equivalent entry in #824's generated hooks.json fixture; doctor line test in #824 |
-| B-007 observe parses postToolUse; unknown tool_name never rewritten | `src/observe/hook.rs` | unit test: Cursor payload with `tool_name: "SomethingNew"` recorded verbatim; JSON-stringified `tool_output` decoded |
+| B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
+| B-007 observe maps verified identity before postToolUse capture; unknown tool_name never rewritten | Cursor parser + `src/observe/hook.rs` + adapter boundary | fixture maps `conversation_id` and normalized sole root to session/cwd/project before capture; missing/wrong identity, invalid root matrix, and unverified path shapes exit non-zero with zero writes; `SomethingNew` remains verbatim and JSON-stringified `tool_output` is decoded |
 | B-008 stop maps conversation and verified project identity; statuses preserve prior capture | `src/summarize` + #822 | PoC records the stop project-root field/type; fixtures require `conversation_id` plus one verified root/cwd and assert remem session/project identity; before verification and for missing/blank/multi-root identity, subprocess tests assert non-zero and zero writes/enqueues/spills; valid fixtures cover `completed` / `aborted` / `error` decisions |
-| B-009 malformed stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON and missing required fields assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills |
+| B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
 | B-011 DB host value is `cursor` | shared host parser + capture/enqueue/persistence boundaries | `as_db_value()` unit test plus DB integration tests proving only canonical `cursor` reaches each hook-origin host column |
 | B-012 real-agent marker gate | #822 PoC evidence | unique synthetic marker appears in a real Cursor agent's model-visible context; stdout-only marker is failure and blocks injection |
-| B-013 invalid and multi-root arrays remain fail-closed | context/summarize parsing + #822/human gate | fixtures `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots return non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
+| B-013 invalid and multi-root arrays remain fail-closed | context/observe/summarize parsing + #822/human gate | each event fixture covers `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots and returns non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
 
 ## Risks
 
@@ -168,6 +199,13 @@ diagnostics (surface added in #824) reports
   also ambiguous and could hide a malformed producer. B-002/B-008/B-013 require
   one root and block ambiguity; neither current cwd nor an undeclared
   environment variable is a fallback.
+- R5. A raw Cursor workspace string may not be a native path on the current
+  platform (for example `/c:/...` on Windows). Normalizing without real-host
+  evidence can create a false project identity; #822-backed fixtures define
+  accepted conversions and every unverified form fails before persistence.
+- R6. Treating a valid host as valid for every command can activate unsupported
+  side effects. The shared parser and dispatch support matrix are separate, and
+  Cursor session-init is explicitly rejected before execution.
 
 ## Verification Plan
 
@@ -175,8 +213,8 @@ diagnostics (surface added in #824) reports
 - `cargo test` (full suite; new tests listed in the mapping)
 - #822 real-host PoC, recording the Cursor version and sanitized raw evidence:
   - capture exact event names and payload field names/types for `sessionStart`,
-    `postToolUse`, `stop`, and any observed `preCompact`, including the exact
-    project-root field/type on `stop`;
+    `postToolUse`, `stop`, and any observed `preCompact`, including exact
+    conversation/project-root fields on `postToolUse` and `stop`;
   - invoke real Cursor tools and record their exact `tool_name` values;
   - compare foreground and background-agent sessions and record whether hooks
     fire and whether context becomes model-visible;
@@ -187,6 +225,14 @@ diagnostics (surface added in #824) reports
   - exercise zero, one, and multiple `workspace_roots`, including `[""]`,
     `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots; keep every
     shape other than `len == 1` plus a trimmed non-empty sole element blocked;
+  - record sanitized native and Windows workspace-root fixtures, including the
+    observed `/c:/...` form if emitted; freeze normalization only for observed
+    shapes and assert unverified forms cannot become stored project identity;
+  - exercise exact, missing, unknown, and command-mismatched
+    `hook_event_name` values and confirm only `context` + `sessionStart` selects
+    Cursor `additional_context` rendering;
+  - invoke `session-init --host cursor` and assert explicit unsupported
+    non-zero, empty stdout, and zero prompt/capture side effects;
   - exercise missing, blank, single-root/cwd, and multi-root project identity on
     `stop`; keep summarize blocked until the field is verified and fail closed
     without process-cwd or `CURSOR_PROJECT_DIR` fallback.

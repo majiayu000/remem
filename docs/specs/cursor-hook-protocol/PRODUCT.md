@@ -8,6 +8,8 @@ Tracking:
 - Epic: #821
 - Blocking prerequisite: #822 (Cursor hooks contract PoC; open questions below are gated on it)
 - Related runtime surfaces: `remem context`, `remem observe`, `remem summarize`, host identity
+- Review round: 3, the final autonomous spec-fix round; any later finding
+  requires an explicit human decision before another change.
 
 ## Problem
 
@@ -47,24 +49,34 @@ hook JSON output, reusing the existing host-profile mechanism
 
 ## Behavior Invariants
 
-1. B-001 `--host cursor` is accepted wherever hook commands accept a host
-   (`context`, `session-init`, `observe`, and `summarize`). Every explicit hook
-   command boundary and every persistence boundary uses the same exact closed
-   set: `claude-code`, `codex-cli`, and `cursor`. Aliases, misspellings, empty
-   strings, and arbitrary values fail before any output or write, with an error
-   that enumerates the full closed set. Internal host auto-detection must not
-   make `unknown` a persistable or explicitly accepted hook host.
+1. B-001 `cursor` is recognized by the shared hook-host parser's exact closed
+   set (`claude-code`, `codex-cli`, and `cursor`) and is supported by `context`,
+   `observe`, and `summarize`. `session-init --host cursor` is an explicit
+   unsupported combination: dispatch returns non-zero before any prompt write,
+   context stdout, adapter call, or other side effect. Aliases, misspellings,
+   empty strings, and arbitrary values fail at every hook command and
+   persistence boundary before output or write, with an error that enumerates
+   the full closed set. Internal host auto-detection must not make `unknown` a
+   persistable or explicitly accepted hook host.
 2. B-002 When invoked with `--host cursor` and a Cursor `sessionStart` stdin
    payload, `remem context` requires a non-empty `session_id` and a
    `workspace_roots` array satisfying both `len == 1` and
-   `trim(workspace_roots[0])` is non-empty. It maps only that trimmed element to
-   the remem context cwd/project boundary and parses the base field
+   `trim(workspace_roots[0])` is non-empty. Before canonical path, git-root, or
+   project derivation, it applies a platform-aware normalization backed by a
+   sanitized #822 fixture. Windows forms such as `/c:/...` are not converted
+   by guesswork: an unverified path shape fails closed and the raw string is
+   never persisted as project identity. It maps only the verified normalized
+   root to the remem context cwd/project boundary and parses the base field
    `transcript_path` (string | null). A null or absent `transcript_path` is
    valid input. Every other array shape fails closed, including `[]`, `[""]`,
    mixed blank/non-blank arrays, and multiple non-empty roots. The hook process
    cwd and an undeclared `CURSOR_PROJECT_DIR` fallback must not select a project.
-3. B-003 When context injection succeeds under `--host cursor` for a
-   `sessionStart` event, stdout is a single JSON object whose
+3. B-003 The Cursor parser requires and strictly validates the common
+   `hook_event_name` discriminator. Only exact
+   `hook_event_name: "sessionStart"` on the `context` command can select the
+   Cursor injection renderer. Unknown event names or event/command mismatches
+   fail non-zero with no plain-text or Claude-shaped fallback. When that exact
+   event succeeds under `--host cursor`, stdout is a single JSON object whose
    `additional_context` field carries the ANSI-stripped context body. No other
    host's output shape changes.
 4. B-004 The Cursor `additional_context` payload must not contain
@@ -77,13 +89,22 @@ hook JSON output, reusing the existing host-profile mechanism
    emitted.
 6. B-006 No injection-capable Cursor equivalent for `session-init` is assumed.
    Cursor documentation describes `beforeSubmitPrompt` as permit/block only;
-   #822 must verify the real host behavior. Unless that PoC proves an injection
-   contract, `session-init` is not wired on Cursor and `remem doctor` reports
-   the gap — it must not silently pretend the Claude behavior exists.
-7. B-007 When invoked with a Cursor `postToolUse` payload, `remem observe`
-   parses `tool_name`, `tool_input`, and `tool_output` (JSON-stringified per
-   Cursor docs) into the existing observe event model. An unrecognized
-   `tool_name` value is recorded as-is or explicitly skipped with a
+   #822 must verify the real host behavior. Unless a later human-approved spec
+   changes this decision, `session-init --host cursor` fails explicitly at the
+   dispatch entry with a non-zero exit before any prompt-event write, context
+   stdout, enqueue, spill, or database side effect. `remem doctor` reports the
+   unsupported combination; it must not silently pretend the Claude behavior
+   exists.
+7. B-007 When invoked with a verified Cursor `postToolUse` payload, `remem
+   observe` maps required non-empty `conversation_id` to canonical `session_id`
+   and applies B-002's exact single-root validation and platform-aware
+   normalization to map the workspace root to cwd/project before any capture.
+   Missing or wrong-typed identity fields and zero-, multi-, or mixed-empty-root
+   arrays fail non-zero with no adapter dispatch or write. #822 must confirm the
+   real field types and a sanitized Windows fixture before implementation. A
+   valid payload also parses `tool_name`, `tool_input`, and `tool_output`
+   (JSON-stringified per Cursor docs) into the existing observe event model. An
+   unrecognized `tool_name` is recorded as-is or explicitly skipped with a
    diagnostic; it must never be silently rewritten to a different tool class
    (the #817 failure class).
 8. B-008 When invoked with a Cursor `stop` payload, `remem summarize` maps the
@@ -99,8 +120,9 @@ hook JSON output, reusing the existing host-profile mechanism
    `error` must not discard capture that was already persisted; whether they
    suppress the LLM summary call is an explicit decision recorded in the tech
    spec, not an accident.
-9. B-009 A stdin payload that is not valid JSON, or that is missing fields
-   required by the Cursor event contract, fails closed: error-level log with
+9. B-009 A stdin payload that is not valid JSON, that is missing fields
+   required by the Cursor event contract, or whose `hook_event_name` is unknown
+   or mismatched with the invoked command, fails closed: error-level log with
    the event name and a redacted parse failure, non-zero exit, no stdout, no
    fallback to CLI/current cwd, and no partial persistence.
 10. B-010 Claude Code and Codex protocol behavior is byte-identical before and
@@ -118,12 +140,14 @@ hook JSON output, reusing the existing host-profile mechanism
     sufficient. If the marker is absent, the injection capability is parked as
     blocked and #823/#824 must not advertise or install it.
 13. B-013 Multi-root Cursor workspaces remain unresolved until #822 and human
-    review select an identity policy. Workspace-root arrays are valid only when
-    their total length is exactly one and that sole string is non-empty after
-    trimming. `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and arrays
-    containing two non-empty roots all fail closed. Implementation must not
-    discard blank elements and then pick the remaining root, silently pick the
-    first root, merge projects, or use the hook process cwd.
+    review select an identity policy. Across `sessionStart`, `postToolUse`, and
+    `stop`, workspace-root arrays are valid only when their total length is
+    exactly one and that sole string is non-empty after trimming. `[]`, `[""]`,
+    `["", "/repo"]`, `["/repo", ""]`, and arrays containing two non-empty
+    roots all fail closed before output, capture, enqueue, or spill.
+    Implementation must not discard blank elements and then pick the remaining
+    root, silently pick the first root, merge projects, or use the hook process
+    cwd.
 
 ## Boundary Checklist
 
@@ -145,8 +169,9 @@ hook JSON output, reusing the existing host-profile mechanism
 - Q1. Exact `sessionStart` payload field names and types, including
   `composer_mode`, `is_background_agent`, and `workspace_roots`; whether
   background-agent sessions should receive injection; and the human-approved
-  policy for payloads containing multiple workspace roots. Also identify the
-  exact project-root field and type on real `stop` payloads.
+   policy for payloads containing multiple workspace roots. Also identify the
+   exact conversation/project-root fields and types on real `postToolUse` and
+   `stop` payloads, plus sanitized Windows root forms.
 - Q2. The observed closed set of Cursor `tool_name` values and their mapping
   onto the observe matcher (`Write` / `Edit` / `Bash` equivalents), using real
   tool invocations rather than documentation alone.
@@ -162,8 +187,9 @@ hook JSON output, reusing the existing host-profile mechanism
 - A-1. All B-001..B-013 have automated verification per the tech spec mapping.
 - A-2. `cargo test` passes with zero changes to existing Claude/Codex
   protocol tests.
-- A-3. #822 records the real Cursor version, exact event payloads, the `stop`
-  project-root field/type, observed tool names, background-agent behavior,
+- A-3. #822 records the real Cursor version, exact event payloads, the
+  `postToolUse` and `stop` conversation/project-root fields and types, sanitized
+  Windows root fixtures, observed tool names, background-agent behavior,
   `preCompact` behavior, and context size behavior. The four open questions are
   answered or explicitly parked behind a human-approved fail-closed downgrade
   before implementation starts.
