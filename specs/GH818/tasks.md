@@ -62,9 +62,13 @@ evidence。开始任何实现前必须全部满足：
     回滚。terminal/archive history 不变，schema drift 声明完整，任一失败整体回滚。
     非 Summary `processing` row 的 NULL lease expiry 必须在 survivor selection 前规范为已过期，
     使既有 stuck stats 与 expired recovery 可发现，且不得改写其他 persisted fields。
+    Dream replay 使用与 production `dream_profile_key` 相同的 normalizer：malformed JSON、
+    missing/non-string/trim 后 blank `remem_ai_profile` 都作为 empty key，仅影响“不替换”判定，
+    原始 payload 不改写；fixture 逐类证明 migration 不 abort，且后续合法不同 profile 仍可替换。
   - Verify:
     - `cargo test --no-default-features v069_reconciles_active_job_duplicates_before_unique_indexes -- --nocapture`
     - `cargo test --no-default-features v069_replays_pending_dream_duplicates_with_current_profile_predicate -- --nocapture`
+    - `cargo test --no-default-features v069_treats_malformed_non_string_missing_and_blank_dream_profiles_as_empty -- --nocapture`
     - `cargo test --no-default-features v069_does_not_rewrite_processing_dream_payload -- --nocapture`
     - `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`
     - `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`
@@ -92,8 +96,11 @@ evidence。开始任何实现前必须全部满足：
     都不得写成 `max_attempts`。`failure_class='permanent'` 与 `next_retry_epoch=0` 已足以阻止再次
     auto-retry。原始或既有截断 `last_error` 是主证据，2000-char 内确定性追加 canonical marker。
     state API 返回结构化
-    coalesced result 供 T4 worker 消费；T2 不直接输出原错误日志。一次 collision 不得触发
-    UNIQUE error、反复 auto-retry 或阻止其他 expired jobs recovery。
+    coalesced result 供 T4 worker 消费；expired batch 的逐 row type 至少区分 safe
+    `Requeued { source_id, identity_kind }` 与
+    `Coalesced { source_id, canonical_id, identity_kind }`，并从 facade re-export；T2 不直接输出
+    原错误日志。一次 collision 不得触发 UNIQUE error、反复 auto-retry 或阻止其他 expired
+    jobs recovery。
   - Verify:
     - `cargo test --no-default-features lease_owned_job_transitions_require_current_unexpired_lease -- --nocapture`
     - `cargo test --no-default-features rejected_job_transition_preserves_every_persisted_field -- --nocapture`
@@ -101,6 +108,7 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features compile_rules_retry_collision_coalesces_to_pending_successor -- --nocapture`
     - `cargo test --no-default-features compile_rules_retry_collision_preserves_original_error_with_bounded_marker -- --nocapture`
     - `cargo test --no-default-features release_expired_compile_rules_collision_preserves_unrelated_job_progress -- --nocapture`
+    - `cargo test --no-default-features release_expired_job_leases_reports_requeued_and_coalesced_outcomes -- --nocapture`
 
 - [ ] `SP818-T3` — atomic enqueue、三类 identity 与 claim eligibility — Owner: enqueue lane agent；Done when: 见下；Verify: 见下
   - Owner: enqueue lane agent；T2 后接管 `src/db/job.rs` 与 `src/db/job/tests.rs`。
@@ -115,7 +123,10 @@ evidence。开始任何实现前必须全部满足：
     caller 获得 persisted canonical id；Dream disposition/profile/priority/cooldown 保持；
     Summary enqueue 明确拒绝；claim query 与 conditional update 都跳过“同 project predecessor
     仍 processing”的 CompileRules successor，并继续 claim 全局顺序中的下一条 eligible
-    unrelated job；至少三条真实 WAL/independent-connection barrier tests 通过。
+    unrelated job；至少三条真实 WAL/independent-connection barrier tests 通过。identity UNIQUE
+    conflict 只能在精确重读仍 active canonical 后返回 persisted id；canonical 已 terminal、
+    missing/unreadable 时 transaction 回滚并上抛，绝不返回 stale/non-persisted id。NOT NULL、
+    CHECK、FK 与其他 non-identity constraint 原样传播；T3 拥有这些 B-014 enqueue seams/tests。
   - Verify:
     - `cargo test --no-default-features enqueue_job_two_wal_connections_coalesce_ordinary_identity -- --nocapture`
     - `cargo test --no-default-features dream_two_wal_connections_coalesce_across_hosts -- --nocapture`
@@ -126,6 +137,10 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features maybe_enqueue_dream_job_skips_recent_done_job -- --nocapture`
     - `cargo test --no-default-features claim_next_job_skips_compile_rules_successor_while_predecessor_processing -- --nocapture`
     - `cargo test --no-default-features claim_next_job_continues_to_unrelated_eligible_job -- --nocapture`
+    - `cargo test --no-default-features enqueue_job_identity_conflict_rereads_only_active_canonical -- --nocapture`
+    - `cargo test --no-default-features enqueue_job_identity_conflict_terminal_canonical_rolls_back -- --nocapture`
+    - `cargo test --no-default-features enqueue_job_identity_conflict_unreadable_canonical_rolls_back -- --nocapture`
+    - `cargo test --no-default-features enqueue_job_propagates_non_identity_constraint_errors -- --nocapture`
 
 - [ ] `SP818-T4` — worker、observability、failure contract 与 legacy fixtures — Owner: observability lane agent；Done when: 见下；Verify: 见下
   - Owner: observability lane agent。
@@ -142,8 +157,9 @@ evidence。开始任何实现前必须全部满足：
   - Covers: `B-004`, `B-005`, `B-006`, `B-009`, `B-010`, `B-011`, `B-012`, `B-013`,
     `B-014`。
   - Done when: transition error 以 error level 传播且无 done/retry success signal；worker 消费
-    T2 的 structured coalesced result，只记录 safe marker、source/canonical ids 与 identity kind，
-    不输出原始 retry error；shared stats
+    T2 的 structured expired-release result，分别记录 requeued 与 coalesced safe outcome；只记录
+    safe marker、source/canonical ids 与 identity kind，不输出原始 retry error，也不把
+    CompileRules collision 写成 requeued；shared stats
     仍以 persisted row 计算 processing/stuck/actionable failed；status text/JSON 与 doctor 使用
     同一口径；job auto-recovery 先取 bounded candidate list，再逐 row transaction/savepoint
     处理 retired Summary guard 以及 ordinary、Dream、CompileRules collision。candidate query
@@ -154,12 +170,19 @@ evidence。开始任何实现前必须全部满足：
     等价 injected-candidate seam 精确覆盖 defense-in-depth guard。collision 时按 Tech Spec 收敛 canonical work，source 保持
     failed/auditable、保留真实 `attempt_count` 且不再
     重复 retry，既有截断 `last_error` 作为主证据并在 2000-char 内确定性追加 marker；一条 collision
-    不回滚无关 recoveries，unexpected DB error 仍明确失败。migration conflicts 进入现有
+    不回滚无关 recoveries，unexpected DB error 仍明确失败。job candidates 必须先完整收集并释放
+    read statement；每个 source 在 identity lookup 前取得 `IMMEDIATE` write ownership 并重新
+    验证 eligibility。identity UNIQUE race 仅在精确重读仍 active canonical 成功后 coalesce；
+    canonical terminal/missing/unreadable 或 non-identity constraint 必须回滚当前 source、错误向上
+    返回，不得产生 stale/non-persisted id。T4 在 `src/db/failure_lifecycle/tests.rs` 用两个独立
+    file-backed WAL connections + barrier/injected seam 覆盖该 race 与 B-014 rollback。migration
+    conflicts 进入现有
     failure lifecycle；仅作 fixture 的 Summary enqueue 改为合适 non-retired type，真正的
     Summary retirement tests 继续直接构造历史 row；current failure contract 已记录新语义。
   - Verify:
     - `cargo test --no-default-features worker_transition_conflict_logs_error_without_done_or_retry_success -- --nocapture`
     - `cargo test --no-default-features worker_compile_rules_retry_collision_logs_safe_coalesced_result -- --nocapture`
+    - `cargo test --no-default-features worker_expired_job_recovery_logs_requeued_and_coalesced_outcomes -- --nocapture`
     - `cargo test --no-default-features lease_transition_failure_remains_visible_in_status_and_doctor -- --nocapture`
     - `cargo test --no-default-features check_pending_queue_reports_shared_counts -- --nocapture`
     - `cargo test --no-default-features cli_status_renders_action_block_for_runtime_failures -- --nocapture`
@@ -170,6 +193,8 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_job_recovery_two_wal_connections_coalesces_unique_race -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_job_recovery_unreadable_canonical_rolls_back_source -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle -- --nocapture`
 
 ## 并行拆分

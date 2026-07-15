@@ -104,6 +104,19 @@ archived source; no pending work may retain an archived marker.
   safe source/canonical ids and identity kind, never the original error text.
   This collision is a successful convergence result for the candidate, not a
   fabricated exhausted attempt or a successful completion of the source.
+  Candidate ids are fully collected and the read statement released before
+  per-row writes begin. Each row must acquire `IMMEDIATE` write ownership
+  before re-reading source eligibility or looking up active identity; lookup
+  before write ownership is forbidden. If requeue meets the active-identity
+  UNIQUE constraint, only that declared identity conflict may trigger an exact
+  canonical reread. A readable, still-active canonical row yields a structured
+  coalesced result. A terminal, missing, or unreadable canonical row, a
+  busy/locked failure, or any non-identity constraint error rolls back that
+  source unchanged and propagates the error under `B-014`; recovery must not
+  return a stale/non-persisted id or assume deduplication. File-backed,
+  two-connection WAL barrier tests cover the identity race and unreadable
+  canonical rollback while proving independently committed unrelated rows
+  continue to make progress.
 
 ### 3. Retention / archiving
 
