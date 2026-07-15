@@ -305,7 +305,7 @@ fn enqueue_job_dedups_inflight_job() {
     let first = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -315,7 +315,7 @@ fn enqueue_job_dedups_inflight_job() {
     let second = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -336,7 +336,7 @@ fn enqueue_job_dedupe_includes_host() {
     let codex = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -346,7 +346,7 @@ fn enqueue_job_dedupe_includes_host() {
     let claude = enqueue_job(
         &conn,
         "claude-code",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -356,7 +356,7 @@ fn enqueue_job_dedupe_includes_host() {
     let codex_again = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -431,7 +431,7 @@ fn claim_next_job_picks_highest_priority_ready_job() {
     let low = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -476,7 +476,7 @@ fn mark_job_failed_or_retry_requeues_before_max_attempts() {
     let job_id = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -519,7 +519,7 @@ fn mark_job_failed_or_retry_fails_permanent_error_without_retry() {
     let job_id = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
@@ -564,7 +564,7 @@ fn mark_job_failed_or_retry_marks_failed_when_exhausted() {
     let job_id = enqueue_job(
         &conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "alpha",
         Some("s1"),
         "{}",
