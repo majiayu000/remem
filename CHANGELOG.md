@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.205` for GH-671 T5: Claude Code installs a
+  fail-open `PreToolUse` Bash evaluator that emits visible warnings or explicit
+  opt-in denials from local compiled artifacts, while the rollout flag disables
+  evaluation, PostToolUse remains capture-only, and Codex block enforcement is
+  rejected as unsupported.
 - Staged source version `0.5.204` for GH-671 T4: `remem rules` lists compiled
   rule provenance and persists disable, enable, and warn/block action overrides
   without writing derived artifacts on the CLI path; independent override

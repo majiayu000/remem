@@ -79,7 +79,7 @@ fn claude_startup_invocation(project: &str, session_id: &str) -> ContextInvocati
 
 fn assert_claude_hook_warning(output: &str) {
     assert!(output.contains("## Hook Integrity Warning"), "{output}");
-    assert!(output.contains("3/5 registered"), "{output}");
+    assert!(output.contains("3/6 registered"), "{output}");
     assert!(
         output.contains("remem install --target claude --repair"),
         "{output}"

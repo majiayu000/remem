@@ -48,10 +48,11 @@ pub fn set_rule_action(
     project: &str,
     rule_id: &str,
     action: RuleAction,
+    pre_execution_supported: bool,
 ) -> Result<()> {
-    if action == RuleAction::Block {
+    if action == RuleAction::Block && !pre_execution_supported {
         bail!(
-            "block action is unavailable until remem installs a supported pre-execution enforcement hook; use 'warn'"
+            "block action requires a supported pre-execution host; Codex command enforcement is unsupported, so use 'warn' or select Claude Code explicitly"
         );
     }
     update_rule_override(

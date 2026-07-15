@@ -95,7 +95,14 @@ fn overrides_round_trip_through_artifact_deletion_and_recompile() -> Result<()> 
     );
 
     set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", true)?;
-    set_rule_action(&conn, &scoped.path, PROJECT, "pref-1-1", RuleAction::Warn)?;
+    set_rule_action(
+        &conn,
+        &scoped.path,
+        PROJECT,
+        "pref-1-1",
+        RuleAction::Warn,
+        false,
+    )?;
     let stored: (i64, String) = conn.query_row(
         "SELECT disabled, action_override FROM preference_rule_overrides
          WHERE project = ?1 AND rule_id = 'pref-1-1'",
@@ -136,14 +143,19 @@ fn block_action_is_rejected_before_override_or_compile_job() -> Result<()> {
     let scoped = ScopedTestDataDir::new("rules-cli-block-unsupported");
     let conn = db::open_db()?;
 
-    let error = match set_rule_action(&conn, &scoped.path, PROJECT, "pref-1-1", RuleAction::Block) {
+    let error = match set_rule_action(
+        &conn,
+        &scoped.path,
+        PROJECT,
+        "pref-1-1",
+        RuleAction::Block,
+        false,
+    ) {
         Ok(()) => panic!("block must fail closed without a pre-execution enforcement hook"),
         Err(error) => error,
     };
     assert!(
-        error
-            .to_string()
-            .contains("supported pre-execution enforcement hook"),
+        error.to_string().contains("supported pre-execution host"),
         "{error:#}"
     );
 
@@ -158,6 +170,37 @@ fn block_action_is_rejected_before_override_or_compile_job() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!((override_count, job_count), (0, 0));
+    Ok(())
+}
+
+#[test]
+fn block_action_is_persisted_for_supported_pre_execution_host() -> Result<()> {
+    let scoped = ScopedTestDataDir::new("rules-cli-block-supported");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    insert_cli_rule_fixture(&conn)?;
+    compile_and_write(&conn, &scoped.path)?;
+
+    set_rule_action(
+        &conn,
+        &scoped.path,
+        PROJECT,
+        "pref-1-1",
+        RuleAction::Block,
+        true,
+    )?;
+
+    let state: (String, i64) = conn.query_row(
+        "SELECT
+           (SELECT action_override FROM preference_rule_overrides
+            WHERE project = ?1 AND rule_id = 'pref-1-1'),
+           (SELECT COUNT(*) FROM jobs
+            WHERE project = ?1 AND job_type = 'compile_rules')",
+        [PROJECT],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(state, ("block".to_string(), 1));
     Ok(())
 }
 

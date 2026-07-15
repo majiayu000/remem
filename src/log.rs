@@ -10,4 +10,4 @@ pub use timer::Timer;
 pub use write::{debug, debug_enabled, error, info, open_log_append, warn};
 
 pub(crate) use config::with_log_dir;
-pub(crate) use write::log_health_snapshot;
+pub(crate) use write::{log_health_snapshot, set_private_permissions};
