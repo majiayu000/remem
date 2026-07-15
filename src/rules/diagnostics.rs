@@ -57,7 +57,7 @@ pub(crate) fn evaluation_marker_dir(data_dir: &Path) -> PathBuf {
 }
 
 pub(crate) fn upsert_evaluation_error_record(
-    marker_path: &Path,
+    session_marker_path: &Path,
     data_dir: &Path,
     project: Option<&str>,
     codes: &[EvaluationDiagnosticCode],
@@ -69,55 +69,117 @@ pub(crate) fn upsert_evaluation_error_record(
 
     let scope = diagnostic_scope(project, &codes);
     let project_key = project.map(|project| project_key(data_dir, project));
-    let (mut marker, should_log) = match fs::read(marker_path) {
-        Ok(contents) if contents.is_empty() => (EvaluationErrorMarker::default(), false),
+    let session_marker = read_marker(session_marker_path)?;
+    let scoped_path = scoped_marker_path(session_marker_path, scope, project_key.as_deref())?;
+    let scoped_marker = read_marker(&scoped_path)?;
+    let recovered_corruption = matches!(session_marker, MarkerState::Corrupt)
+        || matches!(scoped_marker, MarkerState::Corrupt);
+    let already_recorded = [&session_marker, &scoped_marker].into_iter().any(|state| {
+        matches!(state, MarkerState::Valid(marker) if marker.records.iter().any(|record| {
+            record.scope == scope && record.project_key == project_key
+        }))
+    });
+
+    if !already_recorded || recovered_corruption {
+        let mut marker = match scoped_marker {
+            MarkerState::Valid(marker) => marker,
+            MarkerState::Missing | MarkerState::Empty | MarkerState::Corrupt => {
+                EvaluationErrorMarker::default()
+            }
+        };
+        marker.recovered_corruption |= recovered_corruption;
+        if !already_recorded {
+            marker.records.push(EvaluationErrorRecord {
+                occurred_at_epoch: chrono::Utc::now().timestamp(),
+                scope,
+                project_key,
+                codes,
+            });
+        }
+        publish_marker(&scoped_path, &marker)?;
+    }
+
+    if matches!(session_marker, MarkerState::Corrupt) {
+        crate::atomic_file::write_atomic(session_marker_path, [])
+            .context("clear recovered evaluation error session marker")?;
+        crate::log::set_private_permissions(session_marker_path);
+    }
+    if !matches!(session_marker, MarkerState::Missing) {
+        return Ok(false);
+    }
+    claim_session_log(session_marker_path)
+}
+
+enum MarkerState {
+    Missing,
+    Empty,
+    Valid(EvaluationErrorMarker),
+    Corrupt,
+}
+
+fn read_marker(path: &Path) -> Result<MarkerState> {
+    match fs::read(path) {
+        Ok(contents) if contents.is_empty() => Ok(MarkerState::Empty),
         Ok(contents) => match serde_json::from_slice(&contents)
-            .context("parse evaluation error session marker")
+            .context("parse evaluation error marker")
             .and_then(|marker| {
                 validate_marker(&marker)?;
                 Ok(marker)
             }) {
-            Ok(marker) => (marker, false),
-            Err(_) => (
-                EvaluationErrorMarker {
-                    recovered_corruption: true,
-                    ..EvaluationErrorMarker::default()
-                },
-                false,
-            ),
+            Ok(marker) => Ok(MarkerState::Valid(marker)),
+            Err(_) => Ok(MarkerState::Corrupt),
         },
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            (EvaluationErrorMarker::default(), true)
-        }
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(MarkerState::Missing),
         Err(error) => {
-            return Err(error).with_context(|| {
-                format!(
-                    "read evaluation error session marker {}",
-                    marker_path.display()
-                )
-            })
+            Err(error).with_context(|| format!("read evaluation marker {}", path.display()))
         }
-    };
-
-    if marker
-        .records
-        .iter()
-        .any(|record| record.scope == scope && record.project_key == project_key)
-    {
-        return Ok(false);
     }
-    marker.records.push(EvaluationErrorRecord {
-        occurred_at_epoch: chrono::Utc::now().timestamp(),
-        scope,
-        project_key,
-        codes,
-    });
-    let mut contents = serde_json::to_vec(&marker)?;
+}
+
+fn scoped_marker_path(
+    session_marker_path: &Path,
+    scope: EvaluationDiagnosticScope,
+    project_key: Option<&str>,
+) -> Result<PathBuf> {
+    let session_name = session_marker_path
+        .file_name()
+        .context("evaluation session marker has no file name")?
+        .to_string_lossy();
+    let scope_key = match scope {
+        EvaluationDiagnosticScope::Project => project_key.context("project scope has no key")?,
+        EvaluationDiagnosticScope::Global => "global",
+        EvaluationDiagnosticScope::Unscoped => "unscoped",
+    };
+    Ok(session_marker_path.with_file_name(format!("{session_name}.{scope_key}")))
+}
+
+fn publish_marker(path: &Path, marker: &EvaluationErrorMarker) -> Result<()> {
+    let mut contents = serde_json::to_vec(marker)?;
     contents.push(b'\n');
-    crate::atomic_file::write_atomic(marker_path, contents)
-        .context("publish evaluation error session marker")?;
-    crate::log::set_private_permissions(marker_path);
-    Ok(should_log)
+    crate::atomic_file::write_atomic(path, contents).context("publish evaluation error marker")?;
+    crate::log::set_private_permissions(path);
+    Ok(())
+}
+
+fn claim_session_log(session_marker_path: &Path) -> Result<bool> {
+    let session_name = session_marker_path
+        .file_name()
+        .context("evaluation session marker has no file name")?
+        .to_string_lossy();
+    let claim_path = session_marker_path.with_file_name(format!(".{session_name}.claim"));
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&claim_path)
+    {
+        Ok(_) => {
+            crate::log::set_private_permissions(&claim_path);
+            Ok(true)
+        }
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("create evaluation session claim {}", claim_path.display())),
+    }
 }
 
 pub(crate) fn load_evaluation_error(
@@ -285,7 +347,12 @@ mod tests {
                 EvaluationDiagnosticCode::RuleEvaluation
             ]
         );
-        let raw = fs::read_to_string(marker)?;
+        let scoped = scoped_marker_path(
+            &marker,
+            EvaluationDiagnosticScope::Project,
+            Some(&project_key(&data_dir, project)),
+        )?;
+        let raw = fs::read_to_string(scoped)?;
         assert!(!raw.contains(project));
         assert!(!raw.contains("pattern"));
         Ok(())
@@ -350,7 +417,13 @@ mod tests {
                 .codes,
             vec![EvaluationDiagnosticCode::ArtifactMissing]
         );
-        assert!(!fs::read(&marker)?.is_empty());
+        let scoped = scoped_marker_path(
+            &marker,
+            EvaluationDiagnosticScope::Project,
+            Some(&project_key(&data_dir, "/repo")),
+        )?;
+        assert!(fs::read(&marker)?.is_empty());
+        assert!(!fs::read(scoped)?.is_empty());
         Ok(())
     }
 

@@ -1,8 +1,6 @@
-use std::fs::OpenOptions;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
-use fs2::FileExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -230,39 +228,6 @@ pub(crate) fn log_evaluation_error_once_with_diagnostic(
     }
     let digest = Sha256::digest(session_key.as_bytes());
     let marker = marker_dir.join(format!("{digest:x}"));
-    let claim = marker_dir.join(format!(".{digest:x}.claim"));
-    let claim_file = match OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(&claim)
-    {
-        Ok(file) => file,
-        Err(error) => {
-            crate::log::error(
-                "rules-eval",
-                &format!(
-                    "could not open evaluation diagnostic claim: {error}; {}",
-                    sanitize_diagnostic(message)
-                ),
-            );
-            return;
-        }
-    };
-    crate::log::set_private_permissions(&claim);
-    if let Err(error) = FileExt::try_lock_exclusive(&claim_file) {
-        if error.kind() != std::io::ErrorKind::WouldBlock {
-            crate::log::error(
-                "rules-eval",
-                &format!(
-                    "could not lock evaluation diagnostic claim: {error}; {}",
-                    sanitize_diagnostic(message)
-                ),
-            );
-        }
-        return;
-    }
     match super::upsert_evaluation_error_record(&marker, data_dir, project, codes) {
         Ok(true) => crate::log::error("rules-eval", &sanitize_diagnostic(message)),
         Ok(false) => {}

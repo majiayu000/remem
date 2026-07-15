@@ -221,7 +221,7 @@ fn evaluation_error_marker_is_hashed_and_once_per_session() -> Result<()> {
         .collect::<Vec<_>>();
     assert_eq!(markers.len(), 1);
     let name = markers[0].file_name().to_string_lossy().to_string();
-    assert_eq!(name.len(), 64);
+    assert_eq!(name.split('.').map(str::len).collect::<Vec<_>>(), [64, 8]);
     assert!(!name.contains("private-session"));
     Ok(())
 }
@@ -236,10 +236,11 @@ fn concurrent_errors_log_and_publish_once_per_session() -> Result<()> {
         let barrier = std::sync::Arc::clone(&barrier);
         handles.push(std::thread::spawn(move || {
             barrier.wait();
+            let project_index = index % 4;
             log_evaluation_error_once_with_diagnostic(
                 &data_dir,
                 Some("concurrent-session"),
-                Some("/repo/concurrent"),
+                Some(&format!("/repo/concurrent-{project_index}")),
                 &[EvaluationDiagnosticCode::ArtifactMissing],
                 &format!("concurrent-marker-{index}"),
             );
@@ -255,7 +256,19 @@ fn concurrent_errors_log_and_publish_once_per_session() -> Result<()> {
         .into_iter()
         .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
         .count();
-    assert_eq!(visible_markers, 1);
+    assert_eq!(visible_markers, 4);
+    for index in 0..4 {
+        let record = crate::rules::load_evaluation_error(
+            &scoped.path,
+            &format!("/repo/concurrent-{index}"),
+        )?
+        .latest
+        .context("concurrent project diagnostic")?;
+        assert_eq!(
+            record.codes,
+            vec![EvaluationDiagnosticCode::ArtifactMissing]
+        );
+    }
     let log = std::fs::read_to_string(scoped.path.join("remem.log"))?;
     assert_eq!(
         log.lines()
@@ -267,34 +280,28 @@ fn concurrent_errors_log_and_publish_once_per_session() -> Result<()> {
 }
 
 #[test]
-fn contended_diagnostic_claim_never_blocks_hook_return() -> Result<()> {
+fn existing_session_claim_does_not_drop_project_diagnostic() -> Result<()> {
     let data_dir = test_dir("hook-diagnostic-contention");
     let marker_dir = crate::rules::evaluation_marker_dir(&data_dir);
     std::fs::create_dir_all(&marker_dir)?;
     let digest = Sha256::digest(b"contended-session");
-    let claim = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .write(true)
-        .truncate(false)
-        .open(marker_dir.join(format!(".{digest:x}.claim")))?;
-    FileExt::lock_exclusive(&claim)?;
+    std::fs::File::create(marker_dir.join(format!(".{digest:x}.claim")))?;
 
-    let (done, returned) = std::sync::mpsc::channel();
-    let handle = std::thread::spawn(move || {
-        log_evaluation_error_once_with_diagnostic(
-            &data_dir,
-            Some("contended-session"),
-            Some("/repo"),
-            &[EvaluationDiagnosticCode::ArtifactMissing],
-            "contended marker",
-        );
-        done.send(()).expect("contention result receiver");
-    });
-    returned
-        .recv_timeout(std::time::Duration::from_secs(1))
-        .context("diagnostic publication blocked on its claim")?;
-    handle.join().expect("diagnostic writer should not panic");
+    log_evaluation_error_once_with_diagnostic(
+        &data_dir,
+        Some("contended-session"),
+        Some("/repo"),
+        &[EvaluationDiagnosticCode::ArtifactMissing],
+        "contended marker",
+    );
+
+    let record = crate::rules::load_evaluation_error(&data_dir, "/repo")?
+        .latest
+        .context("diagnostic published despite existing session claim")?;
+    assert_eq!(
+        record.codes,
+        vec![EvaluationDiagnosticCode::ArtifactMissing]
+    );
     Ok(())
 }
 
