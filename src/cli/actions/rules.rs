@@ -27,17 +27,9 @@ pub(in crate::cli) fn run_rules(action: RulesAction) -> Result<()> {
             }
             RuleMutation::Action(rule_id, action) => {
                 rules::set_rule_action(&conn, &data_dir, &project, &rule_id, action)?;
-                let capability = if action == RuleAction::Block {
-                    "; enforcement requires a supported pre-execution host"
-                } else {
-                    ""
-                };
                 (
                     rule_id,
-                    format!(
-                        "Rule action override saved: {}{capability}",
-                        action_label(action)
-                    ),
+                    format!("Rule action override saved: {}", action_label(action)),
                 )
             }
         };

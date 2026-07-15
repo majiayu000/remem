@@ -49,6 +49,11 @@ pub fn set_rule_action(
     rule_id: &str,
     action: RuleAction,
 ) -> Result<()> {
+    if action == RuleAction::Block {
+        bail!(
+            "block action is unavailable until remem installs a supported pre-execution enforcement hook; use 'warn'"
+        );
+    }
     update_rule_override(
         conn,
         data_dir,
