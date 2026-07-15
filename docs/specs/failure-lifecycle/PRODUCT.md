@@ -56,6 +56,25 @@ surface that #381/#383 evidence collection depends on.
 - Worker logs every automatic retry with class, attempt number, and backoff;
   exhaustion and archiving transitions are logged at error/info respectively
   (U-29: no silent state changes).
+- A rejected lease-owned job transition never becomes an in-memory success.
+  A missing target fails loudly and remains absent, so it contributes no
+  processing or stuck row to status/doctor. For an existing wrong-owner,
+  reclaimed, expired, or otherwise ineligible target, every persisted field
+  remains unchanged; if that row is still `processing`, status/doctor continue
+  to show it as processing and then stuck after its unchanged lease expires.
+- A non-Summary active duplicate reconciled by the v069 job-queue migration
+  becomes a permanent, non-archived actionable failure. Its real attempt/error
+  evidence remains queryable and it follows the existing retention/archive
+  lifecycle instead of being hidden, deleted, or reported as exhausted.
+- If a due failed job collides with equivalent active work, that canonical
+  work carries execution forward. The source remains a failed, permanent,
+  queryable audit row with its real attempt count unchanged and does not enter
+  automatic retry again; logs identify the safe source/canonical ids without
+  exposing the original error text.
+- Retired legacy Summary jobs never enter generic job auto-recovery. Candidate
+  selection excludes them, and the per-row recovery guard returns an explicit
+  retired/skipped outcome for any defensive direct input while leaving every
+  persisted audit field and recovery counter unchanged.
 - `remem cleanup --archived-failures[=<days>]` purges archived rows older
   than the horizon, reporting what was removed.
 
@@ -68,6 +87,22 @@ surface that #381/#383 evidence collection depends on.
 - Seeded permanent failure never auto-retries and archives after the window;
   headline counters drop while the row remains queryable until explicit
   cleanup and aggregate history remains queryable after cleanup.
+- A missing-row lease transition fails with an explicit missing diagnostic,
+  emits no success event, leaves the row absent, and adds no processing/stuck
+  count. Rejection of an existing row leaves every persisted field unchanged;
+  when that row is still processing it remains visible and is reported as
+  stuck after the unchanged lease expires.
+- A seeded non-Summary v069 duplicate is permanent, non-archived and
+  actionable, preserves its original attempt/error evidence without false
+  exhaustion, and later archives through the existing retention lifecycle.
+- A seeded job retry that collides with equivalent active work converges on the
+  canonical active job, preserves the source error and real attempt count in a
+  permanent failed row, emits only safe collision metadata, and does not retry
+  that source again.
+- A batch containing a due-like retired Summary and an unrelated retryable job
+  excludes the Summary while recovering the unrelated job. Direct per-row
+  Summary input is skipped explicitly with byte/value-identical persisted
+  fields and no requeued/coalesced count.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.

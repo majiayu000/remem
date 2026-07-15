@@ -131,7 +131,7 @@ mod tests {
     }
 
     #[test]
-    fn claude_three_of_five_warning_names_repair_command() -> anyhow::Result<()> {
+    fn claude_three_of_six_warning_names_repair_command() -> anyhow::Result<()> {
         let dir = std::env::temp_dir().join(format!(
             "remem-hook-warning-{}-{}",
             std::process::id(),
@@ -165,7 +165,7 @@ mod tests {
         )
         .expect("incomplete Claude hooks should warn");
 
-        assert!(warning.contains("3/5 registered"), "{warning}");
+        assert!(warning.contains("3/6 registered"), "{warning}");
         assert!(
             warning.contains("remem install --target claude --repair"),
             "{warning}"

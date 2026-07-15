@@ -1,6 +1,8 @@
 mod artifact;
 mod compiler;
 mod evaluator;
+mod hook;
+mod management;
 mod store;
 
 pub use artifact::{
@@ -16,6 +18,10 @@ pub use evaluator::{
     evaluate_artifact, evaluate_artifact_file, EvaluationDiagnostic, EvaluationInput,
     EvaluationOutcome, EvaluationVerdict, RuleMatch,
 };
+pub use hook::{
+    evaluate_pre_tool_use, log_evaluation_error_once, session_id_hint, RuleHookEvaluation,
+};
+pub use management::{list_project_rules, set_rule_action, set_rule_disabled, ProjectRules};
 pub use store::{
     artifact_path_for_project, load_artifact_fail_open, write_artifact_atomic, ArtifactLoad,
     ArtifactLoadErrorKind,

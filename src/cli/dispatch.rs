@@ -10,12 +10,12 @@ use super::actions::{
     run_eval_graph_decision, run_eval_local, run_eval_provider_comparison, run_eval_weight_grid,
     run_export, run_governance, run_graph_review, run_import, run_ingest_sessions_cli,
     run_memory_action, run_merge_preferences, run_model, run_pending, run_preferences,
-    run_procedures, run_raw, run_reroute, run_review, run_search, run_show, run_status,
+    run_procedures, run_raw, run_reroute, run_review, run_rules, run_search, run_show, run_status,
     run_timeline, run_usage, run_user, run_why, run_workstreams, GovernanceCliRequest,
     RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, ContextGateAction};
+use super::types::{Cli, Commands, ContextGateAction, RulesAction};
 
 #[path = "actions/context_gate.rs"]
 mod context_gate;
@@ -87,6 +87,12 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             context::claude_memory::sync_to_claude_memory(&conn, &cwd, &project)?;
         }
         Commands::Preferences { action } => run_preferences(action)?,
+        Commands::Rules { action } => {
+            if should_skip_rules_action(&action, remem_hooks_disabled()) {
+                return Ok(());
+            }
+            run_rules(action)?;
+        }
         Commands::User { action } => run_user(action)?,
         Commands::Memory { action } => run_memory_action(action)?,
         Commands::Pending { action } => run_pending(action)?,
@@ -322,4 +328,23 @@ fn remem_hooks_disabled() -> bool {
     std::env::var("REMEM_DISABLE_HOOKS")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
+}
+
+fn should_skip_rules_action(action: &RulesAction, hooks_disabled: bool) -> bool {
+    hooks_disabled && matches!(action, RulesAction::Eval { .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_hooks_skip_only_internal_rule_evaluation() {
+        let eval = RulesAction::Eval { host: None };
+        let list = RulesAction::List { project: None };
+
+        assert!(should_skip_rules_action(&eval, true));
+        assert!(!should_skip_rules_action(&eval, false));
+        assert!(!should_skip_rules_action(&list, true));
+    }
 }

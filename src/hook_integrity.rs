@@ -1,10 +1,14 @@
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
+mod parse;
+use parse::{parse_remem_hook_value, parse_remem_invocation};
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ExpectedHookSpec {
     pub(crate) event: &'static str,
     pub(crate) subcommand: &'static str,
+    pub(crate) nested_subcommand: Option<&'static str>,
     pub(crate) host: &'static str,
     pub(crate) matcher: Option<&'static str>,
     pub(crate) timeout_seconds: Option<i64>,
@@ -56,6 +60,7 @@ impl HookIntegrityReport {
 pub(crate) struct RememInvocation {
     pub(crate) executable: String,
     pub(crate) subcommand: Option<String>,
+    pub(crate) nested_subcommand: Option<String>,
     pub(crate) host: Option<String>,
     pub(crate) env_host: Option<String>,
 }
@@ -70,6 +75,7 @@ const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "PostToolUse",
         subcommand: "observe",
+        nested_subcommand: None,
         host: "claude-code",
         matcher: Some("Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task"),
         timeout_seconds: Some(120),
@@ -77,6 +83,7 @@ const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "PreCompact",
         subcommand: "summarize",
+        nested_subcommand: None,
         host: "claude-code",
         matcher: None,
         timeout_seconds: Some(120),
@@ -84,6 +91,7 @@ const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "Stop",
         subcommand: "summarize",
+        nested_subcommand: None,
         host: "claude-code",
         matcher: None,
         timeout_seconds: Some(120),
@@ -91,6 +99,7 @@ const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "SessionStart",
         subcommand: "context",
+        nested_subcommand: None,
         host: "claude-code",
         matcher: Some("startup|resume|clear|compact"),
         timeout_seconds: Some(15),
@@ -98,9 +107,18 @@ const CLAUDE_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "UserPromptSubmit",
         subcommand: "session-init",
+        nested_subcommand: None,
         host: "claude-code",
         matcher: None,
         timeout_seconds: Some(15),
+    },
+    ExpectedHookSpec {
+        event: "PreToolUse",
+        subcommand: "rules",
+        nested_subcommand: Some("eval"),
+        host: "claude-code",
+        matcher: Some("Bash"),
+        timeout_seconds: Some(5),
     },
 ];
 
@@ -108,6 +126,7 @@ const CODEX_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "SessionStart",
         subcommand: "context",
+        nested_subcommand: None,
         host: "codex-cli",
         matcher: None,
         timeout_seconds: None,
@@ -115,6 +134,7 @@ const CODEX_EXPECTED: &[ExpectedHookSpec] = &[
     ExpectedHookSpec {
         event: "Stop",
         subcommand: "summarize",
+        nested_subcommand: None,
         host: "codex-cli",
         matcher: None,
         timeout_seconds: None,
@@ -146,7 +166,7 @@ pub(crate) fn expected_hook_executable_from_hooks(doc: &Value, host: &str) -> Op
             let Some(invocation) = parse_remem_hook_value(hook) else {
                 continue;
             };
-            if invocation.subcommand.as_deref() == Some(spec.subcommand)
+            if invocation_matches_spec_command(&invocation, spec)
                 && invocation
                     .resolved_host()
                     .is_none_or(|resolved| resolved == runtime_host(host))
@@ -338,7 +358,7 @@ fn collect_stale_details(
         let Some(invocation) = parse_remem_hook_value(hook) else {
             continue;
         };
-        if invocation.subcommand.as_deref() != Some(spec.subcommand) {
+        if !invocation_matches_spec_command(&invocation, spec) {
             continue;
         }
         if hook_matches_expected(entry, hook, spec, executable) {
@@ -370,6 +390,9 @@ fn stale_reason(
             invocation.resolved_host().unwrap_or("missing")
         ));
     }
+    if invocation.nested_subcommand.as_deref() != spec.nested_subcommand {
+        reasons.push("nested subcommand drift".to_string());
+    }
     if !entry_matcher_matches(entry, spec.matcher) {
         reasons.push("matcher drift".to_string());
     }
@@ -393,7 +416,7 @@ fn hook_matches_expected(
         && hook_timeout_matches(hook, spec.timeout_seconds)
         && parse_remem_hook_value(hook).is_some_and(|invocation| {
             Path::new(&invocation.executable) == executable
-                && invocation.subcommand.as_deref() == Some(spec.subcommand)
+                && invocation_matches_spec_command(&invocation, spec)
                 && invocation.resolved_host() == Some(spec.host)
         })
 }
@@ -418,11 +441,16 @@ fn is_remem_owned_for_event(host: &str, event: &str, hook: &Value) -> bool {
         return false;
     };
     parse_remem_hook_value(hook).is_some_and(|invocation| {
-        invocation.subcommand.as_deref() == Some(spec.subcommand)
+        invocation_matches_spec_command(&invocation, spec)
             && invocation
                 .resolved_host()
                 .is_none_or(|resolved| resolved == runtime_host(host))
     })
+}
+
+fn invocation_matches_spec_command(invocation: &RememInvocation, spec: &ExpectedHookSpec) -> bool {
+    invocation.subcommand.as_deref() == Some(spec.subcommand)
+        && invocation.nested_subcommand.as_deref() == spec.nested_subcommand
 }
 
 fn hook_values_for_event<'a>(
@@ -444,181 +472,13 @@ fn hook_values_for_event<'a>(
         })
 }
 
-pub(crate) fn parse_remem_hook_value(hook: &Value) -> Option<RememInvocation> {
-    let command = hook.get("command").and_then(|command| command.as_str())?;
-    if let Some(args) = hook.get("args").and_then(|args| args.as_array()) {
-        let mut tokens = vec![command.to_string()];
-        for arg in args {
-            tokens.push(arg.as_str()?.to_string());
-        }
-        return parse_remem_tokens(tokens);
-    }
-    parse_remem_invocation(command)
-}
-
-pub(crate) fn parse_remem_invocation(command: &str) -> Option<RememInvocation> {
-    parse_remem_tokens(shell_words(command)?)
-}
-
-fn parse_remem_tokens(tokens: Vec<String>) -> Option<RememInvocation> {
-    let command_index = tokens.iter().position(|token| !is_env_assignment(token))?;
-    if !is_remem_command_token(&tokens[command_index]) {
-        return None;
-    }
-    let host = find_host_arg(&tokens[command_index + 1..]);
-
-    Some(RememInvocation {
-        executable: tokens[command_index].clone(),
-        subcommand: tokens.get(command_index + 1).cloned(),
-        host,
-        env_host: find_legacy_host_env(&tokens[..command_index]),
-    })
-}
-
-fn find_host_arg(tokens: &[String]) -> Option<String> {
-    let mut iter = tokens.iter();
-    while let Some(token) = iter.next() {
-        if token == "--host" {
-            return iter
-                .next()
-                .map(|host| crate::runtime_config::normalize_host(host));
-        }
-        if let Some(host) = token.strip_prefix("--host=") {
-            return Some(crate::runtime_config::normalize_host(host));
-        }
-    }
-    None
-}
-
-fn find_legacy_host_env(tokens: &[String]) -> Option<String> {
-    for token in tokens {
-        let Some((name, value)) = env_assignment(token) else {
-            continue;
-        };
-        if matches!(name, "REMEM_HOOK_HOST" | "REMEM_CONTEXT_HOST") {
-            return Some(crate::runtime_config::normalize_host(value));
-        }
-    }
-    for token in tokens {
-        let Some((name, value)) = env_assignment(token) else {
-            continue;
-        };
-        if matches!(name, "REMEM_SUMMARY_EXECUTOR" | "REMEM_EXECUTOR") {
-            match value.trim().to_ascii_lowercase().as_str() {
-                "codex" | "codex-cli" => {
-                    return Some(crate::runtime_config::CODEX_HOST.to_string())
-                }
-                "claude" | "claude-cli" | "cli" => {
-                    return Some(crate::runtime_config::CLAUDE_HOST.to_string());
-                }
-                _ => {}
-            }
-        }
-    }
-    None
-}
-
-fn is_remem_command_token(token: &str) -> bool {
-    Path::new(token)
-        .file_stem()
-        .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| stem == "remem")
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    env_assignment(token).is_some()
-}
-
-fn env_assignment(token: &str) -> Option<(&str, &str)> {
-    let (name, value) = token.split_once('=')?;
-    let mut chars = name.chars();
-    let first = chars.next()?;
-    if (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-    {
-        Some((name, value))
-    } else {
-        None
-    }
-}
-
-fn shell_words(command: &str) -> Option<Vec<String>> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut chars = command.chars().peekable();
-    let mut quote = Quote::None;
-    let mut in_token = false;
-
-    while let Some(ch) = chars.next() {
-        match quote {
-            Quote::None => match ch {
-                '\'' => {
-                    quote = Quote::Single;
-                    in_token = true;
-                }
-                '"' => {
-                    quote = Quote::Double;
-                    in_token = true;
-                }
-                '\\' => {
-                    in_token = true;
-                    if let Some(next) = chars.next() {
-                        current.push(next);
-                    }
-                }
-                ch if ch.is_whitespace() => {
-                    if in_token {
-                        tokens.push(std::mem::take(&mut current));
-                        in_token = false;
-                    }
-                }
-                _ => {
-                    current.push(ch);
-                    in_token = true;
-                }
-            },
-            Quote::Single => {
-                if ch == '\'' {
-                    quote = Quote::None;
-                } else {
-                    current.push(ch);
-                }
-            }
-            Quote::Double => match ch {
-                '"' => quote = Quote::None,
-                '\\' => {
-                    if let Some(next) = chars.next() {
-                        current.push(next);
-                    }
-                }
-                _ => current.push(ch),
-            },
-        }
-    }
-
-    if quote != Quote::None {
-        return None;
-    }
-    if in_token {
-        tokens.push(current);
-    }
-    Some(tokens)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Quote {
-    None,
-    Single,
-    Double,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
 
     #[test]
-    fn detects_missing_claude_hooks_as_three_of_five() {
+    fn detects_missing_claude_hooks_as_three_of_six() {
         let doc = json!({
             "hooks": {
                 "SessionStart": [{
@@ -642,7 +502,7 @@ mod tests {
         );
 
         assert_eq!(report.registered, 3);
-        assert_eq!(report.expected, 5);
+        assert_eq!(report.expected, 6);
         assert!(report.missing_events.contains(&"PostToolUse"));
         assert!(report.missing_events.contains(&"Stop"));
         assert!(!report.is_healthy());

@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from specrail_lib import (
@@ -16,6 +17,10 @@ from specrail_lib import (
     infer_state,
     load_pack,
     render_artifact_path,
+    resolve_path,
+    resolve_repo_path,
+    resolve_spec_packet_root,
+    spec_packet_artifact_paths,
     state_map,
     validate_action_policy,
     validate_labels,
@@ -84,7 +89,11 @@ def load_evidence(path: Path | None) -> dict[str, Any]:
 def artifact_exists(repo: Path, artifact_path: str | None) -> bool:
     if not artifact_path:
         return False
-    return (repo / artifact_path).is_file()
+    return resolve_repo_path(
+        repo,
+        artifact_path,
+        label="artifact path",
+    ).is_file()
 
 
 def stricter_decision(current: str, candidate: str) -> str:
@@ -104,12 +113,20 @@ def required_artifact_path(config: Any, artifact: str, issue: int | None) -> str
 
 
 def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
-    repo = Path(args.repo).resolve()
+    repo = resolve_path(Path(args.repo), label="repository")
     config = load_pack(repo)
     config_errors: list[str] = []
     config_errors.extend(validate_state_graph(config))
     config_errors.extend(validate_labels(config))
     config_errors.extend(validate_action_policy(config))
+    try:
+        configured_spec_paths = spec_packet_artifact_paths(config, 1)
+        configured_spec_root = PurePosixPath(
+            configured_spec_paths["spec_packet"]
+        ).parent
+        resolve_spec_packet_root(repo, configured_spec_root)
+    except SpecRailError as exc:
+        config_errors.append(str(exc))
 
     route = normalize_route(args.route)
     policies = action_policy(config)
@@ -220,7 +237,6 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         provided_artifacts[name] = value
 
     for artifact in required:
-        path = required_artifact_path(config, artifact, args.issue)
         if artifact == "linked_issue":
             if args.issue is None:
                 missing.append("linked_issue")
@@ -240,10 +256,29 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             else:
                 missing.append("verification")
             continue
-        required_artifacts.append(path or artifact)
         provided = provided_artifacts.get(artifact)
+        if artifact in ARTIFACT_FILES and args.issue is None:
+            required_artifacts.append(str(provided) if provided else artifact)
+            if provided and artifact_exists(repo, str(provided)):
+                satisfied.append(f"{artifact}: {provided}")
+            elif provided:
+                missing.append(f"{artifact}:{provided}")
+            else:
+                missing.append(artifact)
+            continue
+        path = required_artifact_path(config, artifact, args.issue)
+        required_artifacts.append(path or artifact)
         if provided:
-            if artifact in ARTIFACT_FILES and not (repo / str(provided)).is_file():
+            if artifact in ARTIFACT_FILES and str(provided) != path:
+                missing.append(f"{artifact}:{path}")
+                reasons.append(
+                    f"{artifact} provided at {provided} does not match "
+                    f"configured path {path}"
+                )
+            elif artifact in ARTIFACT_FILES and not artifact_exists(
+                repo,
+                str(provided),
+            ):
                 missing.append(f"{artifact}:{provided}")
             else:
                 satisfied.append(f"{artifact}: {provided}")
@@ -257,11 +292,27 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             required_artifacts.append(path)
 
     if route == "implement":
-        duplicate_work_result = evaluate_duplicate_work_gate_path(
-            repo,
-            args.issue,
-            Path(args.duplicate_evidence) if args.duplicate_evidence else None,
-        )
+        if args.issue is None:
+            duplicate_work_result = {
+                "decision": "needs_human",
+                "issue": None,
+                "reasons": [
+                    "duplicate work evidence cannot be evaluated until a linked issue is provided"
+                ],
+                "satisfied": [],
+                "missing": ["duplicate_evidence"],
+                "blocked_actions": ["implement"],
+                "verification_commands": [
+                    "python3 checks/github_duplicate_evidence.py "
+                    "--github-repo OWNER/REPO --issue <issue> --json"
+                ],
+            }
+        else:
+            duplicate_work_result = evaluate_duplicate_work_gate_path(
+                repo,
+                args.issue,
+                Path(args.duplicate_evidence) if args.duplicate_evidence else None,
+            )
         for item in duplicate_work_result.get("satisfied", []):
             satisfied.append(f"duplicate_work: {item}")
         for item in duplicate_work_result.get("missing", []):
@@ -296,9 +347,20 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         decision = stricter_decision(decision, str(duplicate_work_result["decision"]))
 
     for artifact in creates:
+        if args.issue is None:
+            required_artifacts.append(artifact)
+            continue
         path = render_artifact_path(config, artifact, args.issue)
         if path:
             required_artifacts.append(path)
+
+    verification_commands = ["python3 checks/check_workflow.py --repo ."]
+    if args.issue:
+        spec_dir = spec_packet_artifact_paths(config, args.issue, repo=repo)["spec_packet"]
+        verification_commands.append(
+            "python3 checks/check_workflow.py --repo . --spec-dir="
+            + shlex.quote(spec_dir)
+        )
 
     return {
         "decision": decision,
@@ -315,14 +377,7 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         "allowed_actions": sorted(set(allowed_actions)),
         "blocked_actions": sorted(set(blocked_actions)),
         "duplicate_work_gate": duplicate_work_result,
-        "verification_commands": [
-            "python3 checks/check_workflow.py --repo .",
-            *(
-                [f"python3 checks/check_workflow.py --repo . --spec-dir specs/GH{args.issue}"]
-                if args.issue
-                else []
-            ),
-        ],
+        "verification_commands": verification_commands,
     }
 
 

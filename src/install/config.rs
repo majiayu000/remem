@@ -94,6 +94,13 @@ pub(in crate::install) fn build_hooks(bin: &str, strategy: HookStrategy) -> Valu
 
     if matches!(strategy, HookStrategy::ClaudeCode) {
         hooks.insert(
+            "PreToolUse".to_string(),
+            json!([{
+                "matcher": "Bash",
+                "hooks": [{ "type": "command", "command": hook_command(bin, strategy, "rules eval"), "timeout": 5 }]
+            }]),
+        );
+        hooks.insert(
             "PostToolUse".to_string(),
             json!([{
                 "matcher": "Write|Edit|NotebookEdit|Bash|Grep|Glob|Agent|Task",
