@@ -292,27 +292,30 @@ fn missing_or_unknown_rule_does_not_create_override_or_job() -> Result<()> {
 #[test]
 fn enqueue_failure_rolls_back_override() -> Result<()> {
     let scoped = ScopedTestDataDir::new("rules-cli-enqueue-rollback");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
     let conn = db::open_db()?;
     insert_cli_rule_fixture(&conn)?;
     compile_and_write(&conn, &scoped.path)?;
-    std::fs::write(
-        crate::runtime_config::config_path(),
-        "[rule_compilation]\nenabled = 'yes'\n",
-    )?;
+    conn.execute("ALTER TABLE jobs RENAME TO jobs_unavailable", [])?;
 
     let error = set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", true)
-        .expect_err("invalid enqueue config must roll back the override");
+        .expect_err("enqueue failure after upsert must roll back the override");
     assert!(
-        error
-            .to_string()
-            .contains("read rule compilation config before rule override"),
+        error.to_string().contains("enqueue rule compilation"),
         "{error:#}"
     );
-    let count: i64 = conn.query_row(
+    conn.execute("ALTER TABLE jobs_unavailable RENAME TO jobs", [])?;
+    let override_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM preference_rule_overrides",
         [],
         |row| row.get(0),
     )?;
-    assert_eq!(count, 0);
+    let job_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM jobs WHERE job_type = 'compile_rules'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!((override_count, job_count), (0, 0));
     Ok(())
 }
