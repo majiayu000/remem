@@ -345,6 +345,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "session_rollup_followup_checkpoint",
         sql: include_str!("../migrations/v068_session_rollup_followup_checkpoint.sql"),
     },
+    Migration {
+        version: 69,
+        name: "job_queue_atomicity",
+        sql: include_str!("../migrations/v069_job_queue_atomicity.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

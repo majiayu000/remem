@@ -13,7 +13,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use super::run::run_post_migration_hook;
+use super::run::{run_post_migration_hook, run_pre_migration_hook};
 use super::state::{applied_versions, has_migration_table};
 use super::transition::backfill_to_baseline;
 use super::types::{DryRunResult, Migration, MIGRATIONS, OLD_BASELINE_VERSION};
@@ -120,6 +120,18 @@ pub(crate) fn dry_run_pending(real_conn: &Connection) -> Result<DryRunResult> {
     }
 
     for migration in &pending {
+        if let Err(error) = run_pre_migration_hook(&test_conn, migration.version, migration.name) {
+            return Ok(DryRunResult {
+                migration_version,
+                sqlite_user_version: raw_current_version,
+                current_version,
+                pending_count: pending.len(),
+                error: Some(format!(
+                    "v{:03}_{} pre-migration hook: {}",
+                    migration.version, migration.name, error
+                )),
+            });
+        }
         if let Err(error) = test_conn.execute_batch(migration.sql) {
             return Ok(DryRunResult {
                 migration_version,

@@ -176,8 +176,8 @@ fn validate_dream_target_topic(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::memory::insert_memory;
     use crate::memory::tests_helper::setup_memory_schema;
+    use crate::memory::{insert_memory, search_memories_fts, search_memories_fts_filtered};
     use rusqlite::{params, Connection};
 
     fn setup() -> (Connection, String) {
@@ -243,10 +243,8 @@ mod tests {
 
     #[test]
     fn test_apply_handles_duplicate_superseded_ids() -> Result<()> {
-        // Codex review: a hallucinated duplicate id from the LLM must not
-        // re-fire the memories_au trigger on a row that has already been
-        // removed from memories_fts (which can surface as "database disk
-        // image is malformed").
+        // A hallucinated duplicate id from the LLM must not re-fire the
+        // memories_au trigger or corrupt the all-status FTS index.
         let (mut conn, project) = setup();
         let old_id = insert_memory(
             &conn,
@@ -270,8 +268,27 @@ mod tests {
 
         assert_eq!(status_for_id(&conn, old_id), "stale");
         assert!(
-            !fts_indexed(&conn, old_id, "duplicateterm"),
-            "duplicated supersede must still leave the row out of memories_fts"
+            fts_indexed(&conn, old_id, "duplicateterm"),
+            "duplicated supersede must preserve the stale row in the all-status FTS index"
+        );
+        assert!(
+            search_memories_fts(&conn, "duplicateterm", Some(&project), None, 10, 0)?.is_empty()
+        );
+        assert_eq!(
+            search_memories_fts_filtered(
+                &conn,
+                "duplicateterm",
+                Some(&project),
+                None,
+                10,
+                0,
+                true,
+                None,
+            )?
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>(),
+            vec![old_id]
         );
         let edge_count: i64 = conn.query_row(
             "SELECT COUNT(*) FROM memory_edges WHERE from_memory_id = ?1",
@@ -283,7 +300,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_removes_superseded_from_fts_index() {
+    fn test_apply_keeps_superseded_indexed_but_hidden_by_default() {
         let (mut conn, project) = setup();
         let old_id = insert_memory(
             &conn,
@@ -312,9 +329,29 @@ mod tests {
 
         assert_eq!(status_for_id(&conn, old_id), "stale");
         assert!(
-            !fts_indexed(&conn, old_id, "uniqueoldtitle"),
-            "superseded memory must not match in memories_fts"
+            fts_indexed(&conn, old_id, "uniqueoldtitle"),
+            "superseded memory must remain in the all-status FTS index"
         );
+        assert!(
+            search_memories_fts(&conn, "uniqueoldtitle", Some(&project), None, 10, 0)
+                .expect("default search")
+                .is_empty(),
+            "default search must hide superseded memory"
+        );
+        let with_inactive = search_memories_fts_filtered(
+            &conn,
+            "uniqueoldtitle",
+            Some(&project),
+            None,
+            10,
+            0,
+            true,
+            None,
+        )
+        .expect("include inactive search");
+        assert_eq!(with_inactive.len(), 1);
+        assert_eq!(with_inactive[0].id, old_id);
+        assert_eq!(with_inactive[0].status, "stale");
     }
 
     #[test]
@@ -631,7 +668,7 @@ mod tests {
     }
 
     #[test]
-    fn test_apply_evicts_superseded_rows_from_fts() {
+    fn test_apply_hides_superseded_rows_through_query_predicate() {
         let (mut conn, project) = setup();
         let old_id = insert_memory(
             &conn,
@@ -674,10 +711,31 @@ mod tests {
             .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(
-            post_hits.is_empty(),
-            "FTS MATCH must not return superseded rows after apply, got: {post_hits:?}"
+        assert_eq!(
+            post_hits,
+            vec![old_id],
+            "the all-status FTS index must retain the superseded row"
         );
+        assert!(
+            search_memories_fts(&conn, "supersededneedle", Some(&project), None, 10, 0)
+                .expect("default search")
+                .is_empty(),
+            "the default query predicate must hide superseded rows"
+        );
+        let stale_hits = search_memories_fts_filtered(
+            &conn,
+            "supersededneedle",
+            Some(&project),
+            None,
+            10,
+            0,
+            true,
+            None,
+        )
+        .expect("include inactive search");
+        assert_eq!(stale_hits.len(), 1);
+        assert_eq!(stale_hits[0].id, old_id);
+        assert_eq!(stale_hits[0].status, "stale");
 
         // The merged memory should still be searchable.
         let merged_hits: Vec<i64> = conn

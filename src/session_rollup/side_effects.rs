@@ -632,7 +632,7 @@ fn enqueue_summary_followup_jobs(
         );
     }
     let payload = followup_payload(task.ai_profile.as_deref())?;
-    let compress_job_id = db::enqueue_job(
+    let compress_job_id = db::enqueue_job_in_transaction(
         &tx,
         &task.host,
         db::JobType::Compress,
@@ -641,7 +641,7 @@ fn enqueue_summary_followup_jobs(
         &payload,
         200,
     )?;
-    let dream_decision = db::maybe_enqueue_dream_job(
+    let dream_decision = db::maybe_enqueue_dream_job_in_transaction(
         &tx,
         &task.host,
         &task.project,

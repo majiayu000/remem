@@ -1,5 +1,7 @@
+use std::io::Write;
+
 use anyhow::{anyhow, Context, Result};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::schema_drift::{install_v031_state_delete_trigger, repair_known_schema_drift};
 use super::state::{applied_versions, ensure_migration_table, has_migration_table, mark_applied};
@@ -103,6 +105,7 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
             "migrate",
             &format!("applying v{:03}_{}", migration.version, migration.name),
         );
+        run_pre_migration_hook(conn, migration.version, migration.name)?;
         conn.execute_batch(migration.sql).with_context(|| {
             format!(
                 "migration v{:03}_{} failed",
@@ -131,6 +134,56 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
         .unwrap_or(0);
     let user_version = current_user_version.max(OLD_BASELINE_VERSION - 1 + max_applied);
     conn.execute_batch(&format!("PRAGMA user_version = {}", user_version))?;
+    Ok(())
+}
+
+pub(super) fn run_pre_migration_hook(conn: &Connection, version: i64, name: &str) -> Result<()> {
+    if version == 69 {
+        prepare_v069_dream_profile_keys(conn).with_context(|| {
+            format!("migration v{version:03}_{name} failed to normalize Dream profiles")
+        })?;
+    }
+    Ok(())
+}
+
+fn prepare_v069_dream_profile_keys(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS temp._v069_dream_profile_keys;
+         CREATE TEMP TABLE _v069_dream_profile_keys(
+             id INTEGER PRIMARY KEY,
+             profile_key TEXT NOT NULL
+         );",
+    )
+    .context("create v069 Dream profile normalization table")?;
+    let rows = {
+        let mut statement = conn.prepare(
+            "SELECT pending_dream.id, pending_dream.payload_json
+             FROM jobs AS pending_dream
+             WHERE pending_dream.job_type = 'dream'
+               AND pending_dream.state = 'pending'
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM jobs AS processing_dream
+                   WHERE processing_dream.job_type = 'dream'
+                     AND processing_dream.project = pending_dream.project
+                     AND processing_dream.state = 'processing'
+               )
+             ORDER BY pending_dream.id ASC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (id, payload_json) in rows {
+        let profile_key = crate::db::job::dream_profile_key(&payload_json).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO temp._v069_dream_profile_keys(id, profile_key) VALUES (?1, ?2)",
+            params![id, profile_key],
+        )?;
+    }
     Ok(())
 }
 
@@ -166,5 +219,50 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             &format!("normalized {updated} workstream alias title(s)"),
         );
     }
+    if version == 69 {
+        log_v069_reconciliation_counts(conn).with_context(|| {
+            format!("migration v{version:03}_{name} failed to log reconciliation counts")
+        })?;
+    }
+    Ok(())
+}
+
+fn log_v069_reconciliation_counts(conn: &Connection) -> Result<()> {
+    let mut counts = Vec::with_capacity(3);
+    for identity_kind in ["ordinary", "dream", "compile_rules"] {
+        let (reconciled, manual_review): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN manual_review = 1 THEN 1 ELSE 0 END), 0)
+             FROM temp._v069_reconciled
+             WHERE identity_kind = ?1",
+            params![identity_kind],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        counts.push((reconciled, manual_review));
+    }
+
+    let message = format!(
+        "v069 job queue reconciliation ordinary={} manual_review={} dream={} manual_review={} compile_rules={} manual_review={}",
+        counts[0].0,
+        counts[0].1,
+        counts[1].0,
+        counts[1].1,
+        counts[2].0,
+        counts[2].1,
+    );
+    let mut log_file =
+        crate::log::open_log_append().ok_or_else(|| anyhow!("prepare migration log output"))?;
+    writeln!(
+        log_file,
+        "[{}] [INFO] [migrate] {message}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    )
+    .context("write migration reconciliation log")?;
+    log_file
+        .flush()
+        .context("flush migration reconciliation log")?;
+
+    conn.execute_batch("DROP TABLE temp._v069_reconciled")
+        .context("drop v069 reconciliation evidence after logging")?;
     Ok(())
 }

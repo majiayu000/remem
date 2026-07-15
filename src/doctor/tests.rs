@@ -205,7 +205,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let failed_job_id = db::enqueue_job(
         &conn,
         "codex-cli",
-        db::JobType::Summary,
+        db::JobType::Compress,
         "proj-a",
         Some("session-4"),
         "{}",

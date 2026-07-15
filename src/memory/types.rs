@@ -549,30 +549,6 @@ pub mod tests_helper {
                 ON dream_cluster_decisions(project, decision, next_review_epoch);
             CREATE INDEX idx_dream_cluster_decisions_signature
                 ON dream_cluster_decisions(project, memory_type, cluster_signature);
-            CREATE VIRTUAL TABLE memories_fts USING fts5(
-                title, content, search_context,
-                content='memories',
-                content_rowid='id',
-                tokenize='trigram'
-            );
-            CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, title, content, search_context)
-                SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
-                WHERE new.status = 'active';
-            END;
-            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
-                SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
-                WHERE old.status = 'active';
-                INSERT INTO memories_fts(rowid, title, content, search_context)
-                SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
-                WHERE new.status = 'active';
-            END;
-            CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
-                SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
-                WHERE old.status = 'active';
-            END;
             CREATE TABLE events (
                 id INTEGER PRIMARY KEY,
                 session_id TEXT NOT NULL,
@@ -640,5 +616,7 @@ pub mod tests_helper {
             );",
         )
         .unwrap();
+        conn.execute_batch(include_str!("../migrations/v020_memory_fts_all_status.sql"))
+            .unwrap();
     }
 }
