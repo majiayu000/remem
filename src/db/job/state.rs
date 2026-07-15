@@ -508,9 +508,9 @@ fn release_expired_job_lease(
         return Ok(None);
     };
     if source.state != "processing"
-        || !source
+        || source
             .lease_expires_epoch
-            .is_some_and(|expiry| expiry < now)
+            .is_none_or(|expiry| expiry >= now)
     {
         tx.commit().context("commit ineligible expired job skip")?;
         return Ok(None);
