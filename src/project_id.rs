@@ -43,18 +43,13 @@ fn canonical_project_root_with_resolver(
             .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
             .unwrap_or_else(|| canonical_cwd.to_path_buf());
     }
-    if let Some(root) = git_worktree_root_from_markers(canonical_cwd) {
-        return root;
-    }
-    let requires_git_fallback = canonical_cwd
-        .ancestors()
-        .any(|candidate| candidate.join(".git").exists());
-    if requires_git_fallback {
-        return resolve_toplevel(canonical_cwd)
+    match git_worktree_root_from_markers(canonical_cwd) {
+        GitMarkerDiscovery::Worktree(root) => root,
+        GitMarkerDiscovery::RequiresResolver => resolve_toplevel(canonical_cwd)
             .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
-            .unwrap_or_else(|| canonical_cwd.to_path_buf());
+            .unwrap_or_else(|| canonical_cwd.to_path_buf()),
+        GitMarkerDiscovery::None => canonical_cwd.to_path_buf(),
     }
-    canonical_cwd.to_path_buf()
 }
 
 fn git_environment_requires_resolver() -> bool {
@@ -67,20 +62,43 @@ fn git_environment_requires_resolver_with(mut is_set: impl FnMut(&str) -> bool) 
         "GIT_WORK_TREE",
         "GIT_CEILING_DIRECTORIES",
         "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_CONFIG",
+        "GIT_CONFIG_GLOBAL",
+        "GIT_CONFIG_SYSTEM",
+        "GIT_CONFIG_NOSYSTEM",
+        "GIT_CONFIG_COUNT",
     ]
     .into_iter()
     .any(&mut is_set)
 }
 
-fn git_worktree_root_from_markers(cwd: &std::path::Path) -> Option<PathBuf> {
-    cwd.ancestors()
-        .find(|candidate| is_git_worktree_marker(&candidate.join(".git")))
-        .map(PathBuf::from)
+#[derive(Debug, PartialEq, Eq)]
+enum GitMarkerDiscovery {
+    Worktree(PathBuf),
+    RequiresResolver,
+    None,
+}
+
+fn git_worktree_root_from_markers(cwd: &std::path::Path) -> GitMarkerDiscovery {
+    for candidate in cwd.ancestors() {
+        let marker = candidate.join(".git");
+        match std::fs::symlink_metadata(&marker) {
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return GitMarkerDiscovery::RequiresResolver,
+        }
+        return if is_git_worktree_marker(&marker) {
+            GitMarkerDiscovery::Worktree(candidate.to_path_buf())
+        } else {
+            GitMarkerDiscovery::RequiresResolver
+        };
+    }
+    GitMarkerDiscovery::None
 }
 
 fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
     if marker.is_dir() {
-        return marker.join("HEAD").is_file();
+        return marker.join("HEAD").is_file() && !git_dir_config_requires_resolver(marker);
     }
     let Ok(contents) = std::fs::read_to_string(marker) else {
         return false;
@@ -103,7 +121,84 @@ fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
             .unwrap_or_else(|| std::path::Path::new("."))
             .join(git_dir)
     };
-    git_dir.join("HEAD").is_file()
+    git_dir.join("HEAD").is_file() && !git_dir_config_requires_resolver(&git_dir)
+}
+
+fn git_dir_config_requires_resolver(git_dir: &std::path::Path) -> bool {
+    let mut config_dirs = vec![git_dir.to_path_buf()];
+    let commondir = git_dir.join("commondir");
+    if commondir.exists() {
+        let Ok(common) = std::fs::read_to_string(&commondir) else {
+            return true;
+        };
+        let common = common.trim();
+        if common.is_empty() {
+            return true;
+        }
+        let common = std::path::Path::new(common);
+        let common = if common.is_absolute() {
+            common.to_path_buf()
+        } else {
+            git_dir.join(common)
+        };
+        if !common.is_dir() {
+            return true;
+        }
+        config_dirs.push(common);
+    }
+    config_dirs.into_iter().any(|dir| {
+        let config = dir.join("config");
+        match std::fs::read_to_string(config) {
+            Ok(contents) => git_config_requires_resolver(&contents),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        }
+    })
+}
+
+fn git_config_requires_resolver(contents: &str) -> bool {
+    let mut section = "";
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+            continue;
+        }
+        if line.starts_with('[') {
+            let Some(end) = line.find(']') else {
+                return true;
+            };
+            section = line[1..end].split_whitespace().next().unwrap_or_default();
+            if section.eq_ignore_ascii_case("include") || section.eq_ignore_ascii_case("includeif")
+            {
+                return true;
+            }
+            continue;
+        }
+        let mut fields = line.splitn(2, |ch: char| ch == '=' || ch.is_whitespace());
+        let key = fields.next().unwrap_or_default().trim();
+        let value = fields
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .trim_start_matches('=')
+            .trim();
+        if section.eq_ignore_ascii_case("core") && key.eq_ignore_ascii_case("worktree") {
+            return true;
+        }
+        if section.eq_ignore_ascii_case("core")
+            && key.eq_ignore_ascii_case("bare")
+            && !matches!(
+                value.to_ascii_lowercase().as_str(),
+                "false" | "no" | "off" | "0"
+            )
+        {
+            return true;
+        }
+        if section.eq_ignore_ascii_case("extensions") && key.eq_ignore_ascii_case("worktreeconfig")
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Canonical project identity (single source of truth).
@@ -196,7 +291,7 @@ mod tests {
 
         assert_eq!(
             git_worktree_root_from_markers(&nested),
-            Some(root.clone()),
+            GitMarkerDiscovery::Worktree(root.clone()),
             "a .git file is a worktree marker, not only .git directories"
         );
 
@@ -211,7 +306,10 @@ mod tests {
         std::fs::create_dir_all(&nested)?;
         std::fs::write(root.join(".git"), "not a gitdir marker\n")?;
 
-        assert_eq!(git_worktree_root_from_markers(&nested), None);
+        assert_eq!(
+            git_worktree_root_from_markers(&nested),
+            GitMarkerDiscovery::RequiresResolver
+        );
 
         std::fs::remove_dir_all(root)?;
         Ok(())
@@ -248,6 +346,11 @@ mod tests {
             "GIT_WORK_TREE",
             "GIT_CEILING_DIRECTORIES",
             "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_CONFIG",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_NOSYSTEM",
+            "GIT_CONFIG_COUNT",
         ] {
             assert!(
                 git_environment_requires_resolver_with(|candidate| candidate == variable),
@@ -255,5 +358,79 @@ mod tests {
             );
         }
         assert!(!git_environment_requires_resolver_with(|_| false));
+    }
+
+    #[test]
+    fn plain_git_config_keeps_the_marker_fast_path() {
+        assert!(!git_config_requires_resolver(
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n"
+        ));
+        assert!(git_config_requires_resolver(
+            "[core]\n\tworktree = ../configured\n"
+        ));
+    }
+
+    #[test]
+    fn core_worktree_config_precedes_the_marker_fast_path() -> anyhow::Result<()> {
+        let root = unique_temp_path("core-worktree");
+        let control = root.join("control");
+        let configured_worktree = root.join("configured-worktree");
+        let nested = control.join("nested");
+        std::fs::create_dir_all(&nested)?;
+        std::fs::create_dir_all(&configured_worktree)?;
+
+        let status = Command::new("git")
+            .args(["init", "--bare", "--quiet"])
+            .arg(control.join(".git"))
+            .status()?;
+        assert!(
+            status.success(),
+            "bare control repository should initialize"
+        );
+        for args in [
+            vec!["config", "core.bare", "false"],
+            vec![
+                "config",
+                "core.worktree",
+                configured_worktree.to_str().expect("utf-8 temp path"),
+            ],
+        ] {
+            let status = Command::new("git")
+                .arg(format!("--git-dir={}", control.join(".git").display()))
+                .args(args)
+                .status()?;
+            assert!(status.success(), "git config should succeed");
+        }
+
+        assert_eq!(
+            canonical_project_root(nested.to_str().expect("utf-8 temp path")),
+            configured_worktree.canonicalize()?,
+            "core.worktree must override the apparent .git marker parent"
+        );
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_nested_git_marker_stops_parent_discovery() -> anyhow::Result<()> {
+        let root = unique_temp_path("malformed-nested-marker");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested)?;
+        let status = Command::new("git")
+            .args(["init", "--quiet"])
+            .current_dir(&root)
+            .status()?;
+        assert!(status.success(), "parent repository should initialize");
+        std::fs::write(nested.join(".git"), "not a gitdir marker\n")?;
+
+        assert_eq!(
+            canonical_project_root(nested.to_str().expect("utf-8 temp path")),
+            nested.canonicalize()?,
+            "Git rejects the malformed inner marker instead of discovering the parent repository"
+        );
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
     }
 }

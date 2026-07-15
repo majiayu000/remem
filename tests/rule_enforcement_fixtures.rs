@@ -107,6 +107,77 @@ fn repeated_correction_fixtures_warn_only_with_compiled_rules() -> Result<()> {
 }
 
 #[test]
+fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
+    let suite = load_fixtures()?;
+    let force_scenario = suite
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.id == "forbidden-command")
+        .context("fixture suite is missing the forbidden-command scenario")?;
+    let trailer_scenario = suite
+        .scenarios
+        .iter()
+        .find(|scenario| scenario.id == "forbidden-commit-trailer")
+        .context("fixture suite is missing the forbidden-commit-trailer scenario")?;
+    let artifact = CompiledRulesArtifact::new(
+        2,
+        vec![
+            compiled_rule(force_scenario)?,
+            compiled_rule(trailer_scenario)?,
+        ],
+    );
+
+    for command in [
+        "echo safe\ngit push --force",
+        "(git push --force)",
+        "{ git push origin main -f; }",
+        "(git commit --trailer AI-generated-by=bot)",
+        "{\ngit commit --trailer AI-generated-by=bot\n}",
+        "git push origin +main:main",
+        "git push origin +refs/heads/main:refs/heads/main --",
+        "git push --repo origin +HEAD:main",
+        "git push origin -- +HEAD:main",
+    ] {
+        let outcome = remem::rules::evaluate_artifact(
+            &artifact,
+            &remem::rules::EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        ensure!(
+            outcome.matches.len() == 1 && outcome.diagnostics.is_empty(),
+            "expected one structural match for {command:?}, got {outcome:?}"
+        );
+    }
+
+    for command in [
+        "echo git push --force",
+        "echo '(git push --force)'",
+        "echo \"{ git push --force; }\"",
+        "echo 'safe\ngit push --force'",
+        "git push +server main",
+        "git push origin +",
+        "git push origin +:main",
+        "git push origin :main",
+        "git push -o +main:main origin main",
+        "git push --push-option +main:main origin main",
+    ] {
+        let outcome = remem::rules::evaluate_artifact(
+            &artifact,
+            &remem::rules::EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        ensure!(
+            outcome.matches.is_empty() && outcome.diagnostics.is_empty(),
+            "expected no structural match for {command:?}, got {outcome:?}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 #[ignore = "manual p95 harness; run under --release with --ignored --nocapture"]
 fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
     let suite = load_fixtures()?;

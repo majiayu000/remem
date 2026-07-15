@@ -75,15 +75,18 @@ contract is complete.
   Unicode semantics until the worker regenerates the derived artifact.
 - The v2 classifier may emit `git_push_force_forbidden` for the exact, closed
   low-risk directive `git push --force`. Evaluation uses the existing shell
-  tokenizer and a typed Git-push argument parser: exact `--force`, standalone
-  `-f`, and `f` in valid short-option clusters match before the `--`
-  terminator. The parser honors `-o`/long-option arity, so option values,
-  `--force-with-lease`, positional tokens, and arbitrary natural-language
-  commands fail closed.
+  tokenizer and a typed Git-push argument parser. Unquoted newlines and command
+  groups form executable segments, while quoted or echoed command text stays
+  inert. Exact `--force`, standalone `-f`, `f` in valid short-option clusters,
+  and a non-deletion leading-`+` refspec match; the parser honors the `--`
+  terminator and option arity so option values, deletions, remote names,
+  `--force-with-lease`, and arbitrary natural-language commands fail closed.
 - The project-root marker fast path is used only when Git discovery has no
-  environment override. Explicit layouts and discovery controls such as
-  `GIT_CEILING_DIRECTORIES` delegate to Git so project identity matches Git's
-  own toplevel decision.
+  environment override and the nearest `.git` marker is a plain worktree
+  layout. Explicit layouts, discovery controls such as
+  `GIT_CEILING_DIRECTORIES`, worktree-affecting Git config, and malformed inner
+  markers delegate to Git so project identity matches Git's own toplevel or
+  fails closed instead of falling through to a parent marker.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.

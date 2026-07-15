@@ -267,26 +267,57 @@ fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [
 
 fn git_push_args_force(args: &[String]) -> bool {
     let mut index = 0;
+    let mut repository_supplied = false;
+    let mut options_terminated = false;
     while let Some(arg) = args.get(index) {
-        if arg == "--" {
-            return false;
+        if !options_terminated && arg == "--" {
+            options_terminated = true;
+            index += 1;
+            continue;
         }
-        if matches!(arg.as_str(), "--force" | "-f") {
+        if !options_terminated && matches!(arg.as_str(), "--force" | "-f") {
             return true;
         }
-        match git_push_short_option_effect(arg) {
-            PushShortOptionEffect::Forces => return true,
-            PushShortOptionEffect::ConsumesNext => index += 2,
-            PushShortOptionEffect::Other => {
+        if !options_terminated && (arg == "--repo" || arg.starts_with("--repo=")) {
+            repository_supplied = arg.starts_with("--repo=") || args.get(index + 1).is_some();
+            index += if arg == "--repo" { 2 } else { 1 };
+            continue;
+        }
+        if !options_terminated {
+            match git_push_short_option_effect(arg) {
+                PushShortOptionEffect::Forces => return true,
+                PushShortOptionEffect::ConsumesNext => {
+                    index += 2;
+                    continue;
+                }
+                PushShortOptionEffect::Other => {}
+            }
+            if arg.starts_with('-') {
                 index += if git_push_long_option_consumes_next(arg) {
                     2
                 } else {
                     1
                 };
+                continue;
             }
         }
+        if repository_supplied && is_force_push_refspec(arg) {
+            return true;
+        }
+        repository_supplied = true;
+        index += 1;
     }
     false
+}
+
+fn is_force_push_refspec(arg: &str) -> bool {
+    let Some(refspec) = arg.strip_prefix('+') else {
+        return false;
+    };
+    let source = refspec
+        .split_once(':')
+        .map_or(refspec, |(source, _)| source);
+    !source.is_empty() && !source.starts_with('+')
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -434,10 +465,12 @@ fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
                         current.push(next);
                     }
                 }
-                ';' | '|' | '&' => {
+                ';' | '|' | '&' | '\n' | '(' | ')' | '{' | '}' => {
                     push_token(&mut tokens, &mut current, &mut in_token);
                     push_segment(&mut segments, &mut tokens);
-                    if matches!(chars.peek(), Some(next) if *next == ch) {
+                    if matches!(ch, ';' | '|' | '&')
+                        && matches!(chars.peek(), Some(next) if *next == ch)
+                    {
                         chars.next();
                     }
                 }
