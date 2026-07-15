@@ -15,6 +15,7 @@ pub(in crate::cli) use super::query_types::{
 pub(in crate::cli) use super::review_types::{
     GraphReviewAction, ReviewAction, ReviewBatchFilterArgs,
 };
+pub(in crate::cli) use super::rule_types::{RuleActionArg, RulesAction};
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -155,6 +156,11 @@ pub(super) enum Commands {
     Preferences {
         #[command(subcommand)]
         action: PreferenceAction,
+    },
+    /// Inspect and manage compiled preference rules.
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
     },
     /// Store and inspect explicit user-context claims.
     User {

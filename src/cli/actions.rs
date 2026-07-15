@@ -17,6 +17,7 @@ mod preferences;
 mod procedures;
 mod query;
 mod review;
+mod rules;
 mod scope_cleanup;
 mod shared;
 mod usage;
@@ -48,6 +49,7 @@ pub(super) use query::{
     run_search, run_show, run_status, run_timeline, run_why, run_workstreams,
 };
 pub(super) use review::{run_graph_review, run_review};
+pub(super) use rules::run_rules;
 pub(super) use scope_cleanup::{
     run_archive, run_audit_scope, run_merge_preferences, run_reroute, RerouteCliRequest,
 };

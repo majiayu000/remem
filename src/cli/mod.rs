@@ -9,6 +9,7 @@ mod memory_types;
 mod procedure_types;
 mod query_types;
 mod review_types;
+mod rule_types;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -23,6 +24,8 @@ mod tests_maintenance;
 mod tests_procedures;
 #[cfg(test)]
 mod tests_raw;
+#[cfg(test)]
+mod tests_rules;
 #[cfg(test)]
 mod tests_trace;
 mod types;
