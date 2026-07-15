@@ -14,15 +14,17 @@ pub enum PreferencePredicate {
         trailer: String,
         conflict_key: String,
     },
+    GitPushForceForbidden {
+        conflict_key: String,
+    },
 }
 
 impl PreferencePredicate {
     pub fn conflict_key(&self) -> String {
         match self {
             PreferencePredicate::CommandRegex { conflict_key, .. }
-            | PreferencePredicate::CommitTrailerForbidden { conflict_key, .. } => {
-                conflict_key.clone()
-            }
+            | PreferencePredicate::CommitTrailerForbidden { conflict_key, .. }
+            | PreferencePredicate::GitPushForceForbidden { conflict_key } => conflict_key.clone(),
         }
     }
 }
@@ -53,11 +55,7 @@ const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
     ),
 ];
 
-const FORBIDDEN_COMMANDS: &[(&str, &str, &str)] = &[(
-    "git push --force",
-    r"(^|[;&|][ \t\r\n]*)git[ \t\r\n]+push[ \t\r\n]+([^ \t\r\n;&|]+[ \t\r\n]+)*(--force|-f)([ \t\r\n;&|]|$)",
-    "git-push-force",
-)];
+const FORBIDDEN_COMMANDS: &[(&str, &str)] = &[("git push --force", "git-push-force")];
 
 const FORBIDDEN_COMMAND_ACTIONS: &[&str] = &["do not run", "don't run", "dont run", "never run"];
 
@@ -122,7 +120,7 @@ pub fn classify_preference_predicates(text: &str) -> Vec<PreferenceClassificatio
 }
 
 fn classify_forbidden_command(lower: &str) -> Option<PreferenceClassification> {
-    for (command, pattern, key) in FORBIDDEN_COMMANDS {
+    for (command, key) in FORBIDDEN_COMMANDS {
         let is_exact_directive = FORBIDDEN_COMMAND_ACTIONS.iter().any(|action| {
             has_exact_directive(
                 lower,
@@ -132,8 +130,7 @@ fn classify_forbidden_command(lower: &str) -> Option<PreferenceClassification> {
         });
         if is_exact_directive {
             return Some(PreferenceClassification {
-                predicate: PreferencePredicate::CommandRegex {
-                    pattern: (*pattern).to_string(),
+                predicate: PreferencePredicate::GitPushForceForbidden {
                     conflict_key: format!("forbidden-command:{key}"),
                 },
                 summary: "Forbidden command".to_string(),
@@ -382,7 +379,8 @@ mod tests {
         .into_iter()
         .filter_map(|classification| match classification.predicate {
             PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
-            PreferencePredicate::CommandRegex { .. } => None,
+            PreferencePredicate::CommandRegex { .. }
+            | PreferencePredicate::GitPushForceForbidden { .. } => None,
         })
         .collect::<Vec<_>>();
         assert_eq!(trailers, ["Co-authored-by"]);
@@ -396,7 +394,8 @@ mod tests {
         .into_iter()
         .filter_map(|classification| match classification.predicate {
             PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
-            PreferencePredicate::CommandRegex { .. } => None,
+            PreferencePredicate::CommandRegex { .. }
+            | PreferencePredicate::GitPushForceForbidden { .. } => None,
         })
         .collect::<Vec<_>>();
         assert_eq!(trailers, ["AI-generated-by", "Co-authored-by"]);
@@ -404,18 +403,12 @@ mod tests {
 
     #[test]
     fn forbidden_command_classifier_is_exact_and_closed() -> anyhow::Result<()> {
-        let pattern = command_pattern("Never run git push --force");
-        let regex = regex_lite::Regex::new(&pattern)?;
-        assert!(regex.is_match("git push --force"));
-        assert!(regex.is_match("git push -f"));
-        assert!(regex.is_match("git push origin main --force"));
-        assert!(regex.is_match("git push origin HEAD:main -f"));
-        assert!(regex.is_match("git push --dry-run origin main --force"));
-        assert!(regex.is_match("cargo test && git push --force"));
-        assert!(!regex.is_match("git push --force-with-lease"));
-        assert!(!regex.is_match("git push origin main --force-with-lease"));
-        assert!(!regex.is_match("git push -foo"));
-        assert!(!regex.is_match("echo git push --force"));
+        assert!(matches!(
+            classify_preference_predicate("Never run git push --force")
+                .expect("closed forbidden command should classify")
+                .predicate,
+            PreferencePredicate::GitPushForceForbidden { .. }
+        ));
 
         for text in [
             "Never run rm -rf /",

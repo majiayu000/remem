@@ -98,7 +98,15 @@ Predicate kinds in the first implementation:
 - `commit_trailer_forbidden`: matched against `git commit` command strings for
   forbidden trailer substrings.
 
-Nothing else. New kinds require a spec update.
+Artifact v2 additionally supports:
+
+- `git_push_force_forbidden`: structurally parses shell command segments and
+  Git push arguments. It matches exact `--force`, standalone `-f`, or `f` in a
+  valid short-option cluster before the `--` terminator, while honoring `-o`
+  and long-option arity. It does not match option values, positional arguments,
+  or `--force-with-lease`.
+
+Nothing else. Further kinds require a spec update.
 
 ### Compilation pass (worker side)
 
@@ -213,17 +221,16 @@ hook-side writes.
 - Compatibility: Codex and any host without pre-execution Bash hooks cannot
   enforce command rules; doctor must label per-host enforcement capability
   honestly and CLI must reject unsupported block-mode claims.
-- Performance: regex evaluation per pre-execution Bash event; bounded by rule count
-  (expected < 20); covered by the latency acceptance criterion.
+- Performance: predicate evaluation per pre-execution Bash event; bounded by
+  rule count (expected < 20); covered by the latency acceptance criterion.
 - Artifact compatibility: new compilations emit schema v2 with ASCII-delimited
   `command_regex` patterns evaluated by `regex-lite`. Schema v1 remains readable
   and retains its original Unicode `regex` semantics until the worker replaces
-  the derived artifact. The v2 classifier recognizes only closed package-manager,
-  commit-trailer, and exact low-risk forbidden-command directives; the initial
-  forbidden-command allowlist contains only `git push --force`.
-  Its generated predicate also covers Git's equivalent `git push -f` spelling
-  and recognizes the exact force option after repository/refspec arguments.
-  `--force-with-lease` and unrelated options remain outside this predicate.
+  the derived artifact. The v2 classifier recognizes only closed
+  package-manager, commit-trailer, and exact low-risk forbidden-command
+  directives. Package-manager `command_regex` patterns use `regex-lite`; the
+  forbidden-command allowlist contains only `git push --force` and compiles to
+  the structural `git_push_force_forbidden` predicate.
 - Project-root marker discovery skips the fast path whenever explicit Git
   layout or discovery-control environment is present, including
   `GIT_CEILING_DIRECTORIES`, so hook identity follows Git's own toplevel result.

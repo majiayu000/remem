@@ -232,6 +232,9 @@ fn compiled_rule(scenario: &Scenario) -> Result<CompiledRule> {
                 message: "Commit message violates a compiled trailer preference".to_string(),
             }
         }
+        PreferencePredicate::GitPushForceForbidden { .. } => RulePredicate::GitPushForceForbidden {
+            message: "Command violates a compiled forbidden-command preference".to_string(),
+        },
     };
     Ok(CompiledRule {
         rule_id: format!("pref-{}-1", scenario.source_memory_id),

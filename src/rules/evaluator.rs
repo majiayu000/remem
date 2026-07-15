@@ -196,6 +196,8 @@ fn rule_matches(
             command_adds_forbidden_commit_trailer(&input.command, trailer)
                 .map_err(|err| format!("rule {} could not parse command: {err}", rule.rule_id))
         }
+        RulePredicate::GitPushForceForbidden { .. } => command_forces_git_push(&input.command)
+            .map_err(|err| format!("rule {} could not parse command: {err}", rule.rule_id)),
     }
 }
 
@@ -207,18 +209,27 @@ fn command_adds_forbidden_commit_trailer(command: &str, trailer: &str) -> Result
 }
 
 fn git_commit_segment_adds_trailer(tokens: &[String], trailer: &str) -> bool {
-    let Some(command_index) = tokens.iter().position(|token| !is_env_assignment(token)) else {
-        return false;
-    };
+    git_subcommand_args(tokens, "commit").is_some_and(|args| commit_args_add_trailer(args, trailer))
+}
+
+fn command_forces_git_push(command: &str) -> Result<bool, String> {
+    let segments = shell_command_segments(command)?;
+    Ok(segments
+        .iter()
+        .any(|tokens| git_subcommand_args(tokens, "push").is_some_and(git_push_args_force)))
+}
+
+fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [String]> {
+    let command_index = tokens.iter().position(|token| !is_env_assignment(token))?;
     if tokens[command_index] != "git" {
-        return false;
+        return None;
     }
     let mut index = command_index;
     index += 1;
 
     while let Some(token) = tokens.get(index) {
         match token.as_str() {
-            "commit" => return commit_args_add_trailer(&tokens[index + 1..], trailer),
+            value if value == expected => return Some(&tokens[index + 1..]),
             "-C" | "-c" | "--exec-path" | "--git-dir" | "--work-tree" | "--namespace"
             | "--super-prefix" => {
                 index += 2;
@@ -247,11 +258,68 @@ fn git_commit_segment_adds_trailer(tokens: &[String], trailer: &str) -> bool {
             {
                 index += 1;
             }
-            _ => return false,
+            _ => return None,
         }
     }
 
+    None
+}
+
+fn git_push_args_force(args: &[String]) -> bool {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if arg == "--" {
+            return false;
+        }
+        if matches!(arg.as_str(), "--force" | "-f") {
+            return true;
+        }
+        match git_push_short_option_effect(arg) {
+            PushShortOptionEffect::Forces => return true,
+            PushShortOptionEffect::ConsumesNext => index += 2,
+            PushShortOptionEffect::Other => {
+                index += if git_push_long_option_consumes_next(arg) {
+                    2
+                } else {
+                    1
+                };
+            }
+        }
+    }
     false
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PushShortOptionEffect {
+    Forces,
+    ConsumesNext,
+    Other,
+}
+
+fn git_push_short_option_effect(arg: &str) -> PushShortOptionEffect {
+    let Some(cluster) = arg
+        .strip_prefix('-')
+        .filter(|value| !value.starts_with('-'))
+    else {
+        return PushShortOptionEffect::Other;
+    };
+    let chars = cluster.chars().collect::<Vec<_>>();
+    for (index, option) in chars.iter().enumerate() {
+        match option {
+            'f' => return PushShortOptionEffect::Forces,
+            'o' if index + 1 == chars.len() => return PushShortOptionEffect::ConsumesNext,
+            'o' => return PushShortOptionEffect::Other,
+            _ => {}
+        }
+    }
+    PushShortOptionEffect::Other
+}
+
+fn git_push_long_option_consumes_next(arg: &str) -> bool {
+    matches!(
+        arg,
+        "--push-option" | "--receive-pack" | "--exec" | "--repo" | "--recurse-submodules"
+    )
 }
 
 fn commit_args_add_trailer(args: &[String], trailer: &str) -> bool {
@@ -464,6 +532,22 @@ mod tests {
         }
     }
 
+    fn forbidden_force_push_rule() -> CompiledRule {
+        CompiledRule {
+            rule_id: "pref-789-1".to_string(),
+            source_memory_id: 789,
+            reinforcement_count: 5,
+            action: RuleAction::Block,
+            override_state: RuleOverrideState {
+                disabled: false,
+                action_override: None,
+            },
+            predicate: RulePredicate::GitPushForceForbidden {
+                message: "Do not force push".to_string(),
+            },
+        }
+    }
+
     #[test]
     fn evaluator_is_deterministic_for_same_input_and_artifact() {
         let artifact = CompiledRulesArtifact::new(
@@ -604,6 +688,54 @@ mod tests {
         assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
         assert!(outcome.matches.is_empty());
         assert!(outcome.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn force_push_rule_structurally_matches_exact_options() {
+        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+        for command in [
+            "git push --force",
+            "git push origin HEAD:main -f",
+            "git push -uf origin main",
+            "git push -foo origin main",
+            "git -c push.default=current push -u origin main --force",
+            "cargo test && git push origin main -f",
+        ] {
+            let outcome = evaluate_artifact(
+                &artifact,
+                &EvaluationInput {
+                    command: command.to_string(),
+                },
+            );
+            assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+            assert_eq!(outcome.matches.len(), 1, "{command}");
+            assert!(outcome.diagnostics.is_empty(), "{command}");
+        }
+    }
+
+    #[test]
+    fn force_push_rule_rejects_values_terminators_and_similar_options() {
+        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+        for command in [
+            "git push -- origin -f",
+            "git push -o -f origin main",
+            "git push --push-option -f origin main",
+            "git push -vo -f origin main",
+            "git push -of origin main",
+            "git push origin main --force-with-lease",
+            "echo git push --force",
+            "git push origin main",
+        ] {
+            let outcome = evaluate_artifact(
+                &artifact,
+                &EvaluationInput {
+                    command: command.to_string(),
+                },
+            );
+            assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+            assert!(outcome.matches.is_empty(), "{command}");
+            assert!(outcome.diagnostics.is_empty(), "{command}");
+        }
     }
 
     #[test]

@@ -42,6 +42,7 @@ pub struct RuleOverrideState {
 pub enum RulePredicate {
     CommandRegex { pattern: String, message: String },
     CommitTrailerForbidden { trailer: String, message: String },
+    GitPushForceForbidden { message: String },
 }
 
 impl CompiledRulesArtifact {
@@ -103,7 +104,8 @@ impl RulePredicate {
     pub fn message(&self) -> &str {
         match self {
             RulePredicate::CommandRegex { message, .. }
-            | RulePredicate::CommitTrailerForbidden { message, .. } => message,
+            | RulePredicate::CommitTrailerForbidden { message, .. }
+            | RulePredicate::GitPushForceForbidden { message } => message,
         }
     }
 
@@ -135,6 +137,14 @@ impl RulePredicate {
                 }
                 if message.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty forbidden trailer message");
+                }
+            }
+            RulePredicate::GitPushForceForbidden { message } => {
+                if artifact_version == LEGACY_ARTIFACT_VERSION {
+                    bail!("compiled rule {rule_id} uses git_push_force_forbidden in a v1 artifact");
+                }
+                if message.trim().is_empty() {
+                    bail!("compiled rule {rule_id} has empty forbidden force-push message");
                 }
             }
         }
@@ -222,6 +232,27 @@ mod tests {
         };
 
         artifact.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn force_push_predicate_requires_v2_and_round_trips() -> Result<()> {
+        let mut artifact =
+            CompiledRulesArtifact::new(1234, vec![package_manager_rule(RuleAction::Warn)]);
+        artifact.rules[0].predicate = RulePredicate::GitPushForceForbidden {
+            message: "Do not force push".to_string(),
+        };
+
+        artifact.validate()?;
+        let encoded = serde_json::to_string(&artifact)?;
+        let parsed: CompiledRulesArtifact = serde_json::from_str(&encoded)?;
+        assert_eq!(parsed, artifact);
+
+        artifact.version = LEGACY_ARTIFACT_VERSION;
+        let error = artifact
+            .validate()
+            .expect_err("v1 artifact must reject the v2-only predicate");
+        assert!(error.to_string().contains("in a v1 artifact"));
         Ok(())
     }
 }

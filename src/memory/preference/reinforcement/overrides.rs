@@ -158,6 +158,12 @@ fn predicate_identities(content: &str) -> Vec<PredicateIdentity> {
                     value: trailer.trim().to_ascii_lowercase(),
                 }
             }
+            crate::rules::PreferencePredicate::GitPushForceForbidden { conflict_key } => {
+                PredicateIdentity {
+                    kind: "git_push_force_forbidden",
+                    value: conflict_key.trim().to_ascii_lowercase(),
+                }
+            }
         })
         .collect()
 }

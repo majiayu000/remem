@@ -135,7 +135,8 @@ fn eligible_preference_compiles_with_warn_default() -> Result<()> {
                 "Command violates a compiled package-manager preference"
             )
         }
-        RulePredicate::CommitTrailerForbidden { .. } => unreachable!(),
+        RulePredicate::CommitTrailerForbidden { .. }
+        | RulePredicate::GitPushForceForbidden { .. } => unreachable!(),
     }
     let serialized = serde_json::to_string(&artifact)?;
     assert!(!serialized.contains("Use bun, not npm"));
@@ -166,6 +167,28 @@ fn multiple_forbidden_trailers_compile_to_stable_rules() -> Result<()> {
         RulePredicate::CommitTrailerForbidden { message, .. }
             if message == "Commit message violates a compiled trailer preference"
     )));
+    Ok(())
+}
+
+#[test]
+fn forbidden_force_push_compiles_to_structural_v2_predicate() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-forbidden-force-push");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            content: "Never run git push --force",
+            ..Default::default()
+        },
+    )?;
+
+    let artifact = compile_project_rules(&conn, PROJECT, config(3))?;
+    assert_eq!(artifact.rules.len(), 1);
+    assert!(matches!(
+        &artifact.rules[0].predicate,
+        RulePredicate::GitPushForceForbidden { message }
+            if message == "Command violates a compiled forbidden-command preference"
+    ));
     Ok(())
 }
 

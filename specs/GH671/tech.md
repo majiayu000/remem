@@ -65,20 +65,21 @@ contract is complete.
   topic-key/entity/pattern suppression. Unknown values and malformed policy
   state fail closed with diagnostics; candidate and reinforcement risk must not
   share one test fixture field.
-- Compile only deterministic v1 predicates:
-  `command_regex` and `commit_trailer_forbidden`. New predicate kinds require
-  a spec update.
+- Continue accepting the deterministic v1 predicates `command_regex` and
+  `commit_trailer_forbidden`. Artifact v2 adds the closed
+  `git_push_force_forbidden` predicate; other new kinds require a spec update.
 - Emit artifact schema v2 for new compilations. V2 command regexes use an
   ASCII-delimited closed grammar and `regex-lite` so short-lived hook processes
   do not pay Unicode-regex compilation cost. Continue accepting and evaluating
   v1 artifacts with the original `regex` engine so upgrades preserve existing
   Unicode semantics until the worker regenerates the derived artifact.
-- The v2 classifier may emit `command_regex` for an exact, closed allowlist of
-  low-risk forbidden commands. T7 initially covers only `git push --force`;
-  its generated predicate also covers Git's equivalent `git push -f` spelling.
-  The force option may appear anywhere after `git push` arguments, while exact
-  token boundaries exclude `--force-with-lease` and unrelated options.
-  arbitrary natural-language commands remain unclassifiable and fail closed.
+- The v2 classifier may emit `git_push_force_forbidden` for the exact, closed
+  low-risk directive `git push --force`. Evaluation uses the existing shell
+  tokenizer and a typed Git-push argument parser: exact `--force`, standalone
+  `-f`, and `f` in valid short-option clusters match before the `--`
+  terminator. The parser honors `-o`/long-option arity, so option values,
+  `--force-with-lease`, positional tokens, and arbitrary natural-language
+  commands fail closed.
 - The project-root marker fast path is used only when Git discovery has no
   environment override. Explicit layouts and discovery controls such as
   `GIT_CEILING_DIRECTORIES` delegate to Git so project identity matches Git's
