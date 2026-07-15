@@ -65,14 +65,19 @@ evidence。开始任何实现前必须全部满足：
     Dream replay 使用与 production `dream_profile_key` 相同的 normalizer：malformed JSON、
     missing/non-string/trim 后 blank `remem_ai_profile` 都作为 empty key，仅影响“不替换”判定，
     原始 payload 不改写；fixture 逐类证明 migration 不 abort，且后续合法不同 profile 仍可替换。
+    late active Summary 的 active-only pre-pass 写入与 v064 完全相同的 retirement marker，不追加
+    duplicate marker、不进入 reconciled/manual-review 计数；fixture 同时证明 shared actionable
+    jobs 与 legacy frozen-write violations 不增加，且既有 terminal Summary history 原值不变。
   - Verify:
     - `cargo test --no-default-features v069_reconciles_active_job_duplicates_before_unique_indexes -- --nocapture`
     - `cargo test --no-default-features v069_replays_pending_dream_duplicates_with_current_profile_predicate -- --nocapture`
     - `cargo test --no-default-features v069_treats_malformed_non_string_missing_and_blank_dream_profiles_as_empty -- --nocapture`
+    - `cargo test --no-default-features v069_late_active_summary_uses_v064_marker_and_stays_non_actionable -- --nocapture`
     - `cargo test --no-default-features v069_does_not_rewrite_processing_dream_payload -- --nocapture`
     - `cargo test --no-default-features v069_preserves_existing_duplicate_last_error_and_appends_marker -- --nocapture`
     - `cargo test --no-default-features v069_truncates_near_limit_duplicate_last_error_without_losing_marker -- --nocapture`
     - `cargo test --no-default-features v069_preserves_redundant_active_attempt_count_without_reporting_exhaustion -- --nocapture`
+    - `cargo test --no-default-features v069_duplicate_failure_enters_actionable_failure_lifecycle -- --nocapture`
     - `cargo test --no-default-features v069_normalizes_null_processing_lease_to_expired_before_survivor_selection -- --nocapture`
     - `cargo test --no-default-features v069_preserves_terminal_job_history_and_is_idempotent -- --nocapture`
     - `cargo test --no-default-features v069_post_migration_hook_logs_conflict_counts_without_payload -- --nocapture`
@@ -169,16 +174,20 @@ evidence。开始任何实现前必须全部满足：
     证明排除 Summary 后无关 ordinary recovery 仍前进；另用 transaction-scoped per-row helper 或
     等价 injected-candidate seam 精确覆盖 defense-in-depth guard。collision 时按 Tech Spec 收敛 canonical work，source 保持
     failed/auditable、保留真实 `attempt_count` 且不再
-    重复 retry，既有截断 `last_error` 作为主证据并在 2000-char 内确定性追加 marker；一条 collision
-    不回滚无关 recoveries，unexpected DB error 仍明确失败。job candidates 必须先完整收集并释放
+    重复 retry，非空的既有截断 `last_error` 作为主证据并在 2000-char 内先为完整 marker 预留
+    空间再确定性截断/追加；NULL/empty `last_error` 必须单独存完整 marker。一条 collision 不回滚
+    无关 recoveries，unexpected DB error 仍明确失败。job candidates 必须先完整收集并释放
     read statement；每个 source 在 identity lookup 前取得 `IMMEDIATE` write ownership 并重新
     验证 eligibility。identity UNIQUE race 仅在精确重读仍 active canonical 成功后 coalesce；
     canonical terminal/missing/unreadable 或 non-identity constraint 必须回滚当前 source、错误向上
     返回，不得产生 stale/non-persisted id。T4 在 `src/db/failure_lifecycle/tests.rs` 用两个独立
     file-backed WAL connections + barrier/injected seam 覆盖该 race 与 B-014 rollback。migration
-    conflicts 进入现有
-    failure lifecycle；仅作 fixture 的 Summary enqueue 改为合适 non-retired type，真正的
-    Summary retirement tests 继续直接构造历史 row；current failure contract 已记录新语义。
+    conflicts 进入现有 failure lifecycle；仅作 fixture 的 Summary enqueue 改为合适 non-retired
+    type，真正的 Summary retirement tests 继续直接构造历史 row。T4 独占更新 current
+    failure-lifecycle Product/TECH 与 observability fixtures，明确记录 lease CAS conflict 保持
+    processing/stuck persisted truth，以及 non-Summary v069 duplicate 作为 permanent、
+    non-archived actionable failure 按既有 retention/archive；T1 仍独占 v069 实现与 migration
+    fixtures，T2 仍独占 CAS/state 实现，human gates 不变。
   - Verify:
     - `cargo test --no-default-features worker_transition_conflict_logs_error_without_done_or_retry_success -- --nocapture`
     - `cargo test --no-default-features worker_compile_rules_retry_collision_logs_safe_coalesced_result -- --nocapture`
@@ -193,6 +202,7 @@ evidence。开始任何实现前必须全部满足：
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_auto_recovery_preserves_source_attempt_count -- --nocapture`
+    - `cargo test --no-default-features failure_lifecycle_auto_recovery_null_or_empty_last_error_stores_canonical_marker -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_job_recovery_two_wal_connections_coalesces_unique_race -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle_job_recovery_unreadable_canonical_rolls_back_source -- --nocapture`
     - `cargo test --no-default-features failure_lifecycle -- --nocapture`

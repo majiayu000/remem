@@ -56,6 +56,14 @@ surface that #381/#383 evidence collection depends on.
 - Worker logs every automatic retry with class, attempt number, and backoff;
   exhaustion and archiving transitions are logged at error/info respectively
   (U-29: no silent state changes).
+- A rejected lease-owned job transition never becomes an in-memory success:
+  the persisted job remains `processing`, the worker reports the conflict as
+  an error without a done/retry success signal, and status/doctor continue to
+  show the persisted row as processing and then stuck after lease expiry.
+- A non-Summary active duplicate reconciled by the v069 job-queue migration
+  becomes a permanent, non-archived actionable failure. Its real attempt/error
+  evidence remains queryable and it follows the existing retention/archive
+  lifecycle instead of being hidden, deleted, or reported as exhausted.
 - If a due failed job collides with equivalent active work, that canonical
   work carries execution forward. The source remains a failed, permanent,
   queryable audit row with its real attempt count unchanged and does not enter
@@ -77,6 +85,12 @@ surface that #381/#383 evidence collection depends on.
 - Seeded permanent failure never auto-retries and archives after the window;
   headline counters drop while the row remains queryable until explicit
   cleanup and aggregate history remains queryable after cleanup.
+- A rejected lease-owned transition leaves every persisted job field
+  unchanged, emits no success event, remains visible as processing, and is
+  reported as stuck after the unchanged lease expires.
+- A seeded non-Summary v069 duplicate is permanent, non-archived and
+  actionable, preserves its original attempt/error evidence without false
+  exhaustion, and later archives through the existing retention lifecycle.
 - A seeded job retry that collides with equivalent active work converges on the
   canonical active job, preserves the source error and real attempt count in a
   permanent failed row, emits only safe collision metadata, and does not retry
