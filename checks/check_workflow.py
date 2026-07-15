@@ -171,10 +171,11 @@ def validate_json_schema_body(
             not expected_types
             or not all(isinstance(item, str) for item in expected_types)
             or not set(expected_types) <= JSON_SCHEMA_TYPES
+            or len(set(expected_types)) != len(expected_types)
         ):
             errors.append(
                 f"{relative_path}: {schema_path}.type must be a supported JSON type "
-                "or non-empty array of supported JSON types"
+                "or non-empty unique array of supported JSON types"
             )
         else:
             declared_types = set(expected_types)
@@ -186,23 +187,29 @@ def validate_json_schema_body(
             f"{relative_path}: {schema_path}.enum must be a non-empty array"
         )
 
-    if runtime_subset and declared_types is not None:
+    if runtime_subset:
         keyword_types = (
-            ("additionalProperties", {"object"}),
             ("items", {"array"}),
             ("minItems", {"array"}),
             ("minLength", {"string"}),
-            ("properties", {"object"}),
             ("required", {"object"}),
             ("exclusiveMaximum", {"integer", "number"}),
             ("exclusiveMinimum", {"integer", "number"}),
             ("minimum", {"integer", "number"}),
         )
         for keyword, compatible_types in keyword_types:
-            if keyword in schema and not declared_types & compatible_types:
-                expected = " or ".join(sorted(compatible_types))
+            if keyword not in schema:
+                continue
+            expected = " or ".join(sorted(compatible_types))
+            if declared_types is None:
                 errors.append(
-                    f"{relative_path}: {schema_path}.{keyword} requires type {expected}"
+                    f"{relative_path}: {schema_path}.{keyword} requires explicit "
+                    f"type {expected}"
+                )
+            elif not declared_types <= compatible_types:
+                errors.append(
+                    f"{relative_path}: {schema_path}.{keyword} requires only "
+                    f"type {expected}"
                 )
 
     for keyword in ("minItems", "minLength"):

@@ -152,6 +152,18 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
             "$.properties.issue.type must be a supported JSON type",
         ),
         (
+            "duplicate type array",
+            ("properties", "issue", "type"),
+            ["integer", "integer"],
+            "$.properties.issue.type must be a supported JSON type",
+        ),
+        (
+            "unknown union member",
+            ("properties", "issue", "type"),
+            ["integer", "uint64"],
+            "$.properties.issue.type must be a supported JSON type",
+        ),
+        (
             "enum shape",
             ("properties", "issue", "enum"),
             {"one": 1},
@@ -203,46 +215,67 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
             "minLength type compatibility",
             ("properties", "collected_at", "type"),
             "integer",
-            "$.properties.collected_at.minLength requires type string",
+            "$.properties.collected_at.minLength requires only type string",
+        ),
+        (
+            "minLength missing type",
+            ("properties", "collected_at"),
+            {"minLength": 1},
+            "$.properties.collected_at.minLength requires explicit type string",
+        ),
+        (
+            "minLength unsafe union",
+            ("properties", "collected_at", "type"),
+            ["string", "null"],
+            "$.properties.collected_at.minLength requires only type string",
         ),
         (
             "items type compatibility",
             ("properties", "open_prs", "type"),
             "object",
-            "$.properties.open_prs.items requires type array",
+            "$.properties.open_prs.items requires only type array",
         ),
         (
             "minItems type compatibility",
             ("properties", "open_prs"),
             {"type": "object", "minItems": 1},
-            "$.properties.open_prs.minItems requires type array",
+            "$.properties.open_prs.minItems requires only type array",
         ),
         (
             "minimum type compatibility",
             ("properties", "issue", "type"),
             "string",
-            "$.properties.issue.minimum requires type integer or number",
+            "$.properties.issue.minimum requires only type integer or number",
         ),
         (
             "required type compatibility",
             ("properties", "open_prs", "items"),
             {"type": "array", "required": ["number"]},
-            "$.properties.open_prs.items.required requires type object",
+            "$.properties.open_prs.items.required requires only type object",
         ),
         (
-            "properties type compatibility",
-            ("properties", "open_prs", "items"),
-            {"type": "array", "properties": {}},
-            "$.properties.open_prs.items.properties requires type object",
+            "recursive item keyword",
+            ("properties", "open_prs", "items", "minimun"),
+            1,
+            "$.properties.open_prs.items: unsupported JSON Schema keyword 'minimun'",
         ),
         (
-            "additionalProperties type compatibility",
-            ("properties", "open_prs", "items"),
-            {"type": "array", "additionalProperties": False},
-            "$.properties.open_prs.items.additionalProperties requires type object",
+            "recursive additional keyword",
+            ("additionalProperties",),
+            {"type": "string", "minimun": 1},
+            "$.additionalProperties: unsupported JSON Schema keyword 'minimun'",
         ),
     )
-    runtime_accepts_malformed = {"minLength bool", "minItems negative", "minimum bool"}
+    runtime_accepts_malformed = {
+        "duplicate type array",
+        "minLength bool",
+        "minItems negative",
+        "minimum bool",
+        "minLength missing type",
+        "minLength unsafe union",
+        "recursive additional keyword",
+        "unknown union member",
+    }
     runtime_data = {
         "issue": 1,
         "collected_at": "now",
@@ -292,28 +325,24 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
             "open object required property runtime validation",
         )
 
-        compatible_schema = json.loads(json.dumps(baseline_schema))
-        del compatible_schema["properties"]["collected_at"]["type"]
-        compatible_schema["properties"]["issue"]["type"] = ["null", "integer"]
-        compatible_schema["properties"]["open_prs"]["type"] = ["null", "array"]
-        compatible_schema["properties"]["open_prs"]["items"]["type"] = [
-            "null",
-            "object",
-        ]
+        safe_schema = json.loads(json.dumps(baseline_schema))
+        safe_schema["properties"]["issue"]["type"] = ["integer", "number"]
+        safe_schema["properties"]["issue"]["properties"] = {}
+        safe_schema["properties"]["issue"]["additionalProperties"] = False
         schema_path.write_text(
-            json.dumps(compatible_schema, indent=2) + "\n",
+            json.dumps(safe_schema, indent=2) + "\n",
             encoding="utf-8",
         )
-        compatible_lock = json.loads(json.dumps(baseline_lock))
+        safe_lock = json.loads(json.dumps(baseline_lock))
         update_lock_hash(
-            compatible_lock,
+            safe_lock,
             "schemas/duplicate_work_evidence.schema.json",
             schema_path,
         )
-        write_lock(lock_path, compatible_lock)
+        write_lock(lock_path, safe_lock)
         assert_passed(
             run_runtime_schema_validation(repo, schema_path, runtime_data),
-            "missing and union runtime schema types",
+            "safe numeric union runtime schema",
         )
         assert_passed(
             run(
@@ -325,11 +354,43 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
                 ],
                 cwd=repo,
             ),
-            "missing and union workflow schema types",
+            "safe numeric union workflow schema",
         )
         assert_passed(
             run([str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"], cwd=repo),
-            "missing and union sync schema types",
+            "safe numeric union sync schema",
+        )
+
+        const_schema = json.loads(json.dumps(baseline_schema))
+        const_schema["properties"]["issue"]["const"] = 999
+        schema_path.write_text(
+            json.dumps(const_schema, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        const_lock = json.loads(json.dumps(baseline_lock))
+        update_lock_hash(
+            const_lock,
+            "schemas/duplicate_work_evidence.schema.json",
+            schema_path,
+        )
+        write_lock(lock_path, const_lock)
+        const_runtime = run_runtime_schema_validation(repo, schema_path, runtime_data)
+        assert const_runtime.returncode != 0, "const mismatch must reject the instance"
+        assert_passed(
+            run(
+                [
+                    sys.executable,
+                    str(repo / "checks" / "check_workflow.py"),
+                    "--repo",
+                    str(repo),
+                ],
+                cwd=repo,
+            ),
+            "ordinary const mismatch workflow schema",
+        )
+        assert_passed(
+            run([str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"], cwd=repo),
+            "ordinary const mismatch sync schema",
         )
 
         for label, path, replacement, expected_error in cases:
