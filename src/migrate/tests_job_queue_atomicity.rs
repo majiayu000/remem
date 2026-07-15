@@ -336,6 +336,9 @@ fn v069_treats_malformed_non_string_missing_and_blank_dream_profiles_as_empty() 
         r#"{"remem_ai_profile":42,"kind":"non-string"}"#,
         r#"{"kind":"missing"}"#,
         r#"{"remem_ai_profile":"  ","kind":"blank"}"#,
+        r#"{"remem_ai_profile":"\t\n","kind":"ascii-whitespace"}"#,
+        r#"{"remem_ai_profile":"\u00a0","kind":"nbsp"}"#,
+        r#"{"remem_ai_profile":"\u2003\u3000","kind":"unicode-whitespace"}"#,
     ];
     for (offset, empty_payload) in empty_payloads.iter().enumerate() {
         let base_id = 300 + (offset as i64 * 3);

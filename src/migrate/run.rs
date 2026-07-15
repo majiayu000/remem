@@ -105,6 +105,7 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
             "migrate",
             &format!("applying v{:03}_{}", migration.version, migration.name),
         );
+        run_pre_migration_hook(conn, migration.version, migration.name)?;
         conn.execute_batch(migration.sql).with_context(|| {
             format!(
                 "migration v{:03}_{} failed",
@@ -133,6 +134,56 @@ fn run_migrations_locked(conn: &Connection) -> Result<()> {
         .unwrap_or(0);
     let user_version = current_user_version.max(OLD_BASELINE_VERSION - 1 + max_applied);
     conn.execute_batch(&format!("PRAGMA user_version = {}", user_version))?;
+    Ok(())
+}
+
+pub(super) fn run_pre_migration_hook(conn: &Connection, version: i64, name: &str) -> Result<()> {
+    if version == 69 {
+        prepare_v069_dream_profile_keys(conn).with_context(|| {
+            format!("migration v{version:03}_{name} failed to normalize Dream profiles")
+        })?;
+    }
+    Ok(())
+}
+
+fn prepare_v069_dream_profile_keys(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "DROP TABLE IF EXISTS temp._v069_dream_profile_keys;
+         CREATE TEMP TABLE _v069_dream_profile_keys(
+             id INTEGER PRIMARY KEY,
+             profile_key TEXT NOT NULL
+         );",
+    )
+    .context("create v069 Dream profile normalization table")?;
+    let rows = {
+        let mut statement = conn.prepare(
+            "SELECT pending_dream.id, pending_dream.payload_json
+             FROM jobs AS pending_dream
+             WHERE pending_dream.job_type = 'dream'
+               AND pending_dream.state = 'pending'
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM jobs AS processing_dream
+                   WHERE processing_dream.job_type = 'dream'
+                     AND processing_dream.project = pending_dream.project
+                     AND processing_dream.state = 'processing'
+               )
+             ORDER BY pending_dream.id ASC",
+        )?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (id, payload_json) in rows {
+        let profile_key = crate::db::job::dream_profile_key(&payload_json).unwrap_or_default();
+        conn.execute(
+            "INSERT INTO temp._v069_dream_profile_keys(id, profile_key) VALUES (?1, ?2)",
+            params![id, profile_key],
+        )?;
+    }
     Ok(())
 }
 

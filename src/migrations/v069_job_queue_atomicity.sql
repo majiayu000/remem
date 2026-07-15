@@ -126,30 +126,48 @@ FROM (
 WHERE survivor_rank = 1;
 
 -- Replay pending-only Dream snapshots in stable creation order. The nested
--- json_valid/json_type CASE is deliberately fail-closed for malformed,
--- missing, non-string, and blank profile fields while preserving raw payloads.
+-- profile table is populated by the Rust pre-migration hook using the exact
+-- production dream_profile_key normalizer. The guard fails closed if the hook
+-- did not provide one normalized key for every replay candidate.
+CREATE TEMP TABLE IF NOT EXISTS _v069_dream_profile_keys(
+    id INTEGER PRIMARY KEY,
+    profile_key TEXT NOT NULL
+);
+CREATE TEMP TABLE _v069_dream_profile_guard(
+    missing_count INTEGER NOT NULL CHECK(missing_count = 0)
+);
+INSERT INTO _v069_dream_profile_guard(missing_count)
+SELECT COUNT(*)
+FROM jobs AS pending_dream
+LEFT JOIN _v069_dream_profile_keys AS normalized_profile
+  ON normalized_profile.id = pending_dream.id
+WHERE pending_dream.job_type = 'dream'
+  AND pending_dream.state = 'pending'
+  AND normalized_profile.id IS NULL
+  AND NOT EXISTS (
+      SELECT 1
+      FROM jobs AS processing_dream
+      WHERE processing_dream.job_type = 'dream'
+        AND processing_dream.project = pending_dream.project
+        AND processing_dream.state = 'processing'
+  );
+
 CREATE TEMP TABLE _v069_dream_pending_order AS
 SELECT
-    id,
-    project,
-    host,
-    payload_json,
-    priority,
+    pending_dream.id,
+    pending_dream.project,
+    pending_dream.host,
+    pending_dream.payload_json,
+    pending_dream.priority,
     ROW_NUMBER() OVER (
-        PARTITION BY project
-        ORDER BY created_at_epoch ASC, id ASC
+        PARTITION BY pending_dream.project
+        ORDER BY pending_dream.created_at_epoch ASC, pending_dream.id ASC
     ) AS replay_rank,
-    COUNT(*) OVER (PARTITION BY project) AS replay_count,
-    CASE
-        WHEN json_valid(payload_json) = 1 THEN
-            CASE
-                WHEN json_type(payload_json, '$.remem_ai_profile') = 'text'
-                THEN trim(CAST(json_extract(payload_json, '$.remem_ai_profile') AS TEXT))
-                ELSE ''
-            END
-        ELSE ''
-    END AS profile_key
+    COUNT(*) OVER (PARTITION BY pending_dream.project) AS replay_count,
+    normalized_profile.profile_key
 FROM jobs AS pending_dream
+JOIN _v069_dream_profile_keys AS normalized_profile
+  ON normalized_profile.id = pending_dream.id
 WHERE job_type = 'dream'
   AND state = 'pending'
   AND NOT EXISTS (
@@ -159,6 +177,9 @@ WHERE job_type = 'dream'
         AND processing_dream.project = pending_dream.project
         AND processing_dream.state = 'processing'
   );
+
+DROP TABLE _v069_dream_profile_guard;
+DROP TABLE _v069_dream_profile_keys;
 
 CREATE TEMP TABLE _v069_dream_replay_result AS
 WITH RECURSIVE dream_replay(
