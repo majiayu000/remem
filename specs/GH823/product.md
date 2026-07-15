@@ -73,6 +73,13 @@ hook JSON output, reusing the existing host-profile mechanism
    valid input. Every other array shape fails closed, including `[]`, `[""]`,
    mixed blank/non-blank arrays, and multiple non-empty roots. The hook process
    cwd and an undeclared `CURSOR_PROJECT_DIR` fallback must not select a project.
+   `sessionStart`, `postToolUse`, and `stop` must share one human-approved
+   canonical session identity. #822 must prove that the `session_id` emitted at
+   session start identifies the same session as the `conversation_id` emitted
+   by later events, or human review must freeze a different verified canonical
+   field before implementation. When a payload exposes both approved identity
+   fields, they must be equal; a missing, blank, wrong-typed, or mismatched
+   identity fails closed before output, capture, enqueue, spill, or persistence.
 3. B-003 The Cursor parser requires and strictly validates the common
    `hook_event_name` discriminator. Only exact
    `hook_event_name: "sessionStart"` on the `context` command can select the
@@ -80,7 +87,13 @@ hook JSON output, reusing the existing host-profile mechanism
    fail non-zero with no plain-text or Claude-shaped fallback. When that exact
    event succeeds under `--host cursor`, stdout is a single JSON object whose
    `additional_context` field carries the ANSI-stripped context body. No other
-   host's output shape changes.
+   host's output shape changes. #822 and human approval must freeze a numeric
+   `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES` and the exact UTF-8 byte measurement
+   point. A body exactly at that limit succeeds. For a body one byte over, the
+   approved policy must be either fail-closed with empty stdout or deterministic
+   UTF-8-safe truncation with a model-visible truncation marker; implementation
+   remains blocked until the numeric limit, measurement point, and one-byte-over
+   policy are all approved.
 4. B-004 The Cursor `additional_context` payload must not contain
    prompt-level control instructions (no "render exactly one status line",
    no first-response workarounds, no hidden directives). It may contain the
@@ -126,10 +139,13 @@ hook JSON output, reusing the existing host-profile mechanism
    verified Cursor transcript reader. Before that prerequisite, the
    `transcript_path` field is stripped/deferred at the Cursor boundary and must
    never reach the existing Claude/Codex raw transcript parser, enqueue, spill,
-   or LLM summarization path. After #825, `status` values `aborted` and `error`
-   must not discard capture that was already persisted; whether they suppress
-   the LLM summary call is an explicit decision recorded in the tech spec, not
-   an accident.
+   or LLM summarization path. `status` is a required string with the exact
+   closed set `completed | aborted | error`. A missing, blank, wrong-typed, or
+   unknown status fails non-zero before transcript reading, enqueue, spill,
+   persistence, or an LLM call. After #825, `aborted` and `error` must not
+   discard capture that was already persisted; whether they suppress the LLM
+   summary call is an explicit decision recorded in the tech spec, not an
+   accident.
 9. B-009 A stdin payload that is not valid JSON, that is missing fields
    required by the Cursor event contract, or whose `hook_event_name` is unknown
    or mismatched with the invoked command, fails closed: error-level log with
@@ -194,7 +210,7 @@ hook JSON output, reusing the existing host-profile mechanism
 | Degradation / fallback | covered: B-005, B-006, B-007 (no silent rewrite), B-008 |
 | Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully), B-014 (PII sentinel absent), B-016 (real MCP probe) |
 | Cancellation / interruption / partial completion | covered: B-008 (aborted/error stop payloads) |
-| Resource exhaustion / payload expansion | covered: B-015 (encoded and decoded byte limits) |
+| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-015 (encoded and decoded tool-field limits) |
 
 ## Open Questions (gated on #822)
 
@@ -203,7 +219,9 @@ hook JSON output, reusing the existing host-profile mechanism
   background-agent sessions should receive injection; and the human-approved
    policy for payloads containing multiple workspace roots. Also identify the
    exact conversation/project-root fields and types on real `postToolUse` and
-   `stop` payloads, plus sanitized Windows root forms.
+   `stop` payloads, proof that later `conversation_id` values identify the same
+   session as the initial `session_id` (including equality behavior when both
+   appear), plus sanitized Windows root forms.
 - Q2. The observed closed set of Cursor `tool_name` values and their mapping
   onto the observe matcher (`Write` / `Edit` / `Bash` equivalents), using real
   tool invocations rather than documentation alone.
@@ -211,8 +229,10 @@ hook JSON output, reusing the existing host-profile mechanism
   payload and ordering, and whether it has usable mid-session summarize
   semantics.
 - Q4. The model-visible behavior and practical size/truncation limit of
-  `additional_context`, including a boundary test around the largest accepted
-  synthetic context.
+  `additional_context`; the numeric `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES`, exact
+  UTF-8 byte measurement point, and human-approved one-byte-over policy; and
+  boundary tests proving exact-limit success plus either fail-closed rejection
+  or deterministic UTF-8-safe truncation with a model-visible marker.
 - Q5. For a real MCP invocation, whether `postToolUse` fires at all; whether
   `beforeMCPExecution` and `afterMCPExecution` fire; their exact payloads and
   ordering; and whether any of them contains the canonical identity and tool
@@ -227,10 +247,11 @@ hook JSON output, reusing the existing host-profile mechanism
 - A-3. #822 records the real Cursor version, exact event payloads, the
   `postToolUse` and `stop` conversation/project-root fields and types, sanitized
   Windows root fixtures, observed tool names, background-agent behavior,
-  `preCompact` behavior, context size behavior, the bounded nested-tool-field
-  limit, and the real MCP hook behavior in B-016/Q5. The five open questions are
-  answered or explicitly parked behind a human-approved fail-closed downgrade
-  before implementation starts.
+  `preCompact` behavior, cross-event canonical session identity, the numeric
+  additional-context limit/measurement/one-byte-over policy, the bounded
+  nested-tool-field limit, and the real MCP hook behavior in B-016/Q5. The five
+  open questions are answered or explicitly parked behind a human-approved
+  fail-closed downgrade before implementation starts.
 - A-4. #822 proves a unique synthetic marker is visible to a real Cursor agent.
   If it does not, Cursor injection is recorded as blocked and no implementation
   or installation path claims injection support.

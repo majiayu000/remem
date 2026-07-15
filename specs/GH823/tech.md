@@ -107,6 +107,14 @@ its blocked state.
   validating length, silently select a root, use the hook process cwd, or use
   an unverified `CURSOR_PROJECT_DIR`. The base `transcript_path` remains
   null-tolerant.
+- Treat `sessionStart.session_id`, `postToolUse.conversation_id`, and
+  `stop.conversation_id` as one canonical-session contract, not three unrelated
+  strings. #822 must correlate sanitized events from one real session and prove
+  equality, or human review must freeze a different observed canonical field.
+  If an event contains both approved identity fields, require exact equality.
+  Missing, blank, wrong-typed, or mismatched identity returns non-zero before
+  rendering, adapter dispatch, transcript access, enqueue, spill, or database
+  writes. No event-local alias or fallback may manufacture continuity.
 - `src/observe/hook.rs`: accept the Cursor `postToolUse` shape only after #822
   verifies the exact identity field types. Before adapter dispatch or capture,
   map required non-empty `conversation_id` to the canonical `session_id` and
@@ -139,11 +147,14 @@ its blocked state.
   `transcript_path` inside the Cursor-specific parser and return explicit
   unsupported/non-zero before calling `read_transcript_content()`, enqueueing,
   spilling, or invoking an LLM. A Cursor path must never be passed to the
-  existing Claude/Codex parser merely because it is a string. After #825 lands,
-  decision (B-008): `aborted`/`error` still preserve already captured events;
-  the LLM summary call runs for `completed` and `aborted`, and is skipped with
-  an error-level log for `error`. This decision remains subject to the real
-  payload evidence.
+  existing Claude/Codex parser merely because it is a string. Require `status`
+  to be a string in the exact closed set `completed`, `aborted`, or `error`.
+  Validate it before transcript-reader selection, enqueue, spill, persistence,
+  or LLM dispatch; missing, blank, wrong-typed, and unknown values return
+  non-zero with zero downstream calls. After #825 lands, decision (B-008):
+  `aborted`/`error` still preserve already captured events; the LLM summary call
+  runs for `completed` and `aborted`, and is skipped with an error-level log for
+  `error`. This decision remains subject to the real payload evidence.
 - Apply the same explicit error result to Cursor `postToolUse` and `stop`:
   malformed or contract-incomplete input returns non-zero, emits no stdout, and
   performs no partial adapter dispatch, enqueue, spill, or database write.
@@ -179,6 +190,14 @@ its blocked state.
 - The rendered body is the existing host-independent context; no new
   instruction text is added (B-004). Add a regression test asserting the
   Cursor payload contains none of the GH668 instruction markers.
+- #822 records the largest model-visible body and human approval freezes a
+  numeric `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES`, the exact point at which UTF-8
+  bytes are measured, and one over-limit behavior. Exactly-at-limit output must
+  serialize successfully. Exactly one byte over must either fail closed with
+  empty stdout or be truncated deterministically at a valid UTF-8 boundary and
+  include a model-visible truncation marker; the implementation must not choose
+  between those policies. Tests cover ASCII and multibyte boundary inputs and,
+  for truncation, prove stable bytes plus marker visibility to the real agent.
 - Rendering unit tests prove serialization only. The implementation and install
   path remain blocked until #822 observes a unique synthetic marker in a real
   Cursor agent's model-visible context. A marker present only in hook stdout or
@@ -202,14 +221,14 @@ not silent.
 | Behavior invariant | Implementation area | Verification |
 |---|---|---|
 | B-001 canonical host recognition plus per-command support | shared hook-host parser + `src/cli/dispatch.rs` + hook entrypoints | exact three host values parse; aliases/unknown/empty fail at all commands and persistence boundaries; `session-init --host cursor` returns explicit unsupported/non-zero before prompt write, stdout, or any side effect |
-| B-002 sessionStart maps one normalized workspace root; null transcript_path valid | `src/context/invocation.rs` + platform path normalizer | `len == 1` plus trimmed non-empty #822-backed root normalizes before cwd/git/project derivation; sanitized Windows `/c:/...` fixture proves conversion; unknown path shapes and `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots fail without raw identity persistence or cwd/env fallback |
-| B-003 exact event discriminator drives additional_context JSON | Cursor parser + `src/context/render.rs` | exact `hook_event_name: "sessionStart"` on context emits top-level `additional_context`; missing/unknown/mismatched events exit non-zero with empty stdout and no plain-text/Claude fallback; other hosts remain green |
+| B-002 sessionStart maps one normalized workspace root and one cross-event canonical identity; null transcript_path valid | `src/context/invocation.rs` + shared Cursor identity validator + platform path normalizer | #822 correlates sessionStart/postToolUse/stop from one session; canonical identity equality and dual-field equality succeed, while missing/blank/wrong-typed/mismatched identities fail before any side effect; `len == 1` plus trimmed non-empty #822-backed root normalizes before cwd/git/project derivation; sanitized Windows `/c:/...` fixture proves conversion; unknown path shapes and `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots fail without raw identity persistence or cwd/env fallback |
+| B-003 exact event discriminator drives bounded additional_context JSON | Cursor parser + `src/context/render.rs` | exact `hook_event_name: "sessionStart"` on context emits top-level `additional_context`; missing/unknown/mismatched events exit non-zero with empty stdout and no plain-text/Claude fallback; approved numeric byte limit has ASCII/multibyte exact-limit success and one-byte-over fail-closed or deterministic UTF-8-safe truncation plus visible marker tests; other hosts remain green |
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
 | B-007 observe maps verified identity before postToolUse capture; unknown tool_name uses verbatim generic capture | Cursor parser + `src/observe/hook.rs` + adapter boundary | fixture maps identity before capture; `SomethingNew` remains verbatim, bypasses known-tool classification, and still persists decoded generic input/output; no diagnostic-and-drop branch exists |
-| B-008 stop maps identity; #825 gates transcript reads | Cursor parser + `src/summarize` + #822 + #825 | before #825, a valid-looking Cursor path returns explicit unsupported/non-zero and a spy proves no Claude/Codex transcript read, enqueue, spill, or LLM call; after both prerequisites, fixtures cover identity and `completed` / `aborted` / `error` |
-| B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills |
+| B-008 stop maps identity and closed status; #825 gates transcript reads | Cursor parser + `src/summarize` + #822 + #825 | before #825, a valid-looking Cursor path returns explicit unsupported/non-zero and a spy proves no Claude/Codex transcript read, enqueue, spill, or LLM call; after both prerequisites, fixtures cover canonical identity and exact `completed` / `aborted` / `error`; missing/blank/wrong-typed/unknown status fails before reader/enqueue/spill/persistence/LLM |
+| B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields (including stop status), wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills/LLM calls |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
 | B-011 DB host value is `cursor` | shared host parser + capture/enqueue/persistence boundaries | `as_db_value()` unit test plus DB integration tests proving only canonical `cursor` reaches each hook-origin host column |
 | B-012 real-agent marker gate | #822 PoC evidence | unique synthetic marker appears in a real Cursor agent's model-visible context; stdout-only marker is failure and blocks injection |
@@ -268,7 +287,13 @@ not silent.
   - emit a unique synthetic marker from the hook and verify that a real Cursor
     agent receives it; a marker visible only in stdout/logs blocks injection;
   - probe context sizes around the largest accepted payload and record
-    truncation, rejection, and agent-visible behavior;
+    truncation, rejection, and agent-visible behavior; propose the numeric
+    `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES`, byte measurement point, and exact
+    one-byte-over policy for human approval, including UTF-8 boundary behavior
+    and marker visibility if truncation is selected;
+  - correlate `sessionStart`, `postToolUse`, and `stop` from one real session to
+    prove the canonical identity mapping and exercise equality/mismatch when a
+    payload exposes both approved identity fields;
   - exercise zero, one, and multiple `workspace_roots`, including `[""]`,
     `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots; keep every
     shape other than `len == 1` plus a trimmed non-empty sole element blocked;
@@ -283,7 +308,9 @@ not silent.
   - exercise missing, blank, single-root/cwd, and multi-root project identity on
     `stop`; keep summarize blocked until the field is verified and fail closed
     without process-cwd or `CURSOR_PROJECT_DIR` fallback; before #825, prove a
-    Cursor path cannot reach the Claude/Codex transcript reader.
+    Cursor path cannot reach the Claude/Codex transcript reader; exercise exact
+    `completed`/`aborted`/`error` plus missing, blank, wrong-typed, and unknown
+    status values and prove invalid status reaches no downstream call.
 - After the PoC gate passes, pipe its sanitized payload fixtures through
   `remem context --host cursor`, `remem observe --host cursor`, and
   `remem summarize --host cursor`; assert exact stdout, exit status, and
