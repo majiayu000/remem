@@ -89,8 +89,69 @@ archived source; no pending work may retain an archived marker.
   directly by setting `status='pending'`, clearing lease fields, and setting
   `next_retry_epoch`; no-range transient failures therefore have an explicit
   recovery path instead of staying actionable forever.
-- `jobs`: re-enqueue the failed job by setting `state='pending'`, clearing
-  lease fields, and setting `next_retry_epoch`.
+- `jobs`: exclude retired legacy Summary rows from candidate selection before
+  generic recovery. The transaction-scoped per-row classifier must also check
+  Summary before active-identity lookup and return an explicit retired/skipped
+  result for defensive direct input. In both paths, preserve every persisted
+  field byte/value; do not set permanent, change retry time, append a marker,
+  execute the job, or increment `requeued`/`coalesced` counters. For non-retired
+  job types, re-enqueue the failed job by setting `state='pending'`, clearing
+  lease fields, and setting `next_retry_epoch`. If the same active job identity
+  already exists, keep that canonical work active and leave the source as
+  `failed` with `failure_class='permanent'` and `next_retry_epoch=0`. Preserve
+  the source's real `attempt_count`, error, timestamps, payload, and id; append
+  only a bounded non-secret canonical marker to `last_error`. When source
+  `last_error` is NULL or empty, store the complete marker alone; only a
+  non-empty error uses marker-space reservation, deterministic truncation, and
+  append. The worker logs safe source/canonical ids and identity kind, never
+  the original error text.
+  This collision is a successful convergence result for the candidate, not a
+  fabricated exhausted attempt or a successful completion of the source.
+  Candidate ids are fully collected and the read statement released before
+  per-row writes begin. Each row must acquire `IMMEDIATE` write ownership
+  before re-reading source eligibility or looking up active identity; lookup
+  before write ownership is forbidden. If requeue meets the active-identity
+  UNIQUE constraint, only that declared identity conflict may trigger an exact
+  canonical reread. A readable, still-active canonical row yields a structured
+  coalesced result. A terminal, missing, or unreadable canonical row, a
+  busy/locked failure, or any non-identity constraint error rolls back that
+  source unchanged and propagates the error under `B-014`; recovery must not
+  return a stale/non-persisted id or assume deduplication. File-backed,
+  two-connection WAL barrier tests cover the identity race and unreadable
+  canonical rollback while proving independently committed unrelated rows
+  continue to make progress.
+
+### 2.1 Job queue persisted truth and v069 lifecycle inputs
+
+Lease-owned done, retry, exhausted, and permanent-failure transitions use the
+current processing row, expected owner, and unexpired lease as a single
+transactional authorization boundary. A missing-row result is an error with an
+explicit `current=missing` diagnostic; no row is created, so shared stats gain
+no processing or stuck entry. For an existing wrong-owner, reclaimed,
+expired-lease, or otherwise ineligible row, rejection leaves every persisted
+field unchanged. The worker must propagate either error and emit no done/retry
+success signal. Shared stats reflect the existing row's actual persisted state:
+if it is still `processing`, it remains counted there and becomes `stuck` after
+its unchanged lease expires; an already reclaimed or non-processing row is
+reported according to that state instead. No parallel in-memory success ledger
+may override database truth.
+
+The v069 job-queue migration contributes a separate failure-lifecycle input.
+Each reconciled non-Summary active duplicate becomes `state='failed'`,
+`failure_class='permanent'`, `archived_at_epoch=NULL`, and
+`next_retry_epoch=0`, while retaining its real attempt count and bounded
+existing error evidence plus the non-secret duplicate marker. It is an
+actionable permanent failure in the shared stats/status/doctor source until the
+existing retention step archives it; the migration must not raise its attempt
+count to fabricate exhaustion. Late active Summary retirement is not such a
+duplicate: v069 uses the exact v064 retirement marker so existing failure and
+legacy-surface predicates continue to exclude it.
+
+These v069 rows are not the historical v057 back-classification described in
+section 5. The v057 upgrade deliberately initializes pre-existing failed rows
+as exhausted to avoid a retry storm; v069 creates new conflict evidence and
+must preserve each source row's actual attempt count. Neither rule changes the
+retention, cleanup, or aggregate-history policy below.
 
 ### 3. Retention / archiving
 
