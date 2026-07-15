@@ -24,6 +24,15 @@ PACK_FILES = (
     "states.yaml",
     "workflow.yaml",
 )
+RUNTIME_SCHEMA_SCRIPT = """
+import json
+import sys
+sys.path.insert(0, sys.argv[1])
+from specrail_lib import validate_instance
+with open(sys.argv[2], encoding="utf-8") as fh:
+    schema = json.load(fh)
+validate_instance(schema, json.loads(sys.argv[3]))
+"""
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -60,6 +69,16 @@ def write_lock(lock_path: Path, lock: dict[str, object]) -> None:
     lock_path.write_text(json.dumps(lock, indent=2) + "\n", encoding="utf-8")
 
 
+def update_lock_hash(lock: dict[str, object], relative_path: str, path: Path) -> None:
+    entries = lock["files"]
+    assert isinstance(entries, list)
+    for entry in entries:
+        if isinstance(entry, dict) and entry.get("path") == relative_path:
+            entry["sha256"] = hashlib.sha256(path.read_bytes()).hexdigest()
+            return
+    raise AssertionError(f"missing lock entry for {relative_path}")
+
+
 def set_nested(value: dict[str, object], path: tuple[str, ...], replacement: object) -> None:
     target = value
     for key in path[:-1]:
@@ -69,20 +88,38 @@ def set_nested(value: dict[str, object], path: tuple[str, ...], replacement: obj
     target[path[-1]] = replacement
 
 
+def run_runtime_schema_validation(
+    repo: Path,
+    schema_path: Path,
+    data: dict[str, object],
+) -> subprocess.CompletedProcess[str]:
+    return run(
+        [
+            sys.executable,
+            "-c",
+            RUNTIME_SCHEMA_SCRIPT,
+            str(repo / "checks"),
+            str(schema_path),
+            json.dumps(data),
+        ],
+        cwd=repo,
+    )
+
+
 def assert_malformed_schema_bodies_fail_closed() -> None:
     cases = (
         ("properties", ("properties",), [], "$.properties must be an object"),
         (
             "property schema",
-            ("properties", "name"),
+            ("properties", "issue"),
             [],
-            "$.properties.name must be an object",
+            "$.properties.issue must be an object",
         ),
         (
             "items",
-            ("properties", "required_human_gates", "items"),
+            ("properties", "open_prs", "items"),
             [],
-            "$.properties.required_human_gates.items must be an object",
+            "$.properties.open_prs.items must be an object",
         ),
         (
             "additionalProperties",
@@ -93,22 +130,117 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
         (
             "required shape",
             ("required",),
-            ["name", 7],
+            ["issue", 7],
             "$.required must be an array of strings",
         ),
         (
-            "required declaration",
-            ("required",),
-            ["name", "undeclared"],
-            "$.required references undeclared property 'undeclared'",
+            "unknown keyword",
+            ("properties", "issue", "minimun"),
+            1,
+            "$.properties.issue: unsupported JSON Schema keyword 'minimun'",
+        ),
+        (
+            "unknown type",
+            ("properties", "issue", "type"),
+            "uint64",
+            "$.properties.issue.type must be a supported JSON type",
+        ),
+        (
+            "empty type array",
+            ("properties", "issue", "type"),
+            [],
+            "$.properties.issue.type must be a supported JSON type",
+        ),
+        (
+            "enum shape",
+            ("properties", "issue", "enum"),
+            {"one": 1},
+            "$.properties.issue.enum must be an array",
+        ),
+        (
+            "minLength bool",
+            ("properties", "collected_at", "minLength"),
+            True,
+            "$.properties.collected_at.minLength must be a non-negative integer",
+        ),
+        (
+            "minItems negative",
+            ("properties", "open_prs", "minItems"),
+            -1,
+            "$.properties.open_prs.minItems must be a non-negative integer",
+        ),
+        (
+            "minimum bool",
+            ("properties", "issue", "minimum"),
+            True,
+            "$.properties.issue.minimum must be a JSON number",
+        ),
+        (
+            "minimum shape",
+            ("properties", "issue", "minimum"),
+            "one",
+            "$.properties.issue.minimum must be a JSON number",
+        ),
+        (
+            "exclusiveMinimum shape",
+            ("properties", "issue", "exclusiveMinimum"),
+            "one",
+            "$.properties.issue.exclusiveMinimum must be a JSON number",
+        ),
+        (
+            "exclusiveMaximum shape",
+            ("properties", "issue", "exclusiveMaximum"),
+            "ten",
+            "$.properties.issue.exclusiveMaximum must be a JSON number",
         ),
     )
+    runtime_accepts_malformed = {"minLength bool", "minItems negative", "minimum bool"}
+    runtime_data = {
+        "issue": 1,
+        "collected_at": "now",
+        "open_prs_complete": True,
+        "open_pr_limit": 10,
+        "open_prs": [],
+        "remote_branches": [],
+    }
 
     with tempfile.TemporaryDirectory(prefix="remem-specrail-schema-body-") as raw:
         repo = Path(raw)
         copy_pack(repo)
-        schema_path = repo / "schemas" / "flow_manifest.schema.json"
+        schema_path = repo / "schemas" / "duplicate_work_evidence.schema.json"
+        lock_path = repo / "checks" / "specrail-sync.lock.json"
         baseline_schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        baseline_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+
+        open_schema_path = repo / "schemas" / "open_required.schema.json"
+        open_schema_path.write_text(
+            json.dumps(
+                {
+                    "$schema": "https://json-schema.org/draft/2020-12/schema",
+                    "title": "Open required object",
+                    "type": "object",
+                    "required": ["opaque"],
+                    "additionalProperties": True,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        open_workflow = run(
+            [
+                sys.executable,
+                str(repo / "checks" / "check_workflow.py"),
+                "--repo",
+                str(repo),
+            ],
+            cwd=repo,
+        )
+        assert_passed(open_workflow, "open object required property workflow check")
+        assert_passed(
+            run_runtime_schema_validation(repo, open_schema_path, {"opaque": 1}),
+            "open object required property runtime validation",
+        )
 
         for label, path, replacement, expected_error in cases:
             malformed = json.loads(json.dumps(baseline_schema))
@@ -117,9 +249,29 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
                 json.dumps(malformed, indent=2) + "\n",
                 encoding="utf-8",
             )
+            malformed_lock = json.loads(json.dumps(baseline_lock))
+            update_lock_hash(
+                malformed_lock,
+                "schemas/duplicate_work_evidence.schema.json",
+                schema_path,
+            )
+            write_lock(lock_path, malformed_lock)
+
+            runtime_check = run_runtime_schema_validation(repo, schema_path, runtime_data)
+            if label in runtime_accepts_malformed:
+                assert_passed(runtime_check, f"runtime malformed {label} contrast")
+            else:
+                assert runtime_check.returncode != 0, (
+                    f"runtime must reject malformed {label}"
+                )
 
             workflow_check = run(
-                [sys.executable, str(repo / "checks" / "check_workflow.py"), "--repo", str(repo)],
+                [
+                    sys.executable,
+                    str(repo / "checks" / "check_workflow.py"),
+                    "--repo",
+                    str(repo),
+                ],
                 cwd=repo,
             )
             assert workflow_check.returncode != 0, (
