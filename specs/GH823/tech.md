@@ -91,9 +91,12 @@ its blocked state.
   cwd/CLI fallback is permitted.
 - The Cursor input model requires `hook_event_name` and validates it before
   dispatch: `context` accepts only exact `sessionStart`, `observe` only exact
-  `postToolUse`, and `summarize` only exact `stop`. Unknown values and
-  event/command mismatches return non-zero before adapter or renderer selection;
-  they never fall through to plain-text or Claude-shaped output.
+  `postToolUse`, and `summarize` only exact `stop`. A failure event such as
+  `postToolUseFailure` is not accepted by analogy: #822 must first execute a
+  real failing tool and human review must approve its observed event/payload
+  mapping. Unknown values and event/command mismatches return non-zero before
+  adapter or renderer selection; they never fall through to plain-text or
+  Claude-shaped output.
 - Cursor `sessionStart` requires a non-empty `session_id` and a
   `workspace_roots` array whose total length is exactly one and whose sole
   string is non-empty after trimming. Map only that trimmed
@@ -132,6 +135,28 @@ its blocked state.
   classification but still use the existing generic capture path with the
   original `tool_name` and decoded input/output. They are never remapped or
   discarded after diagnosis (B-007, B-015).
+- Probe one real failing Bash-equivalent and one failing edit/write-equivalent
+  in #822. Record whether `postToolUseFailure`, `postToolUse`, both, or another
+  event fires, along with sanitized payloads, ordering, and any stable
+  invocation identifier shared by dual events from the same tool call. Human
+  approval must freeze the canonical `event_id`/upsert key and failure-
+  precedence semantics, then either add the verified failure discriminator to
+  the Cursor parser and map it
+  into a new explicit canonical failure outcome/discriminator carried through
+  canonical capture, spill/replay, and database persistence, then consume that
+  outcome in downstream classification/extraction wherever success and failure
+  differ. Current `ParsedHookEvent`/capture persistence has no general failure
+  field, so the implementation must not infer this capability from `exit_code`
+  or the event name. Otherwise mark Cursor observe incomplete and keep its #824
+  installation entries disabled. The implementation cannot ship a success-only
+  observe hook as complete capture. If #822 cannot prove a safe shared call
+  identity for dual-event delivery, do not synthesize correlation from mutable
+  payload content: the disabled/incomplete branch is required. Tests for an
+  approved mapping must assert
+  the stored failure outcome for both Bash and edit/write failures, prove
+  both-event delivery persists exactly once with failure precedence, cover
+  spill/replay and downstream consumption, and prove malformed failure payloads
+  produce zero writes.
 - `src/summarize`: accept the Cursor `stop` shape only after #822 verifies its
   exact fields. Map required non-empty `conversation_id` to
   `SummarizeInput.session_id` before the existing missing-session early return,
@@ -226,7 +251,7 @@ not silent.
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
-| B-007 observe maps verified identity before postToolUse capture; unknown tool_name uses verbatim generic capture | Cursor parser + `src/observe/hook.rs` + adapter boundary | fixture maps identity before capture; `SomethingNew` remains verbatim, bypasses known-tool classification, and still persists decoded generic input/output; no diagnostic-and-drop branch exists |
+| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | fixture maps identity before capture; `SomethingNew` remains verbatim, bypasses known-tool classification, and still persists decoded generic input/output; real failing Bash/edit probes freeze the event mapping plus shared call identity and canonical event/upsert key; mapped failures store an explicit canonical failure outcome through spill/DB/downstream, dual events persist once with failure precedence, or missing safe correlation forces #824 observe disabled/incomplete; no diagnostic-and-drop branch exists |
 | B-008 stop maps identity and closed status; #825 gates transcript reads | Cursor parser + `src/summarize` + #822 + #825 | before #825, a valid-looking Cursor path returns explicit unsupported/non-zero and a spy proves no Claude/Codex transcript read, enqueue, spill, or LLM call; after both prerequisites, fixtures cover canonical identity and exact `completed` / `aborted` / `error`; missing/blank/wrong-typed/unknown status fails before reader/enqueue/spill/persistence/LLM |
 | B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields (including stop status), wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills/LLM calls |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
@@ -284,6 +309,11 @@ not silent.
     without inferring a mapping;
   - compare foreground and background-agent sessions and record whether hooks
     fire and whether context becomes model-visible;
+  - execute failing Bash-equivalent and edit/write-equivalent tools; instrument
+    `postToolUseFailure`, `postToolUse`, and any other observed event, recording
+    fire/no-fire, sanitized payloads, ordering, and any stable shared invocation
+    identity for a human canonical event/upsert-key, precedence, and preserve-
+    or-gate decision without inferred mapping;
   - emit a unique synthetic marker from the hook and verify that a real Cursor
     agent receives it; a marker visible only in stdout/logs blocks injection;
   - probe context sizes around the largest accepted payload and record
@@ -319,6 +349,11 @@ not silent.
   spill, replay, parse error, adapter request, and LLM fake-provider paths.
 - Run B-015 malformed, exact-limit, encoded-over-limit, and
   decoded-expansion-over-limit cases before classifier invocation.
+- For an approved failed-tool mapping, run failure fixtures through canonical
+  capture/spill/replay/database and downstream consumers; assert the explicit
+  stored failure outcome for Bash and edit/write, exactly-once persistence when
+  both events fire, and failure precedence. Otherwise, verify #824 installs no
+  Cursor observe hook and doctor reports capture as explicitly incomplete.
 
 ## Rollback
 

@@ -125,7 +125,21 @@ hook JSON output, reusing the existing host-profile mechanism
    unrecognized `tool_name` follows the existing generic-capture contract: it
    is recorded verbatim with the decoded generic input/output and is never
    skipped, silently rewritten, or forced through a known-tool classifier (the
-   #817 failure class).
+   #817 failure class). #822 must also execute one failing Bash-equivalent and
+   one failing edit/write-equivalent and record whether Cursor emits
+   `postToolUseFailure`, `postToolUse`, both, or another exact event, including
+   sanitized payloads, ordering, and any stable invocation identity shared by
+   the success/failure events for one tool call. Human review must then either
+   freeze a canonical event/upsert key and failure-precedence rule that safely
+   correlates dual-event delivery and map the verified failure event into the
+   observe model with
+   an explicit canonical failure outcome/discriminator preserved through
+   capture, spill, and database persistence (and consumed downstream where
+   relevant), or keep Cursor observe explicitly incomplete and prevent #824
+   from installing or advertising capture. If the real payloads expose no safe
+   shared call identity, correlation or content-derived deduplication must not
+   be guessed and the disabled/incomplete branch is mandatory. A success-only
+   hook path must not be described as complete automatic capture.
 8. B-008 When invoked with a Cursor `stop` payload, `remem summarize` maps the
    required non-empty Cursor `conversation_id` to remem's canonical
    `session_id` before enqueueing or persistence. #822 must also identify the
@@ -211,6 +225,7 @@ hook JSON output, reusing the existing host-profile mechanism
 | Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully), B-014 (PII sentinel absent), B-016 (real MCP probe) |
 | Cancellation / interruption / partial completion | covered: B-008 (aborted/error stop payloads) |
 | Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-015 (encoded and decoded tool-field limits) |
+| Failed tool execution | covered: B-007 (real failure-event probe; preserve failure evidence or keep observe uninstalled/incomplete) |
 
 ## Open Questions (gated on #822)
 
@@ -224,7 +239,13 @@ hook JSON output, reusing the existing host-profile mechanism
    appear), plus sanitized Windows root forms.
 - Q2. The observed closed set of Cursor `tool_name` values and their mapping
   onto the observe matcher (`Write` / `Edit` / `Bash` equivalents), using real
-  tool invocations rather than documentation alone.
+  tool invocations rather than documentation alone. Also, for both a failing
+  Bash-equivalent and a failing edit/write-equivalent, whether Cursor emits
+  `postToolUseFailure`, `postToolUse`, both, or another event; its exact
+  payload/ordering; whether dual events share a stable per-call identity; the
+  human-approved canonical event/upsert key and precedence semantics; and the
+  choice to preserve the failure in observe or leave Cursor capture uninstalled
+  and explicitly incomplete when safe correlation is unavailable.
 - Q3. Whether `preCompact` is emitted in the tested Cursor version, its exact
   payload and ordering, and whether it has usable mid-session summarize
   semantics.
@@ -249,9 +270,11 @@ hook JSON output, reusing the existing host-profile mechanism
   Windows root fixtures, observed tool names, background-agent behavior,
   `preCompact` behavior, cross-event canonical session identity, the numeric
   additional-context limit/measurement/one-byte-over policy, the bounded
-  nested-tool-field limit, and the real MCP hook behavior in B-016/Q5. The five
-  open questions are answered or explicitly parked behind a human-approved
-  fail-closed downgrade before implementation starts.
+  nested-tool-field limit, failed-tool hook behavior, shared invocation identity,
+  canonical deduplication/precedence and preservation policy, and the real MCP
+  hook behavior in B-016/Q5. The five open questions are
+  answered or explicitly parked behind a human-approved fail-closed downgrade
+  before implementation starts.
 - A-4. #822 proves a unique synthetic marker is visible to a real Cursor agent.
   If it does not, Cursor injection is recorded as blocked and no implementation
   or installation path claims injection support.
