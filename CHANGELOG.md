@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.207` for GH-671 T7: repeated-correction fixtures
+  cover package-manager choices, forbidden commit trailers, and forbidden
+  commands; the rule hook avoids per-invocation Git subprocess discovery and
+  uses a compile-time-optimized regex engine so enabled-rule p95 remains within
+  measurement noise of the disabled baseline.
 - Staged source version `0.5.206` for GH-671 T6: `remem doctor` reports
   compiled-rule artifact presence, rule count, compile and evaluation health,
   and honest per-host enforcement capabilities without exposing rule payloads

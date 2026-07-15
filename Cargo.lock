@@ -1830,6 +1830,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "regex-lite"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
+
+[[package]]
 name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1837,7 +1843,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remem-ai"
-version = "0.5.206"
+version = "0.5.207"
 dependencies = [
  "anyhow",
  "axum",
@@ -1849,6 +1855,7 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
  "regex",
+ "regex-lite",
  "reqwest",
  "ring",
  "rmcp",

@@ -1,0 +1,333 @@
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
+
+use anyhow::{ensure, Context, Result};
+use remem::rules::{
+    artifact_path_for_project, evaluate_pre_tool_use, write_artifact_atomic, CompiledRule,
+    CompiledRulesArtifact, RuleAction, RuleOverrideState, RulePredicate,
+};
+use serde::Deserialize;
+use serde_json::json;
+
+const FIXTURES: &str = include_str!("fixtures/rule-enforcement-repeated-corrections.json");
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FixtureSuite {
+    schema_version: u32,
+    scenarios: Vec<Scenario>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Scenario {
+    id: String,
+    correction: String,
+    source_memory_id: i64,
+    reinforcement_count: i64,
+    violating_command: String,
+    compliant_command: String,
+    predicate: RulePredicate,
+}
+
+#[test]
+fn repeated_correction_fixtures_warn_only_with_compiled_rules() -> Result<()> {
+    let suite = load_fixtures()?;
+    ensure!(suite.schema_version == 1, "unsupported fixture schema");
+    ensure!(suite.scenarios.len() == 3, "expected three fixture classes");
+
+    let root = test_dir("rule-enforcement-fixtures");
+    for scenario in suite.scenarios {
+        ensure!(!scenario.correction.trim().is_empty(), "blank correction");
+        ensure!(
+            scenario.reinforcement_count >= 3,
+            "{} is not repeatedly reinforced",
+            scenario.id
+        );
+        let project_dir = root.join(&scenario.id);
+        std::fs::create_dir_all(&project_dir)?;
+        let project = remem::db::project_from_cwd(&project_dir.to_string_lossy());
+        let data_dir = project_dir.join("data");
+        let artifact_path = artifact_path_for_project(&data_dir, &project);
+
+        write_artifact_atomic(&artifact_path, &CompiledRulesArtifact::new(1, Vec::new()))?;
+        let without_rule = evaluate_pre_tool_use(
+            &hook_input(&project_dir, &scenario.id, &scenario.violating_command),
+            Some("claude-code"),
+            &data_dir,
+            true,
+        )?;
+        ensure!(
+            without_rule.output.is_none() && without_rule.diagnostics.is_empty(),
+            "{} warned without a compiled rule",
+            scenario.id
+        );
+
+        let rule = compiled_rule(&scenario);
+        write_artifact_atomic(&artifact_path, &CompiledRulesArtifact::new(2, vec![rule]))?;
+        let violation = evaluate_pre_tool_use(
+            &hook_input(&project_dir, &scenario.id, &scenario.violating_command),
+            Some("claude-code"),
+            &data_dir,
+            true,
+        )?;
+        let output = violation
+            .output
+            .with_context(|| format!("{} did not warn on violation", scenario.id))?;
+        ensure!(
+            output["systemMessage"]
+                .as_str()
+                .is_some_and(|message| message.contains("warning")),
+            "{} did not emit a visible warning",
+            scenario.id
+        );
+        ensure!(
+            output["hookSpecificOutput"]
+                .get("permissionDecision")
+                .is_none(),
+            "{} defaulted to block instead of warn",
+            scenario.id
+        );
+
+        let compliant = evaluate_pre_tool_use(
+            &hook_input(&project_dir, &scenario.id, &scenario.compliant_command),
+            Some("claude-code"),
+            &data_dir,
+            true,
+        )?;
+        ensure!(
+            compliant.output.is_none() && compliant.diagnostics.is_empty(),
+            "{} warned on its compliant command",
+            scenario.id
+        );
+    }
+    Ok(())
+}
+
+#[test]
+#[ignore = "manual p95 harness; run under --release with --ignored --nocapture"]
+fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
+    let suite = load_fixtures()?;
+    let root = test_dir("rule-hook-latency");
+    let project_dir = root.join("project");
+    std::fs::create_dir_all(&project_dir)?;
+    let project = remem::db::project_from_cwd(&project_dir.to_string_lossy());
+    let baseline = HookProcess::new(&root.join("baseline"), false, &project_dir)?;
+    let enabled_empty = HookProcess::new(&root.join("enabled-empty"), true, &project_dir)?;
+    let enabled_non_regex = HookProcess::new(&root.join("enabled-non-regex"), true, &project_dir)?;
+    let enabled = HookProcess::new(&root.join("enabled"), true, &project_dir)?;
+    let rules = suite
+        .scenarios
+        .iter()
+        .map(compiled_rule)
+        .collect::<Vec<_>>();
+    write_artifact_atomic(
+        artifact_path_for_project(&enabled.data_dir, &project),
+        &CompiledRulesArtifact::new(2, rules),
+    )?;
+    write_artifact_atomic(
+        artifact_path_for_project(&enabled_empty.data_dir, &project),
+        &CompiledRulesArtifact::new(2, Vec::new()),
+    )?;
+    write_artifact_atomic(
+        artifact_path_for_project(&enabled_non_regex.data_dir, &project),
+        &CompiledRulesArtifact::new(
+            2,
+            vec![compiled_rule(
+                suite
+                    .scenarios
+                    .iter()
+                    .find(|scenario| {
+                        matches!(
+                            scenario.predicate,
+                            RulePredicate::CommitTrailerForbidden { .. }
+                        )
+                    })
+                    .context("fixture suite is missing a non-regex rule")?,
+            )],
+        ),
+    )?;
+
+    let probe = enabled.run("npm install left-pad", true)?;
+    ensure!(
+        String::from_utf8(probe.stdout)?.contains("warning"),
+        "enabled benchmark path did not exercise its compiled artifact"
+    );
+    for _ in 0..10 {
+        baseline.run("cargo check", false)?;
+        enabled_empty.run("cargo check", false)?;
+        enabled_non_regex.run("cargo check", false)?;
+        enabled.run("cargo check", false)?;
+    }
+
+    let mut baseline_a = Vec::with_capacity(60);
+    let mut baseline_b = Vec::with_capacity(60);
+    let mut enabled_empty_samples = Vec::with_capacity(120);
+    let mut enabled_non_regex_samples = Vec::with_capacity(120);
+    let mut enabled_a = Vec::with_capacity(60);
+    let mut enabled_b = Vec::with_capacity(60);
+    for _ in 0..60 {
+        baseline_a.push(baseline.run("cargo check", false)?.elapsed);
+        enabled_empty_samples.push(enabled_empty.run("cargo check", false)?.elapsed);
+        enabled_non_regex_samples.push(enabled_non_regex.run("cargo check", false)?.elapsed);
+        enabled_a.push(enabled.run("cargo check", false)?.elapsed);
+        enabled_b.push(enabled.run("cargo check", false)?.elapsed);
+        enabled_non_regex_samples.push(enabled_non_regex.run("cargo check", false)?.elapsed);
+        enabled_empty_samples.push(enabled_empty.run("cargo check", false)?.elapsed);
+        baseline_b.push(baseline.run("cargo check", false)?.elapsed);
+    }
+
+    let baseline_a_p95 = percentile_ms(&baseline_a, 95);
+    let baseline_b_p95 = percentile_ms(&baseline_b, 95);
+    let enabled_a_p95 = percentile_ms(&enabled_a, 95);
+    let enabled_b_p95 = percentile_ms(&enabled_b, 95);
+    let enabled_empty_p95 = percentile_ms(&enabled_empty_samples, 95);
+    let enabled_non_regex_p95 = percentile_ms(&enabled_non_regex_samples, 95);
+    let baseline_p95 = baseline_a_p95.max(baseline_b_p95);
+    let enabled_p95 = enabled_a_p95.max(enabled_b_p95);
+    let observed_noise_ms = (baseline_a_p95 - baseline_b_p95).abs();
+    let tolerance_ms = observed_noise_ms.max(0.5);
+    let delta_ms = enabled_p95 - baseline_p95;
+
+    eprintln!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "schema_version": 1,
+            "samples_per_primary_cohort": 60,
+            "samples_per_diagnostic_cohort": 120,
+            "baseline_a_p95_ms": baseline_a_p95,
+            "baseline_b_p95_ms": baseline_b_p95,
+            "enabled_empty_artifact_p95_ms": enabled_empty_p95,
+            "enabled_non_regex_artifact_p95_ms": enabled_non_regex_p95,
+            "enabled_a_p95_ms": enabled_a_p95,
+            "enabled_b_p95_ms": enabled_b_p95,
+            "baseline_p95_ms": baseline_p95,
+            "enabled_p95_ms": enabled_p95,
+            "delta_ms": delta_ms,
+            "observed_baseline_noise_ms": observed_noise_ms,
+            "tolerance_ms": tolerance_ms,
+            "within_measurement_noise": enabled_p95 <= baseline_p95 + tolerance_ms,
+        }))?
+    );
+    ensure!(
+        enabled_p95 <= baseline_p95 + tolerance_ms,
+        "enabled p95 {enabled_p95:.3}ms exceeded baseline {baseline_p95:.3}ms + noise {tolerance_ms:.3}ms"
+    );
+    Ok(())
+}
+
+fn load_fixtures() -> Result<FixtureSuite> {
+    serde_json::from_str(FIXTURES).context("parse rule enforcement fixtures")
+}
+
+fn compiled_rule(scenario: &Scenario) -> CompiledRule {
+    CompiledRule {
+        rule_id: format!("pref-{}-1", scenario.source_memory_id),
+        source_memory_id: scenario.source_memory_id,
+        reinforcement_count: scenario.reinforcement_count,
+        action: RuleAction::Warn,
+        override_state: RuleOverrideState {
+            disabled: false,
+            action_override: None,
+        },
+        predicate: scenario.predicate.clone(),
+    }
+}
+
+fn hook_input(project: &Path, session_id: &str, command: &str) -> String {
+    json!({
+        "session_id": session_id,
+        "cwd": project,
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Bash",
+        "tool_input": {"command": command}
+    })
+    .to_string()
+}
+
+struct HookProcess {
+    data_dir: PathBuf,
+    config_path: PathBuf,
+    project_dir: PathBuf,
+}
+
+struct HookRun {
+    elapsed: Duration,
+    stdout: Vec<u8>,
+}
+
+impl HookProcess {
+    fn new(root: &Path, enabled: bool, project_dir: &Path) -> Result<Self> {
+        let data_dir = root.join("data");
+        std::fs::create_dir_all(&data_dir)?;
+        let config_path = root.join("config.toml");
+        std::fs::write(
+            &config_path,
+            format!(
+                "[rule_compilation]\nenabled = {enabled}\nrule_compile_min_reinforcement = 3\n"
+            ),
+        )?;
+        Ok(Self {
+            data_dir,
+            config_path,
+            project_dir: project_dir.to_path_buf(),
+        })
+    }
+
+    fn run(&self, command: &str, capture_stdout: bool) -> Result<HookRun> {
+        let started = Instant::now();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_remem"))
+            .args(["rules", "eval", "--host", "claude-code"])
+            .env("REMEM_DATA_DIR", &self.data_dir)
+            .env("REMEM_CONFIG", &self.config_path)
+            .env_remove("REMEM_DISABLE_HOOKS")
+            .stdin(Stdio::piped())
+            .stdout(if capture_stdout {
+                Stdio::piped()
+            } else {
+                Stdio::null()
+            })
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("spawn remem rules eval")?;
+        child
+            .stdin
+            .take()
+            .context("rules eval stdin")?
+            .write_all(hook_input(&self.project_dir, "latency-session", command).as_bytes())?;
+        let output = child
+            .wait_with_output()
+            .context("wait for remem rules eval")?;
+        let elapsed = started.elapsed();
+        ensure!(
+            output.status.success(),
+            "remem rules eval failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(HookRun {
+            elapsed,
+            stdout: output.stdout,
+        })
+    }
+}
+
+fn percentile_ms(samples: &[Duration], percentile: usize) -> f64 {
+    let mut values = samples
+        .iter()
+        .map(Duration::as_secs_f64)
+        .map(|seconds| seconds * 1000.0)
+        .collect::<Vec<_>>();
+    values.sort_by(f64::total_cmp);
+    let index = (values.len() - 1) * percentile / 100;
+    values[index]
+}
+
+fn test_dir(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "remem-{label}-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ))
+}

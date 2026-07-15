@@ -26,9 +26,54 @@ pub fn canonical_project_path(cwd: &str) -> PathBuf {
 /// canonical cwd for non-git directories and missing paths.
 pub fn canonical_project_root(cwd: &str) -> PathBuf {
     let canonical_cwd = canonical_project_path(cwd);
-    crate::git_util::resolve_toplevel(&canonical_cwd)
-        .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
-        .unwrap_or(canonical_cwd)
+    if let Some(root) = git_worktree_root_from_markers(&canonical_cwd) {
+        return root;
+    }
+    let requires_git_fallback = canonical_cwd
+        .ancestors()
+        .any(|candidate| candidate.join(".git").exists())
+        || std::env::var_os("GIT_DIR").is_some()
+        || std::env::var_os("GIT_WORK_TREE").is_some();
+    if requires_git_fallback {
+        return crate::git_util::resolve_toplevel(&canonical_cwd)
+            .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
+            .unwrap_or(canonical_cwd);
+    }
+    canonical_cwd
+}
+
+fn git_worktree_root_from_markers(cwd: &std::path::Path) -> Option<PathBuf> {
+    cwd.ancestors()
+        .find(|candidate| is_git_worktree_marker(&candidate.join(".git")))
+        .map(PathBuf::from)
+}
+
+fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
+    if marker.is_dir() {
+        return marker.join("HEAD").is_file();
+    }
+    let Ok(contents) = std::fs::read_to_string(marker) else {
+        return false;
+    };
+    let Some(git_dir) = contents
+        .lines()
+        .next()
+        .and_then(|line| line.strip_prefix("gitdir:"))
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+    else {
+        return false;
+    };
+    let git_dir = std::path::Path::new(git_dir);
+    let git_dir = if git_dir.is_absolute() {
+        git_dir.to_path_buf()
+    } else {
+        marker
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join(git_dir)
+    };
+    git_dir.join("HEAD").is_file()
 }
 
 /// Canonical project identity (single source of truth).
@@ -107,5 +152,38 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn git_marker_file_identifies_a_linked_worktree_without_spawning_git() -> anyhow::Result<()> {
+        let root = unique_temp_path("git-marker-file");
+        let nested = root.join("crates").join("member").join("src");
+        let git_dir = root.join("linked-worktree-git-dir");
+        std::fs::create_dir_all(&nested)?;
+        std::fs::create_dir_all(&git_dir)?;
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")?;
+        std::fs::write(root.join(".git"), "gitdir: linked-worktree-git-dir\n")?;
+
+        assert_eq!(
+            git_worktree_root_from_markers(&nested),
+            Some(root.clone()),
+            "a .git file is a worktree marker, not only .git directories"
+        );
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_git_marker_is_not_treated_as_a_worktree() -> anyhow::Result<()> {
+        let root = unique_temp_path("invalid-git-marker");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(&nested)?;
+        std::fs::write(root.join(".git"), "not a gitdir marker\n")?;
+
+        assert_eq!(git_worktree_root_from_markers(&nested), None);
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
     }
 }

@@ -2,7 +2,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::rules::artifact::{CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate};
+use crate::rules::artifact::{
+    build_command_regex, CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate,
+};
 use crate::rules::store::{load_artifact_fail_open, ArtifactLoad, ArtifactLoadErrorKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +177,7 @@ fn diagnostic_code_for_artifact_error(kind: ArtifactLoadErrorKind) -> Evaluation
 
 fn rule_matches(rule: &CompiledRule, input: &EvaluationInput) -> Result<bool, String> {
     match &rule.predicate {
-        RulePredicate::CommandRegex { pattern, .. } => regex::Regex::new(pattern)
+        RulePredicate::CommandRegex { pattern, .. } => build_command_regex(pattern)
             .map(|regex| regex.is_match(&input.command))
             .map_err(|err| format!("rule {} has invalid regex: {err}", rule.rule_id)),
         RulePredicate::CommitTrailerForbidden { trailer, .. } => {

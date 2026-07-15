@@ -111,7 +111,7 @@ impl RulePredicate {
                 if pattern.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty command_regex pattern");
                 }
-                if let Err(error) = regex::Regex::new(pattern) {
+                if let Err(error) = build_command_regex(pattern) {
                     bail!("compiled rule {rule_id} has invalid command_regex pattern: {error}");
                 }
                 if message.trim().is_empty() {
@@ -129,6 +129,10 @@ impl RulePredicate {
         }
         Ok(())
     }
+}
+
+pub(crate) fn build_command_regex(pattern: &str) -> Result<regex_lite::Regex, regex_lite::Error> {
+    regex_lite::Regex::new(pattern)
 }
 
 #[cfg(test)]
