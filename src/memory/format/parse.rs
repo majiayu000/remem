@@ -101,7 +101,7 @@ pub(crate) fn parse_observations_with_outcome(text: &str) -> ParseObservationsOu
         let content_end = content_start + close_rel;
         let content = &text[content_start..content_end];
 
-        let Some(obs_type) = extract_field(content, "type") else {
+        let Some(raw_type) = extract_field(content, "type") else {
             crate::log::error(
                 "observation-parse",
                 "dropping observation: drop_reason=missing_type raw_type=\"\"",
@@ -110,16 +110,17 @@ pub(crate) fn parse_observations_with_outcome(text: &str) -> ParseObservationsOu
             pos = content_end + "</observation>".len();
             continue;
         };
+        let obs_type = raw_type.trim().to_ascii_lowercase();
         if !OBSERVATION_TYPES.contains(&obs_type.as_str()) {
             let raw_type_preview = crate::adapter::redaction::redact_and_truncate(
-                &obs_type,
+                &raw_type,
                 INVALID_TYPE_PREVIEW_BYTES,
             );
             crate::log::error(
                 "observation-parse",
                 &format!(
                     "dropping observation: drop_reason=unknown_type raw_type_preview={raw_type_preview:?} raw_type_bytes={}",
-                    obs_type.len()
+                    raw_type.len()
                 ),
             );
             invalid_type_drops.push(InvalidObservationTypeDrop::Unknown);
@@ -128,7 +129,7 @@ pub(crate) fn parse_observations_with_outcome(text: &str) -> ParseObservationsOu
         }
 
         let mut concepts = extract_array(content, "concepts", "concept");
-        concepts.retain(|concept| concept != &obs_type);
+        concepts.retain(|concept| !concept.eq_ignore_ascii_case(&obs_type));
 
         observations.push(ParsedObservation {
             obs_type,

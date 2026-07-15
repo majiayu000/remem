@@ -315,6 +315,37 @@ fn valid_compression_inserts_replacement_then_marks_sources() -> Result<()> {
 }
 
 #[test]
+fn case_normalized_type_compression_inserts_replacement_and_marks_source() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![insert_source_observation(&conn, "active")?];
+    let sources = source_observations(&conn, &ids)?;
+    let response = "<observation>
+        <type>Decision</type>
+        <title>Case-normalized replacement</title>
+        <narrative>Compressed narrative</narrative>
+      </observation>";
+
+    let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
+
+    assert_eq!(
+        outcome,
+        CompressionOutcome::Compressed {
+            source_count: 1,
+            replacement_count: 1,
+            marked_count: 1,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["compressed"]);
+    assert_eq!(
+        compressed_titles(&conn)?,
+        vec!["Case-normalized replacement"]
+    );
+    assert_eq!(compressed_source_links(&conn)?.len(), 1);
+    Ok(())
+}
+
+#[test]
 fn multi_replacement_compression_links_every_replacement_to_every_source() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_observation_schema(&conn)?;

@@ -71,6 +71,84 @@ fn parse_observations_multiple_mixed_case() {
 }
 
 #[test]
+fn parse_observations_normalizes_legal_type_case_before_validation() {
+    for observation_type in OBSERVATION_TYPES {
+        let title_case = format!(
+            "{}{}",
+            observation_type[..1].to_ascii_uppercase(),
+            &observation_type[1..]
+        );
+        for raw_type in [title_case, observation_type.to_ascii_uppercase()] {
+            let xml =
+                format!("<observation><type> {raw_type} </type><title>Case</title></observation>");
+
+            let outcome = parse_observations_with_outcome(&xml);
+
+            assert!(
+                !outcome.had_invalid_type(),
+                "legal type casing should not be rejected: {raw_type}"
+            );
+            assert_eq!(outcome.observations.len(), 1, "raw type: {raw_type}");
+            assert_eq!(
+                outcome.observations[0].obs_type, *observation_type,
+                "raw type: {raw_type}"
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_observations_filters_type_concept_case_insensitively() {
+    let xml = r#"
+<observation>
+  <type>Decision</type>
+  <title>Decision case</title>
+  <concepts><concept>decision</concept><concept>DECISION</concept><concept>architecture</concept></concepts>
+</observation>
+"#;
+
+    let parsed = parse_observations(xml);
+
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].obs_type, "decision");
+    assert_eq!(parsed[0].concepts, vec!["architecture"]);
+}
+
+#[test]
+fn uppercase_unsupported_types_remain_unknown_with_raw_log_evidence() {
+    let log_dir = std::env::temp_dir().join(format!(
+        "remem-observation-type-uppercase-unknown-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should follow Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&log_dir).expect("test log directory should be created");
+
+    let xml = r#"
+<observation><type>PREFERENCE</type><title>Unsupported</title></observation>
+<observation><type>ARCHITECTURE</type><title>Unsupported</title></observation>
+"#;
+    let outcome = crate::log::with_log_dir(&log_dir, || parse_observations_with_outcome(xml));
+
+    assert!(outcome.observations.is_empty());
+    assert_eq!(
+        outcome.invalid_type_drops,
+        vec![
+            InvalidObservationTypeDrop::Unknown,
+            InvalidObservationTypeDrop::Unknown,
+        ]
+    );
+    let log = std::fs::read_to_string(log_dir.join("remem.log"))
+        .expect("observation parser error log should be readable");
+    assert!(log.contains("raw_type_preview=\"PREFERENCE\" raw_type_bytes=10"));
+    assert!(log.contains("raw_type_preview=\"ARCHITECTURE\" raw_type_bytes=12"));
+
+    std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
+}
+
+#[test]
 fn extract_field_scans_from_open_tag() {
     let body = "</title><title>ok</title>";
     assert_eq!(extract_field(body, "title").as_deref(), Some("ok"));
