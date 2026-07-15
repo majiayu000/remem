@@ -13,6 +13,7 @@ mod procedure_exports;
 mod promotion_funnel;
 mod report;
 mod review_queue;
+mod rule_enforcement;
 mod runtime_config_check;
 mod schema;
 #[cfg(test)]

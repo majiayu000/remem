@@ -1,5 +1,3 @@
-use std::fs::OpenOptions;
-use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -8,8 +6,8 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use super::{
-    artifact_path_for_project, evaluate_artifact_file, EvaluationInput, EvaluationVerdict,
-    RuleMatch,
+    artifact_path_for_project, evaluate_artifact_file_with_codes, EvaluationDiagnosticCode,
+    EvaluationInput, EvaluationVerdict, RuleMatch,
 };
 
 #[derive(Debug, Deserialize)]
@@ -28,6 +26,13 @@ pub struct RuleHookEvaluation {
     pub diagnostics: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct DetailedRuleHookEvaluation {
+    pub evaluation: RuleHookEvaluation,
+    pub project: Option<String>,
+    pub diagnostic_codes: Vec<EvaluationDiagnosticCode>,
+}
+
 pub fn session_id_hint(raw: &str) -> Option<String> {
     serde_json::from_str::<Value>(raw)
         .ok()?
@@ -36,12 +41,31 @@ pub fn session_id_hint(raw: &str) -> Option<String> {
         .map(str::to_string)
 }
 
+pub(crate) fn project_hint(raw: &str) -> Option<String> {
+    let cwd = serde_json::from_str::<Value>(raw)
+        .ok()?
+        .get("cwd")?
+        .as_str()?
+        .to_string();
+    Some(crate::db::project_from_cwd(&cwd))
+}
+
 pub fn evaluate_pre_tool_use(
     raw: &str,
     host: Option<&str>,
     data_dir: &Path,
     enabled: bool,
 ) -> Result<RuleHookEvaluation> {
+    evaluate_pre_tool_use_with_diagnostics(raw, host, data_dir, enabled)
+        .map(|detailed| detailed.evaluation)
+}
+
+pub(crate) fn evaluate_pre_tool_use_with_diagnostics(
+    raw: &str,
+    host: Option<&str>,
+    data_dir: &Path,
+    enabled: bool,
+) -> Result<DetailedRuleHookEvaluation> {
     let host = host
         .map(crate::runtime_config::normalize_host)
         .unwrap_or_else(|| "unknown".to_string());
@@ -50,10 +74,14 @@ pub fn evaluate_pre_tool_use(
     }
 
     if !enabled {
-        return Ok(RuleHookEvaluation {
-            session_id: session_id_hint(raw),
-            output: None,
-            diagnostics: Vec::new(),
+        return Ok(DetailedRuleHookEvaluation {
+            evaluation: RuleHookEvaluation {
+                session_id: session_id_hint(raw),
+                output: None,
+                diagnostics: Vec::new(),
+            },
+            project: None,
+            diagnostic_codes: Vec::new(),
         });
     }
 
@@ -78,29 +106,39 @@ pub fn evaluate_pre_tool_use(
         .filter(|command| !command.trim().is_empty())
         .context("Claude PreToolUse Bash input is missing tool_input.command")?;
     let project = crate::db::project_from_cwd(&payload.cwd);
-    let outcome = evaluate_artifact_file(
+    let coded_outcome = evaluate_artifact_file_with_codes(
         artifact_path_for_project(data_dir, &project),
         &EvaluationInput {
             command: command.to_string(),
         },
     );
+    let diagnostic_codes = coded_outcome.diagnostic_codes;
+    let outcome = coded_outcome.outcome;
     let diagnostics = outcome
         .diagnostics
         .into_iter()
         .map(|diagnostic| sanitize_diagnostic(&diagnostic.message))
         .collect::<Vec<_>>();
     if !diagnostics.is_empty() {
-        return Ok(RuleHookEvaluation {
-            session_id: payload.session_id,
-            output: None,
-            diagnostics,
+        return Ok(DetailedRuleHookEvaluation {
+            evaluation: RuleHookEvaluation {
+                session_id: payload.session_id,
+                output: None,
+                diagnostics,
+            },
+            project: Some(project),
+            diagnostic_codes,
         });
     }
 
-    Ok(RuleHookEvaluation {
-        session_id: payload.session_id,
-        output: render_hook_output(outcome.verdict, &outcome.matches),
-        diagnostics,
+    Ok(DetailedRuleHookEvaluation {
+        evaluation: RuleHookEvaluation {
+            session_id: payload.session_id,
+            output: render_hook_output(outcome.verdict, &outcome.matches),
+            diagnostics,
+        },
+        project: Some(project),
+        diagnostic_codes,
     })
 }
 
@@ -157,13 +195,27 @@ fn sanitize_diagnostic(message: &str) -> String {
 }
 
 pub fn log_evaluation_error_once(data_dir: &Path, session_id: Option<&str>, message: &str) {
+    log_evaluation_error_once_with_diagnostic(
+        data_dir,
+        session_id,
+        None,
+        &[EvaluationDiagnosticCode::HookInput],
+        message,
+    );
+}
+
+pub(crate) fn log_evaluation_error_once_with_diagnostic(
+    data_dir: &Path,
+    session_id: Option<&str>,
+    project: Option<&str>,
+    codes: &[EvaluationDiagnosticCode],
+    message: &str,
+) {
     let Some(session_key) = session_id.filter(|session_id| !session_id.trim().is_empty()) else {
         crate::log::error("rules-eval", &sanitize_diagnostic(message));
         return;
     };
-    let marker_dir = data_dir
-        .join("compiled_rules")
-        .join(".evaluation-error-sessions");
+    let marker_dir = super::evaluation_marker_dir(data_dir);
     if let Err(error) = std::fs::create_dir_all(&marker_dir) {
         crate::log::error(
             "rules-eval",
@@ -176,21 +228,13 @@ pub fn log_evaluation_error_once(data_dir: &Path, session_id: Option<&str>, mess
     }
     let digest = Sha256::digest(session_key.as_bytes());
     let marker = marker_dir.join(format!("{digest:x}"));
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&marker)
-    {
-        Ok(file) => {
-            drop(file);
-            crate::log::set_private_permissions(&marker);
-            crate::log::error("rules-eval", &sanitize_diagnostic(message));
-        }
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+    match super::upsert_evaluation_error_record(&marker, data_dir, project, codes) {
+        Ok(true) => crate::log::error("rules-eval", &sanitize_diagnostic(message)),
+        Ok(false) => {}
         Err(error) => crate::log::error(
             "rules-eval",
             &format!(
-                "could not create evaluation diagnostic marker: {error}; {}",
+                "could not publish evaluation diagnostic marker: {error:#}; {}",
                 sanitize_diagnostic(message)
             ),
         ),
