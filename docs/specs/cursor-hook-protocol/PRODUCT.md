@@ -1,7 +1,7 @@
 # Cursor Hook I/O Protocol Product Spec
 
 Status: Draft, needs human approval before implementation
-Date: 2026-07-14
+Date: 2026-07-15
 
 Tracking:
 - Spec/tracking issue: #823
@@ -55,12 +55,14 @@ hook JSON output, reusing the existing host-profile mechanism
    that enumerates the full closed set. Internal host auto-detection must not
    make `unknown` a persistable or explicitly accepted hook host.
 2. B-002 When invoked with `--host cursor` and a Cursor `sessionStart` stdin
-   payload, `remem context` requires a non-empty `session_id` and exactly one
-   non-empty entry in `workspace_roots`, maps `workspace_roots[0]` to the remem
-   context cwd/project boundary, and parses the base field `transcript_path`
-   (string | null). A null or absent `transcript_path` is valid input. Missing
-   or empty `workspace_roots` fails closed; the hook process cwd and an
-   undeclared `CURSOR_PROJECT_DIR` fallback must not select a different project.
+   payload, `remem context` requires a non-empty `session_id` and a
+   `workspace_roots` array satisfying both `len == 1` and
+   `trim(workspace_roots[0])` is non-empty. It maps only that trimmed element to
+   the remem context cwd/project boundary and parses the base field
+   `transcript_path` (string | null). A null or absent `transcript_path` is
+   valid input. Every other array shape fails closed, including `[]`, `[""]`,
+   mixed blank/non-blank arrays, and multiple non-empty roots. The hook process
+   cwd and an undeclared `CURSOR_PROJECT_DIR` fallback must not select a project.
 3. B-003 When context injection succeeds under `--host cursor` for a
    `sessionStart` event, stdout is a single JSON object whose
    `additional_context` field carries the ANSI-stripped context body. No other
@@ -86,11 +88,17 @@ hook JSON output, reusing the existing host-profile mechanism
    (the #817 failure class).
 8. B-008 When invoked with a Cursor `stop` payload, `remem summarize` maps the
    required non-empty Cursor `conversation_id` to remem's canonical
-   `session_id` before enqueueing or persistence. It runs the same summarize
-   entry as a Claude `Stop` hook. `status` values `aborted` and `error` must not
-   discard capture that was already persisted; whether they suppress the LLM
-   summary call is an explicit decision recorded in the tech spec, not an
-   accident.
+   `session_id` before enqueueing or persistence. #822 must also identify the
+   exact project-root field and type emitted by a real Cursor `stop`. Until
+   that evidence exists, or when that verified field is missing, blank,
+   multi-root, or otherwise ambiguous, summarize fails with a non-zero exit and
+   performs no write, enqueue, or spill. After verification, only one validated
+   root/cwd is mapped to the remem project; the hook process cwd and
+   `CURSOR_PROJECT_DIR` are never fallbacks. A valid event runs the same
+   summarize entry as a Claude `Stop` hook. `status` values `aborted` and
+   `error` must not discard capture that was already persisted; whether they
+   suppress the LLM summary call is an explicit decision recorded in the tech
+   spec, not an accident.
 9. B-009 A stdin payload that is not valid JSON, or that is missing fields
    required by the Cursor event contract, fails closed: error-level log with
    the event name and a redacted parse failure, non-zero exit, no stdout, no
@@ -110,9 +118,12 @@ hook JSON output, reusing the existing host-profile mechanism
     sufficient. If the marker is absent, the injection capability is parked as
     blocked and #823/#824 must not advertise or install it.
 13. B-013 Multi-root Cursor workspaces remain unresolved until #822 and human
-    review select an identity policy. A payload with more than one non-empty
-    `workspace_roots` entry fails closed; implementation must not silently pick
-    the first root, merge projects, or use the hook process cwd.
+    review select an identity policy. Workspace-root arrays are valid only when
+    their total length is exactly one and that sole string is non-empty after
+    trimming. `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and arrays
+    containing two non-empty roots all fail closed. Implementation must not
+    discard blank elements and then pick the remaining root, silently pick the
+    first root, merge projects, or use the hook process cwd.
 
 ## Boundary Checklist
 
@@ -134,7 +145,8 @@ hook JSON output, reusing the existing host-profile mechanism
 - Q1. Exact `sessionStart` payload field names and types, including
   `composer_mode`, `is_background_agent`, and `workspace_roots`; whether
   background-agent sessions should receive injection; and the human-approved
-  policy for payloads containing multiple workspace roots.
+  policy for payloads containing multiple workspace roots. Also identify the
+  exact project-root field and type on real `stop` payloads.
 - Q2. The observed closed set of Cursor `tool_name` values and their mapping
   onto the observe matcher (`Write` / `Edit` / `Bash` equivalents), using real
   tool invocations rather than documentation alone.
@@ -150,10 +162,11 @@ hook JSON output, reusing the existing host-profile mechanism
 - A-1. All B-001..B-013 have automated verification per the tech spec mapping.
 - A-2. `cargo test` passes with zero changes to existing Claude/Codex
   protocol tests.
-- A-3. #822 records the real Cursor version, exact event payloads, observed
-  tool names, background-agent behavior, `preCompact` behavior, and context
-  size behavior. The four open questions are answered or explicitly parked
-  behind a human-approved fail-closed downgrade before implementation starts.
+- A-3. #822 records the real Cursor version, exact event payloads, the `stop`
+  project-root field/type, observed tool names, background-agent behavior,
+  `preCompact` behavior, and context size behavior. The four open questions are
+  answered or explicitly parked behind a human-approved fail-closed downgrade
+  before implementation starts.
 - A-4. #822 proves a unique synthetic marker is visible to a real Cursor agent.
   If it does not, Cursor injection is recorded as blocked and no implementation
   or installation path claims injection support.

@@ -1,7 +1,7 @@
 # Cursor Hook I/O Protocol Technical Spec
 
 Status: Draft, needs human approval before implementation
-Date: 2026-07-14
+Date: 2026-07-15
 
 Tracking:
 - Spec/tracking issue: #823
@@ -49,10 +49,12 @@ Verified against `origin/main` (`f612b4a1`), 2026-07-15:
   spec introduces is what #824 will write into `hooks.json`.
 
 External-contract candidates for #822 to verify, not implementation facts:
-Cursor documentation and review evidence describe JSON hook payloads with
+the official [Cursor Hooks documentation](https://cursor.com/docs/hooks)
+(rechecked 2026-07-15) and review evidence describe JSON hook payloads with
 `transcript_path`, `sessionStart`, `postToolUse`, and `stop` fields; review
-evidence additionally reports `conversation_id` on `stop`. #822 must record the
-exact payloads emitted by the installed Cursor version and prove whether
+evidence additionally reports `conversation_id` on `stop`. Documentation is
+not proof of the installed Cursor version's emitted payloads or model-visible
+behavior. #822 must record the exact real-host payloads and prove whether
 top-level `additional_context` reaches a real agent before this design leaves
 its blocked state.
 
@@ -81,12 +83,13 @@ its blocked state.
   or wrong field types return an error to CLI dispatch. Context generation is
   not called, the process exits non-zero, stdout remains empty, and no current
   cwd/CLI fallback is permitted.
-- Cursor `sessionStart` requires a non-empty `session_id` and exactly one
-  non-empty `workspace_roots` entry. Map `workspace_roots[0]` to the existing
-  invocation `cwd`, then derive project identity from that value. Missing or
-  empty arrays fail closed. Arrays with multiple non-empty roots remain blocked
-  pending #822 plus a human identity decision (B-013); do not silently select a
-  root. Do not use the hook process cwd or an unverified
+- Cursor `sessionStart` requires a non-empty `session_id` and a
+  `workspace_roots` array whose total length is exactly one and whose sole
+  string is non-empty after trimming. Map only that trimmed
+  `workspace_roots[0]` to invocation `cwd`, then derive project identity from
+  it. `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two-non-empty-root
+  arrays all fail closed. Do not filter blank entries before validating length,
+  silently select a root, use the hook process cwd, or use an unverified
   `CURSOR_PROJECT_DIR`. The base `transcript_path` remains null-tolerant.
 - `src/observe/hook.rs`: accept the Cursor `postToolUse` shape. `tool_output`
   arrives JSON-stringified — decode once, and on decode failure store the raw
@@ -95,10 +98,15 @@ its blocked state.
 - `src/summarize`: accept the Cursor `stop` shape only after #822 verifies its
   exact fields. Map required non-empty `conversation_id` to
   `SummarizeInput.session_id` before the existing missing-session early return,
-  enqueue, spill identity, or persistence paths. Decision (B-008):
-  `aborted`/`error` still preserve already captured events; the LLM summary call
-  runs for `completed` and `aborted`, and is skipped with an error-level log for
-  `error`. This decision remains subject to the real payload evidence.
+  enqueue, spill identity, or persistence paths. #822 must also record the
+  exact project-root field/type emitted on `stop`. Until that evidence exists,
+  or if the verified field is absent, blank, multi-root, or ambiguous, return
+  non-zero before any enqueue, spill, or database write. After verification,
+  map only one validated root/cwd to remem project identity; never fall back to
+  the process cwd or `CURSOR_PROJECT_DIR`. Decision (B-008): `aborted`/`error`
+  still preserve already captured events; the LLM summary call runs for
+  `completed` and `aborted`, and is skipped with an error-level log for `error`.
+  This decision remains subject to the real payload evidence.
 - Apply the same explicit error result to Cursor `postToolUse` and `stop`:
   malformed or contract-incomplete input returns non-zero, emits no stdout, and
   performs no partial adapter dispatch, enqueue, spill, or database write.
@@ -132,18 +140,18 @@ diagnostics (surface added in #824) reports
 | Behavior invariant | Implementation area | Verification |
 |---|---|---|
 | B-001 `cursor` accepted; every hook command rejects aliases/unknown/empty before side effects | shared hook-host parser + `src/cli/dispatch.rs` + context/observe/summarize entrypoints | unit tests for all four commands and persistence entrypoints: exact three values accepted; `curser`, `unknown`, aliases, and empty rejected with the same closed-set error and no write |
-| B-002 sessionStart maps one workspace root; null transcript_path valid | `src/context/invocation.rs` | Cursor fixture with exactly one root maps it to cwd/project; null/absent transcript path succeeds; missing/empty roots fail without current-cwd fallback |
+| B-002 sessionStart maps one workspace root; null transcript_path valid | `src/context/invocation.rs` | `len == 1` plus trimmed non-empty root maps to cwd/project; null/absent transcript path succeeds; fixtures `[]`, `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots fail without current-cwd/env fallback |
 | B-003 additional_context JSON on stdout, other hosts unchanged | `src/context/render.rs` | new render test: Cursor sessionStart → top-level `additional_context`; existing Codex/Claude render tests untouched and green |
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 session-init not wired, doctor-visible | design decision + #824 doctor surface | assert no UserPromptSubmit-equivalent entry in #824's generated hooks.json fixture; doctor line test in #824 |
 | B-007 observe parses postToolUse; unknown tool_name never rewritten | `src/observe/hook.rs` | unit test: Cursor payload with `tool_name: "SomethingNew"` recorded verbatim; JSON-stringified `tool_output` decoded |
-| B-008 stop maps conversation identity; statuses preserve prior capture | `src/summarize` | fixtures require `conversation_id`, assert it becomes persisted/enqueued `session_id`, and cover `completed` / `aborted` / `error` decisions |
+| B-008 stop maps conversation and verified project identity; statuses preserve prior capture | `src/summarize` + #822 | PoC records the stop project-root field/type; fixtures require `conversation_id` plus one verified root/cwd and assert remem session/project identity; before verification and for missing/blank/multi-root identity, subprocess tests assert non-zero and zero writes/enqueues/spills; valid fixtures cover `completed` / `aborted` / `error` decisions |
 | B-009 malformed stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON and missing required fields assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
 | B-011 DB host value is `cursor` | shared host parser + capture/enqueue/persistence boundaries | `as_db_value()` unit test plus DB integration tests proving only canonical `cursor` reaches each hook-origin host column |
 | B-012 real-agent marker gate | #822 PoC evidence | unique synthetic marker appears in a real Cursor agent's model-visible context; stdout-only marker is failure and blocks injection |
-| B-013 multi-root remains fail-closed | `src/context/invocation.rs` + #822/human gate | two-root fixture returns non-zero with no stdout/write; implementation cannot enable multi-root until a recorded human decision |
+| B-013 invalid and multi-root arrays remain fail-closed | context/summarize parsing + #822/human gate | fixtures `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots return non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
 
 ## Risks
 
@@ -156,8 +164,10 @@ diagnostics (surface added in #824) reports
   Codex lesson); B-004 keeps the payload free of instruction text so worst
   case is a visible context block, not a leaked directive.
 - R4. Choosing the wrong root in a multi-root workspace can inject or persist
-  another project's memory. B-002/B-013 require one root and block ambiguity;
-  neither current cwd nor an undeclared environment variable is a fallback.
+  another project's memory. Filtering blanks before checking array length is
+  also ambiguous and could hide a malformed producer. B-002/B-008/B-013 require
+  one root and block ambiguity; neither current cwd nor an undeclared
+  environment variable is a fallback.
 
 ## Verification Plan
 
@@ -165,7 +175,8 @@ diagnostics (surface added in #824) reports
 - `cargo test` (full suite; new tests listed in the mapping)
 - #822 real-host PoC, recording the Cursor version and sanitized raw evidence:
   - capture exact event names and payload field names/types for `sessionStart`,
-    `postToolUse`, `stop`, and any observed `preCompact`;
+    `postToolUse`, `stop`, and any observed `preCompact`, including the exact
+    project-root field/type on `stop`;
   - invoke real Cursor tools and record their exact `tool_name` values;
   - compare foreground and background-agent sessions and record whether hooks
     fire and whether context becomes model-visible;
@@ -173,8 +184,12 @@ diagnostics (surface added in #824) reports
     agent receives it; a marker visible only in stdout/logs blocks injection;
   - probe context sizes around the largest accepted payload and record
     truncation, rejection, and agent-visible behavior;
-  - exercise zero, one, and multiple `workspace_roots`; keep multi-root blocked
-    until a human approves an identity policy.
+  - exercise zero, one, and multiple `workspace_roots`, including `[""]`,
+    `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots; keep every
+    shape other than `len == 1` plus a trimmed non-empty sole element blocked;
+  - exercise missing, blank, single-root/cwd, and multi-root project identity on
+    `stop`; keep summarize blocked until the field is verified and fail closed
+    without process-cwd or `CURSOR_PROJECT_DIR` fallback.
 - After the PoC gate passes, pipe its sanitized payload fixtures through
   `remem context --host cursor`, `remem observe --host cursor`, and
   `remem summarize --host cursor`; assert exact stdout, exit status, and
