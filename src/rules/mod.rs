@@ -16,7 +16,7 @@ pub use compiler::{
     PreferenceClassification, PreferencePredicate,
 };
 pub(crate) use diagnostics::{
-    evaluation_marker_dir, load_evaluation_error, publish_evaluation_error_record,
+    evaluation_marker_dir, load_evaluation_error, upsert_evaluation_error_record,
 };
 pub use evaluator::{
     evaluate_artifact, evaluate_artifact_file, EvaluationDiagnostic, EvaluationInput,

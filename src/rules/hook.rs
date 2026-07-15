@@ -1,5 +1,4 @@
 use std::fs::OpenOptions;
-use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -231,20 +230,6 @@ pub(crate) fn log_evaluation_error_once_with_diagnostic(
     }
     let digest = Sha256::digest(session_key.as_bytes());
     let marker = marker_dir.join(format!("{digest:x}"));
-    match marker.try_exists() {
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(error) => {
-            crate::log::error(
-                "rules-eval",
-                &format!(
-                    "could not inspect evaluation diagnostic marker: {error}; {}",
-                    sanitize_diagnostic(message)
-                ),
-            );
-            return;
-        }
-    }
     let claim = marker_dir.join(format!(".{digest:x}.claim"));
     let claim_file = match OpenOptions::new()
         .create(true)
@@ -266,45 +251,27 @@ pub(crate) fn log_evaluation_error_once_with_diagnostic(
         }
     };
     crate::log::set_private_permissions(&claim);
-    match claim_file.try_lock_exclusive() {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::WouldBlock => return,
-        Err(error) => {
-            crate::log::error(
-                "rules-eval",
-                &format!(
-                    "could not lock evaluation diagnostic claim: {error}; {}",
-                    sanitize_diagnostic(message)
-                ),
-            );
-            return;
-        }
-    }
-    match marker.try_exists() {
-        Ok(true) => return,
-        Ok(false) => {}
-        Err(error) => {
-            crate::log::error(
-                "rules-eval",
-                &format!(
-                    "could not recheck evaluation diagnostic marker: {error}; {}",
-                    sanitize_diagnostic(message)
-                ),
-            );
-            return;
-        }
-    }
-    if let Err(error) = super::publish_evaluation_error_record(&marker, data_dir, project, codes) {
+    if let Err(error) = claim_file.lock_exclusive() {
         crate::log::error(
             "rules-eval",
             &format!(
-                "could not publish evaluation diagnostic marker: {error:#}; {}",
+                "could not lock evaluation diagnostic claim: {error}; {}",
                 sanitize_diagnostic(message)
             ),
         );
         return;
     }
-    crate::log::error("rules-eval", &sanitize_diagnostic(message));
+    match super::upsert_evaluation_error_record(&marker, data_dir, project, codes) {
+        Ok(true) => crate::log::error("rules-eval", &sanitize_diagnostic(message)),
+        Ok(false) => {}
+        Err(error) => crate::log::error(
+            "rules-eval",
+            &format!(
+                "could not publish evaluation diagnostic marker: {error:#}; {}",
+                sanitize_diagnostic(message)
+            ),
+        ),
+    }
 }
 
 #[cfg(test)]
