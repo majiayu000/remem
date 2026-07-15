@@ -17,6 +17,15 @@ pub(in crate::cli) enum RulesAction {
         rule_id: String,
         #[arg(value_enum)]
         action: RuleActionArg,
+        /// Host expected to enforce block actions. Required for block mode.
+        #[arg(long, value_enum)]
+        host: Option<RuleHostArg>,
+    },
+    /// Internal read-only Claude PreToolUse Bash evaluator.
+    Eval {
+        /// Hook host. Only claude-code supports pre-execution enforcement.
+        #[arg(long, value_enum)]
+        host: Option<RuleHostArg>,
     },
 }
 
@@ -24,4 +33,10 @@ pub(in crate::cli) enum RulesAction {
 pub(in crate::cli) enum RuleActionArg {
     Warn,
     Block,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(in crate::cli) enum RuleHostArg {
+    ClaudeCode,
+    CodexCli,
 }

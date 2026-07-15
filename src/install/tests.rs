@@ -210,8 +210,8 @@ fn repair_hooks_warns_for_desktop_mcp_drift() -> anyhow::Result<()> {
 
     let report = super::hosts::ClaudeHost.repair_hooks("/new/remem")?;
 
-    assert_eq!(report.registered, 5);
-    assert_eq!(report.expected, 5);
+    assert_eq!(report.registered, 6);
+    assert_eq!(report.expected, 6);
     let Some(warning) = report.mcp_warning else {
         panic!("desktop MCP drift should produce a warning");
     };
@@ -507,6 +507,12 @@ fn build_hooks_contains_expected_claude_commands() {
     );
     assert_eq!(hooks["PostToolUse"][0]["hooks"][0]["timeout"], 120);
     assert_eq!(
+        hooks["PreToolUse"][0]["hooks"][0]["command"],
+        "/tmp/remem rules eval --host claude-code"
+    );
+    assert_eq!(hooks["PreToolUse"][0]["matcher"], "Bash");
+    assert_eq!(hooks["PreToolUse"][0]["hooks"][0]["timeout"], 5);
+    assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
         "/tmp/remem summarize --host claude-code"
     );
@@ -526,6 +532,7 @@ fn build_hooks_contains_expected_codex_commands() {
     assert!(hooks["SessionStart"][0].get("matcher").is_none());
     assert!(hooks.get("UserPromptSubmit").is_none());
     assert!(hooks.get("PostToolUse").is_none());
+    assert!(hooks.get("PreToolUse").is_none());
     assert!(hooks.get("PreCompact").is_none());
     assert_eq!(
         hooks["Stop"][0]["hooks"][0]["command"],
@@ -620,7 +627,7 @@ fn repair_hooks_json_preserves_third_party_and_is_idempotent() -> anyhow::Result
 
     assert!(first.is_healthy());
     assert!(second.is_healthy());
-    assert_eq!(count_command_prefix(&repaired, "/new/remem"), 5);
+    assert_eq!(count_command_prefix(&repaired, "/new/remem"), 6);
     assert_eq!(
         repaired["hooks"]["SessionStart"][0]["hooks"][0]["command"],
         "/opt/remem-helper prepare"
