@@ -4,20 +4,20 @@
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 from pathlib import Path
 
+from schema_contract import uses_runtime_profile, validate_schema_node
 from specrail_lib import (
     SpecRailError,
     load_pack,
     read_text,
     validate_action_policy,
-    validate_json_schemas,
     validate_labels,
     validate_state_graph,
     validate_skills_lock,
-    validate_template_parity,
 )
 
 
@@ -28,6 +28,7 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "checks/check_workflow.py",
+    "checks/schema_contract.py",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
@@ -128,6 +129,70 @@ def validate_tokens(repo: Path) -> list[str]:
         for token in tokens:
             if token not in text:
                 errors.append(f"{rel}: missing token {token!r}")
+    return errors
+
+
+def validate_all_json_schemas(repo: Path) -> list[str]:
+    """Validate every JSON schema adopted by remem."""
+
+    errors: list[str] = []
+    schema_dir = repo / "schemas"
+    if not schema_dir.is_dir():
+        return ["missing schemas/ directory"]
+    for path in sorted(schema_dir.glob("*.schema.json")):
+        relative_path = path.relative_to(repo)
+        try:
+            data = json.loads(read_text(path))
+        except json.JSONDecodeError as exc:
+            errors.append(f"{relative_path}: invalid JSON: {exc.msg}")
+            continue
+        if not isinstance(data, dict):
+            errors.append(f"{relative_path}: top-level JSON must be an object")
+            continue
+        if "$schema" not in data:
+            errors.append(f"{relative_path}: missing $schema")
+        if "title" not in data:
+            errors.append(f"{relative_path}: missing title")
+        if data.get("type") != "object":
+            errors.append(f"{relative_path}: top-level type must be object")
+        errors.extend(
+            validate_schema_node(
+                data,
+                relative_path,
+                runtime_profile=uses_runtime_profile(path),
+            )
+        )
+    return errors
+
+
+def validate_template_parity(repo: Path) -> list[str]:
+    """Validate the complete base and zh-CN template surface."""
+
+    errors: list[str] = []
+    root = repo / "templates"
+    zh = root / "zh-CN"
+    base_files = sorted(path.name for path in root.glob("*.md"))
+    zh_files = sorted(path.name for path in zh.glob("*.md")) if zh.is_dir() else []
+    for name in base_files:
+        if name not in zh_files:
+            errors.append(f"templates/zh-CN: missing localized template {name}")
+    for name in zh_files:
+        if name not in base_files:
+            errors.append(f"templates/zh-CN/{name}: no matching base template")
+    stable_tokens = ["GH-", "ready_to_spec", "ready_to_implement"]
+    for name in ["issue_feature.md", "product_spec.md", "tech_spec.md", "pull_request.md"]:
+        base_path = repo / "templates" / name
+        if not base_path.is_file():
+            continue
+        base_text = read_text(base_path)
+        for rel in [Path("templates") / name, Path("templates/zh-CN") / name]:
+            path = repo / rel
+            if not path.is_file():
+                continue
+            text = read_text(path)
+            for token in stable_tokens:
+                if token in base_text and token not in text:
+                    errors.append(f"{rel}: missing stable token {token}")
     return errors
 
 
@@ -266,7 +331,7 @@ def main() -> int:
         config = load_pack(repo)
         errors.extend(validate_required_files(repo))
         errors.extend(validate_tokens(repo))
-        errors.extend(validate_json_schemas(repo))
+        errors.extend(validate_all_json_schemas(repo))
         errors.extend(validate_state_graph(config))
         errors.extend(validate_labels(config))
         errors.extend(validate_action_policy(config))
