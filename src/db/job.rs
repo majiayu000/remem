@@ -10,5 +10,6 @@ pub use claim::claim_next_job;
 pub use enqueue::{enqueue_job, maybe_enqueue_dream_job, DreamEnqueueDecision};
 pub use state::{
     mark_job_done, mark_job_exhausted, mark_job_failed, mark_job_failed_or_retry,
-    release_expired_job_leases, requeue_stuck_jobs,
+    release_expired_job_leases, requeue_stuck_jobs, ExpiredJobLeaseBatch, ExpiredJobLeaseOutcome,
+    JobIdentityKind, JobTransitionOutcome,
 };

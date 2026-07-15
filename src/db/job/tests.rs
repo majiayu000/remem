@@ -1,8 +1,9 @@
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Value, Connection};
 
 use super::{
-    claim_next_job, enqueue_job, mark_job_failed_or_retry, maybe_enqueue_dream_job,
-    DreamEnqueueDecision, JobType,
+    claim_next_job, enqueue_job, mark_job_done, mark_job_exhausted, mark_job_failed,
+    mark_job_failed_or_retry, maybe_enqueue_dream_job, release_expired_job_leases,
+    DreamEnqueueDecision, ExpiredJobLeaseOutcome, JobIdentityKind, JobTransitionOutcome, JobType,
 };
 use crate::migrate::MIGRATIONS;
 
@@ -20,6 +21,282 @@ fn expect_enqueued(decision: DreamEnqueueDecision) -> i64 {
         DreamEnqueueDecision::Enqueued(id) => id,
         other => panic!("expected a newly enqueued Dream job, got {other:?}"),
     }
+}
+
+fn enqueue_and_claim(conn: &mut Connection, project: &str, owner: &str) -> i64 {
+    let job_id = enqueue_job(
+        conn,
+        "codex-cli",
+        JobType::Observation,
+        project,
+        Some("session"),
+        "{\"fixture\":true}",
+        100,
+    )
+    .expect("fixture job should enqueue");
+    let claimed = claim_next_job(conn, owner, 60)
+        .expect("fixture claim should succeed")
+        .expect("fixture job should be claimable");
+    assert_eq!(claimed.id, job_id);
+    job_id
+}
+
+fn job_snapshot(conn: &Connection, job_id: i64) -> Vec<Value> {
+    conn.query_row(
+        "SELECT id, host, job_type, project, session_id, payload_json, state,
+                priority, attempt_count, max_attempts, lease_owner,
+                lease_expires_epoch, next_retry_epoch, last_error,
+                created_at_epoch, updated_at_epoch, failure_class,
+                failed_at_epoch, archived_at_epoch
+         FROM jobs WHERE id = ?1",
+        params![job_id],
+        |row| (0..19).map(|column| row.get(column)).collect(),
+    )
+    .expect("job snapshot should load")
+}
+
+#[test]
+fn lease_owned_job_transitions_require_current_unexpired_lease() {
+    let mut conn = setup_conn();
+
+    let done_id = enqueue_and_claim(&mut conn, "done", "worker-a");
+    assert!(mark_job_done(&conn, done_id, "worker-b").is_err());
+    mark_job_done(&conn, done_id, "worker-a").expect("current owner should complete the job");
+    assert!(mark_job_done(&conn, done_id, "worker-a").is_err());
+
+    let retry_id = enqueue_and_claim(&mut conn, "retry", "worker-a");
+    conn.execute(
+        "UPDATE jobs SET lease_expires_epoch = ?2 WHERE id = ?1",
+        params![retry_id, chrono::Utc::now().timestamp() - 1],
+    )
+    .expect("retry lease should expire");
+    assert!(mark_job_failed(&conn, retry_id, "worker-a", "boom", 30).is_err());
+
+    let exhausted_id = enqueue_and_claim(&mut conn, "exhausted", "worker-a");
+    conn.execute(
+        "UPDATE jobs SET lease_owner = 'worker-b' WHERE id = ?1",
+        params![exhausted_id],
+    )
+    .expect("lease should be reassigned");
+    assert!(mark_job_exhausted(&conn, exhausted_id, "worker-a").is_err());
+
+    let permanent_id = enqueue_and_claim(&mut conn, "permanent", "worker-a");
+    conn.execute(
+        "UPDATE jobs SET lease_expires_epoch = ?2 WHERE id = ?1",
+        params![permanent_id, chrono::Utc::now().timestamp() - 1],
+    )
+    .expect("permanent failure lease should expire");
+    assert!(
+        mark_job_failed_or_retry(&conn, permanent_id, "worker-a", "not implemented", 30,).is_err()
+    );
+}
+
+#[test]
+fn rejected_job_transition_preserves_every_persisted_field() {
+    let mut conn = setup_conn();
+    let job_id = enqueue_and_claim(&mut conn, "preserve", "worker-a");
+    conn.execute(
+        "UPDATE jobs
+         SET priority = 7, attempt_count = 2, max_attempts = 9,
+             next_retry_epoch = 123, last_error = 'original',
+             failure_class = 'transient', failed_at_epoch = 456,
+             archived_at_epoch = 789
+         WHERE id = ?1",
+        params![job_id],
+    )
+    .expect("fixture evidence should update");
+    let before = job_snapshot(&conn, job_id);
+
+    let error = mark_job_failed_or_retry(&conn, job_id, "worker-b", "replacement", 30)
+        .expect_err("wrong owner must reject the transition");
+
+    assert!(error.to_string().contains("worker-b"));
+    assert_eq!(job_snapshot(&conn, job_id), before);
+}
+
+#[test]
+fn job_transition_error_reports_expected_and_current_lease() {
+    let mut conn = setup_conn();
+    let job_id = enqueue_and_claim(&mut conn, "diagnostic", "worker-current");
+    conn.execute(
+        "UPDATE jobs SET lease_expires_epoch = 1700000000 WHERE id = ?1",
+        params![job_id],
+    )
+    .expect("fixture lease should update");
+
+    let error = mark_job_done(&conn, job_id, "worker-expected")
+        .expect_err("mismatched lease owner must be diagnosed")
+        .to_string();
+    assert!(error.contains(&format!("job_id={job_id}")));
+    assert!(error.contains("expected_owner=worker-expected"));
+    assert!(error.contains("current_state=processing"));
+    assert!(error.contains("current_owner=worker-current"));
+    assert!(error.contains("lease_expires_epoch=1700000000"));
+
+    let missing = mark_job_done(&conn, i64::MAX, "worker-expected")
+        .expect_err("missing job must be diagnosed")
+        .to_string();
+    assert!(missing.contains("current=missing"));
+}
+
+fn compile_rules_with_successor(conn: &Connection, project: &str, expiry: i64) -> (i64, i64) {
+    let source = enqueue_job(
+        conn,
+        "worker",
+        JobType::CompileRules,
+        project,
+        None,
+        "{\"source\":true}",
+        50,
+    )
+    .expect("CompileRules source should enqueue");
+    conn.execute(
+        "UPDATE jobs SET state = 'processing', lease_owner = 'worker-a',
+             lease_expires_epoch = ?2, attempt_count = 2,
+             last_error = 'existing failure' WHERE id = ?1",
+        params![source, expiry],
+    )
+    .expect("CompileRules source should enter processing");
+    let successor = enqueue_job(
+        conn,
+        "worker",
+        JobType::CompileRules,
+        project,
+        None,
+        "{\"successor\":true}",
+        200,
+    )
+    .expect("CompileRules successor should enqueue");
+    (source, successor)
+}
+
+#[test]
+fn compile_rules_retry_collision_coalesces_to_pending_successor() {
+    let conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let (source, successor) = compile_rules_with_successor(&conn, "retry-collision", now + 60);
+    let source_before = job_snapshot(&conn, source);
+    let successor_before = job_snapshot(&conn, successor);
+    conn.execute_batch(&format!(
+        "CREATE TRIGGER fail_compile_source BEFORE UPDATE OF state ON jobs
+         WHEN OLD.id = {source} AND NEW.state = 'failed'
+         BEGIN SELECT RAISE(ABORT, 'injected source failure'); END;"
+    ))
+    .expect("rollback trigger should install");
+    assert!(mark_job_failed_or_retry(&conn, source, "worker-a", "boom", 30).is_err());
+    assert_eq!(job_snapshot(&conn, source), source_before);
+    assert_eq!(job_snapshot(&conn, successor), successor_before);
+    conn.execute_batch("DROP TRIGGER fail_compile_source")
+        .expect("rollback trigger should drop");
+
+    let outcome = mark_job_failed_or_retry(&conn, source, "worker-a", "boom", 30)
+        .expect("retry collision should coalesce");
+    assert_eq!(
+        outcome,
+        JobTransitionOutcome::Coalesced {
+            source_id: source,
+            canonical_id: successor,
+            identity_kind: JobIdentityKind::CompileRules,
+        }
+    );
+    let source_row = job_snapshot(&conn, source);
+    assert_eq!(source_row[6], Value::Text("failed".into()));
+    assert_eq!(source_row[8], Value::Integer(3));
+    assert_eq!(source_row[12], Value::Integer(0));
+    assert!(matches!(&source_row[13], Value::Text(error) if error.starts_with("boom ")));
+    assert_eq!(source_row[16], Value::Text("permanent".into()));
+    let successor_row = job_snapshot(&conn, successor);
+    assert_eq!(successor_row[6], Value::Text("pending".into()));
+    assert_eq!(successor_row[7], Value::Integer(50));
+    assert!(matches!(successor_row[12], Value::Integer(epoch) if epoch >= now + 29));
+    assert_eq!(successor_row[5], Value::Text("{\"successor\":true}".into()));
+}
+
+#[test]
+fn compile_rules_retry_collision_preserves_original_error_with_bounded_marker() {
+    let conn = setup_conn();
+    let (source, successor) =
+        compile_rules_with_successor(&conn, "bounded-error", chrono::Utc::now().timestamp() + 60);
+    let error = "e".repeat(2_000);
+    mark_job_failed_or_retry(&conn, source, "worker-a", &error, 30)
+        .expect("retry collision should coalesce");
+    let persisted: String = conn
+        .query_row(
+            "SELECT last_error FROM jobs WHERE id = ?1",
+            params![source],
+            |row| row.get(0),
+        )
+        .expect("bounded error should load");
+    assert!(persisted.len() <= 2_000);
+    assert!(persisted.starts_with('e'));
+    assert!(persisted.ends_with(&format!(
+        "[compile_rules_retry_coalesced_to_successor id={successor}]"
+    )));
+}
+
+fn expired_release_fixture() -> (Connection, i64, i64, i64) {
+    let conn = setup_conn();
+    let expired = chrono::Utc::now().timestamp() - 10;
+    let (source, successor) = compile_rules_with_successor(&conn, "expired", expired);
+    let ordinary = enqueue_job(
+        &conn,
+        "codex-cli",
+        JobType::Observation,
+        "ordinary-expired",
+        Some("session"),
+        "{}",
+        100,
+    )
+    .expect("ordinary job should enqueue");
+    conn.execute(
+        "UPDATE jobs SET state = 'processing', lease_owner = 'worker-b',
+             lease_expires_epoch = ?2 WHERE id = ?1",
+        params![ordinary, expired + 1],
+    )
+    .expect("ordinary lease should expire");
+    (conn, source, successor, ordinary)
+}
+
+#[test]
+fn release_expired_compile_rules_collision_preserves_unrelated_job_progress() {
+    let (conn, source, successor, ordinary) = expired_release_fixture();
+    let batch = release_expired_job_leases(&conn).expect("expired batch should recover");
+    assert_eq!((batch.requeued, batch.coalesced), (1, 1));
+    let source_row = job_snapshot(&conn, source);
+    assert_eq!(source_row[6], Value::Text("failed".into()));
+    assert_eq!(source_row[8], Value::Integer(2));
+    assert_eq!(source_row[9], Value::Integer(6));
+    assert!(
+        matches!(&source_row[13], Value::Text(error) if error.starts_with("existing failure ") && error.contains("coalesced_to_successor"))
+    );
+    assert_eq!(
+        job_snapshot(&conn, successor)[6],
+        Value::Text("pending".into())
+    );
+    assert_eq!(
+        job_snapshot(&conn, ordinary)[6],
+        Value::Text("pending".into())
+    );
+}
+
+#[test]
+fn release_expired_job_leases_reports_requeued_and_coalesced_outcomes() {
+    let (conn, source, successor, ordinary) = expired_release_fixture();
+    let batch = release_expired_job_leases(&conn).expect("expired batch should recover");
+    assert_eq!(
+        batch.outcomes,
+        vec![
+            ExpiredJobLeaseOutcome::Coalesced {
+                source_id: source,
+                canonical_id: successor,
+                identity_kind: JobIdentityKind::CompileRules,
+            },
+            ExpiredJobLeaseOutcome::Requeued {
+                source_id: ordinary,
+                identity_kind: JobIdentityKind::Ordinary,
+            },
+        ]
+    );
 }
 
 #[test]
