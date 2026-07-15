@@ -1,5 +1,25 @@
 use super::{extract_field, ParsedObservation, OBSERVATION_TYPES};
 
+const INVALID_TYPE_PREVIEW_BYTES: usize = 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InvalidObservationTypeDrop {
+    Missing,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ParseObservationsOutcome {
+    pub(crate) observations: Vec<ParsedObservation>,
+    pub(crate) invalid_type_drops: Vec<InvalidObservationTypeDrop>,
+}
+
+impl ParseObservationsOutcome {
+    pub(crate) fn had_invalid_type(&self) -> bool {
+        !self.invalid_type_drops.is_empty()
+    }
+}
+
 /// Find `needle` in `haystack` using ASCII case-insensitive comparison.
 /// Returns the byte offset of the first match, or `None`.
 pub(crate) fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
@@ -61,7 +81,12 @@ fn parse_confidence(content: &str) -> Option<f64> {
 }
 
 pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
+    parse_observations_with_outcome(text).observations
+}
+
+pub(crate) fn parse_observations_with_outcome(text: &str) -> ParseObservationsOutcome {
     let mut observations = Vec::new();
+    let mut invalid_type_drops = Vec::new();
     let mut pos = 0;
 
     while let Some(tag_start_rel) = find_ascii_ci(&text[pos..], "<observation") {
@@ -76,15 +101,35 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
         let content_end = content_start + close_rel;
         let content = &text[content_start..content_end];
 
-        let raw_type = extract_field(content, "type").unwrap_or_default();
-        let obs_type = if OBSERVATION_TYPES.contains(&raw_type.as_str()) {
-            raw_type
-        } else {
-            "discovery".to_string()
+        let Some(raw_type) = extract_field(content, "type") else {
+            crate::log::error(
+                "observation-parse",
+                "dropping observation: drop_reason=missing_type raw_type=\"\"",
+            );
+            invalid_type_drops.push(InvalidObservationTypeDrop::Missing);
+            pos = content_end + "</observation>".len();
+            continue;
         };
+        let obs_type = raw_type.trim().to_ascii_lowercase();
+        if !OBSERVATION_TYPES.contains(&obs_type.as_str()) {
+            let raw_type_preview = crate::adapter::redaction::redact_and_truncate(
+                &raw_type,
+                INVALID_TYPE_PREVIEW_BYTES,
+            );
+            crate::log::error(
+                "observation-parse",
+                &format!(
+                    "dropping observation: drop_reason=unknown_type raw_type_preview={raw_type_preview:?} raw_type_bytes={}",
+                    raw_type.len()
+                ),
+            );
+            invalid_type_drops.push(InvalidObservationTypeDrop::Unknown);
+            pos = content_end + "</observation>".len();
+            continue;
+        }
 
         let mut concepts = extract_array(content, "concepts", "concept");
-        concepts.retain(|concept| concept != &obs_type);
+        concepts.retain(|concept| !concept.eq_ignore_ascii_case(&obs_type));
 
         observations.push(ParsedObservation {
             obs_type,
@@ -101,5 +146,8 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
         pos = content_end + "</observation>".len();
     }
 
-    observations
+    ParseObservationsOutcome {
+        observations,
+        invalid_type_drops,
+    }
 }

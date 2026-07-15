@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.207` for #817: observation XML parsing now
+  fails closed when the model omits `<type>` or returns an unknown value,
+  drops the invalid observation before it can become candidate support
+  evidence, and records an error-level `missing_type` or `unknown_type` reason;
+  all six declared observation types retain their existing behavior.
 - Staged source version `0.5.206` for GH-671 T6: `remem doctor` reports
   compiled-rule artifact presence, rule count, compile and evaluation health,
   and honest per-host enforcement capabilities without exposing rule payloads

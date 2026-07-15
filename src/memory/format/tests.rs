@@ -1,3 +1,4 @@
+use super::parse::InvalidObservationTypeDrop;
 use super::*;
 
 #[test]
@@ -70,6 +71,84 @@ fn parse_observations_multiple_mixed_case() {
 }
 
 #[test]
+fn parse_observations_normalizes_legal_type_case_before_validation() {
+    for observation_type in OBSERVATION_TYPES {
+        let title_case = format!(
+            "{}{}",
+            observation_type[..1].to_ascii_uppercase(),
+            &observation_type[1..]
+        );
+        for raw_type in [title_case, observation_type.to_ascii_uppercase()] {
+            let xml =
+                format!("<observation><type> {raw_type} </type><title>Case</title></observation>");
+
+            let outcome = parse_observations_with_outcome(&xml);
+
+            assert!(
+                !outcome.had_invalid_type(),
+                "legal type casing should not be rejected: {raw_type}"
+            );
+            assert_eq!(outcome.observations.len(), 1, "raw type: {raw_type}");
+            assert_eq!(
+                outcome.observations[0].obs_type, *observation_type,
+                "raw type: {raw_type}"
+            );
+        }
+    }
+}
+
+#[test]
+fn parse_observations_filters_type_concept_case_insensitively() {
+    let xml = r#"
+<observation>
+  <type>Decision</type>
+  <title>Decision case</title>
+  <concepts><concept>decision</concept><concept>DECISION</concept><concept>architecture</concept></concepts>
+</observation>
+"#;
+
+    let parsed = parse_observations(xml);
+
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].obs_type, "decision");
+    assert_eq!(parsed[0].concepts, vec!["architecture"]);
+}
+
+#[test]
+fn uppercase_unsupported_types_remain_unknown_with_raw_log_evidence() {
+    let log_dir = std::env::temp_dir().join(format!(
+        "remem-observation-type-uppercase-unknown-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should follow Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&log_dir).expect("test log directory should be created");
+
+    let xml = r#"
+<observation><type>PREFERENCE</type><title>Unsupported</title></observation>
+<observation><type>ARCHITECTURE</type><title>Unsupported</title></observation>
+"#;
+    let outcome = crate::log::with_log_dir(&log_dir, || parse_observations_with_outcome(xml));
+
+    assert!(outcome.observations.is_empty());
+    assert_eq!(
+        outcome.invalid_type_drops,
+        vec![
+            InvalidObservationTypeDrop::Unknown,
+            InvalidObservationTypeDrop::Unknown,
+        ]
+    );
+    let log = std::fs::read_to_string(log_dir.join("remem.log"))
+        .expect("observation parser error log should be readable");
+    assert!(log.contains("raw_type_preview=\"PREFERENCE\" raw_type_bytes=10"));
+    assert!(log.contains("raw_type_preview=\"ARCHITECTURE\" raw_type_bytes=12"));
+
+    std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
+}
+
+#[test]
 fn extract_field_scans_from_open_tag() {
     let body = "</title><title>ok</title>";
     assert_eq!(extract_field(body, "title").as_deref(), Some("ok"));
@@ -118,16 +197,104 @@ fn parse_observations_reads_and_clamps_confidence() {
 }
 
 #[test]
-fn parse_observations_defaults_invalid_type_and_filters_type_concept() {
+fn parse_observations_drops_missing_and_unknown_types_with_error_reasons() {
+    let log_dir = std::env::temp_dir().join(format!(
+        "remem-observation-type-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should follow Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&log_dir).expect("test log directory should be created");
+
     let xml = r#"
 <observation>
   <type>unknown</type>
+  <title>Unknown</title>
+</observation>
+<observation>
+  <title>Missing</title>
+</observation>
+<observation>
+  <type>decision</type>
+  <title>Valid</title>
+</observation>
+"#;
+
+    let outcome = crate::log::with_log_dir(&log_dir, || parse_observations_with_outcome(xml));
+    assert_eq!(
+        outcome.invalid_type_drops,
+        vec![
+            InvalidObservationTypeDrop::Unknown,
+            InvalidObservationTypeDrop::Missing,
+        ]
+    );
+    assert!(outcome.had_invalid_type());
+    assert_eq!(outcome.observations.len(), 1);
+    assert_eq!(outcome.observations[0].obs_type, "decision");
+    assert_eq!(outcome.observations[0].title.as_deref(), Some("Valid"));
+
+    let log = std::fs::read_to_string(log_dir.join("remem.log"))
+        .expect("observation parser error log should be readable");
+    assert!(log.contains("[ERROR] [observation-parse]"));
+    assert!(log.contains("drop_reason=unknown_type raw_type_preview=\"unknown\""));
+    assert!(log.contains("drop_reason=missing_type raw_type=\"\""));
+
+    std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
+}
+
+#[test]
+fn unknown_type_log_redacts_secrets_and_bounds_preview() {
+    let log_dir = std::env::temp_dir().join(format!(
+        "remem-observation-type-secret-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should follow Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&log_dir).expect("test log directory should be created");
+
+    let github_token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
+    let bearer_token = "bearer-secret-value-1234567890";
+    let padding = "x".repeat(2_000);
+    let xml = format!(
+        "<observation><type>{github_token} Bearer {bearer_token} {padding}</type><title>Unsafe</title></observation>"
+    );
+
+    let parsed = crate::log::with_log_dir(&log_dir, || parse_observations(&xml));
+    assert!(parsed.is_empty());
+
+    let log = std::fs::read_to_string(log_dir.join("remem.log"))
+        .expect("observation parser error log should be readable");
+    let line = log
+        .lines()
+        .find(|line| line.contains("drop_reason=unknown_type"))
+        .expect("unknown type error should be logged");
+    assert!(line.contains("[REDACTED]"));
+    assert!(line.contains("raw_type_bytes="));
+    assert!(!line.contains(github_token));
+    assert!(!line.contains(bearer_token));
+    assert!(!line.contains(&"x".repeat(200)));
+    assert!(line.len() <= 320, "unknown type log line must stay bounded");
+
+    std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
+}
+
+#[test]
+fn parse_observations_preserves_legal_types_and_filters_type_concept() {
+    for observation_type in OBSERVATION_TYPES {
+        let xml = format!(
+            r#"
+<observation>
+  <type>{observation_type}</type>
   <title>  Planning note  </title>
   <facts>
     <fact>first</fact>
   </facts>
   <concepts>
-    <concept>discovery</concept>
+    <concept>{observation_type}</concept>
     <concept>rust</concept>
   </concepts>
   <files_read>
@@ -137,14 +304,16 @@ fn parse_observations_defaults_invalid_type_and_filters_type_concept() {
     <file>src/main.rs</file>
   </files_modified>
 </observation>
-"#;
+"#
+        );
 
-    let parsed = parse_observations(xml);
-    assert_eq!(parsed.len(), 1);
-    assert_eq!(parsed[0].obs_type, "discovery");
-    assert_eq!(parsed[0].title.as_deref(), Some("Planning note"));
-    assert_eq!(parsed[0].facts, vec!["first"]);
-    assert_eq!(parsed[0].concepts, vec!["rust"]);
-    assert_eq!(parsed[0].files_read, vec!["src/lib.rs"]);
-    assert_eq!(parsed[0].files_modified, vec!["src/main.rs"]);
+        let parsed = parse_observations(&xml);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].obs_type, *observation_type);
+        assert_eq!(parsed[0].title.as_deref(), Some("Planning note"));
+        assert_eq!(parsed[0].facts, vec!["first"]);
+        assert_eq!(parsed[0].concepts, vec!["rust"]);
+        assert_eq!(parsed[0].files_read, vec!["src/lib.rs"]);
+        assert_eq!(parsed[0].files_modified, vec!["src/main.rs"]);
+    }
 }
