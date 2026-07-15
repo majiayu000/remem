@@ -3,11 +3,15 @@
 ## Unreleased
 
 ### Added
-- GH-671 T7 repeated-correction fixtures
+- Staged source version `0.5.210` for GH-671 T7: repeated-correction fixtures
   cover package-manager choices, forbidden commit trailers, and forbidden
   commands; the rule hook avoids per-invocation Git subprocess discovery and
   uses a compile-time-optimized regex engine so enabled-rule p95 remains within
   measurement noise of the disabled baseline.
+- Staged source version `0.5.209` for #818: job enqueue, claim, lease
+  transitions, migration reconciliation, and failure recovery now enforce
+  database-atomic active identities and fail closed on conflicts while
+  preserving actionable diagnostics and deterministic Dream replay semantics.
 - Staged source version `0.5.208` for #819: memory test fixtures now execute
   the canonical v020 FTS migration instead of copying active-only triggers;
   regression coverage keeps stale and archived rows indexed while query

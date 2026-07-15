@@ -2,7 +2,7 @@ use rusqlite::params;
 
 use crate::db::{self, test_support::ScopedTestDataDir};
 
-use super::{lock, run};
+use super::{lock, mark_successful_job, record_failed_job_transition, recover_expired_jobs, run};
 use test_support::install_stub_codex;
 
 mod test_support;
@@ -48,15 +48,19 @@ async fn worker_skips_legacy_observation_job_without_retry() -> anyhow::Result<(
 async fn worker_rejects_legacy_summary_job_without_retry() -> anyhow::Result<()> {
     let _data_dir = ScopedTestDataDir::new("worker-reject-legacy-summary");
     let conn = db::open_db()?;
-    let job_id = db::enqueue_job(
-        &conn,
-        "codex-cli",
-        db::JobType::Summary,
-        "/tmp/remem",
-        Some("sess-legacy-summary"),
-        r#"{"host":"codex-cli","session_id":"sess-legacy-summary","project":"/tmp/remem"}"#,
-        50,
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO jobs
+         (host, job_type, project, session_id, payload_json, state, priority,
+          attempt_count, max_attempts, next_retry_epoch, created_at_epoch, updated_at_epoch)
+         VALUES ('codex-cli', 'summary', '/tmp/remem', 'sess-legacy-summary',
+                 ?1, 'pending', 50, 0, 6, 0, ?2, ?2)",
+        params![
+            r#"{"host":"codex-cli","session_id":"sess-legacy-summary","project":"/tmp/remem"}"#,
+            now
+        ],
     )?;
+    let job_id = conn.last_insert_rowid();
     drop(conn);
 
     run(true, 10).await?;
@@ -98,6 +102,106 @@ async fn worker_rejects_legacy_summary_job_without_retry() -> anyhow::Result<()>
         failure_class.as_deref() == Some("permanent"),
         "expected permanent failure, got {failure_class:?}"
     );
+    Ok(())
+}
+
+fn read_worker_log(data_dir: &ScopedTestDataDir) -> anyhow::Result<String> {
+    Ok(std::fs::read_to_string(data_dir.path.join("remem.log"))?)
+}
+
+fn enqueue_worker_job(
+    conn: &rusqlite::Connection,
+    job_type: db::JobType,
+    project: &str,
+) -> anyhow::Result<i64> {
+    db::enqueue_job(conn, "codex-cli", job_type, project, None, "{}", 50)
+}
+
+#[test]
+fn worker_transition_conflict_logs_error_without_done_or_retry_success() -> anyhow::Result<()> {
+    let data_dir = ScopedTestDataDir::new("worker-transition-conflict");
+    let mut conn = db::open_db()?;
+    let job_id = enqueue_worker_job(&conn, db::JobType::Observation, "/tmp/remem")?;
+    db::claim_next_job(&mut conn, "worker-a", 60)?.expect("job should claim");
+    conn.execute(
+        "UPDATE jobs SET lease_owner = 'worker-b' WHERE id = ?1",
+        params![job_id],
+    )?;
+    let error = mark_successful_job(
+        &conn,
+        job_id,
+        db::JobType::Observation,
+        "/tmp/remem",
+        "worker-a",
+    )
+    .expect_err("wrong owner transition must fail");
+    assert!(error.to_string().contains("current_owner=worker-b"));
+    let log = read_worker_log(&data_dir)?;
+    assert!(log.contains(&format!("job transition failed id={job_id} operation=done")));
+    assert!(log.contains("job_type=observation"));
+    assert!(log.contains(&format!(
+        "project_hash={:016x}",
+        crate::db::deterministic_hash(b"/tmp/remem")
+    )));
+    assert!(log.contains("expected_owner=worker-a"));
+    assert!(log.contains("current_owner=worker-b"));
+    assert!(!log.contains("project=/tmp/remem"));
+    assert!(!log.contains(&format!("done id={job_id}")));
+    assert!(!log.contains("operation=retry success"));
+    Ok(())
+}
+
+#[test]
+fn worker_compile_rules_retry_collision_logs_safe_coalesced_result() -> anyhow::Result<()> {
+    let data_dir = ScopedTestDataDir::new("worker-compile-collision");
+    let mut conn = db::open_db()?;
+    let source_id = enqueue_worker_job(&conn, db::JobType::CompileRules, "/tmp/remem")?;
+    db::claim_next_job(&mut conn, "worker-a", 60)?.expect("source should claim");
+    let canonical_id = enqueue_worker_job(&conn, db::JobType::CompileRules, "/tmp/remem")?;
+    record_failed_job_transition(
+        &conn,
+        source_id,
+        db::JobType::CompileRules,
+        "/tmp/remem",
+        "worker-a",
+        "private-retry-error-must-not-log",
+        5,
+    )?;
+    let log = read_worker_log(&data_dir)?;
+    assert!(log.contains(&format!(
+        "job retry coalesced source_id={source_id} canonical_id={canonical_id} identity=compile_rules"
+    )));
+    assert!(!log.contains("private-retry-error-must-not-log"));
+    assert!(!log.contains(&format!("job id={source_id} failed:")));
+    Ok(())
+}
+
+#[test]
+fn worker_expired_job_recovery_logs_requeued_and_coalesced_outcomes() -> anyhow::Result<()> {
+    let data_dir = ScopedTestDataDir::new("worker-expired-outcomes");
+    let conn = db::open_db()?;
+    let ordinary_id = enqueue_worker_job(&conn, db::JobType::Compress, "/ordinary")?;
+    let compile_id = enqueue_worker_job(&conn, db::JobType::CompileRules, "/compile")?;
+    let expired = chrono::Utc::now().timestamp() - 1;
+    conn.execute(
+        "UPDATE jobs SET state='processing', lease_owner='dead', lease_expires_epoch=?1,
+         last_error='private-expired-error' WHERE id IN (?2, ?3)",
+        params![expired, ordinary_id, compile_id],
+    )?;
+    let canonical_id = enqueue_worker_job(&conn, db::JobType::CompileRules, "/compile")?;
+
+    recover_expired_jobs(&conn)?;
+    let log = read_worker_log(&data_dir)?;
+    assert!(log.contains(&format!(
+        "expired job recovery requeued source_id={ordinary_id} identity=ordinary"
+    )));
+    assert!(log.contains(&format!(
+        "expired job recovery coalesced source_id={compile_id} canonical_id={canonical_id} identity=compile_rules"
+    )));
+    assert!(!log.contains("private-expired-error"));
+    assert!(!log.contains(&format!(
+        "expired job recovery requeued source_id={compile_id}"
+    )));
     Ok(())
 }
 

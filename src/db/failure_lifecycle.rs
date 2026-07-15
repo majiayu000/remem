@@ -68,6 +68,7 @@ pub struct FailureLifecycleMaintenance {
     pub retried_extraction_replay_ranges: usize,
     pub retried_extraction_tasks: usize,
     pub retried_jobs: usize,
+    pub coalesced_jobs: usize,
     pub archived_pending_observations: usize,
     pub archived_extraction_tasks: usize,
     pub archived_extraction_replay_ranges: usize,
@@ -192,10 +193,12 @@ pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleM
         return Ok(FailureLifecycleMaintenance::default());
     }
     let now = chrono::Utc::now().timestamp();
+    let job_recovery = requeue_due_jobs(conn, now)?;
     let mut result = FailureLifecycleMaintenance {
         retried_extraction_replay_ranges: retry_due_extraction_replay_ranges(conn, now)?,
         retried_extraction_tasks: requeue_due_extraction_tasks(conn, now)?,
-        retried_jobs: requeue_due_jobs(conn, now)?,
+        retried_jobs: job_recovery.requeued,
+        coalesced_jobs: job_recovery.coalesced,
         ..FailureLifecycleMaintenance::default()
     };
     let archived = archive_eligible_failures(conn, now, FAILURE_RETENTION_DAYS)?;
@@ -207,6 +210,7 @@ pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleM
     if result.retried_extraction_replay_ranges > 0
         || result.retried_extraction_tasks > 0
         || result.retried_jobs > 0
+        || result.coalesced_jobs > 0
         || result.archived_pending_observations > 0
         || result.archived_extraction_tasks > 0
         || result.archived_extraction_replay_ranges > 0
@@ -215,10 +219,11 @@ pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleM
         crate::log::info(
             "failure_lifecycle",
             &format!(
-                "maintenance retried replay_ranges={} extraction_tasks={} jobs={} archived pending_observations={} extraction_tasks={} replay_ranges={} jobs={}",
+                "maintenance retried replay_ranges={} extraction_tasks={} jobs={} coalesced_jobs={} archived pending_observations={} extraction_tasks={} replay_ranges={} jobs={}",
                 result.retried_extraction_replay_ranges,
                 result.retried_extraction_tasks,
                 result.retried_jobs,
+                result.coalesced_jobs,
                 result.archived_pending_observations,
                 result.archived_extraction_tasks,
                 result.archived_extraction_replay_ranges,
