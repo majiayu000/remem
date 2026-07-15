@@ -221,7 +221,12 @@ hook-side writes.
   the derived artifact. The v2 classifier recognizes only closed package-manager,
   commit-trailer, and exact low-risk forbidden-command directives; the initial
   forbidden-command allowlist contains only `git push --force`.
-  Its generated predicate also covers Git's equivalent `git push -f` spelling.
+  Its generated predicate also covers Git's equivalent `git push -f` spelling
+  and recognizes the exact force option after repository/refspec arguments.
+  `--force-with-lease` and unrelated options remain outside this predicate.
+- Project-root marker discovery skips the fast path whenever explicit Git
+  layout or discovery-control environment is present, including
+  `GIT_CEILING_DIRECTORIES`, so hook identity follows Git's own toplevel result.
 - Latency evidence compares repeated interleaved CLI subprocess cohorts and
   derives the acceptance tolerance from observed median absolute deviation;
   it must not pass through a fixed, unmeasured noise floor.

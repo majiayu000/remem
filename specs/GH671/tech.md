@@ -76,7 +76,13 @@ contract is complete.
 - The v2 classifier may emit `command_regex` for an exact, closed allowlist of
   low-risk forbidden commands. T7 initially covers only `git push --force`;
   its generated predicate also covers Git's equivalent `git push -f` spelling.
+  The force option may appear anywhere after `git push` arguments, while exact
+  token boundaries exclude `--force-with-lease` and unrelated options.
   arbitrary natural-language commands remain unclassifiable and fail closed.
+- The project-root marker fast path is used only when Git discovery has no
+  environment override. Explicit layouts and discovery controls such as
+  `GIT_CEILING_DIRECTORIES` delegate to Git so project identity matches Git's
+  own toplevel decision.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.

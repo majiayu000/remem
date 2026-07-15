@@ -26,17 +26,19 @@ pub fn canonical_project_path(cwd: &str) -> PathBuf {
 /// canonical cwd for non-git directories and missing paths.
 pub fn canonical_project_root(cwd: &str) -> PathBuf {
     let canonical_cwd = canonical_project_path(cwd);
-    canonical_project_root_with_resolver(&canonical_cwd, explicit_git_layout(), |path| {
-        crate::git_util::resolve_toplevel(path)
-    })
+    canonical_project_root_with_resolver(
+        &canonical_cwd,
+        git_environment_requires_resolver(),
+        |path| crate::git_util::resolve_toplevel(path),
+    )
 }
 
 fn canonical_project_root_with_resolver(
     canonical_cwd: &std::path::Path,
-    explicit_git_layout: bool,
+    git_environment_requires_resolver: bool,
     mut resolve_toplevel: impl FnMut(&std::path::Path) -> Option<PathBuf>,
 ) -> PathBuf {
-    if explicit_git_layout {
+    if git_environment_requires_resolver {
         return resolve_toplevel(canonical_cwd)
             .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
             .unwrap_or_else(|| canonical_cwd.to_path_buf());
@@ -55,8 +57,19 @@ fn canonical_project_root_with_resolver(
     canonical_cwd.to_path_buf()
 }
 
-fn explicit_git_layout() -> bool {
-    std::env::var_os("GIT_DIR").is_some() || std::env::var_os("GIT_WORK_TREE").is_some()
+fn git_environment_requires_resolver() -> bool {
+    git_environment_requires_resolver_with(|name| std::env::var_os(name).is_some())
+}
+
+fn git_environment_requires_resolver_with(mut is_set: impl FnMut(&str) -> bool) -> bool {
+    [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_CEILING_DIRECTORIES",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+    ]
+    .into_iter()
+    .any(&mut is_set)
 }
 
 fn git_worktree_root_from_markers(cwd: &std::path::Path) -> Option<PathBuf> {
@@ -226,5 +239,21 @@ mod tests {
         std::fs::remove_dir_all(cwd_root)?;
         std::fs::remove_dir_all(selected_root)?;
         Ok(())
+    }
+
+    #[test]
+    fn git_discovery_environment_requires_the_git_resolver() {
+        for variable in [
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        ] {
+            assert!(
+                git_environment_requires_resolver_with(|candidate| candidate == variable),
+                "{variable} must bypass marker discovery"
+            );
+        }
+        assert!(!git_environment_requires_resolver_with(|_| false));
     }
 }

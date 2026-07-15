@@ -55,7 +55,7 @@ const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
 
 const FORBIDDEN_COMMANDS: &[(&str, &str, &str)] = &[(
     "git push --force",
-    r"(^|[;&|][ \t\r\n]*)git[ \t\r\n]+push[ \t\r\n]+(--force|-f)([ \t\r\n;&|]|$)",
+    r"(^|[;&|][ \t\r\n]*)git[ \t\r\n]+push[ \t\r\n]+([^ \t\r\n;&|]+[ \t\r\n]+)*(--force|-f)([ \t\r\n;&|]|$)",
     "git-push-force",
 )];
 
@@ -408,8 +408,12 @@ mod tests {
         let regex = regex_lite::Regex::new(&pattern)?;
         assert!(regex.is_match("git push --force"));
         assert!(regex.is_match("git push -f"));
+        assert!(regex.is_match("git push origin main --force"));
+        assert!(regex.is_match("git push origin HEAD:main -f"));
+        assert!(regex.is_match("git push --dry-run origin main --force"));
         assert!(regex.is_match("cargo test && git push --force"));
         assert!(!regex.is_match("git push --force-with-lease"));
+        assert!(!regex.is_match("git push origin main --force-with-lease"));
         assert!(!regex.is_match("git push -foo"));
         assert!(!regex.is_match("echo git push --force"));
 
