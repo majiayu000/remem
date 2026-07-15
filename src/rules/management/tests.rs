@@ -95,14 +95,14 @@ fn overrides_round_trip_through_artifact_deletion_and_recompile() -> Result<()> 
     );
 
     set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", true)?;
-    set_rule_action(&conn, &scoped.path, PROJECT, "pref-1-1", RuleAction::Block)?;
+    set_rule_action(&conn, &scoped.path, PROJECT, "pref-1-1", RuleAction::Warn)?;
     let stored: (i64, String) = conn.query_row(
         "SELECT disabled, action_override FROM preference_rule_overrides
          WHERE project = ?1 AND rule_id = 'pref-1-1'",
         [PROJECT],
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
-    assert_eq!(stored, (1, "block".to_string()));
+    assert_eq!(stored, (1, "warn".to_string()));
     let pending: i64 = conn.query_row(
         "SELECT COUNT(*) FROM jobs
          WHERE project = ?1 AND job_type = 'compile_rules' AND state = 'pending'",
@@ -114,17 +114,42 @@ fn overrides_round_trip_through_artifact_deletion_and_recompile() -> Result<()> 
     std::fs::remove_file(artifact_path_for_project(&scoped.path, PROJECT))?;
     let regenerated = worker_rebuild(&scoped.path)?;
     assert!(regenerated.rules[0].override_state.disabled);
-    assert_eq!(regenerated.rules[0].effective_action(), RuleAction::Block);
+    assert_eq!(regenerated.rules[0].effective_action(), RuleAction::Warn);
 
     set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", false)?;
     let enabled = worker_rebuild(&scoped.path)?;
     assert!(!enabled.rules[0].override_state.disabled);
-    assert_eq!(enabled.rules[0].effective_action(), RuleAction::Block);
+    assert_eq!(enabled.rules[0].effective_action(), RuleAction::Warn);
+    Ok(())
+}
 
-    set_rule_action(&conn, &scoped.path, PROJECT, "pref-1-1", RuleAction::Warn)?;
-    let final_rules = worker_rebuild(&scoped.path)?;
-    assert!(!final_rules.rules[0].override_state.disabled);
-    assert_eq!(final_rules.rules[0].effective_action(), RuleAction::Warn);
+#[test]
+fn block_action_is_rejected_before_override_or_compile_job() -> Result<()> {
+    let scoped = ScopedTestDataDir::new("rules-cli-block-unsupported");
+    let conn = db::open_db()?;
+
+    let error = match set_rule_action(&conn, &scoped.path, PROJECT, "pref-1-1", RuleAction::Block) {
+        Ok(()) => panic!("block must fail closed without a pre-execution enforcement hook"),
+        Err(error) => error,
+    };
+    assert!(
+        error
+            .to_string()
+            .contains("supported pre-execution enforcement hook"),
+        "{error:#}"
+    );
+
+    let override_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM preference_rule_overrides",
+        [],
+        |row| row.get(0),
+    )?;
+    let job_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM jobs WHERE job_type = 'compile_rules'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!((override_count, job_count), (0, 0));
     Ok(())
 }
 
