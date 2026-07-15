@@ -1,6 +1,9 @@
+use std::fs::OpenOptions;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
+use fs2::FileExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -236,6 +239,55 @@ pub(crate) fn log_evaluation_error_once_with_diagnostic(
                 "rules-eval",
                 &format!(
                     "could not inspect evaluation diagnostic marker: {error}; {}",
+                    sanitize_diagnostic(message)
+                ),
+            );
+            return;
+        }
+    }
+    let claim = marker_dir.join(format!(".{digest:x}.claim"));
+    let claim_file = match OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(&claim)
+    {
+        Ok(file) => file,
+        Err(error) => {
+            crate::log::error(
+                "rules-eval",
+                &format!(
+                    "could not open evaluation diagnostic claim: {error}; {}",
+                    sanitize_diagnostic(message)
+                ),
+            );
+            return;
+        }
+    };
+    crate::log::set_private_permissions(&claim);
+    match claim_file.try_lock_exclusive() {
+        Ok(()) => {}
+        Err(error) if error.kind() == ErrorKind::WouldBlock => return,
+        Err(error) => {
+            crate::log::error(
+                "rules-eval",
+                &format!(
+                    "could not lock evaluation diagnostic claim: {error}; {}",
+                    sanitize_diagnostic(message)
+                ),
+            );
+            return;
+        }
+    }
+    match marker.try_exists() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            crate::log::error(
+                "rules-eval",
+                &format!(
+                    "could not recheck evaluation diagnostic marker: {error}; {}",
                     sanitize_diagnostic(message)
                 ),
             );

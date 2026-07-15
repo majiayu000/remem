@@ -126,10 +126,9 @@ fn successful_evaluation_does_not_add_or_rewrite_diagnostic_marker() -> Result<(
         &failed.evaluation.diagnostics.join("; "),
     );
     let marker_dir = crate::rules::evaluation_marker_dir(&data_dir);
-    let marker = std::fs::read_dir(&marker_dir)?
-        .next()
-        .context("evaluation marker")??
-        .path();
+    let mut markers = std::fs::read_dir(&marker_dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    markers.retain(|entry| !entry.file_name().to_string_lossy().starts_with('.'));
+    let marker = markers.first().context("evaluation marker")?.path();
     let before = std::fs::read(&marker)?;
 
     write_rule(&data_dir, &project, RuleAction::Warn)?;
@@ -138,7 +137,12 @@ fn successful_evaluation_does_not_add_or_rewrite_diagnostic_marker() -> Result<(
 
     assert!(recovered.evaluation.diagnostics.is_empty());
     assert_eq!(std::fs::read(marker)?, before);
-    assert_eq!(std::fs::read_dir(marker_dir)?.count(), 1);
+    let visible_markers = std::fs::read_dir(marker_dir)?
+        .collect::<std::io::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .count();
+    assert_eq!(visible_markers, 1);
     Ok(())
 }
 
@@ -210,11 +214,55 @@ fn evaluation_error_marker_is_hashed_and_once_per_session() -> Result<()> {
     let marker_dir = data_dir
         .join("compiled_rules")
         .join(".evaluation-error-sessions");
-    let markers = std::fs::read_dir(marker_dir)?.collect::<std::io::Result<Vec<_>>>()?;
+    let markers = std::fs::read_dir(marker_dir)?
+        .collect::<std::io::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .collect::<Vec<_>>();
     assert_eq!(markers.len(), 1);
     let name = markers[0].file_name().to_string_lossy().to_string();
     assert_eq!(name.len(), 64);
     assert!(!name.contains("private-session"));
+    Ok(())
+}
+
+#[test]
+fn concurrent_errors_log_and_publish_once_per_session() -> Result<()> {
+    let scoped = crate::db::test_support::ScopedTestDataDir::new("hook-diagnostic-concurrent");
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let mut handles = Vec::new();
+    for index in 0..8 {
+        let data_dir = scoped.path.clone();
+        let barrier = std::sync::Arc::clone(&barrier);
+        handles.push(std::thread::spawn(move || {
+            barrier.wait();
+            log_evaluation_error_once_with_diagnostic(
+                &data_dir,
+                Some("concurrent-session"),
+                Some("/repo/concurrent"),
+                &[EvaluationDiagnosticCode::ArtifactMissing],
+                &format!("concurrent-marker-{index}"),
+            );
+        }));
+    }
+    for handle in handles {
+        handle.join().expect("diagnostic writer should not panic");
+    }
+
+    let marker_dir = crate::rules::evaluation_marker_dir(&scoped.path);
+    let visible_markers = std::fs::read_dir(marker_dir)?
+        .collect::<std::io::Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+        .count();
+    assert_eq!(visible_markers, 1);
+    let log = std::fs::read_to_string(scoped.path.join("remem.log"))?;
+    assert_eq!(
+        log.lines()
+            .filter(|line| line.contains("concurrent-marker-"))
+            .count(),
+        1
+    );
     Ok(())
 }
 
