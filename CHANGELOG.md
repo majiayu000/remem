@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.204` for #817: observation XML parsing now
+  fails closed when the model omits `<type>` or returns an unknown value,
+  drops the invalid observation before it can become candidate support
+  evidence, and records an error-level `missing_type` or `unknown_type` reason;
+  all six declared observation types retain their existing behavior.
 - Staged source version `0.5.203` for #796: migration v068 records one
   exact-range SessionRollup follow-up scheduling decision in the same SQLite
   transaction as Compress and Dream enqueueing, so retries cannot replace

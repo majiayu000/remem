@@ -76,12 +76,22 @@ pub fn parse_observations(text: &str) -> Vec<ParsedObservation> {
         let content_end = content_start + close_rel;
         let content = &text[content_start..content_end];
 
-        let raw_type = extract_field(content, "type").unwrap_or_default();
-        let obs_type = if OBSERVATION_TYPES.contains(&raw_type.as_str()) {
-            raw_type
-        } else {
-            "discovery".to_string()
+        let Some(obs_type) = extract_field(content, "type") else {
+            crate::log::error(
+                "observation-parse",
+                "dropping observation: drop_reason=missing_type raw_type=\"\"",
+            );
+            pos = content_end + "</observation>".len();
+            continue;
         };
+        if !OBSERVATION_TYPES.contains(&obs_type.as_str()) {
+            crate::log::error(
+                "observation-parse",
+                &format!("dropping observation: drop_reason=unknown_type raw_type={obs_type:?}"),
+            );
+            pos = content_end + "</observation>".len();
+            continue;
+        }
 
         let mut concepts = extract_array(content, "concepts", "concept");
         concepts.retain(|concept| concept != &obs_type);

@@ -118,16 +118,58 @@ fn parse_observations_reads_and_clamps_confidence() {
 }
 
 #[test]
-fn parse_observations_defaults_invalid_type_and_filters_type_concept() {
+fn parse_observations_drops_missing_and_unknown_types_with_error_reasons() {
+    let log_dir = std::env::temp_dir().join(format!(
+        "remem-observation-type-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should follow Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&log_dir).expect("test log directory should be created");
+
     let xml = r#"
 <observation>
   <type>unknown</type>
+  <title>Unknown</title>
+</observation>
+<observation>
+  <title>Missing</title>
+</observation>
+<observation>
+  <type>decision</type>
+  <title>Valid</title>
+</observation>
+"#;
+
+    let parsed = crate::log::with_log_dir(&log_dir, || parse_observations(xml));
+    assert_eq!(parsed.len(), 1);
+    assert_eq!(parsed[0].obs_type, "decision");
+    assert_eq!(parsed[0].title.as_deref(), Some("Valid"));
+
+    let log = std::fs::read_to_string(log_dir.join("remem.log"))
+        .expect("observation parser error log should be readable");
+    assert!(log.contains("[ERROR] [observation-parse]"));
+    assert!(log.contains("drop_reason=unknown_type raw_type=\"unknown\""));
+    assert!(log.contains("drop_reason=missing_type raw_type=\"\""));
+
+    std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
+}
+
+#[test]
+fn parse_observations_preserves_legal_types_and_filters_type_concept() {
+    for observation_type in OBSERVATION_TYPES {
+        let xml = format!(
+            r#"
+<observation>
+  <type>{observation_type}</type>
   <title>  Planning note  </title>
   <facts>
     <fact>first</fact>
   </facts>
   <concepts>
-    <concept>discovery</concept>
+    <concept>{observation_type}</concept>
     <concept>rust</concept>
   </concepts>
   <files_read>
@@ -137,14 +179,16 @@ fn parse_observations_defaults_invalid_type_and_filters_type_concept() {
     <file>src/main.rs</file>
   </files_modified>
 </observation>
-"#;
+"#
+        );
 
-    let parsed = parse_observations(xml);
-    assert_eq!(parsed.len(), 1);
-    assert_eq!(parsed[0].obs_type, "discovery");
-    assert_eq!(parsed[0].title.as_deref(), Some("Planning note"));
-    assert_eq!(parsed[0].facts, vec!["first"]);
-    assert_eq!(parsed[0].concepts, vec!["rust"]);
-    assert_eq!(parsed[0].files_read, vec!["src/lib.rs"]);
-    assert_eq!(parsed[0].files_modified, vec!["src/main.rs"]);
+        let parsed = parse_observations(&xml);
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].obs_type, *observation_type);
+        assert_eq!(parsed[0].title.as_deref(), Some("Planning note"));
+        assert_eq!(parsed[0].facts, vec!["first"]);
+        assert_eq!(parsed[0].concepts, vec!["rust"]);
+        assert_eq!(parsed[0].files_read, vec!["src/lib.rs"]);
+        assert_eq!(parsed[0].files_modified, vec!["src/main.rs"]);
+    }
 }

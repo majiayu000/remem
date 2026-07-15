@@ -189,21 +189,31 @@ fn contentless_replacements_do_not_retire_sources() -> Result<()> {
     let ids = vec![insert_source_observation(&conn, "active")?];
 
     let sources = source_observations(&conn, &ids)?;
-    for response in [
-        "<observation></observation>",
+    let missing_type =
+        apply_compression_response(&conn, "proj", &sources, "<observation></observation>")?;
+    assert_eq!(
+        missing_type,
+        CompressionOutcome::Skipped {
+            reason: NO_REPLACEMENTS_REASON,
+            source_count: 1,
+        }
+    );
+
+    let contentless = apply_compression_response(
+        &conn,
+        "proj",
+        &sources,
         "<observation><type>decision</type></observation>",
-    ] {
-        let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
-        assert_eq!(
-            outcome,
-            CompressionOutcome::Skipped {
-                reason: INVALID_REPLACEMENTS_REASON,
-                source_count: 1,
-            }
-        );
-        assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
-        assert!(compressed_titles(&conn)?.is_empty());
-    }
+    )?;
+    assert_eq!(
+        contentless,
+        CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: 1,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
+    assert!(compressed_titles(&conn)?.is_empty());
     Ok(())
 }
 
