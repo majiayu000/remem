@@ -1,5 +1,5 @@
 use super::{
-    apply_compression_response, CompressionOutcome, INVALID_REPLACEMENTS_REASON,
+    apply_compression_response, CompressionOutcome, COMPRESS_PROMPT, INVALID_REPLACEMENTS_REASON,
     NO_REPLACEMENTS_REASON,
 };
 use crate::db;
@@ -130,6 +130,25 @@ fn valid_response(title: &str) -> String {
             <narrative>Compressed narrative</narrative>
          </observation>"
     )
+}
+
+#[test]
+fn compression_prompt_observation_types_match_runtime_vocabulary() {
+    const MARKER_PREFIX: &str = "ALLOWED_OBSERVATION_TYPES=[";
+    let marker = COMPRESS_PROMPT
+        .lines()
+        .find(|line| line.starts_with(MARKER_PREFIX))
+        .expect("compression prompt should declare the stable allowed-type marker");
+    let declared = marker
+        .strip_prefix(MARKER_PREFIX)
+        .and_then(|value| value.strip_suffix(']'))
+        .expect("allowed-type marker should have an exact bracketed value")
+        .split(',')
+        .collect::<Vec<_>>();
+
+    assert_eq!(declared, crate::memory::format::OBSERVATION_TYPES);
+    assert!(!declared.contains(&"preference"));
+    assert!(COMPRESS_PROMPT.contains("Never output `<type>preference</type>`"));
 }
 
 #[test]
