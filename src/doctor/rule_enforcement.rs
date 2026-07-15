@@ -203,8 +203,8 @@ mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
     use crate::rules::{
-        record_evaluation_error, write_artifact_atomic, CompiledRule, CompiledRulesArtifact,
-        EvaluationDiagnosticCode, RuleAction, RuleOverrideState, RulePredicate,
+        write_artifact_atomic, CompiledRule, CompiledRulesArtifact, EvaluationDiagnosticCode,
+        RuleAction, RuleOverrideState, RulePredicate,
     };
 
     #[test]
@@ -239,11 +239,13 @@ mod tests {
              VALUES (?1, 'compile', 'error', 'TOP_SECRET_DIAGNOSTIC', 1240)",
             [project],
         )?;
-        record_evaluation_error(
+        crate::rules::log_evaluation_error_once_with_diagnostic(
             &scoped.path,
-            project,
+            Some("doctor-session"),
+            Some(project),
             &[EvaluationDiagnosticCode::RuleEvaluation],
-        )?;
+            "TOP_SECRET_EVALUATION",
+        );
 
         let check = check_compiled_rules_for(Some(&conn), &scoped.path, project, true);
 

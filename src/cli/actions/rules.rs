@@ -102,26 +102,31 @@ fn run_rules_eval(host: Option<RuleHostArg>) -> Result<()> {
     };
     let mut raw = String::new();
     if let Err(error) = std::io::stdin().read_to_string(&mut raw) {
-        rules::log_evaluation_error_once(
+        rules::log_evaluation_error_once_with_diagnostic(
             &data_dir,
             None,
+            None,
+            &[rules::EvaluationDiagnosticCode::HookInputRead],
             &format!("read Claude PreToolUse hook input: {error}"),
         );
         return Ok(());
     }
     let session_hint = rules::session_id_hint(&raw);
+    let project_hint = rules::project_hint(&raw);
     let config = match crate::runtime_config::rule_compilation_config() {
         Ok(config) => config,
         Err(error) => {
-            rules::log_evaluation_error_once(
+            rules::log_evaluation_error_once_with_diagnostic(
                 &data_dir,
                 session_hint.as_deref(),
+                project_hint.as_deref(),
+                &[rules::EvaluationDiagnosticCode::Config],
                 &format!("read rule compilation config: {error:#}"),
             );
             return Ok(());
         }
     };
-    let evaluated = match rules::evaluate_pre_tool_use(
+    let evaluated = match rules::evaluate_pre_tool_use_with_diagnostics(
         &raw,
         host.map(rule_host_label),
         &data_dir,
@@ -129,40 +134,34 @@ fn run_rules_eval(host: Option<RuleHostArg>) -> Result<()> {
     ) {
         Ok(evaluated) => evaluated,
         Err(error) => {
-            rules::log_evaluation_error_once(
+            rules::log_evaluation_error_once_with_diagnostic(
                 &data_dir,
                 session_hint.as_deref(),
+                project_hint.as_deref(),
+                &[rules::EvaluationDiagnosticCode::HookInput],
                 &format!("{error:#}"),
             );
             return Ok(());
         }
     };
-    if !evaluated.diagnostics.is_empty() {
-        let diagnostic_sync = rules::sync_evaluation_diagnostic(&data_dir, &evaluated);
-        let mut diagnostics = evaluated.diagnostics;
-        if let Err(error) = diagnostic_sync {
-            diagnostics.push(format!("persist evaluation diagnostic: {error:#}"));
-        }
-        rules::log_evaluation_error_once(
+    if !evaluated.evaluation.diagnostics.is_empty() {
+        rules::log_evaluation_error_once_with_diagnostic(
             &data_dir,
-            evaluated.session_id.as_deref(),
-            &diagnostics.join("; "),
+            evaluated.evaluation.session_id.as_deref(),
+            evaluated.project.as_deref(),
+            &evaluated.diagnostic_codes,
+            &evaluated.evaluation.diagnostics.join("; "),
         );
         return Ok(());
     }
-    if let Err(error) = rules::sync_evaluation_diagnostic(&data_dir, &evaluated) {
-        rules::log_evaluation_error_once(
-            &data_dir,
-            evaluated.session_id.as_deref(),
-            &format!("clear recovered evaluation diagnostic: {error:#}"),
-        );
-    }
-    if let Some(output) = evaluated.output {
+    if let Some(output) = evaluated.evaluation.output {
         match serde_json::to_string(&output) {
             Ok(output) => println!("{output}"),
-            Err(error) => rules::log_evaluation_error_once(
+            Err(error) => rules::log_evaluation_error_once_with_diagnostic(
                 &data_dir,
-                evaluated.session_id.as_deref(),
+                evaluated.evaluation.session_id.as_deref(),
+                evaluated.project.as_deref(),
+                &[rules::EvaluationDiagnosticCode::OutputSerialize],
                 &format!("serialize Claude PreToolUse hook output: {error}"),
             ),
         }

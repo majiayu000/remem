@@ -81,20 +81,26 @@ fn missing_artifact_fails_open_with_diagnostic() -> Result<()> {
     let project = test_dir("hook-missing-project");
     std::fs::create_dir_all(&project)?;
 
-    let evaluated = evaluate_pre_tool_use(
+    let evaluated = evaluate_pre_tool_use_with_diagnostics(
         &hook_input(&project, "session-missing", "npm install"),
         Some("claude-code"),
         &data_dir,
         true,
     )?;
 
-    assert!(evaluated.output.is_none());
-    assert_eq!(evaluated.diagnostics.len(), 1);
-    assert!(evaluated.diagnostics[0].contains("artifact missing"));
-    sync_evaluation_diagnostic(&data_dir, &evaluated)?;
+    assert!(evaluated.evaluation.output.is_none());
+    assert_eq!(evaluated.evaluation.diagnostics.len(), 1);
+    assert!(evaluated.evaluation.diagnostics[0].contains("artifact missing"));
+    log_evaluation_error_once_with_diagnostic(
+        &data_dir,
+        evaluated.evaluation.session_id.as_deref(),
+        evaluated.project.as_deref(),
+        &evaluated.diagnostic_codes,
+        &evaluated.evaluation.diagnostics.join("; "),
+    );
     let project_key = crate::db::project_from_cwd(&project.to_string_lossy());
     let record = crate::rules::load_evaluation_error(&data_dir, &project_key)?
-        .context("evaluation diagnostic sidecar")?;
+        .context("evaluation diagnostic marker")?;
     assert_eq!(
         record.codes,
         vec![crate::rules::EvaluationDiagnosticCode::ArtifactMissing]
@@ -103,23 +109,35 @@ fn missing_artifact_fails_open_with_diagnostic() -> Result<()> {
 }
 
 #[test]
-fn successful_evaluation_clears_prior_error_sidecar() -> Result<()> {
+fn successful_evaluation_does_not_add_or_rewrite_diagnostic_marker() -> Result<()> {
     let data_dir = test_dir("hook-recovery-data");
     let project = test_dir("hook-recovery-project");
     std::fs::create_dir_all(&project)?;
     let input = hook_input(&project, "session-recovery", "npm install");
 
-    let failed = evaluate_pre_tool_use(&input, Some("claude-code"), &data_dir, true)?;
-    sync_evaluation_diagnostic(&data_dir, &failed)?;
-    write_rule(&data_dir, &project, RuleAction::Warn)?;
-    let recovered = evaluate_pre_tool_use(&input, Some("claude-code"), &data_dir, true)?;
-    sync_evaluation_diagnostic(&data_dir, &recovered)?;
-
-    let project_key = crate::db::project_from_cwd(&project.to_string_lossy());
-    assert_eq!(
-        crate::rules::load_evaluation_error(&data_dir, &project_key)?,
-        None
+    let failed =
+        evaluate_pre_tool_use_with_diagnostics(&input, Some("claude-code"), &data_dir, true)?;
+    log_evaluation_error_once_with_diagnostic(
+        &data_dir,
+        failed.evaluation.session_id.as_deref(),
+        failed.project.as_deref(),
+        &failed.diagnostic_codes,
+        &failed.evaluation.diagnostics.join("; "),
     );
+    let marker_dir = crate::rules::evaluation_marker_dir(&data_dir);
+    let marker = std::fs::read_dir(&marker_dir)?
+        .next()
+        .context("evaluation marker")??
+        .path();
+    let before = std::fs::read(&marker)?;
+
+    write_rule(&data_dir, &project, RuleAction::Warn)?;
+    let recovered =
+        evaluate_pre_tool_use_with_diagnostics(&input, Some("claude-code"), &data_dir, true)?;
+
+    assert!(recovered.evaluation.diagnostics.is_empty());
+    assert_eq!(std::fs::read(marker)?, before);
+    assert_eq!(std::fs::read_dir(marker_dir)?.count(), 1);
     Ok(())
 }
 
@@ -130,6 +148,36 @@ fn unsupported_host_does_not_claim_command_enforcement() {
     assert!(error
         .to_string()
         .contains("unsupported for host 'codex-cli'"));
+}
+
+#[test]
+fn invalid_hook_input_can_record_a_project_scoped_closed_code() -> Result<()> {
+    let data_dir = test_dir("hook-invalid-input-data");
+    let project = test_dir("hook-invalid-input-project");
+    let raw = json!({
+        "session_id": "session-invalid-input",
+        "cwd": project,
+        "hook_event_name": "PreToolUse",
+        "tool_name": "Read",
+        "tool_input": {}
+    })
+    .to_string();
+    let error = evaluate_pre_tool_use(&raw, Some("claude-code"), &data_dir, true)
+        .expect_err("non-Bash hook input should fail open through the CLI");
+    let project = project_hint(&raw).context("project hint")?;
+
+    log_evaluation_error_once_with_diagnostic(
+        &data_dir,
+        session_id_hint(&raw).as_deref(),
+        Some(&project),
+        &[EvaluationDiagnosticCode::HookInput],
+        &error.to_string(),
+    );
+
+    let record = crate::rules::load_evaluation_error(&data_dir, &project)?
+        .context("project-scoped evaluation diagnostic")?;
+    assert_eq!(record.codes, vec![EvaluationDiagnosticCode::HookInput]);
+    Ok(())
 }
 
 #[test]
