@@ -8,6 +8,6 @@ mod types;
 pub use crate::db::models::OBSERVATION_TYPES;
 pub use escape::{xml_escape_attr, xml_escape_text};
 pub use extract::extract_field;
-pub(crate) use parse::find_ascii_ci;
 pub use parse::parse_observations;
+pub(crate) use parse::{find_ascii_ci, parse_observations_with_outcome};
 pub use types::ParsedObservation;

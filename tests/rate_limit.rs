@@ -213,6 +213,74 @@ fn search_include_stale_controls_inactive_memories() -> Result<()> {
 }
 
 #[test]
+fn support_fixture_fts_matches_all_status_visibility_contract() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn)?;
+    insert_memory_row(&conn, 1, "proj", "mongodb active", 300, "active", None)?;
+    insert_memory_row(&conn, 2, "proj", "mongodb stale", 250, "stale", None)?;
+    insert_memory_row(&conn, 3, "proj", "mongodb archived", 200, "archived", None)?;
+    let active_only = memory::search_memories_fts_filtered(
+        &conn,
+        "mongodb",
+        Some("proj"),
+        None,
+        10,
+        0,
+        false,
+        None,
+    )?;
+    assert_eq!(
+        active_only
+            .iter()
+            .map(|memory| memory.id)
+            .collect::<Vec<_>>(),
+        vec![1]
+    );
+    let all_statuses = memory::search_memories_fts_filtered(
+        &conn,
+        "mongodb",
+        Some("proj"),
+        None,
+        10,
+        0,
+        true,
+        None,
+    )?;
+    let mut ids = all_statuses
+        .iter()
+        .map(|memory| memory.id)
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    assert_eq!(ids, vec![1, 2, 3]);
+    conn.execute("UPDATE memories SET status = 'stale' WHERE id = 1", [])?;
+    let transitioned = memory::search_memories_fts_filtered(
+        &conn,
+        "mongodb active",
+        Some("proj"),
+        None,
+        10,
+        0,
+        true,
+        None,
+    )?;
+    assert_eq!(transitioned.len(), 1);
+    assert_eq!(transitioned[0].status, "stale");
+    conn.execute("DELETE FROM memories WHERE id = 1", [])?;
+    assert!(memory::search_memories_fts_filtered(
+        &conn,
+        "mongodb active",
+        Some("proj"),
+        None,
+        10,
+        0,
+        true,
+        None,
+    )?
+    .is_empty());
+    Ok(())
+}
+
+#[test]
 fn search_queryless_with_branch_filters_memories() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_memory_schema(&conn)?;
