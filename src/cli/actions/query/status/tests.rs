@@ -368,6 +368,38 @@ fn cli_status_renders_action_block_for_runtime_failures() {
 }
 
 #[test]
+fn lease_transition_failure_remains_visible_in_status_and_doctor() -> anyhow::Result<()> {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("status-lease-conflict");
+    let mut conn = crate::db::open_db()?;
+    let job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Compress,
+        "/tmp/remem",
+        None,
+        "{}",
+        100,
+    )?;
+    crate::db::claim_next_job(&mut conn, "worker-a", 60)?.expect("job should claim");
+    conn.execute(
+        "UPDATE jobs SET lease_expires_epoch = ?2 WHERE id = ?1",
+        params![job_id, chrono::Utc::now().timestamp() - 1],
+    )?;
+    crate::db::mark_job_done(&conn, job_id, "worker-a")
+        .expect_err("expired lease transition must fail");
+    let shared = crate::db::query_system_stats(&conn)?;
+    assert_eq!((shared.processing_jobs, shared.stuck_jobs), (1, 1));
+    drop(conn);
+
+    let report = load_status_report()?;
+    assert_eq!((report.jobs.processing, report.jobs.stuck), (1, 1));
+    let json = serde_json::to_value(&report)?;
+    assert_eq!(json["jobs"]["processing"], 1);
+    assert_eq!(json["jobs"]["stuck"], 1);
+    Ok(())
+}
+
+#[test]
 fn cli_status_renders_replay_action_for_null_lease_processing_legacy_pending() {
     let mut report = status_report_fixture();
     report.pending_observations.ready = 0;

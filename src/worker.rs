@@ -73,6 +73,94 @@ fn run_idle_embedding_backfill(conn: &rusqlite::Connection) -> Result<bool> {
     }
 }
 
+fn recover_expired_jobs(conn: &rusqlite::Connection) -> Result<()> {
+    let batch = db::release_expired_job_leases(conn)?;
+    for outcome in batch.outcomes {
+        match outcome {
+            db::ExpiredJobLeaseOutcome::Requeued {
+                source_id,
+                identity_kind,
+            } => crate::log::warn(
+                "worker",
+                &format!(
+                    "expired job recovery requeued source_id={source_id} identity={}",
+                    identity_kind.as_str()
+                ),
+            ),
+            db::ExpiredJobLeaseOutcome::Coalesced {
+                source_id,
+                canonical_id,
+                identity_kind,
+            } => crate::log::warn(
+                "worker",
+                &format!(
+                    "expired job recovery coalesced source_id={source_id} canonical_id={canonical_id} identity={}",
+                    identity_kind.as_str()
+                ),
+            ),
+        }
+    }
+    Ok(())
+}
+
+fn mark_successful_job(conn: &rusqlite::Connection, job_id: i64, lease_owner: &str) -> Result<()> {
+    if let Err(error) = db::mark_job_done(conn, job_id, lease_owner) {
+        crate::log::error(
+            "worker",
+            &format!("job transition failed id={job_id} operation=done error={error}"),
+        );
+        return Err(error);
+    }
+    crate::log::info("worker", &format!("done id={job_id}"));
+    Ok(())
+}
+
+fn record_failed_job_transition(
+    conn: &rusqlite::Connection,
+    job_id: i64,
+    lease_owner: &str,
+    error_message: &str,
+    backoff_secs: i64,
+) -> Result<()> {
+    let transition = match db::mark_job_failed_or_retry(
+        conn,
+        job_id,
+        lease_owner,
+        error_message,
+        backoff_secs,
+    ) {
+        Ok(transition) => transition,
+        Err(error) => {
+            crate::log::error(
+                "worker",
+                &format!("job transition failed id={job_id} operation=retry error={error}"),
+            );
+            return Err(error);
+        }
+    };
+    match transition {
+        db::JobTransitionOutcome::Transitioned => crate::log::warn(
+            "worker",
+            &format!(
+                "job id={job_id} failed: {} (retry in {backoff_secs}s)",
+                crate::db::truncate_str(error_message, 300)
+            ),
+        ),
+        db::JobTransitionOutcome::Coalesced {
+            source_id,
+            canonical_id,
+            identity_kind,
+        } => crate::log::info(
+            "worker",
+            &format!(
+                "job retry coalesced source_id={source_id} canonical_id={canonical_id} identity={}",
+                identity_kind.as_str()
+            ),
+        ),
+    }
+    Ok(())
+}
+
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     let started_at_epoch = chrono::Utc::now().timestamp();
     let mode = if once { "once" } else { "daemon" };
@@ -128,10 +216,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         }
         let mut conn = db::open_db()?;
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
-        let recovered = db::requeue_stuck_jobs(&conn)?;
-        if recovered > 0 {
-            crate::log::warn("worker", &format!("requeued {} stuck job(s)", recovered));
-        }
+        recover_expired_jobs(&conn)?;
         let recovered_extraction = db::release_expired_extraction_task_leases(&conn)?;
         if recovered_extraction > 0 {
             crate::log::warn(
@@ -174,31 +259,17 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             let conn = db::open_db()?;
             match timed {
                 Ok(Ok(())) => {
-                    db::mark_job_done(&conn, job.id, &lease_owner)?;
-                    crate::log::info("worker", &format!("done id={}", job.id));
+                    mark_successful_job(&conn, job.id, &lease_owner)?;
                 }
                 Ok(Err(e)) => {
                     let msg = e.to_string();
                     let backoff = retry_backoff_secs(job.attempt_count);
-                    db::mark_job_failed_or_retry(&conn, job.id, &lease_owner, &msg, backoff)?;
-                    crate::log::warn(
-                        "worker",
-                        &format!(
-                            "job id={} failed: {} (retry in {}s)",
-                            job.id,
-                            crate::db::truncate_str(&msg, 300),
-                            backoff
-                        ),
-                    );
+                    record_failed_job_transition(&conn, job.id, &lease_owner, &msg, backoff)?;
                 }
                 Err(_) => {
                     let msg = format!("job timed out after {}s", JOB_TIMEOUT_SECS);
                     let backoff = retry_backoff_secs(job.attempt_count);
-                    db::mark_job_failed_or_retry(&conn, job.id, &lease_owner, &msg, backoff)?;
-                    crate::log::warn(
-                        "worker",
-                        &format!("job id={} timeout (retry in {}s)", job.id, backoff),
-                    );
+                    record_failed_job_transition(&conn, job.id, &lease_owner, &msg, backoff)?;
                 }
             }
             continue;

@@ -1,7 +1,12 @@
+use super::maintenance::{
+    recover_due_job_candidate, requeue_due_jobs, set_job_recovery_test_seam, JobRecoveryOutcome,
+    JobRecoveryTestSeam,
+};
 use super::*;
 use crate::db::{CaptureEventInput, ExtractionTaskKind, JobType};
 use anyhow::Result;
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Value, Connection};
+use std::sync::{Arc, Barrier};
 
 #[test]
 fn classifier_maps_known_permanent_patterns() {
@@ -64,27 +69,62 @@ fn seed_pending_failure(conn: &Connection, failed_at: i64, class: &str) -> Resul
 }
 
 fn seed_job_failure(conn: &Connection, failed_at: i64, class: &str, attempts: i64) -> Result<i64> {
-    let id = crate::db::enqueue_job(
+    insert_failed_job(
         conn,
         "codex-cli",
-        JobType::Summary,
+        JobType::Compress,
         "/tmp/remem",
         Some("sess-failure"),
-        "{}",
-        100,
-    )?;
+        Some("transient failure"),
+        failed_at,
+        class,
+        attempts,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn insert_failed_job(
+    conn: &Connection,
+    host: &str,
+    job_type: JobType,
+    project: &str,
+    session_id: Option<&str>,
+    last_error: Option<&str>,
+    failed_at: i64,
+    class: &str,
+    attempts: i64,
+) -> Result<i64> {
     conn.execute(
-        "UPDATE jobs
-         SET state = 'failed',
-             attempt_count = ?1,
-             failure_class = ?2,
-             failed_at_epoch = ?3,
-             updated_at_epoch = ?3,
-             next_retry_epoch = ?3
-         WHERE id = ?4",
-        params![attempts, class, failed_at, id],
+        "INSERT INTO jobs
+         (host, job_type, project, session_id, payload_json, state, priority,
+          attempt_count, max_attempts, next_retry_epoch, last_error, failure_class,
+          failed_at_epoch, created_at_epoch, updated_at_epoch)
+         VALUES (?1, ?2, ?3, ?4, '{}', 'failed', 100, ?5, 6, ?6, ?7, ?8, ?6, ?6, ?6)",
+        params![
+            host,
+            job_type.as_str(),
+            project,
+            session_id,
+            attempts,
+            failed_at,
+            last_error,
+            class
+        ],
     )?;
-    Ok(id)
+    Ok(conn.last_insert_rowid())
+}
+
+fn job_snapshot(conn: &Connection, job_id: i64) -> Result<Vec<Value>> {
+    Ok(conn.query_row(
+        "SELECT id, host, job_type, project, session_id, payload_json, state,
+                priority, attempt_count, max_attempts, lease_owner,
+                lease_expires_epoch, next_retry_epoch, last_error,
+                created_at_epoch, updated_at_epoch, failure_class,
+                failed_at_epoch, archived_at_epoch
+         FROM jobs WHERE id = ?1",
+        params![job_id],
+        |row| (0..19).map(|column| row.get(column)).collect(),
+    )?)
 }
 
 fn seed_extraction_task(conn: &Connection) -> Result<(i64, i64)> {
@@ -232,10 +272,14 @@ fn upgrade_summary_rejections_are_not_actionable_but_worker_rejections_are() -> 
             "sess-worker-rejected",
         ),
     ] {
-        let id = seed_job_failure(&conn, now - 1_000, "permanent", 3)?;
         conn.execute(
-            "UPDATE jobs SET last_error = ?1, session_id = ?2 WHERE id = ?3",
-            params![error, session_id, id],
+            "INSERT INTO jobs
+             (host, job_type, project, session_id, payload_json, state, priority,
+              attempt_count, max_attempts, next_retry_epoch, last_error, failure_class,
+              failed_at_epoch, created_at_epoch, updated_at_epoch)
+             VALUES ('codex-cli', 'summary', '/tmp/remem', ?1, '{}', 'failed', 100,
+                     3, 6, 0, ?2, 'permanent', ?3, ?3, ?3)",
+            params![session_id, error, now - 1_000],
         )?;
     }
 
@@ -243,6 +287,305 @@ fn upgrade_summary_rejections_are_not_actionable_but_worker_rejections_are() -> 
 
     assert_eq!(stats.job.actionable_total, 1);
     assert_eq!(stats.job.permanent, 1);
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_auto_recovery_excludes_legacy_summary_and_recovers_ordinary() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    let summary = insert_failed_job(
+        &conn,
+        "codex-cli",
+        JobType::Summary,
+        "/summary",
+        Some("legacy"),
+        Some("legacy audit"),
+        now - 1_000,
+        "transient",
+        0,
+    )?;
+    let ordinary = insert_failed_job(
+        &conn,
+        "codex-cli",
+        JobType::Compress,
+        "/ordinary",
+        None,
+        Some("retry me"),
+        now - 1_000,
+        "transient",
+        0,
+    )?;
+    let summary_before = job_snapshot(&conn, summary)?;
+
+    let recovered = maintain_failure_lifecycle(&conn)?;
+
+    assert_eq!((recovered.retried_jobs, recovered.coalesced_jobs), (1, 0));
+    assert_eq!(job_snapshot(&conn, summary)?, summary_before);
+    let state: String = conn.query_row(
+        "SELECT state FROM jobs WHERE id = ?1",
+        params![ordinary],
+        |row| row.get(0),
+    )?;
+    assert_eq!(state, "pending");
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_per_row_guard_preserves_legacy_summary() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    let summary = insert_failed_job(
+        &conn,
+        "codex-cli",
+        JobType::Summary,
+        "/summary-guard",
+        None,
+        Some("preserve exactly"),
+        now - 1_000,
+        "transient",
+        0,
+    )?;
+    let before = job_snapshot(&conn, summary)?;
+
+    let outcome = recover_due_job_candidate(&conn, summary, now)?;
+
+    assert_eq!(
+        outcome,
+        Some(JobRecoveryOutcome::SkippedRetiredSummary { source_id: summary })
+    );
+    assert_eq!(job_snapshot(&conn, summary)?, before);
+    Ok(())
+}
+
+fn seed_collision(
+    conn: &Connection,
+    job_type: JobType,
+    project: &str,
+    attempt_count: i64,
+    last_error: Option<&str>,
+) -> Result<(i64, i64)> {
+    let now = chrono::Utc::now().timestamp();
+    let source = insert_failed_job(
+        conn,
+        "codex-cli",
+        job_type,
+        project,
+        None,
+        last_error,
+        now - 1_000,
+        "transient",
+        attempt_count,
+    )?;
+    let canonical = crate::db::enqueue_job(conn, "codex-cli", job_type, project, None, "{}", 50)?;
+    Ok((source, canonical))
+}
+
+#[test]
+fn failure_lifecycle_auto_recovery_coalesces_mixed_active_identities_per_row() -> Result<()> {
+    let conn = setup_conn()?;
+    let pairs = [
+        seed_collision(
+            &conn,
+            JobType::Compress,
+            "/ordinary-mixed",
+            0,
+            Some("ordinary"),
+        )?,
+        seed_collision(&conn, JobType::Dream, "/dream-mixed", 0, Some("dream"))?,
+        seed_collision(
+            &conn,
+            JobType::CompileRules,
+            "/compile-mixed",
+            0,
+            Some("compile"),
+        )?,
+    ];
+
+    let recovered = requeue_due_jobs(&conn, chrono::Utc::now().timestamp())?;
+
+    assert_eq!((recovered.requeued, recovered.coalesced), (0, 3));
+    for (source, canonical) in pairs {
+        let (state, class, retry): (String, Option<String>, i64) = conn.query_row(
+            "SELECT state, failure_class, next_retry_epoch FROM jobs WHERE id = ?1",
+            params![source],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            (state.as_str(), class.as_deref(), retry),
+            ("failed", Some("permanent"), 0)
+        );
+        assert!(recovered.outcomes.iter().any(|outcome| matches!(
+            outcome,
+            JobRecoveryOutcome::Coalesced { source_id, canonical_id, .. }
+                if *source_id == source && *canonical_id == canonical
+        )));
+    }
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat() -> Result<()> {
+    let conn = setup_conn()?;
+    let original = "x".repeat(2_500);
+    let (source, canonical) = seed_collision(
+        &conn,
+        JobType::Compress,
+        "/bounded-error",
+        0,
+        Some(&original),
+    )?;
+    let first = maintain_failure_lifecycle(&conn)?;
+    assert_eq!(first.coalesced_jobs, 1);
+    let error: String = conn.query_row(
+        "SELECT last_error FROM jobs WHERE id = ?1",
+        params![source],
+        |row| row.get(0),
+    )?;
+    let marker = format!("[job_recovery_coalesced canonical_id={canonical} identity=ordinary]");
+    assert!(error.starts_with('x'));
+    assert!(error.ends_with(&marker));
+    assert!(error.len() <= 2_000);
+    let second = maintain_failure_lifecycle(&conn)?;
+    assert_eq!((second.retried_jobs, second.coalesced_jobs), (0, 0));
+    assert_eq!(
+        conn.query_row(
+            "SELECT last_error FROM jobs WHERE id = ?1",
+            params![source],
+            |row| row.get::<_, String>(0),
+        )?,
+        error
+    );
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_auto_recovery_preserves_source_attempt_count() -> Result<()> {
+    let conn = setup_conn()?;
+    let (source, _) = seed_collision(
+        &conn,
+        JobType::CompileRules,
+        "/attempt-count",
+        2,
+        Some("real failure"),
+    )?;
+    requeue_due_jobs(&conn, chrono::Utc::now().timestamp())?;
+    let attempts: i64 = conn.query_row(
+        "SELECT attempt_count FROM jobs WHERE id = ?1",
+        params![source],
+        |row| row.get(0),
+    )?;
+    assert_eq!(attempts, 2);
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_auto_recovery_null_or_empty_last_error_stores_canonical_marker() -> Result<()>
+{
+    let conn = setup_conn()?;
+    for (project, error) in [("/null-error", None), ("/empty-error", Some(""))] {
+        let (source, canonical) = seed_collision(&conn, JobType::Compress, project, 0, error)?;
+        let outcome = recover_due_job_candidate(&conn, source, chrono::Utc::now().timestamp())?;
+        assert!(matches!(
+            outcome,
+            Some(JobRecoveryOutcome::Coalesced { .. })
+        ));
+        let stored: String = conn.query_row(
+            "SELECT last_error FROM jobs WHERE id = ?1",
+            params![source],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            stored,
+            format!("[job_recovery_coalesced canonical_id={canonical} identity=ordinary]")
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_job_recovery_two_wal_connections_coalesces_unique_race() -> Result<()> {
+    let path = crate::db::test_support::unique_temp_db_path("failure-job-race");
+    let conn = Connection::open(&path)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+    conn.busy_timeout(std::time::Duration::from_secs(30))?;
+    crate::migrate::run_migrations(&conn)?;
+    let now = chrono::Utc::now().timestamp();
+    let source = insert_failed_job(
+        &conn,
+        "codex-cli",
+        JobType::Compress,
+        "/wal-race",
+        None,
+        Some("retry"),
+        now - 1_000,
+        "transient",
+        0,
+    )?;
+    let collected = Arc::new(Barrier::new(2));
+    let committed = Arc::new(Barrier::new(2));
+    set_job_recovery_test_seam(JobRecoveryTestSeam {
+        candidates_collected: Some(Arc::clone(&collected)),
+        canonical_committed: Some(Arc::clone(&committed)),
+        skip_initial_lookup: true,
+        unreadable_canonical_reread: false,
+    });
+    let thread_path = path.clone();
+    let handle = std::thread::spawn(move || -> Result<i64> {
+        let other = Connection::open(thread_path)?;
+        other.pragma_update(None, "journal_mode", "WAL")?;
+        other.busy_timeout(std::time::Duration::from_secs(30))?;
+        collected.wait();
+        let canonical = crate::db::enqueue_job(
+            &other,
+            "codex-cli",
+            JobType::Compress,
+            "/wal-race",
+            None,
+            "{}",
+            50,
+        )?;
+        committed.wait();
+        Ok(canonical)
+    });
+
+    let recovered = requeue_due_jobs(&conn, now)?;
+    set_job_recovery_test_seam(JobRecoveryTestSeam::default());
+    let canonical = handle.join().expect("canonical thread should join")?;
+    assert_eq!(
+        recovered.outcomes,
+        vec![JobRecoveryOutcome::Coalesced {
+            source_id: source,
+            canonical_id: canonical,
+            identity_kind: crate::db::JobIdentityKind::Ordinary,
+        }]
+    );
+    drop(conn);
+    crate::db::test_support::cleanup_temp_db_files(&path);
+    Ok(())
+}
+
+#[test]
+fn failure_lifecycle_job_recovery_unreadable_canonical_rolls_back_source() -> Result<()> {
+    let conn = setup_conn()?;
+    let (source, _) = seed_collision(
+        &conn,
+        JobType::Compress,
+        "/unreadable-canonical",
+        1,
+        Some("preserve source"),
+    )?;
+    let before = job_snapshot(&conn, source)?;
+    set_job_recovery_test_seam(JobRecoveryTestSeam {
+        skip_initial_lookup: true,
+        unreadable_canonical_reread: true,
+        ..JobRecoveryTestSeam::default()
+    });
+    let error = requeue_due_jobs(&conn, chrono::Utc::now().timestamp())
+        .expect_err("unreadable canonical must fail closed");
+    set_job_recovery_test_seam(JobRecoveryTestSeam::default());
+    assert!(error.to_string().contains("injected unreadable"));
+    assert_eq!(job_snapshot(&conn, source)?, before);
     Ok(())
 }
 
