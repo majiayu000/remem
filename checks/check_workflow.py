@@ -162,8 +162,11 @@ def validate_json_schema_body(
             )
 
     expected_type = schema.get("type")
+    declared_types: set[str] | None = None
     if "type" in schema:
-        expected_types = expected_type if isinstance(expected_type, list) else [expected_type]
+        expected_types = (
+            expected_type if isinstance(expected_type, list) else [expected_type]
+        )
         if (
             not expected_types
             or not all(isinstance(item, str) for item in expected_types)
@@ -173,9 +176,34 @@ def validate_json_schema_body(
                 f"{relative_path}: {schema_path}.type must be a supported JSON type "
                 "or non-empty array of supported JSON types"
             )
+        else:
+            declared_types = set(expected_types)
 
-    if "enum" in schema and not isinstance(schema["enum"], list):
-        errors.append(f"{relative_path}: {schema_path}.enum must be an array")
+    if "enum" in schema and (
+        not isinstance(schema["enum"], list) or not schema["enum"]
+    ):
+        errors.append(
+            f"{relative_path}: {schema_path}.enum must be a non-empty array"
+        )
+
+    if runtime_subset and declared_types is not None:
+        keyword_types = (
+            ("additionalProperties", {"object"}),
+            ("items", {"array"}),
+            ("minItems", {"array"}),
+            ("minLength", {"string"}),
+            ("properties", {"object"}),
+            ("required", {"object"}),
+            ("exclusiveMaximum", {"integer", "number"}),
+            ("exclusiveMinimum", {"integer", "number"}),
+            ("minimum", {"integer", "number"}),
+        )
+        for keyword, compatible_types in keyword_types:
+            if keyword in schema and not declared_types & compatible_types:
+                expected = " or ".join(sorted(compatible_types))
+                errors.append(
+                    f"{relative_path}: {schema_path}.{keyword} requires type {expected}"
+                )
 
     for keyword in ("minItems", "minLength"):
         if keyword not in schema:

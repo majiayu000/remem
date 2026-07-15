@@ -155,7 +155,13 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
             "enum shape",
             ("properties", "issue", "enum"),
             {"one": 1},
-            "$.properties.issue.enum must be an array",
+            "$.properties.issue.enum must be a non-empty array",
+        ),
+        (
+            "empty enum",
+            ("properties", "issue", "enum"),
+            [],
+            "$.properties.issue.enum must be a non-empty array",
         ),
         (
             "minLength bool",
@@ -193,6 +199,48 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
             "ten",
             "$.properties.issue.exclusiveMaximum must be a JSON number",
         ),
+        (
+            "minLength type compatibility",
+            ("properties", "collected_at", "type"),
+            "integer",
+            "$.properties.collected_at.minLength requires type string",
+        ),
+        (
+            "items type compatibility",
+            ("properties", "open_prs", "type"),
+            "object",
+            "$.properties.open_prs.items requires type array",
+        ),
+        (
+            "minItems type compatibility",
+            ("properties", "open_prs"),
+            {"type": "object", "minItems": 1},
+            "$.properties.open_prs.minItems requires type array",
+        ),
+        (
+            "minimum type compatibility",
+            ("properties", "issue", "type"),
+            "string",
+            "$.properties.issue.minimum requires type integer or number",
+        ),
+        (
+            "required type compatibility",
+            ("properties", "open_prs", "items"),
+            {"type": "array", "required": ["number"]},
+            "$.properties.open_prs.items.required requires type object",
+        ),
+        (
+            "properties type compatibility",
+            ("properties", "open_prs", "items"),
+            {"type": "array", "properties": {}},
+            "$.properties.open_prs.items.properties requires type object",
+        ),
+        (
+            "additionalProperties type compatibility",
+            ("properties", "open_prs", "items"),
+            {"type": "array", "additionalProperties": False},
+            "$.properties.open_prs.items.additionalProperties requires type object",
+        ),
     )
     runtime_accepts_malformed = {"minLength bool", "minItems negative", "minimum bool"}
     runtime_data = {
@@ -200,7 +248,9 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
         "collected_at": "now",
         "open_prs_complete": True,
         "open_pr_limit": 10,
-        "open_prs": [],
+        "open_prs": [
+            {"number": 2, "head_ref": "review-fix", "references_issue": True}
+        ],
         "remote_branches": [],
     }
 
@@ -240,6 +290,46 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
         assert_passed(
             run_runtime_schema_validation(repo, open_schema_path, {"opaque": 1}),
             "open object required property runtime validation",
+        )
+
+        compatible_schema = json.loads(json.dumps(baseline_schema))
+        del compatible_schema["properties"]["collected_at"]["type"]
+        compatible_schema["properties"]["issue"]["type"] = ["null", "integer"]
+        compatible_schema["properties"]["open_prs"]["type"] = ["null", "array"]
+        compatible_schema["properties"]["open_prs"]["items"]["type"] = [
+            "null",
+            "object",
+        ]
+        schema_path.write_text(
+            json.dumps(compatible_schema, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        compatible_lock = json.loads(json.dumps(baseline_lock))
+        update_lock_hash(
+            compatible_lock,
+            "schemas/duplicate_work_evidence.schema.json",
+            schema_path,
+        )
+        write_lock(lock_path, compatible_lock)
+        assert_passed(
+            run_runtime_schema_validation(repo, schema_path, runtime_data),
+            "missing and union runtime schema types",
+        )
+        assert_passed(
+            run(
+                [
+                    sys.executable,
+                    str(repo / "checks" / "check_workflow.py"),
+                    "--repo",
+                    str(repo),
+                ],
+                cwd=repo,
+            ),
+            "missing and union workflow schema types",
+        )
+        assert_passed(
+            run([str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"], cwd=repo),
+            "missing and union sync schema types",
         )
 
         for label, path, replacement, expected_error in cases:
