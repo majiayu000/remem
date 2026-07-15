@@ -14,6 +14,8 @@ mod tests_content_identity;
 #[cfg(test)]
 mod tests_convergence;
 #[cfg(test)]
+mod tests_job_queue_atomicity;
+#[cfg(test)]
 mod tests_legacy_summary;
 #[cfg(test)]
 mod tests_memory_embeddings;

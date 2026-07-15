@@ -1,5 +1,16 @@
 use super::SchemaInvariant;
 
+macro_rules! v068_session_summary_column {
+    ($column:literal) => {
+        SchemaInvariant::column(
+            68,
+            "session_rollup_followup_checkpoint",
+            "session_summaries",
+            $column,
+        )
+    };
+}
+
 pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::table(20, "memory_fts_all_status", "memories_fts"),
     SchemaInvariant::trigger(20, "memory_fts_all_status", "memories_ai"),
@@ -766,34 +777,16 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "capture_git_evidence",
         "idx_git_commit_sessions_session_row",
     ),
-    SchemaInvariant::column(
-        68,
-        "session_rollup_followup_checkpoint",
-        "session_summaries",
-        "followup_scheduling_completed_at_epoch",
-    ),
-    SchemaInvariant::column(
-        68,
-        "session_rollup_followup_checkpoint",
-        "session_summaries",
-        "followup_scheduling_state",
-    ),
-    SchemaInvariant::column(
-        68,
-        "session_rollup_followup_checkpoint",
-        "session_summaries",
-        "followup_compress_job_id",
-    ),
-    SchemaInvariant::column(
-        68,
-        "session_rollup_followup_checkpoint",
-        "session_summaries",
-        "followup_dream_disposition",
-    ),
-    SchemaInvariant::column(
-        68,
-        "session_rollup_followup_checkpoint",
-        "session_summaries",
-        "followup_dream_job_id",
+    v068_session_summary_column!("followup_scheduling_completed_at_epoch"),
+    v068_session_summary_column!("followup_scheduling_state"),
+    v068_session_summary_column!("followup_compress_job_id"),
+    v068_session_summary_column!("followup_dream_disposition"),
+    v068_session_summary_column!("followup_dream_job_id"),
+    SchemaInvariant::index(69, "job_queue_atomicity", "idx_jobs_active_ordinary_unique"),
+    SchemaInvariant::index(69, "job_queue_atomicity", "idx_jobs_active_dream_unique"),
+    SchemaInvariant::index(
+        69,
+        "job_queue_atomicity",
+        "idx_jobs_active_compile_rules_unique",
     ),
 ];

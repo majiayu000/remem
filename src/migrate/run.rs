@@ -1,5 +1,7 @@
+use std::io::Write;
+
 use anyhow::{anyhow, Context, Result};
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::schema_drift::{install_v031_state_delete_trigger, repair_known_schema_drift};
 use super::state::{applied_versions, ensure_migration_table, has_migration_table, mark_applied};
@@ -166,5 +168,50 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             &format!("normalized {updated} workstream alias title(s)"),
         );
     }
+    if version == 69 {
+        log_v069_reconciliation_counts(conn).with_context(|| {
+            format!("migration v{version:03}_{name} failed to log reconciliation counts")
+        })?;
+    }
+    Ok(())
+}
+
+fn log_v069_reconciliation_counts(conn: &Connection) -> Result<()> {
+    let mut counts = Vec::with_capacity(3);
+    for identity_kind in ["ordinary", "dream", "compile_rules"] {
+        let (reconciled, manual_review): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*),
+                    COALESCE(SUM(CASE WHEN manual_review = 1 THEN 1 ELSE 0 END), 0)
+             FROM temp._v069_reconciled
+             WHERE identity_kind = ?1",
+            params![identity_kind],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        counts.push((reconciled, manual_review));
+    }
+
+    let message = format!(
+        "v069 job queue reconciliation ordinary={} manual_review={} dream={} manual_review={} compile_rules={} manual_review={}",
+        counts[0].0,
+        counts[0].1,
+        counts[1].0,
+        counts[1].1,
+        counts[2].0,
+        counts[2].1,
+    );
+    let mut log_file =
+        crate::log::open_log_append().ok_or_else(|| anyhow!("prepare migration log output"))?;
+    writeln!(
+        log_file,
+        "[{}] [INFO] [migrate] {message}",
+        chrono::Local::now().format("%Y-%m-%d %H:%M:%S")
+    )
+    .context("write migration reconciliation log")?;
+    log_file
+        .flush()
+        .context("flush migration reconciliation log")?;
+
+    conn.execute_batch("DROP TABLE temp._v069_reconciled")
+        .context("drop v069 reconciliation evidence after logging")?;
     Ok(())
 }

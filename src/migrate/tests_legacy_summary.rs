@@ -26,7 +26,15 @@ fn legacy_summary_upgrade_rejects_non_terminal_jobs() -> Result<()> {
     conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    conn.execute("DELETE FROM _schema_migrations WHERE version = 64", [])?;
+    conn.execute(
+        "DELETE FROM _schema_migrations WHERE version IN (64, 69)",
+        [],
+    )?;
+    conn.execute_batch(
+        "DROP INDEX idx_jobs_active_ordinary_unique;
+         DROP INDEX idx_jobs_active_dream_unique;
+         DROP INDEX idx_jobs_active_compile_rules_unique;",
+    )?;
     let rollup_task_id = db::record_captured_event(
         &conn,
         &CaptureEventInput {
