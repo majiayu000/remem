@@ -1,4 +1,4 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, ensure, Context, Result};
 use rusqlite::{params, Connection};
 use std::path::Path;
 
@@ -71,24 +71,51 @@ fn update_rule_override(
     update: RuleOverrideUpdate,
 ) -> Result<()> {
     let project_rules = list_project_rules(data_dir, project)?;
-    let rule = project_rules
+    let artifact_rule = project_rules
         .rules
         .iter()
         .find(|rule| rule.rule_id == rule_id)
         .with_context(|| format!("compiled rule '{rule_id}' not found for project '{project}'"))?;
-    persist_rule_override(conn, project, rule, update)
+    let config = crate::runtime_config::rule_compilation_config()
+        .context("read rule compilation config before rule override")?;
+    ensure!(
+        config.enabled,
+        "rule compilation is disabled; enable rule_compilation.enabled before changing compiled rule overrides"
+    );
+
+    let tx = conn.unchecked_transaction()?;
+    let current_rules = crate::rules::compile_project_rules(&tx, project, config)
+        .context("validate current rule eligibility before override")?;
+    let current_rule = current_rules
+        .rules
+        .iter()
+        .find(|rule| rule.rule_id == rule_id)
+        .with_context(|| {
+            format!(
+                "compiled rule '{rule_id}' is stale and no longer eligible for project '{project}'"
+            )
+        })?;
+    ensure!(
+        artifact_rule.source_memory_id == current_rule.source_memory_id
+            && artifact_rule.predicate == current_rule.predicate,
+        "compiled rule '{rule_id}' is stale; wait for the pending worker rebuild before changing it"
+    );
+
+    execute_override_upsert(&tx, project, current_rule, update)?;
+    crate::memory::preference::compilation::enqueue_project(&tx, project)?;
+    tx.commit()?;
+    Ok(())
 }
 
-fn persist_rule_override(
+fn execute_override_upsert(
     conn: &Connection,
     project: &str,
     rule: &CompiledRule,
     update: RuleOverrideUpdate,
 ) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
-    let tx = conn.unchecked_transaction()?;
     match update {
-        RuleOverrideUpdate::Disabled(disabled) => tx.execute(
+        RuleOverrideUpdate::Disabled(disabled) => conn.execute(
             "INSERT INTO preference_rule_overrides
                  (project, rule_id, source_memory_id, disabled, action_override,
                   reason, updated_by, updated_at_epoch)
@@ -110,7 +137,7 @@ fn persist_rule_override(
                 now
             ],
         ),
-        RuleOverrideUpdate::Action(action) => tx.execute(
+        RuleOverrideUpdate::Action(action) => conn.execute(
             "INSERT INTO preference_rule_overrides
                  (project, rule_id, source_memory_id, disabled, action_override,
                   reason, updated_by, updated_at_epoch)
@@ -132,8 +159,6 @@ fn persist_rule_override(
         ),
     }
     .with_context(|| format!("persist override for compiled rule '{}'", rule.rule_id))?;
-    crate::memory::preference::compilation::enqueue_project(&tx, project)?;
-    tx.commit()?;
     Ok(())
 }
 

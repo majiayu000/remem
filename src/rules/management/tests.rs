@@ -137,13 +137,13 @@ fn independent_stale_updates_preserve_each_owned_override_column() -> Result<()>
     insert_cli_rule_fixture(&conn)?;
     let stale_rule = compile_and_write(&conn, &scoped.path)?.rules.remove(0);
 
-    persist_rule_override(
+    execute_override_upsert(
         &conn,
         PROJECT,
         &stale_rule,
         RuleOverrideUpdate::Disabled(true),
     )?;
-    persist_rule_override(
+    execute_override_upsert(
         &conn,
         PROJECT,
         &stale_rule,
@@ -161,8 +161,60 @@ fn independent_stale_updates_preserve_each_owned_override_column() -> Result<()>
 }
 
 #[test]
+fn stale_artifact_cannot_recreate_override_for_changed_predicate() -> Result<()> {
+    let scoped = ScopedTestDataDir::new("rules-cli-stale-artifact");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    insert_cli_rule_fixture(&conn)?;
+    compile_and_write(&conn, &scoped.path)?;
+    conn.execute(
+        "UPDATE memories SET content = 'Use npm, not bun', updated_at_epoch = 4 WHERE id = 1",
+        [],
+    )?;
+
+    let error = set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", true)
+        .expect_err("stale predicate must not recreate an override");
+    assert!(error.to_string().contains("is stale"), "{error:#}");
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM preference_rule_overrides",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(count, 0);
+    Ok(())
+}
+
+#[test]
+fn disabled_compilation_rejects_inert_override() -> Result<()> {
+    let scoped = ScopedTestDataDir::new("rules-cli-disabled-compilation");
+    crate::runtime_config::init_config()?;
+    let conn = db::open_db()?;
+    insert_cli_rule_fixture(&conn)?;
+    compile_and_write(&conn, &scoped.path)?;
+
+    let error = set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", true)
+        .expect_err("disabled compilation must reject an inert override");
+    assert!(
+        error.to_string().contains("rule compilation is disabled"),
+        "{error:#}"
+    );
+    let state: (i64, i64) = conn.query_row(
+        "SELECT
+           (SELECT COUNT(*) FROM preference_rule_overrides),
+           (SELECT COUNT(*) FROM jobs WHERE job_type = 'compile_rules')",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(state, (0, 0));
+    Ok(())
+}
+
+#[test]
 fn missing_or_unknown_rule_does_not_create_override_or_job() -> Result<()> {
     let scoped = ScopedTestDataDir::new("rules-cli-missing");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
     let conn = db::open_db()?;
     insert_cli_rule_fixture(&conn)?;
 
@@ -218,7 +270,9 @@ fn enqueue_failure_rolls_back_override() -> Result<()> {
     let error = set_rule_disabled(&conn, &scoped.path, PROJECT, "pref-1-1", true)
         .expect_err("invalid enqueue config must roll back the override");
     assert!(
-        error.to_string().contains("read rule compilation config"),
+        error
+            .to_string()
+            .contains("read rule compilation config before rule override"),
         "{error:#}"
     );
     let count: i64 = conn.query_row(
