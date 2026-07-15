@@ -111,6 +111,9 @@ impl RulePredicate {
                 if pattern.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty command_regex pattern");
                 }
+                if let Err(error) = regex::Regex::new(pattern) {
+                    bail!("compiled rule {rule_id} has invalid command_regex pattern: {error}");
+                }
                 if message.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty command_regex message");
                 }
@@ -179,5 +182,21 @@ mod tests {
             err.to_string().contains("unknown variant"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn artifact_validation_rejects_invalid_command_regex() {
+        let mut rule = package_manager_rule(RuleAction::Warn);
+        rule.predicate = RulePredicate::CommandRegex {
+            pattern: "(".to_string(),
+            message: "invalid regex fixture".to_string(),
+        };
+        let artifact = CompiledRulesArtifact::new(1234, vec![rule]);
+
+        let error = artifact
+            .validate()
+            .expect_err("invalid command regex must fail artifact validation");
+
+        assert!(error.to_string().contains("invalid command_regex pattern"));
     }
 }

@@ -22,6 +22,7 @@ use super::native_memory::check_native_memory_sync;
 use super::pack_imports::check_pack_imports;
 use super::procedure_exports::check_procedure_exports;
 use super::review_queue::check_review_queue;
+use super::rule_enforcement::{check_compiled_rules, check_rule_enforcement_capabilities};
 use super::runtime_config_check::check_runtime_config;
 use super::schema::{check_key_format, check_schema_migration};
 use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION};
@@ -91,6 +92,14 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, check_install_paths)?;
     push_check(&mut checks, &mut on_check, check_runtime_config)?;
+    push_check(&mut checks, &mut on_check, || {
+        check_compiled_rules(shared_db.conn())
+    })?;
+    push_checks(
+        &mut checks,
+        &mut on_check,
+        check_rule_enforcement_capabilities,
+    )?;
     push_checks(&mut checks, &mut on_check, || {
         check_embedding_provider(shared_db.conn())
     })?;

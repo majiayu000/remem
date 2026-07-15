@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::rules::artifact::{CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate};
-use crate::rules::store::{load_artifact_fail_open, ArtifactLoad};
+use crate::rules::store::{load_artifact_fail_open, ArtifactLoad, ArtifactLoadErrorKind};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EvaluationInput {
@@ -36,6 +38,42 @@ pub struct EvaluationDiagnostic {
     pub message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct CodedEvaluationOutcome {
+    pub outcome: EvaluationOutcome,
+    pub diagnostic_codes: Vec<EvaluationDiagnosticCode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum EvaluationDiagnosticCode {
+    ArtifactMissing,
+    ArtifactRead,
+    ArtifactParse,
+    ArtifactValidate,
+    RuleEvaluation,
+    HookInputRead,
+    Config,
+    HookInput,
+    OutputSerialize,
+}
+
+impl EvaluationDiagnosticCode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::ArtifactMissing => "artifact_missing",
+            Self::ArtifactRead => "artifact_read",
+            Self::ArtifactParse => "artifact_parse",
+            Self::ArtifactValidate => "artifact_validate",
+            Self::RuleEvaluation => "rule_evaluation",
+            Self::HookInputRead => "hook_input_read",
+            Self::Config => "config",
+            Self::HookInput => "hook_input",
+            Self::OutputSerialize => "output_serialize",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvaluationDiagnosticStatus {
     Error,
@@ -45,8 +83,16 @@ pub fn evaluate_artifact(
     artifact: &CompiledRulesArtifact,
     input: &EvaluationInput,
 ) -> EvaluationOutcome {
+    evaluate_artifact_with_codes(artifact, input).outcome
+}
+
+fn evaluate_artifact_with_codes(
+    artifact: &CompiledRulesArtifact,
+    input: &EvaluationInput,
+) -> CodedEvaluationOutcome {
     let mut matches = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut diagnostic_codes = Vec::new();
 
     for rule in &artifact.rules {
         if rule.override_state.disabled {
@@ -60,25 +106,34 @@ pub fn evaluate_artifact(
                 message: rule.predicate.message().to_string(),
             }),
             Ok(false) => {}
-            Err(message) => diagnostics.push(EvaluationDiagnostic {
-                status: EvaluationDiagnosticStatus::Error,
-                message,
-            }),
+            Err(message) => {
+                diagnostics.push(EvaluationDiagnostic {
+                    status: EvaluationDiagnosticStatus::Error,
+                    message,
+                });
+                diagnostic_codes.push(EvaluationDiagnosticCode::RuleEvaluation);
+            }
         }
     }
 
     if !diagnostics.is_empty() {
-        return EvaluationOutcome {
-            verdict: EvaluationVerdict::Allow,
-            matches: Vec::new(),
-            diagnostics,
+        return CodedEvaluationOutcome {
+            outcome: EvaluationOutcome {
+                verdict: EvaluationVerdict::Allow,
+                matches: Vec::new(),
+                diagnostics,
+            },
+            diagnostic_codes,
         };
     }
 
-    EvaluationOutcome {
-        verdict: verdict_for_matches(&matches),
-        matches,
-        diagnostics,
+    CodedEvaluationOutcome {
+        outcome: EvaluationOutcome {
+            verdict: verdict_for_matches(&matches),
+            matches,
+            diagnostics,
+        },
+        diagnostic_codes,
     }
 }
 
@@ -86,16 +141,35 @@ pub fn evaluate_artifact_file(
     path: impl AsRef<Path>,
     input: &EvaluationInput,
 ) -> EvaluationOutcome {
+    evaluate_artifact_file_with_codes(path, input).outcome
+}
+
+pub(crate) fn evaluate_artifact_file_with_codes(
+    path: impl AsRef<Path>,
+    input: &EvaluationInput,
+) -> CodedEvaluationOutcome {
     match load_artifact_fail_open(path) {
-        ArtifactLoad::Loaded(artifact) => evaluate_artifact(&artifact, input),
-        ArtifactLoad::FailOpen { message, .. } => EvaluationOutcome {
-            verdict: EvaluationVerdict::Allow,
-            matches: Vec::new(),
-            diagnostics: vec![EvaluationDiagnostic {
-                status: EvaluationDiagnosticStatus::Error,
-                message,
-            }],
+        ArtifactLoad::Loaded(artifact) => evaluate_artifact_with_codes(&artifact, input),
+        ArtifactLoad::FailOpen { kind, message } => CodedEvaluationOutcome {
+            outcome: EvaluationOutcome {
+                verdict: EvaluationVerdict::Allow,
+                matches: Vec::new(),
+                diagnostics: vec![EvaluationDiagnostic {
+                    status: EvaluationDiagnosticStatus::Error,
+                    message,
+                }],
+            },
+            diagnostic_codes: vec![diagnostic_code_for_artifact_error(kind)],
         },
+    }
+}
+
+fn diagnostic_code_for_artifact_error(kind: ArtifactLoadErrorKind) -> EvaluationDiagnosticCode {
+    match kind {
+        ArtifactLoadErrorKind::Missing => EvaluationDiagnosticCode::ArtifactMissing,
+        ArtifactLoadErrorKind::Read => EvaluationDiagnosticCode::ArtifactRead,
+        ArtifactLoadErrorKind::Parse => EvaluationDiagnosticCode::ArtifactParse,
+        ArtifactLoadErrorKind::Validate => EvaluationDiagnosticCode::ArtifactValidate,
     }
 }
 
