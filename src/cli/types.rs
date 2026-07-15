@@ -15,7 +15,7 @@ pub(in crate::cli) use super::query_types::{
 pub(in crate::cli) use super::review_types::{
     GraphReviewAction, ReviewAction, ReviewBatchFilterArgs,
 };
-pub(in crate::cli) use super::rule_types::{RuleActionArg, RulesAction};
+pub(in crate::cli) use super::rule_types::{RuleActionArg, RuleHostArg, RulesAction};
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]

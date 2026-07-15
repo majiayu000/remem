@@ -451,7 +451,7 @@ fn set_create_mode(options: &mut OpenOptions) {
 #[cfg(not(unix))]
 fn set_create_mode(_options: &mut OpenOptions) {}
 
-fn set_private_permissions(path: &Path) {
+pub(crate) fn set_private_permissions(path: &Path) {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

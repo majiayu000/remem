@@ -112,7 +112,7 @@ impl InstallHost for ClaudeHost {
                 claude_json_path().display()
             ),
             format!(
-                "  hooks  -> {} (SessionStart/UserPromptSubmit/PostToolUse/PreCompact/Stop)",
+                "  hooks  -> {} (SessionStart/UserPromptSubmit/PreToolUse/PostToolUse/PreCompact/Stop)",
                 settings_path().display()
             ),
             format!("  binary -> {}", bin),

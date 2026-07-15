@@ -465,7 +465,7 @@ mod tests {
         });
 
         assert!(matches!(check.status, Status::Warn));
-        assert!(check.detail.contains("1/5 registered"), "{}", check.detail);
+        assert!(check.detail.contains("1/6 registered"), "{}", check.detail);
         Ok(())
     }
 
