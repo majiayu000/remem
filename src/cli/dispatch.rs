@@ -10,7 +10,7 @@ use super::actions::{
     run_eval_graph_decision, run_eval_local, run_eval_provider_comparison, run_eval_weight_grid,
     run_export, run_governance, run_graph_review, run_import, run_ingest_sessions_cli,
     run_memory_action, run_merge_preferences, run_model, run_pending, run_preferences,
-    run_procedures, run_raw, run_reroute, run_review, run_search, run_show, run_status,
+    run_procedures, run_raw, run_reroute, run_review, run_rules, run_search, run_show, run_status,
     run_timeline, run_usage, run_user, run_why, run_workstreams, GovernanceCliRequest,
     RerouteCliRequest,
 };
@@ -87,6 +87,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             context::claude_memory::sync_to_claude_memory(&conn, &cwd, &project)?;
         }
         Commands::Preferences { action } => run_preferences(action)?,
+        Commands::Rules { action } => run_rules(action)?,
         Commands::User { action } => run_user(action)?,
         Commands::Memory { action } => run_memory_action(action)?,
         Commands::Pending { action } => run_pending(action)?,
