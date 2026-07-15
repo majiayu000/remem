@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.208` for #819: memory test fixtures now execute
+  the canonical v020 FTS migration instead of copying active-only triggers;
+  regression coverage keeps stale and archived rows indexed while query
+  predicates control visibility, and verifies status transitions, deletion,
+  and trigger-schema parity with the production migration chain.
 - Staged source version `0.5.207` for #817: observation XML parsing now
   fails closed when the model omits `<type>` or returns an unknown value,
   drops the invalid observation before it can become candidate support
