@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.209` for #818: job enqueue, claim, lease
+  transitions, migration reconciliation, and failure recovery now enforce
+  database-atomic active identities and fail closed on conflicts while
+  preserving actionable diagnostics and deterministic Dream replay semantics.
 - Staged source version `0.5.208` for #819: memory test fixtures now execute
   the canonical v020 FTS migration instead of copying active-only triggers;
   regression coverage keeps stale and archived rows indexed while query
