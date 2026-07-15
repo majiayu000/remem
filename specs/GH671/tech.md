@@ -26,8 +26,8 @@ Authoritative contract:
 
 ## Proposed Design
 
-Phase 1 task-ledger status: `SP671-T1` through `SP671-T3`, `SP671-T6`, and
-`SP671-T7` are recorded as implemented.
+Phase 1 task-ledger status: `SP671-T1` through `SP671-T3` and `SP671-T5`
+through `SP671-T7` are recorded as implemented.
 The state foundation, versioned artifact/evaluator, canonical preference
 reinforcement, deterministic compiler, lifecycle-triggered non-lossy enqueue
 path plus periodic convergence sweeps, same-predicate override transfer,
@@ -35,8 +35,8 @@ persisted low-risk/source-trust/review eligibility, project-over-global
 precedence, stable diagnostics, worker-only artifact writes, CLI rule
 management, hook dispatch, doctor reporting, repeated-correction fixtures, and
 measured hook-latency evidence are present. The task ledger still leaves
-`SP671-T4` and `SP671-T5` unchecked; `SP671-T8` owns their status reconciliation
-along with documentation and final acceptance.
+`SP671-T4` unchecked; `SP671-T8` owns its status reconciliation along with
+documentation and final acceptance.
 
 GH-813 identified one remaining T3 eligibility correction: the current global
 branch accepts any non-null `owner_scope`; it must require the canonical
@@ -77,16 +77,20 @@ contract is complete.
   low-risk directive `git push --force`. Evaluation uses the existing shell
   tokenizer and a typed Git-push argument parser. Unquoted newlines and command
   groups form executable segments, while quoted or echoed command text stays
-  inert. Exact `--force`, standalone `-f`, `f` in valid short-option clusters,
-  and a non-deletion leading-`+` refspec match; the parser honors the `--`
-  terminator and option arity so option values, deletions, remote names,
+  inert, unquoted backslash-newline is removed as line continuation, and
+  heredoc bodies are excluded. Exact `--force`, standalone `-f`, `f` in valid
+  short-option clusters, and a non-deletion leading-`+` refspec match; ordinary
+  positional arguments do not. The parser honors the `--` terminator and
+  option arity so option values, deletions, remote names,
   `--force-with-lease`, and arbitrary natural-language commands fail closed.
 - The project-root marker fast path is used only when Git discovery has no
   environment override and the nearest `.git` marker is a plain worktree
   layout. Explicit layouts, discovery controls such as
-  `GIT_CEILING_DIRECTORIES`, worktree-affecting Git config, and malformed inner
-  markers delegate to Git so project identity matches Git's own toplevel or
-  fails closed instead of falling through to a parent marker.
+  `GIT_CEILING_DIRECTORIES`, command-scope config injection, local/default
+  global/system/XDG worktree-affecting Git config, and malformed inner markers
+  delegate to Git so project identity matches Git's own toplevel or fails
+  closed instead of falling through to a parent marker. Plain config keeps the
+  no-subprocess marker path.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.
@@ -163,7 +167,7 @@ derived artifact.
       policy failure, and critical cross-state cases without SQL text snapshots.
 - [ ] CLI tests: `rules list`, `disable`, `enable`, and `set-action` across
       artifact deletion and recompile.
-- [ ] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
+- [x] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
       PostToolUse capture-only behavior, and Codex unsupported enforcement.
 - [ ] Doctor tests: human and JSON output for count, compile time, host
       capability, and last error.

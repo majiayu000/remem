@@ -30,8 +30,8 @@ Tracking:
 - The current tree also contains rule CLI management, pre-execution Claude
   hook dispatch with honest Codex capability reporting, doctor diagnostics,
   repeated-correction fixtures, and measured hook-latency evidence. The GH-671
-  task ledger records T6 and T7 complete but still leaves T4 and T5 unchecked;
-  T8 owns that task-status and final-acceptance reconciliation.
+  task ledger records T5, T6, and T7 complete but still leaves T4 unchecked;
+  T8 owns the remaining task-status and final-acceptance reconciliation.
 - The current compiler still accepts any non-null `owner_scope` for a global
   row. GH-813 tightens that existing gap to the canonical
   `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
@@ -103,8 +103,12 @@ Artifact v2 additionally supports:
 - `git_push_force_forbidden`: structurally parses shell command segments and
   Git push arguments. It matches exact `--force`, standalone `-f`, or `f` in a
   valid short-option cluster before the `--` terminator, while honoring `-o`
-  and long-option arity. It does not match option values, positional arguments,
-  or `--force-with-lease`.
+  and long-option arity. Ordinary positional arguments do not match, but a
+  non-deletion refspec with a leading `+` does because Git treats that prefix
+  as a per-ref force update. Option values, remote names, deletion refspecs,
+  and `--force-with-lease` remain non-matches. Shell evaluation removes
+  unquoted backslash-newline continuations, treats only command-position brace
+  tokens as groups, and excludes heredoc bodies from executable segments.
 
 Nothing else. Further kinds require a spec update.
 
@@ -232,11 +236,18 @@ hook-side writes.
   forbidden-command allowlist contains only `git push --force` and compiles to
   the structural `git_push_force_forbidden` predicate.
 - Project-root marker discovery skips the fast path whenever explicit Git
-  layout or discovery-control environment is present, including
-  `GIT_CEILING_DIRECTORIES`, so hook identity follows Git's own toplevel result.
+  layout, discovery controls, command-scope config injection, or local/default
+  Git config can change worktree resolution. This includes
+  `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`, paired
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*` inputs, local `core.worktree`, and
+  global/system/XDG config containing worktree-affecting values or includes.
+  Plain config stays on the marker fast path so hooks do not restore an
+  unconditional Git subprocess.
 - Latency evidence compares repeated interleaved CLI subprocess cohorts and
   derives the acceptance tolerance from observed median absolute deviation;
-  it must not pass through a fixed, unmeasured noise floor.
+  it must not pass through a fixed, unmeasured noise floor. The final recorded
+  artifact measured baseline p95 `6.253209 ms`, enabled p95 `6.428708 ms`,
+  delta `0.175499 ms`, and MAD `0.228417 ms`.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan

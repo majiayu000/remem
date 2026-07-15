@@ -137,6 +137,11 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "git push origin +refs/heads/main:refs/heads/main --",
         "git push --repo origin +HEAD:main",
         "git push origin -- +HEAD:main",
+        "git push \\\n--force",
+        "cat <<EOF\ngit push --force\nEOF\ngit push --force",
+        "echo safe # <<EOF\ngit push --force",
+        "cat <<< 'git push --force'\ngit push --force",
+        "cat <<A <<'B'\nfirst\nA\ngit push --force\nB\ngit push --force",
     ] {
         let outcome = remem::rules::evaluate_artifact(
             &artifact,
@@ -161,6 +166,12 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "git push origin :main",
         "git push -o +main:main origin main",
         "git push --push-option +main:main origin main",
+        "echo {git push --force}",
+        "echo { git push --force; }",
+        "cat <<EOF\ngit push --force\nEOF",
+        "cat <<'EOF'\ngit push --force\nEOF",
+        "cat <<-EOF\n\tgit push --force\n\tEOF",
+        "cat <<< 'git push --force'",
     ] {
         let outcome = remem::rules::evaluate_artifact(
             &artifact,
@@ -334,6 +345,7 @@ fn hook_input(project: &Path, session_id: &str, command: &str) -> String {
 struct HookProcess {
     data_dir: PathBuf,
     config_path: PathBuf,
+    home_dir: PathBuf,
     project_dir: PathBuf,
 }
 
@@ -345,7 +357,9 @@ struct HookRun {
 impl HookProcess {
     fn new(root: &Path, enabled: bool, project_dir: &Path) -> Result<Self> {
         let data_dir = root.join("data");
+        let home_dir = root.join("home");
         std::fs::create_dir_all(&data_dir)?;
+        std::fs::create_dir_all(home_dir.join(".config/git"))?;
         let config_path = root.join("config.toml");
         std::fs::write(
             &config_path,
@@ -356,6 +370,7 @@ impl HookProcess {
         Ok(Self {
             data_dir,
             config_path,
+            home_dir,
             project_dir: project_dir.to_path_buf(),
         })
     }
@@ -366,6 +381,9 @@ impl HookProcess {
             .args(["rules", "eval", "--host", "claude-code"])
             .env("REMEM_DATA_DIR", &self.data_dir)
             .env("REMEM_CONFIG", &self.config_path)
+            .env("HOME", &self.home_dir)
+            .env("XDG_CONFIG_HOME", self.home_dir.join(".config"))
+            .env("GIT_CONFIG_NOSYSTEM", "1")
             .env_remove("REMEM_DISABLE_HOOKS")
             .stdin(Stdio::piped())
             .stdout(if capture_stdout {

@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -441,6 +442,7 @@ fn trailer_arg_matches(value: &str, trailer: &str) -> bool {
 }
 
 fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
+    let command = shell_without_heredoc_bodies(command)?;
     let mut segments = Vec::new();
     let mut tokens = Vec::new();
     let mut current = String::new();
@@ -460,12 +462,14 @@ fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
                     in_token = true;
                 }
                 '\\' => {
-                    in_token = true;
                     if let Some(next) = chars.next() {
-                        current.push(next);
+                        if next != '\n' {
+                            current.push(next);
+                            in_token = true;
+                        }
                     }
                 }
-                ';' | '|' | '&' | '\n' | '(' | ')' | '{' | '}' => {
+                ';' | '|' | '&' | '\n' | '(' | ')' => {
                     push_token(&mut tokens, &mut current, &mut in_token);
                     push_segment(&mut segments, &mut tokens);
                     if matches!(ch, ';' | '|' | '&')
@@ -474,6 +478,11 @@ fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
                         chars.next();
                     }
                 }
+                '{' | '}'
+                    if tokens.is_empty()
+                        && chars.peek().is_none_or(|next| {
+                            next.is_whitespace() || matches!(next, ';' | '|' | '&' | '(' | ')')
+                        }) => {}
                 ch if ch.is_whitespace() => {
                     push_token(&mut tokens, &mut current, &mut in_token);
                 }
@@ -493,7 +502,9 @@ fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
                 '"' => quote = ShellQuote::None,
                 '\\' => {
                     if let Some(next) = chars.next() {
-                        current.push(next);
+                        if next != '\n' {
+                            current.push(next);
+                        }
                     }
                 }
                 _ => current.push(ch),
@@ -507,6 +518,140 @@ fn shell_command_segments(command: &str) -> Result<Vec<Vec<String>>, String> {
     push_token(&mut tokens, &mut current, &mut in_token);
     push_segment(&mut segments, &mut tokens);
     Ok(segments)
+}
+
+fn shell_without_heredoc_bodies(command: &str) -> Result<String, String> {
+    let mut executable = String::with_capacity(command.len());
+    let mut pending = VecDeque::new();
+    for line in command.split_inclusive('\n') {
+        if let Some((delimiter, strip_tabs)) = pending.front() {
+            let candidate = line.strip_suffix('\n').unwrap_or(line);
+            let candidate = candidate.strip_suffix('\r').unwrap_or(candidate);
+            let candidate = if *strip_tabs {
+                candidate.trim_start_matches('\t')
+            } else {
+                candidate
+            };
+            if candidate == delimiter {
+                pending.pop_front();
+            }
+            continue;
+        }
+        executable.push_str(line);
+        pending.extend(heredoc_declarations(line)?);
+    }
+    Ok(executable)
+}
+
+fn heredoc_declarations(line: &str) -> Result<Vec<(String, bool)>, String> {
+    let mut declarations = Vec::new();
+    let mut chars = line.chars().peekable();
+    let mut quote = ShellQuote::None;
+    let mut at_word_start = true;
+    while let Some(ch) = chars.next() {
+        match quote {
+            ShellQuote::Single => {
+                if ch == '\'' {
+                    quote = ShellQuote::None;
+                }
+            }
+            ShellQuote::Double => match ch {
+                '"' => quote = ShellQuote::None,
+                '\\' => {
+                    chars.next();
+                }
+                _ => {}
+            },
+            ShellQuote::None => match ch {
+                '#' if at_word_start => break,
+                '\'' => {
+                    quote = ShellQuote::Single;
+                    at_word_start = false;
+                }
+                '"' => {
+                    quote = ShellQuote::Double;
+                    at_word_start = false;
+                }
+                '\\' => {
+                    chars.next();
+                    at_word_start = false;
+                }
+                '<' if chars.peek() == Some(&'<') => {
+                    chars.next();
+                    if chars.peek() == Some(&'<') {
+                        chars.next();
+                        at_word_start = true;
+                        continue;
+                    }
+                    let strip_tabs = chars.next_if_eq(&'-').is_some();
+                    while chars.next_if(|next| matches!(next, ' ' | '\t')).is_some() {}
+                    declarations.push((heredoc_delimiter(&mut chars)?, strip_tabs));
+                    at_word_start = false;
+                }
+                ch if ch.is_whitespace() || matches!(ch, ';' | '|' | '&' | '(' | ')') => {
+                    at_word_start = true;
+                }
+                _ => at_word_start = false,
+            },
+        }
+    }
+    Ok(declarations)
+}
+
+fn heredoc_delimiter(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Result<String, String> {
+    let mut delimiter = String::new();
+    let mut quote = ShellQuote::None;
+    let mut present = false;
+    while let Some(&ch) = chars.peek() {
+        if quote == ShellQuote::None
+            && (ch.is_whitespace() || matches!(ch, ';' | '|' | '&' | '(' | ')' | '<' | '>'))
+        {
+            break;
+        }
+        let value = chars.next().ok_or("missing peeked heredoc delimiter")?;
+        match quote {
+            ShellQuote::None => match value {
+                '\'' => {
+                    quote = ShellQuote::Single;
+                    present = true;
+                }
+                '"' => {
+                    quote = ShellQuote::Double;
+                    present = true;
+                }
+                '\\' => {
+                    let escaped = chars
+                        .next()
+                        .ok_or("missing heredoc delimiter after escape")?;
+                    delimiter.push(escaped);
+                    present = true;
+                }
+                value => {
+                    delimiter.push(value);
+                    present = true;
+                }
+            },
+            ShellQuote::Single => match value {
+                '\'' => quote = ShellQuote::None,
+                value => delimiter.push(value),
+            },
+            ShellQuote::Double => match value {
+                '"' => quote = ShellQuote::None,
+                '\\' => delimiter.push(
+                    chars
+                        .next()
+                        .ok_or("missing quoted heredoc delimiter after escape")?,
+                ),
+                value => delimiter.push(value),
+            },
+        }
+    }
+    if !present || quote != ShellQuote::None {
+        return Err("invalid heredoc delimiter".to_string());
+    }
+    Ok(delimiter)
 }
 
 fn push_token(tokens: &mut Vec<String>, current: &mut String, in_token: &mut bool) {
@@ -543,258 +688,4 @@ fn verdict_for_matches(matches: &[RuleMatch]) -> EvaluationVerdict {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::rules::artifact::{CompiledRule, RuleOverrideState};
-    use crate::rules::test_support::package_manager_rule;
-
-    fn forbidden_trailer_rule() -> CompiledRule {
-        CompiledRule {
-            rule_id: "pref-456-1".to_string(),
-            source_memory_id: 456,
-            reinforcement_count: 4,
-            action: RuleAction::Block,
-            override_state: RuleOverrideState {
-                disabled: false,
-                action_override: None,
-            },
-            predicate: RulePredicate::CommitTrailerForbidden {
-                trailer: "AI-generated-by".to_string(),
-                message: "Do not add AI-generated commit trailers".to_string(),
-            },
-        }
-    }
-
-    fn forbidden_force_push_rule() -> CompiledRule {
-        CompiledRule {
-            rule_id: "pref-789-1".to_string(),
-            source_memory_id: 789,
-            reinforcement_count: 5,
-            action: RuleAction::Block,
-            override_state: RuleOverrideState {
-                disabled: false,
-                action_override: None,
-            },
-            predicate: RulePredicate::GitPushForceForbidden {
-                message: "Do not force push".to_string(),
-            },
-        }
-    }
-
-    #[test]
-    fn evaluator_is_deterministic_for_same_input_and_artifact() {
-        let artifact = CompiledRulesArtifact::new(
-            99,
-            vec![
-                package_manager_rule(RuleAction::Warn),
-                forbidden_trailer_rule(),
-            ],
-        );
-        let input = EvaluationInput {
-            command: "npm install && git commit -m init --trailer AI-generated-by=bot".to_string(),
-        };
-
-        let first = evaluate_artifact(&artifact, &input);
-        let second = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(first, second);
-        assert_eq!(first.verdict, EvaluationVerdict::Block);
-        assert_eq!(first.matches.len(), 2);
-        assert!(first.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn evaluator_skips_disabled_rules_and_warns_by_default() {
-        let mut disabled = package_manager_rule(RuleAction::Warn);
-        disabled.override_state.disabled = true;
-        let artifact =
-            CompiledRulesArtifact::new(99, vec![disabled, package_manager_rule(RuleAction::Warn)]);
-        let input = EvaluationInput {
-            command: "npm add left-pad".to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Warn);
-        assert_eq!(outcome.matches.len(), 1);
-        assert_eq!(outcome.matches[0].rule_id, "pref-123-1");
-    }
-
-    #[test]
-    fn invalid_regex_fails_open_for_that_rule() {
-        let artifact = CompiledRulesArtifact::new(
-            99,
-            vec![CompiledRule {
-                predicate: RulePredicate::CommandRegex {
-                    pattern: "(".to_string(),
-                    message: "broken".to_string(),
-                },
-                ..package_manager_rule(RuleAction::Block)
-            }],
-        );
-        let input = EvaluationInput {
-            command: "npm install".to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
-        assert!(outcome.matches.is_empty());
-        assert_eq!(outcome.diagnostics.len(), 1);
-        assert!(outcome.diagnostics[0].message.contains("invalid regex"));
-    }
-
-    #[test]
-    fn legacy_artifact_retains_unicode_word_boundary_semantics() {
-        let mut artifact =
-            CompiledRulesArtifact::new(99, vec![package_manager_rule(RuleAction::Warn)]);
-        artifact.version = LEGACY_ARTIFACT_VERSION;
-        artifact.rules[0].predicate = RulePredicate::CommandRegex {
-            pattern: r"(^|\s)npm\s+install\b".to_string(),
-            message: "legacy unicode boundary fixture".to_string(),
-        };
-
-        let outcome = evaluate_artifact(
-            &artifact,
-            &EvaluationInput {
-                command: "npm installβ".to_string(),
-            },
-        );
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
-        assert!(outcome.matches.is_empty());
-        assert!(outcome.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn commit_trailer_rule_handles_git_global_options() {
-        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
-        let input = EvaluationInput {
-            command: "git -C /repo -c user.email=x commit -m init --trailer AI-generated-by=bot"
-                .to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Block);
-        assert_eq!(outcome.matches.len(), 1);
-        assert!(outcome.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn commit_trailer_rule_ignores_message_text_mentions() {
-        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
-        let input = EvaluationInput {
-            command: "git commit -m 'remove AI-generated-by support'".to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
-        assert!(outcome.matches.is_empty());
-        assert!(outcome.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn commit_trailer_rule_requires_git_as_segment_command() {
-        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
-        let input = EvaluationInput {
-            command: "echo git commit --trailer AI-generated-by=bot".to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
-        assert!(outcome.matches.is_empty());
-        assert!(outcome.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn commit_trailer_rule_skips_message_option_values() {
-        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_trailer_rule()]);
-        let input = EvaluationInput {
-            command: "git commit -m --trailer AI-generated-by=bot".to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
-        assert!(outcome.matches.is_empty());
-        assert!(outcome.diagnostics.is_empty());
-    }
-
-    #[test]
-    fn force_push_rule_structurally_matches_exact_options() {
-        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
-        for command in [
-            "git push --force",
-            "git push origin HEAD:main -f",
-            "git push -uf origin main",
-            "git push -foo origin main",
-            "git -c push.default=current push -u origin main --force",
-            "cargo test && git push origin main -f",
-        ] {
-            let outcome = evaluate_artifact(
-                &artifact,
-                &EvaluationInput {
-                    command: command.to_string(),
-                },
-            );
-            assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
-            assert_eq!(outcome.matches.len(), 1, "{command}");
-            assert!(outcome.diagnostics.is_empty(), "{command}");
-        }
-    }
-
-    #[test]
-    fn force_push_rule_rejects_values_terminators_and_similar_options() {
-        let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
-        for command in [
-            "git push -- origin -f",
-            "git push -o -f origin main",
-            "git push --push-option -f origin main",
-            "git push -vo -f origin main",
-            "git push -of origin main",
-            "git push origin main --force-with-lease",
-            "echo git push --force",
-            "git push origin main",
-        ] {
-            let outcome = evaluate_artifact(
-                &artifact,
-                &EvaluationInput {
-                    command: command.to_string(),
-                },
-            );
-            assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
-            assert!(outcome.matches.is_empty(), "{command}");
-            assert!(outcome.diagnostics.is_empty(), "{command}");
-        }
-    }
-
-    #[test]
-    fn evaluation_error_fails_open_for_whole_artifact() {
-        let artifact = CompiledRulesArtifact::new(
-            99,
-            vec![
-                CompiledRule {
-                    predicate: RulePredicate::CommandRegex {
-                        pattern: "(".to_string(),
-                        message: "broken".to_string(),
-                    },
-                    ..package_manager_rule(RuleAction::Block)
-                },
-                forbidden_trailer_rule(),
-            ],
-        );
-        let input = EvaluationInput {
-            command: "git commit --trailer AI-generated-by=bot".to_string(),
-        };
-
-        let outcome = evaluate_artifact(&artifact, &input);
-
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
-        assert!(outcome.matches.is_empty());
-        assert_eq!(outcome.diagnostics.len(), 1);
-        assert!(outcome.diagnostics[0].message.contains("invalid regex"));
-    }
-}
+mod tests;

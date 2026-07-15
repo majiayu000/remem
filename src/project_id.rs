@@ -28,7 +28,7 @@ pub fn canonical_project_root(cwd: &str) -> PathBuf {
     let canonical_cwd = canonical_project_path(cwd);
     canonical_project_root_with_resolver(
         &canonical_cwd,
-        git_environment_requires_resolver(),
+        git_environment_requires_resolver() || default_git_config_requires_resolver(),
         crate::git_util::resolve_toplevel,
     )
 }
@@ -65,11 +65,61 @@ fn git_environment_requires_resolver_with(mut is_set: impl FnMut(&str) -> bool) 
         "GIT_CONFIG",
         "GIT_CONFIG_GLOBAL",
         "GIT_CONFIG_SYSTEM",
-        "GIT_CONFIG_NOSYSTEM",
         "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_PARAMETERS",
     ]
     .into_iter()
     .any(&mut is_set)
+}
+
+fn default_git_config_requires_resolver() -> bool {
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let xdg = std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from);
+    let program_data = std::env::var_os("PROGRAMDATA").map(PathBuf::from);
+    let system_paths = if cfg!(unix) && std::env::var_os("GIT_CONFIG_NOSYSTEM").is_none() {
+        vec![PathBuf::from("/etc/gitconfig")]
+    } else {
+        Vec::new()
+    };
+    let paths = default_git_config_paths_with(
+        home.as_deref(),
+        xdg.as_deref(),
+        program_data.as_deref(),
+        system_paths,
+    );
+    git_config_paths_require_resolver(&paths)
+}
+
+fn default_git_config_paths_with(
+    home: Option<&std::path::Path>,
+    xdg: Option<&std::path::Path>,
+    program_data: Option<&std::path::Path>,
+    system_paths: impl IntoIterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
+    let mut paths = system_paths.into_iter().collect::<Vec<_>>();
+    if let Some(program_data) = program_data {
+        paths.push(program_data.join("Git/config"));
+    }
+    if let Some(xdg) = xdg.filter(|path| !path.as_os_str().is_empty()) {
+        paths.push(xdg.join("git/config"));
+    } else if let Some(home) = home {
+        paths.push(home.join(".config/git/config"));
+    }
+    if let Some(home) = home {
+        paths.push(home.join(".gitconfig"));
+    }
+    paths
+}
+
+fn git_config_paths_require_resolver(paths: &[PathBuf]) -> bool {
+    paths
+        .iter()
+        .any(|path| match std::fs::read_to_string(path) {
+            Ok(contents) => git_config_requires_resolver(&contents),
+            Err(error) => error.kind() != std::io::ErrorKind::NotFound,
+        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -349,8 +399,8 @@ mod tests {
             "GIT_CONFIG",
             "GIT_CONFIG_GLOBAL",
             "GIT_CONFIG_SYSTEM",
-            "GIT_CONFIG_NOSYSTEM",
             "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_PARAMETERS",
         ] {
             assert!(
                 git_environment_requires_resolver_with(|candidate| candidate == variable),
@@ -368,6 +418,43 @@ mod tests {
         assert!(git_config_requires_resolver(
             "[core]\n\tworktree = ../configured\n"
         ));
+    }
+
+    #[test]
+    fn default_global_xdg_and_system_configs_can_require_the_git_resolver() -> anyhow::Result<()> {
+        let root = unique_temp_path("default-config-sources");
+        let home = root.join("home");
+        let xdg = root.join("xdg");
+        let system = root.join("system.gitconfig");
+        let global = home.join(".gitconfig");
+        let xdg_config = xdg.join("git/config");
+        std::fs::create_dir_all(xdg.join("git"))?;
+        std::fs::create_dir_all(&home)?;
+        for path in [&global, &xdg_config, &system] {
+            std::fs::write(path, "[user]\n\tname = Test\n")?;
+        }
+        let paths = default_git_config_paths_with(
+            Some(home.as_path()),
+            Some(xdg.as_path()),
+            None,
+            [system.clone()],
+        );
+
+        assert!(!git_config_paths_require_resolver(&paths));
+        for (source, path) in [
+            ("global", &global),
+            ("xdg", &xdg_config),
+            ("system", &system),
+        ] {
+            std::fs::write(path, "[core]\n\tworktree = /tmp/configured\n")?;
+            assert!(
+                git_config_paths_require_resolver(&paths),
+                "{source} core.worktree must require Git resolution"
+            );
+            std::fs::write(path, "[user]\n\tname = Test\n")?;
+        }
+        std::fs::remove_dir_all(root)?;
+        Ok(())
     }
 
     #[test]
