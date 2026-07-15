@@ -27,10 +27,11 @@ Tracking:
   plus periodic convergence sweeps; same-predicate override transfer across
   candidate and cleanup supersession; stable diagnostics and artifacts; and
   worker-only artifact writes.
-- GH671-T4 through GH671-T7 add rule CLI management, pre-execution Claude
+- The current tree also contains rule CLI management, pre-execution Claude
   hook dispatch with honest Codex capability reporting, doctor diagnostics,
-  repeated-correction fixtures, and measured hook-latency evidence. The T8
-  documentation and final-acceptance reconciliation remains pending.
+  repeated-correction fixtures, and measured hook-latency evidence. The GH-671
+  task ledger records T6 and T7 complete but still leaves T4 and T5 unchecked;
+  T8 owns that task-status and final-acceptance reconciliation.
 - The current compiler still accepts any non-null `owner_scope` for a global
   row. GH-813 tightens that existing gap to the canonical
   `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
