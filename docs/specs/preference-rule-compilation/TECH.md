@@ -221,6 +221,7 @@ hook-side writes.
   the derived artifact. The v2 classifier recognizes only closed package-manager,
   commit-trailer, and exact low-risk forbidden-command directives; the initial
   forbidden-command allowlist contains only `git push --force`.
+  Its generated predicate also covers Git's equivalent `git push -f` spelling.
 - Latency evidence compares repeated interleaved CLI subprocess cohorts and
   derives the acceptance tolerance from observed median absolute deviation;
   it must not pass through a fixed, unmeasured noise floor.

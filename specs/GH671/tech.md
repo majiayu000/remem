@@ -75,6 +75,7 @@ contract is complete.
   Unicode semantics until the worker regenerates the derived artifact.
 - The v2 classifier may emit `command_regex` for an exact, closed allowlist of
   low-risk forbidden commands. T7 initially covers only `git push --force`;
+  its generated predicate also covers Git's equivalent `git push -f` spelling.
   arbitrary natural-language commands remain unclassifiable and fail closed.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;

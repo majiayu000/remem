@@ -22,7 +22,7 @@
       "correction": "Never run git push --force",
       "source_memory_id": 67103,
       "reinforcement_count": 5,
-      "violating_command": "git push --force",
+      "violating_command": "git push -f",
       "compliant_command": "git push"
     }
   ]
