@@ -107,7 +107,7 @@ fn update_rule_override(
     );
 
     execute_override_upsert(&tx, project, current_rule, update)?;
-    crate::memory::preference::compilation::enqueue_project(&tx, project)?;
+    crate::memory::preference::compilation::enqueue_project_required(&tx, project)?;
     tx.commit()?;
     Ok(())
 }

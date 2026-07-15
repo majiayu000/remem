@@ -178,16 +178,23 @@ fn known_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
 }
 
 fn enqueue_projects(conn: &Connection, projects: impl IntoIterator<Item = String>) -> Result<()> {
+    let config = crate::runtime_config::rule_compilation_config()
+        .context("read rule compilation config before enqueue")?;
+    if !config.enabled {
+        return Ok(());
+    }
+    enqueue_projects_enabled(conn, projects)
+}
+
+fn enqueue_projects_enabled(
+    conn: &Connection,
+    projects: impl IntoIterator<Item = String>,
+) -> Result<()> {
     let projects = projects
         .into_iter()
         .filter(|project| !project.trim().is_empty())
         .collect::<std::collections::BTreeSet<_>>();
     if projects.is_empty() {
-        return Ok(());
-    }
-    let config = crate::runtime_config::rule_compilation_config()
-        .context("read rule compilation config before enqueue")?;
-    if !config.enabled {
         return Ok(());
     }
     for project in projects {
@@ -205,8 +212,8 @@ fn enqueue_projects(conn: &Connection, projects: impl IntoIterator<Item = String
     Ok(())
 }
 
-pub(crate) fn enqueue_project(conn: &Connection, project: &str) -> Result<()> {
-    enqueue_projects(conn, std::iter::once(project.to_string()))
+pub(crate) fn enqueue_project_required(conn: &Connection, project: &str) -> Result<()> {
+    enqueue_projects_enabled(conn, std::iter::once(project.to_string()))
 }
 
 #[cfg(test)]
