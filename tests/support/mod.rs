@@ -122,33 +122,6 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX idx_memory_embeddings_profile_memory_id
             ON memory_embeddings(model, dimensions, memory_id);
 
-        CREATE VIRTUAL TABLE memories_fts USING fts5(
-            title, content, search_context,
-            content='memories',
-            content_rowid='id',
-            tokenize='trigram'
-        );
-
-        CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-            INSERT INTO memories_fts(rowid, title, content, search_context)
-            SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
-            WHERE new.status = 'active';
-        END;
-
-        CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-            INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
-            SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
-            WHERE old.status = 'active';
-            INSERT INTO memories_fts(rowid, title, content, search_context)
-            SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
-            WHERE new.status = 'active';
-        END;
-
-        CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-            INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
-            SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
-            WHERE old.status = 'active';
-        END;
         CREATE TABLE IF NOT EXISTS entities (
             id INTEGER PRIMARY KEY,
             canonical_name TEXT NOT NULL COLLATE NOCASE,
@@ -199,5 +172,8 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_memory_feedback_target
             ON memory_feedback(target_kind, target_id, target_value, created_at_epoch DESC);",
     )?;
+    conn.execute_batch(include_str!(
+        "../../src/migrations/v020_memory_fts_all_status.sql"
+    ))?;
     Ok(())
 }
