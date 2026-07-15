@@ -205,6 +205,10 @@ fn enqueue_projects(conn: &Connection, projects: impl IntoIterator<Item = String
     Ok(())
 }
 
+pub(crate) fn enqueue_project(conn: &Connection, project: &str) -> Result<()> {
+    enqueue_projects(conn, std::iter::once(project.to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
