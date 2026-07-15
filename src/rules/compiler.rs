@@ -21,6 +21,7 @@ pub use classify::{
 };
 
 const PACKAGE_MANAGER_MESSAGE: &str = "Command violates a compiled package-manager preference";
+const FORBIDDEN_COMMAND_MESSAGE: &str = "Command violates a compiled forbidden-command preference";
 const COMMIT_TRAILER_MESSAGE: &str = "Commit message violates a compiled trailer preference";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -252,6 +253,7 @@ fn compile_project_rules_with_conflicts(
 
         for (index, classification) in classifications.into_iter().enumerate() {
             let conflict_key = classification.predicate.conflict_key();
+            let forbidden_command = conflict_key.starts_with("forbidden-command:");
             match conflict_sources.get(&conflict_key) {
                 Some(source_memory_id) if *source_memory_id != pref.memory_id => {
                     conflict_messages.push(format!(
@@ -268,10 +270,17 @@ fn compile_project_rules_with_conflicts(
 
             let rule_id = format!("pref-{}-{}", pref.memory_id, index + 1);
             let predicate = match classification.predicate {
-                PreferencePredicate::CommandRegex { pattern, .. } => RulePredicate::CommandRegex {
-                    pattern,
-                    message: PACKAGE_MANAGER_MESSAGE.to_string(),
-                },
+                PreferencePredicate::CommandRegex { pattern, .. } => {
+                    let message = if forbidden_command {
+                        FORBIDDEN_COMMAND_MESSAGE
+                    } else {
+                        PACKAGE_MANAGER_MESSAGE
+                    };
+                    RulePredicate::CommandRegex {
+                        pattern,
+                        message: message.to_string(),
+                    }
+                }
                 PreferencePredicate::CommitTrailerForbidden { trailer, .. } => {
                     RulePredicate::CommitTrailerForbidden {
                         trailer,
@@ -521,6 +530,8 @@ fn latest_compile_diagnostic(
     .optional()
 }
 
+#[cfg(test)]
+mod fixture_tests;
 #[cfg(test)]
 mod sweep_tests;
 #[cfg(test)]

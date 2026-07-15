@@ -26,20 +26,37 @@ pub fn canonical_project_path(cwd: &str) -> PathBuf {
 /// canonical cwd for non-git directories and missing paths.
 pub fn canonical_project_root(cwd: &str) -> PathBuf {
     let canonical_cwd = canonical_project_path(cwd);
-    if let Some(root) = git_worktree_root_from_markers(&canonical_cwd) {
+    canonical_project_root_with_resolver(&canonical_cwd, explicit_git_layout(), |path| {
+        crate::git_util::resolve_toplevel(path)
+    })
+}
+
+fn canonical_project_root_with_resolver(
+    canonical_cwd: &std::path::Path,
+    explicit_git_layout: bool,
+    mut resolve_toplevel: impl FnMut(&std::path::Path) -> Option<PathBuf>,
+) -> PathBuf {
+    if explicit_git_layout {
+        return resolve_toplevel(canonical_cwd)
+            .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
+            .unwrap_or_else(|| canonical_cwd.to_path_buf());
+    }
+    if let Some(root) = git_worktree_root_from_markers(canonical_cwd) {
         return root;
     }
     let requires_git_fallback = canonical_cwd
         .ancestors()
-        .any(|candidate| candidate.join(".git").exists())
-        || std::env::var_os("GIT_DIR").is_some()
-        || std::env::var_os("GIT_WORK_TREE").is_some();
+        .any(|candidate| candidate.join(".git").exists());
     if requires_git_fallback {
-        return crate::git_util::resolve_toplevel(&canonical_cwd)
+        return resolve_toplevel(canonical_cwd)
             .map(|root| std::fs::canonicalize(&root).unwrap_or(root))
-            .unwrap_or(canonical_cwd);
+            .unwrap_or_else(|| canonical_cwd.to_path_buf());
     }
-    canonical_cwd
+    canonical_cwd.to_path_buf()
+}
+
+fn explicit_git_layout() -> bool {
+    std::env::var_os("GIT_DIR").is_some() || std::env::var_os("GIT_WORK_TREE").is_some()
 }
 
 fn git_worktree_root_from_markers(cwd: &std::path::Path) -> Option<PathBuf> {
@@ -184,6 +201,30 @@ mod tests {
         assert_eq!(git_worktree_root_from_markers(&nested), None);
 
         std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_git_layout_precedes_a_cwd_marker() -> anyhow::Result<()> {
+        let cwd_root = unique_temp_path("explicit-layout-cwd");
+        let selected_root = unique_temp_path("explicit-layout-selected");
+        let nested = cwd_root.join("nested");
+        std::fs::create_dir_all(cwd_root.join(".git"))?;
+        std::fs::write(cwd_root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+        std::fs::create_dir_all(&nested)?;
+        std::fs::create_dir_all(&selected_root)?;
+
+        let mut resolver_called = false;
+        let resolved = canonical_project_root_with_resolver(&nested, true, |_| {
+            resolver_called = true;
+            Some(selected_root.clone())
+        });
+
+        assert!(resolver_called, "explicit layouts must consult Git");
+        assert_eq!(resolved, selected_root.canonicalize()?);
+
+        std::fs::remove_dir_all(cwd_root)?;
+        std::fs::remove_dir_all(selected_root)?;
         Ok(())
     }
 }

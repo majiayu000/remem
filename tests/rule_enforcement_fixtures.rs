@@ -5,8 +5,9 @@ use std::time::{Duration, Instant};
 
 use anyhow::{ensure, Context, Result};
 use remem::rules::{
-    artifact_path_for_project, evaluate_pre_tool_use, write_artifact_atomic, CompiledRule,
-    CompiledRulesArtifact, RuleAction, RuleOverrideState, RulePredicate,
+    artifact_path_for_project, classify_preference_predicate, evaluate_pre_tool_use,
+    write_artifact_atomic, CompiledRule, CompiledRulesArtifact, PreferencePredicate, RuleAction,
+    RuleOverrideState, RulePredicate,
 };
 use serde::Deserialize;
 use serde_json::json;
@@ -29,7 +30,6 @@ struct Scenario {
     reinforcement_count: i64,
     violating_command: String,
     compliant_command: String,
-    predicate: RulePredicate,
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn repeated_correction_fixtures_warn_only_with_compiled_rules() -> Result<()> {
             scenario.id
         );
 
-        let rule = compiled_rule(&scenario);
+        let rule = compiled_rule(&scenario)?;
         write_artifact_atomic(&artifact_path, &CompiledRulesArtifact::new(2, vec![rule]))?;
         let violation = evaluate_pre_tool_use(
             &hook_input(&project_dir, &scenario.id, &scenario.violating_command),
@@ -122,7 +122,12 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
         .scenarios
         .iter()
         .map(compiled_rule)
-        .collect::<Vec<_>>();
+        .collect::<Result<Vec<_>>>()?;
+    let non_regex_rule = rules
+        .iter()
+        .find(|rule| matches!(rule.predicate, RulePredicate::CommitTrailerForbidden { .. }))
+        .cloned()
+        .context("fixture suite is missing a non-regex rule")?;
     write_artifact_atomic(
         artifact_path_for_project(&enabled.data_dir, &project),
         &CompiledRulesArtifact::new(2, rules),
@@ -133,21 +138,7 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
     )?;
     write_artifact_atomic(
         artifact_path_for_project(&enabled_non_regex.data_dir, &project),
-        &CompiledRulesArtifact::new(
-            2,
-            vec![compiled_rule(
-                suite
-                    .scenarios
-                    .iter()
-                    .find(|scenario| {
-                        matches!(
-                            scenario.predicate,
-                            RulePredicate::CommitTrailerForbidden { .. }
-                        )
-                    })
-                    .context("fixture suite is missing a non-regex rule")?,
-            )],
-        ),
+        &CompiledRulesArtifact::new(2, vec![non_regex_rule]),
     )?;
 
     let probe = enabled.run("npm install left-pad", true)?;
@@ -188,7 +179,12 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
     let baseline_p95 = baseline_a_p95.max(baseline_b_p95);
     let enabled_p95 = enabled_a_p95.max(enabled_b_p95);
     let observed_noise_ms = (baseline_a_p95 - baseline_b_p95).abs();
-    let tolerance_ms = observed_noise_ms.max(0.5);
+    let mut baseline_samples = baseline_a.clone();
+    baseline_samples.extend_from_slice(&baseline_b);
+    let mut enabled_samples = enabled_a.clone();
+    enabled_samples.extend_from_slice(&enabled_b);
+    let measurement_noise_ms = median_absolute_deviation_ms(&baseline_samples)
+        .max(median_absolute_deviation_ms(&enabled_samples));
     let delta_ms = enabled_p95 - baseline_p95;
 
     eprintln!(
@@ -207,13 +203,13 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
             "enabled_p95_ms": enabled_p95,
             "delta_ms": delta_ms,
             "observed_baseline_noise_ms": observed_noise_ms,
-            "tolerance_ms": tolerance_ms,
-            "within_measurement_noise": enabled_p95 <= baseline_p95 + tolerance_ms,
+            "measurement_noise_mad_ms": measurement_noise_ms,
+            "within_measurement_noise": delta_ms <= measurement_noise_ms,
         }))?
     );
     ensure!(
-        enabled_p95 <= baseline_p95 + tolerance_ms,
-        "enabled p95 {enabled_p95:.3}ms exceeded baseline {baseline_p95:.3}ms + noise {tolerance_ms:.3}ms"
+        delta_ms <= measurement_noise_ms,
+        "enabled p95 delta {delta_ms:.3}ms exceeded measured MAD noise {measurement_noise_ms:.3}ms"
     );
     Ok(())
 }
@@ -222,8 +218,22 @@ fn load_fixtures() -> Result<FixtureSuite> {
     serde_json::from_str(FIXTURES).context("parse rule enforcement fixtures")
 }
 
-fn compiled_rule(scenario: &Scenario) -> CompiledRule {
-    CompiledRule {
+fn compiled_rule(scenario: &Scenario) -> Result<CompiledRule> {
+    let classification = classify_preference_predicate(&scenario.correction)
+        .with_context(|| format!("{} correction did not classify", scenario.id))?;
+    let predicate = match classification.predicate {
+        PreferencePredicate::CommandRegex { pattern, .. } => RulePredicate::CommandRegex {
+            pattern,
+            message: "Command violates a compiled preference".to_string(),
+        },
+        PreferencePredicate::CommitTrailerForbidden { trailer, .. } => {
+            RulePredicate::CommitTrailerForbidden {
+                trailer,
+                message: "Commit message violates a compiled trailer preference".to_string(),
+            }
+        }
+    };
+    Ok(CompiledRule {
         rule_id: format!("pref-{}-1", scenario.source_memory_id),
         source_memory_id: scenario.source_memory_id,
         reinforcement_count: scenario.reinforcement_count,
@@ -232,8 +242,8 @@ fn compiled_rule(scenario: &Scenario) -> CompiledRule {
             disabled: false,
             action_override: None,
         },
-        predicate: scenario.predicate.clone(),
-    }
+        predicate,
+    })
 }
 
 fn hook_input(project: &Path, session_id: &str, command: &str) -> String {
@@ -322,6 +332,22 @@ fn percentile_ms(samples: &[Duration], percentile: usize) -> f64 {
     values.sort_by(f64::total_cmp);
     let index = (values.len() - 1) * percentile / 100;
     values[index]
+}
+
+fn median_absolute_deviation_ms(samples: &[Duration]) -> f64 {
+    let mut values = samples
+        .iter()
+        .map(Duration::as_secs_f64)
+        .map(|seconds| seconds * 1000.0)
+        .collect::<Vec<_>>();
+    values.sort_by(f64::total_cmp);
+    let median = values[values.len() / 2];
+    let mut deviations = values
+        .into_iter()
+        .map(|value| (value - median).abs())
+        .collect::<Vec<_>>();
+    deviations.sort_by(f64::total_cmp);
+    deviations[deviations.len() / 2]
 }
 
 fn test_dir(label: &str) -> PathBuf {

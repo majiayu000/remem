@@ -7,12 +7,7 @@
       "source_memory_id": 67101,
       "reinforcement_count": 3,
       "violating_command": "npm install left-pad",
-      "compliant_command": "bun add left-pad",
-      "predicate": {
-        "kind": "command_regex",
-        "pattern": "(^|\\s)npm\\s+(install|i|add|ci)\\b",
-        "message": "Command violates a compiled package-manager preference"
-      }
+      "compliant_command": "bun add left-pad"
     },
     {
       "id": "forbidden-commit-trailer",
@@ -20,12 +15,7 @@
       "source_memory_id": 67102,
       "reinforcement_count": 4,
       "violating_command": "git commit -m init --trailer AI-generated-by=bot",
-      "compliant_command": "git commit -m init",
-      "predicate": {
-        "kind": "commit_trailer_forbidden",
-        "trailer": "AI-generated-by",
-        "message": "Commit message violates a compiled trailer preference"
-      }
+      "compliant_command": "git commit -m init"
     },
     {
       "id": "forbidden-command",
@@ -33,12 +23,7 @@
       "source_memory_id": 67103,
       "reinforcement_count": 5,
       "violating_command": "git push --force",
-      "compliant_command": "git push",
-      "predicate": {
-        "kind": "command_regex",
-        "pattern": "(^|[;&|]\\s*)git\\s+push\\s+--force(\\s|$)",
-        "message": "Command violates a compiled forbidden-command preference"
-      }
+      "compliant_command": "git push"
     }
   ]
 }

@@ -65,6 +65,14 @@ contract is complete.
 - Compile only deterministic v1 predicates:
   `command_regex` and `commit_trailer_forbidden`. New predicate kinds require
   a spec update.
+- Emit artifact schema v2 for new compilations. V2 command regexes use an
+  ASCII-delimited closed grammar and `regex-lite` so short-lived hook processes
+  do not pay Unicode-regex compilation cost. Continue accepting and evaluating
+  v1 artifacts with the original `regex` engine so upgrades preserve existing
+  Unicode semantics until the worker regenerates the derived artifact.
+- The v2 classifier may emit `command_regex` for an exact, closed allowlist of
+  low-risk forbidden commands. T7 initially covers only `git push --force`;
+  arbitrary natural-language commands remain unclassifiable and fail closed.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.
@@ -145,7 +153,7 @@ derived artifact.
       PostToolUse capture-only behavior, and Codex unsupported enforcement.
 - [ ] Doctor tests: human and JSON output for count, compile time, host
       capability, and last error.
-- [ ] Fixture/eval tests: repeated-correction scenarios and hook latency
+- [x] Fixture/eval tests: repeated-correction scenarios and hook latency
       benchmark.
 - [ ] Existing gates: `cargo fmt --check`, `cargo check`, focused tests, and
       `cargo test` before merge readiness.

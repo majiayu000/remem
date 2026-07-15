@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-pub const ARTIFACT_VERSION: u32 = 1;
+pub const ARTIFACT_VERSION: u32 = 2;
+pub const LEGACY_ARTIFACT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,10 +54,11 @@ impl CompiledRulesArtifact {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.version != ARTIFACT_VERSION {
+        if !matches!(self.version, LEGACY_ARTIFACT_VERSION | ARTIFACT_VERSION) {
             bail!(
-                "unsupported compiled rule artifact version {}; expected {}",
+                "unsupported compiled rule artifact version {}; expected {} or {}",
                 self.version,
+                LEGACY_ARTIFACT_VERSION,
                 ARTIFACT_VERSION
             );
         }
@@ -64,7 +66,7 @@ impl CompiledRulesArtifact {
             bail!("compiled rule artifact has negative compiled_at_epoch");
         }
         for rule in &self.rules {
-            rule.validate()?;
+            rule.validate(self.version)?;
         }
         Ok(())
     }
@@ -75,7 +77,7 @@ impl CompiledRule {
         self.override_state.action_override.unwrap_or(self.action)
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, artifact_version: u32) -> Result<()> {
         if self.rule_id.trim().is_empty() {
             bail!("compiled rule has empty rule_id");
         }
@@ -92,7 +94,7 @@ impl CompiledRule {
                 self.reinforcement_count
             );
         }
-        self.predicate.validate(&self.rule_id)?;
+        self.predicate.validate(&self.rule_id, artifact_version)?;
         Ok(())
     }
 }
@@ -105,13 +107,22 @@ impl RulePredicate {
         }
     }
 
-    fn validate(&self, rule_id: &str) -> Result<()> {
+    fn validate(&self, rule_id: &str, artifact_version: u32) -> Result<()> {
         match self {
             RulePredicate::CommandRegex { pattern, message } => {
                 if pattern.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty command_regex pattern");
                 }
-                if let Err(error) = build_command_regex(pattern) {
+                let regex_error = if artifact_version == LEGACY_ARTIFACT_VERSION {
+                    regex::Regex::new(pattern)
+                        .err()
+                        .map(|error| error.to_string())
+                } else {
+                    regex_lite::Regex::new(pattern)
+                        .err()
+                        .map(|error| error.to_string())
+                };
+                if let Some(error) = regex_error {
                     bail!("compiled rule {rule_id} has invalid command_regex pattern: {error}");
                 }
                 if message.trim().is_empty() {
@@ -129,10 +140,6 @@ impl RulePredicate {
         }
         Ok(())
     }
-}
-
-pub(crate) fn build_command_regex(pattern: &str) -> Result<regex_lite::Regex, regex_lite::Error> {
-    regex_lite::Regex::new(pattern)
 }
 
 #[cfg(test)]
@@ -157,7 +164,7 @@ mod tests {
         assert_eq!(
             parsed.rules[0].predicate,
             RulePredicate::CommandRegex {
-                pattern: r"(^|\s)npm\s+(install|i|add)\b".to_string(),
+                pattern: r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add)([ \t\r\n;&|)]|$)".to_string(),
                 message: "Command violates a compiled package-manager preference".to_string()
             }
         );
@@ -202,5 +209,19 @@ mod tests {
             .expect_err("invalid command regex must fail artifact validation");
 
         assert!(error.to_string().contains("invalid command_regex pattern"));
+    }
+
+    #[test]
+    fn legacy_artifact_keeps_unicode_regex_validation() -> Result<()> {
+        let mut artifact =
+            CompiledRulesArtifact::new(1234, vec![package_manager_rule(RuleAction::Warn)]);
+        artifact.version = LEGACY_ARTIFACT_VERSION;
+        artifact.rules[0].predicate = RulePredicate::CommandRegex {
+            pattern: r"\p{Greek}+".to_string(),
+            message: "legacy unicode fixture".to_string(),
+        };
+
+        artifact.validate()?;
+        Ok(())
     }
 }

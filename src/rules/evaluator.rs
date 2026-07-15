@@ -3,7 +3,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::rules::artifact::{
-    build_command_regex, CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate,
+    CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate, LEGACY_ARTIFACT_VERSION,
 };
 use crate::rules::store::{load_artifact_fail_open, ArtifactLoad, ArtifactLoadErrorKind};
 
@@ -100,7 +100,7 @@ fn evaluate_artifact_with_codes(
         if rule.override_state.disabled {
             continue;
         }
-        match rule_matches(rule, input) {
+        match rule_matches(artifact.version, rule, input) {
             Ok(true) => matches.push(RuleMatch {
                 rule_id: rule.rule_id.clone(),
                 source_memory_id: rule.source_memory_id,
@@ -175,11 +175,23 @@ fn diagnostic_code_for_artifact_error(kind: ArtifactLoadErrorKind) -> Evaluation
     }
 }
 
-fn rule_matches(rule: &CompiledRule, input: &EvaluationInput) -> Result<bool, String> {
+fn rule_matches(
+    artifact_version: u32,
+    rule: &CompiledRule,
+    input: &EvaluationInput,
+) -> Result<bool, String> {
     match &rule.predicate {
-        RulePredicate::CommandRegex { pattern, .. } => build_command_regex(pattern)
-            .map(|regex| regex.is_match(&input.command))
-            .map_err(|err| format!("rule {} has invalid regex: {err}", rule.rule_id)),
+        RulePredicate::CommandRegex { pattern, .. } => {
+            if artifact_version == LEGACY_ARTIFACT_VERSION {
+                regex::Regex::new(pattern)
+                    .map(|regex| regex.is_match(&input.command))
+                    .map_err(|err| format!("rule {} has invalid regex: {err}", rule.rule_id))
+            } else {
+                regex_lite::Regex::new(pattern)
+                    .map(|regex| regex.is_match(&input.command))
+                    .map_err(|err| format!("rule {} has invalid regex: {err}", rule.rule_id))
+            }
+        }
         RulePredicate::CommitTrailerForbidden { trailer, .. } => {
             command_adds_forbidden_commit_trailer(&input.command, trailer)
                 .map_err(|err| format!("rule {} could not parse command: {err}", rule.rule_id))
@@ -513,6 +525,28 @@ mod tests {
         assert!(outcome.matches.is_empty());
         assert_eq!(outcome.diagnostics.len(), 1);
         assert!(outcome.diagnostics[0].message.contains("invalid regex"));
+    }
+
+    #[test]
+    fn legacy_artifact_retains_unicode_word_boundary_semantics() {
+        let mut artifact =
+            CompiledRulesArtifact::new(99, vec![package_manager_rule(RuleAction::Warn)]);
+        artifact.version = LEGACY_ARTIFACT_VERSION;
+        artifact.rules[0].predicate = RulePredicate::CommandRegex {
+            pattern: r"(^|\s)npm\s+install\b".to_string(),
+            message: "legacy unicode boundary fixture".to_string(),
+        };
+
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: "npm installβ".to_string(),
+            },
+        );
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+        assert!(outcome.matches.is_empty());
+        assert!(outcome.diagnostics.is_empty());
     }
 
     #[test]

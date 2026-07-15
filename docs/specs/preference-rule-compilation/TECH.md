@@ -211,6 +211,15 @@ hook-side writes.
   honestly and CLI must reject unsupported block-mode claims.
 - Performance: regex evaluation per pre-execution Bash event; bounded by rule count
   (expected < 20); covered by the latency acceptance criterion.
+- Artifact compatibility: new compilations emit schema v2 with ASCII-delimited
+  `command_regex` patterns evaluated by `regex-lite`. Schema v1 remains readable
+  and retains its original Unicode `regex` semantics until the worker replaces
+  the derived artifact. The v2 classifier recognizes only closed package-manager,
+  commit-trailer, and exact low-risk forbidden-command directives; the initial
+  forbidden-command allowlist contains only `git push --force`.
+- Latency evidence compares repeated interleaved CLI subprocess cohorts and
+  derives the acceptance tolerance from observed median absolute deviation;
+  it must not pass through a fixed, unmeasured noise floor.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan
@@ -223,7 +232,7 @@ hook-side writes.
       dimension, unknown values, closed-enum completeness, and critical
       cross-state cases. Tests remain behavior-based and do not snapshot the
       SQL/WHERE text.
-- [ ] Integration test: end-to-end fixture (preference reinforced 3x -> rule
+- [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
 - [ ] Manual verification: real Claude Code session with a seeded preference;
