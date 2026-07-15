@@ -317,12 +317,27 @@ mod tests {
         let data_dir = test_dir("evaluation-error-legacy-marker");
         let marker_dir = evaluation_marker_dir(&data_dir);
         fs::create_dir_all(&marker_dir)?;
-        fs::File::create(marker_dir.join("legacy-session-hash"))?;
+        let marker = marker_dir.join("legacy-session-hash");
+        fs::File::create(&marker)?;
 
         assert_eq!(
             load_evaluation_error(&data_dir, "/repo")?,
             EvaluationErrorSnapshot::default()
         );
+        assert!(!upsert_evaluation_error_record(
+            &marker,
+            &data_dir,
+            Some("/repo"),
+            &[EvaluationDiagnosticCode::ArtifactMissing],
+        )?);
+        assert_eq!(
+            load_evaluation_error(&data_dir, "/repo")?
+                .latest
+                .context("upgraded legacy marker")?
+                .codes,
+            vec![EvaluationDiagnosticCode::ArtifactMissing]
+        );
+        assert!(!fs::read(&marker)?.is_empty());
         Ok(())
     }
 
