@@ -8,6 +8,8 @@ use anyhow::Result;
 use rusqlite::{params, types::Value, Connection};
 use std::sync::{Arc, Barrier};
 
+mod job_recovery;
+
 #[test]
 fn classifier_maps_known_permanent_patterns() {
     for error in [
@@ -442,7 +444,7 @@ fn failure_lifecycle_auto_recovery_preserves_source_error_and_does_not_repeat() 
         params![source],
         |row| row.get(0),
     )?;
-    let marker = format!("[job_recovery_coalesced canonical_id={canonical} identity=ordinary]");
+    let marker = format!("[auto_recovery_coalesced_to_canonical id={canonical}]");
     assert!(error.starts_with('x'));
     assert!(error.ends_with(&marker));
     assert!(error.len() <= 2_000);
@@ -497,7 +499,7 @@ fn failure_lifecycle_auto_recovery_null_or_empty_last_error_stores_canonical_mar
         )?;
         assert_eq!(
             stored,
-            format!("[job_recovery_coalesced canonical_id={canonical} identity=ordinary]")
+            format!("[auto_recovery_coalesced_to_canonical id={canonical}]")
         );
     }
     Ok(())

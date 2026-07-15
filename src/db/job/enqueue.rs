@@ -4,7 +4,7 @@ use rusqlite::{
     TransactionBehavior,
 };
 
-use crate::db::job::JobType;
+use crate::db::job::{dream_profile_key, JobType};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DreamEnqueueDecision {
@@ -354,19 +354,6 @@ fn is_identity_unique_conflict(error: &SqliteError, identity: ActiveIdentity) ->
                 || message.contains("UNIQUE constraint failed: jobs.project, jobs.state")
         }
     }
-}
-
-fn dream_profile_key(payload_json: &str) -> Option<String> {
-    serde_json::from_str::<serde_json::Value>(payload_json)
-        .ok()
-        .and_then(|value| {
-            value
-                .get(crate::runtime_config::MEMORY_AI_PROFILE_FIELD)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .filter(|profile| !profile.is_empty())
-                .map(str::to_string)
-        })
 }
 
 #[cfg(test)]

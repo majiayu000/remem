@@ -38,6 +38,8 @@ struct JobRecoverySource {
     job_type: String,
     project: String,
     session_id: Option<String>,
+    payload_json: String,
+    priority: i64,
     last_error: Option<String>,
 }
 
@@ -229,7 +231,7 @@ pub(super) fn recover_due_job_candidate(
                 source_id,
                 canonical_id,
                 identity_kind,
-                source.last_error.as_deref(),
+                &source,
                 now_epoch,
             )?;
             tx.commit()?;
@@ -293,7 +295,7 @@ pub(super) fn recover_due_job_candidate(
                 source_id,
                 canonical_id,
                 identity_kind,
-                source.last_error.as_deref(),
+                &source,
                 now_epoch,
             )?;
             tx.commit()?;
@@ -313,7 +315,7 @@ fn load_eligible_job_source(
     now_epoch: i64,
 ) -> Result<Option<JobRecoverySource>> {
     conn.query_row(
-        "SELECT host, job_type, project, session_id, last_error
+        "SELECT host, job_type, project, session_id, payload_json, priority, last_error
          FROM jobs
          WHERE id = ?1 AND state = 'failed' AND archived_at_epoch IS NULL
            AND COALESCE(failure_class, 'transient') = 'transient'
@@ -332,7 +334,9 @@ fn load_eligible_job_source(
                 job_type: row.get(1)?,
                 project: row.get(2)?,
                 session_id: row.get(3)?,
-                last_error: row.get(4)?,
+                payload_json: row.get(4)?,
+                priority: row.get(5)?,
+                last_error: row.get(6)?,
             })
         },
     )
@@ -393,14 +397,14 @@ fn coalesce_failed_job_source(
     source_id: i64,
     canonical_id: i64,
     identity_kind: crate::db::JobIdentityKind,
-    existing_error: Option<&str>,
+    source: &JobRecoverySource,
     now_epoch: i64,
 ) -> Result<()> {
-    let marker = format!(
-        "[job_recovery_coalesced canonical_id={canonical_id} identity={}]",
-        identity_kind.as_str()
-    );
-    let last_error = bounded_job_recovery_error(existing_error, &marker);
+    if identity_kind == crate::db::JobIdentityKind::Dream {
+        merge_dream_source_into_pending_canonical(conn, source, canonical_id, now_epoch)?;
+    }
+    let marker = format!("[auto_recovery_coalesced_to_canonical id={canonical_id}]");
+    let last_error = bounded_job_recovery_error(source.last_error.as_deref(), &marker);
     let changed = conn.execute(
         "UPDATE jobs
          SET failure_class = 'permanent', next_retry_epoch = 0, last_error = ?1
@@ -422,6 +426,49 @@ fn coalesce_failed_job_source(
         bail!(
             "failed job source changed before coalescing: source_id={source_id} canonical_id={canonical_id} affected_rows={changed}"
         );
+    }
+    Ok(())
+}
+
+fn merge_dream_source_into_pending_canonical(
+    conn: &Connection,
+    source: &JobRecoverySource,
+    canonical_id: i64,
+    now_epoch: i64,
+) -> Result<()> {
+    let Some(incoming_profile) = crate::db::job::dream_profile_key(&source.payload_json) else {
+        return Ok(());
+    };
+    let (state, canonical_payload): (String, String) = conn
+        .query_row(
+            "SELECT state, payload_json FROM jobs
+             WHERE id = ?1 AND job_type = 'dream' AND project = ?2
+               AND state IN ('pending', 'processing')",
+            params![canonical_id, source.project],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .context("read active Dream recovery canonical")?;
+    if state != "pending"
+        || crate::db::job::dream_profile_key(&canonical_payload) == Some(incoming_profile)
+    {
+        return Ok(());
+    }
+    let changed = conn.execute(
+        "UPDATE jobs
+         SET host = ?1, payload_json = ?2, priority = min(priority, ?3),
+             updated_at_epoch = ?4
+         WHERE id = ?5 AND job_type = 'dream' AND project = ?6 AND state = 'pending'",
+        params![
+            source.host,
+            source.payload_json,
+            source.priority,
+            now_epoch,
+            canonical_id,
+            source.project
+        ],
+    )?;
+    if changed != 1 {
+        bail!("pending Dream recovery canonical changed: canonical_id={canonical_id}");
     }
     Ok(())
 }

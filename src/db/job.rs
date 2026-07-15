@@ -14,3 +14,16 @@ pub use state::{
     release_expired_job_leases, requeue_stuck_jobs, ExpiredJobLeaseBatch, ExpiredJobLeaseOutcome,
     JobIdentityKind, JobTransitionOutcome,
 };
+
+pub(crate) fn dream_profile_key(payload_json: &str) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(payload_json)
+        .ok()
+        .and_then(|value| {
+            value
+                .get(crate::runtime_config::MEMORY_AI_PROFILE_FIELD)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|profile| !profile.is_empty())
+                .map(str::to_string)
+        })
+}

@@ -103,11 +103,21 @@ fn recover_expired_jobs(conn: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-fn mark_successful_job(conn: &rusqlite::Connection, job_id: i64, lease_owner: &str) -> Result<()> {
+fn mark_successful_job(
+    conn: &rusqlite::Connection,
+    job_id: i64,
+    job_type: db::JobType,
+    project: &str,
+    lease_owner: &str,
+) -> Result<()> {
     if let Err(error) = db::mark_job_done(conn, job_id, lease_owner) {
         crate::log::error(
             "worker",
-            &format!("job transition failed id={job_id} operation=done error={error}"),
+            &format!(
+                "job transition failed id={job_id} operation=done job_type={} project_hash={:016x} expected_owner={lease_owner} error={error}",
+                job_type.as_str(),
+                db::deterministic_hash(project.as_bytes())
+            ),
         );
         return Err(error);
     }
@@ -118,6 +128,8 @@ fn mark_successful_job(conn: &rusqlite::Connection, job_id: i64, lease_owner: &s
 fn record_failed_job_transition(
     conn: &rusqlite::Connection,
     job_id: i64,
+    job_type: db::JobType,
+    project: &str,
     lease_owner: &str,
     error_message: &str,
     backoff_secs: i64,
@@ -133,7 +145,11 @@ fn record_failed_job_transition(
         Err(error) => {
             crate::log::error(
                 "worker",
-                &format!("job transition failed id={job_id} operation=retry error={error}"),
+                &format!(
+                    "job transition failed id={job_id} operation=retry job_type={} project_hash={:016x} expected_owner={lease_owner} error={error}",
+                    job_type.as_str(),
+                    db::deterministic_hash(project.as_bytes())
+                ),
             );
             return Err(error);
         }
@@ -259,17 +275,33 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             let conn = db::open_db()?;
             match timed {
                 Ok(Ok(())) => {
-                    mark_successful_job(&conn, job.id, &lease_owner)?;
+                    mark_successful_job(&conn, job.id, job.job_type, &job.project, &lease_owner)?;
                 }
                 Ok(Err(e)) => {
                     let msg = e.to_string();
                     let backoff = retry_backoff_secs(job.attempt_count);
-                    record_failed_job_transition(&conn, job.id, &lease_owner, &msg, backoff)?;
+                    record_failed_job_transition(
+                        &conn,
+                        job.id,
+                        job.job_type,
+                        &job.project,
+                        &lease_owner,
+                        &msg,
+                        backoff,
+                    )?;
                 }
                 Err(_) => {
                     let msg = format!("job timed out after {}s", JOB_TIMEOUT_SECS);
                     let backoff = retry_backoff_secs(job.attempt_count);
-                    record_failed_job_transition(&conn, job.id, &lease_owner, &msg, backoff)?;
+                    record_failed_job_transition(
+                        &conn,
+                        job.id,
+                        job.job_type,
+                        &job.project,
+                        &lease_owner,
+                        &msg,
+                        backoff,
+                    )?;
                 }
             }
             continue;

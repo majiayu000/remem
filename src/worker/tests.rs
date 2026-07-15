@@ -127,11 +127,25 @@ fn worker_transition_conflict_logs_error_without_done_or_retry_success() -> anyh
         "UPDATE jobs SET lease_owner = 'worker-b' WHERE id = ?1",
         params![job_id],
     )?;
-    let error = mark_successful_job(&conn, job_id, "worker-a")
-        .expect_err("wrong owner transition must fail");
+    let error = mark_successful_job(
+        &conn,
+        job_id,
+        db::JobType::Observation,
+        "/tmp/remem",
+        "worker-a",
+    )
+    .expect_err("wrong owner transition must fail");
     assert!(error.to_string().contains("current_owner=worker-b"));
     let log = read_worker_log(&data_dir)?;
     assert!(log.contains(&format!("job transition failed id={job_id} operation=done")));
+    assert!(log.contains("job_type=observation"));
+    assert!(log.contains(&format!(
+        "project_hash={:016x}",
+        crate::db::deterministic_hash(b"/tmp/remem")
+    )));
+    assert!(log.contains("expected_owner=worker-a"));
+    assert!(log.contains("current_owner=worker-b"));
+    assert!(!log.contains("project=/tmp/remem"));
     assert!(!log.contains(&format!("done id={job_id}")));
     assert!(!log.contains("operation=retry success"));
     Ok(())
@@ -147,6 +161,8 @@ fn worker_compile_rules_retry_collision_logs_safe_coalesced_result() -> anyhow::
     record_failed_job_transition(
         &conn,
         source_id,
+        db::JobType::CompileRules,
+        "/tmp/remem",
         "worker-a",
         "private-retry-error-must-not-log",
         5,
