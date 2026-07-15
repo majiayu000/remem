@@ -25,6 +25,8 @@ mod tests_procedures;
 #[cfg(test)]
 mod tests_raw;
 #[cfg(test)]
+mod tests_rules;
+#[cfg(test)]
 mod tests_trace;
 mod types;
 

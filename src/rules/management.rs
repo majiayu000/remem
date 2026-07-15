@@ -1,10 +1,9 @@
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection};
 use std::path::Path;
 
 use super::{
     artifact_path_for_project, load_artifact_fail_open, ArtifactLoad, CompiledRule, RuleAction,
-    RuleOverrideState,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,68 +76,65 @@ fn update_rule_override(
         .iter()
         .find(|rule| rule.rule_id == rule_id)
         .with_context(|| format!("compiled rule '{rule_id}' not found for project '{project}'"))?;
-    let stored = conn
-        .query_row(
-            "SELECT disabled, action_override
-             FROM preference_rule_overrides
-             WHERE project = ?1 AND rule_id = ?2",
-            params![project, rule_id],
-            |row| {
-                let disabled: i64 = row.get(0)?;
-                let action: Option<String> = row.get(1)?;
-                Ok((disabled != 0, action))
-            },
-        )
-        .optional()?;
-    let mut state = match stored {
-        Some((disabled, action)) => RuleOverrideState {
-            disabled,
-            action_override: parse_rule_action(action.as_deref(), rule_id)?,
-        },
-        None => rule.override_state.clone(),
-    };
-    match update {
-        RuleOverrideUpdate::Disabled(value) => state.disabled = value,
-        RuleOverrideUpdate::Action(value) => state.action_override = Some(value),
-    }
+    persist_rule_override(conn, project, rule, update)
+}
 
-    let action_override = state.action_override.map(rule_action_db_value);
+fn persist_rule_override(
+    conn: &Connection,
+    project: &str,
+    rule: &CompiledRule,
+    update: RuleOverrideUpdate,
+) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     let tx = conn.unchecked_transaction()?;
-    tx.execute(
-        "INSERT INTO preference_rule_overrides
-         (project, rule_id, source_memory_id, disabled, action_override,
-          reason, updated_by, updated_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'remem rules CLI', 'user', ?6)
-         ON CONFLICT(project, rule_id) DO UPDATE SET
-           source_memory_id = excluded.source_memory_id,
-           disabled = excluded.disabled,
-           action_override = excluded.action_override,
-           reason = excluded.reason,
-           updated_by = excluded.updated_by,
-           updated_at_epoch = excluded.updated_at_epoch",
-        params![
-            project,
-            rule.rule_id,
-            rule.source_memory_id,
-            i64::from(state.disabled),
-            action_override,
-            now
-        ],
-    )
-    .with_context(|| format!("persist override for compiled rule '{rule_id}'"))?;
+    match update {
+        RuleOverrideUpdate::Disabled(disabled) => tx.execute(
+            "INSERT INTO preference_rule_overrides
+                 (project, rule_id, source_memory_id, disabled, action_override,
+                  reason, updated_by, updated_at_epoch)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'remem rules CLI', 'user', ?6)
+                 ON CONFLICT(project, rule_id) DO UPDATE SET
+                   source_memory_id = excluded.source_memory_id,
+                   disabled = excluded.disabled,
+                   reason = excluded.reason,
+                   updated_by = excluded.updated_by,
+                   updated_at_epoch = excluded.updated_at_epoch",
+            params![
+                project,
+                rule.rule_id,
+                rule.source_memory_id,
+                i64::from(disabled),
+                rule.override_state
+                    .action_override
+                    .map(rule_action_db_value),
+                now
+            ],
+        ),
+        RuleOverrideUpdate::Action(action) => tx.execute(
+            "INSERT INTO preference_rule_overrides
+                 (project, rule_id, source_memory_id, disabled, action_override,
+                  reason, updated_by, updated_at_epoch)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'remem rules CLI', 'user', ?6)
+                 ON CONFLICT(project, rule_id) DO UPDATE SET
+                   source_memory_id = excluded.source_memory_id,
+                   action_override = excluded.action_override,
+                   reason = excluded.reason,
+                   updated_by = excluded.updated_by,
+                   updated_at_epoch = excluded.updated_at_epoch",
+            params![
+                project,
+                rule.rule_id,
+                rule.source_memory_id,
+                i64::from(rule.override_state.disabled),
+                rule_action_db_value(action),
+                now
+            ],
+        ),
+    }
+    .with_context(|| format!("persist override for compiled rule '{}'", rule.rule_id))?;
     crate::memory::preference::compilation::enqueue_project(&tx, project)?;
     tx.commit()?;
     Ok(())
-}
-
-fn parse_rule_action(value: Option<&str>, rule_id: &str) -> Result<Option<RuleAction>> {
-    match value {
-        Some("warn") => Ok(Some(RuleAction::Warn)),
-        Some("block") => Ok(Some(RuleAction::Block)),
-        Some(other) => bail!("invalid action_override '{other}' for rule {rule_id}"),
-        None => Ok(None),
-    }
 }
 
 fn rule_action_db_value(action: RuleAction) -> &'static str {

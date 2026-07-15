@@ -129,6 +129,38 @@ fn overrides_round_trip_through_artifact_deletion_and_recompile() -> Result<()> 
 }
 
 #[test]
+fn independent_stale_updates_preserve_each_owned_override_column() -> Result<()> {
+    let scoped = ScopedTestDataDir::new("rules-cli-independent-updates");
+    crate::runtime_config::init_config()?;
+    crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+    let conn = db::open_db()?;
+    insert_cli_rule_fixture(&conn)?;
+    let stale_rule = compile_and_write(&conn, &scoped.path)?.rules.remove(0);
+
+    persist_rule_override(
+        &conn,
+        PROJECT,
+        &stale_rule,
+        RuleOverrideUpdate::Disabled(true),
+    )?;
+    persist_rule_override(
+        &conn,
+        PROJECT,
+        &stale_rule,
+        RuleOverrideUpdate::Action(RuleAction::Block),
+    )?;
+
+    let state: (i64, String) = conn.query_row(
+        "SELECT disabled, action_override FROM preference_rule_overrides
+         WHERE project = ?1 AND rule_id = 'pref-1-1'",
+        [PROJECT],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(state, (1, "block".to_string()));
+    Ok(())
+}
+
+#[test]
 fn missing_or_unknown_rule_does_not_create_override_or_job() -> Result<()> {
     let scoped = ScopedTestDataDir::new("rules-cli-missing");
     let conn = db::open_db()?;
