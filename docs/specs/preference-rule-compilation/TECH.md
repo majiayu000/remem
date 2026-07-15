@@ -26,8 +26,11 @@ Tracking:
   project-over-global conflict precedence; lifecycle-triggered non-lossy jobs
   plus periodic convergence sweeps; same-predicate override transfer across
   candidate and cleanup supersession; stable diagnostics and artifacts; and
-  worker-only artifact writes. Hook dispatch,
-  rule CLI, doctor output, fixtures, and latency evidence are still pending.
+  worker-only artifact writes.
+- GH671-T4 through GH671-T7 add rule CLI management, pre-execution Claude
+  hook dispatch with honest Codex capability reporting, doctor diagnostics,
+  repeated-correction fixtures, and measured hook-latency evidence. The T8
+  documentation and final-acceptance reconciliation remains pending.
 - The current compiler still accepts any non-null `owner_scope` for a global
   row. GH-813 tightens that existing gap to the canonical
   `owner_scope='user'`, `owner_key='user:default'`, no-target combination;

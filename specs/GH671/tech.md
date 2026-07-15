@@ -26,14 +26,15 @@ Authoritative contract:
 
 ## Proposed Design
 
-Phase 1 implementation status: `SP671-T1` through `SP671-T3` are implemented.
+Phase 1 implementation status: `SP671-T1` through `SP671-T7` are implemented.
 The state foundation, versioned artifact/evaluator, canonical preference
 reinforcement, deterministic compiler, lifecycle-triggered non-lossy enqueue
 path plus periodic convergence sweeps, same-predicate override transfer,
 persisted low-risk/source-trust/review eligibility, project-over-global
-precedence, stable diagnostics, and worker-only artifact writes are present.
-CLI rule management, hook dispatch, doctor reporting, fixtures, and latency
-evidence remain pending.
+precedence, stable diagnostics, worker-only artifact writes, CLI rule
+management, hook dispatch, doctor reporting, repeated-correction fixtures, and
+measured hook-latency evidence are present. `SP671-T8` documentation and final
+acceptance reconciliation remains pending.
 
 GH-813 identified one remaining T3 eligibility correction: the current global
 branch accepts any non-null `owner_scope`; it must require the canonical
