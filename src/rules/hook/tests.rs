@@ -267,6 +267,38 @@ fn concurrent_errors_log_and_publish_once_per_session() -> Result<()> {
 }
 
 #[test]
+fn contended_diagnostic_claim_never_blocks_hook_return() -> Result<()> {
+    let data_dir = test_dir("hook-diagnostic-contention");
+    let marker_dir = crate::rules::evaluation_marker_dir(&data_dir);
+    std::fs::create_dir_all(&marker_dir)?;
+    let digest = Sha256::digest(b"contended-session");
+    let claim = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(marker_dir.join(format!(".{digest:x}.claim")))?;
+    FileExt::lock_exclusive(&claim)?;
+
+    let (done, returned) = std::sync::mpsc::channel();
+    let handle = std::thread::spawn(move || {
+        log_evaluation_error_once_with_diagnostic(
+            &data_dir,
+            Some("contended-session"),
+            Some("/repo"),
+            &[EvaluationDiagnosticCode::ArtifactMissing],
+            "contended marker",
+        );
+        done.send(()).expect("contention result receiver");
+    });
+    returned
+        .recv_timeout(std::time::Duration::from_secs(1))
+        .context("diagnostic publication blocked on its claim")?;
+    handle.join().expect("diagnostic writer should not panic");
+    Ok(())
+}
+
+#[test]
 fn evaluation_error_without_session_is_not_globally_suppressed() {
     let data_dir = test_dir("hook-diagnostic-no-session");
 

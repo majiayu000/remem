@@ -251,14 +251,16 @@ pub(crate) fn log_evaluation_error_once_with_diagnostic(
         }
     };
     crate::log::set_private_permissions(&claim);
-    if let Err(error) = claim_file.lock_exclusive() {
-        crate::log::error(
-            "rules-eval",
-            &format!(
-                "could not lock evaluation diagnostic claim: {error}; {}",
-                sanitize_diagnostic(message)
-            ),
-        );
+    if let Err(error) = FileExt::try_lock_exclusive(&claim_file) {
+        if error.kind() != std::io::ErrorKind::WouldBlock {
+            crate::log::error(
+                "rules-eval",
+                &format!(
+                    "could not lock evaluation diagnostic claim: {error}; {}",
+                    sanitize_diagnostic(message)
+                ),
+            );
+        }
         return;
     }
     match super::upsert_evaluation_error_record(&marker, data_dir, project, codes) {
