@@ -56,10 +56,12 @@ surface that #381/#383 evidence collection depends on.
 - Worker logs every automatic retry with class, attempt number, and backoff;
   exhaustion and archiving transitions are logged at error/info respectively
   (U-29: no silent state changes).
-- A rejected lease-owned job transition never becomes an in-memory success:
-  the persisted job remains `processing`, the worker reports the conflict as
-  an error without a done/retry success signal, and status/doctor continue to
-  show the persisted row as processing and then stuck after lease expiry.
+- A rejected lease-owned job transition never becomes an in-memory success.
+  A missing target fails loudly and remains absent, so it contributes no
+  processing or stuck row to status/doctor. For an existing wrong-owner,
+  reclaimed, expired, or otherwise ineligible target, every persisted field
+  remains unchanged; if that row is still `processing`, status/doctor continue
+  to show it as processing and then stuck after its unchanged lease expires.
 - A non-Summary active duplicate reconciled by the v069 job-queue migration
   becomes a permanent, non-archived actionable failure. Its real attempt/error
   evidence remains queryable and it follows the existing retention/archive
@@ -85,9 +87,11 @@ surface that #381/#383 evidence collection depends on.
 - Seeded permanent failure never auto-retries and archives after the window;
   headline counters drop while the row remains queryable until explicit
   cleanup and aggregate history remains queryable after cleanup.
-- A rejected lease-owned transition leaves every persisted job field
-  unchanged, emits no success event, remains visible as processing, and is
-  reported as stuck after the unchanged lease expires.
+- A missing-row lease transition fails with an explicit missing diagnostic,
+  emits no success event, leaves the row absent, and adds no processing/stuck
+  count. Rejection of an existing row leaves every persisted field unchanged;
+  when that row is still processing it remains visible and is reported as
+  stuck after the unchanged lease expires.
 - A seeded non-Summary v069 duplicate is permanent, non-archived and
   actionable, preserves its original attempt/error evidence without false
   exhaustion, and later archives through the existing retention lifecycle.

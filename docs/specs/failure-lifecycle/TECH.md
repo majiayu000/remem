@@ -125,13 +125,16 @@ archived source; no pending work may retain an archived marker.
 
 Lease-owned done, retry, exhausted, and permanent-failure transitions use the
 current processing row, expected owner, and unexpired lease as a single
-transactional authorization boundary. A zero-row, missing-row, wrong-owner,
-reclaimed, or expired-lease result is an error and leaves every persisted job
-field unchanged. The worker must propagate that error and emit no done/retry
-success signal. Shared stats therefore continue to count the row as
-`processing`; after its unchanged lease expires, the same persisted row becomes
-`stuck` for status and doctor. No parallel in-memory success ledger may override
-that database truth.
+transactional authorization boundary. A missing-row result is an error with an
+explicit `current=missing` diagnostic; no row is created, so shared stats gain
+no processing or stuck entry. For an existing wrong-owner, reclaimed,
+expired-lease, or otherwise ineligible row, rejection leaves every persisted
+field unchanged. The worker must propagate either error and emit no done/retry
+success signal. Shared stats reflect the existing row's actual persisted state:
+if it is still `processing`, it remains counted there and becomes `stuck` after
+its unchanged lease expires; an already reclaimed or non-processing row is
+reported according to that state instead. No parallel in-memory success ledger
+may override database truth.
 
 The v069 job-queue migration contributes a separate failure-lifecycle input.
 Each reconciled non-Summary active duplicate becomes `state='failed'`,
