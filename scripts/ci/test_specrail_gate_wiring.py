@@ -13,6 +13,13 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "checks"))
+from schema_contract import (  # noqa: E402
+    ADOPTED_SCHEMA_KEYWORDS,
+    uses_runtime_profile,
+    validate_schema_node,
+)
+
 SYNC_SCRIPT = ROOT / "scripts" / "sync-specrail-checks.sh"
 WORKFLOW_CHECK = ROOT / "checks" / "check_workflow.py"
 PACK_DIRS = ("checks", "policies", "review", "schemas", "skills", "templates", "tools")
@@ -106,6 +113,268 @@ def run_runtime_schema_validation(
     )
 
 
+def assert_contract_failure(repo: Path, expected_error: str, label: str) -> None:
+    workflow_check = run(
+        [
+            sys.executable,
+            str(repo / "checks" / "check_workflow.py"),
+            "--repo",
+            str(repo),
+        ],
+        cwd=repo,
+    )
+    assert workflow_check.returncode != 0, f"{label} must fail the workflow check"
+    assert expected_error in workflow_check.stdout
+
+    sync_verify = run(
+        [str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"],
+        cwd=repo,
+    )
+    assert sync_verify.returncode != 0, f"{label} must fail sync verification"
+    assert "files match lock" in sync_verify.stdout
+    assert expected_error in sync_verify.stdout
+
+
+def collect_schema_keywords(schema: dict[str, object]) -> set[str]:
+    keywords = set(schema)
+    for keyword in ("$defs", "dependentSchemas", "patternProperties", "properties"):
+        children = schema.get(keyword)
+        if isinstance(children, dict):
+            for child in children.values():
+                if isinstance(child, dict):
+                    keywords.update(collect_schema_keywords(child))
+    for keyword in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        children = schema.get(keyword)
+        if isinstance(children, list):
+            for child in children:
+                if isinstance(child, dict):
+                    keywords.update(collect_schema_keywords(child))
+    for keyword in (
+        "additionalProperties",
+        "contains",
+        "contentSchema",
+        "else",
+        "if",
+        "items",
+        "not",
+        "propertyNames",
+        "then",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+    ):
+        child = schema.get(keyword)
+        if isinstance(child, dict):
+            keywords.update(collect_schema_keywords(child))
+    return keywords
+
+
+def assert_adopted_schema_vocabulary_baseline() -> None:
+    keyword_values = {
+        keyword: "value"
+        for keyword in (
+            "$anchor", "$comment", "$dynamicAnchor", "$dynamicRef", "$id", "$ref",
+            "$schema", "contentEncoding", "contentMediaType", "description", "format", "title",
+        )
+    }
+    keyword_values.update({keyword: True for keyword in ("deprecated", "readOnly", "uniqueItems", "writeOnly")})
+    keyword_values.update({keyword: 0 for keyword in (
+        "maxContains", "maxItems", "maxLength", "maxProperties",
+        "minContains", "minItems", "minLength", "minProperties",
+    )})
+    keyword_values.update({keyword: 1 for keyword in (
+        "exclusiveMaximum", "exclusiveMinimum", "maximum", "minimum", "multipleOf",
+    )})
+    keyword_values.update({keyword: {} for keyword in (
+        "$defs", "dependentSchemas", "patternProperties", "properties",
+    )})
+    keyword_values.update({keyword: [{}] for keyword in ("allOf", "anyOf", "oneOf", "prefixItems")})
+    keyword_values.update({keyword: {} for keyword in (
+        "contains", "contentSchema", "else", "if", "not", "propertyNames", "then",
+    )})
+    keyword_values.update({keyword: True for keyword in (
+        "additionalProperties", "unevaluatedItems", "unevaluatedProperties",
+    )})
+    keyword_values.update({
+        "$vocabulary": {"urn:example:vocabulary": True}, "const": None, "default": None,
+        "dependentRequired": {}, "enum": [None], "examples": [], "items": {},
+        "pattern": "^ok$", "required": [], "type": "object",
+    })
+    assert set(keyword_values) == ADOPTED_SCHEMA_KEYWORDS
+    for keyword, value in keyword_values.items():
+        assert validate_schema_node({keyword: value}, Path("vocabulary.schema.json")) == []
+
+    observed: set[str] = set()
+    for schema_path in sorted((ROOT / "schemas").glob("*.schema.json")):
+        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+        assert isinstance(schema, dict)
+        observed.update(collect_schema_keywords(schema))
+        errors = validate_schema_node(
+            schema,
+            schema_path.relative_to(ROOT),
+            runtime_profile=uses_runtime_profile(schema_path),
+        )
+        assert errors == [], f"baseline schema contract failed for {schema_path}: {errors}"
+    assert observed <= ADOPTED_SCHEMA_KEYWORDS
+    assert {
+        "$id",
+        "$schema",
+        "additionalProperties",
+        "allOf",
+        "const",
+        "dependentRequired",
+        "else",
+        "enum",
+        "if",
+        "items",
+        "pattern",
+        "properties",
+        "required",
+        "then",
+        "type",
+    } <= observed
+
+
+def assert_locked_schema_contract_failures() -> None:
+    cases = (
+        (
+            "duplicate root keyword",
+            "schemas/duplicate_work_evidence.schema.json",
+            ("minimun",),
+            1,
+            "$: unsupported JSON Schema keyword 'minimun'",
+        ),
+        (
+            "PR review nested property keyword",
+            "schemas/pr_review_gate.schema.json",
+            ("properties", "pr", "minimun"),
+            1,
+            "$.properties.pr: unsupported JSON Schema keyword 'minimun'",
+        ),
+        (
+            "review result item keyword",
+            "schemas/review_result.schema.json",
+            ("properties", "prior_findings", "items", "minimun"),
+            1,
+            "$.properties.prior_findings.items: unsupported JSON Schema keyword 'minimun'",
+        ),
+        (
+            "runtime checkpoint additional schema keyword",
+            "schemas/runtime_checkpoint.schema.json",
+            ("additionalProperties",),
+            {"type": "string", "minimun": 1},
+            "$.additionalProperties: unsupported JSON Schema keyword 'minimun'",
+        ),
+        (
+            "review result invalid pattern",
+            "schemas/review_result.schema.json",
+            ("properties", "body", "pattern"),
+            "[",
+            "$.properties.body.pattern invalid regex",
+        ),
+    )
+    locked_files = {
+        "schemas/duplicate_work_evidence.schema.json",
+        "schemas/pr_review_gate.schema.json",
+        "schemas/review_result.schema.json",
+        "schemas/runtime_checkpoint.schema.json",
+    }
+
+    with tempfile.TemporaryDirectory(prefix="remem-specrail-locked-schema-") as raw:
+        repo = Path(raw)
+        copy_pack(repo)
+        lock_path = repo / "checks" / "specrail-sync.lock.json"
+        baseline_lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        for label, relative_path, path, replacement, expected_error in cases:
+            for locked_file in locked_files:
+                shutil.copy2(ROOT / locked_file, repo / locked_file)
+            write_lock(lock_path, json.loads(json.dumps(baseline_lock)))
+
+            schema_path = repo / relative_path
+            schema = json.loads(schema_path.read_text(encoding="utf-8"))
+            set_nested(schema, path, replacement)
+            schema_path.write_text(
+                json.dumps(schema, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            changed_lock = json.loads(json.dumps(baseline_lock))
+            update_lock_hash(changed_lock, relative_path, schema_path)
+            write_lock(lock_path, changed_lock)
+            assert_contract_failure(repo, expected_error, label)
+
+
+def assert_published_schema_applicability() -> None:
+    positive_schema = {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Published applicability fixture",
+        "type": "object",
+        "properties": {
+            "missing_type": {"minLength": 1},
+            "mixed_union": {
+                "type": ["string", "null"],
+                "minLength": 1,
+                "pattern": "^ok$",
+            },
+            "conditional": {
+                "if": {"properties": {"kind": {"const": "primary"}}},
+                "then": {"required": ["value"]},
+                "else": {"properties": {"fallback": {"type": "string"}}},
+            },
+        },
+        "additionalProperties": True,
+    }
+    negative_cases = (
+        (
+            "disjoint minLength",
+            {"type": "integer", "minLength": 1},
+            "$.properties.value.minLength is incompatible with declared type integer",
+        ),
+        (
+            "disjoint pattern",
+            {"type": "integer", "pattern": "^x$"},
+            "$.properties.value.pattern is incompatible with declared type integer",
+        ),
+        (
+            "invalid patternProperties",
+            {"type": "object", "patternProperties": {"[": {"type": "string"}}},
+            "$.properties.value.patternProperties['['] invalid regex",
+        ),
+    )
+
+    with tempfile.TemporaryDirectory(prefix="remem-specrail-published-schema-") as raw:
+        repo = Path(raw)
+        copy_pack(repo)
+        schema_path = repo / "schemas" / "published_fixture.schema.json"
+        schema_path.write_text(
+            json.dumps(positive_schema, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        assert_passed(
+            run(
+                [
+                    sys.executable,
+                    str(repo / "checks" / "check_workflow.py"),
+                    "--repo",
+                    str(repo),
+                ],
+                cwd=repo,
+            ),
+            "published missing/mixed/conditional workflow schema",
+        )
+        assert_passed(
+            run([str(repo / "scripts" / "sync-specrail-checks.sh"), "--verify"], cwd=repo),
+            "published missing/mixed/conditional sync schema",
+        )
+
+        for label, child_schema, expected_error in negative_cases:
+            malformed = json.loads(json.dumps(positive_schema))
+            malformed["properties"] = {"value": child_schema}
+            schema_path.write_text(
+                json.dumps(malformed, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            assert_contract_failure(repo, expected_error, label)
+
+
 def assert_malformed_schema_bodies_fail_closed() -> None:
     cases = (
         ("properties", ("properties",), [], "$.properties must be an object"),
@@ -131,7 +400,7 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
             "required shape",
             ("required",),
             ["issue", 7],
-            "$.required must be an array of strings",
+            "$.required must be a unique array of strings",
         ),
         (
             "unknown keyword",
@@ -327,8 +596,8 @@ def assert_malformed_schema_bodies_fail_closed() -> None:
 
         safe_schema = json.loads(json.dumps(baseline_schema))
         safe_schema["properties"]["issue"]["type"] = ["integer", "number"]
-        safe_schema["properties"]["issue"]["properties"] = {}
-        safe_schema["properties"]["issue"]["additionalProperties"] = False
+        safe_schema["properties"]["issue"].pop("properties", None)
+        safe_schema["properties"]["issue"].pop("additionalProperties", None)
         schema_path.write_text(
             json.dumps(safe_schema, indent=2) + "\n",
             encoding="utf-8",
@@ -510,6 +779,9 @@ def main() -> int:
         run([str(SYNC_SCRIPT), "--verify"], cwd=ROOT),
         "repository sync verifier",
     )
+    assert_adopted_schema_vocabulary_baseline()
+    assert_published_schema_applicability()
+    assert_locked_schema_contract_failures()
     assert_malformed_schema_bodies_fail_closed()
     assert_runtime_verifier()
     print("SpecRail gate wiring test passed")

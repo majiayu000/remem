@@ -5,13 +5,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import re
 import sys
 from pathlib import Path
 
+from schema_contract import uses_runtime_profile, validate_schema_node
 from specrail_lib import (
-    SUPPORTED_SCHEMA_KEYS,
     SpecRailError,
     load_pack,
     read_text,
@@ -22,11 +21,6 @@ from specrail_lib import (
 )
 
 
-JSON_SCHEMA_TYPES = {"array", "boolean", "integer", "null", "number", "object", "string"}
-# Keep this list limited to schemas passed to specrail_lib.validate_instance.
-# Other adopted schemas use the wider JSON Schema vocabulary intentionally.
-RUNTIME_VALIDATED_SCHEMAS = {"duplicate_work_evidence.schema.json"}
-
 REQUIRED_FILES = [
     "AGENT_USAGE.md",
     "AGENTS.md",
@@ -34,6 +28,7 @@ REQUIRED_FILES = [
     "states.yaml",
     "labels.yaml",
     "checks/check_workflow.py",
+    "checks/schema_contract.py",
     "checks/github_issue_evidence.py",
     "checks/github_pr_evidence.py",
     "checks/pr_gate.py",
@@ -137,241 +132,6 @@ def validate_tokens(repo: Path) -> list[str]:
     return errors
 
 
-def validate_json_schema_body(
-    schema: dict[str, object],
-    relative_path: Path,
-    schema_path: str = "$",
-    *,
-    runtime_subset: bool = False,
-) -> list[str]:
-    """Validate recursive JSON Schema shapes and the local runtime subset."""
-
-    errors: list[str] = []
-    if runtime_subset:
-        unsupported = sorted(set(schema) - SUPPORTED_SCHEMA_KEYS)
-        for keyword in unsupported:
-            errors.append(
-                f"{relative_path}: {schema_path}: unsupported JSON Schema keyword "
-                f"{keyword!r}"
-            )
-
-    for keyword in ("$id", "$schema", "description", "title", "pattern"):
-        if keyword in schema and not isinstance(schema[keyword], str):
-            errors.append(
-                f"{relative_path}: {schema_path}.{keyword} must be a string"
-            )
-
-    expected_type = schema.get("type")
-    declared_types: set[str] | None = None
-    if "type" in schema:
-        expected_types = (
-            expected_type if isinstance(expected_type, list) else [expected_type]
-        )
-        if (
-            not expected_types
-            or not all(isinstance(item, str) for item in expected_types)
-            or not set(expected_types) <= JSON_SCHEMA_TYPES
-            or len(set(expected_types)) != len(expected_types)
-        ):
-            errors.append(
-                f"{relative_path}: {schema_path}.type must be a supported JSON type "
-                "or non-empty unique array of supported JSON types"
-            )
-        else:
-            declared_types = set(expected_types)
-
-    if "enum" in schema and (
-        not isinstance(schema["enum"], list) or not schema["enum"]
-    ):
-        errors.append(
-            f"{relative_path}: {schema_path}.enum must be a non-empty array"
-        )
-
-    if runtime_subset:
-        keyword_types = (
-            ("items", {"array"}),
-            ("minItems", {"array"}),
-            ("minLength", {"string"}),
-            ("required", {"object"}),
-            ("exclusiveMaximum", {"integer", "number"}),
-            ("exclusiveMinimum", {"integer", "number"}),
-            ("minimum", {"integer", "number"}),
-        )
-        for keyword, compatible_types in keyword_types:
-            if keyword not in schema:
-                continue
-            expected = " or ".join(sorted(compatible_types))
-            if declared_types is None:
-                errors.append(
-                    f"{relative_path}: {schema_path}.{keyword} requires explicit "
-                    f"type {expected}"
-                )
-            elif not declared_types <= compatible_types:
-                errors.append(
-                    f"{relative_path}: {schema_path}.{keyword} requires only "
-                    f"type {expected}"
-                )
-
-    for keyword in ("minItems", "minLength"):
-        if keyword not in schema:
-            continue
-        value = schema[keyword]
-        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
-            errors.append(
-                f"{relative_path}: {schema_path}.{keyword} must be a non-negative integer"
-            )
-
-    for keyword in ("exclusiveMaximum", "exclusiveMinimum", "maximum", "minimum"):
-        if keyword not in schema:
-            continue
-        value = schema[keyword]
-        if (
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or (isinstance(value, float) and not math.isfinite(value))
-        ):
-            errors.append(
-                f"{relative_path}: {schema_path}.{keyword} must be a JSON number"
-            )
-
-    properties = schema.get("properties")
-    if "properties" in schema and not isinstance(properties, dict):
-        errors.append(f"{relative_path}: {schema_path}.properties must be an object")
-    elif isinstance(properties, dict):
-        for name, child in properties.items():
-            child_path = f"{schema_path}.properties.{name}"
-            if not isinstance(child, dict):
-                errors.append(f"{relative_path}: {child_path} must be an object")
-                continue
-            errors.extend(
-                validate_json_schema_body(
-                    child,
-                    relative_path,
-                    child_path,
-                    runtime_subset=runtime_subset,
-                )
-            )
-
-    required = schema.get("required")
-    if "required" in schema:
-        if not isinstance(required, list) or not all(
-            isinstance(name, str) for name in required
-        ):
-            errors.append(
-                f"{relative_path}: {schema_path}.required must be an array of strings"
-            )
-
-    if "items" in schema:
-        items = schema["items"]
-        items_path = f"{schema_path}.items"
-        if not isinstance(items, dict):
-            errors.append(f"{relative_path}: {items_path} must be an object")
-        else:
-            errors.extend(
-                validate_json_schema_body(
-                    items,
-                    relative_path,
-                    items_path,
-                    runtime_subset=runtime_subset,
-                )
-            )
-
-    if "additionalProperties" in schema:
-        additional = schema["additionalProperties"]
-        additional_path = f"{schema_path}.additionalProperties"
-        if isinstance(additional, dict):
-            errors.extend(
-                validate_json_schema_body(
-                    additional,
-                    relative_path,
-                    additional_path,
-                    runtime_subset=runtime_subset,
-                )
-            )
-        elif not isinstance(additional, bool):
-            errors.append(
-                f"{relative_path}: {additional_path} must be a boolean or object"
-            )
-
-    for keyword in ("$defs", "definitions", "dependentSchemas", "patternProperties"):
-        if keyword not in schema:
-            continue
-        children = schema[keyword]
-        keyword_path = f"{schema_path}.{keyword}"
-        if not isinstance(children, dict):
-            errors.append(f"{relative_path}: {keyword_path} must be an object")
-            continue
-        for name, child in children.items():
-            child_path = f"{keyword_path}.{name}"
-            if not isinstance(child, dict):
-                errors.append(f"{relative_path}: {child_path} must be an object")
-                continue
-            errors.extend(
-                validate_json_schema_body(
-                    child,
-                    relative_path,
-                    child_path,
-                    runtime_subset=runtime_subset,
-                )
-            )
-
-    for keyword in ("allOf", "anyOf", "oneOf", "prefixItems"):
-        if keyword not in schema:
-            continue
-        children = schema[keyword]
-        keyword_path = f"{schema_path}.{keyword}"
-        if not isinstance(children, list) or not children:
-            errors.append(f"{relative_path}: {keyword_path} must be a non-empty array")
-            continue
-        for index, child in enumerate(children):
-            child_path = f"{keyword_path}[{index}]"
-            if not isinstance(child, dict):
-                errors.append(f"{relative_path}: {child_path} must be an object")
-                continue
-            errors.extend(
-                validate_json_schema_body(
-                    child,
-                    relative_path,
-                    child_path,
-                    runtime_subset=runtime_subset,
-                )
-            )
-
-    for keyword in ("contains", "else", "if", "not", "propertyNames", "then"):
-        if keyword not in schema:
-            continue
-        child = schema[keyword]
-        child_path = f"{schema_path}.{keyword}"
-        if not isinstance(child, dict):
-            errors.append(f"{relative_path}: {child_path} must be an object")
-            continue
-        errors.extend(
-            validate_json_schema_body(
-                child,
-                relative_path,
-                child_path,
-                runtime_subset=runtime_subset,
-            )
-        )
-
-    if "dependentRequired" in schema:
-        dependencies = schema["dependentRequired"]
-        dependent_path = f"{schema_path}.dependentRequired"
-        if not isinstance(dependencies, dict):
-            errors.append(f"{relative_path}: {dependent_path} must be an object")
-        else:
-            for name, required_names in dependencies.items():
-                if not isinstance(required_names, list) or not all(
-                    isinstance(item, str) for item in required_names
-                ):
-                    errors.append(
-                        f"{relative_path}: {dependent_path}.{name} must be an "
-                        "array of strings"
-                    )
-
-    return errors
-
-
 def validate_all_json_schemas(repo: Path) -> list[str]:
     """Validate every JSON schema adopted by remem."""
 
@@ -396,10 +156,10 @@ def validate_all_json_schemas(repo: Path) -> list[str]:
         if data.get("type") != "object":
             errors.append(f"{relative_path}: top-level type must be object")
         errors.extend(
-            validate_json_schema_body(
+            validate_schema_node(
                 data,
                 relative_path,
-                runtime_subset=path.name in RUNTIME_VALIDATED_SCHEMAS,
+                runtime_profile=uses_runtime_profile(path),
             )
         )
     return errors
