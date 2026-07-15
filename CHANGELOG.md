@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.204` for GH-671 T4: `remem rules` lists compiled
+  rule provenance and persists disable, enable, and warn/block action overrides
+  without writing derived artifacts on the CLI path; independent override
+  columns survive concurrent-style updates, artifact regeneration, and worker
+  enqueue failures without silent state loss.
 - Staged source version `0.5.203` for #796: migration v068 records one
   exact-range SessionRollup follow-up scheduling decision in the same SQLite
   transaction as Compress and Dream enqueueing, so retries cannot replace
