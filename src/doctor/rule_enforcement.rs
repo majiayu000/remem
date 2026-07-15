@@ -106,20 +106,29 @@ fn check_compiled_rules_for(
         }
     };
     let evaluation_detail = match evaluation {
-        Ok(Some(record)) => {
-            degraded |= enabled;
-            let codes = record
-                .codes
-                .iter()
-                .map(|code| code.as_str())
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("last_evaluation_error={codes}@{}", record.occurred_at_epoch)
+        Ok(snapshot) => {
+            degraded |= enabled && snapshot.corrupt_markers > 0;
+            let latest = snapshot.latest.as_ref().map_or_else(
+                || "none".to_string(),
+                |record| {
+                    let codes = record
+                        .codes
+                        .iter()
+                        .map(|code| code.as_str())
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!("{codes}@{}", record.occurred_at_epoch)
+                },
+            );
+            format!(
+                "last_evaluation_error={latest} evaluation_diagnostic_corrupt={}",
+                snapshot.corrupt_markers
+            )
         }
-        Ok(None) => "last_evaluation_error=none".to_string(),
         Err(_) => {
             degraded = true;
-            "last_evaluation_error=unavailable".to_string()
+            "last_evaluation_error=unavailable evaluation_diagnostic_corrupt=unavailable"
+                .to_string()
         }
     };
 
@@ -271,6 +280,40 @@ mod tests {
         assert!(matches!(check.status, Status::Ok));
         assert!(check.detail.contains("enabled=false"));
         assert!(check.detail.contains("artifact_present=false"));
+    }
+
+    #[test]
+    fn historical_evaluation_error_does_not_degrade_current_healthy_artifact() -> anyhow::Result<()>
+    {
+        let scoped = ScopedTestDataDir::new("doctor-rules-recovered");
+        let conn = crate::db::open_db()?;
+        let project = "/repo/recovered";
+        let artifact = CompiledRulesArtifact::new(2000, Vec::new());
+        write_artifact_atomic(
+            crate::rules::artifact_path_for_project(&scoped.path, project),
+            &artifact,
+        )?;
+        conn.execute(
+            "INSERT INTO preference_rule_diagnostics
+             (project, event_kind, status, message, occurred_at_epoch)
+             VALUES (?1, 'compile', 'ok', 'compiled 0 rule(s)', 2000)",
+            [project],
+        )?;
+        crate::rules::log_evaluation_error_once_with_diagnostic(
+            &scoped.path,
+            Some("doctor-recovered-session"),
+            Some(project),
+            &[EvaluationDiagnosticCode::ArtifactMissing],
+            "historical missing artifact",
+        );
+
+        let check = check_compiled_rules_for(Some(&conn), &scoped.path, project, true);
+
+        assert!(matches!(check.status, Status::Ok), "{}", check.detail);
+        assert!(check
+            .detail
+            .contains("last_evaluation_error=artifact_missing@"));
+        Ok(())
     }
 
     #[test]

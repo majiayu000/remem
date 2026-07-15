@@ -100,6 +100,7 @@ fn missing_artifact_fails_open_with_diagnostic() -> Result<()> {
     );
     let project_key = crate::db::project_from_cwd(&project.to_string_lossy());
     let record = crate::rules::load_evaluation_error(&data_dir, &project_key)?
+        .latest
         .context("evaluation diagnostic marker")?;
     assert_eq!(
         record.codes,
@@ -175,6 +176,7 @@ fn invalid_hook_input_can_record_a_project_scoped_closed_code() -> Result<()> {
     );
 
     let record = crate::rules::load_evaluation_error(&data_dir, &project)?
+        .latest
         .context("project-scoped evaluation diagnostic")?;
     assert_eq!(record.codes, vec![EvaluationDiagnosticCode::HookInput]);
     Ok(())

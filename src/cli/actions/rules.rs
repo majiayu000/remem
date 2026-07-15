@@ -119,7 +119,7 @@ fn run_rules_eval(host: Option<RuleHostArg>) -> Result<()> {
             rules::log_evaluation_error_once_with_diagnostic(
                 &data_dir,
                 session_hint.as_deref(),
-                project_hint.as_deref(),
+                None,
                 &[rules::EvaluationDiagnosticCode::Config],
                 &format!("read rule compilation config: {error:#}"),
             );

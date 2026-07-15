@@ -1,5 +1,3 @@
-use std::fs::OpenOptions;
-use std::io::ErrorKind;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -230,46 +228,31 @@ pub(crate) fn log_evaluation_error_once_with_diagnostic(
     }
     let digest = Sha256::digest(session_key.as_bytes());
     let marker = marker_dir.join(format!("{digest:x}"));
-    match OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&marker)
-    {
-        Ok(mut file) => {
-            if let Err(error) =
-                super::write_evaluation_error_record(&mut file, data_dir, project, codes)
-            {
-                drop(file);
-                if let Err(remove_error) = std::fs::remove_file(&marker) {
-                    crate::log::error(
-                        "rules-eval",
-                        &format!(
-                            "could not remove incomplete evaluation diagnostic marker: {remove_error}"
-                        ),
-                    );
-                }
-                crate::log::error(
-                    "rules-eval",
-                    &format!(
-                        "could not write evaluation diagnostic marker: {error:#}; {}",
-                        sanitize_diagnostic(message)
-                    ),
-                );
-                return;
-            }
-            drop(file);
-            crate::log::set_private_permissions(&marker);
-            crate::log::error("rules-eval", &sanitize_diagnostic(message));
+    match marker.try_exists() {
+        Ok(true) => return,
+        Ok(false) => {}
+        Err(error) => {
+            crate::log::error(
+                "rules-eval",
+                &format!(
+                    "could not inspect evaluation diagnostic marker: {error}; {}",
+                    sanitize_diagnostic(message)
+                ),
+            );
+            return;
         }
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-        Err(error) => crate::log::error(
+    }
+    if let Err(error) = super::publish_evaluation_error_record(&marker, data_dir, project, codes) {
+        crate::log::error(
             "rules-eval",
             &format!(
-                "could not create evaluation diagnostic marker: {error}; {}",
+                "could not publish evaluation diagnostic marker: {error:#}; {}",
                 sanitize_diagnostic(message)
             ),
-        ),
+        );
+        return;
     }
+    crate::log::error("rules-eval", &sanitize_diagnostic(message));
 }
 
 #[cfg(test)]

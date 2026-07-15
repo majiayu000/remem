@@ -1,5 +1,5 @@
-use std::fs::{self, File};
-use std::io::{ErrorKind, Write};
+use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use anyhow::{ensure, Context, Result};
@@ -19,12 +19,18 @@ pub(crate) struct EvaluationErrorRecord {
     pub codes: Vec<EvaluationDiagnosticCode>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct EvaluationErrorSnapshot {
+    pub latest: Option<EvaluationErrorRecord>,
+    pub corrupt_markers: usize,
+}
+
 pub(crate) fn evaluation_marker_dir(data_dir: &Path) -> PathBuf {
     data_dir.join("compiled_rules").join(EVALUATION_MARKER_DIR)
 }
 
-pub(crate) fn write_evaluation_error_record(
-    file: &mut File,
+pub(crate) fn publish_evaluation_error_record(
+    marker: &Path,
     data_dir: &Path,
     project: Option<&str>,
     codes: &[EvaluationDiagnosticCode],
@@ -42,19 +48,22 @@ pub(crate) fn write_evaluation_error_record(
     };
     let mut contents = serde_json::to_vec(&record)?;
     contents.push(b'\n');
-    file.write_all(&contents)
-        .context("write evaluation error session marker")?;
+    crate::atomic_file::write_atomic(marker, contents)
+        .context("publish evaluation error session marker")?;
+    crate::log::set_private_permissions(marker);
     Ok(())
 }
 
 pub(crate) fn load_evaluation_error(
     data_dir: &Path,
     project: &str,
-) -> Result<Option<EvaluationErrorRecord>> {
+) -> Result<EvaluationErrorSnapshot> {
     let marker_dir = evaluation_marker_dir(data_dir);
     let entries = match fs::read_dir(&marker_dir) {
         Ok(entries) => entries,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(EvaluationErrorSnapshot::default())
+        }
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
@@ -65,9 +74,13 @@ pub(crate) fn load_evaluation_error(
         }
     };
     let expected_project_key = project_key(data_dir, project);
-    let mut latest = None;
+    let mut snapshot = EvaluationErrorSnapshot::default();
     for entry in entries {
         let entry = entry.context("read evaluation diagnostic marker entry")?;
+        let file_name = entry.file_name();
+        if file_name.to_string_lossy().starts_with('.') {
+            continue;
+        }
         if !entry
             .file_type()
             .context("read evaluation diagnostic marker type")?
@@ -75,23 +88,27 @@ pub(crate) fn load_evaluation_error(
         {
             continue;
         }
-        let contents = fs::read(entry.path()).with_context(|| {
-            format!(
-                "read evaluation diagnostic marker {}",
-                entry.path().display()
-            )
-        })?;
+        let contents = match fs::read(entry.path()) {
+            Ok(contents) => contents,
+            Err(_) => {
+                snapshot.corrupt_markers += 1;
+                continue;
+            }
+        };
         if contents.is_empty() {
             continue;
         }
-        let record: EvaluationErrorRecord =
-            serde_json::from_slice(&contents).with_context(|| {
-                format!(
-                    "parse evaluation diagnostic marker {}",
-                    entry.path().display()
-                )
-            })?;
-        validate_record(&record)?;
+        let record: EvaluationErrorRecord = match serde_json::from_slice(&contents) {
+            Ok(record) => record,
+            Err(_) => {
+                snapshot.corrupt_markers += 1;
+                continue;
+            }
+        };
+        if validate_record(&record).is_err() {
+            snapshot.corrupt_markers += 1;
+            continue;
+        }
         if record
             .project_key
             .as_deref()
@@ -99,16 +116,17 @@ pub(crate) fn load_evaluation_error(
         {
             continue;
         }
-        if latest
+        if snapshot
+            .latest
             .as_ref()
             .is_none_or(|current: &EvaluationErrorRecord| {
                 record.occurred_at_epoch > current.occurred_at_epoch
             })
         {
-            latest = Some(record);
+            snapshot.latest = Some(record);
         }
     }
-    Ok(latest)
+    Ok(snapshot)
 }
 
 fn project_key(data_dir: &Path, project: &str) -> String {
@@ -148,10 +166,8 @@ mod tests {
         let marker_dir = evaluation_marker_dir(&data_dir);
         fs::create_dir_all(&marker_dir)?;
         let marker = marker_dir.join("session-hash");
-        let mut file = File::create(&marker)?;
-
-        write_evaluation_error_record(
-            &mut file,
+        publish_evaluation_error_record(
+            &marker,
             &data_dir,
             Some(project),
             &[
@@ -160,9 +176,9 @@ mod tests {
                 EvaluationDiagnosticCode::RuleEvaluation,
             ],
         )?;
-        drop(file);
 
-        let record = load_evaluation_error(&data_dir, project)?.context("record")?;
+        let snapshot = load_evaluation_error(&data_dir, project)?;
+        let record = snapshot.latest.context("record")?;
         assert_eq!(
             record.codes,
             vec![
@@ -181,9 +197,58 @@ mod tests {
         let data_dir = test_dir("evaluation-error-legacy-marker");
         let marker_dir = evaluation_marker_dir(&data_dir);
         fs::create_dir_all(&marker_dir)?;
-        File::create(marker_dir.join("legacy-session-hash"))?;
+        fs::File::create(marker_dir.join("legacy-session-hash"))?;
 
-        assert_eq!(load_evaluation_error(&data_dir, "/repo")?, None);
+        assert_eq!(
+            load_evaluation_error(&data_dir, "/repo")?,
+            EvaluationErrorSnapshot::default()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_marker_is_reported_without_hiding_valid_diagnostic() -> Result<()> {
+        let data_dir = test_dir("evaluation-error-corrupt-marker");
+        let marker_dir = evaluation_marker_dir(&data_dir);
+        fs::create_dir_all(&marker_dir)?;
+        fs::write(marker_dir.join("corrupt-session"), b"{not-json")?;
+        publish_evaluation_error_record(
+            &marker_dir.join("valid-session"),
+            &data_dir,
+            Some("/repo"),
+            &[EvaluationDiagnosticCode::ArtifactParse],
+        )?;
+
+        let snapshot = load_evaluation_error(&data_dir, "/repo")?;
+        assert_eq!(snapshot.corrupt_markers, 1);
+        assert_eq!(
+            snapshot.latest.context("valid marker")?.codes,
+            vec![EvaluationDiagnosticCode::ArtifactParse]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn global_config_error_is_visible_from_every_project() -> Result<()> {
+        let data_dir = test_dir("evaluation-error-global-config");
+        let marker_dir = evaluation_marker_dir(&data_dir);
+        fs::create_dir_all(&marker_dir)?;
+        publish_evaluation_error_record(
+            &marker_dir.join("global-session"),
+            &data_dir,
+            None,
+            &[EvaluationDiagnosticCode::Config],
+        )?;
+
+        for project in ["/repo/one", "/repo/two"] {
+            assert_eq!(
+                load_evaluation_error(&data_dir, project)?
+                    .latest
+                    .context("global marker")?
+                    .codes,
+                vec![EvaluationDiagnosticCode::Config]
+            );
+        }
         Ok(())
     }
 }
