@@ -1,3 +1,4 @@
+use super::parse::InvalidObservationTypeDrop;
 use super::*;
 
 #[test]
@@ -143,16 +144,62 @@ fn parse_observations_drops_missing_and_unknown_types_with_error_reasons() {
 </observation>
 "#;
 
-    let parsed = crate::log::with_log_dir(&log_dir, || parse_observations(xml));
-    assert_eq!(parsed.len(), 1);
-    assert_eq!(parsed[0].obs_type, "decision");
-    assert_eq!(parsed[0].title.as_deref(), Some("Valid"));
+    let outcome = crate::log::with_log_dir(&log_dir, || parse_observations_with_outcome(xml));
+    assert_eq!(
+        outcome.invalid_type_drops,
+        vec![
+            InvalidObservationTypeDrop::Unknown,
+            InvalidObservationTypeDrop::Missing,
+        ]
+    );
+    assert!(outcome.had_invalid_type());
+    assert_eq!(outcome.observations.len(), 1);
+    assert_eq!(outcome.observations[0].obs_type, "decision");
+    assert_eq!(outcome.observations[0].title.as_deref(), Some("Valid"));
 
     let log = std::fs::read_to_string(log_dir.join("remem.log"))
         .expect("observation parser error log should be readable");
     assert!(log.contains("[ERROR] [observation-parse]"));
-    assert!(log.contains("drop_reason=unknown_type raw_type=\"unknown\""));
+    assert!(log.contains("drop_reason=unknown_type raw_type_preview=\"unknown\""));
     assert!(log.contains("drop_reason=missing_type raw_type=\"\""));
+
+    std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
+}
+
+#[test]
+fn unknown_type_log_redacts_secrets_and_bounds_preview() {
+    let log_dir = std::env::temp_dir().join(format!(
+        "remem-observation-type-secret-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time should follow Unix epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&log_dir).expect("test log directory should be created");
+
+    let github_token = "ghp_abcdefghijklmnopqrstuvwxyz123456";
+    let bearer_token = "bearer-secret-value-1234567890";
+    let padding = "x".repeat(2_000);
+    let xml = format!(
+        "<observation><type>{github_token} Bearer {bearer_token} {padding}</type><title>Unsafe</title></observation>"
+    );
+
+    let parsed = crate::log::with_log_dir(&log_dir, || parse_observations(&xml));
+    assert!(parsed.is_empty());
+
+    let log = std::fs::read_to_string(log_dir.join("remem.log"))
+        .expect("observation parser error log should be readable");
+    let line = log
+        .lines()
+        .find(|line| line.contains("drop_reason=unknown_type"))
+        .expect("unknown type error should be logged");
+    assert!(line.contains("[REDACTED]"));
+    assert!(line.contains("raw_type_bytes="));
+    assert!(!line.contains(github_token));
+    assert!(!line.contains(bearer_token));
+    assert!(!line.contains(&"x".repeat(200)));
+    assert!(line.len() <= 320, "unknown type log line must stay bounded");
 
     std::fs::remove_dir_all(log_dir).expect("test log directory should be removed");
 }

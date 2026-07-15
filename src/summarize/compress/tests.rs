@@ -194,7 +194,7 @@ fn contentless_replacements_do_not_retire_sources() -> Result<()> {
     assert_eq!(
         missing_type,
         CompressionOutcome::Skipped {
-            reason: NO_REPLACEMENTS_REASON,
+            reason: INVALID_REPLACEMENTS_REASON,
             source_count: 1,
         }
     );
@@ -215,6 +215,50 @@ fn contentless_replacements_do_not_retire_sources() -> Result<()> {
     assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
     assert!(compressed_titles(&conn)?.is_empty());
     Ok(())
+}
+
+fn assert_mixed_invalid_type_response_is_atomic(response: &str) -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![
+        insert_source_observation(&conn, "active")?,
+        insert_source_observation(&conn, "stale")?,
+    ];
+    let sources = source_observations(&conn, &ids)?;
+
+    let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
+
+    assert_eq!(
+        outcome,
+        CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: 2,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["active", "stale"]);
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn valid_and_missing_type_replacements_reject_the_whole_batch() -> Result<()> {
+    let response = format!(
+        "{}\n<observation><title>Missing type</title></observation>",
+        valid_response("Valid replacement")
+    );
+
+    assert_mixed_invalid_type_response_is_atomic(&response)
+}
+
+#[test]
+fn valid_and_unknown_type_replacements_reject_the_whole_batch() -> Result<()> {
+    let response = format!(
+        "{}\n<observation><type>unknown</type><title>Unknown type</title></observation>",
+        valid_response("Valid replacement")
+    );
+
+    assert_mixed_invalid_type_response_is_atomic(&response)
 }
 
 #[test]
