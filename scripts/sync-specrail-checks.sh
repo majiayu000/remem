@@ -249,6 +249,8 @@ for relative_path in sorted(classified_checks_python):
     import_module_aliases = set()
     builtins_aliases = {"builtins"}
     builtin_import_aliases = set()
+    sys_aliases = {"sys"}
+    sys_path_aliases = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -256,6 +258,8 @@ for relative_path in sorted(classified_checks_python):
                     importlib_aliases.add(alias.asname or alias.name)
                 elif alias.name == "builtins":
                     builtins_aliases.add(alias.asname or alias.name)
+                elif alias.name == "sys":
+                    sys_aliases.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom) and not node.level:
             if node.module == "importlib":
                 for alias in node.names:
@@ -265,6 +269,82 @@ for relative_path in sorted(classified_checks_python):
                 for alias in node.names:
                     if alias.name == "__import__":
                         builtin_import_aliases.add(alias.asname or alias.name)
+            elif node.module == "sys":
+                for alias in node.names:
+                    if alias.name in {"path", "*"}:
+                        sys_path_aliases.add(alias.asname or alias.name)
+
+    # Fail closed on aliased dynamic-import callables and sys.path mutation:
+    # only direct, literal importlib.import_module / __import__ calls are
+    # classified above, so any other reference to those callables (assignment,
+    # getattr base, star import) or any sys.path access escapes classification
+    # and must be rejected before the check modules execute.
+    if "*" in sys_path_aliases:
+        print(
+            f"UNSUPPORTED SYS PATH ACCESS: {relative_path}: "
+            "star import of sys cannot be classified safely",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    dynamic_callable_names = import_module_aliases | builtin_import_aliases | {"__import__"}
+    module_alias_names = importlib_aliases | builtins_aliases
+    call_funcs = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    allowed_module_refs = set()
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and id(node) in call_funcs
+            and node.attr in {"import_module", "__import__"}
+            and isinstance(node.value, ast.Name)
+            and node.value.id in module_alias_names
+        ):
+            allowed_module_refs.add(id(node.value))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            if node.id in dynamic_callable_names and id(node) not in call_funcs:
+                print(
+                    f"DYNAMIC IMPORT ALIAS: {relative_path}: {node.id} "
+                    "referenced outside a direct classified call",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if node.id in module_alias_names and id(node) not in allowed_module_refs:
+                print(
+                    f"DYNAMIC IMPORT ALIAS: {relative_path}: {node.id} "
+                    "referenced outside a direct classified call",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if node.id in sys_path_aliases:
+                print(
+                    f"UNSUPPORTED SYS PATH ACCESS: {relative_path}: {node.id} "
+                    "import search path use cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+        elif isinstance(node, ast.Attribute):
+            if node.attr in {"import_module", "__import__"} and not (
+                id(node) in call_funcs
+                and isinstance(node.value, ast.Name)
+                and node.value.id in module_alias_names
+            ):
+                print(
+                    f"DYNAMIC IMPORT ALIAS: {relative_path}: attribute "
+                    f"{node.attr} cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if (
+                node.attr == "path"
+                and isinstance(node.value, ast.Name)
+                and node.value.id in sys_aliases
+            ):
+                print(
+                    f"UNSUPPORTED SYS PATH ACCESS: {relative_path}: "
+                    "sys.path use cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -494,8 +574,16 @@ while IFS= read -r rel; do
 done <<< "$new_entries_output"
 for rel in "${SYNCED_FILES[@]}"; do
   # Copy the blob recorded at upstream_sha instead of the worktree path so a
-  # symlinked or otherwise substituted worktree entry can never be vendored.
+  # symlinked or otherwise substituted worktree entry can never be vendored,
+  # then restore the tree mode that shell redirection drops (100755 vs 100644;
+  # verify_upstream_sources already rejected every other mode).
   git -C "$UPSTREAM" show "${upstream_sha}:${rel}" > "$REPO_ROOT/$rel"
+  entry_mode="$(git -C "$UPSTREAM" ls-tree "$upstream_sha" -- "$rel" | awk 'NR==1{print $1}')"
+  if [[ "$entry_mode" == "100755" ]]; then
+    chmod 755 "$REPO_ROOT/$rel"
+  else
+    chmod 644 "$REPO_ROOT/$rel"
+  fi
 done
 write_lock "$upstream_sha"
 verify_lock

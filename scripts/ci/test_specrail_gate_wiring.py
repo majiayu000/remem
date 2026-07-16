@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import sys
 import tempfile
@@ -93,6 +94,15 @@ def assert_runtime_verifier() -> None:
             ("fromlist wildcard", "__import__('checks', fromlist=['*'])", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
             ("dynamic nonliteral level", "level = 0; __import__('specrail_lib', level=level)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
             ("dynamic relative level", "__import__('specrail_lib', level=1)", "checks/specrail_untracked_helper.py", "UNSUPPORTED RELATIVE LOCAL IMPORT"),
+            ("assigned import_module alias", "import importlib; loader = importlib.import_module; loader('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("assigned builtin import alias", "loader = __import__; loader('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("aliased importlib module", "import importlib; il = importlib; il.import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("getattr importlib import", "import importlib; getattr(importlib, 'import_module')('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("foreign import_module attribute", "import checks_loader_stub as stub; stub.import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("sys path insert", "import sys; sys.path.insert(0, 'tools'); import specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNSUPPORTED SYS PATH ACCESS"),
+            ("sys path assignment", "import sys; sys.path = ['tools'] + sys.path", None, "UNSUPPORTED SYS PATH ACCESS"),
+            ("from sys import path alias", "from sys import path as search_path; search_path.append('tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
+            ("sys star import", "from sys import *", None, "UNSUPPORTED SYS PATH ACCESS"),
             ("outside checks absolute", "import tools.specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("relative", "from . import specrail_lib", None, "UNSUPPORTED RELATIVE LOCAL IMPORT"),
             ("path escape", "import checks.specrail_escape_helper", None, "LOCAL IMPORT PATH ESCAPE"),
@@ -183,6 +193,7 @@ def assert_sync_copy_allows_new_managed_file() -> None:
         copy_pack(upstream)
         new_managed = upstream / "checks" / "specrail_new_upstream.py"
         new_managed.write_text("VALUE = 1\n", encoding="utf-8")
+        new_managed.chmod(0o755)
         new_schema = upstream / "schemas" / "specrail_new_upstream.schema.json"
         shutil.copy2(upstream / "schemas" / "review_result.schema.json", new_schema)
         assert_passed(run(["git", "add", "-A"], cwd=upstream), "stage upstream fixture")
@@ -223,6 +234,12 @@ def assert_sync_copy_allows_new_managed_file() -> None:
         assert_passed(sync_copy, "normal sync with newly copied managed check")
         assert "2 newly copied upstream-managed files pending tracking" in sync_copy.stdout
         assert (target / "checks" / "specrail_new_upstream.py").is_file()
+        assert os.access(target / "checks" / "specrail_new_upstream.py", os.X_OK), (
+            "synced 100755 upstream check must stay executable"
+        )
+        assert not os.access(target / "checks" / "github_evidence_common.py", os.X_OK), (
+            "synced 100644 upstream check must not gain the executable bit"
+        )
         assert (target / "schemas" / "specrail_new_upstream.schema.json").is_file()
         index_after = run(["git", "ls-files", "--stage"], cwd=target)
         assert_passed(index_after, "read target index after sync")
