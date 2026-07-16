@@ -200,7 +200,8 @@ Acceptance:
    contract; no code).
 2. Doctor visibility: legacy row counts, last-write tracking.
 3. Reader migration with equivalence fixtures; freeze writers.
-4. Value migration + deprecation window + drop migrations.
+4. Value migration + a remem 0.6.0 deprecation announcement in doctor and
+   release notes; guarded drop migrations no earlier than remem 0.7.0.
 
 Each code phase ships independently with focused tests plus:
 
@@ -215,6 +216,5 @@ cargo test
 - Do `session_summaries` rows retain standalone value after session rollups
   land in the ledger, or is their value fully represented by promoted
   memories plus `raw_messages`?
-- How long is the deprecation window (one minor release vs a time window)?
 - Does MCP `get_observations` keep its name after legacy removal, or is the
   legacy source parameter retired with it?

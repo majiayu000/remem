@@ -47,7 +47,8 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 6. Confirm `pending_observations` emptiness across real databases and keep
    `pending migrate-legacy` as the explicit migration path.
 7. Keep MCP and architecture docs from describing live observations as legacy.
-8. Ship any table drop only after a deprecation window and a guarded migration.
+8. Start the table-drop deprecation window in remem 0.6.0 through doctor output
+   and release notes. Ship no guarded drop before remem 0.7.0.
 
 ## Product-to-Test Mapping
 
@@ -80,7 +81,8 @@ needed fields and side effects, then removes only the redundant Summary writer.
 
 ## Test Plan
 
-- [ ] Doctor/status fixtures for counts, last-write epochs, and frozen writes.
+- [x] Doctor/status fixtures cover counts, last-write epochs, and frozen writes;
+      doctor returns `Fail` when retire/freeze blockers are present.
 - [x] `finalize_summarize` versus `persist_session_rollup` field-comparison
       fixture: `summary_writer_equivalence_fixture_documents_field_level_deltas`
       documents legacy-only structured fields, rollup-only range fields, and

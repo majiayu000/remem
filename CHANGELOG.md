@@ -3,11 +3,14 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.5.210` for GH-671 T7: repeated-correction fixtures
+- Staged source version `0.5.211` for GH-671 T7: repeated-correction fixtures
   cover package-manager choices, forbidden commit trailers, and forbidden
-  commands; the rule hook avoids per-invocation Git subprocess discovery and
-  uses a compile-time-optimized regex engine so enabled-rule p95 remains within
-  measurement noise of the disabled baseline.
+  commands; one Brush AST execution model closes wrapper, quoting, function,
+  mirror-push, and arithmetic-substitution bypasses while the release hook
+  remains within the fixed 1 ms delta and 15 ms enabled-p95 budgets.
+- Staged source version `0.5.210` for GH-684: frozen legacy-surface writes now
+  fail doctor instead of remaining warning-only, while the retirement contract
+  fixes the 0.6.0 announcement and no-earlier-than-0.7.0 guarded-drop window.
 - Staged source version `0.5.209` for #818: job enqueue, claim, lease
   transitions, migration reconciliation, and failure recovery now enforce
   database-atomic active identities and fail closed on conflicts while
