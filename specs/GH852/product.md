@@ -49,8 +49,9 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 2. `B-002`：Claude `autoMemoryDirectory` 只可在官方允许的用户/策略/显式 settings 范围配置，
    使用绝对路径或 `~/` 路径；不得写项目/本地 settings，也不得越出用户明确选择的目录。
 3. `B-003`：remem 数据库始终是唯一权威；Claude 目录只是可重建的交付 cache。接管启用后，
-   remem 只拥有 `remem_sessions.md` 和 `MEMORY.md` 内一个 marker-bounded 索引块，不拥有 Claude
-   生成的其余 MEMORY/topic 内容。旧目录不得继续生成第二份 remem 输出。
+   remem 只拥有 `remem_sessions.md` 和 `MEMORY.md` 内一个 marker-bounded 交付块，不拥有 Claude
+   生成的其余 MEMORY/topic 内容。只有真实位于官方 startup 加载窗口内的交付块正文才算 native
+   delivery；topic-file 链接不算。旧目录不得继续生成第二份 remem 输出。
 4. `B-004`：Claude 配置变更必须支持 dry-run，变更前备份，保留未知键，以原子方式写入；失败
    时恢复原配置与目录所有权状态，并输出 error 级可定位诊断。
 5. `B-005`：Codex 导入是只读、单向操作。它不得修改、移动或删除 `~/.codex/memories/` 下的
@@ -82,7 +83,9 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
     条目必须从 SessionStart 注入集合排除；未激活、manifest 不完整/过期或回滚后只能走
     SessionStart。不得在一个 SessionStart 中同时交付同一 stable memory id/content hash，也不得
     因去重状态错误同时关闭两条路径。安装/回滚必须在无活动 Claude 会话的 maintenance window
-    完成；无法证明该条件时拒绝切换。
+    完成；无法证明该条件时拒绝切换。有效 setting、prepared manifest 与 startup-window marker
+    generation/digest 必须全部匹配；任何不一致都要 error 并阻止成功的 SessionStart，不能猜测
+    fallback。若 PoC 证明宿主 hook 失败不能阻止会话，则 native bridge 结论必须为 no-go。
 17. `B-017`：Codex record 只能依据宿主提供且可验证的 workspace/repository evidence 绑定 remem
     project。无法可靠归属的 record 必须进入 `owner_scope=tool`、`owner_key=codex-cli`、
     `context_class=search_only` 的全局待审队列，绝不能把 import 命令的当前 cwd 当作来源项目。
@@ -96,8 +99,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 - [ ] Claude PoC 在隔离环境中记录真实版本与读写证据，并确定启用、重复启用、停用和失败回滚
       下的唯一目录所有权规则。
 - [ ] `autoMemoryDirectory` dry-run 不改配置；apply 原子保留未知设置；旧的 remem native-memory
-      同步不会形成第二写入面；marker 索引、active manifest 与 SessionStart exclusion 使用同一
-      stable id/hash 集合，激活前后均无重复或遗漏。
+      同步不会形成第二写入面；startup-window 交付块、prepared manifest 与 SessionStart exclusion
+      使用同一 stable id/hash 集合，激活前后均无重复或遗漏。
 - [ ] Codex PoC 记录至少一个真实已识别格式、一个未知/畸形格式和目录缺失/不可读状态；不从
       单一 fixture 推断全部宿主版本。
 - [ ] Codex import 的 dry-run 与 apply 分类一致；重复 apply 不增加重复事件/candidate；任一解析
@@ -119,7 +122,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 - Claude 设置已有用户自定义 `autoMemoryDirectory`：不得覆盖；dry-run 报告冲突，apply 要求显式
   所有权决策并保留可回滚值。
 - Claude MEMORY.md 或主题文件已存在：不得盲目拼接或截断；PoC 必须验证官方加载上限与 remem
-  生成内容的去重边界。
+  生成内容的去重边界。如果不移动/截断既有 startup-loaded 用户内容就没有足够窗口容纳 remem
+  交付块，native bridge 必须保持关闭并继续只用 SessionStart。
 - 同一 Claude 项目有多个 worktree：不得因路径归一化让不同项目误共享或让同项目重复注入。
 - Codex 目录为空、包含子目录、临时文件、符号链接、超大文件、非 UTF-8、并发写入或在扫描后
   被替换：必须遵守已验证格式与一致性边界，未知项不能静默忽略。
