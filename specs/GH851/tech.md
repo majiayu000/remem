@@ -78,10 +78,13 @@ SessionStart 的 recent row 不能直接追加到 stage 输出，`load_context_d
 产品把它视为硬 policy，则与 source-anchor 一样由 seam 在模型排序后重新施加。stage 输出直接进入
 fact-label annotation、截取与 rendering，期间只允许不改变顺序的映射/注释。
 
-source-anchor 使用两个明确边界，避免混合不可比较的 RRF 与 cross-encoder 分数：现有 `0.25` factor
-继续在 top-N preselection 前影响 RRF 顺序；rerank 成功后，seam 将普通候选与
+source-anchor 使用两个明确边界，避免混合不可比较的 RRF 与 cross-encoder 分数。该 spec 明确批准
+一个仅在 rerank 成功时生效的安全收紧：现有 `0.25` factor 继续在 top-N preselection 前影响 RRF
+顺序和 N/N+1 membership；rerank 成功后，seam 将普通候选与
 `verify-before-trust` 候选做稳定分区，普通分区在前、后者在后，各分区保持 rerank score/RRF rank/id
-决定的内部顺序。baseline fallback 直接使用 pre-rerank 的既有 source-anchor 顺序，不再二次惩罚。
+决定的内部顺序。baseline fallback 直接使用 pre-rerank 的既有 soft-demotion 顺序，不施加硬分区，
+因此 off/error 行为不被这项收紧改变。human approval 必须显式接受“rerank-on 时 hard partition”这一
+行为变化，不能把它描述为现有 `0.25` 语义的等价实现。
 
 候选投影只包含 human-approved 的本地字段，建议从记忆标题、正文和类型形成有标签的确定性文本。
 字段顺序、每字段及总 UTF-8 byte/token 上限必须在实现前用本地 eval 冻结；截断必须在 Unicode 边界
@@ -244,7 +247,7 @@ p95 增量预算、cold SessionStart p95 总预算及超预算处置。同时必
 | --- | --- | --- |
 | `B-001` | shared rerank seam + search/context call sites | `cargo test rerank_shared_stage_top_n_membership`：两入口只返回输入 top-N，且相同输入得到相同顺序 |
 | `B-002` | config validation + stable sorter | `cargo test rerank_empty_short_and_tie_break`：empty 不加载模型；1..k-1 候选被评分；score/RRF/id tie-break 稳定 |
-| `B-003` | eligibility adapters + final policy partition | `cargo test rerank_preserves_eligibility_and_source_anchor`：过滤候选不复活，普通候选始终在 `verify-before-trust` 前，fallback 等于旧顺序 |
+| `B-003` | eligibility adapters + final policy partition | `cargo test rerank_preserves_eligibility_and_source_anchor`：N/N+1 fixture 证明 preselection 仍由 `0.25` factor 改变 membership；成功 rerank 时普通候选在 `verify-before-trust` 前；off/error fallback 精确等于旧 soft-demotion 顺序 |
 | `B-004` | reranker CLI/inventory/local loader | `cargo test reranker_inventory_publish_is_verified` 与 network-deny CLI test：文件/hash/bytes 未完整时不可见，查询不联网 |
 | `B-005` | off bypass + baseline paginator | `cargo test rerank_off_is_baseline_equivalent`：ids/order/page/`has_more` byte-equivalent，loader 调用数为 0 |
 | `B-006` | manifest verifier + diagnostics + doctor | `cargo test rerank_missing_or_corrupt_is_fail_visible`：完整 baseline、closed reason、error log、doctor Fail |
