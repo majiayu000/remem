@@ -1,0 +1,15 @@
+{
+  "conversation_id": "<session-redacted>",
+  "generation_id": "<generation-redacted>",
+  "model": "<model-redacted>",
+  "is_background_agent": false,
+  "composer_mode": "<mode-redacted>",
+  "session_id": "<session-redacted>",
+  "hook_event_name": "sessionStart",
+  "cursor_version": "3.6.31",
+  "workspace_roots": [
+    "<workspace-root-redacted>"
+  ],
+  "user_email": "<account-redacted>",
+  "transcript_path": null
+}

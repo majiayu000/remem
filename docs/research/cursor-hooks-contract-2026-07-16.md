@@ -1,4 +1,4 @@
-# Cursor hooks real-host contract probe (2026-07-16)
+# Cursor hooks real-host contract probe v1 (2026-07-16)
 
 Tracking: GH-822; informs GH-823, GH-824, and GH-825.
 
@@ -40,21 +40,39 @@ approve GH-823/GH-825 or authorize runtime implementation.
 - User config safety: the pre-probe `~/.cursor/hooks.json` was backed up before
   modification. Existing hook entries were retained and the probe entries
   were appended. Cursor recognized the change without an application restart.
-  Immediately after `stop`, the original file was restored byte-for-byte;
-  its pre- and post-restore SHA-256 was
-  `5926f5c7bdd1d82b3779feeaf5d1ceb3ce1a51a9e323c24da6bda9810c2d03f2`.
+  Immediately after `stop`, the original file was restored byte-for-byte and
+  the pre/post SHA-256 values were verified equal. The stable config fingerprint
+  is intentionally not published.
 
-The captured event order was exactly `sessionStart`, `stop`. The private raw
-payload hashes at analysis time were:
+The captured event order was exactly `sessionStart`, `stop`. Private raw
+payloads and the config backup were deleted after structural analysis and
+restore verification. The public, synthetic replacement-value evidence bundle
+is in [`fixtures/cursor-hooks-contract-2026-07-16/`](fixtures/cursor-hooks-contract-2026-07-16/).
+It contains:
 
-| Evidence | SHA-256 |
-|---|---|
-| `sessionStart` stdin | `e1b7da81fdafc7896c7e039b94a486608bda61f40ac3d6f8c12320da3f509d76` |
-| `stop` stdin | `7b1621127cf4ec1691d5b168ee5f453aac8c697f72e1c12013774e6fb0f4f5a0` |
-| transcript JSONL | `bc0b8a5cced6faf745cc6359b1e4c9312b21559d451f44ff936a8985aa288a05` |
+- sanitized `sessionStart` and `stop` fixtures preserving observed keys/types;
+- a two-row synthetic transcript preserving the observed JSONL grammar;
+- the reusable probe script and a placeholder-only hooks config;
+- exact reproduction, restore, sanitization, and limitation notes.
 
-These hashes attest to the local evidence used for the structural analysis;
-they do not make the private payloads public evidence.
+The fixtures contain no real path, account, UUID, model name, token count, or
+stable config/payload hash. They support schema review, not cryptographic
+verification of deleted private evidence.
+
+### Follow-up attempt status
+
+A second bounded run was prepared to exercise read-only tools, a normal missing
+file error, read-only MCP, a background agent, multi-turn transcript growth,
+short/medium/long multibyte context, cancellation, and compaction. The original
+hooks config was backed up, the expanded probe was appended, and its JSON was
+validated. Cursor 3.6.31 remained running but exposed no controllable window to
+the Computer Use channel. Repeated state reads and normal new-window UI
+shortcuts timed out. No hook event fired. The config was therefore restored
+before any further action, pre/post hashes were verified equal, and the empty
+private run directory was deleted.
+
+This follow-up is evidence of an unavailable UI host, not evidence about any
+hook event. It adds no product-contract conclusion below.
 
 ## 1. `transcript_path`
 
