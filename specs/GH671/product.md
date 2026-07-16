@@ -15,23 +15,31 @@ runtime implementation by itself.
 
 ## User Problem
 
-Injected preference text is advisory. remem can remember a repeated correction
-such as "use bun, not npm", inject it into future sessions, and still watch an
-agent violate it because nothing checks tool input deterministically.
+Historically, injected preference text was advisory: remem could remember a
+repeated correction such as "use bun, not npm", inject it into future sessions,
+and still watch an agent violate it because nothing checked tool input
+deterministically.
 
 remem owns both the memory store and the hook surfaces, so high-confidence,
 machine-checkable corrections can become local runtime checks instead of
-remaining recall-only prose.
+remaining recall-only prose. Current enforcement is conditional: with rule
+compilation enabled and an eligible worker-built artifact present, Claude Code
+PreToolUse(Bash) deterministically evaluates supported command input. Phase 1
+does not evaluate arbitrary prose or prompts, and Codex command enforcement
+remains unsupported because it lacks a pre-execution command hook.
 
-Phase 1 implementation status: `SP671-T1` through `SP671-T3` and
-`SP671-T5` through `SP671-T7` are implemented.
-That includes disabled-by-default configuration, canonical SQLite state,
-evidence-backed reinforcement, the artifact/evaluator foundation, and
-deterministic worker-side compilation driven by lifecycle jobs and periodic
-convergence sweeps. GH-813 identified that global ownership is still filtered
-too broadly; its exact owner correction, exhaustive eligibility matrix, CLI
-rule management, and final status reconciliation remain pending, so #671 must
-stay open.
+Phase 1 implementation status: `SP671-T1`, `SP671-T2`, and `SP671-T4`
+through `SP671-T7` are implemented. The core T3 compiler is present, including
+disabled-by-default configuration, canonical SQLite state, evidence-backed
+reinforcement, the artifact/evaluator foundation, and deterministic
+worker-side compilation driven by lifecycle jobs and periodic convergence
+sweeps. #837 provides the CLI management and warn-mode evidence; #839 exact
+head `905a55f7219459dd7b33a1805f0d4da27a97622f`, merged as
+`f612b4a1ec4558ed6d2df85699cefb42109bdf7c`, provides Claude Code
+PreToolUse and supported-host block evidence; #840 provides the doctor
+evidence. GH-813 identified that global ownership is still filtered too
+broadly; its exact owner correction and exhaustive eligibility matrix keep T3
+and the final T8 closure incomplete, so #671 must stay open.
 
 ## Goals
 
@@ -104,14 +112,18 @@ stay open.
 - [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
-- [ ] `remem rules list` shows provenance, effective action, disabled state,
-      and source memory for each compiled rule.
-- [ ] Disable, enable, and `set-action warn|block` round trips are covered by
-      tests and take effect after the next artifact build without restart.
+- [x] `remem rules list` shows provenance, effective action, disabled state,
+      and source memory for each compiled rule, covered by #837.
+- [x] Disable, enable, `set-action <rule_id> warn` (host optional), and
+      `set-action <rule_id> block --host claude-code` round trips are covered
+      across #837's management/warn tests and #839's supported Claude block
+      test and take effect after the next artifact build without restart; the
+      shared unsupported-pre-execution guard rejects block before persistence.
 - [x] Superseding, suppressing, expiring, or deleting a source preference
       removes the derived rule on the next compile pass.
-- [ ] Doctor reports compiled-rule count, last compile time, host enforcement
-      capability, and the most recent compile or evaluation error.
+- [x] Doctor reports compiled-rule count, last compile time, host enforcement
+      capability, and the most recent compile or evaluation error, covered by
+      #840 human/JSON, capability, corruption, recovery, and privacy tests.
 
 ## Edge Cases
 

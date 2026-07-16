@@ -9,16 +9,20 @@ Tracking:
 
 ## Problem
 
-Injected preference text is advisory. An agent can read "use bun, not npm" in
-its context block and still run `npm install`. Published measurement (TRACE,
-arXiv 2606.13174) shows recall-only preference systems leave a large share of
-applicable preference checks violated, while compiling corrections into
-mandatory runtime checks reduces violations to near zero out-of-distribution.
+Historically, injected preference text was advisory: an agent could read "use
+bun, not npm" in its context block and still run `npm install`. Published
+measurement (TRACE, arXiv 2606.13174) shows recall-only preference systems
+leave a large share of applicable preference checks violated, while compiling
+corrections into mandatory runtime checks reduces violations to near zero
+out-of-distribution.
 
 remem uniquely owns both sides needed to close this gap: the preference store
-(with reinforcement metadata) and the hook surface on every session. Today the
-hook surface only injects prose; it never enforces anything the memory system
-has learned.
+(with reinforcement metadata) and the hook surface on every session. Current
+enforcement is conditional: when rule compilation is enabled and an eligible
+worker-built artifact exists, Claude Code PreToolUse(Bash) deterministically
+evaluates supported command input and can warn or explicitly block. Phase 1
+does not evaluate arbitrary prose or prompts, and Codex command enforcement is
+unsupported because it has no pre-execution command hook.
 
 ## Goals
 
@@ -32,12 +36,17 @@ convergence sweeps, preserves same-predicate overrides, and resolves project
 rules ahead of global rules. GH-813 identified that the global-owner filter
 still accepts any non-null owner scope; the exact
 `user`/`user:default`/no-target correction, exhaustive eligibility matrix, and
-CLI management reconciliation remain pending.
+final closure remain pending. CLI management and warn-mode round trips are
+implemented by #837; Claude Code PreToolUse and supported-host block persistence
+are implemented by #839 at exact head
+`905a55f7219459dd7b33a1805f0d4da27a97622f` (merged as
+`f612b4a1ec4558ed6d2df85699cefb42109bdf7c`); doctor enforcement health is
+implemented and reconciled by #840.
 
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.
-- Warn (default) or block (opt-in, per rule) when a tool invocation or prompt
-  contradicts a compiled rule.
+- Warn (default) or block (opt-in, per rule) when a supported command
+  invocation contradicts a compiled rule.
 - Keep every compiled rule traceable to its source memory and reversible by
   the user.
 - Keep compilation off the hook hot path: rules are produced by the background
@@ -93,8 +102,12 @@ CLI management reconciliation remain pending.
 - [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
-- [ ] `remem` CLI lists compiled rules with provenance; disable/enable
-      round-trip works and is covered by a test.
+- [x] `remem` CLI lists compiled rules with provenance; disable/enable,
+      `set-action <rule_id> warn` (host optional), and
+      `set-action <rule_id> block --host claude-code` round trips work and are
+      covered across #837's management/warn tests and #839's supported Claude
+      block test; the shared unsupported-pre-execution guard rejects block
+      before persisting an override or compile job.
 - [ ] Compiler eligibility has one complete positive fixture, independent
       negative coverage for every eligibility dimension, and critical
       cross-state coverage. Candidate risk and reinforcement risk are
@@ -102,8 +115,9 @@ CLI management reconciliation remain pending.
       text.
 - [x] Superseding, suppressing, expiring, or deleting the source preference
       removes the rule on the next compile pass, covered by tests.
-- [ ] Doctor reports compiled-rule count, last compile time, and last
-      evaluation error if any.
+- [x] Doctor reports compiled-rule count, last compile time, host capability,
+      and the latest compile or evaluation error, covered by #840 human/JSON
+      and privacy tests.
 
 ## Edge Cases
 

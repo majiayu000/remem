@@ -6,11 +6,13 @@
 ┌───────────────────────────────────────────────────────────┐
 │              Host Hooks (Claude Code / Codex)              │
 │                                                            │
-│  Claude Code: SessionStart/UserPromptSubmit/PostToolUse/Stop│
+│  Claude: SessionStart/UserPromptSubmit/PreToolUse/PostToolUse│
+│          /Stop                                              │
 │  Codex:       SessionStart/Stop                             │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
 │  UserPromptSubmit ──→ session-init  (Claude Code only)     │
+│  PreToolUse(Bash) ──→ rules eval    (Claude Code only)     │
 │  PostToolUse ───────→ observe       (Claude Code)           │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
@@ -23,6 +25,7 @@
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │
+│                      │  │  5. compile preference rules        │
 │  save_memory         │  │                                    │
 │  workstreams         │  │  Timeout: 180s global limit        │
 │  update_workstream   │  │                                    │
@@ -74,6 +77,7 @@ from an ordinary Stop event or worker-time `HEAD`.
 | `cli/actions.rs` | 385 | CLI command implementations and formatted output |
 | `context.rs` | 368 | Context rendering: preferences + core + index + workstreams + sessions |
 | `preference.rs` | 352 | Preference management: query, render, CLI ops |
+| `rules/` | — | Compiled-rule schema, worker compiler, artifact evaluator, overrides, and diagnostics |
 | `observe.rs` | 287 | Bash filter + capture ledger writes + type checks |
 | `db_pending.rs` | 261 | Legacy pending observations management |
 | `search.rs` | 251 | Search entry: filtered retrieval + pagination |
@@ -195,6 +199,44 @@ SessionRollup lease held across the binary upgrade. Readers continue to hide
 synthetic `Captured event range ...` fallback titles. The unused legacy
 finalize code remains only for the later guarded-removal phase described by
 GH684; it has no production caller after T7.
+
+### Compiled Preference Rules (worker → artifact → Claude PreToolUse)
+
+```text
+eligible preferences + reinforcement + suppressions + rule overrides (SQLite)
+       │
+       ├─ lifecycle jobs and periodic convergence sweep
+       ▼
+background worker compiler
+       │
+       └─ atomic derived artifact: compiled_rules/<project-hash>.json
+                                      │
+                                      ▼
+                         Claude PreToolUse(Bash)
+                                      │
+                         visible warn / explicit block
+```
+
+Rule compilation is disabled by default through
+`rule_compilation.enabled`. SQLite is the source of truth; only the worker
+writes the versioned artifact, while hook evaluation is deterministic,
+read-only, and performs no LLM, network, or database write. `remem rules
+list|disable|enable|set-action` reads provenance or persists an override, then
+the worker rebuild makes the effective action/disabled state visible without a
+host restart.
+
+Claude Code installs a pre-execution Bash evaluator, so `warn` can be visible
+before execution and `block` can be honored only after explicit per-rule user
+opt-in. Claude `PostToolUse` remains capture-only. Codex has no supported
+pre-execution command hook, so command enforcement is reported as unsupported
+and Codex block-mode claims are rejected. Missing, corrupt, or unsupported
+artifacts fail open and emit error-level diagnostics.
+
+Doctor reports enabled state, artifact presence/validity and rule count,
+compile status/time/error, the latest project/global evaluation error, and
+Claude/Codex enforcement capability without exposing rule payloads. GH-671
+remains open: #813 still owns the exact global `user` / `user:default` /
+no-target eligibility correction and exhaustive closed-policy matrix.
 
 ### 4. Context Injection (SessionStart → context)
 
