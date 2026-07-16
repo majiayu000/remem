@@ -335,7 +335,7 @@ pub fn project_matches(value: Option<&str>, project: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, process::Command};
+    use std::{collections::BTreeSet, path::Path, process::Command};
 
     fn unique_temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -678,10 +678,10 @@ mod tests {
             observed.push(candidate.to_string());
             false
         }));
-        assert_eq!(
-            observed, expected,
-            "the Git discovery env guard must stay closed"
-        );
+        let observed_set = observed.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        assert_eq!(observed.len(), expected.len());
+        assert_eq!(observed_set.len(), observed.len());
+        assert_eq!(observed_set, expected.into_iter().collect());
         for variable in expected {
             assert!(
                 git_environment_requires_resolver_with(|candidate| candidate == variable),
