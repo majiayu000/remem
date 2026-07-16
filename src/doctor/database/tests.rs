@@ -89,8 +89,94 @@ fn legacy_surfaces_fail_on_retire_blockers() -> anyhow::Result<()> {
     // The same exact detail reaches both doctor text and JSON output.
     assert_eq!(
         check.detail,
-        "observations rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; observations_fts rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; session_summaries rows=0 disposition=keep last_write_epoch=none frozen_write_violations=0; pending_observations rows=1 disposition=retire last_write_epoch=120 frozen_write_violations=1; summary_jobs rows=1 disposition=retire-summary-only last_write_epoch=130 frozen_write_violations=1; pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0; non-empty pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`; retire/freeze blockers=2"
+        "observations rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; observations_fts rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; session_summaries rows=0 disposition=keep last_write_epoch=none frozen_write_violations=0; pending_observations rows=1 disposition=retire last_write_epoch=120 frozen_write_violations=1; summary_jobs rows=1 disposition=retire-summary-only last_write_epoch=130 frozen_write_violations=1; pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0; actionable pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`; if the legacy host is unknown, apply explicitly with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`; retire/freeze blockers=2"
     );
+    Ok(())
+}
+
+#[test]
+fn legacy_surfaces_do_not_offer_migration_for_migrated_or_archived_history() -> anyhow::Result<()> {
+    let conn = setup_conn()?;
+    let migrated_id = crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        "codex-cli",
+        "sess-migrated",
+        "/tmp/remem",
+        "Bash",
+        None,
+        None,
+        None,
+    )?;
+    let archived_id = crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        "codex-cli",
+        "sess-archived",
+        "/tmp/remem",
+        "Bash",
+        None,
+        None,
+        None,
+    )?;
+    conn.execute(
+        "UPDATE pending_observations SET status = 'migrated' WHERE id = ?1",
+        [migrated_id],
+    )?;
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'failed', archived_at_epoch = 150
+         WHERE id = ?1",
+        [archived_id],
+    )?;
+
+    let check = check_legacy_surfaces(Some(&conn));
+
+    assert!(matches!(check.status, Status::Ok), "{}", check.detail);
+    assert!(check.detail.contains("pending_observations rows=2"));
+    assert!(check.detail.contains("frozen_write_violations=0"));
+    assert!(!check.detail.contains("migrate-legacy"), "{}", check.detail);
+    Ok(())
+}
+
+#[test]
+fn legacy_surfaces_unknown_host_remediation_includes_explicit_host_overrides() -> anyhow::Result<()>
+{
+    let conn = setup_conn()?;
+    crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        "unknown",
+        "sess-unknown-host",
+        "/tmp/remem",
+        "Bash",
+        None,
+        None,
+        None,
+    )?;
+
+    let check = check_legacy_surfaces(Some(&conn));
+    let human_detail = format!("[{}] {}: {}", check.icon(), check.name, check.detail);
+    let json = serde_json::to_value(crate::doctor::types::CheckJson {
+        name: check.name,
+        status: check.status.as_json_tag(),
+        detail: check.detail.as_str(),
+        duration_ms: check.duration_ms,
+    })?;
+
+    assert!(matches!(check.status, Status::Fail), "{}", check.detail);
+    for guidance in [
+        "remem pending migrate-legacy --dry-run",
+        "remem pending migrate-legacy`",
+        "remem pending migrate-legacy --host claude-code",
+        "remem pending migrate-legacy --host codex-cli",
+    ] {
+        assert!(human_detail.contains(guidance), "{human_detail}");
+        assert!(
+            json["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains(guidance)),
+            "{json}"
+        );
+    }
+    assert_eq!(json["detail"].as_str(), Some(check.detail.as_str()));
     Ok(())
 }
 
