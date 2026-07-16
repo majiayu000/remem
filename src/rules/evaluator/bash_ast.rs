@@ -2,7 +2,8 @@ use std::io::Cursor;
 
 use brush_parser::ast::{
     AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand, Word,
+    IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand, UnexpandedArithmeticExpr,
+    Word,
 };
 use brush_parser::word::{WordPiece, WordPieceWithSource};
 use brush_parser::{Parser, ParserOptions};
@@ -87,8 +88,22 @@ impl CommandCollector {
 
     fn collect_compound_command(&mut self, command: &CompoundCommand) -> Result<(), String> {
         match command {
-            CompoundCommand::Arithmetic(_) => Ok(()),
-            CompoundCommand::ArithmeticForClause(command) => self.collect_list(&command.body.list),
+            CompoundCommand::Arithmetic(command) => {
+                self.collect_arithmetic_expression(&command.expr)
+            }
+            CompoundCommand::ArithmeticForClause(command) => {
+                for expression in [
+                    command.initializer.as_ref(),
+                    command.condition.as_ref(),
+                    command.updater.as_ref(),
+                ]
+                .into_iter()
+                .flatten()
+                {
+                    self.collect_arithmetic_expression(expression)?;
+                }
+                self.collect_list(&command.body.list)
+            }
             CompoundCommand::BraceGroup(command) => self.collect_list(&command.list),
             CompoundCommand::Subshell(command) => self.collect_list(&command.list),
             CompoundCommand::ForClause(command) => {
@@ -237,6 +252,15 @@ impl CommandCollector {
         self.collect_word_pieces(&pieces)
     }
 
+    fn collect_arithmetic_expression(
+        &mut self,
+        expression: &UnexpandedArithmeticExpr,
+    ) -> Result<(), String> {
+        let pieces = brush_parser::word::parse(&expression.value, &self.options)
+            .map_err(|error| format!("Bash arithmetic word parse error: {error}"))?;
+        self.collect_word_pieces(&pieces)
+    }
+
     fn collect_word_pieces(&mut self, pieces: &[WordPieceWithSource]) -> Result<(), String> {
         for piece in pieces {
             match &piece.piece {
@@ -249,9 +273,7 @@ impl CommandCollector {
                     self.collect_word_pieces(pieces)?;
                 }
                 WordPiece::ArithmeticExpression(expression) => {
-                    let pieces = brush_parser::word::parse(&expression.value, &self.options)
-                        .map_err(|error| format!("Bash arithmetic word parse error: {error}"))?;
-                    self.collect_word_pieces(&pieces)?;
+                    self.collect_arithmetic_expression(expression)?;
                 }
                 _ => {}
             }

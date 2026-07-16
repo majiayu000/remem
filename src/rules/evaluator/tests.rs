@@ -293,18 +293,22 @@ fn force_push_rule_decodes_static_ansi_c_words() {
 #[test]
 fn force_push_rule_traverses_commands_inside_arithmetic_expansion() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
-    let command = "{ echo $(( $(git push --force) + 1 )); }";
+    for command in [
+        "{ echo $(( $(git push --force) + 1 )); }",
+        "(( $(git push --force) + 1 ))",
+        "for (( i = $(git push --force); i < 1; i++ )); do echo ok; done",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
 
-    let outcome = evaluate_artifact(
-        &artifact,
-        &EvaluationInput {
-            command: command.to_string(),
-        },
-    );
-
-    assert_eq!(outcome.verdict, EvaluationVerdict::Block);
-    assert_eq!(outcome.matches.len(), 1);
-    assert!(outcome.diagnostics.is_empty());
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
 }
 
 #[test]

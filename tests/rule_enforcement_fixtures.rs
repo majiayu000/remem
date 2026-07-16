@@ -147,6 +147,8 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "echo \"$(git push --force)\"",
         "echo $(( $(git push --force) + 1 ))",
         "{ echo $(( $(git push --force) + 1 )); }",
+        "(( $(git push --force) + 1 ))",
+        "for (( i = $(git push --force); i < 1; i++ )); do echo ok; done",
         "cat <<EOF\ngit push --force\nEOF\ngit push --force",
         "echo safe # <<EOF\ngit push --force",
         "cat <<< 'git push --force'\ngit push --force",
