@@ -135,7 +135,7 @@ current SessionRollup path and the legacy Summary job chain.
       distinguish enqueued, inflight-coalesced, and cooldown-suppressed Dream
       outcomes.
 - [x] MCP/docs wording stops calling live `observations` legacy.
-- [ ] Doctor reports legacy row counts and errors when frozen surfaces receive
+- [x] Doctor reports legacy row counts and errors when frozen surfaces receive
       writes.
 
 ## Edge Cases
@@ -157,4 +157,6 @@ current SessionRollup path and the legacy Summary job chain.
 ## Rollout Notes
 
 Each phase is independently reviewable: visibility first, equivalence fixtures
-before writer retirement, deprecation window before any guarded drop.
+before writer retirement. The removal window is now fixed: remem 0.6.0 must
+announce the pending-observations drop in doctor output and release notes, and
+no guarded drop may ship before remem 0.7.0.

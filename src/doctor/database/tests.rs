@@ -68,7 +68,7 @@ fn legacy_surfaces_are_ok_when_retired_surfaces_are_empty() -> anyhow::Result<()
 }
 
 #[test]
-fn legacy_surfaces_warn_on_retire_blockers() -> anyhow::Result<()> {
+fn legacy_surfaces_fail_on_retire_blockers() -> anyhow::Result<()> {
     let conn = setup_conn()?;
     conn.execute(
         "INSERT INTO pending_observations
@@ -87,7 +87,7 @@ fn legacy_surfaces_warn_on_retire_blockers() -> anyhow::Result<()> {
 
     let check = check_legacy_surfaces(Some(&conn));
 
-    assert!(matches!(check.status, Status::Warn));
+    assert!(matches!(check.status, Status::Fail));
     assert!(check.detail.contains("pending_observations rows=1"));
     assert!(check.detail.contains("summary_jobs rows=1"));
     assert!(check.detail.contains("retire/freeze blockers=2"));
@@ -140,7 +140,7 @@ fn legacy_surfaces_ignore_upgrade_summary_rejections_but_report_worker_rejection
 
     let check = check_legacy_surfaces(Some(&conn));
 
-    assert!(matches!(check.status, Status::Warn), "{}", check.detail);
+    assert!(matches!(check.status, Status::Fail), "{}", check.detail);
     assert!(check.detail.contains("summary_jobs rows=2"));
     assert!(check.detail.contains("frozen_write_violations=1"));
     assert!(check.detail.contains("retire/freeze blockers=1"));
