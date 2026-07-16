@@ -740,6 +740,16 @@ pub fn build_sessions_json(
     }
 }
 
+/// Parse a time bound given as Unix epoch seconds, an ISO8601 datetime, or a
+/// plain `YYYY-MM-DD` date interpreted as UTC midnight.
+///
+/// This public compatibility entry point retains its original date semantics.
+/// Query surfaces that need an inclusive date-only upper bound use the
+/// transport-neutral upper-bound parser instead.
+pub fn parse_time_bound(value: &str) -> Result<i64> {
+    super::raw_query::parse_time_lower_bound(value)
+}
+
 fn fts_query(query: &str) -> String {
     // Wrap each token in quotes so we use phrase matching (robust against
     // punctuation that trigram tokenizer would otherwise choke on).
