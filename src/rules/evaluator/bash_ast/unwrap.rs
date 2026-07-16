@@ -68,7 +68,12 @@ pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Opt
     let mut options_terminated = false;
     let mut assignments_started = false;
     while let Some(token) = tokens.get(index) {
-        if is_env_assignment(token) {
+        // env(1) treats any operand containing `=` as a NAME=VALUE assignment,
+        // including names that are not shell identifiers (e.g. `A-B=1`), and
+        // option parsing stops at the first operand.
+        let is_operand_assignment = token.contains('=')
+            && (options_terminated || assignments_started || !token.starts_with('-'));
+        if is_operand_assignment {
             assignments_started = true;
             index += 1;
             continue;
@@ -103,7 +108,8 @@ pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Opt
                     || value.starts_with("--default-signal=")
                     || value.starts_with("--ignore-signal=")
                     || value.starts_with("--block-signal=")
-                    || value.starts_with("-C") && value.len() > 2 =>
+                    || value.starts_with("-C") && value.len() > 2
+                    || value.starts_with("-u") && value.len() > 2 =>
             {
                 index += 1;
             }
@@ -128,12 +134,17 @@ pub(crate) fn exec_wrapper_target(tokens: &[String], command_index: usize) -> Op
                 if flags.starts_with('-') {
                     return None;
                 }
-                let flag_count = flags.chars().count();
                 let mut consumes_next = false;
-                for (position, flag) in flags.chars().enumerate() {
+                for (position, flag) in flags.char_indices() {
                     match flag {
                         'c' | 'l' => {}
-                        'a' if position + 1 == flag_count => consumes_next = true,
+                        'a' => {
+                            // Bash accepts both `exec -a NAME` and the
+                            // attached `exec -aNAME`; in the attached form the
+                            // cluster remainder is argv[0], not more flags.
+                            consumes_next = flags[position + flag.len_utf8()..].is_empty();
+                            break;
+                        }
                         _ => return None,
                     }
                 }

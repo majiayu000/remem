@@ -237,8 +237,8 @@ fn git_subcommand_index(tokens: &[String]) -> Option<usize> {
 
     while let Some(token) = tokens.get(index) {
         match token.as_str() {
-            "-C" | "-c" | "--exec-path" | "--git-dir" | "--work-tree" | "--namespace"
-            | "--super-prefix" => {
+            "-C" | "-c" | "--config-env" | "--exec-path" | "--git-dir" | "--work-tree"
+            | "--namespace" | "--super-prefix" => {
                 index += 2;
             }
             "-p"
