@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import py_compile
 import shutil
 import sys
 import tempfile
@@ -103,6 +104,11 @@ def assert_runtime_verifier() -> None:
             ("sys path assignment", "import sys; sys.path = ['tools'] + sys.path", None, "UNSUPPORTED SYS PATH ACCESS"),
             ("from sys import path alias", "from sys import path as search_path; search_path.append('tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
             ("sys star import", "from sys import *", None, "UNSUPPORTED SYS PATH ACCESS"),
+            ("importlib star import", "from importlib import *; import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("builtins star import", "from builtins import *", None, "DYNAMIC IMPORT ALIAS"),
+            ("sys alias assignment", "import sys; s = sys; getattr(s, 'path').insert(0, 'tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
+            ("sys import-alias getattr", "import sys as s; getattr(s, 'path').insert(0, 'tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
+            ("sourceless pyc helper", "import specrail_untracked_helper", None, "SOURCELESS LOCAL IMPORT"),
             ("outside checks absolute", "import tools.specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("relative", "from . import specrail_lib", None, "UNSUPPORTED RELATIVE LOCAL IMPORT"),
             ("path escape", "import checks.specrail_escape_helper", None, "LOCAL IMPORT PATH ESCAPE"),
@@ -118,6 +124,18 @@ def assert_runtime_verifier() -> None:
                     "Path('untrusted-helper-executed').write_text('bad')\n",
                     encoding="utf-8",
                 )
+            elif label == "sourceless pyc helper":
+                helper_source = repo / "specrail_sourceless_src.py"
+                helper_source.write_text(
+                    "from pathlib import Path\n"
+                    "Path('untrusted-helper-executed').write_text('bad')\n",
+                    encoding="utf-8",
+                )
+                py_compile.compile(
+                    str(helper_source),
+                    cfile=str(repo / "checks" / "specrail_untracked_helper.pyc"),
+                )
+                helper_source.unlink()
             elif label == "path escape":
                 outside_helper = repo / "outside_helper.py"
                 outside_helper.write_text(
@@ -151,6 +169,9 @@ def assert_runtime_verifier() -> None:
             top_helper = repo / "checks" / "specrail_untracked_helper.py"
             if top_helper.exists():
                 top_helper.unlink()
+            pyc_helper = repo / "checks" / "specrail_untracked_helper.pyc"
+            if pyc_helper.exists():
+                pyc_helper.unlink()
             nested_helper = repo / "checks" / "specrail_untracked"
             if nested_helper.exists():
                 shutil.rmtree(nested_helper)

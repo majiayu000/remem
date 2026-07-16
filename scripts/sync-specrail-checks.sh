@@ -127,6 +127,7 @@ verify_python_imports() {
   python3 - "$LOCK_FILE" "$REPO_ROOT" "$tracking_mode" "$@" <<'PY'
 import ast
 import importlib
+import importlib.machinery
 import json
 import subprocess
 import sys
@@ -201,6 +202,31 @@ def candidate_paths(base):
     return (base.with_suffix(".py"), base / "__init__.py")
 
 
+SOURCELESS_SUFFIXES = tuple(
+    importlib.machinery.BYTECODE_SUFFIXES + importlib.machinery.EXTENSION_SUFFIXES
+)
+
+
+def reject_sourceless_candidates(module, base):
+    # A repo-local import that resolves to bytecode or an extension module has
+    # no .py source to classify, so it must fail closed instead of being
+    # treated as an external import.
+    source_py = base.with_suffix(".py")
+    init_py = base / "__init__.py"
+    for suffix in SOURCELESS_SUFFIXES:
+        flat = base.with_name(base.name + suffix)
+        if flat.is_file() and not source_py.is_file():
+            print(f"SOURCELESS LOCAL IMPORT: {module} resolves to {flat}", file=sys.stderr)
+            raise SystemExit(1)
+        package_init = base / f"__init__{suffix}"
+        if package_init.is_file() and not init_py.is_file():
+            print(
+                f"SOURCELESS LOCAL IMPORT: {module} resolves to {package_init}",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+
+
 def existing_local_paths(module):
     parts = module.split(".")
     if not parts or any(not part or part in {".", ".."} for part in parts):
@@ -213,6 +239,7 @@ def existing_local_paths(module):
         bases.append((repo_root.joinpath(*parts), repo_root_resolved))
     resolved_paths = []
     for base, allowed_root in bases:
+        reject_sourceless_candidates(module, base)
         for candidate in candidate_paths(base):
             if not candidate.is_file():
                 continue
@@ -261,6 +288,15 @@ for relative_path in sorted(classified_checks_python):
                 elif alias.name == "sys":
                     sys_aliases.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom) and not node.level:
+            if node.module in {"importlib", "builtins"} and any(
+                alias.name == "*" for alias in node.names
+            ):
+                print(
+                    f"DYNAMIC IMPORT ALIAS: {relative_path}: star import of "
+                    f"{node.module} cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
             if node.module == "importlib":
                 for alias in node.names:
                     if alias.name == "import_module":
@@ -289,6 +325,9 @@ for relative_path in sorted(classified_checks_python):
     dynamic_callable_names = import_module_aliases | builtin_import_aliases | {"__import__"}
     module_alias_names = importlib_aliases | builtins_aliases
     call_funcs = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    attribute_bases = {
+        id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+    }
     allowed_module_refs = set()
     for node in ast.walk(tree):
         if (
@@ -319,6 +358,14 @@ for relative_path in sorted(classified_checks_python):
                 print(
                     f"UNSUPPORTED SYS PATH ACCESS: {relative_path}: {node.id} "
                     "import search path use cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if node.id in sys_aliases and id(node) not in attribute_bases:
+                print(
+                    f"UNSUPPORTED SYS PATH ACCESS: {relative_path}: {node.id} "
+                    "module reference outside direct attribute access cannot "
+                    "be classified safely",
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
