@@ -23,15 +23,16 @@ has learned.
 ## Goals
 
 Phase 1 implementation status: the disabled-by-default configuration,
-canonical SQLite reinforcement state, artifact and evaluator foundation, and
-worker-side compiler are implemented. The compiler uses persisted low-risk,
-source-trust, and review eligibility, combines lifecycle-triggered non-lossy
-jobs with periodic convergence sweeps, preserves same-predicate overrides, and
-resolves project rules ahead of global rules. GH-813 identified that the
-global-owner filter still accepts any non-null owner scope; the exact
-`user`/`user:default`/no-target correction and exhaustive eligibility matrix
-remain pending alongside user-visible hook enforcement, CLI management,
-doctor reporting, fixtures, and latency evidence.
+canonical SQLite reinforcement state, artifact and evaluator foundation,
+worker-side compiler, user-visible hook enforcement, doctor reporting,
+repeated-correction fixtures, and fixed-budget latency evidence are
+implemented. The compiler uses persisted low-risk, source-trust, and review
+eligibility, combines lifecycle-triggered non-lossy jobs with periodic
+convergence sweeps, preserves same-predicate overrides, and resolves project
+rules ahead of global rules. GH-813 identified that the global-owner filter
+still accepts any non-null owner scope; the exact
+`user`/`user:default`/no-target correction, exhaustive eligibility matrix, and
+CLI management reconciliation remain pending.
 
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.
@@ -86,10 +87,10 @@ doctor reporting, fixtures, and latency evidence.
 
 ## Acceptance Criteria
 
-- [ ] Fixture suite of repeated-correction scenarios (package manager choice,
+- [x] Fixture suite of repeated-correction scenarios (package manager choice,
       forbidden commit trailers, forbidden commands) shows the warning fires on
       violation with compiled rules present and does not fire without them.
-- [ ] The existing hook latency benchmark passes both fixed budgets: enabled
+- [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
 - [ ] `remem` CLI lists compiled rules with provenance; disable/enable

@@ -148,7 +148,7 @@ fn git_worktree_root_from_markers(cwd: &std::path::Path) -> GitMarkerDiscovery {
 
 fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
     if marker.is_dir() {
-        return marker.join("HEAD").is_file() && !git_dir_config_requires_resolver(marker);
+        return git_dir_has_plain_layout(marker) && !git_dir_config_requires_resolver(marker);
     }
     let Ok(contents) = std::fs::read_to_string(marker) else {
         return false;
@@ -171,7 +171,33 @@ fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
             .unwrap_or_else(|| std::path::Path::new("."))
             .join(git_dir)
     };
-    git_dir.join("HEAD").is_file() && !git_dir_config_requires_resolver(&git_dir)
+    git_dir_has_plain_layout(&git_dir) && !git_dir_config_requires_resolver(&git_dir)
+}
+
+fn git_dir_has_plain_layout(git_dir: &std::path::Path) -> bool {
+    if !git_dir.join("HEAD").is_file() {
+        return false;
+    }
+    let commondir = git_dir.join("commondir");
+    let common_dir = if commondir.exists() {
+        let Ok(common) = std::fs::read_to_string(&commondir) else {
+            return false;
+        };
+        let common = common.trim();
+        if common.is_empty() {
+            return false;
+        }
+        let common = std::path::Path::new(common);
+        if common.is_absolute() {
+            common.to_path_buf()
+        } else {
+            git_dir.join(common)
+        }
+    } else {
+        git_dir.to_path_buf()
+    };
+
+    common_dir.is_dir() && common_dir.join("objects").is_dir() && common_dir.join("refs").is_dir()
 }
 
 fn git_dir_config_requires_resolver(git_dir: &std::path::Path) -> bool {
@@ -333,11 +359,18 @@ mod tests {
     fn git_marker_file_identifies_a_linked_worktree_without_spawning_git() -> anyhow::Result<()> {
         let root = unique_temp_path("git-marker-file");
         let nested = root.join("crates").join("member").join("src");
-        let git_dir = root.join("linked-worktree-git-dir");
+        let common_dir = root.join("common-git-dir");
+        let git_dir = common_dir.join("worktrees/linked");
         std::fs::create_dir_all(&nested)?;
+        std::fs::create_dir_all(common_dir.join("objects"))?;
+        std::fs::create_dir_all(common_dir.join("refs"))?;
         std::fs::create_dir_all(&git_dir)?;
         std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")?;
-        std::fs::write(root.join(".git"), "gitdir: linked-worktree-git-dir\n")?;
+        std::fs::write(git_dir.join("commondir"), "../..\n")?;
+        std::fs::write(
+            root.join(".git"),
+            format!("gitdir: {}\n", git_dir.display()),
+        )?;
 
         assert_eq!(
             git_worktree_root_from_markers(&nested),
@@ -360,6 +393,40 @@ mod tests {
             git_worktree_root_from_markers(&nested),
             GitMarkerDiscovery::RequiresResolver
         );
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn incomplete_git_directory_delegates_to_git_and_fails_closed() -> anyhow::Result<()> {
+        let root = unique_temp_path("incomplete-git-directory");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(root.join(".git"))?;
+        std::fs::create_dir_all(&nested)?;
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+
+        let output = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&nested)
+            .output()?;
+        assert!(
+            !output.status.success(),
+            "Git must reject the incomplete marker"
+        );
+        assert_eq!(
+            git_worktree_root_from_markers(&nested),
+            GitMarkerDiscovery::RequiresResolver,
+            "an incomplete marker must not bypass Git's own validation"
+        );
+        let canonical_nested = nested.canonicalize()?;
+        let mut resolver_called = false;
+        let resolved = canonical_project_root_with_resolver(&canonical_nested, false, |_| {
+            resolver_called = true;
+            None
+        });
+        assert!(resolver_called, "incomplete markers must delegate to Git");
+        assert_eq!(resolved, canonical_nested, "Git failure must fail closed");
 
         std::fs::remove_dir_all(root)?;
         Ok(())

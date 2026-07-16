@@ -23,14 +23,15 @@ remem owns both the memory store and the hook surfaces, so high-confidence,
 machine-checkable corrections can become local runtime checks instead of
 remaining recall-only prose.
 
-Phase 1 implementation status: `SP671-T1` through `SP671-T3` are implemented.
+Phase 1 implementation status: `SP671-T1` through `SP671-T3` and
+`SP671-T5` through `SP671-T7` are implemented.
 That includes disabled-by-default configuration, canonical SQLite state,
 evidence-backed reinforcement, the artifact/evaluator foundation, and
 deterministic worker-side compilation driven by lifecycle jobs and periodic
 convergence sweeps. GH-813 identified that global ownership is still filtered
-too broadly; its exact owner correction and exhaustive eligibility matrix,
-hook warnings/blocks, CLI rule management, doctor reporting, fixtures, and
-latency evidence remain pending, so #671 must stay open.
+too broadly; its exact owner correction, exhaustive eligibility matrix, CLI
+rule management, and final status reconciliation remain pending, so #671 must
+stay open.
 
 ## Goals
 
@@ -93,14 +94,14 @@ latency evidence remain pending, so #671 must stay open.
 
 ## Acceptance Criteria
 
-- [ ] Repeated-correction fixtures cover package-manager choice, forbidden
+- [x] Repeated-correction fixtures cover package-manager choice, forbidden
       commit trailers, and forbidden commands; violations warn with compiled
       rules and do not warn without them.
 - [ ] Compiler eligibility has one complete positive fixture, independent
       negative coverage for every eligibility dimension, and critical
       cross-state coverage; candidate risk and reinforcement risk are
       independently mutable and tests do not snapshot SQL text.
-- [ ] The existing hook latency benchmark passes both fixed budgets: enabled
+- [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
 - [ ] `remem rules list` shows provenance, effective action, disabled state,
@@ -126,6 +127,7 @@ latency evidence remain pending, so #671 must stay open.
 
 ## Rollout Notes
 
-Spec approval is still a human gate. Implementation should ship behind a
-disabled-by-default config flag, then enable warn mode only after fixture and
-latency evidence. Block mode remains opt-in per rule indefinitely.
+Spec approval is still a human gate. Implementation ships behind a
+disabled-by-default config flag. Fixture and latency evidence now pass the
+fixed acceptance budgets; any future warn-mode default change remains a
+separate human decision. Block mode remains opt-in per rule indefinitely.
