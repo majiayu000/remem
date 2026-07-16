@@ -29,6 +29,7 @@ ADOPTED_SCHEMA_KEYWORDS = frozenset(
     }
 )
 RUNTIME_PROFILE_SCHEMAS = frozenset({"duplicate_work_evidence.schema.json"})
+UNRESOLVED_REFERENCE_KEYWORDS = ("$dynamicRef", "$ref")
 
 SCHEMA_MAP_KEYWORDS = ("$defs", "dependentSchemas", "patternProperties", "properties")
 SCHEMA_LIST_KEYWORDS = ("allOf", "anyOf", "oneOf", "prefixItems")
@@ -95,12 +96,14 @@ assert frozenset(KEYWORD_APPLICABLE_TYPES) == TYPE_SPECIFIC_SCHEMA_KEYWORDS
 assert TYPE_SPECIFIC_SCHEMA_KEYWORDS <= ADOPTED_SCHEMA_KEYWORDS
 
 RUNTIME_TYPED_KEYWORDS = {
+    "additionalProperties": {"object"},
     "exclusiveMaximum": {"integer", "number"},
     "exclusiveMinimum": {"integer", "number"},
     "items": {"array"},
     "minItems": {"array"},
     "minLength": {"string"},
     "minimum": {"integer", "number"},
+    "properties": {"object"},
     "required": {"object"},
 }
 ECMASCRIPT_REGEX_CHECK = (
@@ -206,6 +209,12 @@ def _validate_shapes(
     for keyword in STRING_KEYWORDS:
         if keyword in schema and not isinstance(schema[keyword], str):
             errors.append(f"{relative_path}: {schema_path}.{keyword} must be a string")
+    for keyword in UNRESOLVED_REFERENCE_KEYWORDS:
+        if keyword in schema:
+            errors.append(
+                f"{relative_path}: {schema_path}.{keyword} is unsupported until "
+                "reference resolution is implemented"
+            )
     for keyword in BOOLEAN_KEYWORDS:
         if keyword in schema and not isinstance(schema[keyword], bool):
             errors.append(f"{relative_path}: {schema_path}.{keyword} must be a boolean")

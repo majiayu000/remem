@@ -2,7 +2,8 @@
   "upstream_repo": "https://github.com/majiayu000/specrail",
   "upstream_sha": "75628b21ef676691344e1671f953644ef36da46e",
   "excluded": [
-    "checks/check_workflow.py"
+    "checks/check_workflow.py",
+    "checks/schema_contract.py"
   ],
   "files": [
     {
