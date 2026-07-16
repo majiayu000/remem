@@ -111,3 +111,139 @@ fn force_push_rule_skips_only_statically_unreachable_boolean_branches() {
         assert!(outcome.diagnostics.is_empty(), "{command}");
     }
 }
+
+#[test]
+fn function_state_obeys_unset_and_child_shell_scopes() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "f() { git push --force; }; unset -f f; f",
+        "(f() { git push --force; }); f",
+        "echo $(f() { git push --force; }); f",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    for command in [
+        "f() { git push --force; }; (unset -f f); f",
+        "f() { git push --force; }; echo $(unset -f f); f",
+        "(f() { git push --force; }; f)",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn shell_stdin_uses_the_effective_final_fd_zero_redirect() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "sh <<'EOF' </dev/null\ngit push --force\nEOF",
+        "sh <<< 'git push --force' </dev/null",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    for command in [
+        "sh </dev/null <<'EOF'\ngit push --force\nEOF",
+        "sh 3<<'EOF' <&3\ngit push --force\nEOF",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn env_split_string_preserves_argv_instead_of_shell_syntax() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "env -S 'echo safe; git push --force'",
+        "env -S 'printf \"%s\" \"git push --force\"'",
+        "env -S 'echo # git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    for command in [
+        "env -S 'git push --force'",
+        "env -S '-i git push --force'",
+        "env -S 'sh -c \"git push --force\"'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn single_word_brace_expansion_respects_the_materialization_bound() {
+    let alternatives = (0..=300)
+        .map(|value| format!("item{value}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let segments = shell_command_segments(&format!("echo {{{alternatives}}}"))
+        .expect("large static brace word should remain evaluable");
+    assert!(
+        segments.len() <= 2,
+        "bounded word must not materialize every alternative: {}",
+        segments.len()
+    );
+    let cartesian = shell_command_segments("echo {1..256} {left,right}")
+        .expect("capped Cartesian word should remain evaluable");
+    assert!(
+        cartesian.len() <= 256,
+        "bounded Cartesian summary must remain capped: {}",
+        cartesian.len()
+    );
+
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: format!("git push --{{force,{alternatives}}}"),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block);
+    assert_eq!(outcome.matches.len(), 1);
+    assert!(outcome.diagnostics.is_empty());
+}

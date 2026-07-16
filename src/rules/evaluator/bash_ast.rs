@@ -3,8 +3,8 @@ use std::io::Cursor;
 
 use brush_parser::ast::{
     AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    FunctionBody, IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand,
-    UnexpandedArithmeticExpr, Word,
+    FunctionBody, IoFileRedirectKind, IoFileRedirectTarget, IoRedirect, Pipeline, Program,
+    SimpleCommand, UnexpandedArithmeticExpr, Word,
 };
 use brush_parser::word::{Parameter, ParameterExpr, WordPiece, WordPieceWithSource};
 use brush_parser::{Parser, ParserOptions};
@@ -14,8 +14,8 @@ mod static_words;
 pub(super) mod unwrap;
 
 use static_execution::{
-    direct_command_name, static_env_split_payload, static_eval_payload,
-    static_shell_command_payload, static_shell_reads_stdin,
+    direct_command_name, static_env_split_tokens, static_eval_payload,
+    static_shell_command_payload, static_shell_reads_stdin, static_unset_function_names,
 };
 use static_words::{
     append_word_variants, critical_brace_variants, expand_brace_pieces, static_word_pieces,
@@ -162,7 +162,9 @@ impl CommandCollector {
                 self.collect_list(&command.body.list)
             }
             CompoundCommand::BraceGroup(command) => self.collect_list(&command.list),
-            CompoundCommand::Subshell(command) => self.collect_list(&command.list),
+            CompoundCommand::Subshell(command) => {
+                self.with_function_scope(true, |collector| collector.collect_list(&command.list))
+            }
             CompoundCommand::ForClause(command) => {
                 if let Some(values) = &command.values {
                     for value in values {
@@ -204,7 +206,7 @@ impl CommandCollector {
                 if let Some(name) = &command.name {
                     self.collect_word_commands(name)?;
                 }
-                self.collect_command(&command.body)
+                self.with_function_scope(true, |collector| collector.collect_command(&command.body))
             }
         }
     }
@@ -242,23 +244,42 @@ impl CommandCollector {
             }
         }
         for tokens in segments {
-            self.collect_static_function_call(&tokens)?;
-            if let Some(payload) = static_eval_payload(&tokens) {
-                self.collect_source(&payload)?;
-            }
-            if let Some(payload) = static_env_split_payload(&tokens) {
-                self.collect_source(&payload)?;
-            }
-            if let Some(payload) = static_shell_command_payload(&tokens) {
-                self.collect_source(payload)?;
-            }
-            if static_shell_reads_stdin(&tokens) {
-                for payload in self.stdin_payloads(command)? {
-                    self.collect_source(&payload)?;
-                }
-            }
-            self.segments.push(tokens);
+            self.collect_static_tokens(tokens, command)?;
         }
+        Ok(())
+    }
+
+    fn collect_static_tokens(
+        &mut self,
+        mut tokens: Vec<String>,
+        command: &SimpleCommand,
+    ) -> Result<(), String> {
+        while let Some(expanded) = static_env_split_tokens(&tokens) {
+            let before = static_token_measure(&tokens);
+            let after = static_token_measure(&expanded);
+            if after >= before {
+                return Err("env -S static argv expansion did not make progress".to_string());
+            }
+            tokens = expanded;
+        }
+        if let Some(names) = static_unset_function_names(&tokens) {
+            for name in names {
+                self.functions.remove(name);
+            }
+        }
+        self.collect_static_function_call(&tokens)?;
+        if let Some(payload) = static_eval_payload(&tokens) {
+            self.collect_source(&payload)?;
+        }
+        if let Some(payload) = static_shell_command_payload(&tokens) {
+            self.with_function_scope(false, |collector| collector.collect_source(payload))?;
+        }
+        if static_shell_reads_stdin(&tokens) {
+            if let Some(payload) = self.effective_stdin_payload(command)? {
+                self.with_function_scope(false, |collector| collector.collect_source(&payload))?;
+            }
+        }
+        self.segments.push(tokens);
         Ok(())
     }
 
@@ -307,7 +328,7 @@ impl CommandCollector {
                 self.collect_word_commands(word)
             }
             CommandPrefixOrSuffixItem::ProcessSubstitution(_, command) => {
-                self.collect_list(&command.list)
+                self.with_function_scope(true, |collector| collector.collect_list(&command.list))
             }
         }
     }
@@ -329,9 +350,8 @@ impl CommandCollector {
                 IoFileRedirectTarget::Filename(word) | IoFileRedirectTarget::Duplicate(word) => {
                     self.collect_word_commands(word)
                 }
-                IoFileRedirectTarget::ProcessSubstitution(_, command) => {
-                    self.collect_list(&command.list)
-                }
+                IoFileRedirectTarget::ProcessSubstitution(_, command) => self
+                    .with_function_scope(true, |collector| collector.collect_list(&command.list)),
                 IoFileRedirectTarget::Fd(_) => Ok(()),
             },
         }
@@ -374,7 +394,7 @@ impl CommandCollector {
             match &piece.piece {
                 WordPiece::CommandSubstitution(source)
                 | WordPiece::BackquotedCommandSubstitution(source) => {
-                    self.collect_source(source)?;
+                    self.with_function_scope(true, |collector| collector.collect_source(source))?;
                 }
                 WordPiece::DoubleQuotedSequence(pieces)
                 | WordPiece::GettextDoubleQuotedSequence(pieces) => {
@@ -477,10 +497,12 @@ impl CommandCollector {
         self.collect_word_pieces(&pieces)
     }
 
-    /// Statically known stdin payloads for one simple command: here-document
-    /// bodies (regardless of delimiter quoting) and static here-strings.
-    fn stdin_payloads(&self, command: &SimpleCommand) -> Result<Vec<String>, String> {
-        let mut payloads = Vec::new();
+    /// Select the effective static fd-0 payload after applying redirections
+    /// left-to-right. Payloads shadowed by a later fd-0 redirect are inert as
+    /// shell input, although their own expansion commands are collected
+    /// separately while walking the redirect AST.
+    fn effective_stdin_payload(&self, command: &SimpleCommand) -> Result<Option<String>, String> {
+        let mut payloads = HashMap::<i32, Option<String>>::new();
         for items in [
             command.prefix.as_ref().map(|prefix| &prefix.0),
             command.suffix.as_ref().map(|suffix| &suffix.0),
@@ -493,20 +515,48 @@ impl CommandCollector {
                     continue;
                 };
                 match redirect {
-                    IoRedirect::HereDocument(_, here_doc) => {
-                        payloads.push(here_doc.doc.value.clone());
+                    IoRedirect::HereDocument(fd, here_doc) => {
+                        payloads.insert(fd.unwrap_or(0), Some(here_doc.doc.value.clone()));
                     }
-                    IoRedirect::HereString(_, word) => {
+                    IoRedirect::HereString(fd, word) => {
                         let value = self.command_word(word)?;
-                        if value != DYNAMIC_SHELL_WORD {
-                            payloads.push(value);
-                        }
+                        payloads.insert(
+                            fd.unwrap_or(0),
+                            (value != DYNAMIC_SHELL_WORD).then_some(value),
+                        );
                     }
-                    _ => {}
+                    IoRedirect::File(fd, kind, target) => {
+                        let target_fd = fd.unwrap_or_else(|| default_redirect_fd(kind));
+                        let payload = if matches!(kind, IoFileRedirectKind::DuplicateInput) {
+                            duplicate_input_fd(target, self)?
+                                .and_then(|source_fd| payloads.get(&source_fd).cloned().flatten())
+                        } else {
+                            None
+                        };
+                        payloads.insert(target_fd, payload);
+                    }
+                    IoRedirect::OutputAndError(_, _) => {}
                 }
             }
         }
-        Ok(payloads)
+        Ok(payloads.remove(&0).flatten())
+    }
+
+    fn with_function_scope<T>(
+        &mut self,
+        inherit: bool,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved_functions = self.functions.clone();
+        let saved_active_functions = self.active_functions.clone();
+        if !inherit {
+            self.functions.clear();
+            self.active_functions.clear();
+        }
+        let result = collect(self);
+        self.functions = saved_functions;
+        self.active_functions = saved_active_functions;
+        result
     }
 
     fn command_word(&self, word: &Word) -> Result<String, String> {
@@ -539,6 +589,40 @@ impl CommandCollector {
                 Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
             })
             .collect()
+    }
+}
+
+fn static_token_measure(tokens: &[String]) -> usize {
+    tokens
+        .iter()
+        .map(|token| token.len().saturating_add(1))
+        .sum()
+}
+
+fn default_redirect_fd(kind: &IoFileRedirectKind) -> i32 {
+    match kind {
+        IoFileRedirectKind::Read
+        | IoFileRedirectKind::ReadAndWrite
+        | IoFileRedirectKind::DuplicateInput => 0,
+        IoFileRedirectKind::Write
+        | IoFileRedirectKind::Append
+        | IoFileRedirectKind::Clobber
+        | IoFileRedirectKind::DuplicateOutput => 1,
+    }
+}
+
+fn duplicate_input_fd(
+    target: &IoFileRedirectTarget,
+    collector: &CommandCollector,
+) -> Result<Option<i32>, String> {
+    match target {
+        IoFileRedirectTarget::Fd(fd) => Ok(Some(*fd)),
+        IoFileRedirectTarget::Duplicate(word) => {
+            Ok(collector.command_word(word)?.parse::<i32>().ok())
+        }
+        IoFileRedirectTarget::Filename(_) | IoFileRedirectTarget::ProcessSubstitution(_, _) => {
+            Ok(None)
+        }
     }
 }
 

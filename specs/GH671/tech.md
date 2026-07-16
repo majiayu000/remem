@@ -92,7 +92,14 @@ contract is complete.
   `--force-with-lease`, and arbitrary natural-language commands fail closed.
   Bare argument-free `true`/`false`/`:` pipelines may prove a following
   `&&`/`||` branch unreachable; redirects, assignments, functions, and unknown
-  commands remain conservative. Package-manager command patterns treat shell
+  commands remain conservative. Static function state follows Bash subshell,
+  command-substitution, process-substitution, and coprocess scopes, plus
+  `unset -f`; child shell payloads start a separate function scope. For shells
+  reading stdin, the evaluator applies Bash redirections in order and parses
+  only the effective final fd-0 here-document or here-string. `env -S` is split
+  into argv according to its quote/escape rules and is never reparsed as Bash
+  source. Static brace materialization and its security-prioritized summary are
+  both capped at 256 segments. Package-manager command patterns treat shell
   redirection metacharacters as command boundaries.
 - The project-root marker fast path is used only when Git discovery has no
   environment override and the nearest `.git` marker is a plain worktree

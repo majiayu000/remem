@@ -1,5 +1,5 @@
 //! Static detection of execution contexts inside one command segment:
-//! `shell -c` payloads, `eval` argument joins, `env -S` split strings, and
+//! `shell -c` payloads, `eval` argument joins, `env -S` argv splitting, and
 //! shells that read their script from stdin. Command position always comes
 //! from the shared `unwrap` normalization layer.
 
@@ -29,7 +29,7 @@ pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
     .then(|| arguments.join(" "))
 }
 
-pub(super) fn static_env_split_payload(tokens: &[String]) -> Option<String> {
+pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> {
     let mut index = unwrap::direct_command_index(tokens)?;
     while tokens.get(index)? == "command" {
         index = unwrap::command_wrapper_target(tokens, index)?;
@@ -46,16 +46,14 @@ pub(super) fn static_env_split_payload(tokens: &[String]) -> Option<String> {
         match option.as_str() {
             "-S" | "--split-string" => {
                 let payload = tokens.get(index + 1)?;
-                return (payload != DYNAMIC_SHELL_WORD).then(|| payload.clone());
+                return splice_env_split(tokens, index, index + 2, payload);
             }
             value if value.starts_with("--split-string=") => {
-                return value
-                    .strip_prefix("--split-string=")
-                    .filter(|payload| *payload != DYNAMIC_SHELL_WORD)
-                    .map(str::to_string);
+                let payload = value.strip_prefix("--split-string=")?;
+                return splice_env_split(tokens, index, index + 1, payload);
             }
             value if value.starts_with("-S") && value.len() > 2 => {
-                return Some(value[2..].to_string());
+                return splice_env_split(tokens, index, index + 1, &value[2..]);
             }
             "-u" | "--unset" | "-C" | "--chdir" | "--argv0" => {
                 tokens.get(index + 1)?;
@@ -74,6 +72,155 @@ pub(super) fn static_env_split_payload(tokens: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+fn splice_env_split(
+    tokens: &[String],
+    option_index: usize,
+    suffix_index: usize,
+    payload: &str,
+) -> Option<Vec<String>> {
+    if payload == DYNAMIC_SHELL_WORD {
+        return None;
+    }
+    let split = split_env_string(payload)?;
+    let mut expanded = Vec::with_capacity(tokens.len() + split.len());
+    expanded.extend_from_slice(&tokens[..option_index]);
+    expanded.extend(split);
+    expanded.extend_from_slice(&tokens[suffix_index..]);
+    Some(expanded)
+}
+
+fn split_env_string(payload: &str) -> Option<Vec<String>> {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Quote {
+        None,
+        Single,
+        Double,
+    }
+
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut chars = payload.chars().peekable();
+    let mut quote = Quote::None;
+    let mut in_token = false;
+    while let Some(ch) = chars.next() {
+        match quote {
+            Quote::None => match ch {
+                ' ' | '\t' => finish_env_token(&mut tokens, &mut current, &mut in_token),
+                '\'' => {
+                    quote = Quote::Single;
+                    in_token = true;
+                }
+                '"' => {
+                    quote = Quote::Double;
+                    in_token = true;
+                }
+                '#' if !in_token => break,
+                '$' if chars.peek() == Some(&'{') => return None,
+                '\\' => match chars.next()? {
+                    'c' => {
+                        break;
+                    }
+                    '_' => finish_env_token(&mut tokens, &mut current, &mut in_token),
+                    escaped => {
+                        current.push(env_escape(escaped)?);
+                        in_token = true;
+                    }
+                },
+                _ => {
+                    current.push(ch);
+                    in_token = true;
+                }
+            },
+            Quote::Single => match ch {
+                '\'' => quote = Quote::None,
+                '\\' => {
+                    let escaped = chars.next()?;
+                    if matches!(escaped, '\'' | '\\') {
+                        current.push(escaped);
+                    } else {
+                        current.push('\\');
+                        current.push(escaped);
+                    }
+                }
+                _ => current.push(ch),
+            },
+            Quote::Double => match ch {
+                '"' => quote = Quote::None,
+                '$' if chars.peek() == Some(&'{') => return None,
+                '\\' => match chars.next()? {
+                    'c' => return None,
+                    '_' => current.push(' '),
+                    escaped => current.push(env_escape(escaped)?),
+                },
+                _ => current.push(ch),
+            },
+        }
+    }
+    if quote != Quote::None {
+        return None;
+    }
+    if in_token {
+        tokens.push(current);
+    }
+    Some(tokens)
+}
+
+fn finish_env_token(tokens: &mut Vec<String>, current: &mut String, in_token: &mut bool) {
+    if *in_token {
+        tokens.push(std::mem::take(current));
+        *in_token = false;
+    }
+}
+
+fn env_escape(escaped: char) -> Option<char> {
+    match escaped {
+        'f' => Some('\u{000c}'),
+        'n' => Some('\n'),
+        'r' => Some('\r'),
+        't' => Some('\t'),
+        'v' => Some('\u{000b}'),
+        '#' => Some('#'),
+        '$' => Some('$'),
+        '"' => Some('"'),
+        '\'' => Some('\''),
+        '\\' => Some('\\'),
+        _ => None,
+    }
+}
+
+pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>> {
+    let mut index = unwrap::direct_command_index(tokens)?;
+    while tokens.get(index)? == "command" {
+        index = unwrap::command_wrapper_target(tokens, index)?;
+    }
+    if tokens.get(index)? != "unset" {
+        return None;
+    }
+    index += 1;
+    let mut function_mode = false;
+    while let Some(option) = tokens.get(index) {
+        if option == "--" {
+            index += 1;
+            break;
+        }
+        let Some(flags) = option.strip_prefix('-').filter(|flags| !flags.is_empty()) else {
+            break;
+        };
+        if flags.chars().any(|flag| flag != 'f') {
+            return None;
+        }
+        function_mode = true;
+        index += 1;
+    }
+    function_mode.then(|| {
+        tokens[index..]
+            .iter()
+            .filter(|name| name.as_str() != DYNAMIC_SHELL_WORD)
+            .map(String::as_str)
+            .collect()
+    })
 }
 
 pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {

@@ -118,7 +118,12 @@ Artifact v2 additionally supports:
   executable basenames are recognized through static paths; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
-  `true`/`false`/`:` guards are not evaluated.
+  `true`/`false`/`:` guards are not evaluated. Function definitions follow
+  Bash child-shell scope and static `unset -f` state. Shell-stdin evaluation
+  selects the effective final fd-0 payload under Bash redirection semantics,
+  and `env -S` performs bounded argv splitting without interpreting shell
+  separators. Every materialized or summarized brace-expansion stage remains
+  capped at 256 segments.
 
 Nothing else. Further kinds require a spec update.
 
@@ -261,9 +266,9 @@ hook-side writes.
   requires both fixed budgets: enabled p95 `<= 15.0 ms` and
   enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
   retained as informational output and does not affect pass/fail. The fresh
-  final-head fixed-budget artifact measured baseline p95 `12.431125 ms`, enabled
-  p95 `13.041875 ms`, delta `0.610750 ms`, complex-AST p95 `12.211208 ms`, and
-  MAD `0.715833 ms`; it passes both fixed budgets.
+  final-head fixed-budget artifact measured baseline p95 `12.975834 ms`, enabled
+  p95 `13.851667 ms`, delta `0.875833 ms`, complex-AST p95 `13.345666 ms`, and
+  MAD `1.096416 ms`; it passes both fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan

@@ -27,9 +27,8 @@ pub(super) fn append_word_variants(segments: &mut Vec<Vec<String>>, mut variants
     variants.sort_unstable();
     variants.dedup();
     if variants.is_empty()
-        || (segments.len() > 1
-            && variants.len() > 1
-            && segments.len().saturating_mul(variants.len()) > MAX_STATIC_WORD_VARIANTS)
+        || variants.len() > MAX_STATIC_WORD_VARIANTS
+        || segments.len().saturating_mul(variants.len()) > MAX_STATIC_WORD_VARIANTS
     {
         let critical = variants
             .iter()
@@ -37,17 +36,24 @@ pub(super) fn append_word_variants(segments: &mut Vec<Vec<String>>, mut variants
             .cloned()
             .collect::<Vec<_>>();
         let prefixes = std::mem::take(segments);
+        let mut summarized = Vec::new();
         for mut segment in prefixes {
             for variant in &critical {
                 let mut critical_segment = segment.clone();
                 critical_segment.push(variant.clone());
-                segments.push(critical_segment);
+                summarized.push(critical_segment);
             }
             segment.push(DYNAMIC_SHELL_WORD.to_string());
-            segments.push(segment);
+            summarized.push(segment);
         }
-        segments.sort_unstable();
-        segments.dedup();
+        summarized.sort_unstable_by(|left, right| {
+            static_security_score(right)
+                .cmp(&static_security_score(left))
+                .then_with(|| left.cmp(right))
+        });
+        summarized.dedup();
+        summarized.truncate(MAX_STATIC_WORD_VARIANTS);
+        *segments = summarized;
         return;
     }
     let prefixes = std::mem::take(segments);
@@ -58,6 +64,21 @@ pub(super) fn append_word_variants(segments: &mut Vec<Vec<String>>, mut variants
             segments.push(expanded);
         }
     }
+}
+
+fn static_security_score(segment: &[String]) -> usize {
+    segment
+        .iter()
+        .map(|token| match token.as_str() {
+            "--force" | "-f" | "--mirror" => 8,
+            "git" | "git.exe" => 4,
+            "push" | "commit" => 2,
+            value if value.starts_with('+') && value.len() > 1 => 8,
+            value if value.starts_with("--trailer=") => 4,
+            value if is_critical_static_token(value) => 1,
+            _ => 0,
+        })
+        .sum()
 }
 
 pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
@@ -200,6 +221,9 @@ fn expand_brace_expression(
         }
         variants.sort_unstable();
         variants.dedup();
+        if variants.len() > MAX_STATIC_WORD_VARIANTS {
+            return Err(StaticExpansionError::Limit);
+        }
     }
     Ok(variants)
 }
@@ -238,9 +262,8 @@ fn append_text_variants(
     suffixes: &[String],
 ) -> Result<(), StaticExpansionError> {
     if suffixes.is_empty()
-        || (variants.len() > 1
-            && suffixes.len() > 1
-            && variants.len().saturating_mul(suffixes.len()) > MAX_STATIC_WORD_VARIANTS)
+        || suffixes.len() > MAX_STATIC_WORD_VARIANTS
+        || variants.len().saturating_mul(suffixes.len()) > MAX_STATIC_WORD_VARIANTS
     {
         return Err(StaticExpansionError::Limit);
     }
