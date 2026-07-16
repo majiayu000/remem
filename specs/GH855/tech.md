@@ -511,11 +511,13 @@ ack、关闭 scanner 或吞掉 context error 达成。
     "eval/public/memory/artifacts/adversarial-policy-v2/",
     "eval/public/reports/baseline.json",
     "eval/public/reports/baseline.md",
+    "CHANGELOG.md",
     "Cargo.toml",
     "Cargo.lock",
     "plugins/remem/.codex-plugin/plugin.json",
     "plugins/remem/runtimes/remem-releases.json",
-    "npm/remem/package.json"
+    "npm/remem/package.json",
+    "server.json"
   ],
   "spec_refs": [
     "specs/GH855/product.md",
