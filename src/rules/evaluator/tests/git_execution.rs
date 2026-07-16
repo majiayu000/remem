@@ -393,3 +393,79 @@ fn single_word_brace_expansion_respects_the_materialization_bound() {
     assert_eq!(outcome.matches.len(), 1);
     assert!(outcome.diagnostics.is_empty());
 }
+
+#[test]
+fn force_push_rule_tracks_static_shell_state_and_indirect_execution() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "f(){ git push --force;}; declare -fx f; bash -c f",
+        "source /dev/fd/0 <<'EOF'\ngit push --force\nEOF",
+        "source /proc/self/fd/0 <<'EOF'\ngit push --force\nEOF",
+        "builtin builtin eval 'git push --force'",
+        "GIT=git env -S '${GIT} push --force'",
+        "shopt -s expand_aliases\nalias gp='git push --force'\ngp",
+        "git -c alias.pf='push --force' pf",
+        "git -c alias.pf='!git push' pf --force",
+        "git push -od origin +HEAD:main",
+        "shopt -s lastpipe; printf x | { f(){ git push --force;};}; f",
+        "git(){ command git \"$@\";}; git push --force",
+        "trap 'git push --force' EXIT; case ok in o*) :;; ok) trap - EXIT;; esac",
+        "case ok in o*) : ;& nope) git push --force;; esac",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_prunes_static_non_execution_and_honors_overrides() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "while false; do git push --force; done",
+        "until true; do git push --force; done",
+        "case ok in nope) git push --force;; esac",
+        "trap 'git push --force' EXIT; trap - EXIT",
+        "f(){ git push --force;}; declare -f f; bash -c f",
+        "printf x | { f(){ git push --force;};}; f",
+        "bash -c 'sh </dev/null' <<'EOF'\ngit push --force\nEOF",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    let alternatives = std::iter::once("--force".to_string())
+        .chain((0..=300).map(|value| format!("branch{value}")))
+        .chain(std::iter::once("--no-force".to_string()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let command = format!("git push {{{alternatives}}}");
+    let outcome = evaluate_artifact(&artifact, &EvaluationInput { command });
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+    assert!(outcome.matches.is_empty());
+    assert!(outcome.diagnostics.is_empty());
+
+    let reverse = std::iter::once("--no-force".to_string())
+        .chain((0..=300).map(|value| format!("branch{value}")))
+        .chain(std::iter::once("--force".to_string()))
+        .collect::<Vec<_>>()
+        .join(",");
+    let command = format!("git push {{{reverse}}}");
+    let outcome = evaluate_artifact(&artifact, &EvaluationInput { command });
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block);
+    assert_eq!(outcome.matches.len(), 1);
+    assert!(outcome.diagnostics.is_empty());
+}

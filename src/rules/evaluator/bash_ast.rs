@@ -3,19 +3,21 @@ use std::io::Cursor;
 
 use brush_parser::ast::{
     AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    FunctionBody, IfClauseCommand, IoFileRedirectTarget, IoRedirect, Pipeline, Program,
-    SimpleCommand, UnexpandedArithmeticExpr, Word,
+    FunctionBody, IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand,
+    UnexpandedArithmeticExpr, Word,
 };
 use brush_parser::word::{Parameter, ParameterExpr, WordPiece, WordPieceWithSource};
 use brush_parser::{Parser, ParserOptions};
 
+mod control_flow;
+mod shell_state;
 mod static_execution;
 mod static_words;
 mod stdin_payload;
 pub(super) mod unwrap;
 
 use static_execution::{
-    direct_command_name, static_env_split_tokens, static_eval_payload, static_exit_trap_payload,
+    direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_is_bash,
     static_shell_reads_stdin, static_source_reads_stdin, static_unset_function_names,
 };
@@ -23,6 +25,7 @@ use static_words::{
     append_word_variants, critical_brace_variants, expand_brace_pieces, static_word_pieces,
     StaticExpansionError,
 };
+use stdin_payload::EffectiveStdin;
 
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
 const MAX_STATIC_WORD_VARIANTS: usize = 256;
@@ -34,10 +37,16 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         functions: HashMap::new(),
         exported_functions: HashSet::new(),
         active_functions: HashSet::new(),
+        aliases: HashMap::new(),
+        active_aliases: HashSet::new(),
+        expand_aliases: false,
+        lastpipe: false,
+        exit_traps: Vec::new(),
         execution_is_definite: true,
         inherited_stdin: None,
     };
     collector.collect_source(source)?;
+    collector.collect_exit_traps()?;
     Ok(collector.segments)
 }
 
@@ -47,6 +56,11 @@ struct CommandCollector {
     functions: HashMap<String, Vec<FunctionDefinition>>,
     exported_functions: HashSet<String>,
     active_functions: HashSet<String>,
+    aliases: HashMap<String, Vec<AliasDefinition>>,
+    active_aliases: HashSet<String>,
+    expand_aliases: bool,
+    lastpipe: bool,
+    exit_traps: Vec<ExitTrapDefinition>,
     execution_is_definite: bool,
     inherited_stdin: Option<String>,
 }
@@ -54,6 +68,19 @@ struct CommandCollector {
 #[derive(Clone)]
 struct FunctionDefinition {
     body: FunctionBody,
+    is_definite: bool,
+    forwards_arguments: bool,
+}
+
+#[derive(Clone)]
+struct AliasDefinition {
+    payload: String,
+    is_definite: bool,
+}
+
+#[derive(Clone)]
+struct ExitTrapDefinition {
+    payload: String,
     is_definite: bool,
 }
 
@@ -129,8 +156,13 @@ impl CommandCollector {
         if pipeline.seq.len() == 1 {
             return self.collect_command(&pipeline.seq[0]);
         }
-        for command in &pipeline.seq {
-            self.with_function_scope(true, |collector| collector.collect_command(command))?;
+        let last = pipeline.seq.len() - 1;
+        for (index, command) in pipeline.seq.iter().enumerate() {
+            if index == last && self.lastpipe {
+                self.collect_command(command)?;
+            } else {
+                self.with_function_scope(true, |collector| collector.collect_command(command))?;
+            }
         }
         Ok(())
     }
@@ -156,6 +188,9 @@ impl CommandCollector {
                             vec![FunctionDefinition {
                                 body: function.body.clone(),
                                 is_definite: true,
+                                forwards_arguments: function_body_forwards_arguments(
+                                    &function.body,
+                                ),
                             }],
                         );
                     } else {
@@ -166,6 +201,7 @@ impl CommandCollector {
                         definitions.push(FunctionDefinition {
                             body: function.body.clone(),
                             is_definite: false,
+                            forwards_arguments: function_body_forwards_arguments(&function.body),
                         });
                     }
                 }
@@ -217,27 +253,10 @@ impl CommandCollector {
                     collector.collect_list(&command.body.list)
                 })
             }
-            CompoundCommand::CaseClause(command) => {
-                self.collect_word_commands(&command.value)?;
-                for case in &command.cases {
-                    for pattern in &case.patterns {
-                        self.collect_word_commands(pattern)?;
-                    }
-                    if let Some(commands) = &case.cmd {
-                        self.with_execution_certainty(false, |collector| {
-                            collector.collect_list(commands)
-                        })?;
-                    }
-                }
-                Ok(())
-            }
+            CompoundCommand::CaseClause(command) => self.collect_case_clause(command),
             CompoundCommand::IfClause(command) => self.collect_if_clause(command),
-            CompoundCommand::WhileClause(command) | CompoundCommand::UntilClause(command) => {
-                self.collect_list(&command.0)?;
-                self.with_execution_certainty(false, |collector| {
-                    collector.collect_list(&command.1.list)
-                })
-            }
+            CompoundCommand::WhileClause(command) => self.collect_loop(command, false),
+            CompoundCommand::UntilClause(command) => self.collect_loop(command, true),
             CompoundCommand::Coprocess(command) => {
                 if let Some(name) = &command.name {
                     self.collect_word_commands(name)?;
@@ -245,56 +264,6 @@ impl CommandCollector {
                 self.with_function_scope(true, |collector| collector.collect_command(&command.body))
             }
         }
-    }
-
-    fn collect_if_clause(&mut self, command: &IfClauseCommand) -> Result<(), String> {
-        self.collect_list(&command.condition)?;
-        let status = self.static_list_success(&command.condition)?;
-        if status != Some(false) {
-            self.with_execution_certainty(status == Some(true), |collector| {
-                collector.collect_list(&command.then)
-            })?;
-        }
-        if status == Some(true) {
-            return Ok(());
-        }
-        let mut branch_is_definite = status == Some(false);
-        for branch in command.elses.iter().flatten() {
-            let branch_status = if let Some(condition) = &branch.condition {
-                self.with_execution_certainty(branch_is_definite, |collector| {
-                    collector.collect_list(condition)
-                })?;
-                self.static_list_success(condition)?
-            } else {
-                Some(true)
-            };
-            if branch_status != Some(false) {
-                self.with_execution_certainty(
-                    branch_is_definite && branch_status == Some(true),
-                    |collector| collector.collect_list(&branch.body),
-                )?;
-            }
-            match branch_status {
-                Some(true) => break,
-                Some(false) => {}
-                None => branch_is_definite = false,
-            }
-        }
-        Ok(())
-    }
-
-    fn static_list_success(&self, list: &CompoundList) -> Result<Option<bool>, String> {
-        let Some(item) = list.0.last() else {
-            return Ok(None);
-        };
-        let mut status = self.static_pipeline_success(&item.0.first)?;
-        for additional in &item.0.additional {
-            status = match additional {
-                AndOr::And(pipeline) => and_status(status, self.static_pipeline_success(pipeline)?),
-                AndOr::Or(pipeline) => or_status(status, self.static_pipeline_success(pipeline)?),
-            };
-        }
-        Ok(status)
     }
 
     fn collect_simple_command(&mut self, command: &SimpleCommand) -> Result<(), String> {
@@ -349,6 +318,7 @@ impl CommandCollector {
             }
             tokens = expanded;
         }
+        self.apply_static_shell_state(&tokens);
         if let Some(names) = static_unset_function_names(&tokens) {
             for name in names {
                 if self.execution_is_definite {
@@ -370,17 +340,17 @@ impl CommandCollector {
                 }
             }
         }
-        if self.collect_static_function_call(&tokens)? {
+        if self.collect_static_alias_call(&tokens)? || self.collect_static_function_call(&tokens)? {
             return Ok(());
-        }
-        if let Some(payload) = static_exit_trap_payload(&tokens) {
-            self.with_function_scope(true, |collector| collector.collect_source(payload))?;
         }
         if let Some(payload) = static_eval_payload(&tokens) {
             self.collect_source(&payload)?;
         }
         if let Some(payload) = static_shell_command_payload(&tokens) {
-            let inherited_stdin = self.effective_stdin_payload(command)?;
+            let inherited_stdin = match self.effective_stdin_payload(command)? {
+                EffectiveStdin::Replaced(payload) => payload,
+                EffectiveStdin::Untouched => None,
+            };
             self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
                 collector.with_inherited_stdin(inherited_stdin, |collector| {
                     collector.collect_source(payload)
@@ -388,16 +358,21 @@ impl CommandCollector {
             })?;
         }
         if static_shell_reads_stdin(&tokens) {
-            if let Some(payload) = self
-                .effective_stdin_payload(command)?
-                .or_else(|| self.inherited_stdin.clone())
-            {
+            let payload = match self.effective_stdin_payload(command)? {
+                EffectiveStdin::Replaced(payload) => payload,
+                EffectiveStdin::Untouched => self.inherited_stdin.clone(),
+            };
+            if let Some(payload) = payload {
                 self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
                     collector.collect_source(&payload)
                 })?;
             }
         } else if static_source_reads_stdin(&tokens) {
-            if let Some(payload) = self.effective_stdin_payload(command)? {
+            let payload = match self.effective_stdin_payload(command)? {
+                EffectiveStdin::Replaced(payload) => payload,
+                EffectiveStdin::Untouched => self.inherited_stdin.clone(),
+            };
+            if let Some(payload) = payload {
                 self.collect_source(&payload)?;
             }
         }
@@ -412,7 +387,9 @@ impl CommandCollector {
         let Some(definitions) = self.functions.get(name).cloned() else {
             return Ok(false);
         };
-        let definitely_defined = definitions.iter().any(|definition| definition.is_definite);
+        let definitely_defined = definitions
+            .iter()
+            .any(|definition| definition.is_definite && !definition.forwards_arguments);
         if !self.active_functions.insert(name.to_string()) {
             return Ok(definitely_defined);
         }
@@ -625,79 +602,6 @@ impl CommandCollector {
         self.collect_word_pieces(&pieces)
     }
 
-    fn with_function_scope<T>(
-        &mut self,
-        inherit: bool,
-        collect: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let saved_functions = self.functions.clone();
-        let saved_exported_functions = self.exported_functions.clone();
-        let saved_active_functions = self.active_functions.clone();
-        let saved_inherited_stdin = self.inherited_stdin.clone();
-        if !inherit {
-            self.functions.clear();
-            self.exported_functions.clear();
-            self.active_functions.clear();
-        }
-        let result = collect(self);
-        self.functions = saved_functions;
-        self.exported_functions = saved_exported_functions;
-        self.active_functions = saved_active_functions;
-        self.inherited_stdin = saved_inherited_stdin;
-        result
-    }
-
-    fn with_child_shell_scope<T>(
-        &mut self,
-        inherit_exported: bool,
-        collect: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let saved_functions = self.functions.clone();
-        let saved_exports = self.exported_functions.clone();
-        let saved_active = self.active_functions.clone();
-        let saved_inherited_stdin = self.inherited_stdin.clone();
-        if inherit_exported {
-            self.functions
-                .retain(|name, _| saved_exports.contains(name));
-            self.exported_functions
-                .retain(|name| self.functions.contains_key(name));
-        } else {
-            self.functions.clear();
-            self.exported_functions.clear();
-        }
-        self.active_functions.clear();
-        let result = collect(self);
-        self.functions = saved_functions;
-        self.exported_functions = saved_exports;
-        self.active_functions = saved_active;
-        self.inherited_stdin = saved_inherited_stdin;
-        result
-    }
-
-    fn with_inherited_stdin<T>(
-        &mut self,
-        payload: Option<String>,
-        collect: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let saved = self.inherited_stdin.clone();
-        self.inherited_stdin = payload;
-        let result = collect(self);
-        self.inherited_stdin = saved;
-        result
-    }
-
-    fn with_execution_certainty<T>(
-        &mut self,
-        definitely_executes: bool,
-        collect: impl FnOnce(&mut Self) -> Result<T, String>,
-    ) -> Result<T, String> {
-        let saved = self.execution_is_definite;
-        self.execution_is_definite = saved && definitely_executes;
-        let result = collect(self);
-        self.execution_is_definite = saved;
-        result
-    }
-
     fn command_word(&self, word: &Word) -> Result<String, String> {
         let pieces = brush_parser::word::parse(&word.value, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
@@ -737,6 +641,13 @@ fn static_token_measure(tokens: &[String]) -> usize {
         .iter()
         .map(|token| token.len().saturating_add(1))
         .sum()
+}
+
+fn function_body_forwards_arguments(body: &FunctionBody) -> bool {
+    let source = body.to_string();
+    ["$@", "$*", "${@}", "${*}"]
+        .iter()
+        .any(|needle| source.contains(needle))
 }
 
 fn and_status(left: Option<bool>, right: Option<bool>) -> Option<bool> {

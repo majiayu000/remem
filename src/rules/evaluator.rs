@@ -216,12 +216,18 @@ fn git_commit_segment_adds_trailer(tokens: &[String], trailer: &str) -> bool {
 
 fn command_forces_git_push(command: &str) -> Result<bool, String> {
     let segments = shell_command_segments(command)?;
-    Ok(segments
-        .iter()
-        .any(|tokens| git_subcommand_args(tokens, "push").is_some_and(git_push_args_force)))
+    Ok(segments.iter().any(|tokens| {
+        git_subcommand_args(tokens, "push").is_some_and(git_push_args_force)
+            || git_alias_forces_push(tokens)
+    }))
 }
 
 fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [String]> {
+    let index = git_subcommand_index(tokens)?;
+    (tokens.get(index)? == expected).then_some(&tokens[index + 1..])
+}
+
+fn git_subcommand_index(tokens: &[String]) -> Option<usize> {
     let command_index = bash_ast::unwrap::effective_command_index(tokens)?;
     if !is_git_executable(tokens.get(command_index)?) {
         return None;
@@ -231,7 +237,6 @@ fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [
 
     while let Some(token) = tokens.get(index) {
         match token.as_str() {
-            value if value == expected => return Some(&tokens[index + 1..]),
             "-C" | "-c" | "--exec-path" | "--git-dir" | "--work-tree" | "--namespace"
             | "--super-prefix" => {
                 index += 2;
@@ -261,11 +266,69 @@ fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [
             {
                 index += 1;
             }
-            _ => return None,
+            _ => return Some(index),
         }
     }
 
     None
+}
+
+fn git_alias_forces_push(tokens: &[String]) -> bool {
+    let Some(subcommand_index) = git_subcommand_index(tokens) else {
+        return false;
+    };
+    let Some(alias_name) = tokens.get(subcommand_index) else {
+        return false;
+    };
+    let Some(payload) = git_config_alias_payload(tokens, subcommand_index, alias_name) else {
+        return false;
+    };
+    let shell_alias = payload.starts_with('!');
+    let payload = payload.strip_prefix('!').unwrap_or(payload);
+    let Ok(segments) = shell_command_segments(payload) else {
+        return false;
+    };
+    segments.into_iter().any(|mut segment| {
+        if shell_alias {
+            segment.extend_from_slice(&tokens[subcommand_index + 1..]);
+            return git_subcommand_args(&segment, "push").is_some_and(git_push_args_force);
+        }
+        segment.extend_from_slice(&tokens[subcommand_index + 1..]);
+        segment
+            .strip_prefix(&["push".to_string()])
+            .is_some_and(git_push_args_force)
+    })
+}
+
+fn git_config_alias_payload<'a>(
+    tokens: &'a [String],
+    subcommand_index: usize,
+    alias_name: &str,
+) -> Option<&'a str> {
+    let command_index = bash_ast::unwrap::effective_command_index(tokens)?;
+    let mut index = command_index + 1;
+    let mut payload = None;
+    while index < subcommand_index {
+        let token = tokens.get(index)?;
+        let assignment = if token == "-c" {
+            index += 2;
+            tokens.get(index - 1)?.as_str()
+        } else if let Some(assignment) = token.strip_prefix("-c") {
+            index += 1;
+            assignment
+        } else {
+            index += 1;
+            continue;
+        };
+        if let Some((key, value)) = assignment.split_once('=') {
+            if let Some((section, name)) = key.split_once('.') {
+                if section.eq_ignore_ascii_case("alias") && name.eq_ignore_ascii_case(alias_name) {
+                    payload = Some(value);
+                }
+            }
+        }
+    }
+    payload
 }
 
 fn is_git_executable(command: &str) -> bool {
@@ -314,10 +377,7 @@ fn git_push_args_force(args: &[String]) -> bool {
             continue;
         }
         if !options_terminated {
-            if arg
-                .strip_prefix('-')
-                .is_some_and(|cluster| !cluster.starts_with('-') && cluster.contains('d'))
-            {
+            if git_push_short_option_enables_delete(arg) {
                 delete_enabled = true;
             }
             match git_push_short_option_effect(arg) {
@@ -350,6 +410,23 @@ fn git_push_args_force(args: &[String]) -> bool {
     force_enabled || mirror_enabled
 }
 
+fn git_push_short_option_enables_delete(arg: &str) -> bool {
+    let Some(cluster) = arg
+        .strip_prefix('-')
+        .filter(|value| !value.starts_with('-'))
+    else {
+        return false;
+    };
+    for option in cluster.chars() {
+        match option {
+            'd' => return true,
+            'o' => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn delete_option_state(arg: &str) -> Option<bool> {
     if let Some(prefix) = arg.strip_prefix("--no-") {
         return (!prefix.is_empty() && "delete".starts_with(prefix)).then_some(false);
@@ -358,9 +435,9 @@ fn delete_option_state(arg: &str) -> Option<bool> {
     (!prefix.is_empty() && "delete".starts_with(prefix)).then_some(true)
 }
 
-pub(super) fn git_push_arg_enables_force(arg: &str) -> bool {
-    arg == "--force"
-        || mirror_option_state(arg) == Some(true)
+pub(super) fn git_push_arg_changes_force_state(arg: &str) -> bool {
+    matches!(arg, "--force" | "--no-force")
+        || mirror_option_state(arg).is_some()
         || git_push_short_option_effect(arg) == PushShortOptionEffect::Forces
         || is_force_push_refspec(arg)
 }

@@ -3,7 +3,7 @@ use brush_parser::word::{
 };
 
 use super::{DYNAMIC_SHELL_WORD, MAX_STATIC_WORD_VARIANTS};
-use crate::rules::evaluator::git_push_arg_enables_force;
+use crate::rules::evaluator::git_push_arg_changes_force_state;
 
 const CRITICAL_STATIC_TOKENS: &[&str] = &[
     "git",
@@ -35,15 +35,15 @@ pub(super) fn append_word_variants(segments: &mut [Vec<String>], variants: Vec<S
 }
 
 pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
-    let mut variants = CRITICAL_STATIC_TOKENS
-        .iter()
-        .filter(|target| brace_pieces_can_equal(pieces, target))
-        .map(|target| (*target).to_string())
+    let mut variants = security_brace_variants(pieces)
+        .into_iter()
+        .filter(|value| is_critical_static_token(value))
         .collect::<Vec<_>>();
     variants.extend(
-        security_brace_variants(pieces)
-            .into_iter()
-            .filter(|value| is_critical_static_token(value)),
+        CRITICAL_STATIC_TOKENS
+            .iter()
+            .filter(|target| brace_pieces_can_equal(pieces, target))
+            .map(|target| (*target).to_string()),
     );
     let mut seen = std::collections::HashSet::new();
     variants.retain(|variant| seen.insert(variant.clone()));
@@ -52,7 +52,7 @@ pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<S
 
 fn is_critical_static_token(value: &str) -> bool {
     CRITICAL_STATIC_TOKENS.contains(&value)
-        || git_push_arg_enables_force(value)
+        || git_push_arg_changes_force_state(value)
         || value.starts_with("--trailer=")
         || value.starts_with('+') && value.len() > 1
 }
@@ -109,13 +109,23 @@ fn security_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
 }
 
 fn summarize_security_variants(variants: &mut Vec<String>) {
-    variants.sort_unstable_by(|left, right| {
-        security_variant_score(right)
-            .cmp(&security_variant_score(left))
+    let mut seen = std::collections::HashSet::new();
+    variants.retain(|variant| seen.insert(variant.clone()));
+    if variants.len() <= MAX_STATIC_WORD_VARIANTS {
+        return;
+    }
+    let mut retained = (0..variants.len()).collect::<Vec<_>>();
+    retained.sort_unstable_by(|left, right| {
+        security_variant_score(&variants[*right])
+            .cmp(&security_variant_score(&variants[*left]))
             .then_with(|| left.cmp(right))
     });
-    variants.dedup();
-    variants.truncate(MAX_STATIC_WORD_VARIANTS);
+    retained.truncate(MAX_STATIC_WORD_VARIANTS);
+    retained.sort_unstable();
+    *variants = retained
+        .into_iter()
+        .map(|index| variants[index].clone())
+        .collect();
 }
 
 fn security_variant_score(value: &str) -> usize {

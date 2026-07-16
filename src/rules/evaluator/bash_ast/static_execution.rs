@@ -3,8 +3,15 @@
 //! shells that read their script from stdin. Command position always comes
 //! from the shared `unwrap` normalization layer.
 
+use std::collections::HashMap;
+
 use super::unwrap;
 use super::DYNAMIC_SHELL_WORD;
+
+pub(super) enum ExitTrapChange<'a> {
+    Set(&'a str),
+    Reset,
+}
 
 pub(super) fn direct_command_name(tokens: &[String]) -> Option<&str> {
     unwrap::direct_command_index(tokens).map(|index| tokens[index].as_str())
@@ -26,7 +33,7 @@ pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
     .then(|| arguments.join(" "))
 }
 
-pub(super) fn static_exit_trap_payload(tokens: &[String]) -> Option<&str> {
+pub(super) fn static_exit_trap_change(tokens: &[String]) -> Option<ExitTrapChange<'_>> {
     let mut index = static_builtin_command_index(tokens)?;
     if tokens.get(index)? != "trap" {
         return None;
@@ -36,23 +43,91 @@ pub(super) fn static_exit_trap_payload(tokens: &[String]) -> Option<&str> {
         index += 1;
     }
     let payload = tokens.get(index)?;
-    if matches!(payload.as_str(), "" | "-" | DYNAMIC_SHELL_WORD) {
+    if payload == DYNAMIC_SHELL_WORD {
         return None;
     }
+    let handles_exit = tokens[index + 1..]
+        .iter()
+        .any(|signal| signal == "0" || signal.eq_ignore_ascii_case("EXIT"));
+    if !handles_exit {
+        return None;
+    }
+    Some(if matches!(payload.as_str(), "" | "-") {
+        ExitTrapChange::Reset
+    } else {
+        ExitTrapChange::Set(payload)
+    })
+}
+
+pub(super) fn static_shopt_expand_aliases(tokens: &[String]) -> Option<bool> {
+    static_shopt_state(tokens, "expand_aliases")
+}
+
+pub(super) fn static_shopt_lastpipe(tokens: &[String]) -> Option<bool> {
+    static_shopt_state(tokens, "lastpipe")
+}
+
+fn static_shopt_state(tokens: &[String], expected: &str) -> Option<bool> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if tokens.get(index)? != "shopt" {
+        return None;
+    }
+    index += 1;
+    let enabled = match tokens.get(index)?.as_str() {
+        "-s" => true,
+        "-u" => false,
+        _ => return None,
+    };
     tokens[index + 1..]
         .iter()
-        .any(|signal| signal == "0" || signal.eq_ignore_ascii_case("EXIT"))
-        .then_some(payload.as_str())
+        .any(|name| name == expected)
+        .then_some(enabled)
+}
+
+pub(super) fn static_alias_definitions(tokens: &[String]) -> Option<Vec<(&str, &str)>> {
+    let index = static_builtin_command_index(tokens)?;
+    if tokens.get(index)? != "alias" {
+        return None;
+    }
+    Some(
+        tokens[index + 1..]
+            .iter()
+            .filter_map(|definition| definition.split_once('='))
+            .filter(|(name, payload)| {
+                !name.is_empty()
+                    && *payload != DYNAMIC_SHELL_WORD
+                    && name
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-'))
+            })
+            .collect(),
+    )
+}
+
+pub(super) fn static_unalias_names(tokens: &[String]) -> Option<Vec<&str>> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if tokens.get(index)? != "unalias" {
+        return None;
+    }
+    index += 1;
+    if tokens.get(index).is_some_and(|token| token == "--") {
+        index += 1;
+    }
+    if tokens.get(index).is_some_and(|token| token == "-a") {
+        return Some(Vec::new());
+    }
+    Some(tokens[index..].iter().map(String::as_str).collect())
 }
 
 pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, Vec<&str>)> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "export" {
+    let is_declare = tokens.get(index)? == "declare";
+    if !is_declare && tokens.get(index)? != "export" {
         return None;
     }
     index += 1;
     let mut function_mode = false;
-    let mut exported = true;
+    let mut exported = !is_declare;
     while let Some(option) = tokens.get(index) {
         if option == "--" {
             index += 1;
@@ -61,14 +136,18 @@ pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, 
         let Some(flags) = option.strip_prefix('-').filter(|flags| !flags.is_empty()) else {
             break;
         };
-        if flags.chars().any(|flag| !matches!(flag, 'f' | 'n')) {
+        if flags.chars().any(|flag| !matches!(flag, 'f' | 'n' | 'x')) {
             return None;
         }
         function_mode |= flags.contains('f');
-        exported &= !flags.contains('n');
+        if is_declare {
+            exported |= flags.contains('x');
+        } else {
+            exported &= !flags.contains('n');
+        }
         index += 1;
     }
-    function_mode.then(|| {
+    (function_mode && (!is_declare || exported)).then(|| {
         (
             exported,
             tokens[index..]
@@ -85,14 +164,16 @@ fn static_builtin_command_index(tokens: &[String]) -> Option<usize> {
     while tokens.get(index)? == "command" {
         index = unwrap::command_wrapper_target(tokens, index)?;
     }
-    if tokens.get(index)? == "builtin" {
+    while tokens.get(index)? == "builtin" {
         index += 1;
     }
     tokens.get(index).map(|_| index)
 }
 
 pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> {
-    let mut index = unwrap::direct_command_index(tokens)?;
+    let prefix_end = unwrap::direct_command_index(tokens)?;
+    let assignments = static_assignments(&tokens[..prefix_end]);
+    let mut index = prefix_end;
     while tokens.get(index)? == "command" {
         index = unwrap::command_wrapper_target(tokens, index)?;
     }
@@ -107,14 +188,14 @@ pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> 
         match option.as_str() {
             "-S" | "--split-string" => {
                 let payload = tokens.get(index + 1)?;
-                return splice_env_split(tokens, index, index + 2, payload);
+                return splice_env_split(tokens, index, index + 2, payload, &assignments);
             }
             value if value.starts_with("--split-string=") => {
                 let payload = value.strip_prefix("--split-string=")?;
-                return splice_env_split(tokens, index, index + 1, payload);
+                return splice_env_split(tokens, index, index + 1, payload, &assignments);
             }
             value if value.starts_with("-S") && value.len() > 2 => {
-                return splice_env_split(tokens, index, index + 1, &value[2..]);
+                return splice_env_split(tokens, index, index + 1, &value[2..], &assignments);
             }
             "-u" | "--unset" | "-C" | "--chdir" | "--argv0" => {
                 tokens.get(index + 1)?;
@@ -147,15 +228,59 @@ fn splice_env_split(
     option_index: usize,
     suffix_index: usize,
     payload: &str,
+    assignments: &HashMap<&str, &str>,
 ) -> Option<Vec<String>> {
     if payload == DYNAMIC_SHELL_WORD {
         return None;
     }
-    let split = split_env_string(payload)?;
+    let payload = expand_env_split_variables(payload, assignments)?;
+    let split = split_env_string(&payload)?;
     let mut expanded = Vec::with_capacity(tokens.len() + split.len());
     expanded.extend_from_slice(&tokens[..option_index]);
     expanded.extend(split);
     expanded.extend_from_slice(&tokens[suffix_index..]);
+    Some(expanded)
+}
+
+fn static_assignments(tokens: &[String]) -> HashMap<&str, &str> {
+    tokens
+        .iter()
+        .filter_map(|token| token.split_once('='))
+        .filter(|(_, value)| *value != DYNAMIC_SHELL_WORD)
+        .collect()
+}
+
+fn expand_env_split_variables(payload: &str, assignments: &HashMap<&str, &str>) -> Option<String> {
+    let mut expanded = String::with_capacity(payload.len());
+    let mut chars = payload.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            expanded.push(ch);
+            expanded.push(chars.next()?);
+            continue;
+        }
+        if ch != '$' || chars.peek() != Some(&'{') {
+            expanded.push(ch);
+            continue;
+        }
+        chars.next();
+        let mut name = String::new();
+        while chars.peek().is_some_and(|next| *next != '}') {
+            name.push(chars.next()?);
+        }
+        chars.next()?;
+        let valid_name = name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name
+                .chars()
+                .all(|part| part.is_ascii_alphanumeric() || part == '_');
+        if !valid_name {
+            return None;
+        }
+        expanded.push_str(assignments.get(name.as_str())?);
+    }
     Some(expanded)
 }
 
@@ -185,7 +310,6 @@ fn split_env_string(payload: &str) -> Option<Vec<String>> {
                     in_token = true;
                 }
                 '#' if !in_token => break,
-                '$' if chars.peek() == Some(&'{') => return None,
                 '\\' => match chars.next()? {
                     'c' => {
                         break;
@@ -216,7 +340,6 @@ fn split_env_string(payload: &str) -> Option<Vec<String>> {
             },
             Quote::Double => match ch {
                 '"' => quote = Quote::None,
-                '$' if chars.peek() == Some(&'{') => return None,
                 '\\' => match chars.next()? {
                     'c' => return None,
                     '_' => current.push(' '),
@@ -327,9 +450,12 @@ pub(super) fn static_source_reads_stdin(tokens: &[String]) -> bool {
         return false;
     };
     matches!(tokens[index].as_str(), "source" | ".")
-        && tokens
-            .get(index + 1)
-            .is_some_and(|path| path == "/dev/stdin")
+        && tokens.get(index + 1).is_some_and(|path| {
+            matches!(
+                path.as_str(),
+                "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0"
+            )
+        })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

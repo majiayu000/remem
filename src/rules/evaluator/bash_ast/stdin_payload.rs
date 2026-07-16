@@ -6,12 +6,17 @@ use brush_parser::ast::{
 
 use super::{CommandCollector, DYNAMIC_SHELL_WORD};
 
+pub(super) enum EffectiveStdin {
+    Untouched,
+    Replaced(Option<String>),
+}
+
 impl CommandCollector {
     /// Select the static fd-0 payload after applying Bash redirections left-to-right.
     pub(super) fn effective_stdin_payload(
         &self,
         command: &SimpleCommand,
-    ) -> Result<Option<String>, String> {
+    ) -> Result<EffectiveStdin, String> {
         let mut payloads = HashMap::<i32, Option<String>>::new();
         for items in [
             command.prefix.as_ref().map(|prefix| &prefix.0),
@@ -49,7 +54,10 @@ impl CommandCollector {
                 }
             }
         }
-        Ok(payloads.remove(&0).flatten())
+        Ok(match payloads.remove(&0) {
+            Some(payload) => EffectiveStdin::Replaced(payload),
+            None => EffectiveStdin::Untouched,
+        })
     }
 }
 
