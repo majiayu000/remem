@@ -175,7 +175,7 @@ fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
 }
 
 fn git_dir_has_plain_layout(git_dir: &std::path::Path) -> bool {
-    if !git_dir.join("HEAD").is_file() {
+    if !git_head_is_valid(git_dir) {
         return false;
     }
     let commondir = git_dir.join("commondir");
@@ -198,6 +198,40 @@ fn git_dir_has_plain_layout(git_dir: &std::path::Path) -> bool {
     };
 
     common_dir.is_dir() && common_dir.join("objects").is_dir() && common_dir.join("refs").is_dir()
+}
+
+fn git_head_is_valid(git_dir: &std::path::Path) -> bool {
+    let Ok(contents) = std::fs::read_to_string(git_dir.join("HEAD")) else {
+        return false;
+    };
+    let value = contents.strip_suffix('\n').unwrap_or(&contents);
+    let value = value.strip_suffix('\r').unwrap_or(value);
+    if value.is_empty() || value.contains(['\r', '\n']) {
+        return false;
+    }
+    if let Some(reference) = value.strip_prefix("ref: ") {
+        return git_ref_name_is_valid(reference);
+    }
+    matches!(value.len(), 40 | 64) && value.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn git_ref_name_is_valid(reference: &str) -> bool {
+    if !reference.starts_with("refs/")
+        || reference.contains("..")
+        || reference.contains("//")
+        || reference.contains("@{")
+    {
+        return false;
+    }
+    reference.split('/').all(|component| {
+        !component.is_empty()
+            && !component.starts_with('.')
+            && !component.ends_with('.')
+            && !component.ends_with(".lock")
+            && component.chars().all(|ch| {
+                !ch.is_control() && !matches!(ch, ' ' | '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+            })
+    })
 }
 
 fn git_dir_config_requires_resolver(git_dir: &std::path::Path) -> bool {
@@ -428,6 +462,83 @@ mod tests {
         assert!(resolver_called, "incomplete markers must delegate to Git");
         assert_eq!(resolved, canonical_nested, "Git failure must fail closed");
 
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn invalid_head_content_delegates_to_git() -> anyhow::Result<()> {
+        let root = unique_temp_path("invalid-head-content");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(root.join(".git/objects"))?;
+        std::fs::create_dir_all(root.join(".git/refs"))?;
+        std::fs::create_dir_all(&nested)?;
+        std::fs::write(root.join(".git/HEAD"), "not-a-valid-head\n")?;
+
+        let output = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(&nested)
+            .output()?;
+        assert!(!output.status.success(), "Git must reject the invalid HEAD");
+        assert_eq!(
+            git_worktree_root_from_markers(&nested),
+            GitMarkerDiscovery::RequiresResolver
+        );
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn head_validation_accepts_only_symbolic_refs_or_current_oid_lengths() -> anyhow::Result<()> {
+        let root = unique_temp_path("head-validation");
+        std::fs::create_dir_all(&root)?;
+        let head = root.join("HEAD");
+
+        for valid in [
+            "ref: refs/heads/main\n".to_string(),
+            format!("{}\n", "a".repeat(40)),
+            format!("{}\n", "b".repeat(64)),
+        ] {
+            std::fs::write(&head, valid)?;
+            assert!(git_head_is_valid(&root));
+        }
+        for invalid in [
+            "not-a-valid-head\n".to_string(),
+            "ref: refs/heads/../main\n".to_string(),
+            "ref: refs/heads/main.lock\n".to_string(),
+            format!("{}\n", "a".repeat(39)),
+            format!("{}g\n", "a".repeat(39)),
+            "ref: refs/heads/main\nextra\n".to_string(),
+        ] {
+            std::fs::write(&head, invalid)?;
+            assert!(!git_head_is_valid(&root));
+        }
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_head_delegates_to_git() -> anyhow::Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root = unique_temp_path("unreadable-head");
+        let nested = root.join("nested");
+        let head = root.join(".git/HEAD");
+        std::fs::create_dir_all(root.join(".git/objects"))?;
+        std::fs::create_dir_all(root.join(".git/refs"))?;
+        std::fs::create_dir_all(&nested)?;
+        std::fs::write(&head, "ref: refs/heads/main\n")?;
+        std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o000))?;
+
+        assert_eq!(
+            git_worktree_root_from_markers(&nested),
+            GitMarkerDiscovery::RequiresResolver
+        );
+
+        std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o600))?;
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
