@@ -81,6 +81,11 @@ def assert_runtime_verifier() -> None:
             ("dynamic importlib literal", "import importlib; importlib.import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("dynamic builtin literal", "__import__('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("dynamic nonliteral", "import importlib; module_name = 'specrail_untracked_helper'; importlib.import_module(module_name)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("builtins attribute literal", "import builtins; builtins.__import__('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("builtins aliased attribute literal", "import builtins as builtin_api; builtin_api.__import__('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("builtins imported alias literal", "from builtins import __import__ as dyn_import; dyn_import('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("builtins attribute nonliteral", "import builtins; module_name = 'specrail_untracked_helper'; builtins.__import__(module_name)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("builtins imported alias nonliteral", "from builtins import __import__ as dyn_import; module_name = 'specrail_untracked_helper'; dyn_import(module_name)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
             ("outside checks absolute", "import tools.specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("relative", "from . import specrail_lib", None, "UNSUPPORTED RELATIVE LOCAL IMPORT"),
             ("path escape", "import checks.specrail_escape_helper", None, "LOCAL IMPORT PATH ESCAPE"),
@@ -107,7 +112,7 @@ def assert_runtime_verifier() -> None:
                     outside_helper
                 )
             broken_managed.write_text(
-                f"if False:\n    {statement}\n"
+                f"{statement}\n"
                 + broken_managed.read_text(encoding="utf-8"),
                 encoding="utf-8",
             )
@@ -171,6 +176,8 @@ def assert_sync_copy_allows_new_managed_file() -> None:
         copy_pack(upstream)
         new_managed = upstream / "checks" / "specrail_new_upstream.py"
         new_managed.write_text("VALUE = 1\n", encoding="utf-8")
+        new_schema = upstream / "schemas" / "specrail_new_upstream.schema.json"
+        shutil.copy2(upstream / "schemas" / "review_result.schema.json", new_schema)
         assert_passed(run(["git", "add", "-A"], cwd=upstream), "stage upstream fixture")
         assert_passed(
             run(
@@ -188,22 +195,121 @@ def assert_sync_copy_allows_new_managed_file() -> None:
         script = sync_script.read_text(encoding="utf-8")
         needle = '  "checks/specrail_lib.py"\n'
         assert needle in script
-        sync_script.write_text(
-            script.replace(
+        script = script.replace(
                 needle,
                 needle + '  "checks/specrail_new_upstream.py"\n',
+                1,
+        )
+        schema_needle = '  "schemas/runtime_checkpoint.schema.json"\n'
+        assert schema_needle in script
+        sync_script.write_text(
+            script.replace(
+                schema_needle,
+                schema_needle + '  "schemas/specrail_new_upstream.schema.json"\n',
                 1,
             ),
             encoding="utf-8",
         )
+        index_before = run(["git", "ls-files", "--stage"], cwd=target)
+        assert_passed(index_before, "read target index before sync")
         sync_copy = run([str(sync_script), str(upstream)], cwd=target)
         assert_passed(sync_copy, "normal sync with newly copied managed check")
-        assert "newly copied upstream-managed Python files pending tracking" in sync_copy.stdout
+        assert "2 newly copied upstream-managed files pending tracking" in sync_copy.stdout
         assert (target / "checks" / "specrail_new_upstream.py").is_file()
+        assert (target / "schemas" / "specrail_new_upstream.schema.json").is_file()
+        index_after = run(["git", "ls-files", "--stage"], cwd=target)
+        assert_passed(index_after, "read target index after sync")
+        assert index_after.stdout == index_before.stdout, "write sync must not alter target index"
 
         strict_verify = run([str(sync_script), "--verify"], cwd=target)
         assert strict_verify.returncode != 0
-        assert "CLASSIFIED PYTHON IS NOT TRACKED: checks/specrail_new_upstream.py" in strict_verify.stderr
+        assert "CLASSIFIED FILE IS NOT TRACKED: checks/specrail_new_upstream.py" in strict_verify.stderr
+        assert "CLASSIFIED FILE IS NOT TRACKED: schemas/specrail_new_upstream.schema.json" in strict_verify.stderr
+
+        assert_passed(
+            run(["git", "add", "checks/specrail_new_upstream.py"], cwd=target),
+            "stage new managed Python fixture",
+        )
+        schema_untracked = run([str(sync_script), "--verify"], cwd=target)
+        assert schema_untracked.returncode != 0
+        assert "CLASSIFIED FILE IS NOT TRACKED: schemas/specrail_new_upstream.schema.json" in schema_untracked.stderr
+
+        assert_passed(
+            run(["git", "add", "schemas/specrail_new_upstream.schema.json"], cwd=target),
+            "stage new managed schema fixture",
+        )
+        assert_passed(
+            run([str(sync_script), "--verify"], cwd=target),
+            "strict sync verify after tracking new managed files",
+        )
+
+
+def assert_upstream_source_preflight() -> None:
+    cases = (
+        ("untracked", "UPSTREAM HEAD DOES NOT TRACK"),
+        ("dirty", "UPSTREAM WORKTREE DRIFT"),
+        ("staged", "UPSTREAM INDEX DRIFT"),
+    )
+    for mode, expected in cases:
+        with (
+            tempfile.TemporaryDirectory(prefix=f"remem-sync-{mode}-target-") as target_raw,
+            tempfile.TemporaryDirectory(prefix=f"remem-sync-{mode}-upstream-") as upstream_raw,
+        ):
+            target = Path(target_raw)
+            upstream = Path(upstream_raw)
+            copy_pack(target)
+            copy_pack(upstream)
+            assert_passed(
+                run(
+                    [
+                        "git", "-c", "user.name=SpecRail Test",
+                        "-c", "user.email=test@example.invalid",
+                        "commit", "-qm", "baseline upstream fixture",
+                    ],
+                    cwd=upstream,
+                ),
+                f"commit {mode} upstream baseline",
+            )
+            relative = "checks/github_evidence_common.py"
+            upstream_file = upstream / relative
+            if mode == "untracked":
+                assert_passed(
+                    run(["git", "rm", "--cached", relative], cwd=upstream),
+                    "remove upstream fixture from index",
+                )
+                assert_passed(
+                    run(
+                        [
+                            "git", "-c", "user.name=SpecRail Test",
+                            "-c", "user.email=test@example.invalid",
+                            "commit", "-qm", "remove upstream fixture",
+                        ],
+                        cwd=upstream,
+                    ),
+                    "commit upstream fixture removal",
+                )
+            else:
+                upstream_file.write_text(
+                    "# uncommitted upstream drift\n"
+                    + upstream_file.read_text(encoding="utf-8"),
+                    encoding="utf-8",
+                )
+                if mode == "staged":
+                    assert_passed(
+                        run(["git", "add", relative], cwd=upstream),
+                        "stage upstream drift fixture",
+                    )
+
+            original_target = (target / relative).read_bytes()
+            original_lock = (target / "checks" / "specrail-sync.lock.json").read_bytes()
+            rejected = run(
+                [str(target / "scripts" / "sync-specrail-checks.sh"), str(upstream)],
+                cwd=target,
+            )
+            assert rejected.returncode != 0, f"{mode} upstream source must fail"
+            assert expected in rejected.stderr
+            assert (target / relative).read_bytes() == original_target
+            assert (target / "checks" / "specrail-sync.lock.json").read_bytes() == original_lock
 
 
 def main() -> int:
@@ -218,6 +324,7 @@ def main() -> int:
     run_schema_contract_tests()
     assert_runtime_verifier()
     assert_sync_copy_allows_new_managed_file()
+    assert_upstream_source_preflight()
     print("SpecRail gate wiring test passed")
     return 0
 

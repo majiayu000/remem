@@ -123,7 +123,8 @@ PY
 
 verify_python_imports() {
   local tracking_mode="${1:-strict}"
-  python3 - "$LOCK_FILE" "$REPO_ROOT" "$tracking_mode" <<'PY'
+  shift || true
+  python3 - "$LOCK_FILE" "$REPO_ROOT" "$tracking_mode" "$@" <<'PY'
 import ast
 import importlib
 import json
@@ -137,13 +138,21 @@ tracking_mode = sys.argv[3]
 if tracking_mode not in {"strict", "allow-untracked-managed"}:
     print(f"INVALID TRACKING MODE: {tracking_mode}", file=sys.stderr)
     raise SystemExit(1)
-allow_untracked_managed = tracking_mode == "allow-untracked-managed"
+allowed_untracked_managed = {Path(path) for path in sys.argv[4:]}
+if tracking_mode == "strict" and allowed_untracked_managed:
+    print("INVALID: strict tracking mode cannot allow untracked files", file=sys.stderr)
+    raise SystemExit(1)
 with lock_path.open(encoding="utf-8") as fh:
     lock = json.load(fh)
 
 checks_dir = repo_root / "checks"
 managed = {Path(entry["path"]) for entry in lock["files"]}
 excluded = {Path(path) for path in lock["excluded"]}
+unknown_allowed = sorted(allowed_untracked_managed - managed)
+if unknown_allowed:
+    for path in unknown_allowed:
+        print(f"INVALID UNTRACKED MANAGED ALLOWANCE: {path}", file=sys.stderr)
+    raise SystemExit(1)
 managed_python = {path for path in managed if path.suffix == ".py"}
 excluded_python = {path for path in excluded if path.suffix == ".py"}
 classified_python = managed_python | excluded_python
@@ -164,25 +173,24 @@ tracked = subprocess.run(
 if tracked.returncode != 0:
     print(f"TRACKING FAILED: {tracked.stderr.strip()}", file=sys.stderr)
     raise SystemExit(1)
-tracked_python = {
-    Path(line)
-    for line in tracked.stdout.splitlines()
-    if line and Path(line).suffix == ".py"
-}
+tracked_files = {Path(line) for line in tracked.stdout.splitlines() if line}
+tracked_python = {path for path in tracked_files if path.suffix == ".py"}
 tracked_checks_python = {
     path for path in tracked_python if path.parts and path.parts[0] == "checks"
 }
 unclassified = sorted(tracked_checks_python - classified_checks_python)
-untracked_managed = sorted(managed_python - tracked_python)
-untracked_excluded = sorted(excluded_python - tracked_python)
-if unclassified or untracked_excluded or (untracked_managed and not allow_untracked_managed):
+untracked_managed = sorted(managed - tracked_files)
+untracked_excluded = sorted(excluded - tracked_files)
+disallowed_untracked_managed = sorted(
+    set(untracked_managed) - allowed_untracked_managed
+)
+if unclassified or untracked_excluded or disallowed_untracked_managed:
     for path in unclassified:
         print(f"UNCLASSIFIED TRACKED PYTHON: {path}", file=sys.stderr)
     for path in untracked_excluded:
-        print(f"CLASSIFIED PYTHON IS NOT TRACKED: {path}", file=sys.stderr)
-    if not allow_untracked_managed:
-        for path in untracked_managed:
-            print(f"CLASSIFIED PYTHON IS NOT TRACKED: {path}", file=sys.stderr)
+        print(f"CLASSIFIED FILE IS NOT TRACKED: {path}", file=sys.stderr)
+    for path in disallowed_untracked_managed:
+        print(f"CLASSIFIED FILE IS NOT TRACKED: {path}", file=sys.stderr)
     raise SystemExit(1)
 
 repo_root_resolved = repo_root.resolve()
@@ -239,15 +247,24 @@ for relative_path in sorted(classified_checks_python):
         raise SystemExit(1) from exc
     importlib_aliases = {"importlib"}
     import_module_aliases = set()
+    builtins_aliases = {"builtins"}
+    builtin_import_aliases = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 if alias.name == "importlib":
                     importlib_aliases.add(alias.asname or alias.name)
-        elif isinstance(node, ast.ImportFrom) and not node.level and node.module == "importlib":
-            for alias in node.names:
-                if alias.name == "import_module":
-                    import_module_aliases.add(alias.asname or alias.name)
+                elif alias.name == "builtins":
+                    builtins_aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and not node.level:
+            if node.module == "importlib":
+                for alias in node.names:
+                    if alias.name == "import_module":
+                        import_module_aliases.add(alias.asname or alias.name)
+            elif node.module == "builtins":
+                for alias in node.names:
+                    if alias.name == "__import__":
+                        builtin_import_aliases.add(alias.asname or alias.name)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -274,7 +291,10 @@ for relative_path in sorted(classified_checks_python):
         elif isinstance(node, ast.Call):
             function = node.func
             dynamic_name = None
-            if isinstance(function, ast.Name) and function.id == "__import__":
+            if (
+                isinstance(function, ast.Name)
+                and function.id in ({"__import__"} | builtin_import_aliases)
+            ):
                 dynamic_name = "__import__"
             elif isinstance(function, ast.Name) and function.id in import_module_aliases:
                 dynamic_name = "importlib.import_module"
@@ -285,6 +305,13 @@ for relative_path in sorted(classified_checks_python):
                 and function.value.id in importlib_aliases
             ):
                 dynamic_name = "importlib.import_module"
+            elif (
+                isinstance(function, ast.Attribute)
+                and function.attr == "__import__"
+                and isinstance(function.value, ast.Name)
+                and function.value.id in builtins_aliases
+            ):
+                dynamic_name = "builtins.__import__"
             if dynamic_name is None:
                 continue
             target = node.args[0] if node.args else next(
@@ -323,11 +350,42 @@ print(f"ok: {len(managed_python)} upstream-managed Python files classified")
 print(f"ok: {len(excluded_python)} local-owned excluded Python files classified")
 if untracked_managed:
     print(
-        f"ok: {len(untracked_managed)} newly copied upstream-managed Python files "
+        f"ok: {len(untracked_managed)} newly copied upstream-managed files "
         "pending tracking"
     )
 print("ok: classified SpecRail Python import closure")
 PY
+}
+
+verify_upstream_sources() {
+  local upstream="$1"
+  local upstream_sha="$2"
+  local failed=0
+  local rel
+  for rel in "${SYNCED_FILES[@]}"; do
+    if ! git -C "$upstream" cat-file -e "${upstream_sha}:${rel}" 2>/dev/null; then
+      echo "UPSTREAM HEAD DOES NOT TRACK: $rel" >&2
+      failed=1
+      continue
+    fi
+    if [[ "$(git -C "$upstream" cat-file -t "${upstream_sha}:${rel}")" != "blob" ]]; then
+      echo "UPSTREAM HEAD PATH IS NOT A FILE: $rel" >&2
+      failed=1
+      continue
+    fi
+    if ! git -C "$upstream" diff --cached --quiet "$upstream_sha" -- "$rel"; then
+      echo "UPSTREAM INDEX DRIFT: $rel" >&2
+      failed=1
+    fi
+    if ! git -C "$upstream" diff --quiet -- "$rel"; then
+      echo "UPSTREAM WORKTREE DRIFT: $rel" >&2
+      failed=1
+    fi
+  done
+  if [[ "$failed" -ne 0 ]]; then
+    echo "error: synced files must match tracked content in upstream HEAD" >&2
+    return 1
+  fi
 }
 
 verify_workflow() {
@@ -347,11 +405,12 @@ if [[ ! -d "$UPSTREAM/checks" ]]; then
   exit 1
 fi
 
-upstream_sha="$(git -C "$UPSTREAM" rev-parse HEAD)"
+upstream_sha="$(git -C "$UPSTREAM" rev-parse --verify 'HEAD^{commit}')"
+verify_upstream_sources "$UPSTREAM" "$upstream_sha"
 for rel in "${SYNCED_FILES[@]}"; do
   cp "$UPSTREAM/$rel" "$REPO_ROOT/$rel"
 done
 write_lock "$upstream_sha"
 verify_lock
-verify_python_imports allow-untracked-managed
+verify_python_imports allow-untracked-managed "${SYNCED_FILES[@]}"
 verify_workflow
