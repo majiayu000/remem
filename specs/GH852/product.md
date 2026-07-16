@@ -22,8 +22,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 ## 目标
 
 - 用隔离的真实 Claude Code 环境验证 `autoMemoryDirectory` 的读取、写入、容量和生命周期行为，
-  并确定 remem 与 Claude 原生记忆唯一、无双写的所有权规则。
-- 提供 `remem import --source codex-memories` 的单向、幂等、可 dry-run 导入，把可识别的 Codex
+  并以 remem 数据库为唯一权威，确定 native bridge 与 SessionStart 互斥交付、无重复注入的规则。
+- 提供 `remem import codex-memories` 的单向、幂等、可 dry-run 导入，把可识别的 Codex
   本地记忆作为不可信外部内容送入现有 candidate review 与投毒过滤，而不是直接晋升。
 - 审计 remem 当前 Codex `hooks.json` 事件覆盖度，重点比较 Claude 侧 observe 级捕获，形成带真实
   事件证据的 go/no-go 结论。
@@ -38,7 +38,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 - 不绕过 `memory_candidates`、人工 review、来源信任分级或投毒隔离。
 - 不在项目级 `.claude/settings*.json` 注入 `autoMemoryDirectory`；该设置只允许用户级、策略级或
   显式 `--settings` 范围。
-- 不自动合并、覆盖或删除用户手工维护的 Claude/Codex 文件。
+- 除用户显式 opt-in 后维护 remem 专属文件及 `MEMORY.md` 中的 marker-bounded block 外，不合并、
+  覆盖或删除用户手工维护的 Claude/Codex 内容。
 - 不在研究报告缺失时补写其结论或把 issue 摘要当作报告全文。
 
 ## Behavior Invariants
@@ -47,9 +48,9 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
    的文件/事件、退出状态和清理结果；推断或模拟输出不能替代真实 Claude Code/Codex 证据。
 2. `B-002`：Claude `autoMemoryDirectory` 只可在官方允许的用户/策略/显式 settings 范围配置，
    使用绝对路径或 `~/` 路径；不得写项目/本地 settings，也不得越出用户明确选择的目录。
-3. `B-003`：Claude 接管必须有单一写入者规则。启用后，remem 现有
-   `~/.claude/projects/<slug>/memory/` 同步不得继续向旧目录生成第二份状态；停用或回滚后不得遗留
-   两个均被视为权威的目录。
+3. `B-003`：remem 数据库始终是唯一权威；Claude 目录只是可重建的交付 cache。接管启用后，
+   remem 只拥有 `remem_sessions.md` 和 `MEMORY.md` 内一个 marker-bounded 索引块，不拥有 Claude
+   生成的其余 MEMORY/topic 内容。旧目录不得继续生成第二份 remem 输出。
 4. `B-004`：Claude 配置变更必须支持 dry-run，变更前备份，保留未知键，以原子方式写入；失败
    时恢复原配置与目录所有权状态，并输出 error 级可定位诊断。
 5. `B-005`：Codex 导入是只读、单向操作。它不得修改、移动或删除 `~/.codex/memories/` 下的
@@ -63,7 +64,7 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
    幂等键至少绑定规范化内容摘要、已验证格式版本和 `source=codex_native` provenance。
 9. `B-009`：所有 Codex 原生内容按外部/低信任输入处理，进入既有候选与投毒链路；新候选默认
    `pending_review` 或 `quarantined`，不得自动晋升到 active memory。provenance 必须能追溯到
-   Codex 源文件与内容摘要，但诊断不得打印文件正文或 secret。
+   Codex 源文件与脱敏内容摘要，但诊断不得打印文件正文或 secret。
 10. `B-010`：导入一批记录要么完整写入对应的 provenance、事件与候选计划，要么全部回滚。
     DB 写入、解析或投毒分类失败不得留下“已导入”标记或半条候选。
 11. `B-011`：源目录不存在属于明确的“未配置/无原生记忆”状态；路径存在但不可读、不是目录或
@@ -77,6 +78,17 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
     或宿主生成的隐私内容；详细诊断使用可安全展示的相对标识或摘要。
 15. `B-015`：研究报告合入并核对、产品/技术 spec 人工批准、`ready_to_implement`、最终 review、
     merge 与 release 均保留为 human gates。
+16. `B-016`：native bridge 激活时，当前激活 manifest 中已由 Claude 原生 memory 交付的 remem
+    条目必须从 SessionStart 注入集合排除；未激活、manifest 不完整/过期或回滚后只能走
+    SessionStart。不得在一个 SessionStart 中同时交付同一 stable memory id/content hash，也不得
+    因去重状态错误同时关闭两条路径。安装/回滚必须在无活动 Claude 会话的 maintenance window
+    完成；无法证明该条件时拒绝切换。
+17. `B-017`：Codex record 只能依据宿主提供且可验证的 workspace/repository evidence 绑定 remem
+    project。无法可靠归属的 record 必须进入 `owner_scope=tool`、`owner_key=codex-cli`、
+    `context_class=search_only` 的全局待审队列，绝不能把 import 命令的当前 cwd 当作来源项目。
+18. `B-018`：任何 record 在写 event、candidate、embedding 或索引前必须通过既有 secret-redaction
+    边界。检测到 secret、redaction 失败或分类器出错时，整批 apply 失败且不持久化正文、正文摘要、
+    candidate 或“已导入”标记；dry-run 只报告脱敏文件标识和 `secret_blocked` 计数。
 
 ## 验收标准
 
@@ -84,13 +96,18 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 - [ ] Claude PoC 在隔离环境中记录真实版本与读写证据，并确定启用、重复启用、停用和失败回滚
       下的唯一目录所有权规则。
 - [ ] `autoMemoryDirectory` dry-run 不改配置；apply 原子保留未知设置；旧的 remem native-memory
-      同步不会形成第二写入面。
+      同步不会形成第二写入面；marker 索引、active manifest 与 SessionStart exclusion 使用同一
+      stable id/hash 集合，激活前后均无重复或遗漏。
 - [ ] Codex PoC 记录至少一个真实已识别格式、一个未知/畸形格式和目录缺失/不可读状态；不从
       单一 fixture 推断全部宿主版本。
 - [ ] Codex import 的 dry-run 与 apply 分类一致；重复 apply 不增加重复事件/candidate；任一解析
       或写入错误均整批回滚。
 - [ ] 导入结果带 `source=codex_native`、源摘要和格式版本，且只能进入 `pending_review` 或
       `quarantined`，投毒样本不能直接成为 active memory。
+- [ ] 有可靠项目证据的 record 只进入对应 project；无可靠证据的 record 只进入 Codex tool-owned
+      search-only review，跨项目 fixture 不发生污染。
+- [ ] secret、redaction failure 和 classifier failure fixtures 整批失败，DB 与索引中没有原文、
+      原文 hash、candidate、embedding 或导入标记。
 - [ ] doctor 能区分未配置、可用、不可读和不支持格式，且不输出记忆正文或 secret。
 - [ ] Codex hooks 审计使用真实会话事件，明确与 Claude observe 粒度的覆盖差异及 go/no-go，且
       本 issue 不改变 hooks 运行时。
@@ -122,7 +139,7 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 
 - [Claude Code memory and `autoMemoryDirectory`](https://code.claude.com/docs/en/memory)
 - [Claude Code data and privacy boundaries](https://code.claude.com/docs/en/claude-directory)
-- [Codex local memory](https://developers.openai.com/codex/config-advanced/#memory)
-- [Codex hooks](https://developers.openai.com/codex/hooks/)
+- [Codex local memory](https://learn.chatgpt.com/docs/customization/memories)
+- [Codex hooks](https://learn.chatgpt.com/docs/hooks)
 
 本文件只定义产品契约，不构成 `spec_approval` 或实现授权。
