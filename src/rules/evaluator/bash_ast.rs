@@ -35,6 +35,7 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         exported_functions: HashSet::new(),
         active_functions: HashSet::new(),
         execution_is_definite: true,
+        inherited_stdin: None,
     };
     collector.collect_source(source)?;
     Ok(collector.segments)
@@ -47,6 +48,7 @@ struct CommandCollector {
     exported_functions: HashSet<String>,
     active_functions: HashSet<String>,
     execution_is_definite: bool,
+    inherited_stdin: Option<String>,
 }
 
 #[derive(Clone)]
@@ -124,8 +126,11 @@ impl CommandCollector {
     }
 
     fn collect_pipeline(&mut self, pipeline: &Pipeline) -> Result<(), String> {
+        if pipeline.seq.len() == 1 {
+            return self.collect_command(&pipeline.seq[0]);
+        }
         for command in &pipeline.seq {
-            self.collect_command(command)?;
+            self.with_function_scope(true, |collector| collector.collect_command(command))?;
         }
         Ok(())
     }
@@ -365,7 +370,9 @@ impl CommandCollector {
                 }
             }
         }
-        self.collect_static_function_call(&tokens)?;
+        if self.collect_static_function_call(&tokens)? {
+            return Ok(());
+        }
         if let Some(payload) = static_exit_trap_payload(&tokens) {
             self.with_function_scope(true, |collector| collector.collect_source(payload))?;
         }
@@ -373,12 +380,18 @@ impl CommandCollector {
             self.collect_source(&payload)?;
         }
         if let Some(payload) = static_shell_command_payload(&tokens) {
+            let inherited_stdin = self.effective_stdin_payload(command)?;
             self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
-                collector.collect_source(payload)
+                collector.with_inherited_stdin(inherited_stdin, |collector| {
+                    collector.collect_source(payload)
+                })
             })?;
         }
         if static_shell_reads_stdin(&tokens) {
-            if let Some(payload) = self.effective_stdin_payload(command)? {
+            if let Some(payload) = self
+                .effective_stdin_payload(command)?
+                .or_else(|| self.inherited_stdin.clone())
+            {
                 self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
                     collector.collect_source(&payload)
                 })?;
@@ -392,15 +405,16 @@ impl CommandCollector {
         Ok(())
     }
 
-    fn collect_static_function_call(&mut self, tokens: &[String]) -> Result<(), String> {
+    fn collect_static_function_call(&mut self, tokens: &[String]) -> Result<bool, String> {
         let Some(name) = direct_command_name(tokens) else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(definitions) = self.functions.get(name).cloned() else {
-            return Ok(());
+            return Ok(false);
         };
+        let definitely_defined = definitions.iter().any(|definition| definition.is_definite);
         if !self.active_functions.insert(name.to_string()) {
-            return Ok(());
+            return Ok(definitely_defined);
         }
         let result = (|| {
             for definition in definitions {
@@ -417,7 +431,7 @@ impl CommandCollector {
             Ok(())
         })();
         self.active_functions.remove(name);
-        result
+        result.map(|()| definitely_defined)
     }
 
     fn collect_command_items(
@@ -619,6 +633,7 @@ impl CommandCollector {
         let saved_functions = self.functions.clone();
         let saved_exported_functions = self.exported_functions.clone();
         let saved_active_functions = self.active_functions.clone();
+        let saved_inherited_stdin = self.inherited_stdin.clone();
         if !inherit {
             self.functions.clear();
             self.exported_functions.clear();
@@ -628,6 +643,7 @@ impl CommandCollector {
         self.functions = saved_functions;
         self.exported_functions = saved_exported_functions;
         self.active_functions = saved_active_functions;
+        self.inherited_stdin = saved_inherited_stdin;
         result
     }
 
@@ -639,6 +655,7 @@ impl CommandCollector {
         let saved_functions = self.functions.clone();
         let saved_exports = self.exported_functions.clone();
         let saved_active = self.active_functions.clone();
+        let saved_inherited_stdin = self.inherited_stdin.clone();
         if inherit_exported {
             self.functions
                 .retain(|name, _| saved_exports.contains(name));
@@ -653,6 +670,19 @@ impl CommandCollector {
         self.functions = saved_functions;
         self.exported_functions = saved_exports;
         self.active_functions = saved_active;
+        self.inherited_stdin = saved_inherited_stdin;
+        result
+    }
+
+    fn with_inherited_stdin<T>(
+        &mut self,
+        payload: Option<String>,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved = self.inherited_stdin.clone();
+        self.inherited_stdin = payload;
+        let result = collect(self);
+        self.inherited_stdin = saved;
         result
     }
 
@@ -685,6 +715,7 @@ impl CommandCollector {
             Ok(expanded) => expanded,
             Err(StaticExpansionError::Limit) => {
                 let mut variants = critical_brace_variants(&brace_pieces);
+                variants.truncate(MAX_STATIC_WORD_VARIANTS - 1);
                 variants.push(DYNAMIC_SHELL_WORD.to_string());
                 return Ok(variants);
             }

@@ -120,15 +120,17 @@ Artifact v2 additionally supports:
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
-  Function definitions follow Bash subshell and static `unset -f` state;
-  explicitly exported functions alone enter child Bash, while other child
-  shells start empty. Shell `-n`/`noexec` payloads remain inert. Shell-stdin
-  evaluation selects the effective final fd-0 payload under Bash redirection
-  semantics, and `env -S` performs bounded argv splitting without interpreting
-  shell separators or options that occur after its first assignment operand.
+  Function definitions follow Bash subshell, pipeline, shadowing, and static
+  `unset -f` state; explicitly exported functions alone enter child Bash,
+  while other child shells start empty. Shell `-n`/`noexec` payloads remain
+  inert. Shell `-s` and nested static shells inherit the effective final fd-0
+  payload under Bash redirection semantics. `env -S` performs bounded argv
+  splitting without interpreting shell separators or options that occur after
+  its first assignment operand; documented GNU signal options remain wrappers.
   Every materialized or summarized brace-expansion stage remains capped at 256
-  segments while preserving semantically forcing short clusters, mirror
-  abbreviations, and force refspecs.
+  segments while preserving one-command argv order and semantically forcing
+  short clusters, mirror abbreviations, and force refspecs. Git delete mode
+  keeps leading-plus ref names non-forcing.
 
 Nothing else. Further kinds require a spec update.
 
@@ -271,9 +273,9 @@ hook-side writes.
   requires both fixed budgets: enabled p95 `<= 15.0 ms` and
   enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
   retained as informational output and does not affect pass/fail. The fresh
-  final-head fixed-budget artifact measured baseline p95 `10.199750 ms`, enabled
-  p95 `10.116167 ms`, delta `-0.083583 ms`, complex-AST p95 `10.905667 ms`, and
-  MAD `0.576959 ms`; it passes both fixed budgets.
+  final-head fixed-budget artifact measured baseline p95 `8.334417 ms`, enabled
+  p95 `8.422292 ms`, delta `0.087875 ms`, complex-AST p95 `8.385708 ms`, and
+  MAD `0.339917 ms`; it passes both fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan

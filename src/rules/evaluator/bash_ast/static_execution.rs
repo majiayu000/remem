@@ -123,10 +123,17 @@ pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> 
             value
                 if value.starts_with("--unset=")
                     || value.starts_with("--chdir=")
-                    || value.starts_with("--argv0=") =>
+                    || value.starts_with("--argv0=")
+                    || value.starts_with("--default-signal=")
+                    || value.starts_with("--ignore-signal=")
+                    || value.starts_with("--block-signal=") =>
             {
                 index += 1;
             }
+            "--default-signal"
+            | "--ignore-signal"
+            | "--block-signal"
+            | "--list-signal-handling" => index += 1,
             "--" => return None,
             value if value.starts_with('-') => index += 1,
             _ => return None,
@@ -336,11 +343,12 @@ enum ShellInput {
 fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
     let mut index = command_index + 1;
     let mut noexec = false;
+    let mut reads_stdin = false;
     while let Some(option) = tokens.get(index) {
         if option == "--" {
             return if noexec {
                 ShellInput::NoExec
-            } else if tokens.get(index + 1).is_none() {
+            } else if reads_stdin || tokens.get(index + 1).is_none() {
                 ShellInput::Stdin
             } else {
                 ShellInput::Other
@@ -369,6 +377,9 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
                 if flags.contains('n') {
                     noexec = option.starts_with('-');
                 }
+                if option.starts_with('-') && flags.contains('s') {
+                    reads_stdin = true;
+                }
                 if option.starts_with('-') && flags.contains('c') {
                     return if noexec {
                         ShellInput::NoExec
@@ -382,7 +393,11 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             index += 1;
             continue;
         }
-        return ShellInput::Other;
+        return if reads_stdin && !noexec {
+            ShellInput::Stdin
+        } else {
+            ShellInput::Other
+        };
     }
     if noexec {
         ShellInput::NoExec

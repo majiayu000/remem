@@ -305,15 +305,13 @@ fn git_config_requires_resolver(contents: &str) -> bool {
         {
             return true;
         }
-        if section.eq_ignore_ascii_case("extensions") && key.eq_ignore_ascii_case("worktreeconfig")
-        {
+        if section.eq_ignore_ascii_case("extensions") {
             return true;
         }
     }
     false
 }
 
-/// Canonical project identity (single source of truth).
 pub fn project_from_cwd(cwd: &str) -> String {
     canonical_project_root(cwd).to_string_lossy().to_string()
 }
@@ -693,6 +691,9 @@ mod tests {
         ));
         assert!(git_config_requires_resolver(
             "[core]\n\tworktree = ../configured\n"
+        ));
+        assert!(git_config_requires_resolver(
+            "[extensions]\nunknownfuture=true\n"
         ));
     }
 

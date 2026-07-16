@@ -57,6 +57,9 @@ fn force_push_rule_models_mirror_abbreviations_and_boolean_negation() {
         "git push --mirror --no-mirror origin main",
         "git push --mi --no-m origin main",
         "git push -f --no-force origin main",
+        "git push --{force,no-force} origin main",
+        "git push --delete origin +main",
+        "git push -d origin +main",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -121,6 +124,7 @@ fn function_state_obeys_unset_and_child_shell_scopes() {
         "f() { git push --force; }; false || unset -f f; f",
         "(f() { git push --force; }); f",
         "echo $(f() { git push --force; }); f",
+        "git() { :; }; git push --force",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -140,6 +144,7 @@ fn function_state_obeys_unset_and_child_shell_scopes() {
         "f() { git push --force; }; unknown && f() { :; }; f",
         "g() { git push --force; }; unknown && f() { unset -f g; }; f; g",
         "g() { git push --force; }; unknown && unset -f g; g",
+        "f() { git push --force; }; unset -f f | cat; f",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -198,6 +203,9 @@ fn nested_static_execution_receivers_preserve_shell_semantics() {
         "source /dev/stdin <<'EOF'\ngit push --force\nEOF",
         ". /dev/stdin <<'EOF'\ngit push --force\nEOF",
         "bash +n -c 'git push --force'",
+        "bash -s -- arg <<'EOF'\ngit push --force\nEOF",
+        "bash -c sh <<'EOF'\ngit push --force\nEOF",
+        "env --default-signal=PIPE git push --force",
     ] {
         let outcome = evaluate_artifact(
             &artifact,

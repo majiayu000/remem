@@ -81,7 +81,17 @@ pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Opt
                 options_terminated = true;
                 index += 1;
             }
-            "-" | "-i" | "--ignore-environment" | "-0" | "--null" | "-v" | "--debug" => index += 1,
+            "-"
+            | "-i"
+            | "--ignore-environment"
+            | "-0"
+            | "--null"
+            | "-v"
+            | "--debug"
+            | "--default-signal"
+            | "--ignore-signal"
+            | "--block-signal"
+            | "--list-signal-handling" => index += 1,
             "-u" | "--unset" | "-C" | "--chdir" | "--argv0" => {
                 tokens.get(index + 1)?;
                 index += 2;
@@ -90,6 +100,9 @@ pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Opt
                 if value.starts_with("--unset=")
                     || value.starts_with("--chdir=")
                     || value.starts_with("--argv0=")
+                    || value.starts_with("--default-signal=")
+                    || value.starts_with("--ignore-signal=")
+                    || value.starts_with("--block-signal=")
                     || value.starts_with("-C") && value.len() > 2 =>
             {
                 index += 1;

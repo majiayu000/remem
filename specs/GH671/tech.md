@@ -95,15 +95,17 @@ contract is complete.
   `if`/`elif` branches unreachable; redirects, assignments, functions, and
   unknown commands remain conservative. Static function state follows Bash
   subshell, command-substitution, process-substitution, and coprocess scopes,
-  plus `unset -f`; only explicitly exported functions enter a child Bash, and
-  other child shells start empty. Shell `-n`/`noexec` payloads remain inert.
-  For shells or `source /dev/stdin` reading stdin, the evaluator applies Bash
-  redirections in order and parses only the effective final fd-0 here-document
-  or here-string. `env -S` is split into argv according to its quote/escape
-  rules and is never reparsed as Bash source; an assignment operand ends env
-  option parsing. Static brace materialization and its security-prioritized
-  summary are both capped at 256 segments while retaining forcing option
-  clusters, mirror abbreviations, and force refspecs. Package-manager patterns
+  pipeline isolation, known-function shadowing, and `unset -f`; only explicitly
+  exported functions enter a child Bash, and other child shells start empty.
+  Shell `-n`/`noexec` payloads remain inert. For `-s`, nested static shells, or
+  `source /dev/stdin`, the evaluator applies Bash redirections in order and
+  carries the effective final fd-0 here-document or here-string. `env -S` is
+  split into argv according to its quote/escape rules and is never reparsed as
+  Bash source; an assignment operand ends env option parsing and documented GNU
+  signal options remain wrappers. Static brace materialization and its
+  security-prioritized summary are both capped at 256 arguments while retaining
+  one-command argv order, forcing option clusters, mirror abbreviations, and
+  force refspecs; Git delete mode keeps `+` ref names non-forcing. Package-manager patterns
   treat shell
   redirection metacharacters as command boundaries.
 - The project-root marker fast path is used only when Git discovery has no

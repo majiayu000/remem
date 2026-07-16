@@ -24,62 +24,14 @@ const CRITICAL_STATIC_TOKENS: &[&str] = &[
     "zsh",
 ];
 
-pub(super) fn append_word_variants(segments: &mut Vec<Vec<String>>, mut variants: Vec<String>) {
-    variants.sort_unstable();
-    variants.dedup();
-    if variants.is_empty()
-        || variants.len() > MAX_STATIC_WORD_VARIANTS
-        || segments.len().saturating_mul(variants.len()) > MAX_STATIC_WORD_VARIANTS
-    {
-        let critical = variants
-            .iter()
-            .filter(|variant| is_critical_static_token(variant))
-            .cloned()
-            .collect::<Vec<_>>();
-        let prefixes = std::mem::take(segments);
-        let mut summarized = Vec::new();
-        for mut segment in prefixes {
-            for variant in &critical {
-                let mut critical_segment = segment.clone();
-                critical_segment.push(variant.clone());
-                summarized.push(critical_segment);
-            }
+pub(super) fn append_word_variants(segments: &mut [Vec<String>], variants: Vec<String>) {
+    for segment in segments {
+        if variants.is_empty() {
             segment.push(DYNAMIC_SHELL_WORD.to_string());
-            summarized.push(segment);
-        }
-        summarized.sort_unstable_by(|left, right| {
-            static_security_score(right)
-                .cmp(&static_security_score(left))
-                .then_with(|| left.cmp(right))
-        });
-        summarized.dedup();
-        summarized.truncate(MAX_STATIC_WORD_VARIANTS);
-        *segments = summarized;
-        return;
-    }
-    let prefixes = std::mem::take(segments);
-    for prefix in prefixes {
-        for variant in &variants {
-            let mut expanded = prefix.clone();
-            expanded.push(variant.clone());
-            segments.push(expanded);
+        } else {
+            segment.extend(variants.iter().cloned());
         }
     }
-}
-
-fn static_security_score(segment: &[String]) -> usize {
-    segment
-        .iter()
-        .map(|token| match token.as_str() {
-            value if git_push_arg_enables_force(value) => 8,
-            "git" | "git.exe" => 4,
-            "push" | "commit" => 2,
-            value if value.starts_with('+') && value.len() > 1 => 8,
-            value if value.starts_with("--trailer=") => 4,
-            value if is_critical_static_token(value) => 1,
-            _ => 0,
-        })
-        .sum()
 }
 
 pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
@@ -93,8 +45,8 @@ pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<S
             .into_iter()
             .filter(|value| is_critical_static_token(value)),
     );
-    variants.sort_unstable();
-    variants.dedup();
+    let mut seen = std::collections::HashSet::new();
+    variants.retain(|variant| seen.insert(variant.clone()));
     variants
 }
 
@@ -304,8 +256,6 @@ fn expand_brace_expression(
                 }
             }
         }
-        variants.sort_unstable();
-        variants.dedup();
         if variants.len() > MAX_STATIC_WORD_VARIANTS {
             return Err(StaticExpansionError::Limit);
         }
@@ -360,8 +310,6 @@ fn append_text_variants(
             variants.push(expanded);
         }
     }
-    variants.sort_unstable();
-    variants.dedup();
     Ok(())
 }
 

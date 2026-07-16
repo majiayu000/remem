@@ -279,6 +279,7 @@ fn git_push_args_force(args: &[String]) -> bool {
     let mut options_terminated = false;
     let mut force_enabled = false;
     let mut mirror_enabled = false;
+    let mut delete_enabled = false;
     while let Some(arg) = args.get(index) {
         if !options_terminated && arg == "--" {
             options_terminated = true;
@@ -301,6 +302,11 @@ fn git_push_args_force(args: &[String]) -> bool {
                 index += 1;
                 continue;
             }
+            if let Some(enabled) = delete_option_state(arg) {
+                delete_enabled = enabled;
+                index += 1;
+                continue;
+            }
         }
         if !options_terminated && (arg == "--repo" || arg.starts_with("--repo=")) {
             repository_supplied = arg.starts_with("--repo=") || args.get(index + 1).is_some();
@@ -308,6 +314,12 @@ fn git_push_args_force(args: &[String]) -> bool {
             continue;
         }
         if !options_terminated {
+            if arg
+                .strip_prefix('-')
+                .is_some_and(|cluster| !cluster.starts_with('-') && cluster.contains('d'))
+            {
+                delete_enabled = true;
+            }
             match git_push_short_option_effect(arg) {
                 PushShortOptionEffect::Forces => {
                     force_enabled = true;
@@ -329,13 +341,21 @@ fn git_push_args_force(args: &[String]) -> bool {
                 continue;
             }
         }
-        if repository_supplied && is_force_push_refspec(arg) {
+        if repository_supplied && !delete_enabled && is_force_push_refspec(arg) {
             return true;
         }
         repository_supplied = true;
         index += 1;
     }
     force_enabled || mirror_enabled
+}
+
+fn delete_option_state(arg: &str) -> Option<bool> {
+    if let Some(prefix) = arg.strip_prefix("--no-") {
+        return (!prefix.is_empty() && "delete".starts_with(prefix)).then_some(false);
+    }
+    let prefix = arg.strip_prefix("--")?;
+    (!prefix.is_empty() && "delete".starts_with(prefix)).then_some(true)
 }
 
 pub(super) fn git_push_arg_enables_force(arg: &str) -> bool {
