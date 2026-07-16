@@ -20,6 +20,7 @@ from schema_contract import (  # noqa: E402
     ADOPTED_SCHEMA_KEYWORDS,
     KEYWORD_APPLICABLE_TYPES,
     TYPE_SPECIFIC_SCHEMA_KEYWORDS,
+    UNRESOLVED_REFERENCE_KEYWORDS,
     uses_runtime_profile,
     validate_schema_node,
 )
@@ -67,6 +68,8 @@ def copy_pack(repo: Path) -> None:
     target = repo / "scripts" / "sync-specrail-checks.sh"
     target.parent.mkdir(parents=True)
     shutil.copy2(ROOT / "scripts" / "sync-specrail-checks.sh", target)
+    assert_passed(run(["git", "init", "-q"], cwd=repo), "initialize isolated git repo")
+    assert_passed(run(["git", "add", "-A"], cwd=repo), "track isolated pack")
 
 
 def write_lock(path: Path, lock: dict[str, object]) -> None:
@@ -145,7 +148,7 @@ def collect_keywords(schema: dict[str, object]) -> set[str]:
 
 def assert_vocabulary_and_baselines() -> None:
     values = {keyword: "value" for keyword in (
-        "$anchor", "$comment", "$dynamicAnchor", "$dynamicRef", "$id", "$ref", "$schema",
+        "$anchor", "$comment", "$dynamicAnchor", "$id", "$schema",
         "contentEncoding", "contentMediaType", "description", "format", "title",
     )}
     values.update({keyword: True for keyword in ("deprecated", "readOnly", "uniqueItems", "writeOnly")})
@@ -169,9 +172,15 @@ def assert_vocabulary_and_baselines() -> None:
         "dependentRequired": {}, "enum": [None], "examples": [], "pattern": "^ok$",
         "required": [], "type": "object",
     })
-    assert set(values) == ADOPTED_SCHEMA_KEYWORDS
+    assert set(values) == ADOPTED_SCHEMA_KEYWORDS - set(UNRESOLVED_REFERENCE_KEYWORDS)
     for keyword, value in values.items():
         assert validate_schema_node({keyword: value}, Path("vocabulary.schema.json")) == []
+    assert validate_schema_node(
+        {"$defs": {"value": {"type": "string"}}}, Path("defs.schema.json")
+    ) == []
+    for keyword in UNRESOLVED_REFERENCE_KEYWORDS:
+        errors = validate_schema_node({keyword: "#/$defs/value"}, Path("ref.schema.json"))
+        assert any("reference resolution is implemented" in error for error in errors)
 
     expected_typed = frozenset({
         "additionalProperties", "contains", "contentEncoding", "contentMediaType",
@@ -265,6 +274,8 @@ def assert_published_contracts() -> None:
         ("contentEncoding", {"type": "integer", "contentEncoding": "base64"}, "contentEncoding is incompatible"),
         ("python regex", {"type": "string", "pattern": "(?P<name>a)"}, "invalid ECMAScript regex"),
         ("patternProperties", {"type": "object", "patternProperties": {"[": True}}, "invalid ECMAScript regex"),
+        ("unresolved ref", {"$ref": "#/$defs/value"}, "reference resolution is implemented"),
+        ("unresolved dynamic ref", {"$dynamicRef": "#value"}, "reference resolution is implemented"),
     )
     with tempfile.TemporaryDirectory(prefix="remem-published-schema-") as raw:
         repo = Path(raw)
@@ -290,6 +301,8 @@ def assert_locked_schema_contracts() -> None:
         ("schemas/review_result.schema.json", ("properties", "prior_findings", "items", "minimun"), 1, "$.properties.prior_findings.items: unsupported JSON Schema keyword 'minimun'"),
         ("schemas/runtime_checkpoint.schema.json", ("additionalProperties",), {"type": "string", "minimun": 1}, "$.additionalProperties: unsupported JSON Schema keyword 'minimun'"),
         ("schemas/review_result.schema.json", ("properties", "body", "pattern"), "[", "$.properties.body.pattern invalid ECMAScript regex"),
+        ("schemas/duplicate_work_evidence.schema.json", ("$ref",), "#/$defs/value", "reference resolution is implemented"),
+        ("schemas/runtime_checkpoint.schema.json", ("$dynamicRef",), "#value", "reference resolution is implemented"),
     )
     locked = {case[0] for case in cases}
     with tempfile.TemporaryDirectory(prefix="remem-locked-schema-") as raw:
@@ -341,6 +354,10 @@ def runtime_cases() -> tuple[tuple[str, tuple[str, ...], object, str], ...]:
         ("recursive item keyword", ("properties", "open_prs", "items", "minimun"), 1, "$.properties.open_prs.items: unsupported JSON Schema keyword 'minimun'"),
         ("recursive additional keyword", ("additionalProperties",), {"type": "string", "minimun": 1}, "$.additionalProperties: unsupported JSON Schema keyword 'minimun'"),
         ("boolean runtime child", ("properties", "issue"), True, "$.properties.issue boolean schema is not executable"),
+        ("properties scalar bypass", ("properties", "open_prs"), {"properties": {"ignored": {"type": "string"}}}, "$.properties.open_prs.properties requires explicit type object"),
+        ("properties union bypass", ("properties", "open_prs"), {"type": ["array", "object"], "properties": {"ignored": {"type": "string"}}}, "$.properties.open_prs.properties requires only type object"),
+        ("additionalProperties scalar bypass", ("properties", "collected_at"), {"additionalProperties": False}, "$.properties.collected_at.additionalProperties requires explicit type object"),
+        ("additionalProperties union bypass", ("properties", "collected_at"), {"type": ["object", "string"], "additionalProperties": False}, "$.properties.collected_at.additionalProperties requires only type object"),
         ("Python-only runtime regex", ("properties", "collected_at", "pattern"), "(?P<name>.+)", "invalid ECMAScript regex"),
         ("ECMAScript-only runtime regex", ("properties", "collected_at", "pattern"), "(?<name>.+)", "invalid Python runtime regex"),
     )
@@ -350,7 +367,9 @@ def assert_runtime_profile_matrix() -> None:
     runtime_accepts = {
         "duplicate type array", "minLength bool", "minItems negative", "minimum bool",
         "minLength missing type", "minLength unsafe union", "recursive additional keyword",
-        "unknown union member", "enum duplicate",
+        "unknown union member", "enum duplicate", "properties scalar bypass",
+        "properties union bypass", "additionalProperties scalar bypass",
+        "additionalProperties union bypass",
     }
     with tempfile.TemporaryDirectory(prefix="remem-runtime-schema-") as raw:
         repo = Path(raw)
