@@ -34,6 +34,7 @@ model/runner/environment、非回归预算与默认 k 必须先由 human `spec_a
 | PromptSubmit 门槛 | `src/context/prompt_submit.rs:57`, `src/context/prompt_submit.rs:76` | PromptSubmit 有单独的候选过滤与 item 审计路径 | 其评分语义不是 SessionStart 已校准共同分数，只能经新证据批准后复用 |
 | PromptSubmit 审计 finalizer | `src/context/prompt_submit.rs:92`, `src/context/prompt_submit.rs:103`, `src/context/audit.rs:324` | PromptSubmit 与 SessionStart 最终都调用同一 audit writer/finalizer，但 PromptSubmit 自己构造输出与 injected items | 改 stable-key finalizer 时必须保持 PromptSubmit 空/有输出两条路径，不能只修 SessionStart |
 | 重复注入 gate 身份 | `src/context/injection_gate/data_version_hint.rs:17` | data-version 包含 render contract、policy 和数据指纹，驱动已有 pre-render/duplicate gate | scorer/version/threshold/k 必须进入身份，避免策略改变仍被旧 decision 抑制 |
+| strict pre-render suppression | `src/context/render.rs:147`, `src/context/render.rs:152`, `src/context/injection_gate/pre_render.rs:75`, `src/context/injection_gate/pre_render.rs:113`, `src/context/injection_gate/store.rs:133` | data-version 命中时先更新 `context_injections.updated_at_epoch`/suppress count 并直接返回空输出；render 收到空 `audit_items`，因而没有对应 item run | B-023 不能把这类正常 reuse 一律报 `audit_incomplete`，也不能用旧 injected rows 冒充本次空输出；suppression output 与 reuse item evidence 必须同事务 |
 | deterministic injection eval | `src/context/render/eval.rs:35`, `src/context/render/eval.rs:105` | 使用默认 policy 生成分区 snapshot，只覆盖现有计数/截断 | 可补选择规则与空/error 的确定性回归，但不能替代 coding outcome |
 | coding bench 输入与归因 | `src/eval/coding_bench/condition.rs:98`, `src/eval/coding_bench/condition.rs:214`, `src/eval/coding_bench/types.rs:246` | 已从 audit 读取 injected memory IDs，并有 injected/used/irrelevant/missing attribution | 是 k sweep 的主效果层；需增加 arm 与 SessionStart 选择证据 |
 | coding bench 执行顺序 | `src/eval/coding_bench/run_plan.rs:10`, `src/eval/coding_bench/run_plan.rs:35` | 完整 condition/task/run matrix 使用运行时随机 seed shuffle，当前报告不保存 seed | 预注册 sweep 必须由 charter 固定 seed 并在报告保存 exact plan，才能复验执行顺序 |
@@ -125,6 +126,30 @@ total/delta 裁剪的候选分别记录 `total_char_limit`/`delta_preview`，sup
 PromptSubmit 继续复用该 finalizer，并从自己的实际 rendered memory IDs 提供 stable keys；它没有
 SessionStart relevance policy，也不能因 finalizer API 变化丢失 injected/dropped/abstained rows。
 
+strict pre-render 命中不能再只调用 `record_suppression`。新的 suppression/reuse finalizer 必须在
+一个 SQLite transaction 内完成以下全部步骤：
+
+1. 找到最近的、由新原子 writer 产生的 complete **emitted** item run；它必须精确匹配
+   host/project/session/injection key、context hash、data-version、query fingerprint、policy/scorer
+   version、threshold 和 k。reuse run 不得再作为源，避免无界引用链或循环。
+2. 为本次 suppression 生成唯一 `injection_run_id`，复制可复验的 score/decision/stable-key
+   evidence 并记录 `reused_from_run_id`。来源中的 `injected` 在本次必须转为 `dropped`，
+   reason=`gate_suppressed_reuse`、render order 为空；其他 closed decisions 保留原因。因为本次输出为空，
+   final injected count 必须为零。
+3. 插入该 complete reuse item run，并更新同一 `context_injections` row 的 `output_mode`/
+   `updated_at_epoch`/`suppress_count`；两者共用同一 event epoch 并一次 commit。
+
+无需新列：新 writer 在现有 `provenance` 使用 closed v2 key/value envelope，至少包含
+`audit_schema=2`、`run_item_count=<N>`、`data_version=<64hex>`、`query_fingerprint=<64hex>`、
+`policy_id/version`、canonical threshold/k；reuse rows 另含
+`reused_from_run_id_b64=<base64url-no-pad>`。未知/重复 key、非法编码或同 run 字段不一致均使 run invalid。
+source complete 的定义是：同一 run 的实际 row count 精确等于每行相同的 `run_item_count`，全部 identity
+字段一致，且 `output_mode` 是 materialized `full`/`delta` 而非 reuse；因此 legacy/手工半批 rows 不能成为源。
+
+来源 run 缺失、legacy/部分、任一 identity 不匹配、copy/update 失败时整个 transaction 回滚，
+pre-render 必须返回 miss 并走完整 render + item finalizer；不得留下“新 context epoch + 旧/空 item
+evidence”。这是对先前 complete run 的精确、可审计复用，不是把时间差强行解释为 complete。
+
 `ContextRenderStats` 新增 relevance state 和每受控分区的 candidate/eligible/injected 以及按闭集
 reason 的 dropped counts。footer 在 `off/applied/abstained/error` 之间显式区分，并把 relevance
 blank 与 truncation 分开显示。关闭模式不改 section body/order/count；footer 的新增诊断是唯一
@@ -143,15 +168,33 @@ complete。
 - arms 固定为 `production_baseline,k1,k3,k5,k10`；baseline 必须使用 main 的当前关闭策略，四个
   k arm 共享一个获批 scorer/version/threshold/candidate projection。
 - 现有 `remem/no_memory/curated_file` condition 语义保留；k 只作用于 remem SessionStart 注入。
-- charter 在任何 raw run 前提交并由 human 明确批准，记录 issue、main SHA、fixture hash、task IDs、
-  arms、run count/order seed、model、runner/version、environment、scorer config、阈值和所有非回归
-  预算。批准记录绑定 charter commit 与内容 hash；amendment 也必须先提交、单独获批并产生新 hash。
-- runner 启动前解析批准记录，执行 `git merge-base --is-ancestor <approved-charter-commit> HEAD`
-  的等价检查，确认工作树 charter bytes 与批准 hash 相同，并把 approved commit/hash/current HEAD
-  写入 run metadata。当前 HEAD 是每个 raw run 的 source commit；任何 raw-run/evidence commit 必须
-  后代于批准 charter/amendment commit。祖先关系、hash、cleanliness 任一不符即在运行前拒绝。
-- charter 一旦修改，旧 hash 的全部 raw runs 自动 invalid；validator 禁止跨 charter hash、跨
-  amendment 或跨 source ancestry 聚合。修正文案也必须走 amendment，不能保留旧 runs。
+- charter 是 closed-schema JSON，记录 issue、fixture/task IDs 与 hash、五个 arms、run count/order
+  seed、model、runner/version、environment、scorer config、threshold、所有非回归预算，以及覆盖
+  runner/scorer/runtime 可执行源码闭集的 `approved_code_commit`、sorted `approved_code_paths` 和
+  `approved_code_tree_sha256`；批准的 code commit 必须是 charter target commit 的祖先，runner 要求这些
+  路径从批准 code commit 到 run source HEAD 逐字不变。charter 不包含自身 commit SHA、
+  tag object ID 或 `approved_by`；内容不能自我批准。
+- human approval 的唯一载体是签名 annotated tag，名称闭集为
+  `refs/tags/remem-approval/gh854-sessionstart-k-sweep-v<N>`，并以包含 charter blob 的 commit 为
+  tag target。tag message 必须只含可解析 trailers：`SpecRail-Issue: GH-854`、
+  `Approval-Kind: sessionstart-k-sweep-charter`、`Charter-Path: eval/coding-bench/sessionstart-k-sweep-charter.json`、
+  `Charter-SHA256: <64hex>` 和 `Approved-By: <stable-human-id>`。轻量 tag、未签名 tag、
+  额外/缺失 trailer 或从 `latest` 自动猜 tag 均拒绝。
+- runner 必须显式接收 `--approval-tag <exact-name>`、`--approval-tag-object <exact-object-id>` 和由
+  human/operator 提供、位于 checkout
+  外的 `--approval-trust-root <absolute-path>`。trust root 使用 closed schema
+  `{"version":1,"allowed_signers":[{"human_id":"...","fingerprint":"..."}]}`；runner 不创建、更改或
+  从候选 branch 导入它，并记录其 hash。`git verify-tag --raw` 的 primary fingerprint 必须与
+  `Approved-By` 在 trust root 的唯一映射精确相等；仅“签名有效”但 signer 不可信仍拒绝。
+- 在写任何 raw row 前，runner 必须先断言 tag ref 当前解析到显式传入的 exact object ID（因此移动/
+  重写后立即失败），再验证 tag target commit 是当前
+  source HEAD 祖先、`git show <target>:<Charter-Path>` 与工作树 bytes/hash 同 tag trailer 完全
+  一致、工作树干净、`approved_code_tree_sha256` 与受控源码完全一致、以及所有
+  CLI/runtime effective params 等于 charter。run metadata 记录 exact tag name/object ID、target commit、
+  signer fingerprint/human ID、trust-root hash、charter path/hash、code-tree hash 和 source HEAD。
+- 任何 raw-run/evidence commit 必须是 tag target 的后代。charter 一旦修改，必须以严格递增的
+  `<N>` 创建新签名 tag；旧 tag/hash 下的全部 raw runs 自动 invalid。validator 禁止跨
+  tag object、charter hash、signer/trust-root hash 或 source ancestry 聚合。重写/移动旧 tag 永久拒绝。
 - `run_plan` 从 charter seed 生成稳定 shuffle；report 保存 seed 和 exact arm/task/run 顺序，不能在
   运行时临时取未记录随机数。
 - task failure、timeout、oracle inconclusive 和缺失审计都是实验数据，不得从分母移除。中断的
@@ -183,6 +226,10 @@ runtime default、merge 或 release。
 status query 用 session/project/injection key/context hash 与 latest epochs 对齐 output/item evidence；
 item run 必须原子写入。最近 context epoch 比最近完整 relevance run 新、item run 部分/缺失或审计写入
 失败时，status 显示 `audit_incomplete`/`unavailable` 并保留两个 epoch，不回退展示更旧 run 为当前。
+唯一例外是第 4 节定义的原子 suppression/reuse run：它与 context row 共用 event epoch、
+精确引用 prior complete emitted run 并自包含本次零注入 item evidence。该情形显示
+`relevance_state=suppressed_reused`、`audit_completeness=complete`、`final_injected=0` 和
+`reused_from_run_id`，不显示 `applied`，也不把来源 run 的 injected count 携带到本次。
 旧 DB 或还没有 relevance provenance 的 rows 显示 `unavailable_legacy`，不做 migration、不误报
 `applied`。JSON 新字段是 additive；文本把它们加入现有 `Latest session memory footprint` block。
 
@@ -207,20 +254,20 @@ human 批准且 issue 进入 `ready_to_implement` 后另开 PR。
 | `B-007` 空/弱 query abstain | implicit query validator + render | `cargo test context::tests::relevance::weak_query_abstains_only_governed_sections -- --exact` |
 | `B-008` 评分失败整体关闭 | scorer boundary + plan state | `cargo test context::tests::relevance::partial_or_invalid_scores_fail_closed -- --exact`；timeout/NaN/Inf/partial fixtures 均无受控 injected 项 |
 | `B-009` 非法配置 | typed policy parser | `cargo test context::tests::relevance::invalid_enabled_config_is_visible_error -- --exact`，缺字段/阈值越界/k=0/未知 scorer 均拒绝 |
-| `B-010` 完整 item/最终审计 | item-aware planner/truncation + gate stable keys + shared audit finalizer | `cargo test context::tests::relevance::audit_matches_complete_final_keys -- --exact`、`cargo test context::tests::truncation -- --nocapture`；total/delta cut 落在 item 中部时输出无半项且 DB 只有完整 survivor 为 injected；`cargo test context::prompt_submit::tests -- --nocapture` 证明 PromptSubmit 同 finalizer 不靠 title 子串且空/有输出审计不回归 |
+| `B-010` 完整 item/最终审计 | item-aware planner/truncation + gate stable keys + shared audit finalizer | `cargo test context::tests::relevance::audit_matches_complete_final_keys -- --exact`、`cargo test context::tests::truncation -- --nocapture`；total/delta cut 落在 item 中部时输出无半项且 DB 只有完整 survivor 为 injected；pre-render 空输出断言 injected=0；`cargo test context::prompt_submit::tests -- --nocapture` 证明 PromptSubmit 同 finalizer 不靠 title 子串且空/有输出审计不回归 |
 | `B-011` hook footer 状态与 counts | stats/footer + render snapshots | `cargo test context::tests::relevance::footer_distinguishes_relevance_and_truncation -- --exact`；`render.rs`/`render_inline.rs` snapshots 覆盖四状态、完整 injected keys 与所有 closed reasons |
 | `B-012` 审计失败可见 | audit call site + diagnostics/footer | `cargo test context::tests::relevance::audit_write_failure_is_error_and_not_complete -- --exact` |
 | `B-013` 并发隔离 | request-private plan | `cargo test context::tests::relevance::concurrent_requests_do_not_share_selection_state -- --exact` |
 | `B-014` 重试/策略身份 | plan determinism + data-version | `cargo test context::tests::relevance::retry_is_idempotent_and_policy_change_invalidates_gate -- --exact` |
 | `B-015` 取消/部分结果 | scorer deadline + bench runner completion | `cargo test context::tests::relevance::cancellation_publishes_no_partial_plan -- --exact` 与 `cargo test eval::coding_bench::tests::interrupted_matrix_cannot_recommend -- --exact` |
-| `B-016` immutable charter/五臂 matrix | coding-bench CLI/runner/charter/validator | `cargo test eval::coding_bench::tests::sessionstart_matrix_requires_approved_ancestor_charter -- --exact`；负例覆盖非祖先 commit、dirty/hash mismatch、未批准 amendment、跨 hash runs，均在 run 前或 aggregate 前失败；CLI dry-run 输出批准 commit/hash 与冻结顺序 |
+| `B-016` immutable charter/五臂 matrix | coding-bench CLI/runner/signed-tag preflight/validator | `cargo test eval::coding_bench::tests::sessionstart_matrix_requires_trusted_signed_charter_tag -- --exact`；负例覆盖缺 tag、轻量/未签名 tag、签名坏、不可信 fingerprint/identity、repo-local 信任根、错 trailer/path/hash、tag target 非祖先、dirty bytes、code-tree/effective-param drift、tag 移动或重用、未批准 amendment 和跨 tag/hash runs，均在首个 raw row 前或 aggregate 前失败；CLI dry-run 输出 exact tag object/target/signer/trust-root/charter/code-tree/source HEAD |
 | `B-017` 完整指标/证据 | coding-bench artifact/score validator | `cargo test eval::coding_bench::tests::sessionstart_report_requires_outcome_noise_cost_latency_and_raw_refs -- --exact`；删除任一字段的 fixture 必须失败 |
 | `B-018` 最小合格 k/不启用 | report decision | `cargo test eval::coding_bench::tests::recommends_smallest_arm_within_all_budgets_or_disabled -- --exact`，含无 arm 合格负例 |
 | `B-019` coding evidence 必需 | report validator | `cargo test eval::coding_bench::tests::golden_only_cannot_authorize_default -- --exact`；缺失/incomplete coding report 输出 `keep_disabled` |
 | `B-020` 本地/隐私 | scorer boundary + report sanitizer | `cargo test context::tests::relevance::scorer_uses_no_external_io -- --exact`；人工检查报告/日志不含 fixture secret canary 或原文 |
 | `B-021` 双 host/旧配置 | shared policy path + host snapshots | `cargo test context::tests::relevance::claude_and_codex_share_policy_and_old_config_is_off -- --exact`；隔离旧 DB 启动无需 migration |
 | `B-022` human/evidence gates | workflow labels + implementation PR evidence | `python3 checks/route_gate.py --repo . --route implement --issue 854 --state ready_to_spec --json` 必须 blocked；人工确认 research/scorer/threshold/budgets/approval 缺一时无 tasks/default claim |
-| `B-023` hook 与 CLI status 边界 | `status_spend.rs`, status types/text/JSON, hook footer | `cargo test cli::actions::query::status::tests -- --nocapture` 与 `cargo test db::query::status_spend::tests -- --nocapture`；snapshots 断言现有 chars/runs 保留、新 relevance/audit 字段 additive，最新 context 无完整 item run 显示 incomplete，legacy rows 显示 `unavailable_legacy` |
+| `B-023` hook 与 CLI status 边界 | pre-render/store atomic reuse finalizer + `status_spend.rs` + status types/text/JSON + hook footer | `cargo test context::injection_gate::pre_render::tests::strict_pre_render_suppression_writes_atomic_reuse_evidence -- --exact`；源 complete run 时 context/item 同 epoch 且 status=`suppressed_reused`/complete/final_injected=0；identity mismatch、legacy/partial source 和注入式 item-write failure 时 transaction 回滚、epoch/suppress count 不前进且 render 被调用。再运行 `cargo test cli::actions::query::status::tests -- --nocapture` 与 `cargo test db::query::status_spend::tests -- --nocapture`；snapshots 断言 chars/runs 保留、原子 reuse 不误报 incomplete、真无 item run 仍 incomplete、legacy 仍 `unavailable_legacy` |
 
 ## 数据流
 
@@ -232,11 +279,12 @@ ContextRequest + immutable ContextPolicy
   -> approved local scorer (all-or-nothing)
   -> threshold -> stable global k -> existing section budgets
   -> item-aware render/total/duplicate/delta gate returns complete surviving stable keys
-  -> hook footer + atomic finalized context_injection_items
+  -> normal emit: hook footer + atomic finalized context_injection_items
+  -> strict pre-render hit: atomic suppression epoch + zero-injected reuse item run
   -> remem status text/JSON reads latest complete relevance run beside existing chars/runs
 
-approved ancestor charter commit/hash + coding-bench fixture + fixed environment
-  -> runner preflight verifies ancestor + exact clean bytes
+immutable charter commit/blob + exact trusted signed annotated approval tag + external trust root
+  -> runner preflight verifies tag signature/identity + target ancestry + bytes/hash + code tree/effective params
   -> production baseline, k1, k3, k5, k10 arms
   -> raw hashed run evidence bound to charter hash/source HEAD (failures included)
   -> validated aggregate metrics/budgets
@@ -258,6 +306,10 @@ approved ancestor charter commit/hash + coding-bench fixture + fixed environment
   虚耗 k，产生“k=3 但只注入 1 个受控项”的错误实验语义；必须先冻结/排除/去重。
 - **总字符裁剪后用 title 搜索推断存活 item**：拒绝。重复标题和半截多行 item 会使审计与输出
   不一致；预算或 finalizer 必须携带 stable keys。
+- **pre-render suppression 只复用旧 status/时间戳**：拒绝。旧 run 可能是 legacy、partial 或
+  来自不同 policy identity；只有同事务的自包含 reuse item run 能证明本次零输出为正常 suppression。
+- **在 charter JSON 内写 `approved_by` 或自身 commit SHA**：拒绝。候选 branch 可自我声明批准，
+  而内容不可能预先包含承载它的 Git commit SHA；批准必须由独立签名 tag + checkout 外信任根建立。
 - **直接使用 PromptSubmit token overlap**：暂不采用。该门槛服务不同 hook/查询，缺少三个分区
   的共同校准；可在 approval 证据证明后作为候选 scorer，而不是隐式默认。
 - **直接复用 hybrid RRF 或 GH-851 reranker**：暂不采用。当前 RRF 分数被丢弃且只覆盖 memory，
@@ -277,12 +329,14 @@ approved ancestor charter commit/hash + coding-bench fixture + fixed environment
   scorer identity 纳入 data-version 会让策略变化后的首次请求重新注入，这是正确失效行为。
 - Correctness: 三分区分数若未校准，global k 会系统性偏向某一分区；因此 calibration evidence 是
   硬 blocker。Core 必须在相同 reference time 下先冻结，total/delta 后只信任完整 stable keys；
-  title 子串、半截 item 或在 k 后排除 Core 都会污染 runtime 与 eval 结果。
+  title 子串、半截 item 或在 k 后排除 Core 都会污染 runtime 与 eval 结果。pre-render
+  suppression 若只推进 output epoch 会误报 audit incomplete；若照搬旧 injected 状态则会误报本次实际输出。
 - Performance: 对全部候选评分增加 SessionStart CPU/latency。期限和候选上限必须预先批准；超时
   不能部分输出。sweep 报告 wall time 和 input size。
-- Evaluation validity: 任务集过小、执行顺序、model 漂移或事后挑指标会污染结论。approved charter
-  commit 必须是每个 raw-run source/evidence commit 的祖先；hash/bytes/amendment 变化废止旧 runs，
-  五臂同环境、失败计入分母和预注册 budgets 防止选择性报告。
+- Evaluation validity: 任务集过小、执行顺序、model 或可执行代码漂移、伪造 human approval
+  或事后挑指标会污染结论。签名 tag target 必须是每个 raw-run source/evidence commit 的祖先；
+  signer/trust-root/charter/code-tree/hash/amendment 变化废止旧 runs，五臂同环境、失败计入分母和预注册
+  budgets 防止选择性报告。
 - Maintenance: scorer/version/policy/data-version/report schema 必须同步演进；closed reason 改义或
   新增受控分区需新 spec revision，不能仅改实现。
 - Data: 不做 schema migration；若实现中发现现有 audit 列无法无损表达批准契约，必须暂停并修订
@@ -298,8 +352,13 @@ approved ancestor charter commit/hash + coding-bench fixture + fixed environment
       Core exclusion/k accounting、section budget、item-aware total truncation、duplicate suppression、
       delta preview 和 PromptSubmit 共享 finalizer；执行 `render.rs`、`render_inline.rs`、
       `truncation.rs`、`gate_pipeline.rs` 与 PromptSubmit focused tests。
+- [ ] Pre-render reuse integration：执行 `src/context/injection_gate/pre_render.rs` 内联 tests 与
+      `src/context/injection_gate/tests.rs`；覆盖 exact complete source、identity/policy/hash mismatch、legacy/
+      partial source、reuse-of-reuse 拒绝、同秒多次 suppression 的唯一 run ID，以及 item/context
+      任一写故障的 transaction rollback + full-render fallback。
 - [ ] Eval unit tests：执行 mapping 中 `eval::coding_bench::tests::sessionstart_*` tests，负例覆盖
-      缺 arm、字段漂移、失败剔除、incomplete report 和 golden-only recommendation。
+      缺 arm、字段漂移、失败剔除、incomplete report、golden-only recommendation，以及 B-016 的
+      signed-tag/trust-root/ancestry/charter/code-tree/effective-parameter 全部负例。
 - [ ] `cargo test context::tests -- --nocapture`。
 - [ ] `cargo test eval::coding_bench -- --nocapture`。
 - [ ] `python3 scripts/ci/check_plugin_version_sync.py`。
@@ -307,12 +366,13 @@ approved ancestor charter commit/hash + coding-bench fixture + fixed environment
 - [ ] `cargo check`。
 - [ ] `cargo clippy -- -D warnings`。
 - [ ] `cargo test`。
-- [ ] 用批准 charter 运行完整五臂 coding-bench，validator 通过并生成去敏报告；人工核对 raw artifact
-      hashes、批准 charter commit 祖先关系、每 run source HEAD、失败分母、配置身份和
-      recommendation，不把 dry-run 当结果；修改 charter 后确认旧 runs 全部 invalid。
+- [ ] 以 exact signed approval tag object 与 checkout 外 trust root 运行完整五臂 coding-bench，validator
+      通过并生成去敏报告；人工核对 raw artifact hashes、tag object/target/signer/trust-root hash、
+      charter/code-tree hash、每 run source HEAD、失败分母、配置身份和 recommendation，不把 dry-run 当结果；
+      修改 charter 或 signer/trust root 后确认旧 runs 全部 invalid。
 - [ ] `cargo test cli::actions::query::status::tests -- --nocapture` 与
       `cargo test db::query::status_spend::tests -- --nocapture`，核对文本/JSON status 的 current、
-      incomplete、legacy 三类 fixture。
+      suppressed_reused、incomplete、legacy 四类 fixture。
 - [ ] `cargo run -- eval-extraction --json --check-baseline` 与
       `cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json`，确认共享 runtime 无回归。
 - [ ] `python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file /tmp/pr-body.md`，PR body
@@ -332,7 +392,7 @@ review、human merge/release 授权。PoC、spec、implementation、default、me
 继承。
 
 <!-- specrail-planned-changes
-{"version":1,"issue":854,"complete":true,"paths":["Cargo.lock","Cargo.toml","README.md","docs/ARCHITECTURE.md","docs/context-budget-design-2026-04-29.md","docs/specs/current-memory-contracts/PRODUCT.md","docs/specs/current-memory-contracts/TECH.md","eval/coding-bench/README.md","eval/coding-bench/fixtures/tasks.json","eval/coding-bench/reports/issue854-sessionstart-k-sweep.json","eval/coding-bench/sessionstart-k-sweep-charter.json","npm/remem/package.json","plugins/remem/.codex-plugin/plugin.json","plugins/remem/runtimes/remem-releases.json","specs/GH854/product.md","specs/GH854/tech.md","src/cli/actions/eval.rs","src/cli/actions/query/status.rs","src/cli/actions/query/status/tests.rs","src/cli/actions/query/status/types.rs","src/cli/eval_types.rs","src/cli/tests_eval.rs","src/context.rs","src/context/audit.rs","src/context/implicit_query.rs","src/context/injection_gate.rs","src/context/injection_gate/data_version_hint.rs","src/context/injection_gate/delta.rs","src/context/injection_gate/tests.rs","src/context/policy.rs","src/context/prompt_submit.rs","src/context/query.rs","src/context/relevance.rs","src/context/render.rs","src/context/render/eval.rs","src/context/render/stats.rs","src/context/render/truncation.rs","src/context/sections/index.rs","src/context/sections/lessons.rs","src/context/sections/sessions.rs","src/context/style.rs","src/context/tests/diagnostics.rs","src/context/tests/gate_pipeline.rs","src/context/tests/mod.rs","src/context/tests/ownership.rs","src/context/tests/relevance.rs","src/context/tests/render.rs","src/context/tests/render_inline.rs","src/context/tests/render_stability.rs","src/context/tests/truncation.rs","src/context/types.rs","src/db/query/status_spend.rs","src/eval/coding_bench/artifact.rs","src/eval/coding_bench/condition.rs","src/eval/coding_bench/fixture.rs","src/eval/coding_bench/run_plan.rs","src/eval/coding_bench/runner.rs","src/eval/coding_bench/score.rs","src/eval/coding_bench/tests.rs","src/eval/coding_bench/types.rs"],"spec_refs":["specs/GH854/product.md","specs/GH854/tech.md"]}
+{"version":1,"issue":854,"complete":true,"paths":["Cargo.lock","Cargo.toml","README.md","docs/ARCHITECTURE.md","docs/context-budget-design-2026-04-29.md","docs/specs/current-memory-contracts/PRODUCT.md","docs/specs/current-memory-contracts/TECH.md","eval/coding-bench/README.md","eval/coding-bench/fixtures/tasks.json","eval/coding-bench/reports/issue854-sessionstart-k-sweep.json","eval/coding-bench/sessionstart-k-sweep-charter.json","npm/remem/package.json","plugins/remem/.codex-plugin/plugin.json","plugins/remem/runtimes/remem-releases.json","specs/GH854/product.md","specs/GH854/tech.md","src/cli/actions/eval.rs","src/cli/actions/query/status.rs","src/cli/actions/query/status/tests.rs","src/cli/actions/query/status/types.rs","src/cli/eval_types.rs","src/cli/tests_eval.rs","src/context.rs","src/context/audit.rs","src/context/implicit_query.rs","src/context/injection_gate.rs","src/context/injection_gate/data_version_hint.rs","src/context/injection_gate/delta.rs","src/context/injection_gate/pre_render.rs","src/context/injection_gate/store.rs","src/context/injection_gate/tests.rs","src/context/policy.rs","src/context/prompt_submit.rs","src/context/query.rs","src/context/relevance.rs","src/context/render.rs","src/context/render/eval.rs","src/context/render/stats.rs","src/context/render/truncation.rs","src/context/sections/index.rs","src/context/sections/lessons.rs","src/context/sections/sessions.rs","src/context/style.rs","src/context/tests/diagnostics.rs","src/context/tests/gate_pipeline.rs","src/context/tests/mod.rs","src/context/tests/ownership.rs","src/context/tests/relevance.rs","src/context/tests/render.rs","src/context/tests/render_inline.rs","src/context/tests/render_stability.rs","src/context/tests/truncation.rs","src/context/types.rs","src/db/query/status_spend.rs","src/eval/coding_bench/artifact.rs","src/eval/coding_bench/condition.rs","src/eval/coding_bench/fixture.rs","src/eval/coding_bench/run_plan.rs","src/eval/coding_bench/runner.rs","src/eval/coding_bench/score.rs","src/eval/coding_bench/tests.rs","src/eval/coding_bench/types.rs"],"spec_refs":["specs/GH854/product.md","specs/GH854/tech.md"]}
 -->
 
 本文件不授权实现。只有 human 完成上述 blockers、批准修订后的 product/tech spec 并把 GH-854
