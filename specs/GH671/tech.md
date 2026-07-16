@@ -125,12 +125,18 @@ none supplies GH671 completion evidence.
   artifacts are regenerated output.
 - Run artifact compilation and writes only from the background worker. Hooks
   only load and evaluate artifacts.
-- Add `remem rules list [--project <path>]`, `disable`, `enable`, and
-  `set-action warn|block`. Overrides update SQLite and become effective after
-  the next artifact build.
-- Add a Claude Code `PreToolUse` Bash hook for command evaluation before
-  execution. Keep PostToolUse observe capture-only. Report Codex command
-  enforcement as unsupported until Codex exposes a pre-execution command hook.
+- Expose `remem rules list [--project <path>]`, `disable`, `enable`,
+  `set-action <rule_id> warn [--host claude-code|codex-cli]`, and
+  `set-action <rule_id> block --host claude-code`. The host option is optional
+  and does not gate warn; block requires the explicit Claude Code host, while
+  omission or `--host codex-cli` is rejected. Overrides update SQLite and
+  become effective after the next artifact build.
+- Install a Claude Code `PreToolUse` Bash hook that invokes
+  `remem rules eval --host claude-code` before command execution. Each enabled,
+  valid short-lived CLI invocation reads and parses the artifact from disk; no
+  in-process cache is promised. Keep PostToolUse observe capture-only. Report
+  Codex command enforcement as unsupported until Codex exposes a pre-execution
+  command hook.
 - Add doctor output for artifact presence, rule count, last compile time, last
   compile/evaluation error, and host enforcement capability.
 
@@ -196,9 +202,12 @@ derived artifact.
       reinforcement risk, one negative per eligibility dimension, exact
       owner/trust/review allowlists, unknown values, closed-enum completeness,
       policy failure, and critical cross-state cases without SQL text snapshots.
-- [x] CLI tests: #837 covers `rules list`, `disable`, `enable`, and
-      `set-action` across artifact deletion and worker rebuild, including
-      unsupported Codex block mode.
+- [x] CLI tests: #837 covers provenance listing plus warn disable/enable/action
+      round-trip and worker rebuild (`src/rules/management/tests.rs:82-138`),
+      Codex/missing-host block rejection
+      (`src/rules/management/tests.rs:142-174`), Claude Code block persistence
+      (`src/rules/management/tests.rs:177-204`), and compiler reconstruction of
+      stored overrides (`src/rules/compiler/tests.rs:380-399`).
 - [x] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
       PostToolUse capture-only behavior, and Codex unsupported enforcement.
 - [x] Doctor tests: #840 covers human and JSON output for artifact/rule count,

@@ -46,11 +46,12 @@ Tracking:
   (`src/context/render.rs`).
 - Lesson/preference metadata carries `reinforcement_count`
   (`src/memory_candidate/apply.rs`).
-- Hooks are dispatched through `src/cli/dispatch.rs`; Claude Code fires
-  SessionStart, UserPromptSubmit, PostToolUse, PreCompact, and Stop today;
-  Codex fires SessionStart/Stop with PostToolUse(Bash) opt-in. The existing
-  Claude Code PostToolUse observe hook is after command execution and cannot
-  provide block-mode enforcement.
+- Hooks are dispatched through `src/cli/dispatch.rs`; Claude Code installs
+  SessionStart, UserPromptSubmit, PreToolUse(Bash), PostToolUse, PreCompact,
+  and Stop, including `remem rules eval --host claude-code` on PreToolUse.
+  Codex installs SessionStart/Stop with PostToolUse(Bash) opt-in and no
+  pre-execution rule evaluator. Claude Code PostToolUse observe remains after
+  command execution and cannot provide block-mode enforcement.
 - The background worker (`src/worker.rs`) already runs extraction and
   consolidation off the interactive path.
 - `memory_suppressions` (v051) and soft supersession
@@ -96,9 +97,9 @@ resolved `REMEM_DATA_DIR` / `db::absolute_data_dir()` location:
 Predicate kinds in the first implementation:
 
 - `command_regex`: matched against pre-execution Bash command input on hosts
-  with a pre-tool hook. Claude Code support requires adding a `PreToolUse`
-  Bash hook that invokes a read-only `remem rules eval` path before the
-  command runs.
+  with a pre-tool hook. Claude Code installation already adds a `PreToolUse`
+  Bash hook that invokes the read-only `remem rules eval --host claude-code`
+  path before the command runs.
 - `commit_trailer_forbidden`: matched against `git commit` command strings for
   forbidden trailer substrings.
 
@@ -177,14 +178,17 @@ Nothing else. Further kinds require a spec update.
 
 ### Hook evaluation
 
-- PreToolUse (Claude Code Bash): load artifact (mtime-cached in process),
-  evaluate predicates against the command before execution, and return the
-  host's warning or blocking contract on match.
+- PreToolUse (Claude Code Bash): each enabled, valid short-lived `remem rules
+  eval` CLI invocation reads and parses the artifact from disk, evaluates
+  predicates against the command before execution, and returns the host's
+  warning or blocking contract on match. There is no in-process artifact-cache
+  contract.
 - PostToolUse observe remains capture-only; it may record violations for
   diagnostics but must not be the enforcement path for warning/block behavior.
 - Codex command rules are reported as unsupported for enforcement until Codex
-  exposes a pre-execution Bash hook; `set-action ... block` returns an error
-  for Codex-only projects instead of implying protection exists.
+  exposes a pre-execution Bash hook. `set-action <rule_id> block` without
+  `--host claude-code`, including `--host codex-cli`, returns an error instead
+  of implying protection exists.
 - Block action: only honored when the rule has `"action": "block"` set via
   explicit user CLI opt-in and the current host supports pre-execution
   enforcement.
@@ -197,13 +201,16 @@ Nothing else. Further kinds require a spec update.
 remem rules list [--project <path>]
 remem rules disable <rule_id>
 remem rules enable <rule_id>
-remem rules set-action <rule_id> warn|block
+remem rules set-action <rule_id> warn [--host claude-code|codex-cli]
+remem rules set-action <rule_id> block --host claude-code
 ```
 
 Disable/enable and action overrides are stored in SQLite (for example a
 `rule_overrides` table keyed by rule_id plus project scope). The worker emits
 the merged result into the derived artifact; deleting or regenerating the
-artifact cannot revert a user override.
+artifact cannot revert a user override. `--host` is optional for `warn` and
+does not gate that action; `block` requires the explicit
+`--host claude-code` capability assertion.
 
 ### Doctor
 

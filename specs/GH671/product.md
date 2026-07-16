@@ -106,8 +106,10 @@ and the final T8 closure incomplete, so #671 must stay open.
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
 - [x] `remem rules list` shows provenance, effective action, disabled state,
       and source memory for each compiled rule, covered by #837.
-- [x] Disable, enable, and `set-action warn|block` round trips are covered by
-      #837 tests and take effect after the next artifact build without restart.
+- [x] Disable, enable, `set-action <rule_id> warn` (host optional), and
+      `set-action <rule_id> block --host claude-code` round trips are covered
+      by #837 tests and take effect after the next artifact build without
+      restart; missing-host and Codex block requests are rejected.
 - [x] Superseding, suppressing, expiring, or deleting a source preference
       removes the derived rule on the next compile pass.
 - [x] Doctor reports compiled-rule count, last compile time, host enforcement

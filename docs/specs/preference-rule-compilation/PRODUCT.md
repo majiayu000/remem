@@ -94,8 +94,10 @@ PR #837; doctor enforcement health is implemented and reconciled by #840.
 - [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
-- [x] `remem` CLI lists compiled rules with provenance; disable/enable and
-      action round trips work and are covered by #837 tests.
+- [x] `remem` CLI lists compiled rules with provenance; disable/enable,
+      `set-action <rule_id> warn` (host optional), and
+      `set-action <rule_id> block --host claude-code` round trips work and are
+      covered by #837 tests; missing-host and Codex block requests are rejected.
 - [ ] Compiler eligibility has one complete positive fixture, independent
       negative coverage for every eligibility dimension, and critical
       cross-state coverage. Candidate risk and reinforcement risk are
