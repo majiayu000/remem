@@ -345,6 +345,38 @@ fn drain_transcript_rejects_content_truncated_before_captured_boundary() -> Resu
 }
 
 #[test]
+fn drain_transcript_read_error_rolls_back_streamed_rows_and_records_failure() -> Result<()> {
+    let conn = setup_conn();
+    let valid =
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"rolled back"}]}}"#;
+    let path = write_temp_transcript("raw-invalid-utf8", "")?;
+    let mut content = format!("{valid}\n").into_bytes();
+    content.push(0xff);
+    std::fs::write(&path, content)?;
+
+    let report = drain_transcript(
+        &conn,
+        path.to_string_lossy().as_ref(),
+        "session-invalid-utf8",
+        "/proj",
+        None,
+        None,
+    )?;
+
+    assert!(report.read_error.is_some());
+    assert_eq!(report.inserted, 0, "rolled-back inserts are not reported");
+    let stored: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages WHERE session_id = 'session-invalid-utf8'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored, 0, "a stream read failure rolls back the file");
+    assert_eq!(raw_ingest_failure_count(&conn)?, 1);
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
 fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
     let conn = setup_conn();
     let path = write_temp_transcript(

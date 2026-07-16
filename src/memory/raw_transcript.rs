@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{BufRead, BufReader, Read};
 
 use serde_json::Value;
 
@@ -30,6 +30,78 @@ pub(crate) fn read_transcript_content(
         ));
     }
     Ok(content)
+}
+
+/// Visit a transcript one line at a time while retaining at most the current
+/// and next JSONL records. A captured byte boundary is treated as an immutable
+/// snapshot: shorter files fail instead of silently draining a later shape.
+pub(crate) fn stream_transcript_lines(
+    transcript_path: &str,
+    byte_limit: Option<u64>,
+    mut visit: impl FnMut(&str, bool),
+) -> std::io::Result<()> {
+    let file = std::fs::File::open(transcript_path)?;
+    match byte_limit {
+        Some(limit) => stream_reader(file.take(limit), Some(limit), &mut visit),
+        None => stream_reader(file, None, &mut visit),
+    }
+}
+
+fn stream_reader(
+    reader: impl Read,
+    expected_bytes: Option<u64>,
+    visit: &mut impl FnMut(&str, bool),
+) -> std::io::Result<()> {
+    let mut reader = BufReader::new(reader);
+    let mut pending = None;
+    let mut total_bytes = 0_u64;
+
+    loop {
+        let mut next = Vec::new();
+        let bytes_read = reader.read_until(b'\n', &mut next)?;
+        if bytes_read == 0 {
+            break;
+        }
+        total_bytes = total_bytes.checked_add(bytes_read as u64).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "transcript size overflow")
+        })?;
+        if let Some(line) = pending.replace(next) {
+            visit_line(&line, false, visit)?;
+        }
+    }
+
+    if let Some(expected) = expected_bytes {
+        if total_bytes != expected {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!(
+                    "transcript truncated before captured boundary: expected {expected} bytes, read {total_bytes}"
+                ),
+            ));
+        }
+    }
+    if let Some(line) = pending {
+        visit_line(&line, true, visit)?;
+    }
+    Ok(())
+}
+
+fn visit_line(
+    bytes: &[u8],
+    is_final: bool,
+    visit: &mut impl FnMut(&str, bool),
+) -> std::io::Result<()> {
+    let mut end = bytes.len();
+    if end > 0 && bytes[end - 1] == b'\n' {
+        end -= 1;
+    }
+    if end > 0 && bytes[end - 1] == b'\r' {
+        end -= 1;
+    }
+    let line = std::str::from_utf8(&bytes[..end])
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidData, error))?;
+    visit(line, is_final);
+    Ok(())
 }
 
 pub(crate) fn parse_transcript_message(value: &Value) -> Option<ParsedTranscriptMessage> {

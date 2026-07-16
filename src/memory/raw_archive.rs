@@ -337,84 +337,70 @@ pub(crate) fn drain_transcript_with_capture_limit(
     options: &TranscriptDrainOptions<'_>,
     byte_limit: Option<u64>,
 ) -> Result<RawIngestReport> {
-    let content =
-        match crate::memory::raw_transcript::read_transcript_content(transcript_path, byte_limit) {
-            Ok(content) => content,
-            Err(error) => {
-                let report = RawIngestReport {
-                    read_error: Some(format!(
-                        "read transcript {} failed: {}",
-                        transcript_path, error
-                    )),
-                    ..RawIngestReport::default()
+    let mut report = RawIngestReport::default();
+    let stream_result = with_raw_archive_drain_savepoint(conn, || {
+        crate::memory::raw_transcript::stream_transcript_lines(
+            transcript_path,
+            byte_limit,
+            |line, is_final| {
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+                    if options.tolerate_partial_tail && is_final {
+                        report.partial_tail = true;
+                    } else {
+                        report.parse_errors += 1;
+                    }
+                    return;
                 };
-                crate::log::warn(
-                    "raw-archive",
-                    report
-                        .read_error
-                        .as_deref()
-                        .unwrap_or("read transcript failed"),
-                );
-                record_raw_ingest_failure(
+                let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
+                else {
+                    report.skipped_messages += 1;
+                    return;
+                };
+                if message.text.trim().is_empty() {
+                    report.empty_messages += 1;
+                    return;
+                }
+
+                match insert_raw_message_from_root_at(
                     conn,
                     session_id,
                     project,
+                    message.role,
+                    &message.text,
                     SOURCE_TRANSCRIPT,
-                    Some(transcript_path),
-                    &report,
-                )?;
-                return Ok(report);
-            }
-        };
-
-    let mut report = RawIngestReport::default();
-    let line_count = content.lines().count();
-    with_raw_archive_drain_savepoint(conn, || {
-        for (index, line) in content.lines().enumerate() {
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-                if options.tolerate_partial_tail && index + 1 == line_count {
-                    report.partial_tail = true;
-                } else {
-                    report.parse_errors += 1;
+                    branch,
+                    cwd,
+                    options.source_root,
+                    message.created_at_epoch,
+                ) {
+                    Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
+                    Ok(Some(_)) => report.duplicates += 1,
+                    Ok(None) => report.empty_messages += 1,
+                    Err(error) => {
+                        report.insert_errors += 1;
+                        crate::log::warn(
+                            "raw-archive",
+                            &format!("insert raw message failed: {}", error),
+                        );
+                    }
                 }
-                continue;
-            };
-            let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
-            else {
-                report.skipped_messages += 1;
-                continue;
-            };
-            if message.text.trim().is_empty() {
-                report.empty_messages += 1;
-                continue;
-            }
-
-            match insert_raw_message_from_root_at(
-                conn,
-                session_id,
-                project,
-                message.role,
-                &message.text,
-                SOURCE_TRANSCRIPT,
-                branch,
-                cwd,
-                options.source_root,
-                message.created_at_epoch,
-            ) {
-                Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
-                Ok(Some(_)) => report.duplicates += 1,
-                Ok(None) => report.empty_messages += 1,
-                Err(error) => {
-                    report.insert_errors += 1;
-                    crate::log::warn(
-                        "raw-archive",
-                        &format!("insert raw message failed: {}", error),
-                    );
-                }
-            }
-        }
-        Ok(())
+            },
+        )
+        .map_err(anyhow::Error::from)
     })?;
+    if let Err(error) = stream_result {
+        report = RawIngestReport {
+            read_error: Some(format!("read transcript {transcript_path} failed: {error}")),
+            ..RawIngestReport::default()
+        };
+        crate::log::warn(
+            "raw-archive",
+            report
+                .read_error
+                .as_deref()
+                .unwrap_or("read transcript failed"),
+        );
+    }
     if report.has_failures() {
         record_raw_ingest_failure(
             conn,
@@ -431,14 +417,14 @@ pub(crate) fn drain_transcript_with_capture_limit(
 fn with_raw_archive_drain_savepoint<T>(
     conn: &Connection,
     f: impl FnOnce() -> Result<T>,
-) -> Result<T> {
+) -> Result<std::result::Result<T, anyhow::Error>> {
     conn.execute_batch("SAVEPOINT remem_raw_archive_drain;")
         .context("start raw archive drain savepoint")?;
     match f() {
         Ok(value) => {
             conn.execute_batch("RELEASE SAVEPOINT remem_raw_archive_drain;")
                 .context("release raw archive drain savepoint")?;
-            Ok(value)
+            Ok(Ok(value))
         }
         Err(error) => {
             let rollback = conn.execute_batch(
@@ -446,7 +432,7 @@ fn with_raw_archive_drain_savepoint<T>(
                  RELEASE SAVEPOINT remem_raw_archive_drain;",
             );
             match rollback {
-                Ok(()) => Err(error),
+                Ok(()) => Ok(Err(error)),
                 Err(rollback_error) => Err(error).context(format!(
                     "raw archive drain rollback also failed: {rollback_error}"
                 )),

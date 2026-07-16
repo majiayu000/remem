@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.212` for the GH-720 T1 follow-up: transcript
+  ingestion now streams JSONL records with bounded memory, preserves captured
+  byte boundaries, and rolls back already-inserted rows when a later read or
+  UTF-8 failure makes the file incomplete. GH-720 remains open for its manual
+  and cross-repository phases.
 - Staged source version `0.5.211` for #720 query parity: the MCP `search_raw`
   tool and CLI `query raw` now share one raw-query assembly path, aligning the
   JSON envelope and date-only `until` bounds across surfaces.
