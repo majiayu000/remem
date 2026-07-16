@@ -50,6 +50,13 @@ pub(super) fn sync_native_memory(
     Ok(())
 }
 
+fn is_native_memory_markdown(file_path: &str) -> bool {
+    file_path.ends_with(".md")
+        && file_path.contains("/.claude/projects/")
+        && file_path.contains("/memory/")
+        && !file_path.ends_with("/MEMORY.md")
+}
+
 #[cfg(test)]
 mod tests {
     use anyhow::Context;
@@ -98,11 +105,4 @@ mod tests {
         assert!(err.to_string().contains("unsafe marker"), "{err}");
         Ok(())
     }
-}
-
-fn is_native_memory_markdown(file_path: &str) -> bool {
-    file_path.ends_with(".md")
-        && file_path.contains("/.claude/projects/")
-        && file_path.contains("/memory/")
-        && !file_path.ends_with("/MEMORY.md")
 }

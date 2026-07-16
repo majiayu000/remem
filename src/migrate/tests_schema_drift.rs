@@ -600,11 +600,10 @@ fn create_current_schema_missing_versions(
          PRAGMA foreign_keys=OFF;
          PRAGMA writable_schema=ON;",
     )?;
-    for migration in MIGRATIONS.iter().filter(|migration| {
-        !missing_versions
-            .iter()
-            .any(|missing| *missing == migration.version)
-    }) {
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| !missing_versions.contains(&migration.version))
+    {
         conn.execute_batch(migration.sql)?;
     }
     conn.execute_batch(

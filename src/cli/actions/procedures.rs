@@ -261,8 +261,7 @@ mod tests {
         );
         assert!(
             run_procedures_lines
-                .iter()
-                .any(|line| *line == "Commands::Procedures { action } => run_procedures(action)?,"),
+                .contains(&"Commands::Procedures { action } => run_procedures(action)?,"),
             "CLI dispatch must route procedure actions only from Commands::Procedures"
         );
     }
