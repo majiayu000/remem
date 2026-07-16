@@ -30,8 +30,11 @@ Tracking:
 - The current tree also contains rule CLI management, pre-execution Claude
   hook dispatch with honest Codex capability reporting, doctor diagnostics,
   repeated-correction fixtures, and measured hook-latency evidence. #837 at
-  merge commit `4d5eafa9b217950b91e8cb46c20c52ce3d9de4a8` supplies the T4 CLI
-  round-trip evidence, and #840 at merge commit
+  merge commit `4d5eafa9b217950b91e8cb46c20c52ce3d9de4a8` supplies management and
+  warn-mode round-trip evidence. #839 exact head
+  `905a55f7219459dd7b33a1805f0d4da27a97622f`, merged as
+  `f612b4a1ec4558ed6d2df85699cefb42109bdf7c`, supplies Claude Code
+  PreToolUse and supported-host block persistence. #840 at merge commit
   `ca1a804c8f8b8889ac8b2ba29f5f1c8522f17884` supplies doctor enforcement
   health evidence. T8a reconciles task status and public documentation; final
   acceptance remains open.
@@ -304,9 +307,18 @@ hook-side writes.
 - [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
-- [x] CLI management tests: #837 covers provenance listing and
-      disable/enable/action overrides across artifact deletion and worker
-      rebuild, including unsupported Codex block mode.
+- [x] CLI management tests: #837 covers provenance listing and the
+      management/warn round trip across artifact deletion and worker rebuild
+      (`src/rules/management/tests.rs:82-138`). The shared
+      unsupported-pre-execution rejection path
+      (`src/rules/management/tests.rs:142-174`)
+      proves no override/job persistence without separately exercising host
+      None and Codex CLI values. #839 exact head
+      `905a55f7219459dd7b33a1805f0d4da27a97622f` (merged as
+      `f612b4a1ec4558ed6d2df85699cefb42109bdf7c`) covers supported Claude block
+      persistence (`src/rules/management/tests.rs:177-204`). Existing compiler
+      coverage reconstructs stored overrides
+      (`src/rules/compiler/tests.rs:380-399`).
 - [x] Doctor tests: #840 covers human/JSON artifact and compile health, latest
       evaluation diagnostics, Claude/Codex capability reporting, recovery, and
       payload privacy.
