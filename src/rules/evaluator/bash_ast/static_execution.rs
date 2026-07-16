@@ -11,10 +11,7 @@ pub(super) fn direct_command_name(tokens: &[String]) -> Option<&str> {
 }
 
 pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
-    let mut index = unwrap::direct_command_index(tokens)?;
-    while tokens.get(index)? == "command" {
-        index = unwrap::command_wrapper_target(tokens, index)?;
-    }
+    let index = static_builtin_command_index(tokens)?;
     if tokens.get(index)? != "eval" {
         return None;
     }
@@ -29,6 +26,71 @@ pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
     .then(|| arguments.join(" "))
 }
 
+pub(super) fn static_exit_trap_payload(tokens: &[String]) -> Option<&str> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if tokens.get(index)? != "trap" {
+        return None;
+    }
+    index += 1;
+    if tokens.get(index).is_some_and(|token| token == "--") {
+        index += 1;
+    }
+    let payload = tokens.get(index)?;
+    if matches!(payload.as_str(), "" | "-" | DYNAMIC_SHELL_WORD) {
+        return None;
+    }
+    tokens[index + 1..]
+        .iter()
+        .any(|signal| signal == "0" || signal.eq_ignore_ascii_case("EXIT"))
+        .then_some(payload.as_str())
+}
+
+pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, Vec<&str>)> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if tokens.get(index)? != "export" {
+        return None;
+    }
+    index += 1;
+    let mut function_mode = false;
+    let mut exported = true;
+    while let Some(option) = tokens.get(index) {
+        if option == "--" {
+            index += 1;
+            break;
+        }
+        let Some(flags) = option.strip_prefix('-').filter(|flags| !flags.is_empty()) else {
+            break;
+        };
+        if flags.chars().any(|flag| !matches!(flag, 'f' | 'n')) {
+            return None;
+        }
+        function_mode |= flags.contains('f');
+        exported &= !flags.contains('n');
+        index += 1;
+    }
+    function_mode.then(|| {
+        (
+            exported,
+            tokens[index..]
+                .iter()
+                .filter(|name| name.as_str() != DYNAMIC_SHELL_WORD)
+                .map(String::as_str)
+                .collect(),
+        )
+    })
+}
+
+fn static_builtin_command_index(tokens: &[String]) -> Option<usize> {
+    let mut index = unwrap::direct_command_index(tokens)?;
+    while tokens.get(index)? == "command" {
+        index = unwrap::command_wrapper_target(tokens, index)?;
+    }
+    if tokens.get(index)? == "builtin" {
+        index += 1;
+    }
+    tokens.get(index).map(|_| index)
+}
+
 pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> {
     let mut index = unwrap::direct_command_index(tokens)?;
     while tokens.get(index)? == "command" {
@@ -40,8 +102,7 @@ pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> 
     index += 1;
     while let Some(option) = tokens.get(index) {
         if unwrap::is_env_assignment(option) {
-            index += 1;
-            continue;
+            return None;
         }
         match option.as_str() {
             "-S" | "--split-string" => {
@@ -228,7 +289,9 @@ pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
     if !is_shell(tokens.get(command_index)?) {
         return None;
     }
-    let payload_index = shell_command_payload_index(tokens, command_index)?;
+    let ShellInput::Command(payload_index) = shell_input(tokens, command_index) else {
+        return None;
+    };
     let payload = tokens.get(payload_index)?;
     (payload != DYNAMIC_SHELL_WORD).then_some(payload.as_str())
 }
@@ -243,58 +306,100 @@ pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
     {
         return false;
     }
-    let mut index = command_index + 1;
-    while let Some(option) = tokens.get(index) {
-        if option == "--" {
-            return tokens.get(index + 1).is_none();
-        }
-        if option == "-" {
-            return true;
-        }
-        if shell_option_takes_argument(option) {
-            index += 2;
-            continue;
-        }
-        if shell_option_carries_command(option) {
-            return false;
-        }
-        if option.starts_with('-') || option.starts_with('+') {
-            index += 1;
-            continue;
-        }
-        return false;
-    }
-    true
+    shell_input(tokens, command_index) == ShellInput::Stdin
 }
 
-fn shell_command_payload_index(tokens: &[String], command_index: usize) -> Option<usize> {
+pub(super) fn static_shell_is_bash(tokens: &[String]) -> bool {
+    unwrap::effective_command_index(tokens)
+        .and_then(|index| tokens.get(index))
+        .is_some_and(|command| shell_name(command) == Some("bash"))
+}
+
+pub(super) fn static_source_reads_stdin(tokens: &[String]) -> bool {
+    let Some(index) = static_builtin_command_index(tokens) else {
+        return false;
+    };
+    matches!(tokens[index].as_str(), "source" | ".")
+        && tokens
+            .get(index + 1)
+            .is_some_and(|path| path == "/dev/stdin")
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ShellInput {
+    Command(usize),
+    Stdin,
+    Other,
+    NoExec,
+}
+
+fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
     let mut index = command_index + 1;
+    let mut noexec = false;
     while let Some(option) = tokens.get(index) {
-        if option == "--" || option == "-" {
-            return None;
+        if option == "--" {
+            return if noexec {
+                ShellInput::NoExec
+            } else if tokens.get(index + 1).is_none() {
+                ShellInput::Stdin
+            } else {
+                ShellInput::Other
+            };
+        }
+        if option == "-" {
+            return if noexec {
+                ShellInput::NoExec
+            } else {
+                ShellInput::Stdin
+            };
         }
         if shell_option_takes_argument(option) {
-            tokens.get(index + 1)?;
+            let Some(value) = tokens.get(index + 1) else {
+                return ShellInput::Other;
+            };
+            if matches!(option.as_str(), "-o" | "+o") && value == "noexec" {
+                noexec = option.starts_with('-');
+            }
             index += 2;
             continue;
         }
-        if shell_option_carries_command(option) {
-            return tokens.get(index + 1).map(|_| index + 1);
-        }
         if option.starts_with('-') || option.starts_with('+') {
+            if !option.starts_with("--") {
+                let flags = &option[1..];
+                if flags.contains('n') {
+                    noexec = option.starts_with('-');
+                }
+                if option.starts_with('-') && flags.contains('c') {
+                    return if noexec {
+                        ShellInput::NoExec
+                    } else if tokens.get(index + 1).is_some() {
+                        ShellInput::Command(index + 1)
+                    } else {
+                        ShellInput::Other
+                    };
+                }
+            }
             index += 1;
             continue;
         }
-        return None;
+        return ShellInput::Other;
     }
-    None
+    if noexec {
+        ShellInput::NoExec
+    } else {
+        ShellInput::Stdin
+    }
 }
 
 fn is_shell(command: &str) -> bool {
+    shell_name(command).is_some()
+}
+
+fn shell_name(command: &str) -> Option<&str> {
     std::path::Path::new(command)
         .file_name()
         .and_then(|value| value.to_str())
-        .is_some_and(|name| matches!(name, "bash" | "dash" | "ksh" | "sh" | "zsh"))
+        .filter(|name| matches!(*name, "bash" | "dash" | "ksh" | "sh" | "zsh"))
 }
 
 fn shell_option_takes_argument(option: &str) -> bool {
@@ -302,11 +407,4 @@ fn shell_option_takes_argument(option: &str) -> bool {
         option,
         "-O" | "+O" | "-o" | "+o" | "--init-file" | "--rcfile"
     )
-}
-
-fn shell_option_carries_command(option: &str) -> bool {
-    option == "-c"
-        || option
-            .strip_prefix('-')
-            .is_some_and(|flags| !flags.starts_with('-') && flags.contains('c'))
 }

@@ -3,7 +3,7 @@ use std::io::Cursor;
 
 use brush_parser::ast::{
     AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    FunctionBody, IoFileRedirectKind, IoFileRedirectTarget, IoRedirect, Pipeline, Program,
+    FunctionBody, IfClauseCommand, IoFileRedirectTarget, IoRedirect, Pipeline, Program,
     SimpleCommand, UnexpandedArithmeticExpr, Word,
 };
 use brush_parser::word::{Parameter, ParameterExpr, WordPiece, WordPieceWithSource};
@@ -11,11 +11,13 @@ use brush_parser::{Parser, ParserOptions};
 
 mod static_execution;
 mod static_words;
+mod stdin_payload;
 pub(super) mod unwrap;
 
 use static_execution::{
-    direct_command_name, static_env_split_tokens, static_eval_payload,
-    static_shell_command_payload, static_shell_reads_stdin, static_unset_function_names,
+    direct_command_name, static_env_split_tokens, static_eval_payload, static_exit_trap_payload,
+    static_export_function_change, static_shell_command_payload, static_shell_is_bash,
+    static_shell_reads_stdin, static_source_reads_stdin, static_unset_function_names,
 };
 use static_words::{
     append_word_variants, critical_brace_variants, expand_brace_pieces, static_word_pieces,
@@ -30,7 +32,9 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         options: ParserOptions::default(),
         segments: Vec::new(),
         functions: HashMap::new(),
+        exported_functions: HashSet::new(),
         active_functions: HashSet::new(),
+        execution_is_definite: true,
     };
     collector.collect_source(source)?;
     Ok(collector.segments)
@@ -39,8 +43,16 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
 struct CommandCollector {
     options: ParserOptions,
     segments: Vec<Vec<String>>,
-    functions: HashMap<String, FunctionBody>,
+    functions: HashMap<String, Vec<FunctionDefinition>>,
+    exported_functions: HashSet<String>,
     active_functions: HashSet<String>,
+    execution_is_definite: bool,
+}
+
+#[derive(Clone)]
+struct FunctionDefinition {
+    body: FunctionBody,
+    is_definite: bool,
 }
 
 impl CommandCollector {
@@ -68,12 +80,18 @@ impl CommandCollector {
                     AndOr::And(_) if static_success == Some(false) => {}
                     AndOr::Or(_) if static_success == Some(true) => {}
                     AndOr::And(pipeline) => {
-                        self.collect_pipeline(pipeline)?;
+                        let definitely_executes = static_success == Some(true);
+                        self.with_execution_certainty(definitely_executes, |collector| {
+                            collector.collect_pipeline(pipeline)
+                        })?;
                         static_success =
                             and_status(static_success, self.static_pipeline_success(pipeline)?);
                     }
                     AndOr::Or(pipeline) => {
-                        self.collect_pipeline(pipeline)?;
+                        let definitely_executes = static_success == Some(false);
+                        self.with_execution_certainty(definitely_executes, |collector| {
+                            collector.collect_pipeline(pipeline)
+                        })?;
                         static_success =
                             or_status(static_success, self.static_pipeline_success(pipeline)?);
                     }
@@ -127,7 +145,24 @@ impl CommandCollector {
             Command::Function(function) => {
                 let name = self.command_word(&function.fname)?;
                 if name != DYNAMIC_SHELL_WORD {
-                    self.functions.insert(name, function.body.clone());
+                    if self.execution_is_definite {
+                        self.functions.insert(
+                            name,
+                            vec![FunctionDefinition {
+                                body: function.body.clone(),
+                                is_definite: true,
+                            }],
+                        );
+                    } else {
+                        let definitions = self.functions.entry(name).or_default();
+                        for definition in definitions.iter_mut() {
+                            definition.is_definite = false;
+                        }
+                        definitions.push(FunctionDefinition {
+                            body: function.body.clone(),
+                            is_definite: false,
+                        });
+                    }
                 }
                 Ok(())
             }
@@ -159,7 +194,9 @@ impl CommandCollector {
                 {
                     self.collect_arithmetic_expression(expression)?;
                 }
-                self.collect_list(&command.body.list)
+                self.with_execution_certainty(false, |collector| {
+                    collector.collect_list(&command.body.list)
+                })
             }
             CompoundCommand::BraceGroup(command) => self.collect_list(&command.list),
             CompoundCommand::Subshell(command) => {
@@ -171,7 +208,9 @@ impl CommandCollector {
                         self.collect_word_commands(value)?;
                     }
                 }
-                self.collect_list(&command.body.list)
+                self.with_execution_certainty(false, |collector| {
+                    collector.collect_list(&command.body.list)
+                })
             }
             CompoundCommand::CaseClause(command) => {
                 self.collect_word_commands(&command.value)?;
@@ -180,27 +219,19 @@ impl CommandCollector {
                         self.collect_word_commands(pattern)?;
                     }
                     if let Some(commands) = &case.cmd {
-                        self.collect_list(commands)?;
+                        self.with_execution_certainty(false, |collector| {
+                            collector.collect_list(commands)
+                        })?;
                     }
                 }
                 Ok(())
             }
-            CompoundCommand::IfClause(command) => {
-                self.collect_list(&command.condition)?;
-                self.collect_list(&command.then)?;
-                if let Some(elses) = &command.elses {
-                    for branch in elses {
-                        if let Some(condition) = &branch.condition {
-                            self.collect_list(condition)?;
-                        }
-                        self.collect_list(&branch.body)?;
-                    }
-                }
-                Ok(())
-            }
+            CompoundCommand::IfClause(command) => self.collect_if_clause(command),
             CompoundCommand::WhileClause(command) | CompoundCommand::UntilClause(command) => {
                 self.collect_list(&command.0)?;
-                self.collect_list(&command.1.list)
+                self.with_execution_certainty(false, |collector| {
+                    collector.collect_list(&command.1.list)
+                })
             }
             CompoundCommand::Coprocess(command) => {
                 if let Some(name) = &command.name {
@@ -209,6 +240,56 @@ impl CommandCollector {
                 self.with_function_scope(true, |collector| collector.collect_command(&command.body))
             }
         }
+    }
+
+    fn collect_if_clause(&mut self, command: &IfClauseCommand) -> Result<(), String> {
+        self.collect_list(&command.condition)?;
+        let status = self.static_list_success(&command.condition)?;
+        if status != Some(false) {
+            self.with_execution_certainty(status == Some(true), |collector| {
+                collector.collect_list(&command.then)
+            })?;
+        }
+        if status == Some(true) {
+            return Ok(());
+        }
+        let mut branch_is_definite = status == Some(false);
+        for branch in command.elses.iter().flatten() {
+            let branch_status = if let Some(condition) = &branch.condition {
+                self.with_execution_certainty(branch_is_definite, |collector| {
+                    collector.collect_list(condition)
+                })?;
+                self.static_list_success(condition)?
+            } else {
+                Some(true)
+            };
+            if branch_status != Some(false) {
+                self.with_execution_certainty(
+                    branch_is_definite && branch_status == Some(true),
+                    |collector| collector.collect_list(&branch.body),
+                )?;
+            }
+            match branch_status {
+                Some(true) => break,
+                Some(false) => {}
+                None => branch_is_definite = false,
+            }
+        }
+        Ok(())
+    }
+
+    fn static_list_success(&self, list: &CompoundList) -> Result<Option<bool>, String> {
+        let Some(item) = list.0.last() else {
+            return Ok(None);
+        };
+        let mut status = self.static_pipeline_success(&item.0.first)?;
+        for additional in &item.0.additional {
+            status = match additional {
+                AndOr::And(pipeline) => and_status(status, self.static_pipeline_success(pipeline)?),
+                AndOr::Or(pipeline) => or_status(status, self.static_pipeline_success(pipeline)?),
+            };
+        }
+        Ok(status)
     }
 
     fn collect_simple_command(&mut self, command: &SimpleCommand) -> Result<(), String> {
@@ -235,7 +316,8 @@ impl CommandCollector {
         if let Some(suffix) = &command.suffix {
             for item in &suffix.0 {
                 match item {
-                    CommandPrefixOrSuffixItem::Word(word) => {
+                    CommandPrefixOrSuffixItem::Word(word)
+                    | CommandPrefixOrSuffixItem::AssignmentWord(_, word) => {
                         self.collect_word_commands(word)?;
                         append_word_variants(&mut segments, self.command_word_variants(word)?);
                     }
@@ -264,19 +346,46 @@ impl CommandCollector {
         }
         if let Some(names) = static_unset_function_names(&tokens) {
             for name in names {
-                self.functions.remove(name);
+                if self.execution_is_definite {
+                    self.functions.remove(name);
+                    self.exported_functions.remove(name);
+                } else if let Some(definitions) = self.functions.get_mut(name) {
+                    for definition in definitions {
+                        definition.is_definite = false;
+                    }
+                }
+            }
+        }
+        if let Some((exported, names)) = static_export_function_change(&tokens) {
+            for name in names {
+                if exported && self.functions.contains_key(name) {
+                    self.exported_functions.insert(name.to_string());
+                } else if !exported && self.execution_is_definite {
+                    self.exported_functions.remove(name);
+                }
             }
         }
         self.collect_static_function_call(&tokens)?;
+        if let Some(payload) = static_exit_trap_payload(&tokens) {
+            self.with_function_scope(true, |collector| collector.collect_source(payload))?;
+        }
         if let Some(payload) = static_eval_payload(&tokens) {
             self.collect_source(&payload)?;
         }
         if let Some(payload) = static_shell_command_payload(&tokens) {
-            self.with_function_scope(false, |collector| collector.collect_source(payload))?;
+            self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
+                collector.collect_source(payload)
+            })?;
         }
         if static_shell_reads_stdin(&tokens) {
             if let Some(payload) = self.effective_stdin_payload(command)? {
-                self.with_function_scope(false, |collector| collector.collect_source(&payload))?;
+                self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
+                    collector.collect_source(&payload)
+                })?;
+            }
+        } else if static_source_reads_stdin(&tokens) {
+            if let Some(payload) = self.effective_stdin_payload(command)? {
+                self.collect_source(&payload)?;
             }
         }
         self.segments.push(tokens);
@@ -287,18 +396,23 @@ impl CommandCollector {
         let Some(name) = direct_command_name(tokens) else {
             return Ok(());
         };
-        let Some(body) = self.functions.get(name).cloned() else {
+        let Some(definitions) = self.functions.get(name).cloned() else {
             return Ok(());
         };
         if !self.active_functions.insert(name.to_string()) {
             return Ok(());
         }
         let result = (|| {
-            self.collect_compound_command(&body.0)?;
-            if let Some(redirects) = &body.1 {
-                for redirect in &redirects.0 {
-                    self.collect_redirect_commands(redirect)?;
-                }
+            for definition in definitions {
+                self.with_execution_certainty(definition.is_definite, |collector| {
+                    collector.collect_compound_command(&definition.body.0)?;
+                    if let Some(redirects) = &definition.body.1 {
+                        for redirect in &redirects.0 {
+                            collector.collect_redirect_commands(redirect)?;
+                        }
+                    }
+                    Ok(())
+                })?;
             }
             Ok(())
         })();
@@ -497,65 +611,60 @@ impl CommandCollector {
         self.collect_word_pieces(&pieces)
     }
 
-    /// Select the effective static fd-0 payload after applying redirections
-    /// left-to-right. Payloads shadowed by a later fd-0 redirect are inert as
-    /// shell input, although their own expansion commands are collected
-    /// separately while walking the redirect AST.
-    fn effective_stdin_payload(&self, command: &SimpleCommand) -> Result<Option<String>, String> {
-        let mut payloads = HashMap::<i32, Option<String>>::new();
-        for items in [
-            command.prefix.as_ref().map(|prefix| &prefix.0),
-            command.suffix.as_ref().map(|suffix| &suffix.0),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            for item in items {
-                let CommandPrefixOrSuffixItem::IoRedirect(redirect) = item else {
-                    continue;
-                };
-                match redirect {
-                    IoRedirect::HereDocument(fd, here_doc) => {
-                        payloads.insert(fd.unwrap_or(0), Some(here_doc.doc.value.clone()));
-                    }
-                    IoRedirect::HereString(fd, word) => {
-                        let value = self.command_word(word)?;
-                        payloads.insert(
-                            fd.unwrap_or(0),
-                            (value != DYNAMIC_SHELL_WORD).then_some(value),
-                        );
-                    }
-                    IoRedirect::File(fd, kind, target) => {
-                        let target_fd = fd.unwrap_or_else(|| default_redirect_fd(kind));
-                        let payload = if matches!(kind, IoFileRedirectKind::DuplicateInput) {
-                            duplicate_input_fd(target, self)?
-                                .and_then(|source_fd| payloads.get(&source_fd).cloned().flatten())
-                        } else {
-                            None
-                        };
-                        payloads.insert(target_fd, payload);
-                    }
-                    IoRedirect::OutputAndError(_, _) => {}
-                }
-            }
-        }
-        Ok(payloads.remove(&0).flatten())
-    }
-
     fn with_function_scope<T>(
         &mut self,
         inherit: bool,
         collect: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
         let saved_functions = self.functions.clone();
+        let saved_exported_functions = self.exported_functions.clone();
         let saved_active_functions = self.active_functions.clone();
         if !inherit {
             self.functions.clear();
+            self.exported_functions.clear();
             self.active_functions.clear();
         }
         let result = collect(self);
         self.functions = saved_functions;
+        self.exported_functions = saved_exported_functions;
         self.active_functions = saved_active_functions;
+        result
+    }
+
+    fn with_child_shell_scope<T>(
+        &mut self,
+        inherit_exported: bool,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved_functions = self.functions.clone();
+        let saved_exports = self.exported_functions.clone();
+        let saved_active = self.active_functions.clone();
+        if inherit_exported {
+            self.functions
+                .retain(|name, _| saved_exports.contains(name));
+            self.exported_functions
+                .retain(|name| self.functions.contains_key(name));
+        } else {
+            self.functions.clear();
+            self.exported_functions.clear();
+        }
+        self.active_functions.clear();
+        let result = collect(self);
+        self.functions = saved_functions;
+        self.exported_functions = saved_exports;
+        self.active_functions = saved_active;
+        result
+    }
+
+    fn with_execution_certainty<T>(
+        &mut self,
+        definitely_executes: bool,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved = self.execution_is_definite;
+        self.execution_is_definite = saved && definitely_executes;
+        let result = collect(self);
+        self.execution_is_definite = saved;
         result
     }
 
@@ -597,33 +706,6 @@ fn static_token_measure(tokens: &[String]) -> usize {
         .iter()
         .map(|token| token.len().saturating_add(1))
         .sum()
-}
-
-fn default_redirect_fd(kind: &IoFileRedirectKind) -> i32 {
-    match kind {
-        IoFileRedirectKind::Read
-        | IoFileRedirectKind::ReadAndWrite
-        | IoFileRedirectKind::DuplicateInput => 0,
-        IoFileRedirectKind::Write
-        | IoFileRedirectKind::Append
-        | IoFileRedirectKind::Clobber
-        | IoFileRedirectKind::DuplicateOutput => 1,
-    }
-}
-
-fn duplicate_input_fd(
-    target: &IoFileRedirectTarget,
-    collector: &CommandCollector,
-) -> Result<Option<i32>, String> {
-    match target {
-        IoFileRedirectTarget::Fd(fd) => Ok(Some(*fd)),
-        IoFileRedirectTarget::Duplicate(word) => {
-            Ok(collector.command_word(word)?.parse::<i32>().ok())
-        }
-        IoFileRedirectTarget::Filename(_) | IoFileRedirectTarget::ProcessSubstitution(_, _) => {
-            Ok(None)
-        }
-    }
 }
 
 fn and_status(left: Option<bool>, right: Option<bool>) -> Option<bool> {

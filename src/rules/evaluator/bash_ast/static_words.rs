@@ -3,6 +3,7 @@ use brush_parser::word::{
 };
 
 use super::{DYNAMIC_SHELL_WORD, MAX_STATIC_WORD_VARIANTS};
+use crate::rules::evaluator::git_push_arg_enables_force;
 
 const CRITICAL_STATIC_TOKENS: &[&str] = &[
     "git",
@@ -70,7 +71,7 @@ fn static_security_score(segment: &[String]) -> usize {
     segment
         .iter()
         .map(|token| match token.as_str() {
-            "--force" | "-f" | "--mirror" => 8,
+            value if git_push_arg_enables_force(value) => 8,
             "git" | "git.exe" => 4,
             "push" | "commit" => 2,
             value if value.starts_with('+') && value.len() > 1 => 8,
@@ -82,17 +83,101 @@ fn static_security_score(segment: &[String]) -> usize {
 }
 
 pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
-    CRITICAL_STATIC_TOKENS
+    let mut variants = CRITICAL_STATIC_TOKENS
         .iter()
         .filter(|target| brace_pieces_can_equal(pieces, target))
         .map(|target| (*target).to_string())
-        .collect()
+        .collect::<Vec<_>>();
+    variants.extend(
+        security_brace_variants(pieces)
+            .into_iter()
+            .filter(|value| is_critical_static_token(value)),
+    );
+    variants.sort_unstable();
+    variants.dedup();
+    variants
 }
 
 fn is_critical_static_token(value: &str) -> bool {
     CRITICAL_STATIC_TOKENS.contains(&value)
+        || git_push_arg_enables_force(value)
         || value.starts_with("--trailer=")
         || value.starts_with('+') && value.len() > 1
+}
+
+fn security_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
+    let mut variants = vec![String::new()];
+    for piece in pieces {
+        let suffixes = match piece {
+            BraceExpressionOrText::Text(text) => vec![text.clone()],
+            BraceExpressionOrText::Expr(expression) => {
+                let mut suffixes = Vec::new();
+                for member in expression {
+                    match member {
+                        BraceExpressionMember::Child(child) => {
+                            suffixes.extend(security_brace_variants(child));
+                        }
+                        BraceExpressionMember::NumberSequence { start, end, .. } => {
+                            suffixes.push(start.to_string());
+                            suffixes.push(end.to_string());
+                        }
+                        BraceExpressionMember::CharSequence {
+                            start,
+                            end,
+                            increment,
+                        } => {
+                            suffixes.push(start.to_string());
+                            suffixes.push(end.to_string());
+                            for candidate in ['-', '+', ':', 'f', 'm', 'i', 'o'] {
+                                if sequence_contains(
+                                    *start as i64,
+                                    *end as i64,
+                                    *increment,
+                                    candidate as i64,
+                                ) {
+                                    suffixes.push(candidate.to_string());
+                                }
+                            }
+                        }
+                    }
+                    summarize_security_variants(&mut suffixes);
+                }
+                suffixes
+            }
+        };
+        let prefixes = std::mem::take(&mut variants);
+        for prefix in prefixes {
+            for suffix in &suffixes {
+                variants.push(format!("{prefix}{suffix}"));
+            }
+        }
+        summarize_security_variants(&mut variants);
+    }
+    variants
+}
+
+fn summarize_security_variants(variants: &mut Vec<String>) {
+    variants.sort_unstable_by(|left, right| {
+        security_variant_score(right)
+            .cmp(&security_variant_score(left))
+            .then_with(|| left.cmp(right))
+    });
+    variants.dedup();
+    variants.truncate(MAX_STATIC_WORD_VARIANTS);
+}
+
+fn security_variant_score(value: &str) -> usize {
+    if is_critical_static_token(value) {
+        return 100;
+    }
+    let before_force = value.split_once('f').map_or(value, |(prefix, _)| prefix);
+    if value.contains('f') && !before_force.contains('o') {
+        return 50;
+    }
+    if value.starts_with('+') || "mirror".starts_with(value.trim_start_matches('-')) {
+        return 40;
+    }
+    usize::from(value.chars().any(|ch| matches!(ch, '-' | '+' | 'f' | 'm')))
 }
 
 fn brace_pieces_can_equal(pieces: &[BraceExpressionOrText], target: &str) -> bool {

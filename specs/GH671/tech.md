@@ -78,8 +78,9 @@ contract is complete.
   explicit static shell-expansion handling, and a typed Git-push argument
   parser. Unquoted newlines and command groups form executable segments;
   assignment-word, parameter, arithmetic, command-substitution,
-  expandable-heredoc, static `eval`, shell `-c`/stdin, and statically invoked
-  function execution contexts are traversed. `command`, `env`, and `exec`
+  expandable-heredoc, static and `builtin eval`, EXIT trap, shell `-c`/stdin,
+  `source /dev/stdin`, and statically invoked function execution contexts are
+  traversed. `command`, `env`, and `exec`
   wrappers share one command-position normalizer. Static brace alternatives
   are evaluated; bounded materialization preserves security-critical static
   variants and keeps later words and command segments evaluable. Quoted or
@@ -90,16 +91,20 @@ contract is complete.
   honor Git's last-option-wins behavior. The parser honors the `--` terminator
   and option arity so option values, deletions, remote names,
   `--force-with-lease`, and arbitrary natural-language commands fail closed.
-  Bare argument-free `true`/`false`/`:` pipelines may prove a following
-  `&&`/`||` branch unreachable; redirects, assignments, functions, and unknown
-  commands remain conservative. Static function state follows Bash subshell,
-  command-substitution, process-substitution, and coprocess scopes, plus
-  `unset -f`; child shell payloads start a separate function scope. For shells
-  reading stdin, the evaluator applies Bash redirections in order and parses
-  only the effective final fd-0 here-document or here-string. `env -S` is split
-  into argv according to its quote/escape rules and is never reparsed as Bash
-  source. Static brace materialization and its security-prioritized summary are
-  both capped at 256 segments. Package-manager command patterns treat shell
+  Bare argument-free `true`/`false`/`:` pipelines may prove `&&`/`||` and
+  `if`/`elif` branches unreachable; redirects, assignments, functions, and
+  unknown commands remain conservative. Static function state follows Bash
+  subshell, command-substitution, process-substitution, and coprocess scopes,
+  plus `unset -f`; only explicitly exported functions enter a child Bash, and
+  other child shells start empty. Shell `-n`/`noexec` payloads remain inert.
+  For shells or `source /dev/stdin` reading stdin, the evaluator applies Bash
+  redirections in order and parses only the effective final fd-0 here-document
+  or here-string. `env -S` is split into argv according to its quote/escape
+  rules and is never reparsed as Bash source; an assignment operand ends env
+  option parsing. Static brace materialization and its security-prioritized
+  summary are both capped at 256 segments while retaining forcing option
+  clusters, mirror abbreviations, and force refspecs. Package-manager patterns
+  treat shell
   redirection metacharacters as command boundaries.
 - The project-root marker fast path is used only when Git discovery has no
   environment override and the nearest `.git` marker is a plain worktree

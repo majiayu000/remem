@@ -338,6 +338,13 @@ fn git_push_args_force(args: &[String]) -> bool {
     force_enabled || mirror_enabled
 }
 
+pub(super) fn git_push_arg_enables_force(arg: &str) -> bool {
+    arg == "--force"
+        || mirror_option_state(arg) == Some(true)
+        || git_push_short_option_effect(arg) == PushShortOptionEffect::Forces
+        || is_force_push_refspec(arg)
+}
+
 fn mirror_option_state(arg: &str) -> Option<bool> {
     if let Some(prefix) = arg.strip_prefix("--no-") {
         return (!prefix.is_empty() && "mirror".starts_with(prefix)).then_some(false);

@@ -66,12 +66,14 @@ pub(crate) fn command_wrapper_target(tokens: &[String], command_index: usize) ->
 pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Option<usize> {
     let mut index = command_index + 1;
     let mut options_terminated = false;
+    let mut assignments_started = false;
     while let Some(token) = tokens.get(index) {
         if is_env_assignment(token) {
+            assignments_started = true;
             index += 1;
             continue;
         }
-        if options_terminated {
+        if options_terminated || assignments_started {
             return Some(index);
         }
         match token.as_str() {
@@ -79,7 +81,7 @@ pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Opt
                 options_terminated = true;
                 index += 1;
             }
-            "-" | "-i" | "--ignore-environment" | "-0" | "--null" | "--debug" => index += 1,
+            "-" | "-i" | "--ignore-environment" | "-0" | "--null" | "-v" | "--debug" => index += 1,
             "-u" | "--unset" | "-C" | "--chdir" | "--argv0" => {
                 tokens.get(index + 1)?;
                 index += 2;
@@ -87,7 +89,8 @@ pub(crate) fn env_wrapper_target(tokens: &[String], command_index: usize) -> Opt
             value
                 if value.starts_with("--unset=")
                     || value.starts_with("--chdir=")
-                    || value.starts_with("--argv0=") =>
+                    || value.starts_with("--argv0=")
+                    || value.starts_with("-C") && value.len() > 2 =>
             {
                 index += 1;
             }
