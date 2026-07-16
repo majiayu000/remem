@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn codex_hook_stdin_timeout_allows_normal_startup_latency() {
-        assert!(CONTEXT_STDIN_TIMEOUT_MS >= 1000);
+        const { assert!(CONTEXT_STDIN_TIMEOUT_MS >= 1000) };
     }
 
     #[test]

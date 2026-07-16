@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.213` for GH-844: CI and local PR preflight now
+  fail on clippy warnings across all Cargo targets, with the existing 11
+  test-target lints fixed without suppressions or runtime behavior changes.
 - Staged source version `0.5.212` for the GH-720 T1 follow-up: transcript
   ingestion now streams JSONL records with bounded memory, preserves captured
   byte boundaries, and rolls back already-inserted rows when a later read or
