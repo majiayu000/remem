@@ -54,7 +54,8 @@ pub(crate) mod test_support {
                 action_override: None,
             },
             predicate: RulePredicate::CommandRegex {
-                pattern: r"(^|\s)npm\s+(install|i|add)\b".to_string(),
+                pattern: r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add)([ \t\r\n;&|)<>]|$)"
+                    .to_string(),
                 message: "Command violates a compiled package-manager preference".to_string(),
             },
         }

@@ -21,6 +21,7 @@ pub use classify::{
 };
 
 const PACKAGE_MANAGER_MESSAGE: &str = "Command violates a compiled package-manager preference";
+const FORBIDDEN_COMMAND_MESSAGE: &str = "Command violates a compiled forbidden-command preference";
 const COMMIT_TRAILER_MESSAGE: &str = "Commit message violates a compiled trailer preference";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -278,6 +279,11 @@ fn compile_project_rules_with_conflicts(
                         message: COMMIT_TRAILER_MESSAGE.to_string(),
                     }
                 }
+                PreferencePredicate::GitPushForceForbidden { .. } => {
+                    RulePredicate::GitPushForceForbidden {
+                        message: FORBIDDEN_COMMAND_MESSAGE.to_string(),
+                    }
+                }
             };
             let override_state =
                 overrides
@@ -521,6 +527,8 @@ fn latest_compile_diagnostic(
     .optional()
 }
 
+#[cfg(test)]
+mod fixture_tests;
 #[cfg(test)]
 mod sweep_tests;
 #[cfg(test)]

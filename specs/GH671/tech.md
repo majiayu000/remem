@@ -26,14 +26,17 @@ Authoritative contract:
 
 ## Proposed Design
 
-Phase 1 implementation status: `SP671-T1` through `SP671-T3` are implemented.
+Phase 1 task-ledger status: `SP671-T1` through `SP671-T3` and `SP671-T5`
+through `SP671-T7` are recorded as implemented.
 The state foundation, versioned artifact/evaluator, canonical preference
 reinforcement, deterministic compiler, lifecycle-triggered non-lossy enqueue
 path plus periodic convergence sweeps, same-predicate override transfer,
 persisted low-risk/source-trust/review eligibility, project-over-global
-precedence, stable diagnostics, and worker-only artifact writes are present.
-CLI rule management, hook dispatch, doctor reporting, fixtures, and latency
-evidence remain pending.
+precedence, stable diagnostics, worker-only artifact writes, CLI rule
+management, hook dispatch, doctor reporting, repeated-correction fixtures, and
+measured hook-latency evidence are present. The task ledger still leaves
+`SP671-T4` unchecked; `SP671-T8` owns its status reconciliation along with
+documentation and final acceptance.
 
 GH-813 identified one remaining T3 eligibility correction: the current global
 branch accepts any non-null `owner_scope`; it must require the canonical
@@ -62,9 +65,57 @@ contract is complete.
   topic-key/entity/pattern suppression. Unknown values and malformed policy
   state fail closed with diagnostics; candidate and reinforcement risk must not
   share one test fixture field.
-- Compile only deterministic v1 predicates:
-  `command_regex` and `commit_trailer_forbidden`. New predicate kinds require
-  a spec update.
+- Continue accepting the deterministic v1 predicates `command_regex` and
+  `commit_trailer_forbidden`. Artifact v2 adds the closed
+  `git_push_force_forbidden` predicate; other new kinds require a spec update.
+- Emit artifact schema v2 for new compilations. V2 command regexes use an
+  ASCII-delimited closed grammar and `regex-lite` so short-lived hook processes
+  do not pay Unicode-regex compilation cost. Continue accepting and evaluating
+  v1 artifacts with the original `regex` engine so upgrades preserve existing
+  Unicode semantics until the worker regenerates the derived artifact.
+- The v2 classifier may emit `git_push_force_forbidden` for the exact, closed
+  low-risk directive `git push --force`. Evaluation uses the Brush shell AST,
+  explicit static shell-expansion handling, and a typed Git-push argument
+  parser. Unquoted newlines and command groups form executable segments;
+  assignment-word, parameter, arithmetic, command-substitution,
+  expandable-heredoc, static and `builtin eval`, EXIT trap, shell `-c`/stdin,
+  `source /dev/stdin`, and statically invoked function execution contexts are
+  traversed. `command`, `env`, and `exec`
+  wrappers share one command-position normalizer. Static brace alternatives
+  are evaluated; bounded materialization preserves security-critical static
+  variants and keeps later words and command segments evaluable. Quoted or
+  echoed command text and uninvoked function definitions stay inert. Static
+  path-qualified `git`/`git.exe` basenames are recognized. Exact `--force`,
+  standalone `-f`, `f` in valid short-option clusters, mirror abbreviations,
+  and a non-deletion leading-`+` refspec match; boolean force/mirror options
+  honor Git's last-option-wins behavior. The parser honors the `--` terminator
+  and option arity so option values, deletions, remote names,
+  `--force-with-lease`, and arbitrary natural-language commands fail closed.
+  Bare argument-free `true`/`false`/`:` pipelines may prove `&&`/`||` and
+  `if`/`elif` branches unreachable; redirects, assignments, functions, and
+  unknown commands remain conservative. Static function state follows Bash
+  subshell, command-substitution, process-substitution, and coprocess scopes,
+  pipeline isolation, known-function shadowing, and `unset -f`; only explicitly
+  exported functions enter a child Bash, and other child shells start empty.
+  Shell `-n`/`noexec` payloads remain inert. For `-s`, nested static shells, or
+  `source /dev/stdin`, the evaluator applies Bash redirections in order and
+  carries the effective final fd-0 here-document or here-string. `env -S` is
+  split into argv according to its quote/escape rules and is never reparsed as
+  Bash source; an assignment operand ends env option parsing and documented GNU
+  signal options remain wrappers. Static brace materialization and its
+  security-prioritized summary are both capped at 256 arguments while retaining
+  one-command argv order, forcing option clusters, mirror abbreviations, and
+  force refspecs; Git delete mode keeps `+` ref names non-forcing. Package-manager patterns
+  treat shell
+  redirection metacharacters as command boundaries.
+- The project-root marker fast path is used only when Git discovery has no
+  environment override and the nearest `.git` marker is a plain worktree
+  layout. Explicit layouts, discovery controls such as
+  `GIT_CEILING_DIRECTORIES`, command-scope config injection, local/default
+  global/system/XDG worktree-affecting Git config, filesystem device
+  boundaries, and malformed inner markers delegate to Git so project identity
+  matches Git's own toplevel or fails closed instead of falling through to a
+  parent marker. Plain config keeps the no-subprocess marker path.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.
@@ -125,7 +176,9 @@ derived artifact.
 - Compatibility: Codex and hosts without pre-execution hooks cannot enforce
   command block mode; CLI and doctor must say that plainly.
 - Performance: Hook evaluation must stay bounded by a small rule count and
-  avoid DB/network/LLM work.
+  avoid DB/network/LLM work. The release benchmark gates on two fixed budgets:
+  enabled p95 `<= 15.0 ms` and enabled-minus-disabled p95 delta `<= 1.0 ms`;
+  MAD is emitted only as diagnostic context.
 - Maintenance: Predicate growth can become a hidden rules engine; require spec
   updates for new predicate kinds.
 
@@ -141,12 +194,13 @@ derived artifact.
       policy failure, and critical cross-state cases without SQL text snapshots.
 - [ ] CLI tests: `rules list`, `disable`, `enable`, and `set-action` across
       artifact deletion and recompile.
-- [ ] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
+- [x] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
       PostToolUse capture-only behavior, and Codex unsupported enforcement.
 - [ ] Doctor tests: human and JSON output for count, compile time, host
       capability, and last error.
-- [ ] Fixture/eval tests: repeated-correction scenarios and hook latency
-      benchmark.
+- [x] Fixture/eval tests: repeated-correction scenarios and hook latency
+      benchmark with fixed `1.0 ms` delta and `15.0 ms` enabled-p95 budgets;
+      MAD is informational only.
 - [ ] Existing gates: `cargo fmt --check`, `cargo check`, focused tests, and
       `cargo test` before merge readiness.
 

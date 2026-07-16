@@ -14,15 +14,17 @@ pub enum PreferencePredicate {
         trailer: String,
         conflict_key: String,
     },
+    GitPushForceForbidden {
+        conflict_key: String,
+    },
 }
 
 impl PreferencePredicate {
     pub fn conflict_key(&self) -> String {
         match self {
             PreferencePredicate::CommandRegex { conflict_key, .. }
-            | PreferencePredicate::CommitTrailerForbidden { conflict_key, .. } => {
-                conflict_key.clone()
-            }
+            | PreferencePredicate::CommitTrailerForbidden { conflict_key, .. }
+            | PreferencePredicate::GitPushForceForbidden { conflict_key } => conflict_key.clone(),
         }
     }
 }
@@ -35,11 +37,29 @@ pub struct PreferenceClassification {
 }
 
 const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
-    ("npm", r"(^|\s)npm\s+(install|i|add|ci)\b"),
-    ("yarn", r"(^|\s)yarn\s+(add|install)\b"),
-    ("bun", r"(^|\s)bun\s+(add|install)\b"),
-    ("pnpm", r"(^|\s)pnpm\s+(add|install|i)\b"),
+    (
+        "npm",
+        r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add|ci)([ \t\r\n;&|)<>]|$)",
+    ),
+    (
+        "yarn",
+        r"(^|[ \t\r\n])yarn[ \t\r\n]+(add|install)([ \t\r\n;&|)<>]|$)",
+    ),
+    (
+        "bun",
+        r"(^|[ \t\r\n])bun[ \t\r\n]+(add|install)([ \t\r\n;&|)<>]|$)",
+    ),
+    (
+        "pnpm",
+        r"(^|[ \t\r\n])pnpm[ \t\r\n]+(add|install|i)([ \t\r\n;&|)<>]|$)",
+    ),
 ];
+
+const FORBIDDEN_COMMANDS: &[(&str, &str)] = &[("git push --force", "git-push-force")];
+
+const FORBIDDEN_COMMAND_ACTIONS: &[&str] = &["do not run", "don't run", "dont run", "never run"];
+
+const FORBIDDEN_COMMAND_SUFFIXES: &[&str] = &[" in this project", ""];
 
 const PACKAGE_MANAGERS: &[&str] = &["bun", "deno", "npm", "pnpm", "yarn"];
 
@@ -82,7 +102,7 @@ pub fn classify_preference_predicate(text: &str) -> Option<PreferenceClassificat
     classify_preference_predicates(text).into_iter().next()
 }
 
-/// Return every deterministic v1 predicate represented by one closed
+/// Return every deterministic predicate represented by one closed
 /// preference directive. A multi-trailer directive may emit multiple rules.
 pub fn classify_preference_predicates(text: &str) -> Vec<PreferenceClassification> {
     if crate::memory_candidate::contains_unsafe_memory_marker(text)
@@ -94,8 +114,30 @@ pub fn classify_preference_predicates(text: &str) -> Vec<PreferenceClassificatio
     let mut classifications = classify_package_manager(&lower)
         .into_iter()
         .collect::<Vec<_>>();
+    classifications.extend(classify_forbidden_command(&lower));
     classifications.extend(classify_commit_trailers(&lower));
     classifications
+}
+
+fn classify_forbidden_command(lower: &str) -> Option<PreferenceClassification> {
+    for (command, key) in FORBIDDEN_COMMANDS {
+        let is_exact_directive = FORBIDDEN_COMMAND_ACTIONS.iter().any(|action| {
+            has_exact_directive(
+                lower,
+                &format!("{action} {command}"),
+                FORBIDDEN_COMMAND_SUFFIXES,
+            )
+        });
+        if is_exact_directive {
+            return Some(PreferenceClassification {
+                predicate: PreferencePredicate::GitPushForceForbidden {
+                    conflict_key: format!("forbidden-command:{key}"),
+                },
+                summary: "Forbidden command".to_string(),
+            });
+        }
+    }
+    None
 }
 
 fn classify_package_manager(lower: &str) -> Option<PreferenceClassification> {
@@ -290,6 +332,17 @@ mod tests {
     }
 
     #[test]
+    fn package_manager_pattern_stops_at_redirection_metacharacters() {
+        let pattern = command_pattern("Use pnpm, not npm");
+        let regex = regex_lite::Regex::new(&pattern).expect("classifier pattern must compile");
+        assert!(regex.is_match("npm install>install.log"));
+        assert!(regex.is_match("npm install >install.log"));
+        assert!(regex.is_match("npm i<packages.txt"));
+        assert!(regex.is_match("npm install 2>errors.log"));
+        assert!(!regex.is_match("npm installer"));
+    }
+
+    #[test]
     fn ambiguous_multiclause_preferences_fail_closed() {
         for text in [
             "Never omit Co-authored-by",
@@ -337,7 +390,8 @@ mod tests {
         .into_iter()
         .filter_map(|classification| match classification.predicate {
             PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
-            PreferencePredicate::CommandRegex { .. } => None,
+            PreferencePredicate::CommandRegex { .. }
+            | PreferencePredicate::GitPushForceForbidden { .. } => None,
         })
         .collect::<Vec<_>>();
         assert_eq!(trailers, ["Co-authored-by"]);
@@ -351,10 +405,33 @@ mod tests {
         .into_iter()
         .filter_map(|classification| match classification.predicate {
             PreferencePredicate::CommitTrailerForbidden { trailer, .. } => Some(trailer),
-            PreferencePredicate::CommandRegex { .. } => None,
+            PreferencePredicate::CommandRegex { .. }
+            | PreferencePredicate::GitPushForceForbidden { .. } => None,
         })
         .collect::<Vec<_>>();
         assert_eq!(trailers, ["AI-generated-by", "Co-authored-by"]);
+    }
+
+    #[test]
+    fn forbidden_command_classifier_is_exact_and_closed() -> anyhow::Result<()> {
+        assert!(matches!(
+            classify_preference_predicate("Never run git push --force")
+                .expect("closed forbidden command should classify")
+                .predicate,
+            PreferencePredicate::GitPushForceForbidden { .. }
+        ));
+
+        for text in [
+            "Never run rm -rf /",
+            "Never run git push --force unless asked",
+            "Never run git push --force; use --force-with-lease",
+        ] {
+            assert!(
+                classify_preference_predicate(text).is_none(),
+                "must fail closed: {text}"
+            );
+        }
+        Ok(())
     }
 
     #[test]

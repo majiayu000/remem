@@ -1,7 +1,8 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 
-pub const ARTIFACT_VERSION: u32 = 1;
+pub const ARTIFACT_VERSION: u32 = 2;
+pub const LEGACY_ARTIFACT_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -41,6 +42,7 @@ pub struct RuleOverrideState {
 pub enum RulePredicate {
     CommandRegex { pattern: String, message: String },
     CommitTrailerForbidden { trailer: String, message: String },
+    GitPushForceForbidden { message: String },
 }
 
 impl CompiledRulesArtifact {
@@ -53,10 +55,11 @@ impl CompiledRulesArtifact {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if self.version != ARTIFACT_VERSION {
+        if !matches!(self.version, LEGACY_ARTIFACT_VERSION | ARTIFACT_VERSION) {
             bail!(
-                "unsupported compiled rule artifact version {}; expected {}",
+                "unsupported compiled rule artifact version {}; expected {} or {}",
                 self.version,
+                LEGACY_ARTIFACT_VERSION,
                 ARTIFACT_VERSION
             );
         }
@@ -64,7 +67,7 @@ impl CompiledRulesArtifact {
             bail!("compiled rule artifact has negative compiled_at_epoch");
         }
         for rule in &self.rules {
-            rule.validate()?;
+            rule.validate(self.version)?;
         }
         Ok(())
     }
@@ -75,7 +78,7 @@ impl CompiledRule {
         self.override_state.action_override.unwrap_or(self.action)
     }
 
-    fn validate(&self) -> Result<()> {
+    fn validate(&self, artifact_version: u32) -> Result<()> {
         if self.rule_id.trim().is_empty() {
             bail!("compiled rule has empty rule_id");
         }
@@ -92,7 +95,7 @@ impl CompiledRule {
                 self.reinforcement_count
             );
         }
-        self.predicate.validate(&self.rule_id)?;
+        self.predicate.validate(&self.rule_id, artifact_version)?;
         Ok(())
     }
 }
@@ -101,17 +104,27 @@ impl RulePredicate {
     pub fn message(&self) -> &str {
         match self {
             RulePredicate::CommandRegex { message, .. }
-            | RulePredicate::CommitTrailerForbidden { message, .. } => message,
+            | RulePredicate::CommitTrailerForbidden { message, .. }
+            | RulePredicate::GitPushForceForbidden { message } => message,
         }
     }
 
-    fn validate(&self, rule_id: &str) -> Result<()> {
+    fn validate(&self, rule_id: &str, artifact_version: u32) -> Result<()> {
         match self {
             RulePredicate::CommandRegex { pattern, message } => {
                 if pattern.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty command_regex pattern");
                 }
-                if let Err(error) = regex::Regex::new(pattern) {
+                let regex_error = if artifact_version == LEGACY_ARTIFACT_VERSION {
+                    regex::Regex::new(pattern)
+                        .err()
+                        .map(|error| error.to_string())
+                } else {
+                    regex_lite::Regex::new(pattern)
+                        .err()
+                        .map(|error| error.to_string())
+                };
+                if let Some(error) = regex_error {
                     bail!("compiled rule {rule_id} has invalid command_regex pattern: {error}");
                 }
                 if message.trim().is_empty() {
@@ -124,6 +137,14 @@ impl RulePredicate {
                 }
                 if message.trim().is_empty() {
                     bail!("compiled rule {rule_id} has empty forbidden trailer message");
+                }
+            }
+            RulePredicate::GitPushForceForbidden { message } => {
+                if artifact_version == LEGACY_ARTIFACT_VERSION {
+                    bail!("compiled rule {rule_id} uses git_push_force_forbidden in a v1 artifact");
+                }
+                if message.trim().is_empty() {
+                    bail!("compiled rule {rule_id} has empty forbidden force-push message");
                 }
             }
         }
@@ -153,7 +174,8 @@ mod tests {
         assert_eq!(
             parsed.rules[0].predicate,
             RulePredicate::CommandRegex {
-                pattern: r"(^|\s)npm\s+(install|i|add)\b".to_string(),
+                pattern: r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add)([ \t\r\n;&|)<>]|$)"
+                    .to_string(),
                 message: "Command violates a compiled package-manager preference".to_string()
             }
         );
@@ -198,5 +220,40 @@ mod tests {
             .expect_err("invalid command regex must fail artifact validation");
 
         assert!(error.to_string().contains("invalid command_regex pattern"));
+    }
+
+    #[test]
+    fn legacy_artifact_keeps_unicode_regex_validation() -> Result<()> {
+        let mut artifact =
+            CompiledRulesArtifact::new(1234, vec![package_manager_rule(RuleAction::Warn)]);
+        artifact.version = LEGACY_ARTIFACT_VERSION;
+        artifact.rules[0].predicate = RulePredicate::CommandRegex {
+            pattern: r"\p{Greek}+".to_string(),
+            message: "legacy unicode fixture".to_string(),
+        };
+
+        artifact.validate()?;
+        Ok(())
+    }
+
+    #[test]
+    fn force_push_predicate_requires_v2_and_round_trips() -> Result<()> {
+        let mut artifact =
+            CompiledRulesArtifact::new(1234, vec![package_manager_rule(RuleAction::Warn)]);
+        artifact.rules[0].predicate = RulePredicate::GitPushForceForbidden {
+            message: "Do not force push".to_string(),
+        };
+
+        artifact.validate()?;
+        let encoded = serde_json::to_string(&artifact)?;
+        let parsed: CompiledRulesArtifact = serde_json::from_str(&encoded)?;
+        assert_eq!(parsed, artifact);
+
+        artifact.version = LEGACY_ARTIFACT_VERSION;
+        let error = artifact
+            .validate()
+            .expect_err("v1 artifact must reject the v2-only predicate");
+        assert!(error.to_string().contains("in a v1 artifact"));
+        Ok(())
     }
 }

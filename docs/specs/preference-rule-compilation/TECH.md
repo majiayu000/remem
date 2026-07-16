@@ -26,8 +26,12 @@ Tracking:
   project-over-global conflict precedence; lifecycle-triggered non-lossy jobs
   plus periodic convergence sweeps; same-predicate override transfer across
   candidate and cleanup supersession; stable diagnostics and artifacts; and
-  worker-only artifact writes. Hook dispatch,
-  rule CLI, doctor output, fixtures, and latency evidence are still pending.
+  worker-only artifact writes.
+- The current tree also contains rule CLI management, pre-execution Claude
+  hook dispatch with honest Codex capability reporting, doctor diagnostics,
+  repeated-correction fixtures, and measured hook-latency evidence. The GH-671
+  task ledger records T5, T6, and T7 complete but still leaves T4 unchecked;
+  T8 owns the remaining task-status and final-acceptance reconciliation.
 - The current compiler still accepts any non-null `owner_scope` for a global
   row. GH-813 tightens that existing gap to the canonical
   `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
@@ -94,7 +98,41 @@ Predicate kinds in the first implementation:
 - `commit_trailer_forbidden`: matched against `git commit` command strings for
   forbidden trailer substrings.
 
-Nothing else. New kinds require a spec update.
+Artifact v2 additionally supports:
+
+- `git_push_force_forbidden`: structurally parses shell command segments and
+  Git push arguments. It matches exact `--force`, standalone `-f`, or `f` in a
+  valid short-option cluster before the `--` terminator, while honoring `-o`
+  and long-option arity. Ordinary positional arguments do not match, but a
+  non-deletion refspec with a leading `+` does because Git treats that prefix
+  as a per-ref force update. Option values, remote names, deletion refspecs,
+  and `--force-with-lease` remain non-matches. Shell evaluation uses the Brush
+  AST, removes unquoted backslash-newline continuations, traverses assignment
+  words, parameter/arithmetic/command substitutions, expandable heredocs,
+  static and `builtin eval`, EXIT traps, shell `-c` and stdin payloads,
+  `source /dev/stdin`, and statically invoked function bodies, and evaluates
+  static brace alternatives. `command`, `env`, and `exec` share one
+  command-position normalizer. Quoted or echoed command text and
+  uninvoked function definitions remain inert. Static expansion is bounded;
+  security-critical static variants remain visible when full materialization
+  is capped, and later words or command segments are never discarded. Git
+  executable basenames are recognized through static paths; force and mirror
+  boolean options use Git's last-option-wins behavior (including mirror
+  abbreviations); and branches proven unreachable by bare static
+  `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
+  Function definitions follow Bash subshell, pipeline, shadowing, and static
+  `unset -f` state; explicitly exported functions alone enter child Bash,
+  while other child shells start empty. Shell `-n`/`noexec` payloads remain
+  inert. Shell `-s` and nested static shells inherit the effective final fd-0
+  payload under Bash redirection semantics. `env -S` performs bounded argv
+  splitting without interpreting shell separators or options that occur after
+  its first assignment operand; documented GNU signal options remain wrappers.
+  Every materialized or summarized brace-expansion stage remains capped at 256
+  segments while preserving one-command argv order and semantically forcing
+  short clusters, mirror abbreviations, and force refspecs. Git delete mode
+  keeps leading-plus ref names non-forcing.
+
+Nothing else. Further kinds require a spec update.
 
 ### Compilation pass (worker side)
 
@@ -209,8 +247,35 @@ hook-side writes.
 - Compatibility: Codex and any host without pre-execution Bash hooks cannot
   enforce command rules; doctor must label per-host enforcement capability
   honestly and CLI must reject unsupported block-mode claims.
-- Performance: regex evaluation per pre-execution Bash event; bounded by rule count
-  (expected < 20); covered by the latency acceptance criterion.
+- Performance: predicate evaluation per pre-execution Bash event; bounded by
+  rule count (expected < 20). The release benchmark gates on enabled p95
+  `<= 15.0 ms` and enabled-minus-disabled p95 delta `<= 1.0 ms`; MAD is
+  retained only as informational output.
+- Artifact compatibility: new compilations emit schema v2 with ASCII-delimited
+  `command_regex` patterns evaluated by `regex-lite`. Schema v1 remains readable
+  and retains its original Unicode `regex` semantics until the worker replaces
+  the derived artifact. The v2 classifier recognizes only closed
+  package-manager, commit-trailer, and exact low-risk forbidden-command
+  directives. Package-manager `command_regex` patterns use `regex-lite`; the
+  forbidden-command allowlist contains only `git push --force` and compiles to
+  the structural `git_push_force_forbidden` predicate.
+- Project-root marker discovery skips the fast path whenever explicit Git
+  layout, discovery controls, command-scope config injection, or local/default
+  Git config can change worktree resolution. This includes
+  `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`, paired
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*` inputs, local `core.worktree`, and
+  global/system/XDG config containing worktree-affecting values or includes.
+  Gitfile, symlink, and filesystem-device-boundary semantics remain owned by
+  `git rev-parse`; only a real `.git` directory with a conservatively validated
+  plain layout may use the marker fast path. Plain config stays on that fast
+  path so hooks do not restore an unconditional Git subprocess.
+- Latency evidence compares repeated interleaved CLI subprocess cohorts. Pass
+  requires both fixed budgets: enabled p95 `<= 15.0 ms` and
+  enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
+  retained as informational output and does not affect pass/fail. The fresh
+  final-head fixed-budget artifact measured baseline p95 `7.627417 ms`, enabled
+  p95 `7.905666 ms`, delta `0.278249 ms`, complex-AST p95 `7.921000 ms`, and
+  MAD `0.313583 ms`; it passes both fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan
@@ -223,7 +288,7 @@ hook-side writes.
       dimension, unknown values, closed-enum completeness, and critical
       cross-state cases. Tests remain behavior-based and do not snapshot the
       SQL/WHERE text.
-- [ ] Integration test: end-to-end fixture (preference reinforced 3x -> rule
+- [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
 - [ ] Manual verification: real Claude Code session with a seeded preference;

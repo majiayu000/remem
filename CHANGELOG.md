@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.214` for GH-671 T7: repeated-correction fixtures
+  cover package-manager choices, forbidden commit trailers, and forbidden
+  commands; one Brush AST execution model closes wrapper, quoting, function,
+  mirror-push, and arithmetic-substitution bypasses while the release hook
+  remains within the fixed 1 ms delta and 15 ms enabled-p95 budgets.
 - Staged source version `0.5.213` for GH-844: CI and local PR preflight now
   fail on clippy warnings across all Cargo targets, with the existing 11
   test-target lints fixed without suppressions or runtime behavior changes.

@@ -198,5 +198,9 @@ fn predicate_display(predicate: &RulePredicate) -> (&'static str, String) {
         RulePredicate::CommitTrailerForbidden { trailer, .. } => {
             ("commit_trailer_forbidden", format!("{trailer:?}"))
         }
+        RulePredicate::GitPushForceForbidden { .. } => (
+            "git_push_force_forbidden",
+            "git push force option".to_string(),
+        ),
     }
 }
