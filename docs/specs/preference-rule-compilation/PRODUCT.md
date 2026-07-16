@@ -32,7 +32,8 @@ convergence sweeps, preserves same-predicate overrides, and resolves project
 rules ahead of global rules. GH-813 identified that the global-owner filter
 still accepts any non-null owner scope; the exact
 `user`/`user:default`/no-target correction, exhaustive eligibility matrix, and
-CLI management reconciliation remain pending.
+final closure remain pending. CLI management is implemented and reconciled by
+PR #837; doctor enforcement health is implemented and reconciled by #840.
 
 - Compile a small, high-confidence subset of preferences into deterministic
   rules that hooks can evaluate without an LLM.
@@ -93,8 +94,8 @@ CLI management reconciliation remain pending.
 - [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
-- [ ] `remem` CLI lists compiled rules with provenance; disable/enable
-      round-trip works and is covered by a test.
+- [x] `remem` CLI lists compiled rules with provenance; disable/enable and
+      action round trips work and are covered by #837 tests.
 - [ ] Compiler eligibility has one complete positive fixture, independent
       negative coverage for every eligibility dimension, and critical
       cross-state coverage. Candidate risk and reinforcement risk are
@@ -102,8 +103,9 @@ CLI management reconciliation remain pending.
       text.
 - [x] Superseding, suppressing, expiring, or deleting the source preference
       removes the rule on the next compile pass, covered by tests.
-- [ ] Doctor reports compiled-rule count, last compile time, and last
-      evaluation error if any.
+- [x] Doctor reports compiled-rule count, last compile time, host capability,
+      and the latest compile or evaluation error, covered by #840 human/JSON
+      and privacy tests.
 
 ## Edge Cases
 

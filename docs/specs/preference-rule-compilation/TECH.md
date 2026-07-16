@@ -29,14 +29,18 @@ Tracking:
   worker-only artifact writes.
 - The current tree also contains rule CLI management, pre-execution Claude
   hook dispatch with honest Codex capability reporting, doctor diagnostics,
-  repeated-correction fixtures, and measured hook-latency evidence. The GH-671
-  task ledger records T5, T6, and T7 complete but still leaves T4 unchecked;
-  T8 owns the remaining task-status and final-acceptance reconciliation.
+  repeated-correction fixtures, and measured hook-latency evidence. #837 at
+  merge commit `4d5eafa9b217950b91e8cb46c20c52ce3d9de4a8` supplies the T4 CLI
+  round-trip evidence, and #840 at merge commit
+  `ca1a804c8f8b8889ac8b2ba29f5f1c8522f17884` supplies doctor enforcement
+  health evidence. T8a reconciles task status and public documentation; final
+  acceptance remains open.
 - The current compiler still accepts any non-null `owner_scope` for a global
   row. GH-813 tightens that existing gap to the canonical
   `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
-  until that implementation lands, malformed or legacy global ownership is not
-  proven fail-closed.
+  until that implementation and its exhaustive eligibility matrix land,
+  malformed or legacy global ownership is not proven fail-closed, T3/T8 remain
+  incomplete, and #671 must stay open.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
@@ -203,8 +207,10 @@ artifact cannot revert a user override.
 
 ### Doctor
 
-Report artifact presence, rule count, compiled_at age, and last evaluation
-error.
+Report whether compilation is enabled, artifact presence/validity and rule
+count, compile status/time/error, the latest project/global evaluation error,
+and per-host enforcement capability. Human and JSON output must not expose rule
+payloads.
 
 ## Product-to-Test Mapping
 
@@ -291,6 +297,12 @@ hook-side writes.
 - [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
+- [x] CLI management tests: #837 covers provenance listing and
+      disable/enable/action overrides across artifact deletion and worker
+      rebuild, including unsupported Codex block mode.
+- [x] Doctor tests: #840 covers human/JSON artifact and compile health, latest
+      evaluation diagnostics, Claude/Codex capability reporting, recovery, and
+      payload privacy.
 - [ ] Manual verification: real Claude Code session with a seeded preference;
       confirm warning appears and `remem rules list` shows provenance.
 

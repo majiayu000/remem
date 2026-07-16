@@ -294,6 +294,7 @@ Claude Code workflow
         |
         |- SessionStart      -> Inject memories + preferences
         |- UserPromptSubmit  -> Register session, flush stale queues
+        |- PreToolUse(Bash)  -> Evaluate compiled preference rules
         |- PostToolUse       -> Capture tool operations (queued, <1ms)
         '- Stop              -> Summarize in background (~6ms return)
 
@@ -314,6 +315,36 @@ The capture pipeline starts with an append-only ledger:
 payloads out of prompt-sized rows, and `extraction_tasks` coalesces work by
 host/project/session instead of creating one LLM job per tool call. Curated
 memory remains the promoted output of this pipeline, not the raw event itself.
+
+### Compiled preference rules
+
+Compiled preference rules are disabled by default. Enable the worker/compiler
+explicitly with `remem config set rule_compilation.enabled true`; SQLite
+remains canonical, and the background worker rebuilds the derived
+`<data-dir>/compiled_rules/<project-hash>.json` artifact. CLI overrides enqueue
+that rebuild and take effect after it completes, without restarting the host:
+
+```bash
+remem rules list [--project <path>]
+remem rules disable <rule-id>
+remem rules enable <rule-id>
+remem rules set-action <rule-id> warn
+remem rules set-action <rule-id> block --host claude-code
+```
+
+On Claude Code, the installed `PreToolUse(Bash)` hook evaluates the artifact
+before execution: `warn` is the default visible action, while `block` requires
+explicit per-rule opt-in. `PostToolUse` remains capture-only and is not an
+enforcement path. Codex has no supported pre-execution command hook, so remem
+reports command enforcement as unsupported there and rejects Codex block-mode
+claims. Missing, corrupt, or unsupported artifacts fail open and record an
+error-level diagnostic instead of blocking the agent.
+
+`remem doctor` reports whether compilation is enabled, artifact
+presence/validity and rule count, compile time/error, the latest evaluation
+error, and Claude/Codex enforcement capability without printing rule payloads.
+GH-671 remains open because #813 still owns the exact global-owner filter and
+exhaustive eligibility matrix.
 
 ## Remem vs Built-in `MEMORY.md`
 
@@ -627,6 +658,11 @@ remem status
 remem status --json
 remem config show
 remem config set memory_ai.profiles.codex.model gpt-5.2
+remem rules list [--project <path>]
+remem rules disable <rule-id>
+remem rules enable <rule-id>
+remem rules set-action <rule-id> warn
+remem rules set-action <rule-id> block --host claude-code
 remem model current
 remem model list
 remem model use balanced --dry-run

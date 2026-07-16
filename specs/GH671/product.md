@@ -23,15 +23,15 @@ remem owns both the memory store and the hook surfaces, so high-confidence,
 machine-checkable corrections can become local runtime checks instead of
 remaining recall-only prose.
 
-Phase 1 implementation status: `SP671-T1` through `SP671-T3` and
-`SP671-T5` through `SP671-T7` are implemented.
-That includes disabled-by-default configuration, canonical SQLite state,
-evidence-backed reinforcement, the artifact/evaluator foundation, and
-deterministic worker-side compilation driven by lifecycle jobs and periodic
-convergence sweeps. GH-813 identified that global ownership is still filtered
-too broadly; its exact owner correction, exhaustive eligibility matrix, CLI
-rule management, and final status reconciliation remain pending, so #671 must
-stay open.
+Phase 1 implementation status: `SP671-T1`, `SP671-T2`, and `SP671-T4`
+through `SP671-T7` are implemented. The core T3 compiler is present, including
+disabled-by-default configuration, canonical SQLite state, evidence-backed
+reinforcement, the artifact/evaluator foundation, and deterministic
+worker-side compilation driven by lifecycle jobs and periodic convergence
+sweeps. #837 provides the CLI management evidence and #840 provides the doctor
+evidence. GH-813 identified that global ownership is still filtered too
+broadly; its exact owner correction and exhaustive eligibility matrix keep T3
+and the final T8 closure incomplete, so #671 must stay open.
 
 ## Goals
 
@@ -104,14 +104,15 @@ stay open.
 - [x] The existing hook latency benchmark passes both fixed budgets: enabled
       p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
       `1.0 ms`. MAD remains informational and cannot decide pass/fail.
-- [ ] `remem rules list` shows provenance, effective action, disabled state,
-      and source memory for each compiled rule.
-- [ ] Disable, enable, and `set-action warn|block` round trips are covered by
-      tests and take effect after the next artifact build without restart.
+- [x] `remem rules list` shows provenance, effective action, disabled state,
+      and source memory for each compiled rule, covered by #837.
+- [x] Disable, enable, and `set-action warn|block` round trips are covered by
+      #837 tests and take effect after the next artifact build without restart.
 - [x] Superseding, suppressing, expiring, or deleting a source preference
       removes the derived rule on the next compile pass.
-- [ ] Doctor reports compiled-rule count, last compile time, host enforcement
-      capability, and the most recent compile or evaluation error.
+- [x] Doctor reports compiled-rule count, last compile time, host enforcement
+      capability, and the most recent compile or evaluation error, covered by
+      #840 human/JSON, capability, corruption, recovery, and privacy tests.
 
 ## Edge Cases
 
