@@ -78,6 +78,10 @@ def assert_runtime_verifier() -> None:
             ("qualified", "import checks.specrail_untracked_helper", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("from checks multi-name", "from checks import specrail_lib, specrail_untracked_helper", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("nested qualified", "import checks.specrail_untracked.specrail_helper", "checks/specrail_untracked/specrail_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("dynamic importlib literal", "import importlib; importlib.import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("dynamic builtin literal", "__import__('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("dynamic nonliteral", "import importlib; module_name = 'specrail_untracked_helper'; importlib.import_module(module_name)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("outside checks absolute", "import tools.specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("relative", "from . import specrail_lib", None, "UNSUPPORTED RELATIVE LOCAL IMPORT"),
             ("path escape", "import checks.specrail_escape_helper", None, "LOCAL IMPORT PATH ESCAPE"),
         )
@@ -117,7 +121,7 @@ def assert_runtime_verifier() -> None:
             assert unclassified_import.returncode != 0, f"{label} import must fail"
             assert "files match lock" in unclassified_import.stdout
             assert expected in unclassified_import.stderr
-            if helper_relative:
+            if helper_relative and expected == "UNCLASSIFIED LOCAL IMPORT":
                 assert helper_relative in unclassified_import.stderr
             elif label == "path escape":
                 assert "checks/specrail_escape_helper.py" in unclassified_import.stderr
@@ -128,6 +132,9 @@ def assert_runtime_verifier() -> None:
             nested_helper = repo / "checks" / "specrail_untracked"
             if nested_helper.exists():
                 shutil.rmtree(nested_helper)
+            tools_helper = repo / "tools" / "specrail_untrusted_helper.py"
+            if tools_helper.exists():
+                tools_helper.unlink()
             escape_helper = repo / "checks" / "specrail_escape_helper.py"
             if escape_helper.exists():
                 escape_helper.unlink()
@@ -153,6 +160,52 @@ def assert_runtime_verifier() -> None:
         assert "specrail_missing_workflow_dependency" in missing_workflow.stderr
 
 
+def assert_sync_copy_allows_new_managed_file() -> None:
+    with (
+        tempfile.TemporaryDirectory(prefix="remem-sync-target-") as target_raw,
+        tempfile.TemporaryDirectory(prefix="remem-sync-upstream-") as upstream_raw,
+    ):
+        target = Path(target_raw)
+        upstream = Path(upstream_raw)
+        copy_pack(target)
+        copy_pack(upstream)
+        new_managed = upstream / "checks" / "specrail_new_upstream.py"
+        new_managed.write_text("VALUE = 1\n", encoding="utf-8")
+        assert_passed(run(["git", "add", "-A"], cwd=upstream), "stage upstream fixture")
+        assert_passed(
+            run(
+                [
+                    "git", "-c", "user.name=SpecRail Test",
+                    "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "add upstream check fixture",
+                ],
+                cwd=upstream,
+            ),
+            "commit upstream fixture",
+        )
+
+        sync_script = target / "scripts" / "sync-specrail-checks.sh"
+        script = sync_script.read_text(encoding="utf-8")
+        needle = '  "checks/specrail_lib.py"\n'
+        assert needle in script
+        sync_script.write_text(
+            script.replace(
+                needle,
+                needle + '  "checks/specrail_new_upstream.py"\n',
+                1,
+            ),
+            encoding="utf-8",
+        )
+        sync_copy = run([str(sync_script), str(upstream)], cwd=target)
+        assert_passed(sync_copy, "normal sync with newly copied managed check")
+        assert "newly copied upstream-managed Python files pending tracking" in sync_copy.stdout
+        assert (target / "checks" / "specrail_new_upstream.py").is_file()
+
+        strict_verify = run([str(sync_script), "--verify"], cwd=target)
+        assert strict_verify.returncode != 0
+        assert "CLASSIFIED PYTHON IS NOT TRACKED: checks/specrail_new_upstream.py" in strict_verify.stderr
+
+
 def main() -> int:
     assert_passed(
         run([sys.executable, str(WORKFLOW_CHECK), "--repo", str(ROOT)], cwd=ROOT),
@@ -164,6 +217,7 @@ def main() -> int:
     )
     run_schema_contract_tests()
     assert_runtime_verifier()
+    assert_sync_copy_allows_new_managed_file()
     print("SpecRail gate wiring test passed")
     return 0
 

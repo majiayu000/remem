@@ -122,7 +122,8 @@ PY
 }
 
 verify_python_imports() {
-  python3 - "$LOCK_FILE" "$REPO_ROOT" <<'PY'
+  local tracking_mode="${1:-strict}"
+  python3 - "$LOCK_FILE" "$REPO_ROOT" "$tracking_mode" <<'PY'
 import ast
 import importlib
 import json
@@ -132,18 +133,30 @@ from pathlib import Path
 
 lock_path = Path(sys.argv[1])
 repo_root = Path(sys.argv[2])
+tracking_mode = sys.argv[3]
+if tracking_mode not in {"strict", "allow-untracked-managed"}:
+    print(f"INVALID TRACKING MODE: {tracking_mode}", file=sys.stderr)
+    raise SystemExit(1)
+allow_untracked_managed = tracking_mode == "allow-untracked-managed"
 with lock_path.open(encoding="utf-8") as fh:
     lock = json.load(fh)
 
 checks_dir = repo_root / "checks"
 managed = {Path(entry["path"]) for entry in lock["files"]}
 excluded = {Path(path) for path in lock["excluded"]}
-managed_python = {path for path in managed if path.parent == Path("checks") and path.suffix == ".py"}
-excluded_python = {path for path in excluded if path.parent == Path("checks") and path.suffix == ".py"}
+managed_python = {path for path in managed if path.suffix == ".py"}
+excluded_python = {path for path in excluded if path.suffix == ".py"}
 classified_python = managed_python | excluded_python
+managed_checks_python = {
+    path for path in managed_python if path.parts and path.parts[0] == "checks"
+}
+excluded_checks_python = {
+    path for path in excluded_python if path.parts and path.parts[0] == "checks"
+}
+classified_checks_python = managed_checks_python | excluded_checks_python
 
 tracked = subprocess.run(
-    ["git", "-C", str(repo_root), "ls-files", "--", "checks"],
+    ["git", "-C", str(repo_root), "ls-files"],
     capture_output=True,
     text=True,
     check=False,
@@ -156,39 +169,54 @@ tracked_python = {
     for line in tracked.stdout.splitlines()
     if line and Path(line).suffix == ".py"
 }
-unclassified = sorted(tracked_python - classified_python)
-untracked = sorted(classified_python - tracked_python)
-if unclassified or untracked:
+tracked_checks_python = {
+    path for path in tracked_python if path.parts and path.parts[0] == "checks"
+}
+unclassified = sorted(tracked_checks_python - classified_checks_python)
+untracked_managed = sorted(managed_python - tracked_python)
+untracked_excluded = sorted(excluded_python - tracked_python)
+if unclassified or untracked_excluded or (untracked_managed and not allow_untracked_managed):
     for path in unclassified:
         print(f"UNCLASSIFIED TRACKED PYTHON: {path}", file=sys.stderr)
-    for path in untracked:
+    for path in untracked_excluded:
         print(f"CLASSIFIED PYTHON IS NOT TRACKED: {path}", file=sys.stderr)
+    if not allow_untracked_managed:
+        for path in untracked_managed:
+            print(f"CLASSIFIED PYTHON IS NOT TRACKED: {path}", file=sys.stderr)
     raise SystemExit(1)
 
 repo_root_resolved = repo_root.resolve()
 checks_dir_resolved = checks_dir.resolve()
 
 
+def candidate_paths(base):
+    return (base.with_suffix(".py"), base / "__init__.py")
+
+
 def existing_local_paths(module):
     parts = module.split(".")
-    if parts and parts[0] == "checks":
-        parts = parts[1:]
     if not parts or any(not part or part in {".", ".."} for part in parts):
         return []
-    base = checks_dir.joinpath(*parts)
-    candidates = (base.with_suffix(".py"), base / "__init__.py")
+    bases = []
+    if parts[0] == "checks":
+        bases.append((checks_dir.joinpath(*parts[1:]), checks_dir_resolved))
+    else:
+        bases.append((checks_dir.joinpath(*parts), checks_dir_resolved))
+        bases.append((repo_root.joinpath(*parts), repo_root_resolved))
     resolved_paths = []
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        resolved = candidate.resolve()
-        try:
-            resolved.relative_to(checks_dir_resolved)
-            relative = resolved.relative_to(repo_root_resolved)
-        except ValueError:
-            print(f"LOCAL IMPORT PATH ESCAPE: {candidate}", file=sys.stderr)
-            raise SystemExit(1)
-        resolved_paths.append(relative)
+    for base, allowed_root in bases:
+        for candidate in candidate_paths(base):
+            if not candidate.is_file():
+                continue
+            resolved = candidate.resolve()
+            try:
+                resolved.relative_to(allowed_root)
+                relative = resolved.relative_to(repo_root_resolved)
+            except ValueError:
+                print(f"LOCAL IMPORT PATH ESCAPE: {candidate}", file=sys.stderr)
+                raise SystemExit(1)
+            if relative not in resolved_paths:
+                resolved_paths.append(relative)
     return resolved_paths
 
 
@@ -202,13 +230,25 @@ def require_classified_import(source, module):
             raise SystemExit(1)
 
 
-for relative_path in sorted(tracked_python):
+for relative_path in sorted(classified_checks_python):
     source_path = repo_root / relative_path
     try:
         tree = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(relative_path))
     except (OSError, SyntaxError) as exc:
         print(f"AST FAILED: {relative_path}: {type(exc).__name__}: {exc}", file=sys.stderr)
         raise SystemExit(1) from exc
+    importlib_aliases = {"importlib"}
+    import_module_aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "importlib":
+                    importlib_aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom) and not node.level and node.module == "importlib":
+            for alias in node.names:
+                if alias.name == "import_module":
+                    import_module_aliases.add(alias.asname or alias.name)
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -231,9 +271,45 @@ for relative_path in sorted(tracked_python):
                 if alias.name != "*":
                     qualified = f"{module}.{alias.name}" if module else alias.name
                     require_classified_import(relative_path, qualified)
+        elif isinstance(node, ast.Call):
+            function = node.func
+            dynamic_name = None
+            if isinstance(function, ast.Name) and function.id == "__import__":
+                dynamic_name = "__import__"
+            elif isinstance(function, ast.Name) and function.id in import_module_aliases:
+                dynamic_name = "importlib.import_module"
+            elif (
+                isinstance(function, ast.Attribute)
+                and function.attr == "import_module"
+                and isinstance(function.value, ast.Name)
+                and function.value.id in importlib_aliases
+            ):
+                dynamic_name = "importlib.import_module"
+            if dynamic_name is None:
+                continue
+            target = node.args[0] if node.args else next(
+                (keyword.value for keyword in node.keywords if keyword.arg == "name"),
+                None,
+            )
+            if not isinstance(target, ast.Constant) or not isinstance(target.value, str):
+                print(
+                    f"NON-LITERAL DYNAMIC IMPORT: {relative_path}: "
+                    f"{dynamic_name} target cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if target.value.startswith("."):
+                print(
+                    f"UNSUPPORTED RELATIVE LOCAL IMPORT: {relative_path}: "
+                    "checks/ is a flat non-package layout",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            require_classified_import(relative_path, target.value)
 
+sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(checks_dir))
-for relative_path in sorted(classified_python):
+for relative_path in sorted(classified_checks_python):
     try:
         importlib.import_module(relative_path.stem)
     except BaseException as exc:
@@ -245,6 +321,11 @@ for relative_path in sorted(classified_python):
 
 print(f"ok: {len(managed_python)} upstream-managed Python files classified")
 print(f"ok: {len(excluded_python)} local-owned excluded Python files classified")
+if untracked_managed:
+    print(
+        f"ok: {len(untracked_managed)} newly copied upstream-managed Python files "
+        "pending tracking"
+    )
 print("ok: classified SpecRail Python import closure")
 PY
 }
@@ -255,7 +336,7 @@ verify_workflow() {
 
 if [[ "${1:-}" == "--verify" ]]; then
   verify_lock
-  verify_python_imports
+  verify_python_imports strict
   verify_workflow
   exit 0
 fi
@@ -272,5 +353,5 @@ for rel in "${SYNCED_FILES[@]}"; do
 done
 write_lock "$upstream_sha"
 verify_lock
-verify_python_imports
+verify_python_imports allow-untracked-managed
 verify_workflow
