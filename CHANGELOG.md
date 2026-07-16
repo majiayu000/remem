@@ -3,11 +3,14 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.5.211` for GH-671 T7: repeated-correction fixtures
+- Staged source version `0.5.213` for GH-671 T7: repeated-correction fixtures
   cover package-manager choices, forbidden commit trailers, and forbidden
   commands; one Brush AST execution model closes wrapper, quoting, function,
   mirror-push, and arithmetic-substitution bypasses while the release hook
   remains within the fixed 1 ms delta and 15 ms enabled-p95 budgets.
+- Staged source version `0.5.211` for #720 query parity: the MCP `search_raw`
+  tool and CLI `query raw` now share one raw-query assembly path, aligning the
+  JSON envelope and date-only `until` bounds across surfaces.
 - Staged source version `0.5.210` for GH-684: frozen legacy-surface writes now
   fail doctor instead of remaining warning-only, while the retirement contract
   fixes the 0.6.0 announcement and no-earlier-than-0.7.0 guarded-drop window.

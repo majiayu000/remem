@@ -826,7 +826,10 @@ remem raw sessions --since 2026-06-01 --until 2026-06-30 --sample 3 --json
 ```
 
 `remem raw sessions` groups rows by source root, project, and session ID, and
-can include the first N user-message samples per session.
+can include the first N user-message samples per session. A date-only `since`
+starts at `00:00:00` UTC, while a date-only `until` includes that entire UTC
+day through `23:59:59`. MCP `search_raw` returns the same JSON envelope and
+pagination fields as `remem raw search ... --json`.
 
 ### Scriptable JSON output
 

@@ -280,7 +280,7 @@ pub(super) struct SearchRawParams {
     )]
     pub since: Option<String>,
     #[schemars(
-        description = "Only rows at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD)"
+        description = "Only rows at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD; a date includes that full UTC day)"
     )]
     pub until: Option<String>,
 }
@@ -292,7 +292,7 @@ pub(super) struct ListRawSessionsParams {
     )]
     pub since: Option<String>,
     #[schemars(
-        description = "Only sessions with messages at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD)"
+        description = "Only sessions with messages at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD; a date includes that full UTC day)"
     )]
     pub until: Option<String>,
     #[schemars(description = "Project name filter")]

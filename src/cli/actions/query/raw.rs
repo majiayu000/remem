@@ -1,11 +1,13 @@
 use anyhow::Result;
 use rusqlite::Connection;
-use serde::Serialize;
 
 use crate::cli::types::{RawAction, RawRole};
 use crate::memory::raw_archive::{
-    build_sessions_json, list_sessions, parse_time_bound, RawMessage, RawSearchRequest,
-    RawSessionQuery, RawSessionSummary,
+    build_sessions_json, list_sessions, RawMessage, RawSearchRequest, RawSessionQuery,
+    RawSessionSummary,
+};
+use crate::memory::raw_query::{
+    build_raw_search_json, parse_time_lower_bound, parse_time_upper_bound,
 };
 use crate::{db, memory::raw_archive::search_raw_messages};
 
@@ -30,8 +32,8 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             role,
             limit,
             offset,
-            since.as_deref().map(parse_time_bound).transpose()?,
-            until.as_deref().map(parse_time_bound).transpose()?,
+            since.as_deref().map(parse_time_lower_bound).transpose()?,
+            until.as_deref().map(parse_time_upper_bound).transpose()?,
             json,
         ),
         RawAction::Sessions {
@@ -41,8 +43,8 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             sample,
             json,
         } => run_raw_sessions(
-            since.as_deref().map(parse_time_bound).transpose()?,
-            until.as_deref().map(parse_time_bound).transpose()?,
+            since.as_deref().map(parse_time_lower_bound).transpose()?,
+            until.as_deref().map(parse_time_upper_bound).transpose()?,
             project.as_deref(),
             sample,
             json,
@@ -70,7 +72,7 @@ pub(super) fn run_raw_search(
         project,
         branch,
         role.map(RawRole::as_str),
-        normalized_limit + 1,
+        normalized_limit.saturating_add(1),
         normalized_offset,
         since_epoch,
         until_epoch,
@@ -212,90 +214,6 @@ pub(super) fn render_raw_search_results(
         ));
     }
     output
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(super) fn build_raw_search_json(
-    query: &str,
-    project: Option<&str>,
-    branch: Option<&str>,
-    role: Option<&str>,
-    limit: i64,
-    offset: i64,
-    since_epoch: Option<i64>,
-    until_epoch: Option<i64>,
-    has_more: bool,
-    rows: &[RawMessage],
-) -> RawSearchJson {
-    let normalized_limit = limit.max(1);
-    let normalized_offset = offset.max(0);
-    RawSearchJson {
-        query: query.to_string(),
-        project: project.map(str::to_string),
-        branch: branch.map(str::to_string),
-        role: role.map(str::to_string),
-        limit: normalized_limit,
-        offset: normalized_offset,
-        since_epoch,
-        until_epoch,
-        source_type: "raw_archive".to_string(),
-        note: "raw archive rows are captured chat turns, not curated memories".to_string(),
-        count: rows.len(),
-        has_more,
-        next_offset: has_more.then_some(normalized_offset + normalized_limit),
-        results: rows.iter().map(RawArchiveRowJson::from).collect(),
-    }
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct RawSearchJson {
-    pub query: String,
-    pub project: Option<String>,
-    pub branch: Option<String>,
-    pub role: Option<String>,
-    pub limit: i64,
-    pub offset: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub since_epoch: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub until_epoch: Option<i64>,
-    pub source_type: String,
-    pub note: String,
-    pub count: usize,
-    pub has_more: bool,
-    pub next_offset: Option<i64>,
-    pub results: Vec<RawArchiveRowJson>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub(super) struct RawArchiveRowJson {
-    pub id: i64,
-    pub source_type: String,
-    pub session_id: String,
-    pub project: String,
-    pub role: String,
-    pub content: String,
-    pub source: String,
-    pub branch: Option<String>,
-    pub cwd: Option<String>,
-    pub created_at_epoch: i64,
-}
-
-impl From<&RawMessage> for RawArchiveRowJson {
-    fn from(row: &RawMessage) -> Self {
-        Self {
-            id: row.id,
-            source_type: "raw_archive".to_string(),
-            session_id: row.session_id.clone(),
-            project: row.project.clone(),
-            role: row.role.clone(),
-            content: row.content.clone(),
-            source: row.source.clone(),
-            branch: row.branch.clone(),
-            cwd: row.cwd.clone(),
-            created_at_epoch: row.created_at_epoch,
-        }
-    }
 }
 
 fn format_raw_row(row: &RawMessage) -> String {
