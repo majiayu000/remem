@@ -426,8 +426,8 @@ not described as legacy.
 1. `remem pending migrate-legacy` (already exists) is the migration path for
    any non-empty `pending_observations` in the wild; extend its report to
    print migrated/skipped/valueless counts if it does not already.
-2. Deprecation window: at least one minor release where doctor announces
-   the upcoming drop and the release notes carry it.
+2. Deprecation window: remem 0.6.0 must announce the upcoming drop in doctor
+   output and release notes. The guarded drop cannot ship before remem 0.7.0.
 3. Guarded drop migration for `pending_observations` (pre-check refuses when
    unmigrated rows exist). No drop for `observations`, `observations_fts`,
    or `session_summaries` — they stay.
