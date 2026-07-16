@@ -18,6 +18,10 @@ impl CommandCollector {
         command: &SimpleCommand,
     ) -> Result<EffectiveStdin, String> {
         let mut payloads = HashMap::<i32, Option<String>>::new();
+        if let Some(payload) = &self.inherited_stdin {
+            payloads.insert(0, Some(payload.clone()));
+        }
+        let mut stdin_replaced = false;
         for items in [
             command.prefix.as_ref().map(|prefix| &prefix.0),
             command.suffix.as_ref().map(|suffix| &suffix.0),
@@ -31,17 +35,19 @@ impl CommandCollector {
                 };
                 match redirect {
                     IoRedirect::HereDocument(fd, here_doc) => {
-                        payloads.insert(fd.unwrap_or(0), Some(here_doc.doc.value.clone()));
+                        let target_fd = fd.unwrap_or(0);
+                        stdin_replaced |= target_fd == 0;
+                        payloads.insert(target_fd, Some(here_doc.doc.value.clone()));
                     }
                     IoRedirect::HereString(fd, word) => {
                         let value = self.command_word(word)?;
-                        payloads.insert(
-                            fd.unwrap_or(0),
-                            (value != DYNAMIC_SHELL_WORD).then_some(value),
-                        );
+                        let target_fd = fd.unwrap_or(0);
+                        stdin_replaced |= target_fd == 0;
+                        payloads.insert(target_fd, (value != DYNAMIC_SHELL_WORD).then_some(value));
                     }
                     IoRedirect::File(fd, kind, target) => {
                         let target_fd = fd.unwrap_or_else(|| default_redirect_fd(kind));
+                        stdin_replaced |= target_fd == 0;
                         let payload = if matches!(kind, IoFileRedirectKind::DuplicateInput) {
                             duplicate_input_fd(target, self)?
                                 .and_then(|source_fd| payloads.get(&source_fd).cloned().flatten())
@@ -54,9 +60,9 @@ impl CommandCollector {
                 }
             }
         }
-        Ok(match payloads.remove(&0) {
-            Some(payload) => EffectiveStdin::Replaced(payload),
-            None => EffectiveStdin::Untouched,
+        Ok(match (stdin_replaced, payloads.remove(&0)) {
+            (false, _) => EffectiveStdin::Untouched,
+            (true, payload) => EffectiveStdin::Replaced(payload.flatten()),
         })
     }
 }

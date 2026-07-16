@@ -411,6 +411,15 @@ fn force_push_rule_tracks_static_shell_state_and_indirect_execution() {
         "git(){ command git \"$@\";}; git push --force",
         "trap 'git push --force' EXIT; case ok in o*) :;; ok) trap - EXIT;; esac",
         "case ok in o*) : ;& nope) git push --force;; esac",
+        "f(){ command git \"$@\";}; f push --force",
+        "git(){ command git \"$1\" \"$2\";}; git push --force",
+        "bash -c 'sh 3<&0 <&3' <<'EOF'\ngit push --force\nEOF",
+        "trap 'git push --force' EXIT; trap -p EXIT",
+        "trap 'git push --force' EXIT; exit; trap - EXIT",
+        "shopt -s nocasematch; case OK in ok) git push --force;; esac",
+        "f(){ git push --force;}; typeset -fx f; bash -c f",
+        "shopt -s lastpipe; unknown && set -m; printf x | { f(){ git push --force;};}; f",
+        "shopt -s lastpipe; set -m; unknown && set +m; printf x | { f(){ git push --force;};}; f",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -435,6 +444,10 @@ fn force_push_rule_prunes_static_non_execution_and_honors_overrides() {
         "f(){ git push --force;}; declare -f f; bash -c f",
         "printf x | { f(){ git push --force;};}; f",
         "bash -c 'sh </dev/null' <<'EOF'\ngit push --force\nEOF",
+        "f(){ printf '%s\\n' \"$@\";}; f git push --force",
+        "git -c alias.pf='echo safe; push --force' pf",
+        "shopt -s expand_aliases\nalias gp='git push --force'; gp",
+        "shopt -s lastpipe; set -m; printf x | { f(){ git push --force;};}; f",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -464,6 +477,22 @@ fn force_push_rule_prunes_static_non_execution_and_honors_overrides() {
         .collect::<Vec<_>>()
         .join(",");
     let command = format!("git push {{{reverse}}}");
+    let outcome = evaluate_artifact(&artifact, &EvaluationInput { command });
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block);
+    assert_eq!(outcome.matches.len(), 1);
+    assert!(outcome.diagnostics.is_empty());
+
+    let alternating = (0..=300)
+        .map(|index| {
+            if index % 2 == 0 {
+                "--force"
+            } else {
+                "--no-force"
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let command = format!("git push {{{alternating}}}");
     let outcome = evaluate_artifact(&artifact, &EvaluationInput { command });
     assert_eq!(outcome.verdict, EvaluationVerdict::Block);
     assert_eq!(outcome.matches.len(), 1);

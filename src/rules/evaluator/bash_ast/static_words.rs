@@ -39,14 +39,10 @@ pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<S
         .into_iter()
         .filter(|value| is_critical_static_token(value))
         .collect::<Vec<_>>();
-    variants.extend(
-        CRITICAL_STATIC_TOKENS
-            .iter()
-            .filter(|target| brace_pieces_can_equal(pieces, target))
-            .map(|target| (*target).to_string()),
-    );
     let mut seen = std::collections::HashSet::new();
+    variants.reverse();
     variants.retain(|variant| seen.insert(variant.clone()));
+    variants.reverse();
     variants
 }
 
@@ -110,7 +106,9 @@ fn security_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
 
 fn summarize_security_variants(variants: &mut Vec<String>) {
     let mut seen = std::collections::HashSet::new();
+    variants.reverse();
     variants.retain(|variant| seen.insert(variant.clone()));
+    variants.reverse();
     if variants.len() <= MAX_STATIC_WORD_VARIANTS {
         return;
     }
@@ -118,7 +116,7 @@ fn summarize_security_variants(variants: &mut Vec<String>) {
     retained.sort_unstable_by(|left, right| {
         security_variant_score(&variants[*right])
             .cmp(&security_variant_score(&variants[*left]))
-            .then_with(|| left.cmp(right))
+            .then_with(|| right.cmp(left))
     });
     retained.truncate(MAX_STATIC_WORD_VARIANTS);
     retained.sort_unstable();
@@ -133,70 +131,17 @@ fn security_variant_score(value: &str) -> usize {
         return 100;
     }
     let before_force = value.split_once('f').map_or(value, |(prefix, _)| prefix);
+    let bare = value.trim_start_matches('-');
     if value.contains('f') && !before_force.contains('o') {
         return 50;
     }
-    if value.starts_with('+') || "mirror".starts_with(value.trim_start_matches('-')) {
+    if !bare.is_empty() && ("force".ends_with(bare) || "mirror".ends_with(bare)) {
+        return 50;
+    }
+    if value.starts_with('+') || "mirror".starts_with(bare) {
         return 40;
     }
     usize::from(value.chars().any(|ch| matches!(ch, '-' | '+' | 'f' | 'm')))
-}
-
-fn brace_pieces_can_equal(pieces: &[BraceExpressionOrText], target: &str) -> bool {
-    let mut positions = vec![0];
-    for piece in pieces {
-        let mut next = Vec::new();
-        for position in positions {
-            match piece {
-                BraceExpressionOrText::Text(text) => {
-                    if target[position..].starts_with(text) {
-                        next.push(position + text.len());
-                    }
-                }
-                BraceExpressionOrText::Expr(expression) => {
-                    for end in position..=target.len() {
-                        if target.is_char_boundary(end)
-                            && brace_expression_can_equal(expression, &target[position..end])
-                        {
-                            next.push(end);
-                        }
-                    }
-                }
-            }
-        }
-        next.sort_unstable();
-        next.dedup();
-        positions = next;
-        if positions.is_empty() {
-            return false;
-        }
-    }
-    positions.contains(&target.len())
-}
-
-fn brace_expression_can_equal(expression: &[BraceExpressionMember], target: &str) -> bool {
-    expression.iter().any(|member| match member {
-        BraceExpressionMember::Child(pieces) => brace_pieces_can_equal(pieces, target),
-        BraceExpressionMember::NumberSequence {
-            start,
-            end,
-            increment,
-        } => target
-            .parse::<i64>()
-            .ok()
-            .is_some_and(|value| sequence_contains(*start, *end, *increment, value)),
-        BraceExpressionMember::CharSequence {
-            start,
-            end,
-            increment,
-        } => {
-            let mut chars = target.chars();
-            chars.next().is_some_and(|value| {
-                chars.next().is_none()
-                    && sequence_contains(*start as i64, *end as i64, *increment, value as i64)
-            })
-        }
-    })
 }
 
 fn sequence_contains(start: i64, end: i64, increment: i64, value: i64) -> bool {

@@ -1,6 +1,7 @@
 use super::static_execution::{
-    direct_command_name, static_alias_definitions, static_exit_trap_change,
-    static_shopt_expand_aliases, static_shopt_lastpipe, static_unalias_names, ExitTrapChange,
+    direct_command_name, static_alias_definitions, static_exit_trap_change, static_monitor_mode,
+    static_shopt_expand_aliases, static_shopt_lastpipe, static_shopt_nocasematch,
+    static_unalias_names, ExitTrapChange,
 };
 use super::{unwrap, AliasDefinition, CommandCollector, ExitTrapDefinition};
 
@@ -16,18 +17,28 @@ impl CommandCollector {
                 self.lastpipe = enabled;
             }
         }
+        if let Some(enabled) = static_shopt_nocasematch(tokens) {
+            if enabled || self.execution_is_definite {
+                self.nocasematch = enabled;
+            }
+        }
+        if let Some(enabled) = static_monitor_mode(tokens) {
+            if self.execution_is_definite || !enabled {
+                self.monitor_mode = enabled;
+            }
+        }
         if let Some(definitions) = static_alias_definitions(tokens) {
             for (name, payload) in definitions {
                 if self.execution_is_definite {
-                    self.aliases.insert(
+                    self.pending_aliases.insert(
                         name.to_string(),
-                        vec![AliasDefinition {
+                        Some(vec![AliasDefinition {
                             payload: payload.to_string(),
                             is_definite: true,
-                        }],
+                        }]),
                     );
                 } else {
-                    let definitions = self.aliases.entry(name.to_string()).or_default();
+                    let mut definitions = self.aliases.get(name).cloned().unwrap_or_default();
                     definitions
                         .iter_mut()
                         .for_each(|definition| definition.is_definite = false);
@@ -35,16 +46,18 @@ impl CommandCollector {
                         payload: payload.to_string(),
                         is_definite: false,
                     });
+                    self.pending_aliases
+                        .insert(name.to_string(), Some(definitions));
                 }
             }
         }
         if let Some(names) = static_unalias_names(tokens) {
             if names.is_empty() && self.execution_is_definite {
-                self.aliases.clear();
+                self.pending_clear_aliases = true;
             }
             for name in names {
                 if self.execution_is_definite {
-                    self.aliases.remove(name);
+                    self.pending_aliases.insert(name.to_string(), None);
                 } else if let Some(definitions) = self.aliases.get_mut(name) {
                     definitions
                         .iter_mut()
@@ -79,7 +92,7 @@ impl CommandCollector {
     }
 
     pub(super) fn collect_static_alias_call(&mut self, tokens: &[String]) -> Result<bool, String> {
-        if !self.expand_aliases {
+        if !self.alias_expansion_active {
             return Ok(false);
         }
         let Some(name) = direct_command_name(tokens) else {
@@ -92,7 +105,8 @@ impl CommandCollector {
         if !self.active_aliases.insert(name.to_string()) {
             return Ok(definitely_defined);
         }
-        let command_index = unwrap::direct_command_index(tokens).expect("direct alias command");
+        let command_index = unwrap::direct_command_index(tokens)
+            .ok_or_else(|| "alias call lost its command position".to_string())?;
         let result = (|| {
             for definition in definitions {
                 let mut source = definition.payload;
@@ -110,13 +124,33 @@ impl CommandCollector {
         result.map(|()| definitely_defined)
     }
 
+    pub(super) fn commit_pending_alias_changes(&mut self) {
+        if self.pending_clear_aliases {
+            self.aliases.clear();
+        }
+        for (name, definitions) in std::mem::take(&mut self.pending_aliases) {
+            match definitions {
+                Some(definitions) => {
+                    self.aliases.insert(name, definitions);
+                }
+                None => {
+                    self.aliases.remove(&name);
+                }
+            }
+        }
+        self.pending_clear_aliases = false;
+    }
+
     pub(super) fn collect_exit_traps(&mut self) -> Result<(), String> {
         let traps = std::mem::take(&mut self.exit_traps);
+        let terminated = self.execution_terminated;
+        self.execution_terminated = false;
         for trap in traps {
             self.with_execution_certainty(trap.is_definite, |collector| {
                 collector.collect_source(&trap.payload)
             })?;
         }
+        self.execution_terminated = terminated;
         self.exit_traps.clear();
         Ok(())
     }
@@ -131,12 +165,18 @@ impl CommandCollector {
             self.functions.clear();
             self.exported_functions.clear();
             self.aliases.clear();
+            self.pending_aliases.clear();
+            self.pending_clear_aliases = false;
             self.expand_aliases = false;
+            self.alias_expansion_active = false;
             self.lastpipe = false;
+            self.nocasematch = false;
+            self.monitor_mode = false;
         }
         self.active_functions.clear();
         self.active_aliases.clear();
         self.exit_traps.clear();
+        self.execution_terminated = false;
         let result = collect(self).and_then(|value| {
             self.collect_exit_traps()?;
             Ok(value)
@@ -162,10 +202,16 @@ impl CommandCollector {
         }
         self.active_functions.clear();
         self.aliases.clear();
+        self.pending_aliases.clear();
+        self.pending_clear_aliases = false;
         self.active_aliases.clear();
         self.expand_aliases = false;
+        self.alias_expansion_active = false;
         self.lastpipe = false;
+        self.nocasematch = false;
+        self.monitor_mode = false;
         self.exit_traps.clear();
+        self.execution_terminated = false;
         let result = collect(self).and_then(|value| {
             self.collect_exit_traps()?;
             Ok(value)
@@ -204,10 +250,16 @@ impl CommandCollector {
             exported_functions: self.exported_functions.clone(),
             active_functions: self.active_functions.clone(),
             aliases: self.aliases.clone(),
+            pending_aliases: self.pending_aliases.clone(),
+            pending_clear_aliases: self.pending_clear_aliases,
             active_aliases: self.active_aliases.clone(),
             expand_aliases: self.expand_aliases,
+            alias_expansion_active: self.alias_expansion_active,
             lastpipe: self.lastpipe,
+            nocasematch: self.nocasematch,
+            monitor_mode: self.monitor_mode,
             exit_traps: self.exit_traps.clone(),
+            execution_terminated: self.execution_terminated,
             inherited_stdin: self.inherited_stdin.clone(),
         }
     }
@@ -217,10 +269,16 @@ impl CommandCollector {
         self.exported_functions = saved.exported_functions;
         self.active_functions = saved.active_functions;
         self.aliases = saved.aliases;
+        self.pending_aliases = saved.pending_aliases;
+        self.pending_clear_aliases = saved.pending_clear_aliases;
         self.active_aliases = saved.active_aliases;
         self.expand_aliases = saved.expand_aliases;
+        self.alias_expansion_active = saved.alias_expansion_active;
         self.lastpipe = saved.lastpipe;
+        self.nocasematch = saved.nocasematch;
+        self.monitor_mode = saved.monitor_mode;
         self.exit_traps = saved.exit_traps;
+        self.execution_terminated = saved.execution_terminated;
         self.inherited_stdin = saved.inherited_stdin;
     }
 }
@@ -230,10 +288,16 @@ struct ShellStateSnapshot {
     exported_functions: std::collections::HashSet<String>,
     active_functions: std::collections::HashSet<String>,
     aliases: std::collections::HashMap<String, Vec<AliasDefinition>>,
+    pending_aliases: std::collections::HashMap<String, Option<Vec<AliasDefinition>>>,
+    pending_clear_aliases: bool,
     active_aliases: std::collections::HashSet<String>,
     expand_aliases: bool,
+    alias_expansion_active: bool,
     lastpipe: bool,
+    nocasematch: bool,
+    monitor_mode: bool,
     exit_traps: Vec<ExitTrapDefinition>,
+    execution_terminated: bool,
     inherited_stdin: Option<String>,
 }
 

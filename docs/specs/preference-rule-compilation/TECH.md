@@ -273,9 +273,9 @@ hook-side writes.
   requires both fixed budgets: enabled p95 `<= 15.0 ms` and
   enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
   retained as informational output and does not affect pass/fail. The fresh
-  final-head fixed-budget artifact measured baseline p95 `8.494083 ms`, enabled
-  p95 `8.924458 ms`, delta `0.430375 ms`, complex-AST p95 `8.934542 ms`, and
-  MAD `0.382667 ms`; it passes both fixed budgets.
+  final-head fixed-budget artifact measured baseline p95 `8.552375 ms`, enabled
+  p95 `8.528000 ms`, delta `-0.024375 ms`, complex-AST p95 `8.848250 ms`, and
+  MAD `0.339000 ms`; it passes both fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan

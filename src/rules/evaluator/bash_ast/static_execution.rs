@@ -39,6 +39,9 @@ pub(super) fn static_exit_trap_change(tokens: &[String]) -> Option<ExitTrapChang
         return None;
     }
     index += 1;
+    if matches!(tokens.get(index).map(String::as_str), Some("-p" | "-l")) {
+        return None;
+    }
     if tokens.get(index).is_some_and(|token| token == "--") {
         index += 1;
     }
@@ -65,6 +68,31 @@ pub(super) fn static_shopt_expand_aliases(tokens: &[String]) -> Option<bool> {
 
 pub(super) fn static_shopt_lastpipe(tokens: &[String]) -> Option<bool> {
     static_shopt_state(tokens, "lastpipe")
+}
+
+pub(super) fn static_shopt_nocasematch(tokens: &[String]) -> Option<bool> {
+    static_shopt_state(tokens, "nocasematch")
+}
+
+pub(super) fn static_monitor_mode(tokens: &[String]) -> Option<bool> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if tokens.get(index)? != "set" {
+        return None;
+    }
+    index += 1;
+    match tokens.get(index)?.as_str() {
+        "-m" => Some(true),
+        "+m" => Some(false),
+        "-o" if tokens.get(index + 1).is_some_and(|name| name == "monitor") => Some(true),
+        "+o" if tokens.get(index + 1).is_some_and(|name| name == "monitor") => Some(false),
+        _ => None,
+    }
+}
+
+pub(super) fn static_shell_exits(tokens: &[String]) -> bool {
+    static_builtin_command_index(tokens)
+        .and_then(|index| tokens.get(index))
+        .is_some_and(|command| command == "exit")
 }
 
 fn static_shopt_state(tokens: &[String], expected: &str) -> Option<bool> {
@@ -121,7 +149,7 @@ pub(super) fn static_unalias_names(tokens: &[String]) -> Option<Vec<&str>> {
 
 pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, Vec<&str>)> {
     let mut index = static_builtin_command_index(tokens)?;
-    let is_declare = tokens.get(index)? == "declare";
+    let is_declare = matches!(tokens.get(index)?.as_str(), "declare" | "typeset");
     if !is_declare && tokens.get(index)? != "export" {
         return None;
     }

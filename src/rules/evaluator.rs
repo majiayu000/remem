@@ -288,6 +288,9 @@ fn git_alias_forces_push(tokens: &[String]) -> bool {
     let Ok(segments) = shell_command_segments(payload) else {
         return false;
     };
+    if !shell_alias && segments.len() != 1 {
+        return false;
+    }
     segments.into_iter().any(|mut segment| {
         if shell_alias {
             segment.extend_from_slice(&tokens[subcommand_index + 1..]);

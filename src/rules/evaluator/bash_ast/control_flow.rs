@@ -69,7 +69,7 @@ impl CommandCollector {
                     .any(|ch| matches!(ch, '*' | '?' | '[' | ']' | '(' | ')' | '|' | '\\'))
             {
                 all_exact = false;
-            } else if pattern == value {
+            } else if pattern == value || self.nocasematch && pattern.eq_ignore_ascii_case(value) {
                 return Ok(Some(true));
             }
         }
