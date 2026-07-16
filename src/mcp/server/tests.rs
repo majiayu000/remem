@@ -9,7 +9,6 @@ use super::errors::{self, McpErrorCode, McpToolError};
 use super::MemoryServer;
 use crate::db::test_support::ScopedTestDataDir;
 use crate::memory;
-use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
 use crate::memory::service::{resolve_local_note_path, sanitize_segment};
 
 mod compressed_sources;
