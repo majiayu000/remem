@@ -74,11 +74,13 @@ contract is complete.
   v1 artifacts with the original `regex` engine so upgrades preserve existing
   Unicode semantics until the worker regenerates the derived artifact.
 - The v2 classifier may emit `git_push_force_forbidden` for the exact, closed
-  low-risk directive `git push --force`. Evaluation uses the existing shell
-  tokenizer and a typed Git-push argument parser. Unquoted newlines and command
-  groups form executable segments, while quoted or echoed command text stays
-  inert, unquoted backslash-newline is removed as line continuation, and
-  heredoc bodies are excluded. Exact `--force`, standalone `-f`, `f` in valid
+  low-risk directive `git push --force`. Evaluation uses the Brush shell AST,
+  explicit static shell-expansion handling, and a typed Git-push argument
+  parser. Unquoted newlines and command groups form executable segments;
+  assignment-word, arithmetic, command-substitution, expandable-heredoc, and
+  static shell `-c` execution contexts are traversed; static brace alternatives
+  are evaluated; and quoted or echoed command text and quoted heredocs stay
+  inert. Exact `--force`, standalone `-f`, `f` in valid
   short-option clusters, and a non-deletion leading-`+` refspec match; ordinary
   positional arguments do not. The parser honors the `--` terminator and
   option arity so option values, deletions, remote names,
@@ -87,10 +89,10 @@ contract is complete.
   environment override and the nearest `.git` marker is a plain worktree
   layout. Explicit layouts, discovery controls such as
   `GIT_CEILING_DIRECTORIES`, command-scope config injection, local/default
-  global/system/XDG worktree-affecting Git config, and malformed inner markers
-  delegate to Git so project identity matches Git's own toplevel or fails
-  closed instead of falling through to a parent marker. Plain config keeps the
-  no-subprocess marker path.
+  global/system/XDG worktree-affecting Git config, filesystem device
+  boundaries, and malformed inner markers delegate to Git so project identity
+  matches Git's own toplevel or fails closed instead of falling through to a
+  parent marker. Plain config keeps the no-subprocess marker path.
 - Store derived artifacts under
   `<data_dir>/compiled_rules/<project-hash>.json`. SQLite remains canonical;
   artifacts are regenerated output.

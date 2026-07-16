@@ -130,7 +130,21 @@ enum GitMarkerDiscovery {
 }
 
 fn git_worktree_root_from_markers(cwd: &std::path::Path) -> GitMarkerDiscovery {
+    git_worktree_root_from_markers_with_device(cwd, filesystem_device_id)
+}
+
+fn git_worktree_root_from_markers_with_device(
+    cwd: &std::path::Path,
+    mut device_id: impl FnMut(&std::path::Path) -> std::io::Result<u64>,
+) -> GitMarkerDiscovery {
+    let Ok(starting_device) = device_id(cwd) else {
+        return GitMarkerDiscovery::RequiresResolver;
+    };
     for candidate in cwd.ancestors() {
+        match device_id(candidate) {
+            Ok(device) if device == starting_device => {}
+            Ok(_) | Err(_) => return GitMarkerDiscovery::RequiresResolver,
+        }
         let marker = candidate.join(".git");
         let metadata = match std::fs::symlink_metadata(&marker) {
             Ok(metadata) => metadata,
@@ -144,6 +158,18 @@ fn git_worktree_root_from_markers(cwd: &std::path::Path) -> GitMarkerDiscovery {
         };
     }
     GitMarkerDiscovery::None
+}
+
+#[cfg(unix)]
+fn filesystem_device_id(path: &std::path::Path) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+
+    std::fs::metadata(path).map(|metadata| metadata.dev())
+}
+
+#[cfg(not(unix))]
+fn filesystem_device_id(path: &std::path::Path) -> std::io::Result<u64> {
+    std::fs::metadata(path).map(|_| 0)
 }
 
 fn is_plain_git_directory_marker(marker: &std::path::Path) -> bool {
@@ -311,7 +337,7 @@ pub fn project_matches(value: Option<&str>, project: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
+    use std::{path::Path, process::Command};
 
     fn unique_temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -363,6 +389,17 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn marker_discovery_delegates_at_a_device_boundary() {
+        let cwd = PathBuf::from("/worktree/nested");
+        assert_eq!(
+            git_worktree_root_from_markers_with_device(&cwd, |path| {
+                Ok(if path == Path::new("/worktree") { 2 } else { 1 })
+            }),
+            GitMarkerDiscovery::RequiresResolver
+        );
     }
 
     #[test]

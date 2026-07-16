@@ -5,10 +5,13 @@ use brush_parser::ast::{
     IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand, UnexpandedArithmeticExpr,
     Word,
 };
-use brush_parser::word::{WordPiece, WordPieceWithSource};
+use brush_parser::word::{
+    BraceExpressionMember, BraceExpressionOrText, WordPiece, WordPieceWithSource,
+};
 use brush_parser::{Parser, ParserOptions};
 
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
+const MAX_STATIC_WORD_VARIANTS: usize = 256;
 
 pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String> {
     let mut collector = CommandCollector {
@@ -156,31 +159,40 @@ impl CommandCollector {
         let Some(name) = &command.word_or_name else {
             return self.collect_command_items(command.prefix.as_ref().map(|prefix| &prefix.0));
         };
-        let mut tokens = Vec::new();
+        let mut segments = vec![Vec::new()];
         if let Some(prefix) = &command.prefix {
             for item in &prefix.0 {
                 match item {
                     CommandPrefixOrSuffixItem::AssignmentWord(_, word) => {
-                        tokens.push(self.command_word(word)?);
+                        self.collect_word_commands(word)?;
+                        let token = self.command_word(word)?;
+                        for segment in &mut segments {
+                            segment.push(token.clone());
+                        }
                     }
                     _ => self.collect_command_item(item)?,
                 }
             }
         }
         self.collect_word_commands(name)?;
-        tokens.push(self.command_word(name)?);
+        append_word_variants(&mut segments, self.command_word_variants(name)?)?;
         if let Some(suffix) = &command.suffix {
             for item in &suffix.0 {
                 match item {
                     CommandPrefixOrSuffixItem::Word(word) => {
                         self.collect_word_commands(word)?;
-                        tokens.push(self.command_word(word)?);
+                        append_word_variants(&mut segments, self.command_word_variants(word)?)?;
                     }
                     _ => self.collect_command_item(item)?,
                 }
             }
         }
-        self.segments.push(tokens);
+        for tokens in segments {
+            if let Some(payload) = static_shell_command_payload(&tokens) {
+                self.collect_source(payload)?;
+            }
+            self.segments.push(tokens);
+        }
         Ok(())
     }
 
@@ -213,7 +225,14 @@ impl CommandCollector {
 
     fn collect_redirect_commands(&mut self, redirect: &IoRedirect) -> Result<(), String> {
         match redirect {
-            IoRedirect::HereDocument(_, _) => Ok(()),
+            IoRedirect::HereDocument(_, here_doc) => {
+                if !here_doc.requires_expansion {
+                    return Ok(());
+                }
+                let pieces = brush_parser::word::parse_heredoc(&here_doc.doc.value, &self.options)
+                    .map_err(|error| format!("Bash here-document parse error: {error}"))?;
+                self.collect_word_pieces(&pieces)
+            }
             IoRedirect::HereString(_, word) | IoRedirect::OutputAndError(word, _) => {
                 self.collect_word_commands(word)
             }
@@ -286,6 +305,175 @@ impl CommandCollector {
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
     }
+
+    fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
+        let Some(brace_pieces) =
+            brush_parser::word::parse_brace_expansions(&word.value, &self.options)
+                .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
+        else {
+            return Ok(vec![self.command_word(word)?]);
+        };
+        let expanded = expand_brace_pieces(&brace_pieces)?;
+        expanded
+            .into_iter()
+            .map(|value| {
+                let pieces = brush_parser::word::parse(&value, &self.options)
+                    .map_err(|error| format!("Bash expanded word parse error: {error}"))?;
+                Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
+            })
+            .collect()
+    }
+}
+
+fn append_word_variants(
+    segments: &mut Vec<Vec<String>>,
+    variants: Vec<String>,
+) -> Result<(), String> {
+    if variants.is_empty()
+        || segments.len().saturating_mul(variants.len()) > MAX_STATIC_WORD_VARIANTS
+    {
+        return Err(format!(
+            "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} command variants"
+        ));
+    }
+    let prefixes = std::mem::take(segments);
+    for prefix in prefixes {
+        for variant in &variants {
+            let mut expanded = prefix.clone();
+            expanded.push(variant.clone());
+            segments.push(expanded);
+        }
+    }
+    Ok(())
+}
+
+fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
+    let mut command_index = tokens
+        .iter()
+        .position(|token| !super::is_env_assignment(token))?;
+    loop {
+        command_index = match tokens.get(command_index)?.as_str() {
+            "command" => super::command_wrapper_target(tokens, command_index)?,
+            "env" => super::env_wrapper_target(tokens, command_index)?,
+            _ => break,
+        };
+    }
+    let shell = std::path::Path::new(tokens.get(command_index)?)
+        .file_name()
+        .and_then(|value| value.to_str())?;
+    if !matches!(shell, "bash" | "dash" | "ksh" | "sh" | "zsh") {
+        return None;
+    }
+    let mut index = command_index + 1;
+    while let Some(option) = tokens.get(index) {
+        if option == "--" || !option.starts_with('-') || option == "-" {
+            return None;
+        }
+        let carries_command = option == "-c"
+            || option
+                .strip_prefix('-')
+                .is_some_and(|flags| !flags.starts_with('-') && flags.contains('c'));
+        if carries_command {
+            let payload = tokens.get(index + 1)?;
+            return (payload != DYNAMIC_SHELL_WORD).then_some(payload.as_str());
+        }
+        index += 1;
+    }
+    None
+}
+
+fn expand_brace_pieces(pieces: &[BraceExpressionOrText]) -> Result<Vec<String>, String> {
+    let mut variants = vec![String::new()];
+    for piece in pieces {
+        let suffixes = match piece {
+            BraceExpressionOrText::Text(text) => vec![text.clone()],
+            BraceExpressionOrText::Expr(expression) => expand_brace_expression(expression)?,
+        };
+        append_text_variants(&mut variants, &suffixes)?;
+    }
+    Ok(variants)
+}
+
+fn expand_brace_expression(expression: &[BraceExpressionMember]) -> Result<Vec<String>, String> {
+    let mut variants = Vec::new();
+    for member in expression {
+        match member {
+            BraceExpressionMember::Child(pieces) => variants.extend(expand_brace_pieces(pieces)?),
+            BraceExpressionMember::NumberSequence {
+                start,
+                end,
+                increment,
+            } => {
+                let values = inclusive_i64_sequence(*start, *end, *increment)?;
+                variants.extend(values.into_iter().map(|value| value.to_string()));
+            }
+            BraceExpressionMember::CharSequence {
+                start,
+                end,
+                increment,
+            } => {
+                let values = inclusive_i64_sequence(*start as i64, *end as i64, *increment)?;
+                for value in values {
+                    let value = u32::try_from(value)
+                        .ok()
+                        .and_then(char::from_u32)
+                        .ok_or_else(|| {
+                            "Bash brace expansion produced an invalid character".to_string()
+                        })?;
+                    variants.push(value.to_string());
+                }
+            }
+        }
+        if variants.len() > MAX_STATIC_WORD_VARIANTS {
+            return Err(format!(
+                "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} word variants"
+            ));
+        }
+    }
+    Ok(variants)
+}
+
+fn inclusive_i64_sequence(start: i64, end: i64, increment: i64) -> Result<Vec<i64>, String> {
+    if increment == 0 || (start < end && increment < 0) || (start > end && increment > 0) {
+        return Err("Bash brace expansion has an invalid sequence increment".to_string());
+    }
+    let mut values = Vec::new();
+    let mut value = start;
+    while if increment > 0 {
+        value <= end
+    } else {
+        value >= end
+    } {
+        if values.len() == MAX_STATIC_WORD_VARIANTS {
+            return Err(format!(
+                "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} sequence variants"
+            ));
+        }
+        values.push(value);
+        value = value
+            .checked_add(increment)
+            .ok_or_else(|| "Bash brace expansion sequence overflowed".to_string())?;
+    }
+    Ok(values)
+}
+
+fn append_text_variants(variants: &mut Vec<String>, suffixes: &[String]) -> Result<(), String> {
+    if suffixes.is_empty()
+        || variants.len().saturating_mul(suffixes.len()) > MAX_STATIC_WORD_VARIANTS
+    {
+        return Err(format!(
+            "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} word variants"
+        ));
+    }
+    let prefixes = std::mem::take(variants);
+    for prefix in prefixes {
+        for suffix in suffixes {
+            let mut expanded = prefix.clone();
+            expanded.push_str(suffix);
+            variants.push(expanded);
+        }
+    }
+    Ok(())
 }
 
 fn static_word_pieces(pieces: &[WordPieceWithSource]) -> Option<String> {

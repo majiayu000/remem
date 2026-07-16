@@ -106,9 +106,12 @@ Artifact v2 additionally supports:
   and long-option arity. Ordinary positional arguments do not match, but a
   non-deletion refspec with a leading `+` does because Git treats that prefix
   as a per-ref force update. Option values, remote names, deletion refspecs,
-  and `--force-with-lease` remain non-matches. Shell evaluation removes
-  unquoted backslash-newline continuations, treats only command-position brace
-  tokens as groups, and excludes heredoc bodies from executable segments.
+  and `--force-with-lease` remain non-matches. Shell evaluation uses the Brush
+  AST, removes unquoted backslash-newline continuations, traverses assignment
+  words, arithmetic and command substitutions, expandable heredocs, and static
+  shell `-c` payloads, and evaluates static brace alternatives. Quoted or
+  echoed command text, quoted heredocs, and non-executing function definitions
+  remain inert.
 
 Nothing else. Further kinds require a spec update.
 
@@ -243,17 +246,17 @@ hook-side writes.
   `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`, paired
   `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*` inputs, local `core.worktree`, and
   global/system/XDG config containing worktree-affecting values or includes.
-  Gitfile and symlink semantics remain owned by `git rev-parse`; only a real
-  `.git` directory with a conservatively validated plain layout may use the
-  marker fast path. Plain config stays on that fast path so hooks do not
-  restore an unconditional Git subprocess.
+  Gitfile, symlink, and filesystem-device-boundary semantics remain owned by
+  `git rev-parse`; only a real `.git` directory with a conservatively validated
+  plain layout may use the marker fast path. Plain config stays on that fast
+  path so hooks do not restore an unconditional Git subprocess.
 - Latency evidence compares repeated interleaved CLI subprocess cohorts. Pass
   requires both fixed budgets: enabled p95 `<= 15.0 ms` and
   enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
   retained as informational output and does not affect pass/fail. The fresh
-  final-head fixed-budget artifact measured baseline p95 `10.036125 ms`, enabled
-  p95 `10.317208 ms`, delta `0.281083 ms`, complex-AST p95 `10.173334 ms`, and
-  MAD `0.449042 ms`; it passes both fixed budgets.
+  final-head fixed-budget artifact measured baseline p95 `9.218000 ms`, enabled
+  p95 `9.511667 ms`, delta `0.293667 ms`, complex-AST p95 `9.666208 ms`, and
+  MAD `0.501542 ms`; it passes both fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan

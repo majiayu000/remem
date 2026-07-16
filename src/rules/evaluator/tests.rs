@@ -312,6 +312,51 @@ fn force_push_rule_traverses_commands_inside_arithmetic_expansion() {
 }
 
 #[test]
+fn force_push_rule_traverses_expanding_shell_contexts() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "FOO=$(git push --force) true",
+        "cat <<EOF\n$(git push --force)\nEOF",
+        "bash -c 'git push --force'",
+        "/bin/sh -ec 'git push --mirror origin'",
+        "env FLAG=1 command bash -lc 'git push --force'",
+        "git push --{force,force}",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_keeps_non_expanding_shell_text_inert() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "cat <<'EOF'\n$(git push --force)\nEOF",
+        "bash -c \"$PAYLOAD\"",
+        "git push '--{force,force}'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
 fn force_push_rule_rejects_values_terminators_and_similar_options() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     for command in [
