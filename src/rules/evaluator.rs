@@ -285,22 +285,73 @@ fn git_alias_forces_push(tokens: &[String]) -> bool {
     };
     let shell_alias = payload.starts_with('!');
     let payload = payload.strip_prefix('!').unwrap_or(payload);
-    let Ok(segments) = shell_command_segments(payload) else {
+    if shell_alias {
+        let Ok(segments) = shell_command_segments(payload) else {
+            return false;
+        };
+        return segments.into_iter().any(|mut segment| {
+            segment.extend_from_slice(&tokens[subcommand_index + 1..]);
+            git_subcommand_args(&segment, "push").is_some_and(git_push_args_force)
+        });
+    }
+
+    let Some(mut alias_args) = split_git_alias(payload) else {
         return false;
     };
-    if !shell_alias && segments.len() != 1 {
-        return false;
-    }
-    segments.into_iter().any(|mut segment| {
-        if shell_alias {
-            segment.extend_from_slice(&tokens[subcommand_index + 1..]);
-            return git_subcommand_args(&segment, "push").is_some_and(git_push_args_force);
+    alias_args.extend_from_slice(&tokens[subcommand_index + 1..]);
+    alias_args
+        .strip_prefix(&["push".to_string()])
+        .is_some_and(git_push_args_force)
+}
+
+fn split_git_alias(payload: &str) -> Option<Vec<String>> {
+    let mut arguments = Vec::new();
+    let mut argument = String::new();
+    let mut quoted = None;
+    let mut escaped = false;
+    let mut started = false;
+
+    for ch in payload.chars() {
+        if escaped {
+            argument.push(ch);
+            escaped = false;
+            started = true;
+            continue;
         }
-        segment.extend_from_slice(&tokens[subcommand_index + 1..]);
-        segment
-            .strip_prefix(&["push".to_string()])
-            .is_some_and(git_push_args_force)
-    })
+        if ch == '\\' && quoted != Some('\'') {
+            escaped = true;
+            started = true;
+            continue;
+        }
+        if matches!(ch, '\'' | '\"') {
+            if quoted == Some(ch) {
+                quoted = None;
+            } else if quoted.is_none() {
+                quoted = Some(ch);
+            } else {
+                argument.push(ch);
+            }
+            started = true;
+            continue;
+        }
+        if quoted.is_none() && ch.is_ascii_whitespace() {
+            if started {
+                arguments.push(std::mem::take(&mut argument));
+                started = false;
+            }
+            continue;
+        }
+        argument.push(ch);
+        started = true;
+    }
+
+    if escaped || quoted.is_some() {
+        return None;
+    }
+    if started {
+        arguments.push(argument);
+    }
+    Some(arguments)
 }
 
 fn git_config_alias_payload<'a>(
