@@ -15,16 +15,17 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 
 ### `pending_observations` (legacy queue) — verdict: pure legacy
 
-- Writers on the default runtime path: none. `enqueue_pending`
-  (`src/db/pending/queue.rs`) has no production caller; only test bodies call
-  it. The PostToolUse observe hook writes `captured_events` +
+- Writers on the default runtime path: none. GH684-T6 deleted the former
+  `enqueue_pending` API, pending claim/lease helpers, and the legacy
+  `PendingObservation` claim DTO. The PostToolUse observe hook writes
+  `captured_events` +
   `ObservationExtract` tasks, not this queue; the Stop hook only reads a
   count to log an "ignored N legacy pending" warning.
 - Remaining writers are manual admin: `remem pending migrate-legacy`
   (`src/db/pending/admin/migration.rs`, re-records rows as `captured_events`
   and marks them `migrated`), `retry-failed` / `purge-failed`
-  (`src/db/pending/admin/mutate.rs`). The claim/lease machinery
-  (`src/db/pending/claim.rs`) has no production consumer.
+  (`src/db/pending/admin/mutate.rs`). Tests seed historical rows through
+  `db::test_support::insert_legacy_pending_fixture`.
 - Readers: status/stats counters, doctor capture-liveness and queue-health,
   observability metrics, `remem pending` listings.
 - Dogfood evidence: queue fully empty — ready/delayed/processing/expired/
@@ -390,9 +391,9 @@ extraction tasks.
 ### `pending_observations`
 
 Readers are counters and admin listings only, so no reader migration is
-needed. Freeze means: delete the dead claim/lease machinery
-(`src/db/pending/claim.rs`) and the test-only `enqueue_pending` write path;
-status/doctor keep reporting row counts until the drop ships.
+needed. GH684-T6 completed the freeze by deleting the dead claim/lease
+machinery and the test-only `enqueue_pending` write path; status/doctor keep
+reporting row counts until the drop ships.
 
 GH684-T5 confirmed the real local databases on 2026-07-08. The default store
 (`/Users/apple/.remem/remem.db`) and the dated backup stores under

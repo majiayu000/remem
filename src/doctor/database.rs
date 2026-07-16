@@ -429,23 +429,42 @@ pub(super) fn check_declared_empty_surfaces(conn: Option<&Connection>) -> Check 
     }
 }
 
+const LEGACY_PENDING_DEPRECATION_NOTICE: &str = "pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0";
+const LEGACY_PENDING_MIGRATION_NOTICE: &str = "actionable pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`; if the legacy host is unknown, apply explicitly with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`";
+
 pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
     let Some(conn) = conn else {
-        return Check::new("Legacy surfaces", Status::Warn, "cannot open database");
+        return Check::new(
+            "Legacy surfaces",
+            Status::Warn,
+            format!("cannot open database; {LEGACY_PENDING_DEPRECATION_NOTICE}"),
+        );
     };
-
     let stats = match db::query_system_stats(conn) {
         Ok(stats) => stats,
         Err(err) => {
             return Check::new(
                 "Legacy surfaces",
                 Status::Warn,
-                format!("cannot load legacy surface stats: {}", err),
+                format!(
+                    "cannot load legacy surface stats: {err}; {LEGACY_PENDING_DEPRECATION_NOTICE}"
+                ),
             );
         }
     };
-
-    let detail = stats
+    let actionable_pending_rows = match db::pending::admin::count_legacy_migration_candidates(
+        conn,
+        None,
+        i64::MAX,
+    ) {
+        Ok(count) => count,
+        Err(err) => return Check::new(
+            "Legacy surfaces",
+            Status::Warn,
+            format!("cannot count actionable legacy pending rows: {err}; {LEGACY_PENDING_DEPRECATION_NOTICE}"),
+        ),
+    };
+    let mut detail = stats
         .legacy_surfaces
         .iter()
         .map(|surface| {
@@ -464,7 +483,10 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
         })
         .collect::<Vec<_>>()
         .join("; ");
-
+    detail.push_str(&format!("; {LEGACY_PENDING_DEPRECATION_NOTICE}"));
+    if actionable_pending_rows > 0 {
+        detail.push_str(&format!("; {LEGACY_PENDING_MIGRATION_NOTICE}"));
+    }
     let violations: i64 = stats
         .legacy_surfaces
         .iter()
