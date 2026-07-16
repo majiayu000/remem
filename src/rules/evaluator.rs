@@ -3,7 +3,6 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 mod bash_ast;
-mod tree_sitter_ast;
 
 use crate::rules::artifact::{
     CompiledRule, CompiledRulesArtifact, RuleAction, RulePredicate, LEGACY_ARTIFACT_VERSION,
@@ -223,9 +222,14 @@ fn command_forces_git_push(command: &str) -> Result<bool, String> {
 }
 
 fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [String]> {
-    let command_index = tokens.iter().position(|token| !is_env_assignment(token))?;
-    if tokens[command_index] != "git" {
-        return None;
+    let mut command_index = tokens.iter().position(|token| !is_env_assignment(token))?;
+    loop {
+        command_index = match tokens.get(command_index)?.as_str() {
+            "command" => command_wrapper_target(tokens, command_index)?,
+            "env" => env_wrapper_target(tokens, command_index)?,
+            "git" => break,
+            _ => return None,
+        };
     }
     let mut index = command_index;
     index += 1;
@@ -282,6 +286,9 @@ fn git_push_args_force(args: &[String]) -> bool {
         if !options_terminated && matches!(arg.as_str(), "--force" | "-f") {
             return true;
         }
+        if !options_terminated && arg == "--mirror" {
+            return true;
+        }
         if !options_terminated && (arg == "--repo" || arg.starts_with("--repo=")) {
             repository_supplied = arg.starts_with("--repo=") || args.get(index + 1).is_some();
             index += if arg == "--repo" { 2 } else { 1 };
@@ -312,6 +319,64 @@ fn git_push_args_force(args: &[String]) -> bool {
         index += 1;
     }
     false
+}
+
+fn command_wrapper_target(tokens: &[String], command_index: usize) -> Option<usize> {
+    let mut index = command_index + 1;
+    while let Some(option) = tokens.get(index) {
+        match option.as_str() {
+            "--" => return tokens.get(index + 1).map(|_| index + 1),
+            "-p" => index += 1,
+            "-v" | "-V" => return None,
+            value if value.starts_with('-') => {
+                let flags = value.strip_prefix('-')?;
+                if flags.is_empty()
+                    || flags.chars().any(|flag| !matches!(flag, 'p' | 'v' | 'V'))
+                    || flags.chars().any(|flag| matches!(flag, 'v' | 'V'))
+                {
+                    return None;
+                }
+                index += 1;
+            }
+            _ => return Some(index),
+        }
+    }
+    None
+}
+
+fn env_wrapper_target(tokens: &[String], command_index: usize) -> Option<usize> {
+    let mut index = command_index + 1;
+    let mut options_terminated = false;
+    while let Some(token) = tokens.get(index) {
+        if is_env_assignment(token) {
+            index += 1;
+            continue;
+        }
+        if options_terminated {
+            return Some(index);
+        }
+        match token.as_str() {
+            "--" => {
+                options_terminated = true;
+                index += 1;
+            }
+            "-i" | "--ignore-environment" | "-0" | "--null" | "--debug" => index += 1,
+            "-u" | "--unset" | "-C" | "--chdir" | "--argv0" => {
+                tokens.get(index + 1)?;
+                index += 2;
+            }
+            value
+                if value.starts_with("--unset=")
+                    || value.starts_with("--chdir=")
+                    || value.starts_with("--argv0=") =>
+            {
+                index += 1;
+            }
+            value if value.starts_with('-') => return None,
+            _ => return Some(index),
+        }
+    }
+    None
 }
 
 fn is_force_push_refspec(arg: &str) -> bool {

@@ -10,9 +10,6 @@ use brush_parser::{Parser, ParserOptions};
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
 
 pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String> {
-    if let Some(segments) = super::tree_sitter_ast::command_segments(source)? {
-        return Ok(segments);
-    }
     let mut collector = CommandCollector {
         options: ParserOptions::default(),
         segments: Vec::new(),
@@ -75,7 +72,7 @@ impl CommandCollector {
                 }
                 Ok(())
             }
-            Command::Function(function) => self.collect_compound_command(&function.body.0),
+            Command::Function(_) => Ok(()),
             Command::ExtendedTest(test, redirects) => {
                 self.collect_extended_test(&test.expr)?;
                 if let Some(redirects) = redirects {
@@ -251,6 +248,11 @@ impl CommandCollector {
                 | WordPiece::GettextDoubleQuotedSequence(pieces) => {
                     self.collect_word_pieces(pieces)?;
                 }
+                WordPiece::ArithmeticExpression(expression) => {
+                    let pieces = brush_parser::word::parse(&expression.value, &self.options)
+                        .map_err(|error| format!("Bash arithmetic word parse error: {error}"))?;
+                    self.collect_word_pieces(&pieces)?;
+                }
                 _ => {}
             }
         }
@@ -279,8 +281,10 @@ fn static_word_pieces(pieces: &[WordPieceWithSource]) -> Option<String> {
             | WordPiece::GettextDoubleQuotedSequence(pieces) => {
                 value.push_str(&static_word_pieces(pieces)?);
             }
-            WordPiece::AnsiCQuotedText(_)
-            | WordPiece::TildeExpansion(_)
+            WordPiece::AnsiCQuotedText(text) => {
+                value.push_str(&decode_ansi_c_quoted_text(text)?);
+            }
+            WordPiece::TildeExpansion(_)
             | WordPiece::ParameterExpansion(_)
             | WordPiece::CommandSubstitution(_)
             | WordPiece::BackquotedCommandSubstitution(_)
@@ -288,4 +292,91 @@ fn static_word_pieces(pieces: &[WordPieceWithSource]) -> Option<String> {
         }
     }
     Some(value)
+}
+
+fn decode_ansi_c_quoted_text(text: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            push_char_bytes(&mut bytes, ch);
+            continue;
+        }
+        let escaped = chars.next()?;
+        match escaped {
+            'a' => bytes.push(0x07),
+            'b' => bytes.push(0x08),
+            'e' | 'E' => bytes.push(0x1b),
+            'f' => bytes.push(0x0c),
+            'n' => bytes.push(b'\n'),
+            'r' => bytes.push(b'\r'),
+            't' => bytes.push(b'\t'),
+            'v' => bytes.push(0x0b),
+            '\\' => bytes.push(b'\\'),
+            '\'' => bytes.push(b'\''),
+            'c' => {
+                let control = chars.next()?;
+                if !control.is_ascii() {
+                    return None;
+                }
+                let control = control.to_ascii_uppercase() as u8;
+                bytes.push(if control == b'?' {
+                    0x7f
+                } else {
+                    control & 0x1f
+                });
+            }
+            'x' => bytes.push(take_digits(&mut chars, 16, 2)? as u8),
+            'u' => {
+                let decoded = char::from_u32(take_digits(&mut chars, 16, 4)?)?;
+                push_char_bytes(&mut bytes, decoded);
+            }
+            'U' => {
+                let decoded = char::from_u32(take_digits(&mut chars, 16, 8)?)?;
+                push_char_bytes(&mut bytes, decoded);
+            }
+            '0' => bytes.push(take_digits(&mut chars, 8, 3).unwrap_or(0) as u8),
+            '1'..='7' => {
+                let mut value = escaped.to_digit(8)?;
+                for _ in 0..2 {
+                    let Some(digit) = chars.peek().and_then(|ch| ch.to_digit(8)) else {
+                        break;
+                    };
+                    chars.next();
+                    value = value * 8 + digit;
+                }
+                bytes.push(value as u8);
+            }
+            _ => {
+                bytes.push(b'\\');
+                push_char_bytes(&mut bytes, escaped);
+            }
+        }
+    }
+    if bytes.contains(&0) {
+        return None;
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn take_digits<I>(chars: &mut std::iter::Peekable<I>, radix: u32, max: usize) -> Option<u32>
+where
+    I: Iterator<Item = char>,
+{
+    let mut value = 0;
+    let mut count = 0;
+    while count < max {
+        let Some(digit) = chars.peek().and_then(|ch| ch.to_digit(radix)) else {
+            break;
+        };
+        chars.next();
+        value = value * radix + digit;
+        count += 1;
+    }
+    (count > 0).then_some(value)
+}
+
+fn push_char_bytes(bytes: &mut Vec<u8>, ch: char) {
+    let mut encoded = [0; 4];
+    bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
 }

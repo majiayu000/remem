@@ -206,6 +206,108 @@ fn force_push_rule_structurally_matches_exact_options() {
 }
 
 #[test]
+fn force_push_rule_matches_mirror_and_command_wrappers() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "git push --mirror origin",
+        "env GIT_SSH_COMMAND=ssh git push --force",
+        "env -i -u HOME command -p git push --mirror origin",
+        "command git push --force",
+        "command -- git push --force",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_keeps_non_executing_wrappers_inert() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "command -v git push --force",
+        "command -V git push --force",
+        "command echo git push --force",
+        "env NOTE=example echo git push --force",
+        "git push -- --mirror",
+        "git push --no-mirror origin",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_does_not_execute_function_definitions() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "f() { git push --force; }",
+        "function deploy { git push --mirror origin; }",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_decodes_static_ansi_c_words() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "$'git' push --force",
+        "git push $'--force'",
+        "$'\\x67it' push $'--\\x66orce'",
+        "g$'\\151t' push --force",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_traverses_commands_inside_arithmetic_expansion() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "{ echo $(( $(git push --force) + 1 )); }";
+
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.to_string(),
+        },
+    );
+
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block);
+    assert_eq!(outcome.matches.len(), 1);
+    assert!(outcome.diagnostics.is_empty());
+}
+
+#[test]
 fn force_push_rule_rejects_values_terminators_and_similar_options() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     for command in [

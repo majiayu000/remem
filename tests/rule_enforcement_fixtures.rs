@@ -141,8 +141,12 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "git push origin -- +HEAD:main",
         "git push \\\n--force",
         "git push \"--force\"",
+        "git push --mirror origin",
+        "env GIT_SSH_COMMAND=ssh command git push --force",
+        "$'git' push $'--force'",
         "echo \"$(git push --force)\"",
         "echo $(( $(git push --force) + 1 ))",
+        "{ echo $(( $(git push --force) + 1 )); }",
         "cat <<EOF\ngit push --force\nEOF\ngit push --force",
         "echo safe # <<EOF\ngit push --force",
         "cat <<< 'git push --force'\ngit push --force",
@@ -174,6 +178,9 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "echo {git push --force}",
         "echo }",
         "echo $((1 << 2))",
+        "f() { git push --force; }",
+        "command -v git push --force",
+        "env NOTE=example echo git push --force",
         "cat <<EOF\ngit push --force\nEOF",
         "cat <<'EOF'\ngit push --force\nEOF",
         "cat <<-EOF\n\tgit push --force\n\tEOF",
@@ -267,7 +274,7 @@ fn rule_hook_cli_p95_meets_absolute_budgets() -> Result<()> {
     let mut enabled_non_regex_samples = Vec::with_capacity(120);
     let mut enabled_a = Vec::with_capacity(60);
     let mut enabled_b = Vec::with_capacity(60);
-    let mut brush_fallback_samples = Vec::with_capacity(60);
+    let mut complex_ast_samples = Vec::with_capacity(60);
     for _ in 0..60 {
         baseline_a.push(baseline.run("cargo check", false)?.elapsed);
         enabled_empty_samples.push(enabled_empty.run("cargo check", false)?.elapsed);
@@ -277,7 +284,7 @@ fn rule_hook_cli_p95_meets_absolute_budgets() -> Result<()> {
         enabled_non_regex_samples.push(enabled_non_regex.run("cargo check", false)?.elapsed);
         enabled_empty_samples.push(enabled_empty.run("cargo check", false)?.elapsed);
         baseline_b.push(baseline.run("cargo check", false)?.elapsed);
-        brush_fallback_samples.push(
+        complex_ast_samples.push(
             enabled
                 .run("cat <<A <<B\none\nA\ntwo\nB\ngit push --force", false)?
                 .elapsed,
@@ -300,7 +307,7 @@ fn rule_hook_cli_p95_meets_absolute_budgets() -> Result<()> {
     let measurement_noise_ms = median_absolute_deviation_ms(&baseline_samples)
         .max(median_absolute_deviation_ms(&enabled_samples));
     let delta_ms = enabled_p95 - baseline_p95;
-    let brush_fallback_p95 = percentile_ms(&brush_fallback_samples, 95);
+    let complex_ast_p95 = percentile_ms(&complex_ast_samples, 95);
 
     eprintln!(
         "{}",
@@ -325,8 +332,8 @@ fn rule_hook_cli_p95_meets_absolute_budgets() -> Result<()> {
             "observed_baseline_noise_ms": observed_noise_ms,
             "measurement_noise_mad_ms": measurement_noise_ms,
             "delta_within_observed_mad": delta_ms <= measurement_noise_ms,
-            "brush_fallback_p95_ms": brush_fallback_p95,
-            "brush_fallback_below_ten_percent_of_hook_timeout": brush_fallback_p95 < 500.0,
+            "complex_ast_p95_ms": complex_ast_p95,
+            "complex_ast_below_ten_percent_of_hook_timeout": complex_ast_p95 < 500.0,
         }))?
     );
     ensure!(
@@ -338,8 +345,8 @@ fn rule_hook_cli_p95_meets_absolute_budgets() -> Result<()> {
         "enabled p95 {enabled_p95:.3}ms exceeded the {MAX_ENABLED_P95_MS:.3}ms hard limit"
     );
     ensure!(
-        brush_fallback_p95 < 500.0,
-        "brush fallback p95 {brush_fallback_p95:.3}ms exceeded 10% of the 5s hook timeout"
+        complex_ast_p95 < 500.0,
+        "complex AST p95 {complex_ast_p95:.3}ms exceeded 10% of the 5s hook timeout"
     );
     Ok(())
 }
