@@ -125,6 +125,21 @@ Issue 引用的仓库研究报告
 20. `B-020`：本 spec 在缺少 issue 所引用研究报告的不可变证据时只能进入待审批状态；不得以
     issue 摘要、猜测的百分比或 agent 自行生成的替代报告满足 `spec_approval`。maintainer 接受等价
     一手证据时，批准记录必须指出该证据及 revision。
+21. `B-021`：`legacy_unscanned` 只能由 schema migration 标记升级前已经存在的 summary row；迁移完成
+    后的 rollup、`finalize_summarize` 及任何其它运行期 writer 都不得创建或恢复该状态。writer 必须在
+    写入任何 derived summary/topic/candidate/native-memory 前取得完整、project/session/range 绑定的
+    source evidence 并形成 combined verdict；证据缺失或不可验证时整个 derived write 原子失败、错误
+    可见且规范 raw capture 保持可重试，禁止先写 generated output 再靠后续扫描“洗白”。
+22. `B-022`：summary eligibility 必须在 `query_recent_summaries` 解码原始 row 后、正文参与
+    self-diagnostic、cluster/session dedup、stale fallback、implicit query、hybrid retrieval、abstention、
+    ranking 或任何其它派生选择之前完成。scanner、schema、row decode、状态或审计更新失败的 row 不得
+    影响查询词、候选 ID、顺序或渲染；必须 fail closed 地排除并产生 error-visible 证据，安全 row 可
+    继续处理。
+23. `B-023`：`src/git_trace.rs` 暴露的 commit/session summary trace 及其 MCP `lookup_commit`、
+    `commits_for_session` 输出属于 model-visible sink，必须复用同一 eligibility gate，并把每个 summary
+    ID 同 commit 所属 project、link/session identity 精确绑定。跨项目或错误 ID、未确认命中以及
+    scanner/schema/audit 失败均不得返回 summary 正文，且必须作为可见错误传播；不得以裸 SQL、空
+    `summary` 或 warning-only fallback 隐藏失败。
 
 ## 验收标准
 
@@ -137,6 +152,13 @@ Issue 引用的仓库研究报告
       接受准确 ack，并在并发/重试测试中只释放一次 checkpointed side effects。
 - [ ] legacy summary 在所有 model-visible reader 前复扫；命中、scanner error、schema/query error
       都 fail closed 且可见，安全 legacy summary 保持兼容。
+- [ ] 只有升级 fixture 的既有 row 会成为 `legacy_unscanned`；所有运行期 summary writer 在完整 source
+      evidence 不可取得时返回错误、零 derived row/side effect，retry 不重复 LLM 且不能把状态回退为
+      legacy/safe。
+- [ ] poisoned/error summary 与“该 row 不存在”的对照在 implicit query、cluster/session dedup、hybrid
+      retrieval、abstention、selected memory IDs/rank 上等价；其载荷不能成为 retrieval-steering signal。
+- [ ] git trace 与 MCP commit tools 对 safe/精确 ack summary 保持兼容；未确认、跨 project/ID、scanner/
+      schema/audit failure 均不返回正文并产生明确 tool/query error。
 - [ ] doctor、CLI status 与 API status 的 fresh/stale/error case 均提供不含载荷/secret 的 poisoning
       计数和诊断。
 - [ ] adversarial-policy 与新的 capture E2E eval 为确定性、离线且包含恶意/无害引用对照；相关
@@ -154,13 +176,13 @@ Issue 引用的仓库研究报告
 | 边界类别 | 结论 |
 | --- | --- |
 | Empty / missing input | covered: `B-003`, `B-005`, `B-016` |
-| Error and failure paths | covered: `B-005`, `B-008`, `B-013`, `B-016` |
+| Error and failure paths | covered: `B-005`, `B-008`, `B-013`, `B-016`, `B-021`, `B-022`, `B-023` |
 | Authorization / permission | covered: `B-009`, `B-010`, `B-020` |
-| Concurrency / race / ordering | covered: `B-006`, `B-011`, `B-012` |
-| Retry / repetition / idempotency | covered: `B-007`, `B-011`, `B-012` |
-| Illegal state transitions | covered: `B-010`, `B-012` |
-| Compatibility / migration | covered: `B-009`, `B-015`, `B-019` |
-| Degradation / fallback | covered: `B-005`, `B-008`, `B-013` |
+| Concurrency / race / ordering | covered: `B-006`, `B-011`, `B-012`, `B-021`, `B-022` |
+| Retry / repetition / idempotency | covered: `B-007`, `B-011`, `B-012`, `B-021` |
+| Illegal state transitions | covered: `B-010`, `B-012`, `B-021` |
+| Compatibility / migration | covered: `B-009`, `B-015`, `B-019`, `B-021` |
+| Degradation / fallback | covered: `B-005`, `B-008`, `B-013`, `B-022`, `B-023` |
 | Evidence and audit integrity | covered: `B-001`, `B-002`, `B-014`, `B-020` |
 | Cancellation / interruption / partial completion | covered: `B-005`, `B-006`, `B-011`, `B-012` |
 
@@ -176,6 +198,10 @@ Issue 引用的仓库研究报告
   的有界 stale 数据；超过既有最大 stale window 后返回错误。
 - quarantine 发生在 raw archive drain 失败的同一次 rollup：两类失败证据都保留，retry 不重复
   模型调用，也不能先释放安全 side effects。
+- migration 与旧 binary 交错：迁移后仍省略 verdict/试图写 `legacy_unscanned` 的 writer 必须被数据库
+  invariant 拒绝并返回错误；不能用 default 状态制造新的 legacy row。
+- eligibility 记录 quarantine/block audit 失败：该 row 仍在任何正文比较、dedup 或 retrieval signal
+  前被排除，调用方收到错误；审计失败不能转成放行，也不能删除其它已验证安全 row。
 
 ## 发布说明
 
