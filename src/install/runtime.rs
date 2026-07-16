@@ -401,36 +401,6 @@ fn print_install_path_warnings(bin: &str) {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::test_support::ScopedTestDataDir;
-
-    #[test]
-    fn rollback_keeps_generated_key_when_db_no_longer_looks_plaintext() -> Result<()> {
-        let test_dir = ScopedTestDataDir::new("install-runtime-keep-key-encrypted-db");
-        std::fs::create_dir_all(&test_dir.path)?;
-        let key = crate::db::CipherKey::Raw("a".repeat(64));
-        let key_path = test_dir.path.join(".key");
-        std::fs::write(&key_path, key.stored_value())?;
-        std::fs::write(test_dir.db_path(), b"not a plaintext sqlite database")?;
-
-        crate::db::rollback_generated_key_after_encrypt_failure(
-            &key_path,
-            &key,
-            &test_dir.db_path(),
-            true,
-            true,
-        )?;
-
-        assert!(
-            key_path.exists(),
-            "rollback must retain the key when the DB may already be encrypted"
-        );
-        Ok(())
-    }
-}
-
 fn runtime_host_name(install_host: &str) -> &'static str {
     match install_host {
         "claude" => crate::runtime_config::CLAUDE_HOST,
@@ -472,4 +442,34 @@ pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
     eprintln!("  数据目录 {} 保留不动", remem_data_dir().display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
+
+    #[test]
+    fn rollback_keeps_generated_key_when_db_no_longer_looks_plaintext() -> Result<()> {
+        let test_dir = ScopedTestDataDir::new("install-runtime-keep-key-encrypted-db");
+        std::fs::create_dir_all(&test_dir.path)?;
+        let key = crate::db::CipherKey::Raw("a".repeat(64));
+        let key_path = test_dir.path.join(".key");
+        std::fs::write(&key_path, key.stored_value())?;
+        std::fs::write(test_dir.db_path(), b"not a plaintext sqlite database")?;
+
+        crate::db::rollback_generated_key_after_encrypt_failure(
+            &key_path,
+            &key,
+            &test_dir.db_path(),
+            true,
+            true,
+        )?;
+
+        assert!(
+            key_path.exists(),
+            "rollback must retain the key when the DB may already be encrypted"
+        );
+        Ok(())
+    }
 }

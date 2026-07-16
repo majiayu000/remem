@@ -308,10 +308,9 @@ fn capture_event_content_with_git_evidence(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
+    use tokio::sync::Mutex;
 
     use super::super::filter::{event_skip_reason, skip_detail};
     use super::super::spill::spill_capture_event;
@@ -320,7 +319,7 @@ mod tests {
         SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
     };
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     fn codex_bash_event() -> ParsedHookEvent {
         ParsedHookEvent {
@@ -334,9 +333,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn codex_bash_observe_skips_by_default() {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+    #[tokio::test]
+    async fn codex_bash_observe_skips_by_default() {
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
         assert_eq!(
@@ -347,7 +346,7 @@ mod tests {
 
     #[tokio::test]
     async fn observe_records_codex_bash_skip_in_drop_ledger() -> anyhow::Result<()> {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
         let _test_dir = ScopedTestDataDir::new("observe-codex-bash-drop");
         let setup = db::open_db()?;
@@ -413,9 +412,7 @@ mod tests {
 
     #[tokio::test]
     async fn observe_skip_drop_does_not_migrate_stale_database() -> anyhow::Result<()> {
-        let _guard = ENV_LOCK
-            .lock()
-            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
         let test_dir = ScopedTestDataDir::new("observe-skip-stale-schema");
         std::fs::create_dir_all(&test_dir.path)?;
@@ -444,9 +441,9 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn codex_bash_observe_can_be_enabled_explicitly() {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+    #[tokio::test]
+    async fn codex_bash_observe_can_be_enabled_explicitly() {
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::set_var("REMEM_ENABLE_CODEX_BASH_OBSERVE", "1") };
         let event = codex_bash_event();
         let skipped = event_skip_reason(&CodexAdapter, &event, false);

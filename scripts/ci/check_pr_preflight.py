@@ -133,7 +133,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
         ),
         ("Check version bump", ["python3", "scripts/ci/check_version_bump.py", base, head]),
         ("Run cargo fmt --check", ["cargo", "fmt", "--check"]),
-        ("Run cargo clippy -- -D warnings", ["cargo", "clippy", "--", "-D", "warnings"]),
+        (
+            "Run cargo clippy --all-targets -- -D warnings",
+            ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+        ),
     ]
 
 

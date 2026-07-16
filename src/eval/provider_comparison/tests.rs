@@ -184,9 +184,7 @@ fn committed_golden_dataset_contains_en_and_cjk_provider_comparison_cases() -> R
         "expected at least four provider_comparison cases"
     );
     assert!(cases.iter().any(|query| query.id.contains("-en-")));
-    assert!(cases
-        .iter()
-        .any(|query| query.query.chars().any(|character| !character.is_ascii())));
+    assert!(cases.iter().any(|query| !query.query.is_ascii()));
     Ok(())
 }
 

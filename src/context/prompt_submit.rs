@@ -645,12 +645,12 @@ mod tests {
         let staleness_labels = HashMap::new();
 
         let fresh = render_prompt_submit_context(
-            &[memory.clone()],
+            std::slice::from_ref(&memory),
             &staleness_labels,
             memory.updated_at_epoch,
         );
         let fresh_again = render_prompt_submit_context(
-            &[memory.clone()],
+            std::slice::from_ref(&memory),
             &staleness_labels,
             memory.updated_at_epoch,
         );
