@@ -473,7 +473,7 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
     if violations > 0 {
         Check::new(
             "Legacy surfaces",
-            Status::Warn,
+            Status::Fail,
             format!("{detail}; retire/freeze blockers={violations}"),
         )
     } else {

@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.210` for GH-684: frozen legacy-surface writes now
+  fail doctor instead of remaining warning-only, while the retirement contract
+  fixes the 0.6.0 announcement and no-earlier-than-0.7.0 guarded-drop window.
 - Staged source version `0.5.209` for #818: job enqueue, claim, lease
   transitions, migration reconciliation, and failure recovery now enforce
   database-atomic active identities and fail closed on conflicts while
