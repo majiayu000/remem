@@ -86,6 +86,13 @@ def assert_runtime_verifier() -> None:
             ("builtins imported alias literal", "from builtins import __import__ as dyn_import; dyn_import('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("builtins attribute nonliteral", "import builtins; module_name = 'specrail_untracked_helper'; builtins.__import__(module_name)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
             ("builtins imported alias nonliteral", "from builtins import __import__ as dyn_import; module_name = 'specrail_untracked_helper'; dyn_import(module_name)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("fromlist keyword literal", "__import__('checks', fromlist=['specrail_untracked_helper'])", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("fromlist positional literal", "__import__('checks', None, None, ['specrail_untracked_helper'])", "checks/specrail_untracked_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
+            ("fromlist nonliteral list", "names = ['specrail_untracked_helper']; __import__('checks', fromlist=names)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("fromlist nonliteral entry", "name = 'specrail_untracked_helper'; __import__('checks', fromlist=[name])", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("fromlist wildcard", "__import__('checks', fromlist=['*'])", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("dynamic nonliteral level", "level = 0; __import__('specrail_lib', level=level)", "checks/specrail_untracked_helper.py", "NON-LITERAL DYNAMIC IMPORT"),
+            ("dynamic relative level", "__import__('specrail_lib', level=1)", "checks/specrail_untracked_helper.py", "UNSUPPORTED RELATIVE LOCAL IMPORT"),
             ("outside checks absolute", "import tools.specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNCLASSIFIED LOCAL IMPORT"),
             ("relative", "from . import specrail_lib", None, "UNSUPPORTED RELATIVE LOCAL IMPORT"),
             ("path escape", "import checks.specrail_escape_helper", None, "LOCAL IMPORT PATH ESCAPE"),
@@ -244,11 +251,44 @@ def assert_sync_copy_allows_new_managed_file() -> None:
         )
 
 
+def assert_sync_rejects_unindexed_previously_locked_file() -> None:
+    with (
+        tempfile.TemporaryDirectory(prefix="remem-sync-rmcached-target-") as target_raw,
+        tempfile.TemporaryDirectory(prefix="remem-sync-rmcached-upstream-") as upstream_raw,
+    ):
+        target = Path(target_raw)
+        upstream = Path(upstream_raw)
+        copy_pack(target)
+        copy_pack(upstream)
+        assert_passed(
+            run(
+                [
+                    "git", "-c", "user.name=SpecRail Test",
+                    "-c", "user.email=test@example.invalid",
+                    "commit", "-qm", "baseline upstream fixture",
+                ],
+                cwd=upstream,
+            ),
+            "commit rm-cached upstream baseline",
+        )
+        assert_passed(
+            run(["git", "rm", "--cached", "checks/specrail_lib.py"], cwd=target),
+            "drop previously locked managed file from target index",
+        )
+        rejected = run(
+            [str(target / "scripts" / "sync-specrail-checks.sh"), str(upstream)],
+            cwd=target,
+        )
+        assert rejected.returncode != 0, "sync must fail when a locked managed file left the index"
+        assert "CLASSIFIED FILE IS NOT TRACKED: checks/specrail_lib.py" in rejected.stderr
+
+
 def assert_upstream_source_preflight() -> None:
     cases = (
         ("untracked", "UPSTREAM HEAD DOES NOT TRACK"),
         ("dirty", "UPSTREAM WORKTREE DRIFT"),
         ("staged", "UPSTREAM INDEX DRIFT"),
+        ("symlink", "UPSTREAM HEAD PATH IS NOT A REGULAR FILE"),
     )
     for mode, expected in cases:
         with (
@@ -288,6 +328,26 @@ def assert_upstream_source_preflight() -> None:
                     ),
                     "commit upstream fixture removal",
                 )
+            elif mode == "symlink":
+                payload = upstream / "specrail_symlink_payload.py"
+                payload.write_text("VALUE = 1\n", encoding="utf-8")
+                upstream_file.unlink()
+                upstream_file.symlink_to("../specrail_symlink_payload.py")
+                assert_passed(
+                    run(["git", "add", "-A"], cwd=upstream),
+                    "stage upstream symlink fixture",
+                )
+                assert_passed(
+                    run(
+                        [
+                            "git", "-c", "user.name=SpecRail Test",
+                            "-c", "user.email=test@example.invalid",
+                            "commit", "-qm", "replace upstream fixture with symlink",
+                        ],
+                        cwd=upstream,
+                    ),
+                    "commit upstream symlink fixture",
+                )
             else:
                 upstream_file.write_text(
                     "# uncommitted upstream drift\n"
@@ -324,6 +384,7 @@ def main() -> int:
     run_schema_contract_tests()
     assert_runtime_verifier()
     assert_sync_copy_allows_new_managed_file()
+    assert_sync_rejects_unindexed_previously_locked_file()
     assert_upstream_source_preflight()
     print("SpecRail gate wiring test passed")
     return 0

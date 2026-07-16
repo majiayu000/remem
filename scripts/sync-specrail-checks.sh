@@ -333,6 +333,57 @@ for relative_path in sorted(classified_checks_python):
                 )
                 raise SystemExit(1)
             require_classified_import(relative_path, target.value)
+            if dynamic_name == "importlib.import_module":
+                continue
+            level = node.args[4] if len(node.args) > 4 else next(
+                (keyword.value for keyword in node.keywords if keyword.arg == "level"),
+                None,
+            )
+            if level is not None:
+                if not isinstance(level, ast.Constant) or not isinstance(level.value, int):
+                    print(
+                        f"NON-LITERAL DYNAMIC IMPORT: {relative_path}: "
+                        f"{dynamic_name} level cannot be classified safely",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                if level.value:
+                    print(
+                        f"UNSUPPORTED RELATIVE LOCAL IMPORT: {relative_path}: "
+                        "checks/ is a flat non-package layout",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+            fromlist = node.args[3] if len(node.args) > 3 else next(
+                (keyword.value for keyword in node.keywords if keyword.arg == "fromlist"),
+                None,
+            )
+            if fromlist is None or (
+                isinstance(fromlist, ast.Constant) and fromlist.value is None
+            ):
+                continue
+            if not isinstance(fromlist, (ast.List, ast.Tuple)):
+                print(
+                    f"NON-LITERAL DYNAMIC IMPORT: {relative_path}: "
+                    f"{dynamic_name} fromlist cannot be classified safely",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            for element in fromlist.elts:
+                if (
+                    not isinstance(element, ast.Constant)
+                    or not isinstance(element.value, str)
+                    or element.value == "*"
+                ):
+                    print(
+                        f"NON-LITERAL DYNAMIC IMPORT: {relative_path}: "
+                        f"{dynamic_name} fromlist entry cannot be classified safely",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                require_classified_import(
+                    relative_path, f"{target.value}.{element.value}"
+                )
 
 sys.path.insert(0, str(repo_root))
 sys.path.insert(0, str(checks_dir))
@@ -362,14 +413,16 @@ verify_upstream_sources() {
   local upstream_sha="$2"
   local failed=0
   local rel
+  local mode
   for rel in "${SYNCED_FILES[@]}"; do
     if ! git -C "$upstream" cat-file -e "${upstream_sha}:${rel}" 2>/dev/null; then
       echo "UPSTREAM HEAD DOES NOT TRACK: $rel" >&2
       failed=1
       continue
     fi
-    if [[ "$(git -C "$upstream" cat-file -t "${upstream_sha}:${rel}")" != "blob" ]]; then
-      echo "UPSTREAM HEAD PATH IS NOT A FILE: $rel" >&2
+    mode="$(git -C "$upstream" ls-tree "$upstream_sha" -- "$rel" | awk 'NR==1{print $1}')"
+    if [[ "$mode" != "100644" && "$mode" != "100755" ]]; then
+      echo "UPSTREAM HEAD PATH IS NOT A REGULAR FILE (mode ${mode:-missing}): $rel" >&2
       failed=1
       continue
     fi
@@ -392,6 +445,33 @@ verify_workflow() {
   python3 "$REPO_ROOT/checks/check_workflow.py" --repo "$REPO_ROOT"
 }
 
+# Print SYNCED_FILES entries that are not present in the prior lock. Only these
+# genuinely new sync entries may be untracked after a sync; a previously locked
+# managed file that disappeared from the index (e.g. git rm --cached) must
+# still fail closed as CLASSIFIED FILE IS NOT TRACKED.
+new_sync_entries() {
+  if [[ ! -f "$LOCK_FILE" ]]; then
+    printf '%s\n' "${SYNCED_FILES[@]}"
+    return
+  fi
+  python3 - "$LOCK_FILE" "${SYNCED_FILES[@]}" <<'PY'
+import json
+import sys
+
+lock_path, *synced = sys.argv[1:]
+with open(lock_path, encoding="utf-8") as fh:
+    lock = json.load(fh)
+entries = lock.get("files")
+if not isinstance(entries, list):
+    print("INVALID: lock files must be a list", file=sys.stderr)
+    raise SystemExit(1)
+prior = {entry.get("path") for entry in entries if isinstance(entry, dict)}
+for rel in synced:
+    if rel not in prior:
+        print(rel)
+PY
+}
+
 if [[ "${1:-}" == "--verify" ]]; then
   verify_lock
   verify_python_imports strict
@@ -407,10 +487,17 @@ fi
 
 upstream_sha="$(git -C "$UPSTREAM" rev-parse --verify 'HEAD^{commit}')"
 verify_upstream_sources "$UPSTREAM" "$upstream_sha"
+new_entries_output="$(new_sync_entries)"
+NEW_SYNC_ENTRIES=()
+while IFS= read -r rel; do
+  [[ -n "$rel" ]] && NEW_SYNC_ENTRIES+=("$rel")
+done <<< "$new_entries_output"
 for rel in "${SYNCED_FILES[@]}"; do
-  cp "$UPSTREAM/$rel" "$REPO_ROOT/$rel"
+  # Copy the blob recorded at upstream_sha instead of the worktree path so a
+  # symlinked or otherwise substituted worktree entry can never be vendored.
+  git -C "$UPSTREAM" show "${upstream_sha}:${rel}" > "$REPO_ROOT/$rel"
 done
 write_lock "$upstream_sha"
 verify_lock
-verify_python_imports allow-untracked-managed "${SYNCED_FILES[@]}"
+verify_python_imports allow-untracked-managed ${NEW_SYNC_ENTRIES[@]+"${NEW_SYNC_ENTRIES[@]}"}
 verify_workflow
