@@ -357,6 +357,28 @@ fn force_push_rule_keeps_non_expanding_shell_text_inert() {
 }
 
 #[test]
+fn force_push_rule_keeps_scanning_after_large_static_expansion() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "printf '%s\\n' {1..257}; git push --force",
+        "printf '%s\\n' {1..17} {1..17}; git push --force",
+        "printf '%s\\n' {9223372036854775806..9223372036854775807}; git push --force",
+        "git push {1..257} --force",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
 fn force_push_rule_rejects_values_terminators_and_similar_options() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     for command in [

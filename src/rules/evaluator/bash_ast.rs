@@ -175,13 +175,13 @@ impl CommandCollector {
             }
         }
         self.collect_word_commands(name)?;
-        append_word_variants(&mut segments, self.command_word_variants(name)?)?;
+        append_word_variants(&mut segments, self.command_word_variants(name)?);
         if let Some(suffix) = &command.suffix {
             for item in &suffix.0 {
                 match item {
                     CommandPrefixOrSuffixItem::Word(word) => {
                         self.collect_word_commands(word)?;
-                        append_word_variants(&mut segments, self.command_word_variants(word)?)?;
+                        append_word_variants(&mut segments, self.command_word_variants(word)?);
                     }
                     _ => self.collect_command_item(item)?,
                 }
@@ -313,7 +313,13 @@ impl CommandCollector {
         else {
             return Ok(vec![self.command_word(word)?]);
         };
-        let expanded = expand_brace_pieces(&brace_pieces)?;
+        let expanded = match expand_brace_pieces(&brace_pieces) {
+            Ok(expanded) => expanded,
+            Err(StaticExpansionError::Limit) => {
+                return Ok(vec![DYNAMIC_SHELL_WORD.to_string()]);
+            }
+            Err(StaticExpansionError::Invalid(message)) => return Err(message),
+        };
         expanded
             .into_iter()
             .map(|value| {
@@ -325,16 +331,14 @@ impl CommandCollector {
     }
 }
 
-fn append_word_variants(
-    segments: &mut Vec<Vec<String>>,
-    variants: Vec<String>,
-) -> Result<(), String> {
+fn append_word_variants(segments: &mut Vec<Vec<String>>, variants: Vec<String>) {
     if variants.is_empty()
         || segments.len().saturating_mul(variants.len()) > MAX_STATIC_WORD_VARIANTS
     {
-        return Err(format!(
-            "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} command variants"
-        ));
+        for segment in segments {
+            segment.push(DYNAMIC_SHELL_WORD.to_string());
+        }
+        return;
     }
     let prefixes = std::mem::take(segments);
     for prefix in prefixes {
@@ -344,7 +348,11 @@ fn append_word_variants(
             segments.push(expanded);
         }
     }
-    Ok(())
+}
+
+enum StaticExpansionError {
+    Limit,
+    Invalid(String),
 }
 
 fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
@@ -382,7 +390,9 @@ fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
     None
 }
 
-fn expand_brace_pieces(pieces: &[BraceExpressionOrText]) -> Result<Vec<String>, String> {
+fn expand_brace_pieces(
+    pieces: &[BraceExpressionOrText],
+) -> Result<Vec<String>, StaticExpansionError> {
     let mut variants = vec![String::new()];
     for piece in pieces {
         let suffixes = match piece {
@@ -394,7 +404,9 @@ fn expand_brace_pieces(pieces: &[BraceExpressionOrText]) -> Result<Vec<String>, 
     Ok(variants)
 }
 
-fn expand_brace_expression(expression: &[BraceExpressionMember]) -> Result<Vec<String>, String> {
+fn expand_brace_expression(
+    expression: &[BraceExpressionMember],
+) -> Result<Vec<String>, StaticExpansionError> {
     let mut variants = Vec::new();
     for member in expression {
         match member {
@@ -418,24 +430,30 @@ fn expand_brace_expression(expression: &[BraceExpressionMember]) -> Result<Vec<S
                         .ok()
                         .and_then(char::from_u32)
                         .ok_or_else(|| {
-                            "Bash brace expansion produced an invalid character".to_string()
+                            StaticExpansionError::Invalid(
+                                "Bash brace expansion produced an invalid character".to_string(),
+                            )
                         })?;
                     variants.push(value.to_string());
                 }
             }
         }
         if variants.len() > MAX_STATIC_WORD_VARIANTS {
-            return Err(format!(
-                "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} word variants"
-            ));
+            return Err(StaticExpansionError::Limit);
         }
     }
     Ok(variants)
 }
 
-fn inclusive_i64_sequence(start: i64, end: i64, increment: i64) -> Result<Vec<i64>, String> {
+fn inclusive_i64_sequence(
+    start: i64,
+    end: i64,
+    increment: i64,
+) -> Result<Vec<i64>, StaticExpansionError> {
     if increment == 0 || (start < end && increment < 0) || (start > end && increment > 0) {
-        return Err("Bash brace expansion has an invalid sequence increment".to_string());
+        return Err(StaticExpansionError::Invalid(
+            "Bash brace expansion has an invalid sequence increment".to_string(),
+        ));
     }
     let mut values = Vec::new();
     let mut value = start;
@@ -445,25 +463,25 @@ fn inclusive_i64_sequence(start: i64, end: i64, increment: i64) -> Result<Vec<i6
         value >= end
     } {
         if values.len() == MAX_STATIC_WORD_VARIANTS {
-            return Err(format!(
-                "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} sequence variants"
-            ));
+            return Err(StaticExpansionError::Limit);
         }
         values.push(value);
-        value = value
-            .checked_add(increment)
-            .ok_or_else(|| "Bash brace expansion sequence overflowed".to_string())?;
+        let Some(next) = value.checked_add(increment) else {
+            break;
+        };
+        value = next;
     }
     Ok(values)
 }
 
-fn append_text_variants(variants: &mut Vec<String>, suffixes: &[String]) -> Result<(), String> {
+fn append_text_variants(
+    variants: &mut Vec<String>,
+    suffixes: &[String],
+) -> Result<(), StaticExpansionError> {
     if suffixes.is_empty()
         || variants.len().saturating_mul(suffixes.len()) > MAX_STATIC_WORD_VARIANTS
     {
-        return Err(format!(
-            "Bash static expansion exceeds {MAX_STATIC_WORD_VARIANTS} word variants"
-        ));
+        return Err(StaticExpansionError::Limit);
     }
     let prefixes = std::mem::take(variants);
     for prefix in prefixes {

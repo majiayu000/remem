@@ -155,6 +155,7 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "/bin/sh -ec 'git push --mirror origin'",
         "env FLAG=1 command bash -lc 'git push --force'",
         "git push --{force,force}",
+        "printf '%s\\n' {1..257}; git push --force",
         "cat <<EOF\ngit push --force\nEOF\ngit push --force",
         "echo safe # <<EOF\ngit push --force",
         "cat <<< 'git push --force'\ngit push --force",

@@ -79,11 +79,12 @@ contract is complete.
   parser. Unquoted newlines and command groups form executable segments;
   assignment-word, arithmetic, command-substitution, expandable-heredoc, and
   static shell `-c` execution contexts are traversed; static brace alternatives
-  are evaluated; and quoted or echoed command text and quoted heredocs stay
-  inert. Exact `--force`, standalone `-f`, `f` in valid
-  short-option clusters, and a non-deletion leading-`+` refspec match; ordinary
-  positional arguments do not. The parser honors the `--` terminator and
-  option arity so option values, deletions, remote names,
+  are evaluated; and bounded expansion exhaustion makes only the affected word
+  opaque while later words and command segments remain evaluable. Quoted or
+  echoed command text and quoted heredocs stay inert. Exact `--force`,
+  standalone `-f`, `f` in valid short-option clusters, and a non-deletion
+  leading-`+` refspec match; ordinary positional arguments do not. The parser
+  honors the `--` terminator and option arity so option values, deletions, remote names,
   `--force-with-lease`, and arbitrary natural-language commands fail closed.
 - The project-root marker fast path is used only when Git discovery has no
   environment override and the nearest `.git` marker is a plain worktree

@@ -111,7 +111,9 @@ Artifact v2 additionally supports:
   words, arithmetic and command substitutions, expandable heredocs, and static
   shell `-c` payloads, and evaluates static brace alternatives. Quoted or
   echoed command text, quoted heredocs, and non-executing function definitions
-  remain inert.
+  remain inert. Static expansion is bounded; exhausting that bound makes only
+  the affected word opaque and does not discard later words or command
+  segments.
 
 Nothing else. Further kinds require a spec update.
 
@@ -254,9 +256,9 @@ hook-side writes.
   requires both fixed budgets: enabled p95 `<= 15.0 ms` and
   enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
   retained as informational output and does not affect pass/fail. The fresh
-  final-head fixed-budget artifact measured baseline p95 `9.218000 ms`, enabled
-  p95 `9.511667 ms`, delta `0.293667 ms`, complex-AST p95 `9.666208 ms`, and
-  MAD `0.501542 ms`; it passes both fixed budgets.
+  final-head fixed-budget artifact measured baseline p95 `9.636084 ms`, enabled
+  p95 `10.213167 ms`, delta `0.577083 ms`, complex-AST p95 `10.188000 ms`, and
+  MAD `0.397458 ms`; it passes both fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
 ## Test Plan
