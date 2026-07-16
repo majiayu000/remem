@@ -41,7 +41,7 @@ GH-720
 
 ### Phase 1 — 时间窗口查询
 
-7. raw 查询接受 `since`/`until`（epoch 或 ISO8601），只返回窗口内消息；不给窗口时行为与现状完全一致（向后兼容）。
+7. raw 查询接受 `since`/`until`（epoch、ISO8601 或 `YYYY-MM-DD`），只返回窗口内消息；date-only `since` 从 UTC 日初开始，date-only `until` 包含该 UTC 整日；不给窗口时行为与现状完全一致（向后兼容）。
 8. 新增"窗口内会话列表"查询：返回每个会话的 session id、project、来源根、窗口内首末消息时间、消息数；支持按 project 过滤。
 9. 会话列表支持每会话采样前 N 条用户消息（N 可配置），用于 recap 类摘要场景。
 10. 以上查询在 CLI（`remem raw`）与 MCP raw 工具两个面均可用，输出结构一致。

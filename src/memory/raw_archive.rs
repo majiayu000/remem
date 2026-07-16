@@ -741,25 +741,13 @@ pub fn build_sessions_json(
 }
 
 /// Parse a time bound given as Unix epoch seconds, an ISO8601 datetime, or a
-/// plain `YYYY-MM-DD` date (interpreted as UTC midnight). Shared by the CLI
-/// and MCP raw query surfaces (issue #723) and `ingest-sessions --since`.
+/// plain `YYYY-MM-DD` date interpreted as UTC midnight.
+///
+/// This public compatibility entry point retains its original date semantics.
+/// Query surfaces that need an inclusive date-only upper bound use the
+/// transport-neutral upper-bound parser instead.
 pub fn parse_time_bound(value: &str) -> Result<i64> {
-    let trimmed = value.trim();
-    if let Ok(epoch) = trimmed.parse::<i64>() {
-        return Ok(epoch);
-    }
-    if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(trimmed) {
-        return Ok(datetime.timestamp());
-    }
-    if let Ok(date) = chrono::NaiveDate::parse_from_str(trimmed, "%Y-%m-%d") {
-        let midnight = date
-            .and_hms_opt(0, 0, 0)
-            .expect("midnight is a valid time of day");
-        return Ok(midnight.and_utc().timestamp());
-    }
-    anyhow::bail!(
-        "invalid time bound {trimmed:?}: expected Unix epoch, ISO8601 datetime, or YYYY-MM-DD"
-    );
+    super::raw_query::parse_time_lower_bound(value)
 }
 
 fn fts_query(query: &str) -> String {

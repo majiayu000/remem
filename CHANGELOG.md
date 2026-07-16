@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.5.211` for #720 query parity: the MCP `search_raw`
+  tool and CLI `query raw` now share one raw-query assembly path, aligning the
+  JSON envelope and date-only `until` bounds across surfaces.
 - Staged source version `0.5.210` for GH-684: frozen legacy-surface writes now
   fail doctor instead of remaining warning-only, while the retirement contract
   fixes the 0.6.0 announcement and no-earlier-than-0.7.0 guarded-drop window.

@@ -13,10 +13,7 @@ use serde_json::Value;
 
 use super::{
     current::render_current_state,
-    raw::{
-        build_raw_search_json, build_raw_search_request, render_raw_search_results,
-        search_raw_archive,
-    },
+    raw::{build_raw_search_request, render_raw_search_results, search_raw_archive},
     search::{
         build_search_json, build_search_request, preview_raw_text, preview_text,
         render_search_results,
@@ -24,6 +21,7 @@ use super::{
     show::{format_memory_timestamp, ShowJson},
     why::{render_why_memory, ContextGateSummary, PackAttribution},
 };
+use crate::memory::raw_query::build_raw_search_json;
 
 fn sample_memory() -> Memory {
     Memory {

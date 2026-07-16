@@ -18,6 +18,7 @@ pub mod preference;
 pub mod procedure;
 pub mod promote;
 pub mod raw_archive;
+pub(crate) mod raw_query;
 pub(crate) mod raw_transcript;
 pub(crate) mod reference_time;
 pub mod scope_cleanup;

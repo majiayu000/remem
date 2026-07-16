@@ -6,7 +6,7 @@ use crate::db;
 use crate::ingest::sessions::{
     default_scan_roots, run_ingest_sessions, IngestOptions, IngestSummary, ScanRoot,
 };
-use crate::memory::raw_archive::parse_time_bound;
+use crate::memory::raw_query::parse_time_lower_bound;
 
 /// Run one batch ingestion pass and return the summary so the dispatcher can
 /// map partial failures to a non-zero exit code.
@@ -20,7 +20,7 @@ pub(in crate::cli) fn run_ingest_sessions_cli(
         scan_roots.push(ScanRoot::parse(spec)?);
     }
     let options = IngestOptions {
-        since_epoch: since.map(parse_time_bound).transpose()?,
+        since_epoch: since.map(parse_time_lower_bound).transpose()?,
     };
 
     let conn = db::open_db()?;

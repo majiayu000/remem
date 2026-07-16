@@ -159,7 +159,7 @@ pub(in crate::cli) enum RawAction {
         /// Only rows at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
         #[arg(long)]
         since: Option<String>,
-        /// Only rows at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        /// Only rows at or before this time; YYYY-MM-DD includes that full UTC day.
         #[arg(long)]
         until: Option<String>,
         /// Emit a single JSON object with stable fields for scripts.
@@ -171,7 +171,7 @@ pub(in crate::cli) enum RawAction {
         /// Only sessions with messages at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
         #[arg(long)]
         since: Option<String>,
-        /// Only sessions with messages at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        /// Only sessions with messages at or before this time; YYYY-MM-DD includes that full UTC day.
         #[arg(long)]
         until: Option<String>,
         /// Restrict to one project path.
