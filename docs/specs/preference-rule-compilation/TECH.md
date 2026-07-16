@@ -108,12 +108,17 @@ Artifact v2 additionally supports:
   as a per-ref force update. Option values, remote names, deletion refspecs,
   and `--force-with-lease` remain non-matches. Shell evaluation uses the Brush
   AST, removes unquoted backslash-newline continuations, traverses assignment
-  words, arithmetic and command substitutions, expandable heredocs, and static
-  shell `-c` payloads, and evaluates static brace alternatives. Quoted or
-  echoed command text, quoted heredocs, and non-executing function definitions
-  remain inert. Static expansion is bounded; exhausting that bound makes only
-  the affected word opaque and does not discard later words or command
-  segments.
+  words, parameter/arithmetic/command substitutions, expandable heredocs,
+  static `eval`, shell `-c` and stdin payloads, and statically invoked function
+  bodies, and evaluates static brace alternatives. `command`, `env`, and `exec`
+  share one command-position normalizer. Quoted or echoed command text and
+  uninvoked function definitions remain inert. Static expansion is bounded;
+  security-critical static variants remain visible when full materialization
+  is capped, and later words or command segments are never discarded. Git
+  executable basenames are recognized through static paths; force and mirror
+  boolean options use Git's last-option-wins behavior (including mirror
+  abbreviations); and branches proven unreachable by bare static
+  `true`/`false`/`:` guards are not evaluated.
 
 Nothing else. Further kinds require a spec update.
 

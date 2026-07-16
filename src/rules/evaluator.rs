@@ -222,14 +222,9 @@ fn command_forces_git_push(command: &str) -> Result<bool, String> {
 }
 
 fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [String]> {
-    let mut command_index = tokens.iter().position(|token| !is_env_assignment(token))?;
-    loop {
-        command_index = match tokens.get(command_index)?.as_str() {
-            "command" => command_wrapper_target(tokens, command_index)?,
-            "env" => env_wrapper_target(tokens, command_index)?,
-            "git" => break,
-            _ => return None,
-        };
+    let command_index = bash_ast::unwrap::effective_command_index(tokens)?;
+    if !is_git_executable(tokens.get(command_index)?) {
+        return None;
     }
     let mut index = command_index;
     index += 1;
@@ -273,21 +268,39 @@ fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [
     None
 }
 
+fn is_git_executable(command: &str) -> bool {
+    let basename = command.rsplit(['/', '\\']).next().unwrap_or(command);
+    basename == "git" || basename.eq_ignore_ascii_case("git.exe")
+}
+
 fn git_push_args_force(args: &[String]) -> bool {
     let mut index = 0;
     let mut repository_supplied = false;
     let mut options_terminated = false;
+    let mut force_enabled = false;
+    let mut mirror_enabled = false;
     while let Some(arg) = args.get(index) {
         if !options_terminated && arg == "--" {
             options_terminated = true;
             index += 1;
             continue;
         }
-        if !options_terminated && matches!(arg.as_str(), "--force" | "-f") {
-            return true;
+        if !options_terminated && arg == "--force" {
+            force_enabled = true;
+            index += 1;
+            continue;
         }
-        if !options_terminated && arg == "--mirror" {
-            return true;
+        if !options_terminated && arg == "--no-force" {
+            force_enabled = false;
+            index += 1;
+            continue;
+        }
+        if !options_terminated {
+            if let Some(enabled) = mirror_option_state(arg) {
+                mirror_enabled = enabled;
+                index += 1;
+                continue;
+            }
         }
         if !options_terminated && (arg == "--repo" || arg.starts_with("--repo=")) {
             repository_supplied = arg.starts_with("--repo=") || args.get(index + 1).is_some();
@@ -296,7 +309,11 @@ fn git_push_args_force(args: &[String]) -> bool {
         }
         if !options_terminated {
             match git_push_short_option_effect(arg) {
-                PushShortOptionEffect::Forces => return true,
+                PushShortOptionEffect::Forces => {
+                    force_enabled = true;
+                    index += 1;
+                    continue;
+                }
                 PushShortOptionEffect::ConsumesNext => {
                     index += 2;
                     continue;
@@ -318,65 +335,15 @@ fn git_push_args_force(args: &[String]) -> bool {
         repository_supplied = true;
         index += 1;
     }
-    false
+    force_enabled || mirror_enabled
 }
 
-fn command_wrapper_target(tokens: &[String], command_index: usize) -> Option<usize> {
-    let mut index = command_index + 1;
-    while let Some(option) = tokens.get(index) {
-        match option.as_str() {
-            "--" => return tokens.get(index + 1).map(|_| index + 1),
-            "-p" => index += 1,
-            "-v" | "-V" => return None,
-            value if value.starts_with('-') => {
-                let flags = value.strip_prefix('-')?;
-                if flags.is_empty()
-                    || flags.chars().any(|flag| !matches!(flag, 'p' | 'v' | 'V'))
-                    || flags.chars().any(|flag| matches!(flag, 'v' | 'V'))
-                {
-                    return None;
-                }
-                index += 1;
-            }
-            _ => return Some(index),
-        }
+fn mirror_option_state(arg: &str) -> Option<bool> {
+    if let Some(prefix) = arg.strip_prefix("--no-") {
+        return (!prefix.is_empty() && "mirror".starts_with(prefix)).then_some(false);
     }
-    None
-}
-
-fn env_wrapper_target(tokens: &[String], command_index: usize) -> Option<usize> {
-    let mut index = command_index + 1;
-    let mut options_terminated = false;
-    while let Some(token) = tokens.get(index) {
-        if is_env_assignment(token) {
-            index += 1;
-            continue;
-        }
-        if options_terminated {
-            return Some(index);
-        }
-        match token.as_str() {
-            "--" => {
-                options_terminated = true;
-                index += 1;
-            }
-            "-i" | "--ignore-environment" | "-0" | "--null" | "--debug" => index += 1,
-            "-u" | "--unset" | "-C" | "--chdir" | "--argv0" => {
-                tokens.get(index + 1)?;
-                index += 2;
-            }
-            value
-                if value.starts_with("--unset=")
-                    || value.starts_with("--chdir=")
-                    || value.starts_with("--argv0=") =>
-            {
-                index += 1;
-            }
-            value if value.starts_with('-') => return None,
-            _ => return Some(index),
-        }
-    }
-    None
+    let prefix = arg.strip_prefix("--")?;
+    (!prefix.is_empty() && "mirror".starts_with(prefix)).then_some(true)
 }
 
 fn is_force_push_refspec(arg: &str) -> bool {
@@ -482,18 +449,6 @@ fn commit_option_consumes_next(arg: &str) -> bool {
             .chars()
             .last()
             .is_some_and(|ch| matches!(ch, 'm' | 'F' | 'C' | 'c'))
-}
-
-fn is_env_assignment(token: &str) -> bool {
-    let Some((name, _)) = token.split_once('=') else {
-        return false;
-    };
-    let mut chars = name.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    (first.is_ascii_alphabetic() || first == '_')
-        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 fn trailer_arg_matches(value: &str, trailer: &str) -> bool {

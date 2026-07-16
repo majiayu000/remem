@@ -174,7 +174,8 @@ mod tests {
         assert_eq!(
             parsed.rules[0].predicate,
             RulePredicate::CommandRegex {
-                pattern: r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add)([ \t\r\n;&|)]|$)".to_string(),
+                pattern: r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add)([ \t\r\n;&|)<>]|$)"
+                    .to_string(),
                 message: "Command violates a compiled package-manager preference".to_string()
             }
         );

@@ -2,6 +2,8 @@ use super::*;
 use crate::rules::artifact::{CompiledRule, RuleOverrideState};
 use crate::rules::test_support::package_manager_rule;
 
+mod git_execution;
+
 fn forbidden_trailer_rule() -> CompiledRule {
     CompiledRule {
         rule_id: "pref-456-1".to_string(),
@@ -364,7 +366,252 @@ fn force_push_rule_keeps_scanning_after_large_static_expansion() {
         "printf '%s\\n' {1..17} {1..17}; git push --force",
         "printf '%s\\n' {9223372036854775806..9223372036854775807}; git push --force",
         "git push {1..257} --force",
+        "git push origin main --force {1..300}",
     ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_unwraps_exec_and_env_documented_forms() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "exec git push --force",
+        "exec -a argv0 git push --force",
+        "exec -cl git push --force",
+        "exec -- git push --force",
+        "env - git push --force",
+        "env -S 'git push --force'",
+        "env -i -S 'git push --force'",
+        "env -u HOME -S 'git push --force'",
+        "env --chdir /tmp -S 'git push --force'",
+        "env -S 'FOO=1 git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    for command in ["exec -a git push --force", "env -S '$PAYLOAD'"] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_recognizes_append_assignment_prefixes() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "FOO+=bar git push --force",
+        "FOO+=bar BAR=1 git push --force",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_reparses_static_eval_arguments() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "eval 'git push --force'",
+        "eval git push --force",
+        "eval 'git push' --force",
+        "command eval 'git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: "eval \"$PAYLOAD\"".to_string(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+    assert!(outcome.matches.is_empty());
+    assert!(outcome.diagnostics.is_empty());
+}
+
+#[test]
+fn force_push_rule_evaluates_function_bodies_on_static_invocation() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "f() { git push --force; }; f",
+        "function deploy { git push --mirror origin; }\ndeploy",
+        "f() { git push --force; }; f --now",
+        "f() { f; g; }; g() { git push --force; }; f",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    for command in [
+        "f() { git push --force; }; command f",
+        "f() { git push --force; }; g",
+        "f() { f; }; f",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_parses_shell_stdin_heredocs() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "sh <<'EOF'\ngit push --force\nEOF",
+        "bash <<EOF\ngit push --force\nEOF",
+        "/bin/sh <<-'EOF'\n\tgit push --force\n\tEOF",
+        "bash <<< 'git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: "sh script.sh <<'EOF'\ngit push --force\nEOF".to_string(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+    assert!(outcome.matches.is_empty());
+    assert!(outcome.diagnostics.is_empty());
+}
+
+#[test]
+fn force_push_rule_traverses_parameter_expansion_payloads() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "echo ${UNSET:-$(git push --force)}",
+        "echo ${UNSET:=$(git push --force)}",
+        "echo ${SET:+$(git push --force)}",
+        "echo ${VAR%$(git push --force)}",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: "echo ${UNSET:-safe}".to_string(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+    assert!(outcome.matches.is_empty());
+    assert!(outcome.diagnostics.is_empty());
+}
+
+#[test]
+fn force_push_rule_skips_shell_options_with_arguments_before_dash_c() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "bash --noprofile --rcfile /dev/null -c 'git push --force'",
+        "bash --init-file /dev/null -c 'git push --force'",
+        "bash -O extglob -c 'git push --force'",
+        "bash +O extglob -c 'git push --force'",
+        "bash -o errexit -c 'git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert_eq!(outcome.matches.len(), 1, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_preserves_critical_variants_past_materialization_limit() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let alternatives = std::iter::repeat_n("force", 257)
+        .collect::<Vec<_>>()
+        .join(",");
+    let suffixes = (1..=256)
+        .map(|value| value.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    for command in [
+        format!("git push --{{{alternatives}}}"),
+        format!("git push --{{f,x}}{{orce,{suffixes}}}"),
+    ] {
+        let outcome = evaluate_artifact(&artifact, &EvaluationInput { command });
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block);
+        assert_eq!(outcome.matches.len(), 1);
+        assert!(outcome.diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn package_manager_rule_matches_adjacent_redirections() {
+    let artifact = CompiledRulesArtifact::new(99, vec![package_manager_rule(RuleAction::Block)]);
+    for command in ["npm install>log", "npm install<input", "npm install 2>>log"] {
         let outcome = evaluate_artifact(
             &artifact,
             &EvaluationInput {

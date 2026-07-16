@@ -77,15 +77,23 @@ contract is complete.
   low-risk directive `git push --force`. Evaluation uses the Brush shell AST,
   explicit static shell-expansion handling, and a typed Git-push argument
   parser. Unquoted newlines and command groups form executable segments;
-  assignment-word, arithmetic, command-substitution, expandable-heredoc, and
-  static shell `-c` execution contexts are traversed; static brace alternatives
-  are evaluated; and bounded expansion exhaustion makes only the affected word
-  opaque while later words and command segments remain evaluable. Quoted or
-  echoed command text and quoted heredocs stay inert. Exact `--force`,
-  standalone `-f`, `f` in valid short-option clusters, and a non-deletion
-  leading-`+` refspec match; ordinary positional arguments do not. The parser
-  honors the `--` terminator and option arity so option values, deletions, remote names,
+  assignment-word, parameter, arithmetic, command-substitution,
+  expandable-heredoc, static `eval`, shell `-c`/stdin, and statically invoked
+  function execution contexts are traversed. `command`, `env`, and `exec`
+  wrappers share one command-position normalizer. Static brace alternatives
+  are evaluated; bounded materialization preserves security-critical static
+  variants and keeps later words and command segments evaluable. Quoted or
+  echoed command text and uninvoked function definitions stay inert. Static
+  path-qualified `git`/`git.exe` basenames are recognized. Exact `--force`,
+  standalone `-f`, `f` in valid short-option clusters, mirror abbreviations,
+  and a non-deletion leading-`+` refspec match; boolean force/mirror options
+  honor Git's last-option-wins behavior. The parser honors the `--` terminator
+  and option arity so option values, deletions, remote names,
   `--force-with-lease`, and arbitrary natural-language commands fail closed.
+  Bare argument-free `true`/`false`/`:` pipelines may prove a following
+  `&&`/`||` branch unreachable; redirects, assignments, functions, and unknown
+  commands remain conservative. Package-manager command patterns treat shell
+  redirection metacharacters as command boundaries.
 - The project-root marker fast path is used only when Git discovery has no
   environment override and the nearest `.git` marker is a plain worktree
   layout. Explicit layouts, discovery controls such as

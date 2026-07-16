@@ -1,14 +1,26 @@
+use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use brush_parser::ast::{
     AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand, UnexpandedArithmeticExpr,
-    Word,
+    FunctionBody, IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand,
+    UnexpandedArithmeticExpr, Word,
 };
-use brush_parser::word::{
-    BraceExpressionMember, BraceExpressionOrText, WordPiece, WordPieceWithSource,
-};
+use brush_parser::word::{Parameter, ParameterExpr, WordPiece, WordPieceWithSource};
 use brush_parser::{Parser, ParserOptions};
+
+mod static_execution;
+mod static_words;
+pub(super) mod unwrap;
+
+use static_execution::{
+    direct_command_name, static_env_split_payload, static_eval_payload,
+    static_shell_command_payload, static_shell_reads_stdin,
+};
+use static_words::{
+    append_word_variants, critical_brace_variants, expand_brace_pieces, static_word_pieces,
+    StaticExpansionError,
+};
 
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
 const MAX_STATIC_WORD_VARIANTS: usize = 256;
@@ -17,6 +29,8 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
     let mut collector = CommandCollector {
         options: ParserOptions::default(),
         segments: Vec::new(),
+        functions: HashMap::new(),
+        active_functions: HashSet::new(),
     };
     collector.collect_source(source)?;
     Ok(collector.segments)
@@ -25,6 +39,8 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
 struct CommandCollector {
     options: ParserOptions,
     segments: Vec<Vec<String>>,
+    functions: HashMap<String, FunctionBody>,
+    active_functions: HashSet<String>,
 }
 
 impl CommandCollector {
@@ -46,15 +62,47 @@ impl CommandCollector {
     fn collect_list(&mut self, list: &CompoundList) -> Result<(), String> {
         for item in &list.0 {
             self.collect_pipeline(&item.0.first)?;
+            let mut static_success = self.static_pipeline_success(&item.0.first)?;
             for additional in &item.0.additional {
                 match additional {
-                    AndOr::And(pipeline) | AndOr::Or(pipeline) => {
+                    AndOr::And(_) if static_success == Some(false) => {}
+                    AndOr::Or(_) if static_success == Some(true) => {}
+                    AndOr::And(pipeline) => {
                         self.collect_pipeline(pipeline)?;
+                        static_success =
+                            and_status(static_success, self.static_pipeline_success(pipeline)?);
+                    }
+                    AndOr::Or(pipeline) => {
+                        self.collect_pipeline(pipeline)?;
+                        static_success =
+                            or_status(static_success, self.static_pipeline_success(pipeline)?);
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    fn static_pipeline_success(&self, pipeline: &Pipeline) -> Result<Option<bool>, String> {
+        let [Command::Simple(command)] = pipeline.seq.as_slice() else {
+            return Ok(None);
+        };
+        if command.prefix.is_some() || command.suffix.is_some() {
+            return Ok(None);
+        }
+        let Some(name) = &command.word_or_name else {
+            return Ok(None);
+        };
+        let name = self.command_word(name)?;
+        if name == DYNAMIC_SHELL_WORD || self.functions.contains_key(&name) {
+            return Ok(None);
+        }
+        let success = match name.as_str() {
+            ":" | "true" => Some(true),
+            "false" => Some(false),
+            _ => None,
+        };
+        Ok(success.map(|success| if pipeline.bang { !success } else { success }))
     }
 
     fn collect_pipeline(&mut self, pipeline: &Pipeline) -> Result<(), String> {
@@ -76,7 +124,13 @@ impl CommandCollector {
                 }
                 Ok(())
             }
-            Command::Function(_) => Ok(()),
+            Command::Function(function) => {
+                let name = self.command_word(&function.fname)?;
+                if name != DYNAMIC_SHELL_WORD {
+                    self.functions.insert(name, function.body.clone());
+                }
+                Ok(())
+            }
             Command::ExtendedTest(test, redirects) => {
                 self.collect_extended_test(&test.expr)?;
                 if let Some(redirects) = redirects {
@@ -188,12 +242,47 @@ impl CommandCollector {
             }
         }
         for tokens in segments {
+            self.collect_static_function_call(&tokens)?;
+            if let Some(payload) = static_eval_payload(&tokens) {
+                self.collect_source(&payload)?;
+            }
+            if let Some(payload) = static_env_split_payload(&tokens) {
+                self.collect_source(&payload)?;
+            }
             if let Some(payload) = static_shell_command_payload(&tokens) {
                 self.collect_source(payload)?;
+            }
+            if static_shell_reads_stdin(&tokens) {
+                for payload in self.stdin_payloads(command)? {
+                    self.collect_source(&payload)?;
+                }
             }
             self.segments.push(tokens);
         }
         Ok(())
+    }
+
+    fn collect_static_function_call(&mut self, tokens: &[String]) -> Result<(), String> {
+        let Some(name) = direct_command_name(tokens) else {
+            return Ok(());
+        };
+        let Some(body) = self.functions.get(name).cloned() else {
+            return Ok(());
+        };
+        if !self.active_functions.insert(name.to_string()) {
+            return Ok(());
+        }
+        let result = (|| {
+            self.collect_compound_command(&body.0)?;
+            if let Some(redirects) = &body.1 {
+                for redirect in &redirects.0 {
+                    self.collect_redirect_commands(redirect)?;
+                }
+            }
+            Ok(())
+        })();
+        self.active_functions.remove(name);
+        result
     }
 
     fn collect_command_items(
@@ -294,10 +383,130 @@ impl CommandCollector {
                 WordPiece::ArithmeticExpression(expression) => {
                     self.collect_arithmetic_expression(expression)?;
                 }
+                WordPiece::ParameterExpansion(expression) => {
+                    self.collect_parameter_expression(expression)?;
+                }
                 _ => {}
             }
         }
         Ok(())
+    }
+
+    fn collect_parameter_expression(&mut self, expression: &ParameterExpr) -> Result<(), String> {
+        match expression {
+            ParameterExpr::Parameter { parameter, .. }
+            | ParameterExpr::ParameterLength { parameter, .. }
+            | ParameterExpr::Transform { parameter, .. }
+            | ParameterExpr::UppercaseFirstChar { parameter, .. }
+            | ParameterExpr::UppercasePattern { parameter, .. }
+            | ParameterExpr::LowercaseFirstChar { parameter, .. }
+            | ParameterExpr::LowercasePattern { parameter, .. }
+            | ParameterExpr::RemoveSmallestSuffixPattern { parameter, .. }
+            | ParameterExpr::RemoveLargestSuffixPattern { parameter, .. }
+            | ParameterExpr::RemoveSmallestPrefixPattern { parameter, .. }
+            | ParameterExpr::RemoveLargestPrefixPattern { parameter, .. }
+            | ParameterExpr::UseDefaultValues { parameter, .. }
+            | ParameterExpr::AssignDefaultValues { parameter, .. }
+            | ParameterExpr::IndicateErrorIfNullOrUnset { parameter, .. }
+            | ParameterExpr::UseAlternativeValue { parameter, .. }
+            | ParameterExpr::Substring { parameter, .. }
+            | ParameterExpr::ReplaceSubstring { parameter, .. } => {
+                self.collect_parameter(parameter)?;
+            }
+            ParameterExpr::VariableNames { .. } | ParameterExpr::MemberKeys { .. } => {}
+        }
+        match expression {
+            ParameterExpr::UseDefaultValues { default_value, .. }
+            | ParameterExpr::AssignDefaultValues { default_value, .. } => {
+                self.collect_optional_parameter_word(default_value.as_deref())?;
+            }
+            ParameterExpr::IndicateErrorIfNullOrUnset { error_message, .. } => {
+                self.collect_optional_parameter_word(error_message.as_deref())?;
+            }
+            ParameterExpr::UseAlternativeValue {
+                alternative_value, ..
+            } => {
+                self.collect_optional_parameter_word(alternative_value.as_deref())?;
+            }
+            ParameterExpr::RemoveSmallestSuffixPattern { pattern, .. }
+            | ParameterExpr::RemoveLargestSuffixPattern { pattern, .. }
+            | ParameterExpr::RemoveSmallestPrefixPattern { pattern, .. }
+            | ParameterExpr::RemoveLargestPrefixPattern { pattern, .. }
+            | ParameterExpr::UppercaseFirstChar { pattern, .. }
+            | ParameterExpr::UppercasePattern { pattern, .. }
+            | ParameterExpr::LowercaseFirstChar { pattern, .. }
+            | ParameterExpr::LowercasePattern { pattern, .. } => {
+                self.collect_optional_parameter_word(pattern.as_deref())?;
+            }
+            ParameterExpr::Substring { offset, length, .. } => {
+                self.collect_arithmetic_expression(offset)?;
+                if let Some(length) = length {
+                    self.collect_arithmetic_expression(length)?;
+                }
+            }
+            ParameterExpr::ReplaceSubstring {
+                pattern,
+                replacement,
+                ..
+            } => {
+                self.collect_parameter_word(pattern)?;
+                self.collect_optional_parameter_word(replacement.as_deref())?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn collect_parameter(&mut self, parameter: &Parameter) -> Result<(), String> {
+        if let Parameter::NamedWithIndex { index, .. } = parameter {
+            self.collect_parameter_word(index)?;
+        }
+        Ok(())
+    }
+
+    fn collect_optional_parameter_word(&mut self, value: Option<&str>) -> Result<(), String> {
+        match value {
+            Some(value) => self.collect_parameter_word(value),
+            None => Ok(()),
+        }
+    }
+
+    fn collect_parameter_word(&mut self, value: &str) -> Result<(), String> {
+        let pieces = brush_parser::word::parse(value, &self.options)
+            .map_err(|error| format!("Bash parameter word parse error: {error}"))?;
+        self.collect_word_pieces(&pieces)
+    }
+
+    /// Statically known stdin payloads for one simple command: here-document
+    /// bodies (regardless of delimiter quoting) and static here-strings.
+    fn stdin_payloads(&self, command: &SimpleCommand) -> Result<Vec<String>, String> {
+        let mut payloads = Vec::new();
+        for items in [
+            command.prefix.as_ref().map(|prefix| &prefix.0),
+            command.suffix.as_ref().map(|suffix| &suffix.0),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for item in items {
+                let CommandPrefixOrSuffixItem::IoRedirect(redirect) = item else {
+                    continue;
+                };
+                match redirect {
+                    IoRedirect::HereDocument(_, here_doc) => {
+                        payloads.push(here_doc.doc.value.clone());
+                    }
+                    IoRedirect::HereString(_, word) => {
+                        let value = self.command_word(word)?;
+                        if value != DYNAMIC_SHELL_WORD {
+                            payloads.push(value);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(payloads)
     }
 
     fn command_word(&self, word: &Word) -> Result<String, String> {
@@ -316,7 +525,9 @@ impl CommandCollector {
         let expanded = match expand_brace_pieces(&brace_pieces) {
             Ok(expanded) => expanded,
             Err(StaticExpansionError::Limit) => {
-                return Ok(vec![DYNAMIC_SHELL_WORD.to_string()]);
+                let mut variants = critical_brace_variants(&brace_pieces);
+                variants.push(DYNAMIC_SHELL_WORD.to_string());
+                return Ok(variants);
             }
             Err(StaticExpansionError::Invalid(message)) => return Err(message),
         };
@@ -331,280 +542,18 @@ impl CommandCollector {
     }
 }
 
-fn append_word_variants(segments: &mut Vec<Vec<String>>, variants: Vec<String>) {
-    if variants.is_empty()
-        || segments.len().saturating_mul(variants.len()) > MAX_STATIC_WORD_VARIANTS
-    {
-        for segment in segments {
-            segment.push(DYNAMIC_SHELL_WORD.to_string());
-        }
-        return;
-    }
-    let prefixes = std::mem::take(segments);
-    for prefix in prefixes {
-        for variant in &variants {
-            let mut expanded = prefix.clone();
-            expanded.push(variant.clone());
-            segments.push(expanded);
-        }
+fn and_status(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(false), _) | (_, Some(false)) => Some(false),
+        (Some(true), value) => value,
+        (None, Some(true)) | (None, None) => None,
     }
 }
 
-enum StaticExpansionError {
-    Limit,
-    Invalid(String),
-}
-
-fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
-    let mut command_index = tokens
-        .iter()
-        .position(|token| !super::is_env_assignment(token))?;
-    loop {
-        command_index = match tokens.get(command_index)?.as_str() {
-            "command" => super::command_wrapper_target(tokens, command_index)?,
-            "env" => super::env_wrapper_target(tokens, command_index)?,
-            _ => break,
-        };
+fn or_status(left: Option<bool>, right: Option<bool>) -> Option<bool> {
+    match (left, right) {
+        (Some(true), _) | (_, Some(true)) => Some(true),
+        (Some(false), value) => value,
+        (None, Some(false)) | (None, None) => None,
     }
-    let shell = std::path::Path::new(tokens.get(command_index)?)
-        .file_name()
-        .and_then(|value| value.to_str())?;
-    if !matches!(shell, "bash" | "dash" | "ksh" | "sh" | "zsh") {
-        return None;
-    }
-    let mut index = command_index + 1;
-    while let Some(option) = tokens.get(index) {
-        if option == "--" || !option.starts_with('-') || option == "-" {
-            return None;
-        }
-        let carries_command = option == "-c"
-            || option
-                .strip_prefix('-')
-                .is_some_and(|flags| !flags.starts_with('-') && flags.contains('c'));
-        if carries_command {
-            let payload = tokens.get(index + 1)?;
-            return (payload != DYNAMIC_SHELL_WORD).then_some(payload.as_str());
-        }
-        index += 1;
-    }
-    None
-}
-
-fn expand_brace_pieces(
-    pieces: &[BraceExpressionOrText],
-) -> Result<Vec<String>, StaticExpansionError> {
-    let mut variants = vec![String::new()];
-    for piece in pieces {
-        let suffixes = match piece {
-            BraceExpressionOrText::Text(text) => vec![text.clone()],
-            BraceExpressionOrText::Expr(expression) => expand_brace_expression(expression)?,
-        };
-        append_text_variants(&mut variants, &suffixes)?;
-    }
-    Ok(variants)
-}
-
-fn expand_brace_expression(
-    expression: &[BraceExpressionMember],
-) -> Result<Vec<String>, StaticExpansionError> {
-    let mut variants = Vec::new();
-    for member in expression {
-        match member {
-            BraceExpressionMember::Child(pieces) => variants.extend(expand_brace_pieces(pieces)?),
-            BraceExpressionMember::NumberSequence {
-                start,
-                end,
-                increment,
-            } => {
-                let values = inclusive_i64_sequence(*start, *end, *increment)?;
-                variants.extend(values.into_iter().map(|value| value.to_string()));
-            }
-            BraceExpressionMember::CharSequence {
-                start,
-                end,
-                increment,
-            } => {
-                let values = inclusive_i64_sequence(*start as i64, *end as i64, *increment)?;
-                for value in values {
-                    let value = u32::try_from(value)
-                        .ok()
-                        .and_then(char::from_u32)
-                        .ok_or_else(|| {
-                            StaticExpansionError::Invalid(
-                                "Bash brace expansion produced an invalid character".to_string(),
-                            )
-                        })?;
-                    variants.push(value.to_string());
-                }
-            }
-        }
-        if variants.len() > MAX_STATIC_WORD_VARIANTS {
-            return Err(StaticExpansionError::Limit);
-        }
-    }
-    Ok(variants)
-}
-
-fn inclusive_i64_sequence(
-    start: i64,
-    end: i64,
-    increment: i64,
-) -> Result<Vec<i64>, StaticExpansionError> {
-    if increment == 0 || (start < end && increment < 0) || (start > end && increment > 0) {
-        return Err(StaticExpansionError::Invalid(
-            "Bash brace expansion has an invalid sequence increment".to_string(),
-        ));
-    }
-    let mut values = Vec::new();
-    let mut value = start;
-    while if increment > 0 {
-        value <= end
-    } else {
-        value >= end
-    } {
-        if values.len() == MAX_STATIC_WORD_VARIANTS {
-            return Err(StaticExpansionError::Limit);
-        }
-        values.push(value);
-        let Some(next) = value.checked_add(increment) else {
-            break;
-        };
-        value = next;
-    }
-    Ok(values)
-}
-
-fn append_text_variants(
-    variants: &mut Vec<String>,
-    suffixes: &[String],
-) -> Result<(), StaticExpansionError> {
-    if suffixes.is_empty()
-        || variants.len().saturating_mul(suffixes.len()) > MAX_STATIC_WORD_VARIANTS
-    {
-        return Err(StaticExpansionError::Limit);
-    }
-    let prefixes = std::mem::take(variants);
-    for prefix in prefixes {
-        for suffix in suffixes {
-            let mut expanded = prefix.clone();
-            expanded.push_str(suffix);
-            variants.push(expanded);
-        }
-    }
-    Ok(())
-}
-
-fn static_word_pieces(pieces: &[WordPieceWithSource]) -> Option<String> {
-    let mut value = String::new();
-    for piece in pieces {
-        match &piece.piece {
-            WordPiece::Text(text) | WordPiece::SingleQuotedText(text) => value.push_str(text),
-            WordPiece::EscapeSequence(text) => {
-                let escaped = text.strip_prefix('\\')?;
-                if escaped != "\n" {
-                    value.push_str(escaped);
-                }
-            }
-            WordPiece::DoubleQuotedSequence(pieces)
-            | WordPiece::GettextDoubleQuotedSequence(pieces) => {
-                value.push_str(&static_word_pieces(pieces)?);
-            }
-            WordPiece::AnsiCQuotedText(text) => {
-                value.push_str(&decode_ansi_c_quoted_text(text)?);
-            }
-            WordPiece::TildeExpansion(_)
-            | WordPiece::ParameterExpansion(_)
-            | WordPiece::CommandSubstitution(_)
-            | WordPiece::BackquotedCommandSubstitution(_)
-            | WordPiece::ArithmeticExpression(_) => return None,
-        }
-    }
-    Some(value)
-}
-
-fn decode_ansi_c_quoted_text(text: &str) -> Option<String> {
-    let mut bytes = Vec::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            push_char_bytes(&mut bytes, ch);
-            continue;
-        }
-        let escaped = chars.next()?;
-        match escaped {
-            'a' => bytes.push(0x07),
-            'b' => bytes.push(0x08),
-            'e' | 'E' => bytes.push(0x1b),
-            'f' => bytes.push(0x0c),
-            'n' => bytes.push(b'\n'),
-            'r' => bytes.push(b'\r'),
-            't' => bytes.push(b'\t'),
-            'v' => bytes.push(0x0b),
-            '\\' => bytes.push(b'\\'),
-            '\'' => bytes.push(b'\''),
-            'c' => {
-                let control = chars.next()?;
-                if !control.is_ascii() {
-                    return None;
-                }
-                let control = control.to_ascii_uppercase() as u8;
-                bytes.push(if control == b'?' {
-                    0x7f
-                } else {
-                    control & 0x1f
-                });
-            }
-            'x' => bytes.push(take_digits(&mut chars, 16, 2)? as u8),
-            'u' => {
-                let decoded = char::from_u32(take_digits(&mut chars, 16, 4)?)?;
-                push_char_bytes(&mut bytes, decoded);
-            }
-            'U' => {
-                let decoded = char::from_u32(take_digits(&mut chars, 16, 8)?)?;
-                push_char_bytes(&mut bytes, decoded);
-            }
-            '0' => bytes.push(take_digits(&mut chars, 8, 3).unwrap_or(0) as u8),
-            '1'..='7' => {
-                let mut value = escaped.to_digit(8)?;
-                for _ in 0..2 {
-                    let Some(digit) = chars.peek().and_then(|ch| ch.to_digit(8)) else {
-                        break;
-                    };
-                    chars.next();
-                    value = value * 8 + digit;
-                }
-                bytes.push(value as u8);
-            }
-            _ => {
-                bytes.push(b'\\');
-                push_char_bytes(&mut bytes, escaped);
-            }
-        }
-    }
-    if bytes.contains(&0) {
-        return None;
-    }
-    String::from_utf8(bytes).ok()
-}
-
-fn take_digits<I>(chars: &mut std::iter::Peekable<I>, radix: u32, max: usize) -> Option<u32>
-where
-    I: Iterator<Item = char>,
-{
-    let mut value = 0;
-    let mut count = 0;
-    while count < max {
-        let Some(digit) = chars.peek().and_then(|ch| ch.to_digit(radix)) else {
-            break;
-        };
-        chars.next();
-        value = value * radix + digit;
-        count += 1;
-    }
-    (count > 0).then_some(value)
-}
-
-fn push_char_bytes(bytes: &mut Vec<u8>, ch: char) {
-    let mut encoded = [0; 4];
-    bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
 }

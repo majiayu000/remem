@@ -39,19 +39,19 @@ pub struct PreferenceClassification {
 const PACKAGE_MANAGER_PREDICATES: &[(&str, &str)] = &[
     (
         "npm",
-        r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add|ci)([ \t\r\n;&|)]|$)",
+        r"(^|[ \t\r\n])npm[ \t\r\n]+(install|i|add|ci)([ \t\r\n;&|)<>]|$)",
     ),
     (
         "yarn",
-        r"(^|[ \t\r\n])yarn[ \t\r\n]+(add|install)([ \t\r\n;&|)]|$)",
+        r"(^|[ \t\r\n])yarn[ \t\r\n]+(add|install)([ \t\r\n;&|)<>]|$)",
     ),
     (
         "bun",
-        r"(^|[ \t\r\n])bun[ \t\r\n]+(add|install)([ \t\r\n;&|)]|$)",
+        r"(^|[ \t\r\n])bun[ \t\r\n]+(add|install)([ \t\r\n;&|)<>]|$)",
     ),
     (
         "pnpm",
-        r"(^|[ \t\r\n])pnpm[ \t\r\n]+(add|install|i)([ \t\r\n;&|)]|$)",
+        r"(^|[ \t\r\n])pnpm[ \t\r\n]+(add|install|i)([ \t\r\n;&|)<>]|$)",
     ),
 ];
 
@@ -329,6 +329,17 @@ mod tests {
             classification.predicate,
             PreferencePredicate::CommandRegex { ref pattern, .. } if pattern.contains("npm")
         ));
+    }
+
+    #[test]
+    fn package_manager_pattern_stops_at_redirection_metacharacters() {
+        let pattern = command_pattern("Use pnpm, not npm");
+        let regex = regex_lite::Regex::new(&pattern).expect("classifier pattern must compile");
+        assert!(regex.is_match("npm install>install.log"));
+        assert!(regex.is_match("npm install >install.log"));
+        assert!(regex.is_match("npm i<packages.txt"));
+        assert!(regex.is_match("npm install 2>errors.log"));
+        assert!(!regex.is_match("npm installer"));
     }
 
     #[test]
