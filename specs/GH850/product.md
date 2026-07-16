@@ -83,20 +83,27 @@ Issue #850 与 Epic #849 引用了
    enrichment。
 9. `B-009`：任何会改变 enrichment 输入的 canonical 更新必须立即使旧版本失效；在新版本 ready
    前，检索只可使用更新后的原文/确定性 fallback，不得继续使用与旧内容绑定的 enrichment；仅
-   修改 canonical 字段而未显式修改 enrichment metadata 的写入，也必须保证旧 enrichment-only term
-   不再由 FTS MATCH 或 vector channel 命中。
+   修改 canonical 字段而未显式修改 enrichment metadata 的 raw 写入，也必须在**同一写事务**把
+   持久行的 `search_context` 与 version/source/index identity 收敛为 deterministic fallback/pending，
+   不能只改 FTS 而让 row 保留旧 enrichment。之后任意 unrelated update 都不得使旧 enrichment-only
+   term 重新由 FTS MATCH/vector 命中，且 FTS integrity 必须保持 clean。
 10. `B-010`：并发生成的成功与失败都必须以 claim 时的 source identity、generator/security-policy
     version、attempt identity 和 lease owner 为条件提交。若生成期间记忆被更新、删除、改为不可
     处理状态，lease 被新 attempt 接管，或另一 worker 已提交 ready，旧 worker 必须 no-op/rollback，
     不能覆盖新内容、复活删除行、把版本倒退或用迟到失败清除 ready。
 11. `B-011`：enrichment、FTS snapshot 和启用通道的向量更新必须表现为单行一致提交；取消、
     timeout、进程退出或 crash 发生在提交前不得留下半 ready 状态，发生在提交后重试必须幂等。
-    embedding 显式为 off 是唯一允许“无向量但 ready for FTS”的状态，且必须可诊断。
+    security-policy fallback convergence 也遵守同一合同：provider enabled 时，每行必须具有 matching
+    fallback embedding/index hash 才能重新开放 retrieval；任一 local/remote embedding 失败都保持
+    全局 fail-closed。embedding 显式为 off 是唯一允许“无向量但 ready for FTS”的状态，且必须可诊断。
 12. `B-012`：迁移后的历史行、NULL/空 enrichment 行和旧客户端继续可用。初始 v070 迁移不得同步
     调用 AI 或等待 AI backfill；历史行在回填完成前继续通过 canonical title/content 检索，旧客户
-    端看不到新字段且无需升级 payload schema。未来 security-policy version bump 属于 fail-closed
-    例外：在 deterministic fallback 全量恢复并重新建立安全索引前不得对外提供检索，失败必须阻断
-    启动而不能继续使用旧 policy enrichment。
+    端看不到新字段且无需升级 payload schema。数据库必须持久化单调不下降的
+    `min_security_policy_version`/compatibility epoch 与 convergence state；binary current policy 低于
+    floor 时 DB open fail closed；current 高于 floor/target 或 state 非 ready 时，除显式 maintenance
+    外的任何 retrieval/worker 都 fail closed。未来 security-policy version bump 属于 fail-closed 例外：
+    在 deterministic fallback FTS 与 provider-enabled matching vectors 全量恢复前不得对外提供检索，
+    失败必须阻断启动；旧 binary 不得把新-policy 行重生成旧版本。
 13. `B-013`：`remem doctor` 必须报告 eligible、ready、pending/failed-to-cover 数量、当前
     generator/security-policy versions 和覆盖率；零 eligible 可明确为 OK，低覆盖必须 Warn/Fail
     并给出恢复动作，数据库/计算错误必须 Fail 而不能伪装成 0/0 或 100%。
@@ -108,7 +115,9 @@ Issue #850 与 Epic #849 引用了
     边界，输出不得包含执行指令；若 enrichment 命中当前 instruction-pattern/opaque-payload 防线，
     整份新 enrichment 必须拒绝、error 记录并回退，不能因 canonical source 曾被人工
     acknowledge 就自动信任新生成文本。security-policy version 一旦提升，所有旧-policy enrichment
-    必须先失效并 fail-closed 回 deterministic fallback，不能等新 AI 生成后才停止使用旧文本。
+    必须先失效并 fail-closed 回 deterministic fallback，不能等新 AI 生成后才停止使用旧文本。该
+    maintenance 不调用生成 AI，但 provider enabled 时必须重建 matching embedding，可能联网、计费
+    或下载本地模型；执行前必须展示 provider/eligible count/预计调用面并获得独立 human approval。
 16. `B-016`：diagnostic、doctor 与 eval 证据必须绑定 generator version、security-policy version、
     source/index/attempt identity 和实际执行的通道；缺失或旧版本证据不能证明 ready。日志不得包含
     原文、生成全文或 secret，但必须包含可定位的 memory id、阶段和非敏感错误类别。
@@ -131,6 +140,8 @@ Issue #850 与 Epic #849 引用了
 - [ ] focused FTS 与 vector 测试证明两通道消费同一 snapshot；embedding off 行为明确可诊断。
 - [ ] 新写入、存量回填、更新失效、持久化 claim/lease/attempt、重复执行、双 worker race、lease
       takeover、迟到成功/失败、取消/crash 和失败 fallback 均有确定性测试。
+- [ ] raw canonical update 在同一事务持久化 fallback/invalid identity；随后 unrelated access-count
+      update 后旧 term 仍不命中、新 term 命中，FTS integrity clean。
 - [ ] 生成/embedding/事务失败会产生 redacted error-level diagnostic，原文 FTS 仍可命中且
       doctor 不虚报覆盖。
 - [ ] doctor 覆盖率与 generator/security-policy versions 可见，数据库错误 fail closed。
@@ -139,6 +150,8 @@ Issue #850 与 Epic #849 引用了
       指标严格高于 exact-main 的零基线，其他现有 gates 不回退；人工 context 只证明 wiring，CI
       不发起 live AI call。
 - [ ] migration、回填与 rollback rehearsal 证明可中断、幂等、不会阻塞 hook。
+- [ ] policy upgrade/downgrade 测试证明 DB floor 单调、旧 binary 在 retrieval/worker 前 fail closed；
+      provider enabled 的 fallback vector 失败阻断 reopen，provider off 才允许无 vector。
 - [ ] spec-only PR 使用 `Refs #850` / `Refs #849`，不关闭 implementation issue；最终 review、
       merge、release 仍保留 human gates。
 
