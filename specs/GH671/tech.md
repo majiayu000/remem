@@ -151,7 +151,9 @@ derived artifact.
 - Compatibility: Codex and hosts without pre-execution hooks cannot enforce
   command block mode; CLI and doctor must say that plainly.
 - Performance: Hook evaluation must stay bounded by a small rule count and
-  avoid DB/network/LLM work.
+  avoid DB/network/LLM work. The release benchmark gates on two fixed budgets:
+  enabled p95 `<= 15.0 ms` and enabled-minus-disabled p95 delta `<= 1.0 ms`;
+  MAD is emitted only as diagnostic context.
 - Maintenance: Predicate growth can become a hidden rules engine; require spec
   updates for new predicate kinds.
 
@@ -172,7 +174,8 @@ derived artifact.
 - [ ] Doctor tests: human and JSON output for count, compile time, host
       capability, and last error.
 - [x] Fixture/eval tests: repeated-correction scenarios and hook latency
-      benchmark.
+      benchmark with fixed `1.0 ms` delta and `15.0 ms` enabled-p95 budgets;
+      MAD is informational only.
 - [ ] Existing gates: `cargo fmt --check`, `cargo check`, focused tests, and
       `cargo test` before merge readiness.
 

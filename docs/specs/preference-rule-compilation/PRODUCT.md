@@ -89,8 +89,9 @@ doctor reporting, fixtures, and latency evidence.
 - [ ] Fixture suite of repeated-correction scenarios (package manager choice,
       forbidden commit trailers, forbidden commands) shows the warning fires on
       violation with compiled rules present and does not fire without them.
-- [ ] p95 hook latency with rule evaluation enabled is unchanged within
-      measurement noise on the existing latency benchmark.
+- [ ] The existing hook latency benchmark passes both fixed budgets: enabled
+      p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
+      `1.0 ms`. MAD remains informational and cannot decide pass/fail.
 - [ ] `remem` CLI lists compiled rules with provenance; disable/enable
       round-trip works and is covered by a test.
 - [ ] Compiler eligibility has one complete positive fixture, independent

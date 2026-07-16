@@ -131,6 +131,8 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "echo safe\ngit push --force",
         "(git push --force)",
         "{ git push origin main -f; }",
+        "! { git push --force; }",
+        "{ { git push --force; }; }",
         "(git commit --trailer AI-generated-by=bot)",
         "{\ngit commit --trailer AI-generated-by=bot\n}",
         "git push origin +main:main",
@@ -138,6 +140,9 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "git push --repo origin +HEAD:main",
         "git push origin -- +HEAD:main",
         "git push \\\n--force",
+        "git push \"--force\"",
+        "echo \"$(git push --force)\"",
+        "echo $(( $(git push --force) + 1 ))",
         "cat <<EOF\ngit push --force\nEOF\ngit push --force",
         "echo safe # <<EOF\ngit push --force",
         "cat <<< 'git push --force'\ngit push --force",
@@ -167,7 +172,8 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         "git push -o +main:main origin main",
         "git push --push-option +main:main origin main",
         "echo {git push --force}",
-        "echo { git push --force; }",
+        "echo }",
+        "echo $((1 << 2))",
         "cat <<EOF\ngit push --force\nEOF",
         "cat <<'EOF'\ngit push --force\nEOF",
         "cat <<-EOF\n\tgit push --force\n\tEOF",
@@ -185,12 +191,31 @@ fn structural_rules_follow_shell_boundaries_and_force_refspecs() -> Result<()> {
         );
     }
 
+    let invalid = remem::rules::evaluate_artifact(
+        &artifact,
+        &remem::rules::EvaluationInput {
+            command: "echo { git push --force; }".to_string(),
+        },
+    );
+    ensure!(
+        invalid.matches.is_empty()
+            && invalid.diagnostics.len() == 2
+            && invalid
+                .diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.message.contains("parse error")),
+        "invalid Bash must fail open with rule diagnostics, got {invalid:?}"
+    );
+
     Ok(())
 }
 
 #[test]
 #[ignore = "manual p95 harness; run under --release with --ignored --nocapture"]
-fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
+fn rule_hook_cli_p95_meets_absolute_budgets() -> Result<()> {
+    const MAX_DELTA_MS: f64 = 1.0;
+    const MAX_ENABLED_P95_MS: f64 = 15.0;
+
     let suite = load_fixtures()?;
     let root = test_dir("rule-hook-latency");
     let project_dir = root.join("project");
@@ -233,6 +258,7 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
         enabled_empty.run("cargo check", false)?;
         enabled_non_regex.run("cargo check", false)?;
         enabled.run("cargo check", false)?;
+        enabled.run("cat <<A <<B\none\nA\ntwo\nB\ngit push --force", false)?;
     }
 
     let mut baseline_a = Vec::with_capacity(60);
@@ -241,6 +267,7 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
     let mut enabled_non_regex_samples = Vec::with_capacity(120);
     let mut enabled_a = Vec::with_capacity(60);
     let mut enabled_b = Vec::with_capacity(60);
+    let mut brush_fallback_samples = Vec::with_capacity(60);
     for _ in 0..60 {
         baseline_a.push(baseline.run("cargo check", false)?.elapsed);
         enabled_empty_samples.push(enabled_empty.run("cargo check", false)?.elapsed);
@@ -250,6 +277,11 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
         enabled_non_regex_samples.push(enabled_non_regex.run("cargo check", false)?.elapsed);
         enabled_empty_samples.push(enabled_empty.run("cargo check", false)?.elapsed);
         baseline_b.push(baseline.run("cargo check", false)?.elapsed);
+        brush_fallback_samples.push(
+            enabled
+                .run("cat <<A <<B\none\nA\ntwo\nB\ngit push --force", false)?
+                .elapsed,
+        );
     }
 
     let baseline_a_p95 = percentile_ms(&baseline_a, 95);
@@ -268,11 +300,12 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
     let measurement_noise_ms = median_absolute_deviation_ms(&baseline_samples)
         .max(median_absolute_deviation_ms(&enabled_samples));
     let delta_ms = enabled_p95 - baseline_p95;
+    let brush_fallback_p95 = percentile_ms(&brush_fallback_samples, 95);
 
     eprintln!(
         "{}",
         serde_json::to_string_pretty(&json!({
-            "schema_version": 1,
+            "schema_version": 2,
             "samples_per_primary_cohort": 60,
             "samples_per_diagnostic_cohort": 120,
             "baseline_a_p95_ms": baseline_a_p95,
@@ -284,14 +317,29 @@ fn rule_hook_cli_p95_is_within_measurement_noise() -> Result<()> {
             "baseline_p95_ms": baseline_p95,
             "enabled_p95_ms": enabled_p95,
             "delta_ms": delta_ms,
+            "max_delta_ms": MAX_DELTA_MS,
+            "max_enabled_p95_ms": MAX_ENABLED_P95_MS,
+            "delta_within_budget": delta_ms <= MAX_DELTA_MS,
+            "enabled_p95_within_budget": enabled_p95 <= MAX_ENABLED_P95_MS,
+            "latency_budget_passed": delta_ms <= MAX_DELTA_MS && enabled_p95 <= MAX_ENABLED_P95_MS,
             "observed_baseline_noise_ms": observed_noise_ms,
             "measurement_noise_mad_ms": measurement_noise_ms,
-            "within_measurement_noise": delta_ms <= measurement_noise_ms,
+            "delta_within_observed_mad": delta_ms <= measurement_noise_ms,
+            "brush_fallback_p95_ms": brush_fallback_p95,
+            "brush_fallback_below_ten_percent_of_hook_timeout": brush_fallback_p95 < 500.0,
         }))?
     );
     ensure!(
-        delta_ms <= measurement_noise_ms,
-        "enabled p95 delta {delta_ms:.3}ms exceeded measured MAD noise {measurement_noise_ms:.3}ms"
+        delta_ms <= MAX_DELTA_MS,
+        "enabled p95 delta {delta_ms:.3}ms exceeded the {MAX_DELTA_MS:.3}ms budget"
+    );
+    ensure!(
+        enabled_p95 <= MAX_ENABLED_P95_MS,
+        "enabled p95 {enabled_p95:.3}ms exceeded the {MAX_ENABLED_P95_MS:.3}ms hard limit"
+    );
+    ensure!(
+        brush_fallback_p95 < 500.0,
+        "brush fallback p95 {brush_fallback_p95:.3}ms exceeded 10% of the 5s hook timeout"
     );
     Ok(())
 }

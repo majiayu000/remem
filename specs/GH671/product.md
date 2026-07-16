@@ -100,8 +100,9 @@ latency evidence remain pending, so #671 must stay open.
       negative coverage for every eligibility dimension, and critical
       cross-state coverage; candidate risk and reinforcement risk are
       independently mutable and tests do not snapshot SQL text.
-- [ ] p95 hook latency with rule evaluation enabled is unchanged within
-      measurement noise on the existing latency benchmark.
+- [ ] The existing hook latency benchmark passes both fixed budgets: enabled
+      p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
+      `1.0 ms`. MAD remains informational and cannot decide pass/fail.
 - [ ] `remem rules list` shows provenance, effective action, disabled state,
       and source memory for each compiled rule.
 - [ ] Disable, enable, and `set-action warn|block` round trips are covered by

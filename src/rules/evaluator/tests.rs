@@ -185,7 +185,13 @@ fn force_push_rule_structurally_matches_exact_options() {
         "git push -uf origin main",
         "git push -foo origin main",
         "git -c push.default=current push -u origin main --force",
+        "git --config-env=push.default=REMEM_GIT_CONFIG push origin main --force",
         "cargo test && git push origin main -f",
+        "git push \"--force\"",
+        "{ git push --force; }",
+        "! { git push --force; }",
+        "echo \"$(git push --force)\"",
+        "echo $(( $(git push --force) + 1 ))",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -210,6 +216,9 @@ fn force_push_rule_rejects_values_terminators_and_similar_options() {
         "git push -of origin main",
         "git push origin main --force-with-lease",
         "echo git push --force",
+        "echo {git push --force}",
+        "echo $((1 << 2))",
+        "cat <<EOF\ngit push --force\nEOF",
         "git push origin main",
     ] {
         let outcome = evaluate_artifact(
@@ -249,4 +258,25 @@ fn evaluation_error_fails_open_for_whole_artifact() {
     assert!(outcome.matches.is_empty());
     assert_eq!(outcome.diagnostics.len(), 1);
     assert!(outcome.diagnostics[0].message.contains("invalid regex"));
+}
+
+#[test]
+fn bash_parse_errors_fail_open_with_a_diagnostic() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in ["git push --force '", "echo { git push --force; }"] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.to_string(),
+            },
+        );
+
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert_eq!(outcome.diagnostics.len(), 1, "{command}");
+        assert!(
+            outcome.diagnostics[0].message.contains("parse error"),
+            "{command}"
+        );
+    }
 }
