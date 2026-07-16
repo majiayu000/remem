@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Fixed
+- Staged source version `0.6.1` for GH-861: project identity now delegates to
+  Git whenever `GIT_COMMON_DIR` is set, so invalid or redirected common-dir
+  layouts fail closed instead of being mistaken for plain marker discovery.
+
 ### Added
 - Staged source version `0.6.0` for GH-684 SP684-T10: `remem doctor`
   announces that `pending_observations` is deprecated and cannot be removed

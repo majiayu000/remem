@@ -60,6 +60,7 @@ fn git_environment_requires_resolver_with(mut is_set: impl FnMut(&str) -> bool) 
     [
         "GIT_DIR",
         "GIT_WORK_TREE",
+        "GIT_COMMON_DIR",
         "GIT_CEILING_DIRECTORIES",
         "GIT_DISCOVERY_ACROSS_FILESYSTEM",
         "GIT_CONFIG",
@@ -198,7 +199,6 @@ fn git_dir_has_plain_layout(git_dir: &std::path::Path) -> bool {
     } else {
         git_dir.to_path_buf()
     };
-
     common_dir.is_dir() && common_dir.join("objects").is_dir() && common_dir.join("refs").is_dir()
 }
 
@@ -335,7 +335,7 @@ pub fn project_matches(value: Option<&str>, project: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{path::Path, process::Command};
+    use std::{collections::BTreeSet, path::Path, process::Command};
 
     fn unique_temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(
@@ -353,13 +353,11 @@ mod tests {
         let root = unique_temp_path("outside-git");
         let nested = root.join("nested");
         std::fs::create_dir_all(&nested).expect("create temp dir");
-
         let expected = nested.canonicalize().expect("canonicalize temp dir");
         assert_eq!(
             project_from_cwd(nested.to_str().unwrap()),
             expected.display().to_string()
         );
-
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -374,7 +372,6 @@ mod tests {
             .status()
             .expect("spawn git init");
         assert!(status.success(), "git init should succeed");
-
         let expected = root.canonicalize().expect("canonicalize git root");
         assert_eq!(
             project_from_cwd(nested.to_str().unwrap()),
@@ -385,7 +382,6 @@ mod tests {
             nested.canonicalize().expect("canonicalize nested cwd"),
             "canonical cwd helper must remain a cwd path, not a project identity"
         );
-
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -409,7 +405,6 @@ mod tests {
         std::fs::create_dir_all(git_dir.join("objects"))?;
         std::fs::create_dir_all(git_dir.join("refs"))?;
         std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")?;
-
         let cases = [
             (format!("gitdir: {}\n", git_dir.display()), true),
             (format!("gitdir:{}\n", git_dir.display()), false),
@@ -436,7 +431,6 @@ mod tests {
                 .unwrap_or(canonical_nested);
             assert_eq!(resolved, expected, "gitfile: {contents:?}");
         }
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -490,7 +484,6 @@ mod tests {
         );
         let nested = linked.join("nested");
         std::fs::create_dir_all(&nested)?;
-
         assert_eq!(
             git_worktree_root_from_markers(&nested),
             GitMarkerDiscovery::RequiresResolver
@@ -507,7 +500,6 @@ mod tests {
             ),
             expected
         );
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -518,12 +510,10 @@ mod tests {
         let nested = root.join("nested");
         std::fs::create_dir_all(&nested)?;
         std::fs::write(root.join(".git"), "not a gitdir marker\n")?;
-
         assert_eq!(
             git_worktree_root_from_markers(&nested),
             GitMarkerDiscovery::RequiresResolver
         );
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -535,7 +525,6 @@ mod tests {
         std::fs::create_dir_all(root.join(".git"))?;
         std::fs::create_dir_all(&nested)?;
         std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
-
         let output = Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .current_dir(&nested)
@@ -557,7 +546,6 @@ mod tests {
         });
         assert!(resolver_called, "incomplete markers must delegate to Git");
         assert_eq!(resolved, canonical_nested, "Git failure must fail closed");
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -570,7 +558,6 @@ mod tests {
         std::fs::create_dir_all(root.join(".git/refs"))?;
         std::fs::create_dir_all(&nested)?;
         std::fs::write(root.join(".git/HEAD"), "not-a-valid-head\n")?;
-
         let output = Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .current_dir(&nested)
@@ -580,7 +567,6 @@ mod tests {
             git_worktree_root_from_markers(&nested),
             GitMarkerDiscovery::RequiresResolver
         );
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -590,7 +576,6 @@ mod tests {
         let root = unique_temp_path("head-validation");
         std::fs::create_dir_all(&root)?;
         let head = root.join("HEAD");
-
         for valid in [
             "ref: refs/heads/main\n".to_string(),
             format!("{}\n", "a".repeat(40)),
@@ -610,7 +595,6 @@ mod tests {
             std::fs::write(&head, invalid)?;
             assert!(!git_head_is_valid(&root));
         }
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -619,7 +603,6 @@ mod tests {
     #[test]
     fn unreadable_head_delegates_to_git() -> anyhow::Result<()> {
         use std::os::unix::fs::PermissionsExt;
-
         let root = unique_temp_path("unreadable-head");
         let nested = root.join("nested");
         let head = root.join(".git/HEAD");
@@ -628,46 +611,60 @@ mod tests {
         std::fs::create_dir_all(&nested)?;
         std::fs::write(&head, "ref: refs/heads/main\n")?;
         std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o000))?;
-
         assert_eq!(
             git_worktree_root_from_markers(&nested),
             GitMarkerDiscovery::RequiresResolver
         );
-
         std::fs::set_permissions(&head, std::fs::Permissions::from_mode(0o600))?;
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
 
     #[test]
-    fn explicit_git_layout_precedes_a_cwd_marker() -> anyhow::Result<()> {
-        let cwd_root = unique_temp_path("explicit-layout-cwd");
-        let selected_root = unique_temp_path("explicit-layout-selected");
-        let nested = cwd_root.join("nested");
-        std::fs::create_dir_all(cwd_root.join(".git"))?;
-        std::fs::write(cwd_root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+    fn invalid_git_common_dir_delegates_to_resolver_and_fails_closed() -> anyhow::Result<()> {
+        let root = unique_temp_path("invalid-git-common-dir");
+        let nested = root.join("nested");
+        std::fs::create_dir_all(root.join(".git/objects"))?;
+        std::fs::create_dir_all(root.join(".git/refs"))?;
         std::fs::create_dir_all(&nested)?;
-        std::fs::create_dir_all(&selected_root)?;
-
+        std::fs::write(root.join(".git/HEAD"), "ref: refs/heads/main\n")?;
+        let git_status = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .env("GIT_COMMON_DIR", root.join("missing-common-dir"))
+            .current_dir(&nested)
+            .output()?
+            .status;
+        anyhow::ensure!(!git_status.success());
+        let requires_resolver =
+            git_environment_requires_resolver_with(|candidate| candidate == "GIT_COMMON_DIR");
         let mut resolver_called = false;
-        let resolved = canonical_project_root_with_resolver(&nested, true, |_| {
-            resolver_called = true;
-            Some(selected_root.clone())
-        });
-
-        assert!(resolver_called, "explicit layouts must consult Git");
-        assert_eq!(resolved, selected_root.canonicalize()?);
-
-        std::fs::remove_dir_all(cwd_root)?;
-        std::fs::remove_dir_all(selected_root)?;
+        let resolved = canonical_project_root_with_resolver(
+            &nested.canonicalize()?,
+            requires_resolver,
+            |_| {
+                resolver_called = true;
+                None
+            },
+        );
+        assert!(
+            resolver_called,
+            "GIT_COMMON_DIR must bypass marker discovery"
+        );
+        assert_eq!(
+            resolved,
+            nested.canonicalize()?,
+            "invalid Git layout must fail closed"
+        );
+        std::fs::remove_dir_all(root)?;
         Ok(())
     }
 
     #[test]
-    fn git_discovery_environment_requires_the_git_resolver() {
-        for variable in [
+    fn git_common_dir_is_in_closed_discovery_environment_allowlist() {
+        let expected = [
             "GIT_DIR",
             "GIT_WORK_TREE",
+            "GIT_COMMON_DIR",
             "GIT_CEILING_DIRECTORIES",
             "GIT_DISCOVERY_ACROSS_FILESYSTEM",
             "GIT_CONFIG",
@@ -675,13 +672,22 @@ mod tests {
             "GIT_CONFIG_SYSTEM",
             "GIT_CONFIG_COUNT",
             "GIT_CONFIG_PARAMETERS",
-        ] {
+        ];
+        let mut observed = Vec::new();
+        assert!(!git_environment_requires_resolver_with(|candidate| {
+            observed.push(candidate.to_string());
+            false
+        }));
+        let observed_set = observed.iter().map(String::as_str).collect::<BTreeSet<_>>();
+        assert_eq!(observed.len(), expected.len());
+        assert_eq!(observed_set.len(), observed.len());
+        assert_eq!(observed_set, expected.into_iter().collect());
+        for variable in expected {
             assert!(
                 git_environment_requires_resolver_with(|candidate| candidate == variable),
                 "{variable} must bypass marker discovery"
             );
         }
-        assert!(!git_environment_requires_resolver_with(|_| false));
     }
 
     #[test]
@@ -716,7 +722,6 @@ mod tests {
             None,
             [system.clone()],
         );
-
         assert!(!git_config_paths_require_resolver(&paths));
         for (source, path) in [
             ("global", &global),
@@ -742,7 +747,6 @@ mod tests {
         let nested = control.join("nested");
         std::fs::create_dir_all(&nested)?;
         std::fs::create_dir_all(&configured_worktree)?;
-
         let status = Command::new("git")
             .args(["init", "--bare", "--quiet"])
             .arg(control.join(".git"))
@@ -765,13 +769,11 @@ mod tests {
                 .status()?;
             assert!(status.success(), "git config should succeed");
         }
-
         assert_eq!(
             canonical_project_root(nested.to_str().expect("utf-8 temp path")),
             configured_worktree.canonicalize()?,
             "core.worktree must override the apparent .git marker parent"
         );
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
@@ -787,13 +789,11 @@ mod tests {
             .status()?;
         assert!(status.success(), "parent repository should initialize");
         std::fs::write(nested.join(".git"), "not a gitdir marker\n")?;
-
         assert_eq!(
             canonical_project_root(nested.to_str().expect("utf-8 temp path")),
             nested.canonicalize()?,
             "Git rejects the malformed inner marker instead of discovering the parent repository"
         );
-
         std::fs::remove_dir_all(root)?;
         Ok(())
     }
