@@ -132,12 +132,12 @@ enum GitMarkerDiscovery {
 fn git_worktree_root_from_markers(cwd: &std::path::Path) -> GitMarkerDiscovery {
     for candidate in cwd.ancestors() {
         let marker = candidate.join(".git");
-        match std::fs::symlink_metadata(&marker) {
-            Ok(_) => {}
+        let metadata = match std::fs::symlink_metadata(&marker) {
+            Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(_) => return GitMarkerDiscovery::RequiresResolver,
-        }
-        return if is_git_worktree_marker(&marker) {
+        };
+        return if metadata.file_type().is_dir() && is_plain_git_directory_marker(&marker) {
             GitMarkerDiscovery::Worktree(candidate.to_path_buf())
         } else {
             GitMarkerDiscovery::RequiresResolver
@@ -146,32 +146,8 @@ fn git_worktree_root_from_markers(cwd: &std::path::Path) -> GitMarkerDiscovery {
     GitMarkerDiscovery::None
 }
 
-fn is_git_worktree_marker(marker: &std::path::Path) -> bool {
-    if marker.is_dir() {
-        return git_dir_has_plain_layout(marker) && !git_dir_config_requires_resolver(marker);
-    }
-    let Ok(contents) = std::fs::read_to_string(marker) else {
-        return false;
-    };
-    let Some(git_dir) = contents
-        .lines()
-        .next()
-        .and_then(|line| line.strip_prefix("gitdir:"))
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-    else {
-        return false;
-    };
-    let git_dir = std::path::Path::new(git_dir);
-    let git_dir = if git_dir.is_absolute() {
-        git_dir.to_path_buf()
-    } else {
-        marker
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join(git_dir)
-    };
-    git_dir_has_plain_layout(&git_dir) && !git_dir_config_requires_resolver(&git_dir)
+fn is_plain_git_directory_marker(marker: &std::path::Path) -> bool {
+    git_dir_has_plain_layout(marker) && !git_dir_config_requires_resolver(marker)
 }
 
 fn git_dir_has_plain_layout(git_dir: &std::path::Path) -> bool {
@@ -390,26 +366,111 @@ mod tests {
     }
 
     #[test]
-    fn git_marker_file_identifies_a_linked_worktree_without_spawning_git() -> anyhow::Result<()> {
-        let root = unique_temp_path("git-marker-file");
-        let nested = root.join("crates").join("member").join("src");
-        let common_dir = root.join("common-git-dir");
-        let git_dir = common_dir.join("worktrees/linked");
+    fn gitfile_discovery_delegates_to_git_for_all_syntax() -> anyhow::Result<()> {
+        let root = unique_temp_path("gitfile-conformance");
+        let nested = root.join("nested");
+        let git_dir = root.join("git-dir");
         std::fs::create_dir_all(&nested)?;
-        std::fs::create_dir_all(common_dir.join("objects"))?;
-        std::fs::create_dir_all(common_dir.join("refs"))?;
-        std::fs::create_dir_all(&git_dir)?;
+        std::fs::create_dir_all(git_dir.join("objects"))?;
+        std::fs::create_dir_all(git_dir.join("refs"))?;
         std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n")?;
-        std::fs::write(git_dir.join("commondir"), "../..\n")?;
-        std::fs::write(
-            root.join(".git"),
-            format!("gitdir: {}\n", git_dir.display()),
-        )?;
+
+        let cases = [
+            (format!("gitdir: {}\n", git_dir.display()), true),
+            (format!("gitdir:{}\n", git_dir.display()), false),
+            (format!("gitdir: {}\ntrailing\n", git_dir.display()), false),
+            ("gitdir: git-dir\n".to_string(), true),
+        ];
+        for (contents, git_accepts) in cases {
+            std::fs::write(root.join(".git"), &contents)?;
+            let git_root = crate::git_util::resolve_toplevel(&nested);
+            assert_eq!(git_root.is_some(), git_accepts, "gitfile: {contents:?}");
+            assert_eq!(
+                git_worktree_root_from_markers(&nested),
+                GitMarkerDiscovery::RequiresResolver,
+                "gitfile syntax must be owned by Git: {contents:?}"
+            );
+            let canonical_nested = nested.canonicalize()?;
+            let resolved = canonical_project_root_with_resolver(
+                &canonical_nested,
+                false,
+                crate::git_util::resolve_toplevel,
+            );
+            let expected = git_root
+                .map(|path| path.canonicalize().unwrap_or(path))
+                .unwrap_or(canonical_nested);
+            assert_eq!(resolved, expected, "gitfile: {contents:?}");
+        }
+
+        std::fs::remove_dir_all(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn linked_worktree_discovery_delegates_to_git() -> anyhow::Result<()> {
+        let root = unique_temp_path("linked-worktree");
+        let primary = root.join("primary");
+        let linked = root.join("linked");
+        std::fs::create_dir_all(&root)?;
+        anyhow::ensure!(
+            Command::new("git")
+                .args(["init", "--quiet"])
+                .arg(&primary)
+                .status()?
+                .success(),
+            "git init failed"
+        );
+        for args in [
+            ["config", "user.email", "remem@example.invalid"].as_slice(),
+            ["config", "user.name", "remem-test"].as_slice(),
+            [
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--no-verify",
+                "-m",
+                "initial",
+            ]
+            .as_slice(),
+        ] {
+            anyhow::ensure!(
+                Command::new("git")
+                    .arg("-C")
+                    .arg(&primary)
+                    .args(args)
+                    .status()?
+                    .success(),
+                "git command failed: {args:?}"
+            );
+        }
+        anyhow::ensure!(
+            Command::new("git")
+                .arg("-C")
+                .arg(&primary)
+                .args(["worktree", "add", "--quiet", "-b", "linked-test"])
+                .arg(&linked)
+                .status()?
+                .success(),
+            "git worktree add failed"
+        );
+        let nested = linked.join("nested");
+        std::fs::create_dir_all(&nested)?;
 
         assert_eq!(
             git_worktree_root_from_markers(&nested),
-            GitMarkerDiscovery::Worktree(root.clone()),
-            "a .git file is a worktree marker, not only .git directories"
+            GitMarkerDiscovery::RequiresResolver
+        );
+        let git_root = crate::git_util::resolve_toplevel(&nested)
+            .ok_or_else(|| anyhow::anyhow!("Git did not resolve linked worktree"))?;
+        let expected = git_root.canonicalize()?;
+        assert_eq!(expected, linked.canonicalize()?);
+        assert_eq!(
+            canonical_project_root_with_resolver(
+                &nested.canonicalize()?,
+                false,
+                crate::git_util::resolve_toplevel,
+            ),
+            expected
         );
 
         std::fs::remove_dir_all(root)?;

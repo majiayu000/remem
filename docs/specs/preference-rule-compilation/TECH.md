@@ -243,14 +243,16 @@ hook-side writes.
   `GIT_CEILING_DIRECTORIES`, `GIT_CONFIG_PARAMETERS`, paired
   `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_*` inputs, local `core.worktree`, and
   global/system/XDG config containing worktree-affecting values or includes.
-  Plain config stays on the marker fast path so hooks do not restore an
-  unconditional Git subprocess.
+  Gitfile and symlink semantics remain owned by `git rev-parse`; only a real
+  `.git` directory with a conservatively validated plain layout may use the
+  marker fast path. Plain config stays on that fast path so hooks do not
+  restore an unconditional Git subprocess.
 - Latency evidence compares repeated interleaved CLI subprocess cohorts. Pass
   requires both fixed budgets: enabled p95 `<= 15.0 ms` and
   enabled-minus-disabled p95 delta `<= 1.0 ms`. Median absolute deviation is
   retained as informational output and does not affect pass/fail. The fresh
-  fixed-budget artifact measured baseline p95 `9.164000 ms`, enabled p95
-  `9.386500 ms`, delta `0.222500 ms`, and MAD `0.539375 ms`; it passes both
+  fixed-budget artifact measured baseline p95 `9.069292 ms`, enabled p95
+  `9.460750 ms`, delta `0.391458 ms`, and MAD `0.566916 ms`; it passes both
   fixed budgets.
 - Maintenance: predicate kinds are a closed set; growth requires spec update.
 
