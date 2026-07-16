@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::raw_query::{parse_time_lower_bound, parse_time_upper_bound};
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
@@ -655,12 +656,22 @@ fn list_sessions_samples_first_user_messages_in_window_order() {
 }
 
 #[test]
-fn parse_time_bound_accepts_epoch_iso_and_date() {
-    assert_eq!(parse_time_bound("1750000000").unwrap(), 1_750_000_000);
+fn parse_time_bounds_accept_epoch_iso_and_date() {
+    assert_eq!(parse_time_lower_bound("1750000000").unwrap(), 1_750_000_000);
     assert_eq!(
-        parse_time_bound("2026-01-02T03:04:05Z").unwrap(),
+        parse_time_upper_bound("2026-01-02T03:04:05Z").unwrap(),
         1_767_323_045
     );
-    assert_eq!(parse_time_bound("2026-01-02").unwrap(), 1_767_312_000);
-    assert!(parse_time_bound("not-a-time").is_err());
+    assert_eq!(parse_time_lower_bound("2026-01-02").unwrap(), 1_767_312_000);
+    assert!(parse_time_lower_bound("not-a-time").is_err());
+    assert!(parse_time_upper_bound("not-a-time").is_err());
+}
+
+#[test]
+fn date_only_until_bound_includes_the_full_utc_day() {
+    assert_eq!(
+        parse_time_upper_bound("2026-01-02").unwrap(),
+        1_767_398_399,
+        "an inclusive date-only upper bound must end at 23:59:59 UTC"
+    );
 }

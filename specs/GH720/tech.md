@@ -37,9 +37,9 @@ GH-720
 
 ### Phase 1b — 时间窗口查询
 
-1. `RawSearchRequest` 增加 `since_epoch: Option<i64>` / `until_epoch: Option<i64>`，SQL 走 `idx_raw_messages_project_created`；缺省行为不变（invariant 7）。
+1. `RawSearchRequest` 增加 `since_epoch: Option<i64>` / `until_epoch: Option<i64>`，SQL 走 `idx_raw_messages_project_created`；缺省行为不变（invariant 7）。epoch 与 ISO8601 保持精确边界；date-only `since` 解析为 UTC `00:00:00`，date-only `until` 解析为 UTC `23:59:59`，避免遗漏上界当日的消息。
 2. 新查询 `list_sessions(window, project, sample_n)`：对 `raw_messages` 按 `(source_root, project, session_id)` 分组，返回窗口内 min/max epoch、消息计数，及每会话按 epoch 升序前 N 条 role=user 的消息文本截断。一次 SQL（窗口聚合）+ 每会话一次采样查询，会话数有限（窗口内典型 <100）可接受。
-3. CLI：`remem raw --since --until`；`remem raw sessions --since --until --project --sample N --json`。MCP：`raw_tools` 增加对应工具，输出字段与 CLI JSON 一致（invariant 10）。HTTP 面本阶段不加（无消费方），tech 债记录在案。
+3. CLI：`remem raw --since --until`；`remem raw sessions --since --until --project --sample N --json`。MCP：`raw_tools` 增加对应工具，raw search 通过 transport-neutral `memory::raw_query` DTO 与 CLI 共用完整结果、窗口和分页 envelope（invariant 10）。HTTP 面本阶段不加（无消费方），tech 债记录在案。
 
 ### Phase 2 — refine 切换输入源
 
