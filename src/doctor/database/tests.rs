@@ -57,12 +57,10 @@ fn legacy_surfaces_are_ok_when_retired_surfaces_are_empty() -> anyhow::Result<()
     let check = check_legacy_surfaces(Some(&conn));
 
     assert!(matches!(check.status, Status::Ok));
-    assert!(check.detail.contains("pending_observations rows=0"));
-    assert!(check.detail.contains("summary_jobs rows=0"));
-    assert!(
-        check.detail.contains("frozen_write_violations=0"),
-        "{}",
-        check.detail
+    // `Check.detail` is emitted verbatim by both doctor text and JSON output.
+    assert_eq!(
+        check.detail,
+        "observations rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; observations_fts rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; session_summaries rows=0 disposition=keep last_write_epoch=none frozen_write_violations=0; pending_observations rows=0 disposition=retire last_write_epoch=none frozen_write_violations=0; summary_jobs rows=0 disposition=retire-summary-only last_write_epoch=none frozen_write_violations=0; pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0"
     );
     Ok(())
 }
@@ -88,9 +86,11 @@ fn legacy_surfaces_fail_on_retire_blockers() -> anyhow::Result<()> {
     let check = check_legacy_surfaces(Some(&conn));
 
     assert!(matches!(check.status, Status::Fail));
-    assert!(check.detail.contains("pending_observations rows=1"));
-    assert!(check.detail.contains("summary_jobs rows=1"));
-    assert!(check.detail.contains("retire/freeze blockers=2"));
+    // The same exact detail reaches both doctor text and JSON output.
+    assert_eq!(
+        check.detail,
+        "observations rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; observations_fts rows=0 disposition=reclassify-current last_write_epoch=none frozen_write_violations=0; session_summaries rows=0 disposition=keep last_write_epoch=none frozen_write_violations=0; pending_observations rows=1 disposition=retire last_write_epoch=120 frozen_write_violations=1; summary_jobs rows=1 disposition=retire-summary-only last_write_epoch=130 frozen_write_violations=1; pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0; non-empty pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`; retire/freeze blockers=2"
+    );
     Ok(())
 }
 

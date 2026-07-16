@@ -52,10 +52,10 @@ current SessionRollup path and the legacy Summary job chain.
 ## Acceptance Criteria
 
 - [ ] TECH inventory stays current with every production writer and reader.
-- [ ] Field-level equivalence fixtures compare legacy `finalize_summarize`
+- [x] Field-level equivalence fixtures compare legacy `finalize_summarize`
       output with current `persist_session_rollup` output before Summary job
       retirement.
-- [ ] `pending_observations` emptiness is confirmed on real databases beyond
+- [x] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
 - [x] In-flight `JobType::Summary` upgrade handling is implemented and tested:
       non-terminal legacy Summary jobs are rejected as permanent failures by

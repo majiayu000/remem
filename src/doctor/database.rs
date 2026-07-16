@@ -429,9 +429,16 @@ pub(super) fn check_declared_empty_surfaces(conn: Option<&Connection>) -> Check 
     }
 }
 
+const LEGACY_PENDING_DEPRECATION_NOTICE: &str = "pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0";
+const LEGACY_PENDING_MIGRATION_NOTICE: &str = "non-empty pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`";
+
 pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
     let Some(conn) = conn else {
-        return Check::new("Legacy surfaces", Status::Warn, "cannot open database");
+        return Check::new(
+            "Legacy surfaces",
+            Status::Warn,
+            format!("cannot open database; {LEGACY_PENDING_DEPRECATION_NOTICE}"),
+        );
     };
 
     let stats = match db::query_system_stats(conn) {
@@ -440,12 +447,20 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
             return Check::new(
                 "Legacy surfaces",
                 Status::Warn,
-                format!("cannot load legacy surface stats: {}", err),
+                format!(
+                    "cannot load legacy surface stats: {err}; {LEGACY_PENDING_DEPRECATION_NOTICE}"
+                ),
             );
         }
     };
 
-    let detail = stats
+    let pending_rows = stats
+        .legacy_surfaces
+        .iter()
+        .find(|surface| surface.surface == "pending_observations")
+        .map(|surface| surface.row_count)
+        .unwrap_or_default();
+    let mut detail = stats
         .legacy_surfaces
         .iter()
         .map(|surface| {
@@ -464,6 +479,12 @@ pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
         })
         .collect::<Vec<_>>()
         .join("; ");
+    detail.push_str("; ");
+    detail.push_str(LEGACY_PENDING_DEPRECATION_NOTICE);
+    if pending_rows > 0 {
+        detail.push_str("; ");
+        detail.push_str(LEGACY_PENDING_MIGRATION_NOTICE);
+    }
 
     let violations: i64 = stats
         .legacy_surfaces
