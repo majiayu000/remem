@@ -22,13 +22,15 @@ GH-880
 
 - Owner：backend worker（单 lane）
 - Dependencies：GH-880 spec packet 完整；实现 route gate 与 duplicate-work evidence 通过；基于最新 `origin/main` 选择未占用的 migration 版本。
-- Files owned：`src/migrations/v*_web_console_governance.sql`、`src/migrate/types.rs`、`src/migrate/schema_drift/invariants.rs`、migration tests、`src/api/mutation.rs`、`src/api/cursor.rs`、共享模块声明。
-- Work：添加 candidate/memory integer version、`memories.web_archive_operation_id`、覆盖所有 Web 可见字段 writer 的 version triggers、任一 status transition 清除 archive marker 的 trigger、只存 `idempotency_key_hash` 且带 response schema version 的幂等账本、稳定 operation id/request hash helper、immutable-id typed cursor codec；不注册业务 endpoint，不提前声明 capability。
+- Files owned：`src/migrations/v*_web_console_governance.sql`、`src/migrate/types.rs`、`src/migrate/run.rs`、`src/migrate/schema_drift/invariants.rs`、migration tests、`src/api/mutation.rs`、`src/api/cursor.rs`、共享模块声明。
+- Work：添加 candidate/memory integer version、`memories.web_archive_operation_id`、覆盖所有 Web 可见字段 writer 的 version triggers、任一 status transition 清除 archive marker 的 trigger；将五个 Web cursor source 主键重建为保留现有 id 的 AUTOINCREMENT；添加只存 `idempotency_key_hash` 且带 response schema version 的幂等账本、稳定 operation id/request hash helper 和 typed cursor codec；不注册业务 endpoint，不提前声明 capability。
 - Done when：
   - fresh/upgrade DB 具有正确 default、unique/index/trigger/schema invariant，CLI/worker/lifecycle 可见字段更新也推进 version，任一非 Web status transition 都清除旧 Web archive marker；
+  - run.rs 在 BEGIN 前保存/关闭/验证 FK；`observations`、`sessions`、`workstreams`、`captured_events`、`extraction_tasks` rebuild 保留既有 id/FK/index/trigger/FTS，commit 前 check，commit/rollback 后恢复并验证 FK ON；成功与注入 migration/check/rollback 失败均无部分 schema 或 FK-off 连接；
+  - 每表 post-migration 删除当前 max 后插入的新 id 大于迁移时现存 MAX，production writer 不显式分配 id；
   - idempotency key trim 后必须为 `1..=128` ASCII bytes 且匹配 `[A-Za-z0-9._~-]+`；非法输入在 hash/事务/存储/日志前返回不含 `operation_id` 的 `idempotency_key_invalid`，只可携带独立 request/trace id；same key + same payload 可读取同一 ledger 结果，不同 payload 明确 conflict；
   - raw/normalized idempotency key 不进入 DB、audit、日志或响应，仅 SHA-256 摘要进入 ledger，sentinel 测试同时证明明文不存在且摘要存在；
-  - cursor 对 kind/filter/version 绑定且 malformed input fail closed；
+  - cursor 对 kind/filter/version/`resume_before_id` 绑定且 malformed input fail closed；full page 以最后 returned safe id 续页，budget partial/empty page 以最后 scanned raw id 续页，任何未返回 safe row 不被越过；
   - 没有 token、raw payload 或 secret 写入 request hash/audit fixture。
 - Verify：
   - `cargo test migrate --locked`
@@ -46,7 +48,7 @@ GH-880
 - Done when：
   - detail 返回 version、evidence provenance、`can_review` 和稳定 blocked codes；
   - missing/cross-project/suppressed/unsafe evidence 均阻止审核；raw-only/`session_stop` evidence 返回 `evidence_safe_projection_unavailable`，candidate query/DTO 不读取 `captured_events.content_text`，non-secret transcript sentinel 和 secret 均不泄漏；
-  - approve/reject/edit 的并发、重放、payload conflict 和失败回滚均有 E2E 证据；
+  - 当前请求 ledger lookup 先于 candidate version/status/evidence；首次成功改变状态后，用原 stale request 重放仍返回同 operation/audit/final version 且无第二 mutation/audit，different payload 即使 candidate 已不可审核也优先 conflict；并发和失败回滚均有 E2E 证据；
   - 新 safe review route 不改变旧 route/payload；空白、超长、Unicode、控制字符及字符集外 idempotency key fail closed，UUID/ULID key 可安全重放且明文不进入 DB/audit/log/response；
   - `candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用；contract test 预先固定 `candidate_detail` 和 `candidate_evidence` 两个 endpoint key 最终都映射 `/api/v1/candidates/{id}`。
 - Verify：
@@ -61,13 +63,13 @@ GH-880
 - Owner：backend worker（单 lane）
 - Dependencies：SP880-T1；可在 T2 合并后串行执行以避免共享 `api/types/server/capabilities` 冲突。
 - Files owned：五类 resource handler/query/DTO、`src/api/handlers.rs`、`src/api/server.rs`、`src/api/handlers/capabilities.rs`、`src/api/types.rs`、read-resource tests。
-- Work：实现 observations/sessions/workstreams/events/tasks 的独立 list/detail、keyset cursor、安全引用和服务端脱敏；禁止 raw blob、event detail、task payload/last_error 原文。
+- Work：实现 observations/sessions/workstreams/events/tasks 的独立 list/detail、AUTOINCREMENT keyset cursor、安全引用、fail-closed resource projection policy 和服务端脱敏；禁止 raw blob、event detail、task payload/last_error 原文。
 - Done when：
   - 每类 route 全受 bearer middleware 覆盖，但 capability 和 endpoint map 在本 slice 保持未发布，等待 T5；
-  - empty/data/not-found/auth/DB failure 不互相伪装；
-  - cursor 重读、边界、并发插入、session last-seen 更新、null observation epoch、非法/跨 endpoint/filter mismatch 有回归；
+  - empty/data/not-found/auth/DB failure 不互相伪装；active pattern suppression 覆盖全部可见文本，memory/topic/entity relation suppression 移除对应 row/ref；list 省略、detail 404、policy failure 5xx、revocation 恢复，且没有 `include_suppressed` 绕过；
+  - cursor 重读、边界、并发插入、每表 page1/page2 间 purge max/reinsert、safe/suppressed interleave、all-suppressed 多预算批次、full/partial/empty/terminal page、session last-seen 更新、null observation epoch、非法/跨 endpoint/filter mismatch 有回归；
   - 五类 list 的 `page_size` omitted=50，0/negative clamp 1，101/large integer clamp 100，malformed/overflow 返回 `page_size_invalid`，响应最多 100 行且 `next_cursor` 正确；
-  - events/observations 只从 allowlisted metadata 或批准派生数据构造安全投影，query/DTO 不读取 raw `content_text`；secret/token/env/transcript/payload 与 non-secret raw sentinel 不出现在任何 JSON 字段。
+  - events/observations 只从 allowlisted metadata 或批准派生数据构造安全投影，query/DTO 不读取 raw `content_text`；secret/token/env/transcript/payload 与 non-secret raw sentinel 不出现在 GH-880 新 endpoint 的任何 JSON 字段或关系展开；legacy `/api/v1/search.raw_hits` 由兼容回归测试保持现有行为。
 - Verify：
   - `cargo test api::tests::read_resources --locked`
   - `cargo test adapter::common::tests --locked`
@@ -83,7 +85,8 @@ GH-880
 - Done when：
   - archive 仅允许 active，保留内容且 remem-web active list/search 不可见；Web archive 在 status trigger 清除旧 marker 后写入当前 `operation_id`，restore 只接受 marker 与成功 ledger/audit 精确匹配的当前 archived 行并在状态转换时清除 marker；canonical 无 status list 保持兼容；
   - active/archived list/detail 返回当前整数 version；客户端读取值可作为 expected_version，archive 成功返回的最终 version 可直接驱动 restore；
-  - replay、different-payload、非法 idempotency key、version race、not recoverable、DB failure rollback 有测试；非法 key 在 operation 建立前返回不含 `operation_id` 的 400；Web archive -> restore -> scope cleanup 或无通用 audit 的非 Web archive 不可恢复，后续 fresh Web archive 写入新 marker 后可恢复；
+  - 当前 archive/restore 请求 ledger lookup 先于 memory version/status/marker/provenance；archive 后 archived、restore 后 active/marker cleared 的 same-key replay 均返回首次 envelope且无第二 audit，different payload 优先 conflict；
+  - 新 key/ledger miss 才执行 version/status/marker 及 restore provenance lookup；非 Web archive、Web archive -> restore -> scope cleanup 均不可恢复，后续 fresh Web archive 写入新 marker 后可恢复；非法 key 在 operation 建立前返回不含 `operation_id` 的 400，DB failure rollback 有测试；
   - response 含最终 version 和完整 audit envelope；key 校验通过后的失败含稳定 operation id 且不泄漏 SQL/内容；archive/restore E2E 证明 raw/normalized idempotency key sentinel 不进入 DB/audit/log/response，且 ledger 中对应 SHA-256 hash 存在；
   - 本 slice 的 archive/restore flag 仍为 false，delete 为 false 且无 endpoint；T5 通过后才发布 archive/restore map。
 - Verify：
@@ -101,7 +104,7 @@ GH-880
 - Work：记录 endpoint/request/response/error/cursor/redaction/min-version 契约；扩展 native smoke；执行版本同步和 release gate；不宣称未发布 binary 已可用。
 - Done when：
   - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；`candidate_detail` 和 `candidate_evidence` 两个 key 均显式映射 `/api/v1/candidates/{id}`；
-  - smoke 覆盖 candidate detail/safe review、五类 read、archive/restore、delete absence；
+  - smoke 覆盖 candidate detail/safe review、五类 read/suppression/cursor、archive/restore、delete absence；legacy search raw-hit contract regression 证明现有兼容面未被本 spec 静默改变；
   - source/package/plugin/server manifests 同步且 version bump gate 通过；
   - product B-001–B-017 均有测试或可审计命令对应。
 - Verify：
