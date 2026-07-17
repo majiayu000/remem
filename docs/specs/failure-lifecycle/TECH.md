@@ -225,6 +225,10 @@ storms.
   mutation revalidates inside one SQLite transaction and cannot select or
   update a sibling range. Missing, non-positive, archived, active-task, and
   non-retryable IDs fail instead of falling back to the batch path.
+  `retry-extraction-ranges --id <positive-id> --acknowledge-quarantine
+  [--dry-run]` is the only exception for a quarantined target: the flag
+  requires exact ID, reuses the unarchived/no-active-task predicate in dry-run
+  and mutation, and never changes the default exact or batch candidate set.
 - `remem pending list-failed` / `retry-extraction-ranges` keep working and
   can target archived rows explicitly (`--include-archived`), preserving the
   manual escape hatch for observations and extraction ranges.

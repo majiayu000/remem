@@ -17,6 +17,7 @@ GH-864
 - [x] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 进程组在 deadline 后有界终止并执行统一 child/reader cleanup； Verify: 见 SP864-T3。
 - [x] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
 - [x] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
+- [ ] `SP864-T8` Owner: implementation agent; Done when: quarantined range 只能经显式 exact-ID 确认恢复，默认与 batch 行为不变； Verify: 见 SP864-T8。
 
 ### SP864-T1 — 稳定 transcript evidence 截断
 
@@ -117,10 +118,30 @@ GH-864
   - `python3 scripts/ci/check_plugin_version_sync.py`
   - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
 
+### SP864-T8 — 显式确认 quarantined exact retry
+
+- Owner: implementation agent
+- Dependencies: SP864-T2
+- Files: `src/cli/types.rs`, `src/cli/actions/pending.rs`, `src/cli/tests_maintenance.rs`, `src/db/extraction_replay.rs`, `src/db/extraction/retry_regression_tests.rs`, `README.md`, `docs/specs/README.md`, `docs/specs/failure-lifecycle/PRODUCT.md`, `docs/specs/failure-lifecycle/TECH.md`, release version surfaces
+- Covers: B-016, B-017, B-018
+- Done when:
+  - `--acknowledge-quarantine` 在解析阶段要求正数 `--id`，且只存在于 exact retry。
+  - 无确认的 exact retry 与所有 batch retry 仍只选择 `pending|failed`；显式确认只把目标
+    `quarantined` range 纳入同一未归档、无 active replay task 的 predicate。
+  - dry-run 和写事务接收同一确认值；事务重新验证后只 requeue 目标 range，失败、重复或竞争不改变 sibling。
+  - README、failure-lifecycle PRODUCT/TECH、规格索引、changelog 与 patch 版本面同步。
+- Verify:
+  - `cargo test pending_quarantine_acknowledgement_requires_exact_id --locked`
+  - `cargo test acknowledged_quarantined_range_preserves_other_illegal_state_rejections --locked`
+  - `cargo test acknowledged_quarantined_range_retry_is_exact_and_batch_compatible --locked`
+  - `python3 scripts/ci/check_plugin_version_sync.py`
+  - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
+
 ## 并行拆分
 
 - SP864-T1、SP864-T2、SP864-T3、SP864-T4 可并行；各任务仅修改其 `Files` 中的互斥文件。
 - SP864-T5 必须等待四个实现任务完成，避免多个任务同时修改版本文件。
+- SP864-T8 在 SP864-T2 后串行执行；它与 T2/T5 重叠 CLI、DB、文档和版本文件，不得并行写入。
 - 若使用并行 agent，每个 agent 必须只拥有一个上述实现任务；共享验证与发行文件由串行收口 owner 处理。
 
 ## 验证任务
@@ -131,8 +152,8 @@ GH-864
 ### SP864-T6 — 完整确定性验证与 PR preflight
 
 - Owner: verification agent
-- Dependencies: SP864-T1, SP864-T2, SP864-T3, SP864-T4, SP864-T5
-- Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-007, B-008, B-009, B-010, B-011, B-012, B-013, B-014, B-015
+- Dependencies: SP864-T1, SP864-T2, SP864-T3, SP864-T4, SP864-T5, SP864-T8
+- Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-007, B-008, B-009, B-010, B-011, B-012, B-013, B-014, B-015, B-016, B-017, B-018
 - Done when:
   - product-to-test mapping 中的 focused tests 全部通过。
   - Rust、Node、版本同步、版本 bump、diff 和 SpecRail packet 检查全部通过。
@@ -154,16 +175,17 @@ GH-864
 ### SP864-T7 — 真实 range 308 运维收口
 
 - Owner: release operator
-- Dependencies: SP864-T6, 可用且已认证的 Claude profile
-- Covers: B-015
+- Dependencies: SP864-T6, SP864-T8, 可用且已认证的 Claude profile
+- Covers: B-015, B-019
 - Done when:
-  - 先执行 exact-ID dry-run 并记录目标状态，再执行非 dry-run retry。
+  - 记录成功的 Claude profile live check，先执行带 quarantine 确认的 exact-ID dry-run，再执行带相同确认的 retry。
   - 等待 worker 终态后运行 exact list；GH-864 记录 range 308 的精确 range/task ID、状态、attempt/error
     以及对应 replay task 的已脱敏 provider/profile 日志证据。
   - 失败时保留 issue open 并记录可诊断错误，不批量重试 sibling ranges。
 - Verify:
-  - `remem pending retry-extraction-ranges --id 308 --dry-run`
-  - `remem pending retry-extraction-ranges --id 308`
+  - `remem model test --profile claude --live`
+  - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --dry-run`
+  - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine`
   - `remem pending list-extraction-ranges --id 308 --json`
   - 按 exact list 返回的 `replay_task_id` 关联 worker 日志，记录 provider/profile 与 terminal outcome（脱敏）
 
@@ -172,5 +194,5 @@ GH-864
 - 已批准的 spec 不等于最终实现审批；实现 PR 仍需新鲜 CI、独立 review、全部线程解决和人工 merge 授权。
 - Git subprocess 与 exact-range transaction 是合并前的强制人工安全/正确性审查点。
 - range 308 的真实恢复依赖外部 Claude profile，不能由 fixture、模拟输出或批量 retry 代替。
-- Product invariant set: B-001..B-015。
-- Task coverage union: B-001..B-015；无缺失项。
+- Product invariant set: B-001..B-019。
+- Task coverage union: B-001..B-019；无缺失项。
