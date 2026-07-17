@@ -48,14 +48,17 @@ GH-864
    child 运行期间并发 drain；合法的大输出不得因填满 OS pipe 而被误判为 timeout。
 5. **B-005**：Git 启动失败、`try_wait`/wait/kill/reap 失败必须以 error 级别暴露，不得 panic 或无限
    等待。spawn 成功后的任何错误分支都必须尝试 bounded best-effort kill/reap，并把 cleanup 失败附加
-   到原 lifecycle error；不得通过 `?` 直接返回而跳过 child 清理。普通非零退出继续遵循现有 soft
-   probe None / required metadata error 语义，不得伪造成 branch/commit。
+   到原 lifecycle error；不得通过 `?` 直接返回而跳过 child 清理。每个 Git probe 必须进入独立进程组，
+   timeout/lifecycle error 必须有界终止整组，reader completion/join 也必须受 cleanup deadline 约束；
+   后代进程持有 stdout/stderr 时不得让调用方无界等待。普通非零退出继续遵循现有 soft probe None /
+   required metadata error 语义，不得伪造成 branch/commit。
 6. **B-006**：所有上述 Git 命令必须继续使用参数数组而非 shell 字符串；cwd、branch 或 commit 内容不得
    被解释为额外命令、重定向或 shell 语法。
-7. **B-007**：`retry-extraction-ranges` 与 `quarantine-extraction-ranges` 必须接受可选
+7. **B-007**：`list-extraction-ranges`、`retry-extraction-ranges` 与 `quarantine-extraction-ranges` 必须接受可选
    `--id <positive-i64>`。指定 `--id` 时，只有用户在命令行显式提供的 `--project` 或 `--limit`
    必须在参数解析阶段冲突；仅由 Clap 注入的默认 limit 不得让 `--id`-only 命令失败，也不得进入
-   exact-ID 执行路径。不指定 `--id` 时现有 project/limit 默认值与批量模式保持不变。
+   batch 路径。不指定 `--id` 时现有 project/limit 默认值与批量模式保持不变。exact list 必须返回目标
+   range（包括 terminal `replayed`）及其 replay task ID/status/attempt/error 证据；不存在时非成功退出。
 8. **B-008**：exact-ID dry-run 必须通过只读连接验证同一个 retryable predicate：目标存在、
    未 archived、状态为 `pending|failed`，且没有关联的 `pending|processing` replay task。
    不满足时命令必须非成功退出，且不得退回批量选择。
@@ -76,22 +79,25 @@ GH-864
     保留；其它输入进入共享 slug 规范化，避免把已持久化的 `foo_bar` 意外分裂成新 identity
     `foo-bar`，同时禁止 `---`、`___` 等纯标点 key 绕过 B-013。
 15. **B-015**：实现提交必须同步所有发行版本面并记录 changelog；代码验证通过不等同于真实
-    range 308 已恢复。关闭 GH-864 前还必须在可用 Claude profile 下执行 exact-ID 重放并记录结果。
+    range 308 已恢复。关闭 GH-864 前还必须在可用 Claude profile 下执行 exact-ID 重放，等待 worker
+    终态，并记录 exact list 的 range/task 结果与对应 replay task 的已脱敏 provider/profile 运行日志。
 
 ## 验收标准
 
 - [ ] trailing-whitespace 边界 fixture 证明 transcript evidence 首次生成与持久化重验一致。
 - [ ] 单消息和总预算路径覆盖 UTF-8、空结果、尾部空白与现有脱敏门禁。
 - [ ] Git 超时 fixture 证明 soft probe 与真实 commit metadata 路径共享 2 秒 executor；timeout child
-      被 kill/reap，`try_wait` 错误分支尝试 cleanup，启动和回收错误可见；超过 OS pipe buffer 的合法
-      stdout/stderr fixture 成功且不误报 timeout。
-- [ ] CLI parser 覆盖 `--id`-only、非正 ID、显式 project/limit 冲突、隐式默认 limit 不冲突及无 ID 的兼容模式。
+      和同进程组后代被终止，`try_wait` 错误分支尝试 cleanup，reader completion 有界，启动和回收错误
+      可见；超过 OS pipe buffer 的合法 stdout/stderr fixture 成功且不误报 timeout。
+- [ ] CLI parser 覆盖三个 extraction-range 命令的 `--id`-only、非正 ID、显式 project/limit 冲突、
+      隐式默认 limit 不冲突及无 ID 的兼容模式；exact list 可查询 terminal replay/task 证据。
 - [ ] 两个 sibling ranges fixture 证明 exact retry 和 exact quarantine 只改变目标 ID。
 - [ ] `v0.2-release-audit`、既有 kebab-case/snake_case key、重复标点及纯标点 key 均有 parser 测试。
 - [ ] `cargo fmt --check`、`cargo check --locked`、focused tests、`cargo test --locked --quiet`、
       Clippy、插件版本同步与 PR preflight 通过。
 - [ ] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核。
 - [ ] Claude profile 可用后，range 308 通过 exact-ID 路径重放并把结果记录在 GH-864。
+- [ ] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
 
 ## 边界情况
 
@@ -111,6 +117,6 @@ GH-864
 ## 发布说明
 
 该修复作为一个 patch release 发布。说明应列出四项用户可见修复、exact-ID 命令示例和 Git probe
-2 秒上限。升级不需要数据库迁移；回滚版本不会删除 replay ranges，但会失去 exact-ID CLI、
+2 秒上限。升级不需要数据库迁移；回滚版本不会删除 replay ranges，但会失去 exact-ID list/retry/quarantine CLI、
 稳定截断和 topic key 规范化能力。真实 range 308 的恢复证据属于运维收口，不应写成所有用户都会
 自动恢复的发布承诺。

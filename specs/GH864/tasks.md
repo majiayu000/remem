@@ -14,7 +14,7 @@ GH-864
 
 - [ ] `SP864-T1` Owner: implementation agent; Done when: transcript evidence 截断稳定且原有校验不放宽； Verify: 见 SP864-T1。
 - [ ] `SP864-T2` Owner: implementation agent; Done when: exact range 路径原子且不改变 sibling ranges； Verify: 见 SP864-T2。
-- [ ] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 子进程在 2 秒内终止并执行统一 child cleanup； Verify: 见 SP864-T3。
+- [ ] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 进程组在 deadline 后有界终止并执行统一 child/reader cleanup； Verify: 见 SP864-T3。
 - [ ] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
 - [ ] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
 
@@ -37,17 +37,21 @@ GH-864
 
 - Owner: implementation agent
 - Dependencies: none
-- Files: `src/cli/types.rs`, `src/cli/actions/pending.rs`, `src/cli/tests_maintenance.rs`, `src/db/extraction_replay.rs`, `src/db/extraction/retry_regression_tests.rs`
+- Files: `src/cli/types.rs`, `src/cli/actions/pending.rs`, `src/cli/tests_maintenance.rs`, `src/db/extraction_replay.rs`, `src/db/extraction/retry_regression_tests.rs`, `docs/specs/failure-lifecycle/PRODUCT.md`, `docs/specs/failure-lifecycle/TECH.md`
 - Covers: B-007, B-008, B-009, B-010, B-011
 - Done when:
-  - retry/quarantine 接受正数 `--id`，并在解析阶段只拒绝用户显式提供的 `--project`、`--limit`；
+  - list/retry/quarantine 接受正数 `--id`，并在解析阶段只拒绝用户显式提供的 `--project`、`--limit`；
     `--id`-only 不受隐式默认 limit 影响。
+  - exact list 通过只读 ID 查询返回 terminal `replayed` range 及 replay task id/status/attempt/error；不存在
+    的 ID 报错，不回退到 batch，JSON 不暴露 captured payload 或 provider secret。
   - dry-run 和执行路径复用同一 retryable predicate；执行在单事务内重新验证目标。
   - exact retry/quarantine 只改变目标 range，竞争或非法状态不退回批量选择。
   - 无 `--id` 的 oldest-first、project、limit、事务和返回计数语义保持不变。
+  - failure-lifecycle PRODUCT/TECH 同步 exact list/retry/quarantine、terminal evidence 与 sibling 隔离合同。
 - Verify:
   - `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`
   - `cargo test pending_exact_range_id_conflicts_with_batch_filters --locked`
+  - `cargo test exact_range_list_includes_replayed_task_evidence --locked`
   - `cargo test exact_replay_range_operations_do_not_mutate_sibling_ranges --locked`
   - `cargo test extraction_replay --locked`
 
@@ -59,8 +63,11 @@ GH-864
 - Covers: B-004, B-005, B-006
 - Done when:
   - soft branch/commit probe、`resolve_toplevel` 和真实 `resolve_commit_metadata` 命令全部共用 2 秒 executor。
+  - 每个 Git probe 使用独立 Unix process group；timeout/lifecycle error 先 TERM 整组、在有界 grace 后 KILL
+    整组，并 reap direct child。
   - stdout/stderr 在 child 运行期间由独立 reader 并发 drain；超过 OS pipe buffer 的合法输出不会被误判
-    为 timeout，退出或 cleanup/reap 后才 join readers 并汇总输出。
+    为 timeout。reader 通过 channel 报告 completion，主线程只在 completion 后 join；cleanup deadline
+    内未完成则终止残余进程组并返回 lifecycle error；即使 direct child 已正常退出也不得无界 join。
   - required metadata 使用保留错误的 `Result<PathBuf>` toplevel 路径，timeout/lifecycle error 不得经由
     soft `Option` helper 丢失，且错误保留 argv 类别和 cwd。
   - timeout 路径可靠 kill/reap；spawn 后 `try_wait`/wait/kill/reap 错误先尝试 bounded best-effort cleanup，
@@ -68,9 +75,10 @@ GH-864
   - soft 与 required Git 调用分别保留 None 与 contextual error 语义，且无 shell 解释路径。
   - 维护者完成人工安全审查，确认固定 executable/argv、deadline、真实 caller 接线和 child 回收边界。
 - Verify:
-  - `cargo test command_output_with_timeout_kills_long_running_child --locked`
+  - `cargo test command_output_with_timeout_kills_process_group --locked`
   - `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`
   - `cargo test command_output_with_timeout_drains_large_output --locked`
+  - `cargo test command_output_with_timeout_bounds_reader_completion --locked`
   - `cargo test required_toplevel_preserves_timeout_context --locked`
   - `cargo test git_metadata_commands_use_bounded_executor --locked`
   - `cargo clippy --all-targets -- -D warnings`
@@ -99,10 +107,11 @@ GH-864
 
 - Owner: release implementation agent
 - Dependencies: SP864-T1, SP864-T2, SP864-T3, SP864-T4
-- Files: `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`, `plugins/remem/.codex-plugin/plugin.json`, `plugins/remem/runtimes/remem-releases.json`, `npm/remem/package.json`, `server.json`
+- Files: `README.md`, `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`, `plugins/remem/.codex-plugin/plugin.json`, `plugins/remem/runtimes/remem-releases.json`, `npm/remem/package.json`, `server.json`
 - Covers: B-015
 - Done when:
   - 所有发行版本面同步到同一 patch 版本，changelog 准确列出四项修复。
+  - README 的 pending 命令区记录 exact-ID list/retry/quarantine 示例和 terminal JSON evidence 用法。
   - 发布说明不声称代码合并会自动恢复 range 308。
 - Verify:
   - `python3 scripts/ci/check_plugin_version_sync.py`
@@ -149,12 +158,14 @@ GH-864
 - Covers: B-015
 - Done when:
   - 先执行 exact-ID dry-run 并记录目标状态，再执行非 dry-run retry。
-  - GH-864 记录 range 308 的最终 range/task 状态和 provider 证据。
+  - 等待 worker 终态后运行 exact list；GH-864 记录 range 308 的精确 range/task ID、状态、attempt/error
+    以及对应 replay task 的已脱敏 provider/profile 日志证据。
   - 失败时保留 issue open 并记录可诊断错误，不批量重试 sibling ranges。
 - Verify:
   - `remem pending retry-extraction-ranges --id 308 --dry-run`
   - `remem pending retry-extraction-ranges --id 308`
-  - `remem doctor --json`
+  - `remem pending list-extraction-ranges --id 308 --json`
+  - 按 exact list 返回的 `replay_task_id` 关联 worker 日志，记录 provider/profile 与 terminal outcome（脱敏）
 
 ## Handoff Notes
 
