@@ -183,6 +183,7 @@ pub async fn run_exact_replay(
     include_archived: bool,
     profile: &str,
 ) -> Result<()> {
+    let started_at_epoch = chrono::Utc::now().timestamp();
     let resolved = crate::runtime_config::resolve_memory_ai_profile(
         crate::runtime_config::MemoryAiSelection {
             host: None,
@@ -205,7 +206,8 @@ pub async fn run_exact_replay(
         ),
     );
     let mut conn = db::open_db()?;
-    let task = db::retry_and_claim_extraction_replay_range(
+    record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
+    let mut task = db::retry_and_claim_extraction_replay_range(
         &mut conn,
         range_id,
         acknowledge_quarantine,
@@ -215,13 +217,27 @@ pub async fn run_exact_replay(
     )?;
     drop(conn);
 
-    crate::extraction_worker::run_claimed_exact(
-        task,
-        &resolved.profile_name,
-        &lease_owner,
-        EXTRACTION_TASK_TIMEOUT_SECS,
-    )
-    .await?;
+    loop {
+        crate::extraction_worker::run_claimed_exact(
+            task,
+            &resolved.profile_name,
+            &lease_owner,
+            EXTRACTION_TASK_TIMEOUT_SECS,
+        )
+        .await?;
+        let mut conn = db::open_db()?;
+        record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
+        let Some(follow_up) = db::claim_next_extraction_task_for_replay_range(
+            &mut conn,
+            range_id,
+            &lease_owner,
+            JOB_LEASE_SECS,
+        )?
+        else {
+            break;
+        };
+        task = follow_up;
+    }
     crate::log::info(
         "worker",
         &format!(

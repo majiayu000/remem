@@ -5,7 +5,7 @@ use crate::db::{self, test_support::ScopedTestDataDir};
 use super::{lock, mark_successful_job, record_failed_job_transition, recover_expired_jobs, run};
 use test_support::install_stub_codex;
 
-mod test_support;
+pub(super) mod test_support;
 
 #[tokio::test]
 async fn worker_skips_legacy_observation_job_without_retry() -> anyhow::Result<()> {

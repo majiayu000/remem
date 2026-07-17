@@ -49,6 +49,14 @@ pub(super) fn worker_lock_path() -> Result<PathBuf> {
 
 fn healthy_old_version_daemon_owner() -> Result<Option<String>> {
     let conn = crate::db::open_db()?;
+    if crate::db::healthy_exact_replay_worker_heartbeat(
+        &conn,
+        crate::db::WORKER_HEARTBEAT_HEALTH_SECS,
+    )?
+    .is_some()
+    {
+        return Ok(None);
+    }
     let Some(heartbeat) =
         crate::db::healthy_daemon_worker_heartbeat(&conn, crate::db::WORKER_HEARTBEAT_HEALTH_SECS)?
     else {
@@ -161,6 +169,33 @@ mod tests {
         assert!(
             acquire_worker_singleton_for_mode(true)?.is_none(),
             "worker --once must not bypass current-version daemon lock"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn once_does_not_bypass_lock_for_cross_version_exact_replay() -> anyhow::Result<()> {
+        let _data_dir = ScopedTestDataDir::new("worker-lock-exact-replay-no-bypass");
+        let Some(_exact_lock) = acquire_worker_singleton()? else {
+            anyhow::bail!("exact replay lock should acquire");
+        };
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            &format!(
+                "worker-v0.5.9-exact-replay-{}-{}",
+                std::process::id(),
+                now * 1000
+            ),
+            i64::from(std::process::id()),
+            now,
+            now,
+        )?;
+
+        assert!(
+            acquire_worker_singleton_for_mode(true)?.is_none(),
+            "worker --once must not bypass a healthy exact replay lock"
         );
         Ok(())
     }

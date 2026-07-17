@@ -431,7 +431,12 @@ pub(crate) fn archive_exact_replay_range_after_task_failure(
              failed_at_epoch = COALESCE(failed_at_epoch, ?4),
              archived_at_epoch = ?4,
              updated_at_epoch = ?4
-         WHERE id = ?5 AND replay_task_id = ?1",
+         WHERE id = ?5
+           AND EXISTS (
+             SELECT 1
+             FROM extraction_tasks t
+             WHERE t.id = ?1 AND t.replay_range_id = extraction_replay_ranges.id
+           )",
         params![
             replay_task_id,
             crate::db::truncate_str(error, 2000),
