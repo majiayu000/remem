@@ -48,8 +48,9 @@ GH-864
 6. **B-006**：Git probe 必须继续使用参数数组而非 shell 字符串；cwd、branch 或 commit 内容不得
    被解释为额外命令、重定向或 shell 语法。
 7. **B-007**：`retry-extraction-ranges` 与 `quarantine-extraction-ranges` 必须接受可选
-   `--id <positive-i64>`。指定 `--id` 时，`--project` 和 `--limit` 必须在参数解析阶段冲突；
-   不指定 `--id` 时现有 project/limit 批量模式保持不变。
+   `--id <positive-i64>`。指定 `--id` 时，只有用户在命令行显式提供的 `--project` 或 `--limit`
+   必须在参数解析阶段冲突；仅由 Clap 注入的默认 limit 不得让 `--id`-only 命令失败，也不得进入
+   exact-ID 执行路径。不指定 `--id` 时现有 project/limit 默认值与批量模式保持不变。
 8. **B-008**：exact-ID dry-run 必须通过只读连接验证同一个 retryable predicate：目标存在、
    未 archived、状态为 `pending|failed`，且没有关联的 `pending|processing` replay task。
    不满足时命令必须非成功退出，且不得退回批量选择。
@@ -65,8 +66,9 @@ GH-864
     `v0-2-release-audit`；重复标点必须按统一 slug 规则折叠。
 13. **B-013**：缺失、trim 后为空或规范化后为空的 `topic_key` 必须返回明确解析错误。不得创建
     空 topic identity，也不得因规范化失败退回未经验证的原值。
-14. **B-014**：同一原始 key 在相同版本和配置下必须得到稳定规范化结果；既有合法
-    kebab-case/snake_case key 的语义身份不得意外改变。
+14. **B-014**：同一原始 key 在相同版本和配置下必须得到稳定规范化结果。符合旧 parser grammar
+    `[a-z0-9_-]+` 的既有合法 kebab-case/snake_case key 必须原样保留；只有旧 grammar 会拒绝的
+    输入才进入共享 slug 规范化，避免把已持久化的 `foo_bar` 意外分裂成新 identity `foo-bar`。
 15. **B-015**：实现提交必须同步所有发行版本面并记录 changelog；代码验证通过不等同于真实
     range 308 已恢复。关闭 GH-864 前还必须在可用 Claude profile 下执行 exact-ID 重放并记录结果。
 
@@ -75,9 +77,9 @@ GH-864
 - [ ] trailing-whitespace 边界 fixture 证明 transcript evidence 首次生成与持久化重验一致。
 - [ ] 单消息和总预算路径覆盖 UTF-8、空结果、尾部空白与现有脱敏门禁。
 - [ ] Git 超时 fixture 证明子进程在 2 秒上限内被 kill/reap，启动和回收错误可见。
-- [ ] CLI parser 覆盖 `--id`、非正 ID、与 project/limit 冲突及无 ID 的兼容模式。
+- [ ] CLI parser 覆盖 `--id`-only、非正 ID、显式 project/limit 冲突、隐式默认 limit 不冲突及无 ID 的兼容模式。
 - [ ] 两个 sibling ranges fixture 证明 exact retry 和 exact quarantine 只改变目标 ID。
-- [ ] `v0.2-release-audit`、既有合法 key、重复标点及纯标点 key 均有 parser 测试。
+- [ ] `v0.2-release-audit`、既有 kebab-case/snake_case key、重复标点及纯标点 key 均有 parser 测试。
 - [ ] `cargo fmt --check`、`cargo check --locked`、focused tests、`cargo test --locked --quiet`、
       Clippy、插件版本同步与 PR preflight 通过。
 - [ ] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核。

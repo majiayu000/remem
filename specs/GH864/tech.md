@@ -55,7 +55,10 @@ redactor 后字节相同且可通过 range validation。
 
 ### 3. exact range CLI 与事务
 
-为两个 Clap variant 增加 `id: Option<i64>`，声明与 `project`、`limit` 冲突。DB 层把当前
+为两个 Clap variant 增加 `id: Option<i64>`。参数合同必须区分命令行显式值和 Clap 默认值：
+`--id` 与用户显式提供的 `--project`/`--limit` 冲突，但 `--id`-only 命令即使 limit 字段取得默认值
+也必须成功解析；实现可使用 Clap 的 command-line value-source predicate，或把默认 limit 移入 batch
+分支。DB 层把当前
 retryable ID 查询扩展为可选 `range_id` filter，并新增：
 
 - `ensure_extraction_replay_range_retryable(conn, id)`
@@ -73,12 +76,13 @@ exact API。无 ID 分支继续调用现有 count/batch API，输出保持兼容
 
 ### 4. topic key 规范化
 
-`parse_segment` 保留“属性存在、trim 后非空”的第一道验证；随后把 raw key 传给
+`parse_segment` 保留“属性存在、trim 后非空”的第一道验证。若 raw key 已符合旧 parser grammar
+`[a-z0-9_-]+`，直接原样保留以维持既有 topic identity；否则才传给
 `crate::memory::slugify_for_topic(&raw_topic_key, 96)`。规范化输出为空时返回包含 raw key 的明确
-错误。删除 parser 私有 `is_valid_topic_key`，避免规则漂移。
+错误。旧 grammar predicate 仅作为兼容快路径，不承担新输入的第二套 normalization。
 
-测试至少覆盖版本点号、纯标点和既有合法 key。此变更只影响新解析输出，不迁移已持久化 topic，也
-不修改全局 slug helper。
+测试至少覆盖版本点号、纯标点、既有 kebab-case 和既有 snake_case key。此变更只影响旧 grammar
+原本会拒绝的新解析输出，不迁移已持久化 topic，也不修改全局 slug helper。
 
 ### 5. Release housekeeping
 
@@ -94,16 +98,16 @@ exact API。无 ID 分支继续调用现有 count/batch API，输出保持兼容
 | B-002 | `EvidenceBudget::push` total budget loop | focused UTF-8/empty/total-budget tests plus existing `total_budget_never_retains_empty_utf8_message` |
 | B-003 | `PromptTranscriptEvidence::validate_for_range` unchanged gates | existing transcript evidence validation tests + `cargo test session_rollup --locked` |
 | B-004 | `command_output_with_timeout`, `git_probe_output` | `cargo test command_output_with_timeout_kills_long_running_child --locked` and log review |
-| B-005 | Git probe lifecycle error branches | unit failure injection where practical; `cargo clippy -- -D warnings`; manual error-log review |
+| B-005 | Git probe lifecycle error branches | unit failure injection where practical; `cargo clippy --all-targets -- -D warnings`; manual error-log review |
 | B-006 | `Command::new` argument construction | source review proves no shell; mandatory human security review |
-| B-007 | Clap `PendingAction` variants | `cargo test pending_exact_range_id_conflicts_with_batch_filters --locked` and non-positive DB test |
+| B-007 | Clap `PendingAction` variants | `cargo test pending_exact_range_id_conflicts_with_batch_filters --locked`, `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`, and non-positive DB test |
 | B-008 | read-only CLI dry-run + shared ensure predicate | CLI/DB focused tests for missing, archived, active-task and non-retryable targets |
 | B-009 | exact retry/quarantine transaction APIs | `cargo test exact_replay_range_operations_do_not_mutate_sibling_ranges --locked` |
 | B-010 | exact range filters and rollback | sibling fixture plus concurrent/not-retryable negative fixture |
 | B-011 | existing batch APIs and CLI branches | existing pending maintenance tests + no-ID parser/output snapshots |
 | B-012 | `parse_segment` + shared slug helper | `cargo test normalizes_version_punctuation_in_topic_key --locked` |
 | B-013 | empty-normalized error branch | `cargo test rejects_topic_key_that_normalizes_to_empty --locked` |
-| B-014 | shared slug determinism/compatibility | existing slug tests plus unchanged-key parser fixture |
+| B-014 | old-grammar compatibility fast path + shared slug determinism | `cargo test preserves_existing_snake_case_topic_key --locked` plus kebab-case fixture and existing slug tests |
 | B-015 | release manifests and operational handoff | version-sync/version-bump scripts; GH-864 comment with authenticated range 308 replay result |
 
 ## 数据流
@@ -168,12 +172,14 @@ LLM topic_key
 - [ ] `cargo test command_output_with_timeout_kills_long_running_child --locked`
 - [ ] `cargo test normalizes_version_punctuation_in_topic_key --locked`
 - [ ] `cargo test rejects_topic_key_that_normalizes_to_empty --locked`
+- [ ] `cargo test preserves_existing_snake_case_topic_key --locked`
+- [ ] `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`
 - [ ] 现有 transcript、pending CLI/batch、slug 与 session rollup focused suites
 - [ ] `cargo fmt --check`
 - [ ] `cargo check --locked`
 - [ ] `cargo test --locked --quiet`
-- [ ] `cargo clippy -- -D warnings`
-- [ ] `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/server.test.js`
+- [ ] `cargo clippy --all-targets -- -D warnings`
+- [ ] `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`
 - [ ] `python3 scripts/ci/check_plugin_version_sync.py`
 - [ ] `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
 - [ ] `git diff --check`

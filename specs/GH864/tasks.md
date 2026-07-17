@@ -40,11 +40,13 @@ GH-864
 - Files: `src/cli/types.rs`, `src/cli/actions/pending.rs`, `src/cli/tests_maintenance.rs`, `src/db/extraction_replay.rs`, `src/db/extraction/retry_regression_tests.rs`
 - Covers: B-007, B-008, B-009, B-010, B-011
 - Done when:
-  - retry/quarantine 接受正数 `--id`，并在解析阶段拒绝与 `--project`、`--limit` 组合。
+  - retry/quarantine 接受正数 `--id`，并在解析阶段只拒绝用户显式提供的 `--project`、`--limit`；
+    `--id`-only 不受隐式默认 limit 影响。
   - dry-run 和执行路径复用同一 retryable predicate；执行在单事务内重新验证目标。
   - exact retry/quarantine 只改变目标 range，竞争或非法状态不退回批量选择。
   - 无 `--id` 的 oldest-first、project、limit、事务和返回计数语义保持不变。
 - Verify:
+  - `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`
   - `cargo test pending_exact_range_id_conflicts_with_batch_filters --locked`
   - `cargo test exact_replay_range_operations_do_not_mutate_sibling_ranges --locked`
   - `cargo test extraction_replay --locked`
@@ -62,7 +64,7 @@ GH-864
   - 维护者完成人工安全审查，确认固定 executable/argv、deadline 和 child 回收边界。
 - Verify:
   - `cargo test command_output_with_timeout_kills_long_running_child --locked`
-  - `cargo clippy -- -D warnings`
+  - `cargo clippy --all-targets -- -D warnings`
   - 人工审查 `src/db/core.rs` 的 subprocess 生命周期和日志上下文
 
 ### SP864-T4 — 统一 topic_key 规范化
@@ -72,13 +74,14 @@ GH-864
 - Files: `src/session_rollup/parse.rs`
 - Covers: B-012, B-013, B-014
 - Done when:
-  - parser 对非空原值调用 `slugify_for_topic(..., 96)`。
+  - parser 原样保留符合旧 grammar 的 key；其它非空原值调用 `slugify_for_topic(..., 96)`。
   - `v0.2-release-audit` 稳定得到 `v0-2-release-audit`，重复标点按共享规则折叠。
   - 缺失、trim 后为空或规范化后为空继续返回明确错误。
-  - 既有合法 kebab-case/snake_case key 的语义身份保持稳定。
+  - 符合旧 grammar 的合法 kebab-case/snake_case key 走兼容快路径并原样保留。
 - Verify:
   - `cargo test normalizes_version_punctuation_in_topic_key --locked`
   - `cargo test rejects_topic_key_that_normalizes_to_empty --locked`
+  - `cargo test preserves_existing_snake_case_topic_key --locked`
   - `cargo test session_rollup --locked`
 
 ### SP864-T5 — 同步 patch release 表面
@@ -118,8 +121,8 @@ GH-864
   - `cargo fmt --check`
   - `cargo check --locked`
   - `cargo test --locked --quiet`
-  - `cargo clippy -- -D warnings`
-  - `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/server.test.js`
+  - `cargo clippy --all-targets -- -D warnings`
+  - `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`
   - `python3 scripts/ci/check_plugin_version_sync.py`
   - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
   - `python3 checks/check_workflow.py --repo .`
