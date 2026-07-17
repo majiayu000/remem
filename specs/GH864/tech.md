@@ -41,12 +41,14 @@ redactor 后字节相同且可通过 range validation。
 在 `src/git_util.rs` 提取 crate-visible `command_output_with_timeout(Command, Duration)`，由
 `git_stdout_required`、`resolve_toplevel` 以及 `src/db/core.rs` 的 soft branch/commit probe 共用：
 
-1. `spawn` 后记录 `Instant` deadline；
-2. 通过 `try_wait` 和短间隔轮询等待；
-3. 正常退出后收集 stdout/stderr；
-4. deadline 到达后执行 kill + reap，返回明确 timeout；
-5. spawn 前错误可直接返回；spawn 成功后的 `try_wait`、kill 或 reap 错误必须先进入统一 cleanup；
-6. cleanup 至少尝试 kill，并在 kill 成功或 child 已退出时 wait/reap；cleanup 自身失败附加到原 error，
+1. `spawn` 后记录 `Instant` deadline，并立即 take piped stdout/stderr；
+2. 为 stdout/stderr 启动只读 drain worker，在 child 运行期间持续 `read_to_end`，避免任一 OS pipe 填满；
+3. 主线程通过 `try_wait` 和短间隔轮询等待，不得在 child 退出前等待 drain worker 完成；
+4. child 正常退出或完成 cleanup/reap 后 join drain workers，再用退出状态和已收集字节构造 `Output`；
+5. deadline 到达后执行 kill + reap，返回明确 timeout；
+6. spawn 前错误可直接返回；spawn 成功后的 `try_wait`、kill、reap、pipe read 或 worker join 错误必须
+   进入统一 lifecycle error；
+7. cleanup 至少尝试 kill，并在 kill 成功或 child 已退出时 wait/reap；cleanup 自身失败附加到原 error，
    且任何分支不得进入无界等待。
 
 所有命令继续使用 `Command::new("git")`、`current_dir(cwd)` 和参数数组，不经过 shell。固定
@@ -54,14 +56,18 @@ redactor 后字节相同且可通过 range validation。
 
 - `db::detect_git_branch` / `detect_git_commit` 和 `resolve_toplevel` 的 soft/optional 路径在 timeout 或
   lifecycle error 时写 error 日志并返回 `None`；
+- 新增 `resolve_toplevel_required`（或等价的 `Result<PathBuf>` 路径）供 `resolve_commit_metadata` 使用；
+  它不得经由返回 `Option` 的 soft helper 丢失失败原因，并必须保留 argv 类别和 cwd 上下文；
 - `git_stdout_required` 在 timeout、lifecycle error 或非零退出时返回带 argv 类别和 cwd 的 contextual
   error；`git_evidence.rs` 现有 observed-event propagate 与 Codex-transcript log-and-skip 语义不变；
 - 正常非零 soft probe 继续表示信息不可用，不伪造成 branch/commit。
 
 超时测试使用仓库测试进程自身的 ignored helper 作为长运行 child，避免依赖平台 `sleep`；断言
 timeout child 已被回收。另加可控 poll-error fixture，证明 spawn 后的 `try_wait` error 会调用统一
-cleanup，而不是通过 `?` 直接返回。真实路径测试必须证明 `resolve_commit_metadata`/`git_stdout_required`
-调用共享 executor。该 OS subprocess 路径在合并前必须人工安全审核。
+cleanup，而不是通过 `?` 直接返回。大输出 fixture 必须让 stdout 和 stderr 均超过常见 OS pipe buffer，
+证明 drain 与 child 执行并发且不会误报 timeout。真实路径测试必须证明
+`resolve_commit_metadata`/`git_stdout_required` 调用共享 executor，并证明 required toplevel timeout
+保留 argv/cwd 上下文。该 OS subprocess 路径在合并前必须人工安全审核。
 
 ### 3. exact range CLI 与事务
 
@@ -87,12 +93,13 @@ exact API。无 ID 分支继续调用现有 count/batch API，输出保持兼容
 ### 4. topic key 规范化
 
 `parse_segment` 保留“属性存在、trim 后非空”的第一道验证。若 raw key 已符合旧 parser grammar
-`[a-z0-9_-]+`，直接原样保留以维持既有 topic identity；否则才传给
+`[a-z0-9_-]+` 且至少包含一个 ASCII 字母或数字，直接原样保留以维持既有 topic identity；否则才传给
 `crate::memory::slugify_for_topic(&raw_topic_key, 96)`。规范化输出为空时返回包含 raw key 的明确
 错误。旧 grammar predicate 仅作为兼容快路径，不承担新输入的第二套 normalization。
 
-测试至少覆盖版本点号、纯标点、既有 kebab-case 和既有 snake_case key。此变更只影响旧 grammar
-原本会拒绝的新解析输出，不迁移已持久化 topic，也不修改全局 slug helper。
+测试至少覆盖版本点号、纯标点、既有 kebab-case 和既有 snake_case key；`---`、`___` 等只有旧
+grammar 标点的输入不得命中兼容快路径。此变更只影响旧 grammar 原本会拒绝的新解析输出，不迁移
+已持久化 topic，也不修改全局 slug helper。
 
 ### 5. Release housekeeping
 
@@ -107,8 +114,8 @@ exact API。无 ID 分支继续调用现有 count/batch API，输出保持兼容
 | B-001 | `transcript_evidence.rs` unified truncate helper | `cargo test per_message_budget_keeps_redaction_idempotent_at_whitespace_boundary --locked` |
 | B-002 | `EvidenceBudget::push` total budget loop | focused UTF-8/empty/total-budget tests plus existing `total_budget_never_retains_empty_utf8_message` |
 | B-003 | `PromptTranscriptEvidence::validate_for_range` unchanged gates | existing transcript evidence validation tests + `cargo test session_rollup --locked` |
-| B-004 | shared `git_util::command_output_with_timeout`, soft probes, `git_stdout_required` | `cargo test git_metadata_commands_use_bounded_executor --locked`, `cargo test command_output_with_timeout_kills_long_running_child --locked`, and log review |
-| B-005 | shared post-spawn lifecycle cleanup | `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`; Clippy; manual error aggregation review |
+| B-004 | shared `git_util::command_output_with_timeout`, soft probes, required toplevel, `git_stdout_required` | `cargo test git_metadata_commands_use_bounded_executor --locked`, `cargo test command_output_with_timeout_kills_long_running_child --locked`, `cargo test command_output_with_timeout_drains_large_output --locked`, `cargo test required_toplevel_preserves_timeout_context --locked`, and log review |
+| B-005 | shared post-spawn lifecycle and drain-worker cleanup | `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`; Clippy; manual error aggregation review |
 | B-006 | shared `Command::new("git")` argv construction | source review proves no shell across `git_util.rs` and `db/core.rs`; mandatory human security review |
 | B-007 | Clap `PendingAction` variants | `cargo test pending_exact_range_id_conflicts_with_batch_filters --locked`, `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`, and non-positive DB test |
 | B-008 | read-only CLI dry-run + shared ensure predicate | CLI/DB focused tests for missing, archived, active-task and non-retryable targets |
@@ -151,7 +158,7 @@ pending CLI
 
 LLM topic_key
   -> required + trim
-  -> matches old [a-z0-9_-]+? -- yes --> preserve verbatim
+  -> matches old [a-z0-9_-]+ and has ASCII alphanumeric? -- yes --> preserve verbatim
        |
        no
        v
@@ -191,10 +198,13 @@ LLM topic_key
 - [ ] `cargo test exact_replay_range_operations_do_not_mutate_sibling_ranges --locked`
 - [ ] `cargo test command_output_with_timeout_kills_long_running_child --locked`
 - [ ] `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`
+- [ ] `cargo test command_output_with_timeout_drains_large_output --locked`
+- [ ] `cargo test required_toplevel_preserves_timeout_context --locked`
 - [ ] `cargo test git_metadata_commands_use_bounded_executor --locked`
 - [ ] `cargo test normalizes_version_punctuation_in_topic_key --locked`
 - [ ] `cargo test rejects_topic_key_that_normalizes_to_empty --locked`
 - [ ] `cargo test preserves_existing_snake_case_topic_key --locked`
+- [ ] `cargo test rejects_punctuation_only_topic_key --locked`
 - [ ] `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`
 - [ ] 现有 transcript、pending CLI/batch、slug 与 session rollup focused suites
 - [ ] `cargo fmt --check`

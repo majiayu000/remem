@@ -59,6 +59,10 @@ GH-864
 - Covers: B-004, B-005, B-006
 - Done when:
   - soft branch/commit probe、`resolve_toplevel` 和真实 `resolve_commit_metadata` 命令全部共用 2 秒 executor。
+  - stdout/stderr 在 child 运行期间由独立 reader 并发 drain；超过 OS pipe buffer 的合法输出不会被误判
+    为 timeout，退出或 cleanup/reap 后才 join readers 并汇总输出。
+  - required metadata 使用保留错误的 `Result<PathBuf>` toplevel 路径，timeout/lifecycle error 不得经由
+    soft `Option` helper 丢失，且错误保留 argv 类别和 cwd。
   - timeout 路径可靠 kill/reap；spawn 后 `try_wait`/wait/kill/reap 错误先尝试 bounded best-effort cleanup，
     并以 error 级别记录 argv 类别、cwd 和 cleanup 结果。
   - soft 与 required Git 调用分别保留 None 与 contextual error 语义，且无 shell 解释路径。
@@ -66,6 +70,8 @@ GH-864
 - Verify:
   - `cargo test command_output_with_timeout_kills_long_running_child --locked`
   - `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`
+  - `cargo test command_output_with_timeout_drains_large_output --locked`
+  - `cargo test required_toplevel_preserves_timeout_context --locked`
   - `cargo test git_metadata_commands_use_bounded_executor --locked`
   - `cargo clippy --all-targets -- -D warnings`
   - 人工审查 `src/git_util.rs`、`src/git_evidence.rs`、`src/db/core.rs` 的 subprocess 生命周期和日志上下文
@@ -77,7 +83,8 @@ GH-864
 - Files: `src/session_rollup/parse.rs`
 - Covers: B-012, B-013, B-014
 - Done when:
-  - parser 原样保留符合旧 grammar 的 key；其它非空原值调用 `slugify_for_topic(..., 96)`。
+  - parser 仅原样保留符合旧 grammar 且至少包含一个 ASCII 字母或数字的 key；其它非空原值调用
+    `slugify_for_topic(..., 96)`。
   - `v0.2-release-audit` 稳定得到 `v0-2-release-audit`，重复标点按共享规则折叠。
   - 缺失、trim 后为空或规范化后为空继续返回明确错误。
   - 符合旧 grammar 的合法 kebab-case/snake_case key 走兼容快路径并原样保留。
@@ -85,6 +92,7 @@ GH-864
   - `cargo test normalizes_version_punctuation_in_topic_key --locked`
   - `cargo test rejects_topic_key_that_normalizes_to_empty --locked`
   - `cargo test preserves_existing_snake_case_topic_key --locked`
+  - `cargo test rejects_punctuation_only_topic_key --locked`
   - `cargo test session_rollup --locked`
 
 ### SP864-T5 — 同步 patch release 表面
