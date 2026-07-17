@@ -142,8 +142,10 @@ surface that #381/#383 evidence collection depends on.
 - Misclassification: a permanent failure labeled transient wastes bounded
   retries (capped, acceptable); a transient labeled permanent archives
   something recoverable — mitigated by conservative mapping (unknown
-  defaults to transient) and by archived rows remaining replayable via
-  explicit `remem pending` tooling, including failed jobs.
+  defaults to transient) and by archived rows remaining recoverable through
+  explicit tooling: the locked exact worker for replay ranges and `remem
+  pending` paths for the other supported failure surfaces, including failed
+  jobs.
 - Retention window hides a recurring failure that re-fires after archiving:
   mitigated because each new occurrence is a fresh actionable row; only
   stale rows age out.
