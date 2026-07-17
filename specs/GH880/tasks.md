@@ -50,7 +50,7 @@ GH-880
   - missing/cross-project/suppressed/unsafe evidence 均阻止审核；raw-only/`session_stop` evidence 返回 `evidence_safe_projection_unavailable`，candidate query/DTO 不读取 `captured_events.content_text`，non-secret transcript sentinel 和 secret 均不泄漏；
   - 当前请求 ledger lookup 先于 candidate version/status/evidence；首次成功改变状态后，用原 stale request 重放仍返回同 operation/audit/final version 且无第二 mutation/audit，different payload 即使 candidate 已不可审核也优先 conflict；并发和失败回滚均有 E2E 证据；
   - 新 safe review route 不改变旧 route/payload；空白、超长、Unicode、控制字符及字符集外 idempotency key fail closed，UUID/ULID key 可安全重放且明文不进入 DB/audit/log/response；
-  - `candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用；contract test 预先固定 `candidate_detail` 和 `candidate_evidence` 两个 endpoint key 最终都映射 `/api/v1/candidates/{id}`。
+  - `candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用；contract test 预先固定 `candidate_detail` 和 `candidate_evidence` 两个 endpoint key 最终都映射 `/api/v1/candidates/{id}`，并固定 `candidate_review_safe_approve|reject|edit` 三 key 分别映射对应 safe review route。`candidate_review_safe=false` 时三个 action key 全 absent，true 时三个 key 全 present，任一 partial map 都使 contract 失败。
 - Verify：
   - `cargo test api::tests::candidates --locked`
   - `cargo test api::tests::candidate_review_poisoning --locked`
@@ -103,8 +103,8 @@ GH-880
 - Files owned：`docs/specs/SPEC-web-api.md`、README、CHANGELOG、`scripts/smoke_native_web_api.sh`、version/release manifests；只做与 GH-880 对应的发布面同步。
 - Work：记录 endpoint/request/response/error/cursor/redaction/min-version 契约；扩展 native smoke；执行版本同步和 release gate；不宣称未发布 binary 已可用。
 - Done when：
-  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；`candidate_detail` 和 `candidate_evidence` 两个 key 均显式映射 `/api/v1/candidates/{id}`；
-  - smoke 覆盖 candidate detail/safe review、五类 read/suppression/cursor、archive/restore、delete absence；legacy search raw-hit contract regression 证明现有兼容面未被本 spec 静默改变；
+  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；`candidate_detail` 和 `candidate_evidence` 两个 key 均显式映射 `/api/v1/candidates/{id}`，`candidate_review_safe_approve|reject|edit` 三 key 与 `candidate_review_safe=true` 原子发布并分别精确映射对应 safe route；
+  - smoke 覆盖 candidate detail/safe review、五类 read/suppression/cursor、archive/restore、delete absence；safe review smoke 按 capability map 的 `{id}` template 分别 POST approve/reject/edit，证明映射与 handler/method 一致；legacy search raw-hit contract regression 证明现有兼容面未被本 spec 静默改变；
   - source/package/plugin/server manifests 同步且 version bump gate 通过；
   - product B-001–B-017 均有测试或可审计命令对应。
 - Verify：
@@ -127,7 +127,7 @@ GH-880
 - Files owned：仅 remem-web repo 的 API types/client、capability gates、resource/candidate/governance pages 和 tests；不与 remem backend lane 共享文件。
 - Work：按独立 capability 消费新 endpoint，完整展示 loading/empty/error/conflict/replay；永久 delete 不进入 UI；installed binary 继续受最低发布版本 gate。
 - Done when：
-  - candidate evidence 和安全审核 UI 只在三个 candidate capability 全 true 且 detail/evidence endpoint key 均声明时启用；
+  - candidate evidence 和安全审核 UI 只在三个 candidate capability 全 true，且 detail/evidence 两 key 与 `candidate_review_safe_approve|reject|edit` 三个 action key 全部声明精确路径时启用；缺任一 action key 都 disabled，不得推导路径；
   - 五类资源逐项 gate，archive/restore 从 list/detail 获取 version，并有 reason/version/idempotency 与冲突反馈；
   - TypeScript typecheck/test/build/audit 通过；
   - GH-3 所有验收标准完成后使用 closing PR 并做 closure audit。

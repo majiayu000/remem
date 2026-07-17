@@ -41,7 +41,7 @@ GH-880
 13. B-013 restore 必须只恢复由本 Web archive 契约产生、可审计且仍为 archived 的 memory，并恢复为 active；archived list/detail 必须公开当前整数 `version` 供客户端提交 `expected_version`；当前 archived 状态必须由最近一次状态转换中的成功 Web `memory_archive` 产生，曾经存在 Web archive、但其后发生 restore 或任一非 Web status transition，不构成当前可恢复 provenance；重复 restore 返回幂等结果，目标已永久缺失、由其它生命周期归档或版本冲突时返回结构化错误。
 14. B-014 archive/restore 成功响应必须包含 `operation_id`、`audit_id`、资源 id、before/after 状态、最终 `version` 和发生时间；幂等标识通过校验并建立 operation 后的失败必须原子回滚并返回同一 `operation_id`，`idempotency_key_invalid` 属于 operation 建立前的 400 validation error，只返回独立 request/trace id。
 15. B-015 所有新 endpoint 继续只允许 loopback bearer-token 访问，使用参数化查询；认证失败、非法 id、非法 cursor、非法幂等标识、版本冲突和幂等冲突不得泄露敏感内容。
-16. B-016 旧版客户端和现有 endpoint 行为保持兼容。新客户端只能依据 `features.<name> === true` 和声明 endpoint 启用功能；`candidate_detail` 与 `candidate_evidence` 可以显式映射到同一个 candidate detail endpoint，但两项声明均不可省略。
+16. B-016 旧版客户端和现有 endpoint 行为保持兼容。新客户端只能依据 `features.<name> === true` 和声明 endpoint 启用功能；`candidate_detail` 与 `candidate_evidence` 可以显式映射到同一个 candidate detail endpoint，但两项声明均不可省略。`candidate_review_safe=true` 只能与 `candidate_review_safe_approve`、`candidate_review_safe_reject`、`candidate_review_safe_edit` 三个 endpoint key 原子发布，客户端不得推导或硬编码任一写入路径。
 17. B-017 每个能力必须在对应 remem release 发布后才能向 installed-binary 用户声明可用；source-only 实现不能被文档写成已发布能力。
 
 ## 验收标准
@@ -52,7 +52,7 @@ GH-880
 - [ ] secret/token/transcript/payload 脱敏测试证明敏感原文和非敏感 raw transcript sentinel 都不会进入 GH-880 新增 endpoint 或其关系展开；legacy search contract regression 证明本规格没有静默改变 `/api/v1/search.raw_hits`。
 - [ ] archive/restore 通过从 active/archived list/detail 读取 `version`、提交该值、成功后取得最终 `version`、状态/marker 已变化后的 same-key replay、非法幂等标识、原始幂等值无泄漏、版本冲突、失败回滚、审计完整性及 Web restore 后被非 Web writer 再归档不可恢复的混合序列测试。
 - [ ] permanent delete 在 capabilities 中保持 false，remem-web 不展示该操作。
-- [ ] native API smoke、current Web API contract、README/release guidance 与实现同步，并断言 `candidate_detail`、`candidate_evidence` 两个 endpoint key 都映射到 candidate detail route。
+- [ ] native API smoke、current Web API contract、README/release guidance 与实现同步，并精确断言 `candidate_detail`、`candidate_evidence` 都映射到 candidate detail route，以及 `candidate_review_safe_approve`、`candidate_review_safe_reject`、`candidate_review_safe_edit` 分别映射到三条 safe review route；三个 safe action key 与 `candidate_review_safe=true` 必须全有或全无。
 - [ ] 现有 native API、CLI 和 memory retrieval 测试无回归。
 
 ## 边界情况
