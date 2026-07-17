@@ -140,6 +140,17 @@ Issue 引用的仓库研究报告
     ID 同 commit 所属 project、link/session identity 精确绑定。跨项目或错误 ID、未确认命中以及
     scanner/schema/audit 失败均不得返回 summary 正文，且必须作为可见错误传播；不得以裸 SQL、空
     `summary` 或 warning-only fallback 隐藏失败。
+24. `B-024`：quarantined rollup 不得丢失 acknowledgement 后才能释放的 topic segment 输入。系统必须
+    持久化一个脱敏、有界、schema-versioned、默认 reader 不可见的 pending segment bundle，并把它与
+    summary/project/session/exact range/pattern generation 绑定；不得重调 LLM、提前创建可见 topic，
+    或从未验证文本重建。
+25. `B-025`：`poisoning_side_effects_released_at_epoch` 只能表示所有要求的 checkpointed side effects
+    已完成，不能作为“已开始”标记提前写入。中途失败必须保留未完成 checkpoints 和空 completion
+    marker，使同一 worker lease 的后续 retry 只补齐剩余工作；全部成功后才原子写 completion marker。
+26. `B-026`：summary acknowledgement 必须用与 quarantine 时相同的 source + generated combined
+    verdict 重验当前 generation。source-only laundering 命中必须从 exact captured evidence range
+    重新计算；只扫描 summary body、无法加载绑定 source、或 verdict identity/version 不一致均必须
+    拒绝且不发生部分写入。
 
 ## 验收标准
 
@@ -159,6 +170,10 @@ Issue 引用的仓库研究报告
       retrieval、abstention、selected memory IDs/rank 上等价；其载荷不能成为 retrieval-steering signal。
 - [ ] git trace 与 MCP commit tools 对 safe/精确 ack summary 保持兼容；未确认、跨 project/ID、scanner/
       schema/audit failure 均不返回正文并产生明确 tool/query error。
+- [ ] quarantined rollup 的 pending segments 在 ack 前不可见，ack 后无需重调 LLM 即可按 checkpoint
+      释放；任一副作用失败时 completion marker 保持为空，retry 只补齐剩余工作。
+- [ ] source-only laundering quarantine 的 ack 重载 exact source range 并计算 combined verdict；
+      只扫描生成 summary 的错误实现被 negative fixture 拒绝。
 - [ ] doctor、CLI status 与 API status 的 fresh/stale/error case 均提供不含载荷/secret 的 poisoning
       计数和诊断。
 - [ ] adversarial-policy 与新的 capture E2E eval 为确定性、离线且包含恶意/无害引用对照；相关
@@ -176,15 +191,15 @@ Issue 引用的仓库研究报告
 | 边界类别 | 结论 |
 | --- | --- |
 | Empty / missing input | covered: `B-003`, `B-005`, `B-016` |
-| Error and failure paths | covered: `B-005`, `B-008`, `B-013`, `B-016`, `B-021`, `B-022`, `B-023` |
-| Authorization / permission | covered: `B-009`, `B-010`, `B-020` |
-| Concurrency / race / ordering | covered: `B-006`, `B-011`, `B-012`, `B-021`, `B-022` |
-| Retry / repetition / idempotency | covered: `B-007`, `B-011`, `B-012`, `B-021` |
+| Error and failure paths | covered: `B-005`, `B-008`, `B-013`, `B-016`, `B-021`, `B-022`, `B-023`, `B-025`, `B-026` |
+| Authorization / permission | covered: `B-009`, `B-010`, `B-020`, `B-026` |
+| Concurrency / race / ordering | covered: `B-006`, `B-011`, `B-012`, `B-021`, `B-022`, `B-025` |
+| Retry / repetition / idempotency | covered: `B-007`, `B-011`, `B-012`, `B-021`, `B-024`, `B-025` |
 | Illegal state transitions | covered: `B-010`, `B-012`, `B-021` |
 | Compatibility / migration | covered: `B-009`, `B-015`, `B-019`, `B-021` |
 | Degradation / fallback | covered: `B-005`, `B-008`, `B-013`, `B-022`, `B-023` |
-| Evidence and audit integrity | covered: `B-001`, `B-002`, `B-014`, `B-020` |
-| Cancellation / interruption / partial completion | covered: `B-005`, `B-006`, `B-011`, `B-012` |
+| Evidence and audit integrity | covered: `B-001`, `B-002`, `B-014`, `B-020`, `B-024`, `B-026` |
+| Cancellation / interruption / partial completion | covered: `B-005`, `B-006`, `B-011`, `B-012`, `B-025` |
 
 - 同一载荷同时命中多个 pattern：使用版本化 pattern table 的稳定优先级记录一个 primary match，
   eval 可记录完整命中集合；重跑不得随机改变 primary pattern。
