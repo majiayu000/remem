@@ -214,6 +214,7 @@ LLM topic_key
 - [ ] `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`
 - [ ] `python3 scripts/ci/check_plugin_version_sync.py`
 - [ ] `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
+- [ ] `python3 scripts/ci/check_pr_preflight.py --base <base-sha> --head HEAD --pr-body-file <body-file>`
 - [ ] `git diff --check`
 - [ ] PR preflight 与 Git subprocess/exact DB transaction 人工 review
 - [ ] Claude profile 可用后执行 `remem pending retry-extraction-ranges --id 308 --dry-run`，

@@ -127,6 +127,7 @@ GH-864
 - Done when:
   - product-to-test mapping 中的 focused tests 全部通过。
   - Rust、Node、版本同步、版本 bump、diff 和 SpecRail packet 检查全部通过。
+  - 使用实现 PR 的实际 body 运行完整 `check_pr_preflight.py`（不得使用 `--fast` 或跳过 body checks）并通过。
   - PR head、CI、review threads 和人工 merge 授权通过新鲜 PR gate；不得用历史输出替代。
 - Verify:
   - `cargo fmt --check`
@@ -136,6 +137,7 @@ GH-864
   - `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`
   - `python3 scripts/ci/check_plugin_version_sync.py`
   - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
+  - `python3 scripts/ci/check_pr_preflight.py --base <base-sha> --head HEAD --pr-body-file <body-file>`
   - `python3 checks/check_workflow.py --repo .`
   - `python3 checks/check_workflow.py --repo . --spec-dir=specs/GH864`
   - `git diff --check`
