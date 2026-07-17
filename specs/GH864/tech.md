@@ -10,7 +10,8 @@ GH-864
 
 ## Codebase Context
 
-以下锚点基于 `origin/main@5896e0be22e6b70b31316ab46ab9d0f99d0b3dfa`。
+以下新增恢复锚点基于 `origin/main@89645c04240cf9dc6ee93234603015c9b2fa079a`；原四项修复锚点保留为
+已批准设计的历史定位。
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
@@ -25,6 +26,8 @@ GH-864
 | Failure lifecycle contract | `docs/specs/failure-lifecycle/{PRODUCT,TECH}.md` | 当前合同治理 `extraction_replay_ranges` 与手工 retry escape hatch | exact list/retry/quarantine 必须同步权威生命周期合同 |
 | Operator documentation | `README.md:670-680,895-910` | pending 示例和 JSON 表只覆盖 legacy 命令 | exact-ID 恢复必须可发现且可审计 |
 | Release surfaces | `Cargo.toml`, `Cargo.lock`, `plugins/remem/.codex-plugin/plugin.json`, `plugins/remem/runtimes/remem-releases.json`, `npm/remem/package.json`, `server.json` | patch 发布要求所有版本面同步 | 防止可执行文件、插件和 registry manifest 漂移 |
+| Quarantine acknowledgement CLI | `src/cli/types.rs:750-765`, `src/cli/actions/pending.rs:225-255` | exact retry 只接受默认 retryable predicate，没有显式隔离确认参数 | range 308 已隔离，provider 恢复后仍无法走受控 CLI 恢复 |
+| Exact retry predicate | `src/db/extraction_replay.rs:152-199,249-337` | exact 与 batch 都只选择 `pending|failed`；enqueue 的身份查询同样拒绝 quarantine | 必须只为显式 exact 确认增加窄例外，不能放宽 batch |
 
 ## 设计方案
 
@@ -122,6 +125,22 @@ grammar 标点的输入不得命中兼容快路径。此变更只影响旧 gramm
 脚本和 version bump gate 必须通过。range 308 的真实 exact retry 作为 issue 运维证据单独记录，
 不写入自动化测试，也不使用生产 payload 作为 fixture。
 
+### 6. 显式恢复 quarantined exact range
+
+仅在 `RetryExtractionRanges` 增加 `acknowledge_quarantine: bool`，Clap 通过 `requires = "id"` 在调度前
+拒绝孤立确认参数。list/quarantine 与无 ID 的 batch 分支不接收该参数。
+
+DB retryable 查询增加内部布尔输入，但默认值和所有 batch caller 固定为 false。只有 exact retry 的
+dry-run 与事务 API 传入显式确认；此时 SQL 状态集合从 `pending|failed` 窄扩展为
+`pending|failed|quarantined`，其它 archived 与 active replay task 条件完全复用。enqueue 的 range 身份
+查询接收同一布尔输入，事务内再次验证后才允许 quarantined 目标建立 idempotent replay task并转为
+`requeued`。不得先把 range 直接 UPDATE 为 failed，也不得新增通用 force 或批量 include-quarantined。
+
+测试使用两个 exhausted ranges：隔离目标 range，证明默认 exact retry、无确认 dry-run 与 batch retry
+均不选择它；带确认的 exact dry-run/执行只 requeue 目标，sibling 状态不变。另覆盖确认参数缺少 ID、
+archived、active-task、replayed 和重复确认的失败路径。生产 range 308 仍在实现合并后串行执行：Claude
+live check → acknowledged dry-run → acknowledged retry → worker once/终态轮询 → exact list 与脱敏日志证据。
+
 ## Product-to-Test Mapping
 
 | Product invariant | Implementation area | Verification |
@@ -141,6 +160,10 @@ grammar 标点的输入不得命中兼容快路径。此变更只影响旧 gramm
 | B-013 | empty-normalized error branch | `cargo test rejects_topic_key_that_normalizes_to_empty --locked` |
 | B-014 | old-grammar compatibility fast path + shared slug determinism | `cargo test preserves_existing_snake_case_topic_key --locked` plus kebab-case fixture and existing slug tests |
 | B-015 | release/docs surfaces and operational handoff | version-sync/version-bump scripts; README/failure-lifecycle review; GH-864 comment with authenticated range 308 exact range/task result and redacted provider/profile log evidence |
+| B-016 | retry CLI explicit acknowledgement flag and parser dependency | `cargo test pending_quarantine_acknowledgement_requires_exact_id --locked` |
+| B-017 | read-only exact predicate with narrow quarantined opt-in | `cargo test acknowledged_quarantined_range_preserves_other_illegal_state_rejections --locked` |
+| B-018 | transactional acknowledged retry and unchanged batch/default selection | `cargo test acknowledged_quarantined_range_retry_is_exact_and_batch_compatible --locked` |
+| B-019 | authenticated production handoff | GH-864 comment with live-check, acknowledged dry-run/retry, exact terminal range/task evidence and redacted provider/profile logs; direct SQL and batch commands absent |
 
 ## 数据流
 
@@ -171,6 +194,12 @@ pending CLI
   -> show one / retry one / quarantine one
   -> commit or rollback; sibling ranges untouched
 
+quarantined exact retry
+  -> --id + --acknowledge-quarantine required
+  -> read-only predicate (unarchived, no active replay task)
+  -> transaction revalidates same target
+  -> requeue one target; default/batch candidate sets unchanged
+
 LLM topic_key
   -> required + trim
   -> matches old [a-z0-9_-]+ and has ASCII alphanumeric? -- yes --> preserve verbatim
@@ -192,6 +221,10 @@ LLM topic_key
 - **dry-run 只检查 ID 存在**：拒绝。会把 archived、active-task 或非法状态误报为可执行。
 - **topic parser 单独允许点号**：拒绝。继续产生第三套 slug 规则，无法覆盖其它语义标点。
 - **截断后只在 validator trim**：拒绝。持久化表示仍不稳定，且预算会按错误字节数计算。
+- **直接 SQL 把 range 308 改回 failed**：拒绝。它绕过 CLI 合同、事务重验和可审计确认，无法证明
+  sibling 隔离，也给后续运维留下不可复用手工步骤。
+- **默认 exact retry 自动接受 quarantined**：拒绝。隔离必须继续是粘性状态，只有显式确认才能恢复。
+- **给 batch retry 增加 include-quarantined**：拒绝。批量确认无法证明运维人员逐项审查了隔离原因。
 
 ## 风险
 
@@ -207,6 +240,8 @@ LLM topic_key
 - **Reliability**：process-group kill/reap、后代持 pipe、SQLite 竞争和 provider 认证均可能失败；失败
   必须可见且不能无界等待或改选其它 range。
 - **Maintenance**：四项修复共用一个 release bump，但保持四个原子 commits，便于回溯和 cherry-pick。
+- **Quarantine safety**：显式确认是用户可见的窄授权，不是通用 force；parser、共享 predicate 与事务
+  重验必须使用同一个布尔值，避免 dry-run/执行漂移。
 
 ## 测试计划
 
@@ -235,9 +270,14 @@ LLM topic_key
 - [ ] `python3 scripts/ci/check_pr_preflight.py --base <base-sha> --head HEAD --pr-body-file <body-file>`
 - [ ] `git diff --check`
 - [ ] PR preflight 与 Git subprocess/exact DB transaction 人工 review
-- [ ] Claude profile 可用后执行 `remem pending retry-extraction-ranges --id 308 --dry-run`，再执行非 dry-run，
+- [ ] Claude profile 可用后执行 `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --dry-run`，
+      再执行带相同确认的非 dry-run，
       等待 worker 终态后运行 `remem pending list-extraction-ranges --id 308 --json`，并记录 exact range/task
       状态及对应 replay task 的已脱敏 provider/profile 日志
+- [ ] `cargo test pending_quarantine_acknowledgement_requires_exact_id --locked`
+- [ ] `cargo test acknowledged_quarantined_range_preserves_other_illegal_state_rejections --locked`
+- [ ] `cargo test acknowledged_quarantined_range_retry_is_exact_and_batch_compatible --locked`
+- [ ] 生产 range 308 使用 `--id 308 --acknowledge-quarantine` 完成 dry-run 与 retry；禁止直接 SQL 或 batch retry
 
 ## 回滚方案
 
@@ -246,6 +286,7 @@ LLM topic_key
 - transcript revert 会恢复旧持久化行为，不迁移既有 evidence；
 - Git probe revert 会恢复无界风险，因此只应在修复 timeout executor 后回滚；
 - exact-ID revert 不改变数据库，只移除新 CLI/API；
+- quarantine acknowledgement revert 会恢复“隔离项不可经 CLI 重试”，不应回写已成功 replay 的 range；
 - topic normalization revert 只影响之后的新 rollup parse。
 
 release manifest bump 不应单独回退到已发布版本号。任何 rollback 都重新运行完整 version sync 和
@@ -259,6 +300,7 @@ release manifest bump 不应单独回退到已发布版本号。任何 rollback 
   "paths": [
     "specs/GH864/product.md",
     "specs/GH864/tech.md",
+    "specs/GH864/tasks.md",
     "src/session_rollup/transcript_evidence.rs",
     "src/session_rollup/parse.rs",
     "src/cli/types.rs",

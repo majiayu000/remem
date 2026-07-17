@@ -12,6 +12,8 @@ GH-864
 - Git branch/commit 探测可能无界等待，让 capture 或 rollup 卡死；
 - 运维人员无法只重试或隔离一个明确的 extraction replay range；
 - 合法语义的版本型 `topic_key` 会因点号等标点被拒绝，导致整个 rollup 失败。
+- 已明确隔离的 range 没有受控恢复入口：range 308 当前为 `quarantined`，默认 exact retry 按既有
+  合同正确拒绝，但运维人员即使恢复了 provider 认证也无法完成经确认的单 range 恢复。
 
 用户需要可重复、可审计、不会误伤 sibling ranges 的精确恢复路径。修复必须保持现有批量命令兼容，
 不能通过吞掉错误、放宽为空值或让 Git 子进程留在后台来伪装成功。
@@ -23,6 +25,7 @@ GH-864
 - 为 retry/quarantine 增加 exact range ID 模式，并证明只改变目标 range。
 - 复用统一 topic slug 规则规范化 `topic_key`，接受有意义的版本标点，同时对空结果继续 fail closed。
 - 保持无 `--id` 时的现有批量行为、dry-run 语义和数据模型不变。
+- 为已隔离 range 提供必须显式确认的 exact-ID 恢复路径，同时保持默认 retry 与批量 retry 不会选择隔离项。
 
 ## 非目标
 
@@ -32,6 +35,8 @@ GH-864
 - 不把 Git probe 失败解释为仓库成功探测；不新增 shell 调用、网络调用或 Git 配置写入。
 - 不重新设计 topic/workstream 身份，也不更改 `slugify_for_topic` 的全局规则。
 - 不声称代码合并即可让 range 308 成功；真实重放仍需要可用的 Claude profile 和运行时证据。
+- 不自动解除 quarantine，不允许 batch 操作选择 quarantined range，也不提供绕过 archive 或 active-task
+  门禁的通用强制开关。
 
 ## Behavior Invariants
 
@@ -81,6 +86,18 @@ GH-864
 15. **B-015**：实现提交必须同步所有发行版本面并记录 changelog；代码验证通过不等同于真实
     range 308 已恢复。关闭 GH-864 前还必须在可用 Claude profile 下执行 exact-ID 重放，等待 worker
     终态，并记录 exact list 的 range/task 结果与对应 replay task 的已脱敏 provider/profile 运行日志。
+16. **B-016**：`retry-extraction-ranges` 必须接受可选 `--acknowledge-quarantine`，且该参数必须在
+    参数解析阶段要求同时提供正数 `--id`。缺少确认时，B-008 的默认 predicate 不变；该参数不得用于
+    list、quarantine 或任何 batch 选择。
+17. **B-017**：仅当显式确认存在时，exact-ID dry-run 才可把 `quarantined` 视为候选状态；目标仍必须
+    存在、未 archived 且没有关联的 `pending|processing` replay task。确认不能让 `requeued|replayed`、
+    不存在、已归档或 active-task 目标通过，也不得回退到其它 range。
+18. **B-018**：显式确认后的实际 retry 必须在一个事务中重新验证 B-017，只把目标 range 转为
+    `requeued` 并建立或恢复其 idempotent replay task。确认路径的失败、重复和竞争不得改变 sibling
+    ranges；未带确认的 exact retry 与所有 batch retry 的可选集合必须与既有行为完全一致。
+19. **B-019**：range 308 的运维证据必须同时记录 quarantine 确认、成功的 Claude profile live check、
+    exact dry-run、实际 retry、最终 range/task 状态及已脱敏 provider/profile 日志；任一步失败时 issue
+    保持 open，且不得用直接数据库更新或批量 retry 代替。
 
 ## 验收标准
 
@@ -97,6 +114,8 @@ GH-864
       Clippy、插件版本同步与 PR preflight 通过。
 - [ ] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核。
 - [ ] Claude profile 可用后，range 308 通过 exact-ID 路径重放并把结果记录在 GH-864。
+- [ ] CLI parser 证明 `--acknowledge-quarantine` 缺少 `--id` 时失败；DB 双-range fixture 证明只有显式
+      确认的 quarantined 目标被 requeue，默认 exact 与 batch 均继续跳过 quarantine。
 - [ ] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
 
 ## 边界情况
@@ -105,14 +124,14 @@ GH-864
 | --- | --- |
 | Empty / missing input | covered: B-002, B-007, B-013 |
 | Error and failure paths | covered: B-003, B-005, B-008, B-013 |
-| Authorization / permission | covered: B-008, B-015；本地 CLI 无新增权限模型，但真实 provider 认证不可绕过 |
-| Concurrency / race / ordering | covered: B-009, B-010 |
-| Retry / repetition / idempotency | covered: B-001, B-009, B-010, B-014 |
-| Illegal state transitions | covered: B-008, B-009, B-010 |
-| Compatibility / migration | covered: B-011, B-014；无 schema migration |
-| Degradation / fallback | covered: B-004, B-005, B-008, B-013 |
-| Evidence and audit integrity | covered: B-003, B-008, B-015 |
-| Cancellation / interruption / partial completion | covered: B-004, B-005, B-009 |
+| Authorization / permission | covered: B-008, B-015, B-016, B-017, B-019；本地确认不可替代真实 provider 认证 |
+| Concurrency / race / ordering | covered: B-009, B-010, B-018 |
+| Retry / repetition / idempotency | covered: B-001, B-009, B-010, B-014, B-018 |
+| Illegal state transitions | covered: B-008, B-009, B-010, B-016, B-017, B-018 |
+| Compatibility / migration | covered: B-011, B-014, B-018；无 schema migration |
+| Degradation / fallback | covered: B-004, B-005, B-008, B-013, B-017, B-019 |
+| Evidence and audit integrity | covered: B-003, B-008, B-015, B-016, B-019 |
+| Cancellation / interruption / partial completion | covered: B-004, B-005, B-009, B-018, B-019 |
 
 ## 发布说明
 
@@ -120,3 +139,4 @@ GH-864
 2 秒上限。升级不需要数据库迁移；回滚版本不会删除 replay ranges，但会失去 exact-ID list/retry/quarantine CLI、
 稳定截断和 topic key 规范化能力。真实 range 308 的恢复证据属于运维收口，不应写成所有用户都会
 自动恢复的发布承诺。
+对于已隔离的单 range，发布说明必须展示显式确认参数，并明确默认 exact/batch retry 仍跳过 quarantine。
