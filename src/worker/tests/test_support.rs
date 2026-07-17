@@ -1,6 +1,6 @@
 use std::os::unix::fs::PermissionsExt;
 
-pub(super) fn install_stub_codex(path: &std::path::Path) {
+pub(in crate::worker) fn install_stub_codex(path: &std::path::Path) {
     let script = r#"#!/bin/sh
 prev=""
 output_path=""

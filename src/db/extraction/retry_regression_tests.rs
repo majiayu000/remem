@@ -2,7 +2,8 @@ use crate::db::{
     count_retryable_extraction_replay_ranges, ensure_extraction_replay_range_retryable,
     get_extraction_replay_range_evidence, list_extraction_replay_ranges,
     mark_replay_range_replayed_if_done, quarantine_extraction_replay_range, record_captured_event,
-    retry_extraction_replay_range, retry_extraction_replay_ranges, CaptureEventInput,
+    retry_and_claim_extraction_replay_range, retry_extraction_replay_range,
+    retry_extraction_replay_ranges, CaptureEventInput,
 };
 use anyhow::Result;
 use rusqlite::{params, Connection};
@@ -254,8 +255,8 @@ fn acknowledged_quarantined_range_retry_is_exact_and_batch_compatible() {
     quarantine_extraction_replay_range(&conn, target_id).expect("target should quarantine");
     quarantine_extraction_replay_range(&conn, sibling_id).expect("sibling should quarantine");
 
-    assert!(ensure_extraction_replay_range_retryable(&conn, target_id, false).is_err());
-    ensure_extraction_replay_range_retryable(&conn, target_id, true)
+    assert!(ensure_extraction_replay_range_retryable(&conn, target_id, false, false).is_err());
+    ensure_extraction_replay_range_retryable(&conn, target_id, true, false)
         .expect("acknowledged target should be retryable");
     assert_eq!(
         count_retryable_extraction_replay_ranges(&conn, None, 10)
@@ -282,7 +283,7 @@ fn acknowledged_quarantined_range_retry_is_exact_and_batch_compatible() {
 #[test]
 fn acknowledged_quarantined_range_preserves_other_illegal_state_rejections() {
     let mut conn = setup_conn();
-    assert!(ensure_extraction_replay_range_retryable(&conn, i64::MAX, true).is_err());
+    assert!(ensure_extraction_replay_range_retryable(&conn, i64::MAX, true, false).is_err());
 
     let archived_id = exhaust_task_into_replay_range(&mut conn, "sess-ack-archived");
     let active_id = exhaust_task_into_replay_range(&mut conn, "sess-ack-active");
@@ -318,4 +319,111 @@ fn acknowledged_quarantined_range_preserves_other_illegal_state_rejections() {
     mark_replay_range_replayed_if_done(&conn, task_id, chrono::Utc::now().timestamp())
         .expect("range should become replayed");
     assert!(retry_extraction_replay_range(&conn, replayed_id, true).is_err());
+}
+
+#[test]
+fn archived_quarantined_range_requires_dual_exact_acknowledgement() {
+    let mut conn = setup_conn();
+    let target_id = exhaust_task_into_replay_range(&mut conn, "sess-archived-ack-target");
+    let sibling_id = exhaust_task_into_replay_range(&mut conn, "sess-archived-ack-sibling");
+    quarantine_extraction_replay_range(&conn, target_id).expect("target should quarantine");
+    quarantine_extraction_replay_range(&conn, sibling_id).expect("sibling should quarantine");
+    conn.execute(
+        "UPDATE extraction_replay_ranges
+         SET archived_at_epoch = 1
+         WHERE id IN (?1, ?2)",
+        params![target_id, sibling_id],
+    )
+    .expect("fixtures should archive");
+
+    for (acknowledge_quarantine, include_archived) in [(false, false), (true, false), (false, true)]
+    {
+        assert!(
+            ensure_extraction_replay_range_retryable(
+                &conn,
+                target_id,
+                acknowledge_quarantine,
+                include_archived,
+            )
+            .is_err(),
+            "incomplete acknowledgement must fail"
+        );
+    }
+    ensure_extraction_replay_range_retryable(&conn, target_id, true, true)
+        .expect("dual acknowledged dry-run should validate");
+    assert!(
+        retry_extraction_replay_range(&conn, target_id, true).is_err(),
+        "unlocked exact retry must still reject archived targets"
+    );
+    assert_eq!(
+        retry_extraction_replay_ranges(&conn, None, 10).expect("batch should stay compatible"),
+        0
+    );
+
+    let lease_owner = crate::db::exact_replay_worker_owner(7, 11);
+    let task =
+        retry_and_claim_extraction_replay_range(&mut conn, target_id, true, true, &lease_owner, 60)
+            .expect("locked exact transaction should recover and claim target");
+    assert_eq!(task.replay_range_id, Some(target_id));
+    let (target_status, target_archived): (String, Option<i64>) = conn
+        .query_row(
+            "SELECT status, archived_at_epoch FROM extraction_replay_ranges WHERE id = ?1",
+            params![target_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("target state should query");
+    let (sibling_status, sibling_archived, sibling_task): (String, Option<i64>, Option<i64>) = conn
+        .query_row(
+            "SELECT status, archived_at_epoch, replay_task_id
+             FROM extraction_replay_ranges WHERE id = ?1",
+            params![sibling_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("sibling state should query");
+    assert_eq!(target_status, "requeued");
+    assert!(target_archived.is_none());
+    assert_eq!(sibling_status, "quarantined");
+    assert_eq!(sibling_archived, Some(1));
+    assert!(sibling_task.is_none());
+}
+
+#[test]
+fn exact_extraction_task_claim_preserves_retry_readiness() {
+    let mut conn = setup_conn();
+    let target_id = insert_task(
+        &conn,
+        "sess-exact-readiness-target",
+        ExtractionTaskKind::SessionRollup,
+    )
+    .expect("target task should insert");
+    let sibling_id = insert_task(
+        &conn,
+        "sess-exact-readiness-sibling",
+        ExtractionTaskKind::ObservationExtract,
+    )
+    .expect("sibling task should insert");
+    conn.execute(
+        "UPDATE extraction_tasks SET next_retry_epoch = ?1 WHERE id = ?2",
+        params![chrono::Utc::now().timestamp() + 300, target_id],
+    )
+    .expect("target retry time should update");
+
+    assert!(
+        claim_extraction_task_by_id(&mut conn, target_id, "worker-exact", 60)
+            .expect("future exact claim should query")
+            .is_none()
+    );
+    assert_eq!(task_status(&conn, target_id).0, "pending");
+    assert_eq!(task_status(&conn, sibling_id).0, "pending");
+
+    conn.execute(
+        "UPDATE extraction_tasks SET next_retry_epoch = NULL WHERE id = ?1",
+        params![target_id],
+    )
+    .expect("target should become ready");
+    let claimed = claim_extraction_task_by_id(&mut conn, target_id, "worker-exact", 60)
+        .expect("ready exact claim should succeed")
+        .expect("target should be claimed");
+    assert_eq!(claimed.id, target_id);
+    assert_eq!(task_status(&conn, sibling_id).0, "pending");
 }

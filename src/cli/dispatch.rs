@@ -66,7 +66,23 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             }
             summarize::summarize(host.as_deref(), profile.as_deref()).await?;
         }
-        Commands::Worker { once } => worker::run(once, 2000).await?,
+        Commands::Worker(args) => {
+            if let Some(range_id) = args.replay_range_id {
+                let profile = args
+                    .profile
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("exact replay worker requires --profile"))?;
+                worker::run_exact_replay(
+                    range_id,
+                    args.acknowledge_quarantine,
+                    args.include_archived,
+                    profile,
+                )
+                .await?;
+            } else {
+                worker::run(args.once, 2000).await?;
+            }
+        }
         Commands::Mcp => mcp::run_mcp_server().await?,
         Commands::Install {
             target,
