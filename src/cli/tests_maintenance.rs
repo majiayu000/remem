@@ -75,6 +75,18 @@ fn pending_exact_range_id_accepts_implicit_default_limit() {
 }
 
 #[test]
+fn pending_exact_range_id_rejects_non_positive_before_dispatch() {
+    for command in EXTRACTION_RANGE_COMMANDS {
+        for id in ["0", "-1"] {
+            assert!(
+                Cli::try_parse_from(["remem", "pending", command, "--id", id]).is_err(),
+                "{command} should reject non-positive --id {id}"
+            );
+        }
+    }
+}
+
+#[test]
 fn pending_exact_range_id_conflicts_with_batch_filters() {
     for command in EXTRACTION_RANGE_COMMANDS {
         for (flag, value) in [("--project", "/repo"), ("--limit", "1")] {

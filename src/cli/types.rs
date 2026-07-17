@@ -733,7 +733,11 @@ pub(in crate::cli) enum PendingAction {
     /// List exhausted extraction event ranges.
     ListExtractionRanges {
         /// List exactly one range by ID, including terminal replay evidence.
-        #[arg(long, conflicts_with_all = ["project", "limit"])]
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
         id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
@@ -745,7 +749,11 @@ pub(in crate::cli) enum PendingAction {
     /// Requeue exhausted extraction event ranges.
     RetryExtractionRanges {
         /// Requeue exactly one range by ID.
-        #[arg(long, conflicts_with_all = ["project", "limit"])]
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
         id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
@@ -757,7 +765,11 @@ pub(in crate::cli) enum PendingAction {
     /// Quarantine exhausted extraction event ranges.
     QuarantineExtractionRanges {
         /// Quarantine exactly one range by ID.
-        #[arg(long, conflicts_with_all = ["project", "limit"])]
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
         id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
