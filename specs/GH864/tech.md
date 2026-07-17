@@ -161,8 +161,9 @@ sibling 不变。
 不得提交一个尚未 exact-claim 的 pending replay task。不存在、未到期或竞争返回明确错误且整个事务回滚，
 不调用普通 priority query。
 
-随后 exact processor 只处理已 claim 的 task 一次，并在内存 task clone 覆盖已验证的 `ai_profile`。done
-沿用正常完成 transition；defer、wait、timeout、provider error 或其它非成功结果不进入普通 retry 队列，
+随后 exact processor 只处理已 claim 的 task 一次，并在内存 task clone 覆盖已验证的 `ai_profile`。覆盖完整
+range 的 done 沿用正常完成 transition；partial coverage、defer、wait、timeout、provider error 或其它
+非成功结果不进入普通 retry 队列，
 而是在一个事务中把 replay task 标成 failed/archived，并把 range 恢复为 quarantined/archived，返回明确错误。
 exact lease owner 使用固定可识别前缀；过期 lease recovery 对该前缀执行相同隔离归档，而不是普通 pending
 requeue，从而覆盖进程在 model call 或 transition 前被终止的情况。无需持久化 profile 或新增 schema；再次

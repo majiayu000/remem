@@ -110,8 +110,9 @@ GH-864
     pending task。失败、重复、竞争或确认不完整不得修改目标或 sibling。
 22. **B-022**：worker 必须提供只恢复一个正数 replay range ID 的 `--once` 模式；它在任何写入前取得
     worker singleton，持锁原子执行 B-020/B-021，并以与普通 claim 相同的 pending/到期 predicate 只
-    process 已 claim 的 task。`--profile` 在写入前通过现有 resolver 验证并只用于该 task；done 正常提交，
-    defer/wait/timeout/provider error 等非成功结果必须把 task 与 range 恢复为 archived quarantine。exact
+    process 已 claim 的 task。`--profile` 在写入前通过现有 resolver 验证并只用于该 task；覆盖完整 range
+    的 done 正常提交，partial coverage、defer/wait/timeout/provider error 等非成功结果必须把 task 与 range
+    恢复为 archived quarantine。exact
     owner 的过期 lease 也必须归档隔离而非普通 requeue，保证中断后不会被 daemon 以默认 profile claim。
     锁被 daemon 持有、task 未到期、缺失或竞争时失败，且不回退到全局 claim、maintenance、job、backfill
     或第二个 task。普通 `remem worker [--once]` 行为保持不变。

@@ -243,8 +243,9 @@ storms.
   pending/retry-due predicate; the pending row is never committed without the
   exact lease. A held daemon lock, future retry time, or identity race fails
   before fallback. The exact processor uses the validated in-memory profile
-  for its single attempt. Done follows the normal success transition; defer,
-  wait, timeout, provider error, or another non-success atomically leaves the
+  for its single attempt. Full-range done follows the normal success
+  transition; partial coverage, defer, wait, timeout, provider error, or
+  another non-success atomically leaves the
   replay task failed/archived and the range quarantined/archived. Expired lease
   recovery recognizes exact-replay owners and applies the same archived
   quarantine outcome, so interruption never creates daemon-claimable work with
