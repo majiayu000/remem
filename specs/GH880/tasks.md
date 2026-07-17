@@ -23,9 +23,9 @@ GH-880
 - Owner：backend worker（单 lane）
 - Dependencies：GH-880 spec packet 完整；实现 route gate 与 duplicate-work evidence 通过；基于最新 `origin/main` 选择未占用的 migration 版本。
 - Files owned：`src/migrations/v*_web_console_governance.sql`、`src/migrate/types.rs`、`src/migrate/schema_drift/invariants.rs`、migration tests、`src/api/mutation.rs`、`src/api/cursor.rs`、共享模块声明。
-- Work：添加 candidate/memory integer version、覆盖所有 Web 可见字段 writer 的 version triggers、带 response schema version 的幂等账本、稳定 operation id/request hash helper、immutable-id typed cursor codec；不注册业务 endpoint，不提前声明 capability。
+- Work：添加 candidate/memory integer version、`memories.web_archive_operation_id`、覆盖所有 Web 可见字段 writer 的 version triggers、任一 status transition 清除 archive marker 的 trigger、带 response schema version 的幂等账本、稳定 operation id/request hash helper、immutable-id typed cursor codec；不注册业务 endpoint，不提前声明 capability。
 - Done when：
-  - fresh/upgrade DB 具有正确 default、unique/index/trigger/schema invariant，CLI/worker/lifecycle 可见字段更新也推进 version；
+  - fresh/upgrade DB 具有正确 default、unique/index/trigger/schema invariant，CLI/worker/lifecycle 可见字段更新也推进 version，任一非 Web status transition 都清除旧 Web archive marker；
   - same key + same payload 可读取同一 ledger 结果，不同 payload 明确 conflict；
   - cursor 对 kind/filter/version 绑定且 malformed input fail closed；
   - 没有 token、raw payload 或 secret 写入 request hash/audit fixture。
@@ -44,7 +44,7 @@ GH-880
 - Work：实现 detail 安全投影和 fail-closed decision；把 domain mutation 拆成 transaction-scoped primitive；为 Web approve/reject/edit 增加 reason/version/idempotency/audit envelope；保留旧 CLI wrapper 和兼容 endpoint 行为。
 - Done when：
   - detail 返回 version、evidence provenance、`can_review` 和稳定 blocked codes；
-  - missing/cross-project/suppressed/unsafe evidence 均阻止审核但不泄漏原文；
+  - missing/cross-project/suppressed/unsafe evidence 均阻止审核；raw-only/`session_stop` evidence 返回 `evidence_safe_projection_unavailable`，candidate query/DTO 不读取 `captured_events.content_text`，non-secret transcript sentinel 和 secret 均不泄漏；
   - approve/reject/edit 的并发、重放、payload conflict 和失败回滚均有 E2E 证据；
   - 新 safe review route 不改变旧 route/payload；`candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用。
 - Verify：
@@ -64,7 +64,8 @@ GH-880
   - 每类 route 全受 bearer middleware 覆盖，但 capability 和 endpoint map 在本 slice 保持未发布，等待 T5；
   - empty/data/not-found/auth/DB failure 不互相伪装；
   - cursor 重读、边界、并发插入、session last-seen 更新、null observation epoch、非法/跨 endpoint/filter mismatch 有回归；
-  - secret/token/env/transcript/payload fixtures 不出现在任何 JSON 字段。
+  - 五类 list 的 `page_size` omitted=50，0/negative clamp 1，101/large integer clamp 100，malformed/overflow 返回 `page_size_invalid`，响应最多 100 行且 `next_cursor` 正确；
+  - events/observations 只从 allowlisted metadata 或批准派生数据构造安全投影，query/DTO 不读取 raw `content_text`；secret/token/env/transcript/payload 与 non-secret raw sentinel 不出现在任何 JSON 字段。
 - Verify：
   - `cargo test api::tests::read_resources --locked`
   - `cargo test adapter::common::tests --locked`
@@ -78,8 +79,8 @@ GH-880
 - Files owned：`src/api/handlers/memory_governance.rs`、`src/memory/governance.rs`、memory governance API/types/tests、router/capability 增量。
 - Work：新增 archive/restore transaction primitive 与 Web endpoint；使用 version/idempotency/reason；同事务更新、audit、ledger；显式 `memory_delete=false`，不注册 delete route。
 - Done when：
-  - archive 仅允许 active，保留内容且 remem-web active list/search 不可见；restore 仅恢复具有本 Web archive provenance 的 archived 行；canonical 无 status list 保持兼容；
-  - replay、different-payload、version race、not recoverable、DB failure rollback 有测试；
+  - archive 仅允许 active，保留内容且 remem-web active list/search 不可见；Web archive 在 status trigger 清除旧 marker 后写入当前 `operation_id`，restore 只接受 marker 与成功 ledger/audit 精确匹配的当前 archived 行并在状态转换时清除 marker；canonical 无 status list 保持兼容；
+  - replay、different-payload、version race、not recoverable、DB failure rollback 有测试；Web archive -> restore -> scope cleanup 或无通用 audit 的非 Web archive 不可恢复，后续 fresh Web archive 写入新 marker 后可恢复；
   - response 含完整 audit envelope；失败含稳定 operation id 且不泄漏 SQL/内容；
   - 本 slice 的 archive/restore flag 仍为 false，delete 为 false 且无 endpoint；T5 通过后才发布 archive/restore map。
 - Verify：
