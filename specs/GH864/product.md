@@ -119,23 +119,23 @@ GH-864
 
 ## 验收标准
 
-- [ ] trailing-whitespace 边界 fixture 证明 transcript evidence 首次生成与持久化重验一致。
-- [ ] 单消息和总预算路径覆盖 UTF-8、空结果、尾部空白与现有脱敏门禁。
-- [ ] Git 超时 fixture 证明 soft probe 与真实 commit metadata 路径共享 2 秒 executor；timeout child
+- [x] trailing-whitespace 边界 fixture 证明 transcript evidence 首次生成与持久化重验一致。
+- [x] 单消息和总预算路径覆盖 UTF-8、空结果、尾部空白与现有脱敏门禁。
+- [x] Git 超时 fixture 证明 soft probe 与真实 commit metadata 路径共享 2 秒 executor；timeout child
       和同进程组后代被终止，`try_wait` 错误分支尝试 cleanup，reader completion 有界，启动和回收错误
       可见；超过 OS pipe buffer 的合法 stdout/stderr fixture 成功且不误报 timeout。
-- [ ] CLI parser 覆盖三个 extraction-range 命令的 `--id`-only、非正 ID、显式 project/limit 冲突、
+- [x] CLI parser 覆盖三个 extraction-range 命令的 `--id`-only、非正 ID、显式 project/limit 冲突、
       隐式默认 limit 不冲突及无 ID 的兼容模式；exact list 可查询 terminal replay/task 证据。
-- [ ] 两个 sibling ranges fixture 证明 exact retry 和 exact quarantine 只改变目标 ID。
-- [ ] `v0.2-release-audit`、既有 kebab-case/snake_case key、重复标点及纯标点 key 均有 parser 测试。
-- [ ] `cargo fmt --check`、`cargo check --locked`、focused tests、`cargo test --locked --quiet`、
+- [x] 两个 sibling ranges fixture 证明 exact retry 和 exact quarantine 只改变目标 ID。
+- [x] `v0.2-release-audit`、既有 kebab-case/snake_case key、重复标点及纯标点 key 均有 parser 测试。
+- [x] `cargo fmt --check`、`cargo check --locked`、focused tests、`cargo test --locked --quiet`、
       Clippy、插件版本同步与 PR preflight 通过。
-- [ ] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核。
-- [ ] Claude profile 可用后，range 308 通过 exact-ID 路径重放并把结果记录在 GH-864。
-- [ ] CLI parser 证明 `--acknowledge-quarantine` 缺少 `--id` 时失败；DB 双-range fixture 证明只有显式
+- [x] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核。
+- [x] Claude profile 可用后，range 308 通过 exact-ID 路径重放并把结果记录在 GH-864。
+- [x] CLI parser 证明 `--acknowledge-quarantine` 缺少 `--id` 时失败；DB 双-range fixture 证明只有显式
       确认的 quarantined 目标被 requeue，默认 exact 与 batch 均继续跳过 quarantine。
-- [ ] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
-- [ ] archived quarantine fixture 证明 pending 命令只允许双确认 dry-run，且只有 exact worker 可写恢复；
+- [x] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
+- [x] archived quarantine fixture 证明 pending 命令只允许双确认 dry-run，且只有 exact worker 可写恢复；
       exact worker fixture 证明持锁后才写入、同一事务 requeue+claim 目标 task、保留 retry readiness、使用
       显式 profile，并在非成功或 exact lease 过期后重新归档而不暴露给 daemon。
 
