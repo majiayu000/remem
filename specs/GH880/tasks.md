@@ -23,9 +23,9 @@ GH-880
 - Owner：backend worker（单 lane）
 - Dependencies：GH-880 spec packet 完整；实现 route gate 与 duplicate-work evidence 通过；基于最新 `origin/main` 选择未占用的 migration 版本。
 - Files owned：`src/migrations/v*_web_console_governance.sql`、`src/migrate/types.rs`、`src/migrate/schema_drift/invariants.rs`、migration tests、`src/api/mutation.rs`、`src/api/cursor.rs`、共享模块声明。
-- Work：添加 candidate/memory integer version、幂等账本、稳定 operation id/request hash helper、typed cursor codec；不注册业务 endpoint，不提前声明 capability。
+- Work：添加 candidate/memory integer version、覆盖所有 Web 可见字段 writer 的 version triggers、带 response schema version 的幂等账本、稳定 operation id/request hash helper、immutable-id typed cursor codec；不注册业务 endpoint，不提前声明 capability。
 - Done when：
-  - fresh/upgrade DB 具有正确 default、unique/index/schema invariant；
+  - fresh/upgrade DB 具有正确 default、unique/index/trigger/schema invariant，CLI/worker/lifecycle 可见字段更新也推进 version；
   - same key + same payload 可读取同一 ledger 结果，不同 payload 明确 conflict；
   - cursor 对 kind/filter/version 绑定且 malformed input fail closed；
   - 没有 token、raw payload 或 secret 写入 request hash/audit fixture。
@@ -46,7 +46,7 @@ GH-880
   - detail 返回 version、evidence provenance、`can_review` 和稳定 blocked codes；
   - missing/cross-project/suppressed/unsafe evidence 均阻止审核但不泄漏原文；
   - approve/reject/edit 的并发、重放、payload conflict 和失败回滚均有 E2E 证据；
-  - `candidate_detail`、`candidate_evidence`、`candidate_review_safe` 只在 endpoint + tests 完整后为 true。
+  - 新 safe review route 不改变旧 route/payload；`candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用。
 - Verify：
   - `cargo test api::tests::candidates --locked`
   - `cargo test api::tests::candidate_review_poisoning --locked`
@@ -61,9 +61,9 @@ GH-880
 - Files owned：五类 resource handler/query/DTO、`src/api/handlers.rs`、`src/api/server.rs`、`src/api/handlers/capabilities.rs`、`src/api/types.rs`、read-resource tests。
 - Work：实现 observations/sessions/workstreams/events/tasks 的独立 list/detail、keyset cursor、安全引用和服务端脱敏；禁止 raw blob、event detail、task payload/last_error 原文。
 - Done when：
-  - 每类 capability 与 endpoint 独立开关且 route 全受 bearer middleware 覆盖；
+  - 每类 route 全受 bearer middleware 覆盖，但 capability 和 endpoint map 在本 slice 保持未发布，等待 T5；
   - empty/data/not-found/auth/DB failure 不互相伪装；
-  - cursor 重读、边界、并发插入、非法/跨 endpoint/filter mismatch 有回归；
+  - cursor 重读、边界、并发插入、session last-seen 更新、null observation epoch、非法/跨 endpoint/filter mismatch 有回归；
   - secret/token/env/transcript/payload fixtures 不出现在任何 JSON 字段。
 - Verify：
   - `cargo test api::tests::read_resources --locked`
@@ -78,10 +78,10 @@ GH-880
 - Files owned：`src/api/handlers/memory_governance.rs`、`src/memory/governance.rs`、memory governance API/types/tests、router/capability 增量。
 - Work：新增 archive/restore transaction primitive 与 Web endpoint；使用 version/idempotency/reason；同事务更新、audit、ledger；显式 `memory_delete=false`，不注册 delete route。
 - Done when：
-  - archive 保留内容且默认 read/search 不可见；restore 仅从 archived 恢复；
+  - archive 仅允许 active，保留内容且 remem-web active list/search 不可见；restore 仅恢复具有本 Web archive provenance 的 archived 行；canonical 无 status list 保持兼容；
   - replay、different-payload、version race、not recoverable、DB failure rollback 有测试；
   - response 含完整 audit envelope；失败含稳定 operation id 且不泄漏 SQL/内容；
-  - capability map 只声明 archive/restore，delete 为 false 且无 endpoint。
+  - 本 slice 的 archive/restore flag 仍为 false，delete 为 false 且无 endpoint；T5 通过后才发布 archive/restore map。
 - Verify：
   - `cargo test api::tests::memory_governance --locked`
   - `cargo test memory::governance --locked`
@@ -96,7 +96,7 @@ GH-880
 - Files owned：`docs/specs/SPEC-web-api.md`、README、CHANGELOG、`scripts/smoke_native_web_api.sh`、version/release manifests；只做与 GH-880 对应的发布面同步。
 - Work：记录 endpoint/request/response/error/cursor/redaction/min-version 契约；扩展 native smoke；执行版本同步和 release gate；不宣称未发布 binary 已可用。
 - Done when：
-  - contract 和 capabilities 精确一致；
+  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；
   - smoke 覆盖 candidate detail/safe review、五类 read、archive/restore、delete absence；
   - source/package/plugin/server manifests 同步且 version bump gate 通过；
   - product B-001–B-017 均有测试或可审计命令对应。

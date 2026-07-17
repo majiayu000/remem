@@ -36,8 +36,8 @@ GH-880
 9. B-009 session、workstream 和 task detail 引用 observation/event 时，只能返回安全引用或已脱敏摘要；客户端不得通过关系展开绕过 B-008。
 10. B-010 无数据必须返回真实空 `data` 和终止 cursor；未知字段不能自动成为 UI 权限或触发额外读取。
 11. B-011 Web v1 只提供 archive 和 restore。永久 delete capability 必须保持 false，且 remem-web 不得展示或调用 delete 操作。
-12. B-012 archive 必须要求明确 reason、预期版本和幂等标识；成功后 memory 保留可恢复内容，默认 search/list 不再返回该 memory，显式 audit 读取仍可定位。
-13. B-013 restore 必须只恢复可恢复的 archived memory；重复 restore 返回幂等结果，目标已永久缺失或版本冲突时返回结构化错误。
+12. B-012 archive 必须要求明确 reason、预期版本和幂等标识，且 Web v1 只允许 archive 当前 active memory；成功后 memory 保留可恢复内容，默认 search 和 remem-web 的 active list 不再返回该 memory，显式 `status=archived` audit 读取仍可定位，原有无 status list 语义保持兼容。
+13. B-013 restore 必须只恢复由本 Web archive 契约产生、可审计且仍为 archived 的 memory，并恢复为 active；重复 restore 返回幂等结果，目标已永久缺失、由其它生命周期归档或版本冲突时返回结构化错误。
 14. B-014 archive/restore 成功响应必须包含 `operation_id`、`audit_id`、资源 id、before/after 状态和发生时间；失败必须原子回滚并返回同一操作的诊断标识。
 15. B-015 所有新 endpoint 继续只允许 loopback bearer-token 访问，使用参数化查询；认证失败、非法 id、非法 cursor、版本冲突和幂等冲突不得泄露敏感内容。
 16. B-016 旧版客户端和现有 endpoint 行为保持兼容。新客户端只能依据 `features.<name> === true` 和声明 endpoint 启用功能。
