@@ -296,38 +296,38 @@ LLM topic_key
 
 ## 测试计划
 
-- [ ] `cargo test per_message_budget_keeps_redaction_idempotent_at_whitespace_boundary --locked`
-- [ ] `cargo test exact_replay_range_operations_do_not_mutate_sibling_ranges --locked`
-- [ ] `cargo test command_output_with_timeout_kills_process_group --locked`
-- [ ] `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`
-- [ ] `cargo test command_output_with_timeout_drains_large_output --locked`
-- [ ] `cargo test command_output_with_timeout_bounds_reader_completion --locked`
-- [ ] `cargo test required_toplevel_preserves_timeout_context --locked`
-- [ ] `cargo test git_metadata_commands_use_bounded_executor --locked`
-- [ ] `cargo test normalizes_version_punctuation_in_topic_key --locked`
-- [ ] `cargo test rejects_topic_key_that_normalizes_to_empty --locked`
-- [ ] `cargo test preserves_existing_snake_case_topic_key --locked`
-- [ ] `cargo test rejects_punctuation_only_topic_key --locked`
-- [ ] `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`
-- [ ] `cargo test exact_range_list_includes_replayed_task_evidence --locked`
-- [ ] 现有 transcript、pending CLI/batch、slug 与 session rollup focused suites
-- [ ] `cargo fmt --check`
-- [ ] `cargo check --locked`
-- [ ] `cargo test --locked --quiet`
-- [ ] `cargo clippy --all-targets -- -D warnings`
-- [ ] `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`
-- [ ] `python3 scripts/ci/check_plugin_version_sync.py`
-- [ ] `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
-- [ ] `python3 scripts/ci/check_pr_preflight.py --base <base-sha> --head HEAD --pr-body-file <body-file>`
-- [ ] `git diff --check`
-- [ ] PR preflight 与 Git subprocess/exact DB transaction 人工 review
-- [ ] `cargo test pending_quarantine_acknowledgement_requires_exact_id --locked`
-- [ ] `cargo test acknowledged_quarantined_range_preserves_other_illegal_state_rejections --locked`
-- [ ] `cargo test acknowledged_quarantined_range_retry_is_exact_and_batch_compatible --locked`
-- [ ] `cargo test archived_quarantined_range_requires_dual_exact_acknowledgement --locked`
-- [ ] `cargo test exact_extraction_task_claim_preserves_retry_readiness --locked`
-- [ ] `cargo test worker_exact_range_locks_before_requeue_and_processes_only_target --locked`
-- [ ] 生产 range 308 先完成双确认 dry-run，再以 `worker --once --replay-range-id 308
+- [x] `cargo test per_message_budget_keeps_redaction_idempotent_at_whitespace_boundary --locked`
+- [x] `cargo test exact_replay_range_operations_do_not_mutate_sibling_ranges --locked`
+- [x] `cargo test command_output_with_timeout_kills_process_group --locked`
+- [x] `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`
+- [x] `cargo test command_output_with_timeout_drains_large_output --locked`
+- [x] `cargo test command_output_with_timeout_bounds_reader_completion --locked`
+- [x] `cargo test required_toplevel_preserves_timeout_context --locked`
+- [x] `cargo test git_metadata_commands_use_bounded_executor --locked`
+- [x] `cargo test normalizes_version_punctuation_in_topic_key --locked`
+- [x] `cargo test rejects_topic_key_that_normalizes_to_empty --locked`
+- [x] `cargo test preserves_existing_snake_case_topic_key --locked`
+- [x] `cargo test rejects_punctuation_only_topic_key --locked`
+- [x] `cargo test pending_exact_range_id_accepts_implicit_default_limit --locked`
+- [x] `cargo test exact_range_list_includes_replayed_task_evidence --locked`
+- [x] 现有 transcript、pending CLI/batch、slug 与 session rollup focused suites
+- [x] `cargo fmt --check`
+- [x] `cargo check --locked`
+- [x] `cargo test --locked --quiet`
+- [x] `cargo clippy --all-targets -- -D warnings`
+- [x] `node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem/request-security.test.js plugins/remem/apps/remem/server.test.js npm/remem/scripts/install.test.js`
+- [x] `python3 scripts/ci/check_plugin_version_sync.py`
+- [x] `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
+- [x] `python3 scripts/ci/check_pr_preflight.py --base <base-sha> --head HEAD --pr-body-file <body-file>`
+- [x] `git diff --check`
+- [x] PR preflight 与 Git subprocess/exact DB transaction 人工 review
+- [x] `cargo test pending_quarantine_acknowledgement_requires_exact_id --locked`
+- [x] `cargo test acknowledged_quarantined_range_preserves_other_illegal_state_rejections --locked`
+- [x] `cargo test acknowledged_quarantined_range_retry_is_exact_and_batch_compatible --locked`
+- [x] `cargo test archived_quarantined_range_requires_dual_exact_acknowledgement --locked`
+- [x] `cargo test exact_extraction_task_claim_preserves_retry_readiness --locked`
+- [x] `cargo test worker_exact_range_locks_before_requeue_and_processes_only_target --locked`
+- [x] 生产 range 308 先完成双确认 dry-run，再以 `worker --once --replay-range-id 308
       --acknowledge-quarantine --include-archived --profile claude` 持锁恢复；禁止直接 SQL、batch 或全局 drain
 
 ## 回滚方案
