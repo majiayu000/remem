@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.2` for GH-864: transcript evidence truncation is
+  stable across replay, Git branch/commit probes have a bounded timeout with
+  kill/reap handling, exhausted extraction ranges support exact-ID retry and
+  quarantine, and rollup topic keys normalize version punctuation.
 - Staged source version `0.6.1` for GH-861: project identity now delegates to
   Git whenever `GIT_COMMON_DIR` is set, so invalid or redirected common-dir
   layouts fail closed instead of being mistaken for plain marker discovery.
