@@ -47,8 +47,10 @@ implementation behind the normal SpecRail readiness and spec-approval gates.
 6. Confirm `pending_observations` emptiness across real databases and keep
    `pending migrate-legacy` as the explicit migration path.
 7. Keep MCP and architecture docs from describing live observations as legacy.
-8. Start the table-drop deprecation window in remem 0.6.0 through doctor output
-   and release notes. Ship no guarded drop before remem 0.7.0.
+8. Treat the table-drop deprecation window as started: remem 0.6.0 shipped the
+   doctor output in source, and the superseding remem 0.6.1 GitHub release
+   published the migration commands and the no-earlier-than-0.7.0 notice after
+   v0.6.0's Create Release step failed. Ship no guarded drop before remem 0.7.0.
 
 ## Product-to-Test Mapping
 
