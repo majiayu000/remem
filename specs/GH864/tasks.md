@@ -149,13 +149,14 @@ GH-864
     `--acknowledge-quarantine`，普通 exact/batch 集合不变。
   - retry 事务用同一双确认 predicate 复验，清除目标 archive marker 并只 requeue 目标；失败、竞争与
     sibling 均无副作用。
-  - `worker --once --extraction-task-id <id> --profile <name>` 在 claim 前验证 profile，只 claim/process
-    指定 pending task 一次，不执行全局 maintenance、其它 extraction、job 或 backfill。
+  - `worker --once --replay-range-id <id> --acknowledge-quarantine --include-archived --profile <name>` 在任何
+    写入前验证 profile 并取得 singleton，持锁 requeue/claim/process 指定 range 的 task 一次；ID claim 保留
+    普通 retry readiness，不执行全局 maintenance、其它 extraction、job 或 backfill。
   - CLI 类型拆分后受影响文件保持低于 800 行；版本面同步到 0.6.4。
 - Verify:
   - `cargo test archived_quarantined_range_requires_dual_exact_acknowledgement --locked`
-  - `cargo test exact_extraction_task_claim_never_falls_back --locked`
-  - `cargo test worker_exact_profile_processes_only_target_task --locked`
+  - `cargo test exact_extraction_task_claim_preserves_retry_readiness --locked`
+  - `cargo test worker_exact_range_locks_before_requeue_and_processes_only_target --locked`
   - `python3 scripts/ci/check_plugin_version_sync.py`
   - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
 
@@ -201,16 +202,15 @@ GH-864
 - Dependencies: SP864-T6, SP864-T9, 可用且已认证的 Claude profile
 - Covers: B-015, B-019, B-020, B-021, B-022
 - Done when:
-  - 记录成功的 Claude profile live check，先执行带 quarantine/archive 双确认的 exact-ID dry-run，再执行同一 retry。
+  - 记录成功的 Claude profile live check，先执行带 quarantine/archive 双确认的 exact-ID dry-run，再由持锁
+    exact worker 完成同一 range 的 retry、claim 与处理；锁被 daemon 持有时在写入前失败。
   - 等待 worker 终态后运行 exact list；GH-864 记录 range 308 的精确 range/task ID、状态、attempt/error
     以及对应 replay task 的已脱敏 provider/profile 日志证据。
   - 失败时保留 issue open 并记录可诊断错误，不批量重试 sibling ranges。
 - Verify:
   - `remem model test --profile claude --live`
   - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived --dry-run`
-  - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived`
-  - `remem pending list-extraction-ranges --id 308 --json`（取得本次 `replay_task_id`）
-  - `remem worker --once --extraction-task-id <replay_task_id> --profile claude`
+  - `remem worker --once --replay-range-id 308 --acknowledge-quarantine --include-archived --profile claude`
   - `remem pending list-extraction-ranges --id 308 --json`（记录 worker 终态）
   - 按 exact list 返回的 `replay_task_id` 关联 worker 日志，记录 provider/profile 与 terminal outcome（脱敏）
 

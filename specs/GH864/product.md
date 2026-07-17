@@ -106,10 +106,11 @@ GH-864
 21. **B-021**：带双重显式确认的 archived exact retry 必须在同一事务中重新验证目标 ID、状态和无 active
     replay task，清除该目标的 `archived_at_epoch` 并只 requeue 该目标。失败、重复、竞争或确认不完整不得
     修改目标或 sibling；成功后不得留下 pending work 带 archived marker。
-22. **B-022**：worker 必须提供只处理一个正数 extraction task ID 的 `--once` 模式；该模式不得回退到
-    全局 claim、failure-lifecycle sweep、job、embedding backfill 或第二个 extraction task。可选 `--profile`
-    必须只用于这个 exact task，并在 claim 前通过现有 profile resolver 验证；目标非 pending、缺失或竞争
-    时失败且不改选其它 task。普通 `remem worker [--once]` 行为保持不变。
+22. **B-022**：worker 必须提供只恢复一个正数 replay range ID 的 `--once` 模式；它在任何写入前取得
+    worker singleton，持锁执行 B-020/B-021、取得新 replay task ID，再以与普通 claim 相同的 pending/到期
+    predicate 只 claim/process 该 task。`--profile` 在写入前通过现有 resolver 验证并只用于该 task；锁被
+    daemon 持有、task 未到期、缺失或竞争时失败且不回退到全局 claim、maintenance、job、backfill 或第二个
+    task。普通 `remem worker [--once]` 行为保持不变。
 
 ## 验收标准
 
@@ -130,7 +131,8 @@ GH-864
       确认的 quarantined 目标被 requeue，默认 exact 与 batch 均继续跳过 quarantine。
 - [ ] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
 - [ ] archived quarantine fixture 证明只有 `--id + --include-archived + --acknowledge-quarantine` 可恢复目标，
-      且同一事务清除 archive marker；exact worker fixture 证明只 claim 目标 task 并使用显式 profile。
+      且同一事务清除 archive marker；exact worker fixture 证明持锁后才写入、只 claim 目标 task、保留
+      retry readiness 并使用显式 profile。
 
 ## 边界情况
 

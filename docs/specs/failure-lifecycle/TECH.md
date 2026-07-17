@@ -223,8 +223,9 @@ storms.
   the linked replay task id/status/attempt/error without captured payloads or
   provider secrets. Exact dry-run and mutation share the retryable predicate;
   mutation revalidates inside one SQLite transaction and cannot select or
-  update a sibling range. Missing, non-positive, archived, active-task, and
-  non-retryable IDs fail instead of falling back to the batch path.
+  update a sibling range. Missing, non-positive, active-task, and non-retryable
+  IDs fail instead of falling back to the batch path; archived IDs also fail
+  unless the exact archived-recovery opt-in below is present.
   `retry-extraction-ranges --id <positive-id> --acknowledge-quarantine
   [--dry-run]` is the only exception for a quarantined target: the flag
   requires exact ID, reuses the unarchived/no-active-task predicate in dry-run
@@ -233,11 +234,15 @@ storms.
   it is exact-ID-only, reuses the same no-active-task predicate, and clears the
   target archive marker in the requeue transaction. No batch path receives
   either opt-in.
-- `remem worker --once --extraction-task-id <positive-id> --profile <name>`
-  validates the profile before claiming and processes exactly one pending
-  extraction task. It does not run lifecycle maintenance, priority fallback,
-  jobs, embedding backfill, or a second extraction task; ordinary worker modes
-  keep their existing drain behavior.
+- `remem worker --once --replay-range-id <positive-id>
+  --acknowledge-quarantine --include-archived --profile <name>` validates the
+  profile and acquires the worker singleton before changing the range. While
+  holding the lock it revalidates/requeues that exact range, obtains the replay
+  task ID, and claims it with the ordinary pending/retry-due predicate. A held
+  daemon lock, future retry time, or identity race fails before fallback. It
+  does not run lifecycle maintenance, priority fallback, jobs, embedding
+  backfill, or a second extraction task; ordinary worker modes keep their
+  existing drain behavior.
 - `remem pending list-failed` / `retry-extraction-ranges` keep working; the
   latter can target an archived extraction range only by exact ID with
   `--include-archived`, preserving the manual escape hatch without creating a

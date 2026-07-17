@@ -114,14 +114,16 @@ surface that #381/#383 evidence collection depends on.
 - Exact listing of a terminal replay range returns that range and its linked
   replay-task evidence. Exact retry/quarantine revalidates the same ID in one
   transaction, changes only that target, and rejects missing, non-positive,
-  archived, active-task, or otherwise non-retryable targets without batch
-  fallback. Exact retry of a quarantined range additionally requires an
+  active-task, or otherwise non-retryable targets without batch fallback;
+  archived targets are also rejected unless exact retry supplies the explicit
+  archived-recovery opt-in. Exact retry of a quarantined range additionally requires an
   explicit acknowledgement; without it the sticky quarantine state is
   preserved. Archived quarantine additionally requires exact
   `--include-archived`; the transaction clears only that target's archive
   marker. Neither acknowledgement widens active-task, terminal, or batch
-  eligibility. An exact worker command can then process only the returned
-  replay task with an explicitly validated profile, without draining siblings.
+  eligibility. An exact replay worker acquires the worker singleton before it
+  revalidates/requeues the range, then claims and processes only the returned
+  task with an explicitly validated profile, without a daemon race or sibling drain.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.
