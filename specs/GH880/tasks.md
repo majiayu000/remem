@@ -26,7 +26,7 @@ GH-880
 - Work：添加 candidate/memory integer version、`memories.web_archive_operation_id`、覆盖所有 Web 可见字段 writer 的 version triggers、任一 status transition 清除 archive marker 的 trigger；将五个 Web cursor source 主键重建为保留现有 id 的 AUTOINCREMENT；添加只存 `idempotency_key_hash` 且带 response schema version 的幂等账本、稳定 operation id/request hash helper 和 typed cursor codec；不注册业务 endpoint，不提前声明 capability。
 - Done when：
   - fresh/upgrade DB 具有正确 default、unique/index/trigger/schema invariant，CLI/worker/lifecycle 可见字段更新也推进 version，任一非 Web status transition 都清除旧 Web archive marker；
-  - run.rs 在 BEGIN 前保存/关闭/验证 FK；`observations`、`sessions`、`workstreams`、`captured_events`、`extraction_tasks` rebuild 保留既有 id/FK/index/trigger/FTS，commit 前 check，commit/rollback 后恢复并验证 FK ON；成功与注入 migration/check/rollback 失败均无部分 schema 或 FK-off 连接；
+  - run.rs 在 BEGIN 前强制/验证 FK ON，vNext pending 时才临时关闭/验证；五表 rebuild 保留既有 id/FK/index/trigger/FTS，commit 前 check；入口 FK OFF、成功、注入 migration/check/commit 失败与成功 rollback 均无部分 schema且返回时 FK ON；rollback 自身失败返回复合 fatal error，in-repo caller 立即丢弃 connection；
   - 每表 post-migration 删除当前 max 后插入的新 id 大于迁移时现存 MAX，production writer 不显式分配 id；
   - idempotency key trim 后必须为 `1..=128` ASCII bytes 且匹配 `[A-Za-z0-9._~-]+`；非法输入在 hash/事务/存储/日志前返回不含 `operation_id` 的 `idempotency_key_invalid`，只可携带独立 request/trace id；same key + same payload 可读取同一 ledger 结果，不同 payload 明确 conflict；
   - raw/normalized idempotency key 不进入 DB、audit、日志或响应，仅 SHA-256 摘要进入 ledger，sentinel 测试同时证明明文不存在且摘要存在；
