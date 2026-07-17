@@ -65,7 +65,7 @@ GH-880
 - Files owned：五类 resource handler/query/DTO、`src/api/handlers.rs`、`src/api/server.rs`、`src/api/handlers/capabilities.rs`、`src/api/types.rs`、read-resource tests。
 - Work：实现 observations/sessions/workstreams/events/tasks 的独立 list/detail、AUTOINCREMENT keyset cursor、安全引用、fail-closed resource projection policy 和服务端脱敏；禁止 raw blob、event detail、task payload/last_error 原文。
 - Done when：
-  - 每类 route 全受 bearer middleware 覆盖，但 capability 和 endpoint map 在本 slice 保持未发布，等待 T5；
+  - 每类 route 全受 bearer middleware 覆盖，但 capability 和 endpoint map 在本 slice 保持未发布，等待 T5；contract test 预先固定 `observations|sessions|workstreams|events|tasks` 的 `_list`/`_detail` 十个 key 与精确 route，并要求每个 resource flag=false 时 pair 全 absent、true 时 pair 全 present，partial pair 失败；
   - empty/data/not-found/auth/DB failure 不互相伪装；active pattern suppression 覆盖全部可见文本，memory/topic/entity relation suppression 移除对应 row/ref；list 省略、detail 404、policy failure 5xx、revocation 恢复，且没有 `include_suppressed` 绕过；
   - cursor 重读、边界、并发插入、每表 page1/page2 间 purge max/reinsert、safe/suppressed interleave、all-suppressed 多预算批次、full/partial/empty/terminal page、session last-seen 更新、null observation epoch、非法/跨 endpoint/filter mismatch 有回归；
   - 五类 list 的 `page_size` omitted=50，0/negative clamp 1，101/large integer clamp 100，malformed/overflow 返回 `page_size_invalid`，响应最多 100 行且 `next_cursor` 正确；
@@ -88,7 +88,7 @@ GH-880
   - 当前 archive/restore 请求 ledger lookup 先于 memory version/status/marker/provenance；archive 后 archived、restore 后 active/marker cleared 的 same-key replay 均返回首次 envelope且无第二 audit，different payload 优先 conflict；
   - 新 key/ledger miss 才执行 version/status/marker 及 restore provenance lookup；非 Web archive、Web archive -> restore -> scope cleanup 均不可恢复，后续 fresh Web archive 写入新 marker 后可恢复；非法 key 在 operation 建立前返回不含 `operation_id` 的 400，DB failure rollback 有测试；
   - response 含最终 version 和完整 audit envelope；key 校验通过后的失败含稳定 operation id 且不泄漏 SQL/内容；archive/restore E2E 证明 raw/normalized idempotency key sentinel 不进入 DB/audit/log/response，且 ledger 中对应 SHA-256 hash 存在；
-  - 本 slice 的 archive/restore flag 仍为 false，delete 为 false 且无 endpoint；T5 通过后才发布 archive/restore map。
+  - 本 slice 的 archive/restore flag 仍为 false，且 `memory_archive`/`memory_restore` endpoint key 全 absent；contract test 预先固定两个同名 key 的精确 route 及各自 flag-key 原子性。`memory_delete=false` 且无 delete key/route；T5 通过后才发布 archive/restore map。
 - Verify：
   - `cargo test api::tests::memory_governance --locked`
   - `cargo test memory::governance --locked`
@@ -103,8 +103,8 @@ GH-880
 - Files owned：`docs/specs/SPEC-web-api.md`、README、CHANGELOG、`scripts/smoke_native_web_api.sh`、version/release manifests；只做与 GH-880 对应的发布面同步。
 - Work：记录 endpoint/request/response/error/cursor/redaction/min-version 契约；扩展 native smoke；执行版本同步和 release gate；不宣称未发布 binary 已可用。
 - Done when：
-  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；`candidate_detail` 和 `candidate_evidence` 两个 key 均显式映射 `/api/v1/candidates/{id}`，`candidate_review_safe_approve|reject|edit` 三 key 与 `candidate_review_safe=true` 原子发布并分别精确映射对应 safe route；
-  - smoke 覆盖 candidate detail/safe review、五类 read/suppression/cursor、archive/restore、delete absence；safe review smoke 按 capability map 的 `{id}` template 分别 POST approve/reject/edit，证明映射与 handler/method 一致；legacy search raw-hit contract regression 证明现有兼容面未被本 spec 静默改变；
+  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；5 个 candidate key、10 个 read-resource list/detail key 和 `memory_archive|restore` 2 个 key 全部精确映射，各 capability bundle 原子发布；`memory_delete=false` 且 delete key absent；
+  - smoke 从 capability map 的 advertised template 覆盖 candidate detail/safe review、五类 read list/detail、archive/restore、delete absence；替换 `{id}` 后按声明 method 访问全部新 route，证明映射与 handler 一致；legacy search raw-hit contract regression 证明现有兼容面未被本 spec 静默改变；
   - source/package/plugin/server manifests 同步且 version bump gate 通过；
   - product B-001–B-017 均有测试或可审计命令对应。
 - Verify：
@@ -128,7 +128,7 @@ GH-880
 - Work：按独立 capability 消费新 endpoint，完整展示 loading/empty/error/conflict/replay；永久 delete 不进入 UI；installed binary 继续受最低发布版本 gate。
 - Done when：
   - candidate evidence 和安全审核 UI 只在三个 candidate capability 全 true，且 detail/evidence 两 key 与 `candidate_review_safe_approve|reject|edit` 三个 action key 全部声明精确路径时启用；缺任一 action key 都 disabled，不得推导路径；
-  - 五类资源逐项 gate，archive/restore 从 list/detail 获取 version，并有 reason/version/idempotency 与冲突反馈；
+  - 五类资源逐项 gate：只有 resource flag=true 且对应 `_list`/`_detail` 两 key 精确声明时启用该资源，缺任一 key 只禁用该资源且不推导路径；archive/restore 只在对应 flag 与同名 key 都存在时启用，从 list/detail 获取 version，并有 reason/version/idempotency 与冲突反馈；delete 始终禁用；
   - TypeScript typecheck/test/build/audit 通过；
   - GH-3 所有验收标准完成后使用 closing PR 并做 closure audit。
 - Verify：
