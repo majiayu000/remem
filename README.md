@@ -679,6 +679,8 @@ remem pending retry-extraction-ranges --id 308 --dry-run
 remem pending retry-extraction-ranges --id 308
 remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --dry-run
 remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine
+remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived --dry-run
+remem worker --once --replay-range-id 308 --acknowledge-quarantine --include-archived --profile claude
 remem pending quarantine-extraction-ranges --id 308 --dry-run
 remem pending migrate-legacy --dry-run
 remem pending purge-failed --dry-run --older-than-days 7
@@ -742,6 +744,13 @@ cannot be combined with batch `--project` or `--limit` filters and never falls
 back to a sibling range. A quarantined range remains excluded from ordinary
 exact and batch retry; restoring one requires the exact positive `--id` plus
 `--acknowledge-quarantine`, first with `--dry-run` and then without it.
+If the quarantined range has also archived, the pending command accepts
+`--include-archived` only for a dual-confirmation dry-run. The write must use
+the exact worker command with the same ID, both acknowledgements, and an
+explicit `--profile`. That worker refuses to write while another worker holds
+the singleton, atomically requeues and claims only the target task, and returns
+partial, failed, timed-out, or interrupted attempts to archived quarantine
+instead of exposing them to the ordinary daemon queue.
 
 `remem procedures export` writes reviewable drafts for promoted procedure
 memories. The default output is `remem-drafts/`; export refuses high-context

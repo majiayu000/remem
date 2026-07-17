@@ -34,6 +34,23 @@ pub fn current_worker_owner(mode: &str, pid: u32, epoch_millis: i64) -> String {
     format!("{CURRENT_WORKER_OWNER_PREFIX}{mode}-{pid}-{epoch_millis}")
 }
 
+pub(crate) fn exact_replay_worker_owner(pid: u32, epoch_millis: i64) -> String {
+    current_worker_owner("exact-replay", pid, epoch_millis)
+}
+
+pub(crate) fn is_exact_replay_worker_owner(owner: &str) -> bool {
+    let Some((version, suffix)) = owner
+        .strip_prefix("worker-v")
+        .and_then(|value| value.split_once("-exact-replay-"))
+    else {
+        return false;
+    };
+    let Some((pid, epoch_millis)) = suffix.split_once('-') else {
+        return false;
+    };
+    !version.is_empty() && pid.parse::<u32>().is_ok() && epoch_millis.parse::<i64>().is_ok()
+}
+
 pub fn is_current_daemon_worker_owner(owner: &str) -> bool {
     owner.starts_with(&format!("{CURRENT_WORKER_OWNER_PREFIX}daemon-"))
 }
@@ -98,6 +115,13 @@ pub(crate) fn healthy_current_once_worker_heartbeat(
 ) -> Result<Option<WorkerHeartbeat>> {
     let owner_pattern = format!("{CURRENT_WORKER_OWNER_PREFIX}once-%");
     query_healthy_worker_heartbeat(conn, max_age_secs, false, Some(&owner_pattern))
+}
+
+pub(crate) fn healthy_exact_replay_worker_heartbeat(
+    conn: &Connection,
+    max_age_secs: i64,
+) -> Result<Option<WorkerHeartbeat>> {
+    query_healthy_worker_heartbeat(conn, max_age_secs, false, Some("worker-v%-exact-replay-%"))
 }
 
 fn query_healthy_worker_heartbeat(
@@ -177,8 +201,9 @@ mod tests {
 
     use super::{
         current_worker_owner, healthy_daemon_worker_heartbeat, healthy_worker_heartbeat,
-        is_current_daemon_worker_owner, latest_daemon_worker_heartbeat, latest_worker_heartbeat,
-        test_heartbeat_process_alive, upsert_worker_heartbeat, WORKER_HEARTBEAT_HEALTH_SECS,
+        is_current_daemon_worker_owner, is_exact_replay_worker_owner,
+        latest_daemon_worker_heartbeat, latest_worker_heartbeat, test_heartbeat_process_alive,
+        upsert_worker_heartbeat, WORKER_HEARTBEAT_HEALTH_SECS,
     };
 
     fn setup(conn: &Connection) {
@@ -219,6 +244,22 @@ mod tests {
         assert!(!is_current_daemon_worker_owner(&current_worker_owner(
             "once", 123, 456
         )));
+    }
+
+    #[test]
+    fn exact_replay_worker_owner_is_stable_across_versions() {
+        assert!(is_exact_replay_worker_owner(
+            "worker-v0.5.9-exact-replay-123-456"
+        ));
+        assert!(is_exact_replay_worker_owner(
+            "worker-v0.7.0-beta.1-exact-replay-123-456"
+        ));
+        assert!(!is_exact_replay_worker_owner(
+            "worker-v0.5.9-daemon-123-456"
+        ));
+        assert!(!is_exact_replay_worker_owner(
+            "worker-v0.5.9-exact-replay-invalid-456"
+        ));
     }
 
     #[test]

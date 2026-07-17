@@ -252,6 +252,9 @@ fn enqueue_graph_followup(
     task: &db::ExtractionTask,
     high_watermark_event_id: i64,
 ) -> Result<()> {
+    if crate::extraction_worker::exact_replay_task_active() {
+        return Ok(());
+    }
     db::enqueue_followup_extraction_task(
         conn,
         task,

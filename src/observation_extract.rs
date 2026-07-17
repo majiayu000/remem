@@ -168,12 +168,14 @@ where
     let inserted =
         persist_observations_with_commits(conn, task, &range, &observations, &captured_commits)?;
     promote_verified_procedures(conn, task)?;
-    db::enqueue_followup_extraction_task(
-        conn,
-        task,
-        db::ExtractionTaskKind::MemoryCandidate,
-        range.to_event_id,
-    )?;
+    if !crate::extraction_worker::exact_replay_task_active() {
+        db::enqueue_followup_extraction_task(
+            conn,
+            task,
+            db::ExtractionTaskKind::MemoryCandidate,
+            range.to_event_id,
+        )?;
+    }
     Ok(ObservationExtractResult::Written(inserted))
 }
 

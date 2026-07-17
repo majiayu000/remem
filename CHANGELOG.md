@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.4` for GH-864: archived quarantined extraction
+  ranges can be validated only by an exact dual-confirmation dry-run and
+  recovered only by a singleton-locked worker that atomically requeues and
+  claims one task under an explicit AI profile. Non-successful or interrupted
+  exact attempts return to archived quarantine instead of entering the normal
+  daemon queue.
 - Staged source version `0.6.3` for GH-864: operators can explicitly
   acknowledge and retry one quarantined extraction replay range by exact ID;
   dry-run and execution share the same transactional eligibility checks while
