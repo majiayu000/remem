@@ -14,7 +14,7 @@ GH-864
 
 - [ ] `SP864-T1` Owner: implementation agent; Done when: transcript evidence 截断稳定且原有校验不放宽； Verify: 见 SP864-T1。
 - [ ] `SP864-T2` Owner: implementation agent; Done when: exact range 路径原子且不改变 sibling ranges； Verify: 见 SP864-T2。
-- [ ] `SP864-T3` Owner: implementation agent; Done when: Git probe 在 2 秒内终止并可靠回收 child； Verify: 见 SP864-T3。
+- [ ] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 子进程在 2 秒内终止并执行统一 child cleanup； Verify: 见 SP864-T3。
 - [ ] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
 - [ ] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
 
@@ -55,17 +55,20 @@ GH-864
 
 - Owner: implementation agent
 - Dependencies: none
-- Files: `src/db/core.rs`
+- Files: `src/git_util.rs`, `src/db/core.rs`；`src/git_evidence.rs` 为必须审计但预计无需修改的真实 caller
 - Covers: B-004, B-005, B-006
 - Done when:
-  - branch/commit probe 固定使用 argv 调用并在 2 秒内返回。
-  - timeout 路径可靠 kill/reap；spawn、wait、kill、reap 错误以 error 级别记录 probe 类别和 cwd。
-  - 正常非零退出继续返回无探测结果，且无 shell 解释路径。
-  - 维护者完成人工安全审查，确认固定 executable/argv、deadline 和 child 回收边界。
+  - soft branch/commit probe、`resolve_toplevel` 和真实 `resolve_commit_metadata` 命令全部共用 2 秒 executor。
+  - timeout 路径可靠 kill/reap；spawn 后 `try_wait`/wait/kill/reap 错误先尝试 bounded best-effort cleanup，
+    并以 error 级别记录 argv 类别、cwd 和 cleanup 结果。
+  - soft 与 required Git 调用分别保留 None 与 contextual error 语义，且无 shell 解释路径。
+  - 维护者完成人工安全审查，确认固定 executable/argv、deadline、真实 caller 接线和 child 回收边界。
 - Verify:
   - `cargo test command_output_with_timeout_kills_long_running_child --locked`
+  - `cargo test command_output_with_timeout_cleans_up_after_poll_error --locked`
+  - `cargo test git_metadata_commands_use_bounded_executor --locked`
   - `cargo clippy --all-targets -- -D warnings`
-  - 人工审查 `src/db/core.rs` 的 subprocess 生命周期和日志上下文
+  - 人工审查 `src/git_util.rs`、`src/git_evidence.rs`、`src/db/core.rs` 的 subprocess 生命周期和日志上下文
 
 ### SP864-T4 — 统一 topic_key 规范化
 

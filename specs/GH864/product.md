@@ -41,11 +41,15 @@ GH-864
    尾部空白移除”规则，并按实际缩短后的字节数更新预算；不得持久化空消息。
 3. **B-003**：B-001/B-002 不得放宽现有 evidence 校验：超过消息数/字节预算、非
    `user|assistant` 角色、未脱敏、空内容或不属于 exact rollup range 的事件仍必须返回错误。
-4. **B-004**：Git branch 与 commit probe 的每次子进程调用最多等待 2 秒。超时时必须终止并回收
-   该子进程，调用方得到“无探测结果”，且 error 日志包含 probe 类别和可定位的 cwd 上下文。
-5. **B-005**：Git 启动失败、wait/kill/reap 失败必须以 error 级别暴露，不得 panic、无限等待或遗留
-   子进程。普通的非零 Git 退出继续表示“当前信息不可用”，不得伪造成 branch/commit。
-6. **B-006**：Git probe 必须继续使用参数数组而非 shell 字符串；cwd、branch 或 commit 内容不得
+4. **B-004**：branch/commit soft probe 以及真实 commit evidence 路径中
+   `resolve_toplevel`、`detect_commit_metadata`、`resolve_commit_metadata` 发起的每次 Git 子进程调用
+   最多等待 2 秒。超时时必须终止并回收该子进程；soft probe 返回“无探测结果”，required metadata
+   返回带命令类别和可定位 cwd 的错误，既有 caller 继续按其 fail/skip 语义处理。
+5. **B-005**：Git 启动失败、`try_wait`/wait/kill/reap 失败必须以 error 级别暴露，不得 panic 或无限
+   等待。spawn 成功后的任何错误分支都必须尝试 bounded best-effort kill/reap，并把 cleanup 失败附加
+   到原 lifecycle error；不得通过 `?` 直接返回而跳过 child 清理。普通非零退出继续遵循现有 soft
+   probe None / required metadata error 语义，不得伪造成 branch/commit。
+6. **B-006**：所有上述 Git 命令必须继续使用参数数组而非 shell 字符串；cwd、branch 或 commit 内容不得
    被解释为额外命令、重定向或 shell 语法。
 7. **B-007**：`retry-extraction-ranges` 与 `quarantine-extraction-ranges` 必须接受可选
    `--id <positive-i64>`。指定 `--id` 时，只有用户在命令行显式提供的 `--project` 或 `--limit`
@@ -76,7 +80,8 @@ GH-864
 
 - [ ] trailing-whitespace 边界 fixture 证明 transcript evidence 首次生成与持久化重验一致。
 - [ ] 单消息和总预算路径覆盖 UTF-8、空结果、尾部空白与现有脱敏门禁。
-- [ ] Git 超时 fixture 证明子进程在 2 秒上限内被 kill/reap，启动和回收错误可见。
+- [ ] Git 超时 fixture 证明 soft probe 与真实 commit metadata 路径共享 2 秒 executor；timeout child
+      被 kill/reap，`try_wait` 错误分支尝试 cleanup，启动和回收错误可见。
 - [ ] CLI parser 覆盖 `--id`-only、非正 ID、显式 project/limit 冲突、隐式默认 limit 不冲突及无 ID 的兼容模式。
 - [ ] 两个 sibling ranges fixture 证明 exact retry 和 exact quarantine 只改变目标 ID。
 - [ ] `v0.2-release-audit`、既有 kebab-case/snake_case key、重复标点及纯标点 key 均有 parser 测试。
