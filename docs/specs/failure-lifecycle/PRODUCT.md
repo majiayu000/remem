@@ -117,8 +117,11 @@ surface that #381/#383 evidence collection depends on.
   archived, active-task, or otherwise non-retryable targets without batch
   fallback. Exact retry of a quarantined range additionally requires an
   explicit acknowledgement; without it the sticky quarantine state is
-  preserved, and acknowledgement never widens archived, active-task, terminal,
-  or batch eligibility.
+  preserved. Archived quarantine additionally requires exact
+  `--include-archived`; the transaction clears only that target's archive
+  marker. Neither acknowledgement widens active-task, terminal, or batch
+  eligibility. An exact worker command can then process only the returned
+  replay task with an explicitly validated profile, without draining siblings.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.

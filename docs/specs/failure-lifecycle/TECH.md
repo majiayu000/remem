@@ -229,9 +229,19 @@ storms.
   [--dry-run]` is the only exception for a quarantined target: the flag
   requires exact ID, reuses the unarchived/no-active-task predicate in dry-run
   and mutation, and never changes the default exact or batch candidate set.
-- `remem pending list-failed` / `retry-extraction-ranges` keep working and
-  can target archived rows explicitly (`--include-archived`), preserving the
-  manual escape hatch for observations and extraction ranges.
+  If that same target has since archived, `--include-archived` is also required;
+  it is exact-ID-only, reuses the same no-active-task predicate, and clears the
+  target archive marker in the requeue transaction. No batch path receives
+  either opt-in.
+- `remem worker --once --extraction-task-id <positive-id> --profile <name>`
+  validates the profile before claiming and processes exactly one pending
+  extraction task. It does not run lifecycle maintenance, priority fallback,
+  jobs, embedding backfill, or a second extraction task; ordinary worker modes
+  keep their existing drain behavior.
+- `remem pending list-failed` / `retry-extraction-ranges` keep working; the
+  latter can target an archived extraction range only by exact ID with
+  `--include-archived`, preserving the manual escape hatch without creating a
+  batch archive replay surface.
 - Add an explicit legacy observation replay path:
   `remem pending retry-failed-observations --include-archived --id <id>
   [--host claude-code|codex-cli]` (or `--project <p> --limit <n>

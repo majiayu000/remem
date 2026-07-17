@@ -26,17 +26,19 @@ GH-864
 - 复用统一 topic slug 规则规范化 `topic_key`，接受有意义的版本标点，同时对空结果继续 fail closed。
 - 保持无 `--id` 时的现有批量行为、dry-run 语义和数据模型不变。
 - 为已隔离 range 提供必须显式确认的 exact-ID 恢复路径，同时保持默认 retry 与批量 retry 不会选择隔离项。
+- 为已归档且已隔离的单个 range 接通既有 `--include-archived` escape hatch，并提供只 claim 一个 replay
+  task、显式选择 Claude profile 的 worker 运维路径。
 
 ## 非目标
 
-- 不改变 extraction replay range 的 schema、最大尝试次数、worker 调度或失败分类。
+- 不改变 extraction replay range 的 schema、最大尝试次数、普通 worker 排序/排空语义或失败分类。
 - 不自动重试所有 exhausted ranges，不替用户选择应恢复的 range。
 - 不改变 transcript evidence 的消息数、单消息字节数、总字节数、角色、脱敏或 exact-range 归属门禁。
 - 不把 Git probe 失败解释为仓库成功探测；不新增 shell 调用、网络调用或 Git 配置写入。
 - 不重新设计 topic/workstream 身份，也不更改 `slugify_for_topic` 的全局规则。
 - 不声称代码合并即可让 range 308 成功；真实重放仍需要可用的 Claude profile 和运行时证据。
-- 不自动解除 quarantine，不允许 batch 操作选择 quarantined range，也不提供绕过 archive 或 active-task
-  门禁的通用强制开关。
+- 不自动解除 quarantine，不允许 batch 操作选择 quarantined/archived range，也不提供绕过 active-task
+  或 terminal 门禁的通用强制开关。
 
 ## Behavior Invariants
 
@@ -98,6 +100,16 @@ GH-864
 19. **B-019**：range 308 的运维证据必须同时记录 quarantine 确认、成功的 Claude profile live check、
     exact dry-run、实际 retry、最终 range/task 状态及已脱敏 provider/profile 日志；任一步失败时 issue
     保持 open，且不得用直接数据库更新或批量 retry 代替。
+20. **B-020**：`retry-extraction-ranges` 的 `--include-archived` 只能与正数 exact `--id` 一起使用，且
+    archived `quarantined` 目标必须同时提供 `--acknowledge-quarantine`。缺少任一确认时 dry-run 与执行
+    都必须失败；普通 exact、所有 batch、active-task、`requeued|replayed` 和不存在目标的集合不变。
+21. **B-021**：带双重显式确认的 archived exact retry 必须在同一事务中重新验证目标 ID、状态和无 active
+    replay task，清除该目标的 `archived_at_epoch` 并只 requeue 该目标。失败、重复、竞争或确认不完整不得
+    修改目标或 sibling；成功后不得留下 pending work 带 archived marker。
+22. **B-022**：worker 必须提供只处理一个正数 extraction task ID 的 `--once` 模式；该模式不得回退到
+    全局 claim、failure-lifecycle sweep、job、embedding backfill 或第二个 extraction task。可选 `--profile`
+    必须只用于这个 exact task，并在 claim 前通过现有 profile resolver 验证；目标非 pending、缺失或竞争
+    时失败且不改选其它 task。普通 `remem worker [--once]` 行为保持不变。
 
 ## 验收标准
 
@@ -117,6 +129,8 @@ GH-864
 - [ ] CLI parser 证明 `--acknowledge-quarantine` 缺少 `--id` 时失败；DB 双-range fixture 证明只有显式
       确认的 quarantined 目标被 requeue，默认 exact 与 batch 均继续跳过 quarantine。
 - [ ] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
+- [ ] archived quarantine fixture 证明只有 `--id + --include-archived + --acknowledge-quarantine` 可恢复目标，
+      且同一事务清除 archive marker；exact worker fixture 证明只 claim 目标 task 并使用显式 profile。
 
 ## 边界情况
 
@@ -124,14 +138,14 @@ GH-864
 | --- | --- |
 | Empty / missing input | covered: B-002, B-007, B-013 |
 | Error and failure paths | covered: B-003, B-005, B-008, B-013 |
-| Authorization / permission | covered: B-008, B-015, B-016, B-017, B-019；本地确认不可替代真实 provider 认证 |
-| Concurrency / race / ordering | covered: B-009, B-010, B-018 |
-| Retry / repetition / idempotency | covered: B-001, B-009, B-010, B-014, B-018 |
-| Illegal state transitions | covered: B-008, B-009, B-010, B-016, B-017, B-018 |
-| Compatibility / migration | covered: B-011, B-014, B-018；无 schema migration |
-| Degradation / fallback | covered: B-004, B-005, B-008, B-013, B-017, B-019 |
-| Evidence and audit integrity | covered: B-003, B-008, B-015, B-016, B-019 |
-| Cancellation / interruption / partial completion | covered: B-004, B-005, B-009, B-018, B-019 |
+| Authorization / permission | covered: B-008, B-015, B-016, B-017, B-019, B-020, B-022；本地确认不可替代真实 provider 认证 |
+| Concurrency / race / ordering | covered: B-009, B-010, B-018, B-021, B-022 |
+| Retry / repetition / idempotency | covered: B-001, B-009, B-010, B-014, B-018, B-021 |
+| Illegal state transitions | covered: B-008, B-009, B-010, B-016, B-017, B-018, B-020, B-021, B-022 |
+| Compatibility / migration | covered: B-011, B-014, B-018, B-020, B-022；无 schema migration |
+| Degradation / fallback | covered: B-004, B-005, B-008, B-013, B-017, B-019, B-020, B-022 |
+| Evidence and audit integrity | covered: B-003, B-008, B-015, B-016, B-019, B-021, B-022 |
+| Cancellation / interruption / partial completion | covered: B-004, B-005, B-009, B-018, B-019, B-021, B-022 |
 
 ## 发布说明
 
@@ -140,3 +154,5 @@ GH-864
 稳定截断和 topic key 规范化能力。真实 range 308 的恢复证据属于运维收口，不应写成所有用户都会
 自动恢复的发布承诺。
 对于已隔离的单 range，发布说明必须展示显式确认参数，并明确默认 exact/batch retry 仍跳过 quarantine。
+对于已归档的隔离 range，说明必须展示额外的 `--include-archived` 和 exact worker/profile 命令，并明确
+这些参数不会扩展普通 worker 或 batch retry。
