@@ -4,6 +4,10 @@ use tokio::time::Duration;
 use crate::db;
 use crate::memory_candidate::MemoryCandidateResult;
 
+tokio::task_local! {
+    static EXACT_REPLAY_TASK: ();
+}
+
 const DEPENDENCY_WAIT_RETRY_SECS: i64 = 300;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -126,11 +130,11 @@ pub(crate) async fn run_next(
 
 pub(crate) async fn run_claimed_exact(
     mut task: db::ExtractionTask,
-    profile: &str,
+    profile: &crate::runtime_config::ResolvedMemoryAiProfile,
     lease_owner: &str,
     timeout_secs: u64,
 ) -> Result<()> {
-    task.ai_profile = Some(profile.to_string());
+    task.ai_profile = Some(profile.profile_name.clone());
     crate::log::info(
         "worker",
         &format!(
@@ -141,15 +145,15 @@ pub(crate) async fn run_claimed_exact(
                 .unwrap_or_else(|| "<none>".to_string()),
             task.task_kind.as_str(),
             task.project,
-            profile
+            profile.profile_name
         ),
     );
 
-    let timed = tokio::time::timeout(
-        Duration::from_secs(timeout_secs),
-        process_extraction_task(&task),
-    )
-    .await;
+    let process = crate::ai::with_resolved_profile(
+        profile.clone(),
+        EXACT_REPLAY_TASK.scope((), process_extraction_task(&task)),
+    );
+    let timed = tokio::time::timeout(Duration::from_secs(timeout_secs), process).await;
     match timed {
         Ok(Ok(ExtractionTaskOutcome::Done { to_event_id })) => {
             let completed = to_event_id.or(task.high_watermark_event_id);
@@ -167,7 +171,10 @@ pub(crate) async fn run_claimed_exact(
             db::mark_extraction_task_done(&conn, task.id, lease_owner, completed)?;
             crate::log::info(
                 "worker",
-                &format!("done exact extraction id={} profile={profile}", task.id),
+                &format!(
+                    "done exact extraction id={} profile={}",
+                    task.id, profile.profile_name
+                ),
             );
             Ok(())
         }
@@ -190,6 +197,10 @@ pub(crate) async fn run_claimed_exact(
             &format!("exact replay timed out after {timeout_secs}s"),
         ),
     }
+}
+
+pub(crate) fn exact_replay_task_active() -> bool {
+    EXACT_REPLAY_TASK.try_with(|()| ()).is_ok()
 }
 
 fn archive_exact_outcome(task: &db::ExtractionTask, lease_owner: &str, error: &str) -> Result<()> {

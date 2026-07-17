@@ -75,52 +75,6 @@ pub(crate) fn claim_extraction_task_by_id_in_transaction(
     Ok(Some(load_claimed_extraction_task(conn, task_id)?))
 }
 
-pub(crate) fn claim_next_extraction_task_for_replay_range(
-    conn: &mut Connection,
-    range_id: i64,
-    lease_owner: &str,
-    lease_secs: i64,
-) -> Result<Option<ExtractionTask>> {
-    anyhow::ensure!(
-        crate::db::is_exact_replay_worker_owner(lease_owner),
-        "exact replay follow-up claim requires an exact replay worker owner"
-    );
-    let now = chrono::Utc::now().timestamp();
-    let tx = conn.transaction()?;
-    let candidate = tx
-        .query_row(
-            "SELECT id
-             FROM extraction_tasks
-             WHERE replay_range_id = ?1
-               AND status = 'pending'
-               AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?2)
-             ORDER BY priority DESC, id ASC
-             LIMIT 1",
-            params![range_id, now],
-            |row| row.get::<_, i64>(0),
-        )
-        .optional()?;
-    let Some(task_id) = candidate else {
-        let status: String = tx.query_row(
-            "SELECT status FROM extraction_replay_ranges WHERE id = ?1",
-            params![range_id],
-            |row| row.get(0),
-        )?;
-        anyhow::ensure!(
-            status == "replayed",
-            "exact replay range {range_id} has no retry-ready follow-up and remains {status}"
-        );
-        tx.commit()?;
-        return Ok(None);
-    };
-    let task = claim_extraction_task_by_id_in_transaction(&tx, task_id, lease_owner, lease_secs)?;
-    let task = task.ok_or_else(|| {
-        anyhow::anyhow!("exact replay follow-up task {task_id} could not be claimed")
-    })?;
-    tx.commit()?;
-    Ok(Some(task))
-}
-
 pub fn release_expired_extraction_task_leases(conn: &Connection) -> Result<usize> {
     let now = chrono::Utc::now().timestamp();
     let tx = conn.unchecked_transaction()?;

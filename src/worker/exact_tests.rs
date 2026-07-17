@@ -156,8 +156,9 @@ fn expired_exact_replay_lease_restores_archived_quarantine() -> anyhow::Result<(
 #[cfg(unix)]
 #[allow(clippy::await_holding_lock)]
 #[tokio::test]
-async fn exact_replay_drains_same_range_followups_before_reporting_success() -> anyhow::Result<()> {
-    let _data_dir = ScopedTestDataDir::new("worker-exact-followup-drain");
+async fn exact_replay_processes_only_claimed_task_without_publishing_followups(
+) -> anyhow::Result<()> {
+    let _data_dir = ScopedTestDataDir::new("worker-exact-no-followups");
     let stub_codex = std::env::temp_dir().join(format!(
         "remem-test-exact-followup-{}-{}.sh",
         std::process::id(),
@@ -182,33 +183,26 @@ async fn exact_replay_drains_same_range_followups_before_reporting_success() -> 
 
     let result = run_exact_replay(range_id, true, true, "codex").await;
     let _ = std::fs::remove_file(&stub_codex);
-    let error = result.expect_err("review-gated graph follow-up must not report exact success");
-    assert!(error.to_string().contains("exact replay waiting"));
+    result?;
 
     let conn = db::open_db()?;
-    let (status, archived_at_epoch, replay_task_id) = range_state(&conn, range_id)?;
-    assert_eq!(status, "quarantined");
-    assert!(archived_at_epoch.is_some());
-    let unfinished: i64 = conn.query_row(
+    let (status, archived_at_epoch, _) = range_state(&conn, range_id)?;
+    assert_eq!(status, "replayed");
+    assert!(archived_at_epoch.is_none());
+    let replay_tasks: i64 = conn.query_row(
         "SELECT COUNT(*)
          FROM extraction_tasks
-         WHERE replay_range_id = ?1 AND status IN ('pending', 'processing')",
+         WHERE replay_range_id = ?1",
         params![range_id],
         |row| row.get(0),
     )?;
     assert_eq!(
-        unfinished, 0,
-        "exact follow-ups must not escape to the daemon"
+        replay_tasks, 1,
+        "exact replay must not publish a second task"
     );
-    let failing_kind: String = conn.query_row(
-        "SELECT task_kind FROM extraction_tasks WHERE id = ?1",
-        params![replay_task_id.ok_or_else(|| anyhow::anyhow!("missing failing task"))?],
-        |row| row.get(0),
-    )?;
-    assert_eq!(
-        failing_kind,
-        db::ExtractionTaskKind::GraphCandidate.as_str()
-    );
+    let observations: i64 =
+        conn.query_row("SELECT COUNT(*) FROM observations", [], |row| row.get(0))?;
+    assert_eq!(observations, 1, "the claimed task itself must still run");
     Ok(())
 }
 

@@ -258,8 +258,10 @@ pub(super) fn run_persisted_rollup_side_effects(
             ),
         );
     }
-    enqueue_user_context_followup(conn, task, range)?;
-    enqueue_summary_followup_jobs(conn, task, range, session_id)?;
+    if !crate::extraction_worker::exact_replay_task_active() {
+        enqueue_user_context_followup(conn, task, range)?;
+        enqueue_summary_followup_jobs(conn, task, range, session_id)?;
+    }
     Ok(())
 }
 

@@ -207,7 +207,7 @@ pub async fn run_exact_replay(
     );
     let mut conn = db::open_db()?;
     record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
-    let mut task = db::retry_and_claim_extraction_replay_range(
+    let task = db::retry_and_claim_extraction_replay_range(
         &mut conn,
         range_id,
         acknowledge_quarantine,
@@ -217,27 +217,13 @@ pub async fn run_exact_replay(
     )?;
     drop(conn);
 
-    loop {
-        crate::extraction_worker::run_claimed_exact(
-            task,
-            &resolved.profile_name,
-            &lease_owner,
-            EXTRACTION_TASK_TIMEOUT_SECS,
-        )
-        .await?;
-        let mut conn = db::open_db()?;
-        record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
-        let Some(follow_up) = db::claim_next_extraction_task_for_replay_range(
-            &mut conn,
-            range_id,
-            &lease_owner,
-            JOB_LEASE_SECS,
-        )?
-        else {
-            break;
-        };
-        task = follow_up;
-    }
+    crate::extraction_worker::run_claimed_exact(
+        task,
+        &resolved,
+        &lease_owner,
+        EXTRACTION_TASK_TIMEOUT_SECS,
+    )
+    .await?;
     crate::log::info(
         "worker",
         &format!(
