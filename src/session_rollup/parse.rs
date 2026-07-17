@@ -127,7 +127,11 @@ fn parse_segment(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .context("segment missing topic_key")?;
-    let topic_key = crate::memory::slugify_for_topic(&raw_topic_key, 96);
+    let topic_key = if is_legacy_topic_key(&raw_topic_key) {
+        raw_topic_key.clone()
+    } else {
+        crate::memory::slugify_for_topic(&raw_topic_key, 96)
+    };
     if topic_key.is_empty() {
         return Err(anyhow!("invalid topic_key '{raw_topic_key}'"));
     }
@@ -200,6 +204,13 @@ fn parse_segment(
         files,
         confidence,
     })
+}
+
+fn is_legacy_topic_key(value: &str) -> bool {
+    value.bytes().any(|byte| byte.is_ascii_alphanumeric())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
 }
 
 fn required_tag(body: &str, tag: &str) -> Result<String> {
@@ -363,6 +374,32 @@ mod tests {
     }
 
     #[test]
+    fn preserves_existing_snake_case_topic_key() -> Result<()> {
+        let snake = parse_segment(
+            0,
+            r#"<segment topic_key="existing_topic_2" status="open">
+              <title>Existing topic</title><summary>Stable identity.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )?;
+        let kebab = parse_segment(
+            1,
+            r#"<segment topic_key="existing-topic-2" status="open">
+              <title>Existing topic</title><summary>Stable identity.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )?;
+
+        assert_eq!(snake.topic_key, "existing_topic_2");
+        assert_eq!(kebab.topic_key, "existing-topic-2");
+        Ok(())
+    }
+
+    #[test]
     fn rejects_topic_key_that_normalizes_to_empty() {
         let err = parse_segment(
             0,
@@ -378,6 +415,22 @@ mod tests {
         .expect_err("punctuation-only topic key should fail closed");
 
         assert!(err.to_string().contains("invalid topic_key '...'"));
+    }
+
+    #[test]
+    fn rejects_punctuation_only_topic_key() {
+        let err = parse_segment(
+            0,
+            r#"<segment topic_key="---" status="resolved">
+              <title>Invalid topic</title><summary>Invalid topic key.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )
+        .expect_err("punctuation-only legacy grammar must fail closed");
+
+        assert!(err.to_string().contains("invalid topic_key '---'"));
     }
 
     #[test]

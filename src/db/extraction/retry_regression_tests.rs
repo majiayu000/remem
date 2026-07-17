@@ -1,5 +1,6 @@
 use crate::db::{
-    count_retryable_extraction_replay_ranges, list_extraction_replay_ranges,
+    count_retryable_extraction_replay_ranges, get_extraction_replay_range_evidence,
+    list_extraction_replay_ranges, mark_replay_range_replayed_if_done,
     quarantine_extraction_replay_range, record_captured_event, retry_extraction_replay_range,
     retry_extraction_replay_ranges, CaptureEventInput,
 };
@@ -169,5 +170,78 @@ fn exact_replay_range_operations_do_not_mutate_sibling_ranges() {
             .find(|range| range.id == quarantine_id)
             .map(|range| range.status.as_str()),
         Some("quarantined")
+    );
+}
+
+#[test]
+fn exact_range_list_includes_replayed_task_evidence() {
+    let mut conn = setup_conn();
+    let range_id = exhaust_task_into_replay_range(&mut conn, "sess-exact-list");
+    retry_extraction_replay_range(&conn, range_id).expect("exact retry should enqueue");
+    let pending = get_extraction_replay_range_evidence(&conn, range_id)
+        .expect("exact pending evidence should query");
+    let replay_task_id = pending
+        .replay_task
+        .expect("replay task evidence should exist")
+        .id;
+    conn.execute(
+        "UPDATE extraction_tasks SET status = 'done' WHERE id = ?1",
+        params![replay_task_id],
+    )
+    .expect("replay task should complete");
+    mark_replay_range_replayed_if_done(&conn, replay_task_id, chrono::Utc::now().timestamp())
+        .expect("range should become replayed");
+
+    let evidence = get_extraction_replay_range_evidence(&conn, range_id)
+        .expect("terminal exact evidence should remain queryable");
+    assert_eq!(evidence.range.status, "replayed");
+    let task = evidence
+        .replay_task
+        .expect("terminal replay task should remain");
+    assert_eq!(task.id, replay_task_id);
+    assert_eq!(task.status, "done");
+    assert_eq!(task.attempts, 0);
+    assert!(task.last_error.is_none());
+}
+
+#[test]
+fn exact_range_operations_reject_non_positive_ids() {
+    let conn = setup_conn();
+    for range_id in [0, -1] {
+        assert!(get_extraction_replay_range_evidence(&conn, range_id).is_err());
+        assert!(retry_extraction_replay_range(&conn, range_id).is_err());
+        assert!(quarantine_extraction_replay_range(&conn, range_id).is_err());
+    }
+}
+
+#[test]
+fn exact_range_operations_reject_missing_archived_active_and_terminal_targets() {
+    let mut conn = setup_conn();
+    assert!(get_extraction_replay_range_evidence(&conn, i64::MAX).is_err());
+    assert!(retry_extraction_replay_range(&conn, i64::MAX).is_err());
+
+    let archived_id = exhaust_task_into_replay_range(&mut conn, "sess-exact-archived");
+    let active_id = exhaust_task_into_replay_range(&mut conn, "sess-exact-active");
+    let terminal_id = exhaust_task_into_replay_range(&mut conn, "sess-exact-terminal");
+    conn.execute(
+        "UPDATE extraction_replay_ranges SET archived_at_epoch = 1 WHERE id = ?1",
+        params![archived_id],
+    )
+    .expect("archive exact target");
+    assert!(retry_extraction_replay_range(&conn, archived_id).is_err());
+    assert!(quarantine_extraction_replay_range(&conn, archived_id).is_err());
+
+    retry_extraction_replay_range(&conn, active_id).expect("enqueue exact active target");
+    assert!(retry_extraction_replay_range(&conn, active_id).is_err());
+    assert!(quarantine_extraction_replay_range(&conn, active_id).is_err());
+
+    quarantine_extraction_replay_range(&conn, terminal_id).expect("quarantine exact target");
+    assert!(retry_extraction_replay_range(&conn, terminal_id).is_err());
+    assert_eq!(
+        get_extraction_replay_range_evidence(&conn, terminal_id)
+            .expect("terminal evidence remains queryable")
+            .range
+            .status,
+        "quarantined"
     );
 }

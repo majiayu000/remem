@@ -732,10 +732,13 @@ pub(in crate::cli) enum PendingAction {
     },
     /// List exhausted extraction event ranges.
     ListExtractionRanges {
+        /// List exactly one range by ID, including terminal replay evidence.
+        #[arg(long, conflicts_with_all = ["project", "limit"])]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         json: bool,
     },
@@ -746,8 +749,8 @@ pub(in crate::cli) enum PendingAction {
         id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "100")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -758,8 +761,8 @@ pub(in crate::cli) enum PendingAction {
         id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "100")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         dry_run: bool,
     },

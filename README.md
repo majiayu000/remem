@@ -674,6 +674,10 @@ remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending list-failed --json
 remem pending retry-failed --dry-run
+remem pending list-extraction-ranges --id 308 --json
+remem pending retry-extraction-ranges --id 308 --dry-run
+remem pending retry-extraction-ranges --id 308
+remem pending quarantine-extraction-ranges --id 308 --dry-run
 remem pending migrate-legacy --dry-run
 remem pending purge-failed --dry-run --older-than-days 7
 remem govern --action stale --dry-run --json <id>
@@ -726,6 +730,14 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+Use the exact-ID extraction-range commands when recovering one known failure:
+preview the retry or quarantine first, apply it only after the preview succeeds,
+then query the same ID with `list-extraction-ranges --id <id> --json`. Exact
+listing includes terminal `replayed` ranges and their linked replay task, so the
+final range/task status and bounded error evidence remain auditable. `--id`
+cannot be combined with batch `--project` or `--limit` filters and never falls
+back to a sibling range.
 
 `remem procedures export` writes reviewable drafts for promoted procedure
 memories. The default output is `remem-drafts/`; export refuses high-context
@@ -901,6 +913,7 @@ is set:
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
 | `remem workstreams merge --json` | `project`, `result` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
+| `remem pending list-extraction-ranges --id <id> --json` | `range` (including `id`, `status`, `attempts`, `last_error`, `replay_task_id`) and nullable `replay_task` (`id`, `status`, `attempts`, `last_error`); terminal `replayed` ranges remain queryable |
 | `remem pending migrate-legacy --json` | `project`, `limit`, `count`, `migrated` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 

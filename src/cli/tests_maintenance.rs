@@ -44,41 +44,46 @@ fn cli_parses_cleanup_archived_failures_custom_horizon() {
     }
 }
 
-#[test]
-fn cli_parses_exact_extraction_replay_range_operations() {
-    let retry = Cli::parse_from([
-        "remem",
-        "pending",
-        "retry-extraction-ranges",
-        "--id",
-        "42",
-        "--dry-run",
-    ]);
-    match retry.command {
-        Commands::Pending {
-            action: PendingAction::RetryExtractionRanges { id, dry_run, .. },
-        } => {
-            assert_eq!(id, Some(42));
-            assert!(dry_run);
-        }
-        _ => panic!("expected exact extraction range retry"),
-    }
+const EXTRACTION_RANGE_COMMANDS: [&str; 3] = [
+    "list-extraction-ranges",
+    "retry-extraction-ranges",
+    "quarantine-extraction-ranges",
+];
 
-    let quarantine = Cli::parse_from([
+#[test]
+fn pending_exact_range_id_accepts_implicit_default_limit() {
+    for command in EXTRACTION_RANGE_COMMANDS {
+        assert!(
+            Cli::try_parse_from(["remem", "pending", command, "--id", "42"]).is_ok(),
+            "{command} should accept --id without an explicit limit"
+        );
+    }
+    let list = Cli::parse_from([
         "remem",
         "pending",
-        "quarantine-extraction-ranges",
+        "list-extraction-ranges",
         "--id",
-        "43",
+        "41",
+        "--json",
     ]);
-    match quarantine.command {
+    match list.command {
         Commands::Pending {
-            action: PendingAction::QuarantineExtractionRanges { id, dry_run, .. },
-        } => {
-            assert_eq!(id, Some(43));
-            assert!(!dry_run);
+            action: PendingAction::ListExtractionRanges { id, limit, .. },
+        } => assert_eq!((id, limit), (Some(41), None)),
+        _ => panic!("expected exact extraction range list"),
+    }
+}
+
+#[test]
+fn pending_exact_range_id_conflicts_with_batch_filters() {
+    for command in EXTRACTION_RANGE_COMMANDS {
+        for (flag, value) in [("--project", "/repo"), ("--limit", "1")] {
+            assert!(
+                Cli::try_parse_from(["remem", "pending", command, "--id", "42", flag, value,])
+                    .is_err(),
+                "{command} should reject explicit {flag} with --id"
+            );
         }
-        _ => panic!("expected exact extraction range quarantine"),
     }
 }
 

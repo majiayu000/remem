@@ -2,8 +2,6 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
@@ -215,49 +213,9 @@ pub(crate) fn open_configured_read_only_connection(
     Ok(conn)
 }
 
-const GIT_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
-
-fn command_output_with_timeout(
-    mut command: Command,
-    timeout: Duration,
-) -> std::io::Result<Option<Output>> {
-    let mut child = command.spawn()?;
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait()? {
-            Some(_) => return child.wait_with_output().map(Some),
-            None if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
-            None => {
-                child.kill()?;
-                child.wait()?;
-                return Ok(None);
-            }
-        }
-    }
-}
-
-fn git_probe_output(cwd: &str, args: &[&str]) -> Option<Output> {
-    let mut command = Command::new("git");
-    command
-        .args(["-C", cwd])
-        .args(args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    match command_output_with_timeout(command, GIT_PROBE_TIMEOUT) {
-        Ok(Some(output)) => Some(output),
-        Ok(None) => {
-            crate::log::error("db", &format!("git probe timed out after 2s: cwd={cwd}"));
-            None
-        }
-        Err(error) => {
-            crate::log::error("db", &format!("git probe failed: cwd={cwd}: {error}"));
-            None
-        }
-    }
-}
-
 pub fn detect_git_branch(cwd: &str) -> Option<String> {
-    let output = git_probe_output(cwd, &["rev-parse", "--abbrev-ref", "HEAD"])?;
+    let output =
+        crate::git_util::git_output_soft(Path::new(cwd), &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -290,7 +248,8 @@ impl Drop for DataDirOverrideGuard {
 }
 
 pub fn detect_git_commit(cwd: &str) -> Option<String> {
-    let output = git_probe_output(cwd, &["rev-parse", "--short", "HEAD"])?;
+    let output =
+        crate::git_util::git_output_soft(Path::new(cwd), &["rev-parse", "--short", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -309,35 +268,6 @@ mod tests {
     use super::*;
     use crate::db::crypto::ALLOW_PLAINTEXT_ENV;
     use crate::db::test_support::ScopedTestDataDir;
-
-    #[test]
-    fn command_output_with_timeout_kills_long_running_child() {
-        const HELPER_ENV: &str = "REMEM_GIT_TIMEOUT_TEST_HELPER";
-        if std::env::var_os(HELPER_ENV).is_some() {
-            std::thread::sleep(std::time::Duration::from_secs(5));
-            return;
-        }
-        let mut command = std::process::Command::new(
-            std::env::current_exe().expect("current test executable should be available"),
-        );
-        command
-            .args([
-                "--exact",
-                "db::core::tests::command_output_with_timeout_kills_long_running_child",
-                "--nocapture",
-            ])
-            .env(HELPER_ENV, "1")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::null());
-        let started = std::time::Instant::now();
-        let output = command_output_with_timeout(command, std::time::Duration::from_millis(50))
-            .expect("child process polling should succeed");
-        assert!(output.is_none(), "long-running child should time out");
-        assert!(
-            started.elapsed() < std::time::Duration::from_secs(2),
-            "timed-out child should be killed and reaped promptly"
-        );
-    }
 
     #[test]
     fn content_identity_hash_is_versioned_sha256() {

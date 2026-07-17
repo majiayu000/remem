@@ -1,5 +1,5 @@
 use anyhow::{ensure, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 
 use crate::db::ExtractionTaskKind;
@@ -18,6 +18,20 @@ pub struct ExtractionReplayRange {
     pub attempts: i64,
     pub updated_at_epoch: i64,
     pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExtractionReplayTaskEvidence {
+    pub id: i64,
+    pub status: String,
+    pub attempts: i64,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExtractionReplayRangeEvidence {
+    pub range: ExtractionReplayRange,
+    pub replay_task: Option<ExtractionReplayTaskEvidence>,
 }
 
 pub fn list_extraction_replay_ranges(
@@ -54,6 +68,56 @@ pub fn list_extraction_replay_ranges(
         })
     })?;
     crate::db::query::collect_rows(rows)
+}
+
+pub fn get_extraction_replay_range_evidence(
+    conn: &Connection,
+    range_id: i64,
+) -> Result<ExtractionReplayRangeEvidence> {
+    ensure!(range_id > 0, "extraction replay range id must be positive");
+    conn.query_row(
+        "SELECT r.id, r.source_task_id, r.replay_task_id, r.task_kind, p.project_path,
+                s.session_id, r.from_event_id, r.to_event_id, r.status, r.attempts,
+                r.updated_at_epoch, r.last_error,
+                t.id, t.status, t.attempts, t.last_error
+         FROM extraction_replay_ranges r
+         JOIN projects p ON p.id = r.project_id
+         LEFT JOIN sessions s ON s.id = r.session_row_id
+         LEFT JOIN extraction_tasks t ON t.id = r.replay_task_id
+         WHERE r.id = ?1",
+        params![range_id],
+        |row| {
+            let replay_task_id = row.get::<_, Option<i64>>(12)?;
+            Ok(ExtractionReplayRangeEvidence {
+                range: ExtractionReplayRange {
+                    id: row.get(0)?,
+                    source_task_id: row.get(1)?,
+                    replay_task_id: row.get(2)?,
+                    task_kind: row.get(3)?,
+                    project: row.get(4)?,
+                    session_id: row.get(5)?,
+                    from_event_id: row.get(6)?,
+                    to_event_id: row.get(7)?,
+                    status: row.get(8)?,
+                    attempts: row.get(9)?,
+                    updated_at_epoch: row.get(10)?,
+                    last_error: row.get(11)?,
+                },
+                replay_task: if let Some(id) = replay_task_id {
+                    Some(ExtractionReplayTaskEvidence {
+                        id,
+                        status: row.get(13)?,
+                        attempts: row.get(14)?,
+                        last_error: row.get(15)?,
+                    })
+                } else {
+                    None
+                },
+            })
+        },
+    )
+    .optional()?
+    .ok_or_else(|| anyhow::anyhow!("extraction replay range {range_id} does not exist"))
 }
 
 pub fn count_retryable_extraction_replay_ranges(

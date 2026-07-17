@@ -77,6 +77,11 @@ surface that #381/#383 evidence collection depends on.
   persisted audit field and recovery counter unchanged.
 - `remem cleanup --archived-failures[=<days>]` purges archived rows older
   than the horizon, reporting what was removed.
+- Operators can inspect, preview, retry, or quarantine one extraction replay
+  range by positive ID. Exact listing remains available after the range reaches
+  terminal `replayed` state and returns the linked replay task's status,
+  attempts, and bounded error evidence. Exact mutation never selects or changes
+  a sibling range and never falls back to a batch operation.
 
 ## Acceptance Criteria
 
@@ -103,6 +108,11 @@ surface that #381/#383 evidence collection depends on.
   excludes the Summary while recovering the unrelated job. Direct per-row
   Summary input is skipped explicitly with byte/value-identical persisted
   fields and no requeued/coalesced count.
+- Exact listing of a terminal replay range returns that range and its linked
+  replay-task evidence. Exact retry/quarantine revalidates the same ID in one
+  transaction, changes only that target, and rejects missing, non-positive,
+  archived, active-task, or otherwise non-retryable targets without batch
+  fallback.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.

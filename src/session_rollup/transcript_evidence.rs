@@ -494,6 +494,17 @@ mod tests {
             .messages
             .iter()
             .all(|message| !message.content.is_empty()));
+        assert!(
+            evidence
+                .messages
+                .iter()
+                .map(|message| message.content.len())
+                .sum::<usize>()
+                <= TRANSCRIPT_TOTAL_CONTENT_LIMIT
+        );
+        assert!(evidence.messages.iter().all(|message| {
+            crate::adapter::common::redact_sensitive_text(&message.content) == message.content
+        }));
         let validation = evidence.validate_for_range(&range_with_stop());
         assert!(validation.is_ok(), "{validation:?}");
     }
