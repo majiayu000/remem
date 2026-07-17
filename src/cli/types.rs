@@ -759,6 +759,9 @@ pub(in crate::cli) enum PendingAction {
         project: Option<String>,
         #[arg(long, short = 'n')]
         limit: Option<i64>,
+        /// Explicitly allow retrying one quarantined range.
+        #[arg(long, requires = "id")]
+        acknowledge_quarantine: bool,
         #[arg(long)]
         dry_run: bool,
     },

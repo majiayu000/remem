@@ -100,6 +100,39 @@ fn pending_exact_range_id_conflicts_with_batch_filters() {
 }
 
 #[test]
+fn pending_quarantine_acknowledgement_requires_exact_id() {
+    assert!(Cli::try_parse_from([
+        "remem",
+        "pending",
+        "retry-extraction-ranges",
+        "--acknowledge-quarantine",
+    ])
+    .is_err());
+    let cli = Cli::parse_from([
+        "remem",
+        "pending",
+        "retry-extraction-ranges",
+        "--id",
+        "42",
+        "--acknowledge-quarantine",
+    ]);
+    match cli.command {
+        Commands::Pending {
+            action:
+                PendingAction::RetryExtractionRanges {
+                    id,
+                    acknowledge_quarantine,
+                    ..
+                },
+        } => {
+            assert_eq!(id, Some(42));
+            assert!(acknowledge_quarantine);
+        }
+        _ => panic!("expected acknowledged exact retry command"),
+    }
+}
+
+#[test]
 fn cli_parses_encrypt_rekey_raw() {
     let cli = Cli::parse_from(["remem", "encrypt", "--rekey-raw"]);
     match cli.command {

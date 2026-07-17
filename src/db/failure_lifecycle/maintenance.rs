@@ -87,7 +87,7 @@ pub(super) fn retry_due_extraction_replay_ranges(
                 MAX_FAILURE_AUTO_RETRIES
             ),
         );
-        crate::db::extraction_replay::enqueue_replay_extraction_task(conn, range_id)?;
+        crate::db::extraction_replay::enqueue_replay_extraction_task(conn, range_id, false)?;
         count += 1;
     }
     Ok(count)

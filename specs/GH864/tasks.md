@@ -17,7 +17,7 @@ GH-864
 - [x] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 进程组在 deadline 后有界终止并执行统一 child/reader cleanup； Verify: 见 SP864-T3。
 - [x] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
 - [x] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
-- [ ] `SP864-T8` Owner: implementation agent; Done when: quarantined range 只能经显式 exact-ID 确认恢复，默认与 batch 行为不变； Verify: 见 SP864-T8。
+- [x] `SP864-T8` Owner: implementation agent; Done when: quarantined range 只能经显式 exact-ID 确认恢复，默认与 batch 行为不变； Verify: 见 SP864-T8。
 
 ### SP864-T1 — 稳定 transcript evidence 截断
 

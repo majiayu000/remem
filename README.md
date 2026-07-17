@@ -677,6 +677,8 @@ remem pending retry-failed --dry-run
 remem pending list-extraction-ranges --id 308 --json
 remem pending retry-extraction-ranges --id 308 --dry-run
 remem pending retry-extraction-ranges --id 308
+remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --dry-run
+remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine
 remem pending quarantine-extraction-ranges --id 308 --dry-run
 remem pending migrate-legacy --dry-run
 remem pending purge-failed --dry-run --older-than-days 7
@@ -737,7 +739,9 @@ then query the same ID with `list-extraction-ranges --id <id> --json`. Exact
 listing includes terminal `replayed` ranges and their linked replay task, so the
 final range/task status and bounded error evidence remain auditable. `--id`
 cannot be combined with batch `--project` or `--limit` filters and never falls
-back to a sibling range.
+back to a sibling range. A quarantined range remains excluded from ordinary
+exact and batch retry; restoring one requires the exact positive `--id` plus
+`--acknowledge-quarantine`, first with `--dry-run` and then without it.
 
 `remem procedures export` writes reviewable drafts for promoted procedure
 memories. The default output is `remem-drafts/`; export refuses high-context
