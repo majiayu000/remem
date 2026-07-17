@@ -18,6 +18,7 @@ GH-864
 - [x] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
 - [x] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
 - [x] `SP864-T8` Owner: implementation agent; Done when: quarantined range 只能经显式 exact-ID 确认恢复，默认与 batch 行为不变； Verify: 见 SP864-T8。
+- [ ] `SP864-T9` Owner: implementation agent; Done when: archived quarantine 只能经 exact 双确认恢复，且 exact worker 只处理指定 task/profile； Verify: 见 SP864-T9。
 
 ### SP864-T1 — 稳定 transcript evidence 截断
 
@@ -137,11 +138,35 @@ GH-864
   - `python3 scripts/ci/check_plugin_version_sync.py`
   - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
 
+### SP864-T9 — Archived quarantine escape hatch 与 exact worker
+
+- Owner: implementation agent
+- Dependencies: SP864-T8
+- Files: `src/cli/types.rs`, `src/cli/worker_types.rs`, `src/cli/mod.rs`, `src/cli/dispatch.rs`, `src/cli/actions/pending.rs`, `src/cli/tests_maintenance.rs`, `src/db/extraction_replay.rs`, `src/db/extraction/retry_regression_tests.rs`, `src/db/extraction/lifecycle.rs`, `src/db/extraction/tests.rs`, `src/extraction_worker.rs`, `src/worker.rs`, README、failure-lifecycle contract 与 release version surfaces
+- Covers: B-020, B-021, B-022
+- Done when:
+  - `--include-archived` 在解析阶段只允许正数 exact `--id` 与 `--dry-run`；archived quarantine 同时要求
+    `--acknowledge-quarantine`，pending 命令不提供 archived 写路径，普通 exact/batch 集合不变。
+  - exact worker 的一个事务用同一双确认 predicate 复验，清除目标 archive marker、只 requeue 目标并立即
+    exact-claim；事务不能提交 daemon 可见的未 claim pending task，失败、竞争与 sibling 均无副作用。
+  - `worker --once --replay-range-id <id> --acknowledge-quarantine --include-archived --profile <name>` 在任何
+    写入前验证 profile 并取得 singleton，持锁原子 requeue+claim 后 process 指定 range 的 task 一次；ID
+    claim 保留普通 retry readiness。非成功结果和 exact owner 过期 lease 均恢复 archived quarantine，不能
+    进入 daemon 默认 profile 路径；不执行全局 maintenance、其它 extraction、job 或 backfill。
+  - CLI 类型拆分后受影响文件保持低于 800 行；版本面同步到 0.6.4。
+- Verify:
+  - `cargo test archived_quarantined_range_requires_dual_exact_acknowledgement --locked`
+  - `cargo test exact_extraction_task_claim_preserves_retry_readiness --locked`
+  - `cargo test worker_exact_range_locks_before_requeue_and_processes_only_target --locked`
+  - `python3 scripts/ci/check_plugin_version_sync.py`
+  - `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`
+
 ## 并行拆分
 
 - SP864-T1、SP864-T2、SP864-T3、SP864-T4 可并行；各任务仅修改其 `Files` 中的互斥文件。
 - SP864-T5 必须等待四个实现任务完成，避免多个任务同时修改版本文件。
 - SP864-T8 在 SP864-T2 后串行执行；它与 T2/T5 重叠 CLI、DB、文档和版本文件，不得并行写入。
+- SP864-T9 在 SP864-T8 后串行执行；它拆分 CLI worker 参数并触及同一 replay DB 文件，不得并行写入。
 - 若使用并行 agent，每个 agent 必须只拥有一个上述实现任务；共享验证与发行文件由串行收口 owner 处理。
 
 ## 验证任务
@@ -152,8 +177,8 @@ GH-864
 ### SP864-T6 — 完整确定性验证与 PR preflight
 
 - Owner: verification agent
-- Dependencies: SP864-T1, SP864-T2, SP864-T3, SP864-T4, SP864-T5, SP864-T8
-- Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-007, B-008, B-009, B-010, B-011, B-012, B-013, B-014, B-015, B-016, B-017, B-018
+- Dependencies: SP864-T1, SP864-T2, SP864-T3, SP864-T4, SP864-T5, SP864-T8, SP864-T9
+- Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-007, B-008, B-009, B-010, B-011, B-012, B-013, B-014, B-015, B-016, B-017, B-018, B-020, B-021, B-022
 - Done when:
   - product-to-test mapping 中的 focused tests 全部通过。
   - Rust、Node、版本同步、版本 bump、diff 和 SpecRail packet 检查全部通过。
@@ -175,18 +200,20 @@ GH-864
 ### SP864-T7 — 真实 range 308 运维收口
 
 - Owner: release operator
-- Dependencies: SP864-T6, SP864-T8, 可用且已认证的 Claude profile
-- Covers: B-015, B-019
+- Dependencies: SP864-T6, SP864-T9, 可用且已认证的 Claude profile
+- Covers: B-015, B-019, B-020, B-021, B-022
 - Done when:
-  - 记录成功的 Claude profile live check，先执行带 quarantine 确认的 exact-ID dry-run，再执行带相同确认的 retry。
+  - 记录成功的 Claude profile live check，先执行带 quarantine/archive 双确认的 exact-ID dry-run，再由持锁
+    exact worker 原子完成同一 range 的 retry+claim 并处理；锁被 daemon 持有时在写入前失败，非成功时保持
+    archived quarantine 而不是留下 daemon 可 claim 的 pending task。
   - 等待 worker 终态后运行 exact list；GH-864 记录 range 308 的精确 range/task ID、状态、attempt/error
     以及对应 replay task 的已脱敏 provider/profile 日志证据。
   - 失败时保留 issue open 并记录可诊断错误，不批量重试 sibling ranges。
 - Verify:
   - `remem model test --profile claude --live`
-  - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --dry-run`
-  - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine`
-  - `remem pending list-extraction-ranges --id 308 --json`
+  - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived --dry-run`
+  - `remem worker --once --replay-range-id 308 --acknowledge-quarantine --include-archived --profile claude`
+  - `remem pending list-extraction-ranges --id 308 --json`（记录 worker 终态）
   - 按 exact list 返回的 `replay_task_id` 关联 worker 日志，记录 provider/profile 与 terminal outcome（脱敏）
 
 ## Handoff Notes
@@ -194,5 +221,5 @@ GH-864
 - 已批准的 spec 不等于最终实现审批；实现 PR 仍需新鲜 CI、独立 review、全部线程解决和人工 merge 授权。
 - Git subprocess 与 exact-range transaction 是合并前的强制人工安全/正确性审查点。
 - range 308 的真实恢复依赖外部 Claude profile，不能由 fixture、模拟输出或批量 retry 代替。
-- Product invariant set: B-001..B-019。
-- Task coverage union: B-001..B-019；无缺失项。
+- Product invariant set: B-001..B-022。
+- Task coverage union: B-001..B-022；无缺失项。
