@@ -157,6 +157,8 @@ current SessionRollup path and the legacy Summary job chain.
 ## Rollout Notes
 
 Each phase is independently reviewable: visibility first, equivalence fixtures
-before writer retirement. The removal window is now fixed: remem 0.6.0 must
-announce the pending-observations drop in doctor output and release notes, and
-no guarded drop may ship before remem 0.7.0.
+before writer retirement. The removal window is now active: remem 0.6.0 shipped
+the doctor announcement in source, and the superseding remem 0.6.1 GitHub
+release published the migration commands and the no-earlier-than-0.7.0 removal
+notice after v0.6.0's Create Release step failed. No guarded drop may ship
+before remem 0.7.0.
