@@ -52,10 +52,10 @@ current SessionRollup path and the legacy Summary job chain.
 ## Acceptance Criteria
 
 - [ ] TECH inventory stays current with every production writer and reader.
-- [ ] Field-level equivalence fixtures compare legacy `finalize_summarize`
+- [x] Field-level equivalence fixtures compare legacy `finalize_summarize`
       output with current `persist_session_rollup` output before Summary job
       retirement.
-- [ ] `pending_observations` emptiness is confirmed on real databases beyond
+- [x] `pending_observations` emptiness is confirmed on real databases beyond
       the primary dogfood store, or stragglers are migrated explicitly.
 - [x] In-flight `JobType::Summary` upgrade handling is implemented and tested:
       non-terminal legacy Summary jobs are rejected as permanent failures by
@@ -157,6 +157,8 @@ current SessionRollup path and the legacy Summary job chain.
 ## Rollout Notes
 
 Each phase is independently reviewable: visibility first, equivalence fixtures
-before writer retirement. The removal window is now fixed: remem 0.6.0 must
-announce the pending-observations drop in doctor output and release notes, and
-no guarded drop may ship before remem 0.7.0.
+before writer retirement. The removal window is now active: remem 0.6.0 shipped
+the doctor announcement in source, and the superseding remem 0.6.1 GitHub
+release published the migration commands and the no-earlier-than-0.7.0 removal
+notice after v0.6.0's Create Release step failed. No guarded drop may ship
+before remem 0.7.0.

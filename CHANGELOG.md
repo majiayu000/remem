@@ -2,7 +2,18 @@
 
 ## Unreleased
 
+### Fixed
+- Staged source version `0.6.1` for GH-861: project identity now delegates to
+  Git whenever `GIT_COMMON_DIR` is set, so invalid or redirected common-dir
+  layouts fail closed instead of being mistaken for plain marker discovery.
+
 ### Added
+- Staged source version `0.6.0` for GH-684 SP684-T10: `remem doctor`
+  announces that `pending_observations` is deprecated and cannot be removed
+  before remem 0.7.0. Non-empty stores are directed to preview with
+  `remem pending migrate-legacy --dry-run` and then apply with
+  `remem pending migrate-legacy`. The removal window does not begin until the
+  0.6.0 release is published.
 - Staged source version `0.5.214` for GH-671 T7: repeated-correction fixtures
   cover package-manager choices, forbidden commit trailers, and forbidden
   commands; one Brush AST execution model closes wrapper, quoting, function,
