@@ -124,6 +124,91 @@ pub(crate) async fn run_next(
     Ok(true)
 }
 
+pub(crate) async fn run_claimed_exact(
+    mut task: db::ExtractionTask,
+    profile: &str,
+    lease_owner: &str,
+    timeout_secs: u64,
+) -> Result<()> {
+    task.ai_profile = Some(profile.to_string());
+    crate::log::info(
+        "worker",
+        &format!(
+            "claimed exact extraction id={} range_id={} kind={} project={} profile={}",
+            task.id,
+            task.replay_range_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "<none>".to_string()),
+            task.task_kind.as_str(),
+            task.project,
+            profile
+        ),
+    );
+
+    let timed = tokio::time::timeout(
+        Duration::from_secs(timeout_secs),
+        process_extraction_task(&task),
+    )
+    .await;
+    match timed {
+        Ok(Ok(ExtractionTaskOutcome::Done { to_event_id })) => {
+            let completed = to_event_id.or(task.high_watermark_event_id);
+            if task
+                .high_watermark_event_id
+                .is_some_and(|high_watermark| completed != Some(high_watermark))
+            {
+                return archive_exact_outcome(
+                    &task,
+                    lease_owner,
+                    "exact replay processed only part of the bounded event range",
+                );
+            }
+            let conn = db::open_db()?;
+            db::mark_extraction_task_done(&conn, task.id, lease_owner, completed)?;
+            crate::log::info(
+                "worker",
+                &format!("done exact extraction id={} profile={profile}", task.id),
+            );
+            Ok(())
+        }
+        Ok(Ok(ExtractionTaskOutcome::Deferred(reason))) => archive_exact_outcome(
+            &task,
+            lease_owner,
+            &format!("exact replay deferred: {reason}"),
+        ),
+        Ok(Ok(ExtractionTaskOutcome::Waiting(reason))) => archive_exact_outcome(
+            &task,
+            lease_owner,
+            &format!("exact replay waiting: {reason}"),
+        ),
+        Ok(Err(error)) => {
+            archive_exact_outcome(&task, lease_owner, &format!("exact replay failed: {error}"))
+        }
+        Err(_) => archive_exact_outcome(
+            &task,
+            lease_owner,
+            &format!("exact replay timed out after {timeout_secs}s"),
+        ),
+    }
+}
+
+fn archive_exact_outcome(task: &db::ExtractionTask, lease_owner: &str, error: &str) -> Result<()> {
+    let conn = db::open_db()?;
+    db::archive_claimed_exact_replay_task(&conn, task.id, lease_owner, error)?;
+    crate::log::error(
+        "worker",
+        &format!(
+            "exact extraction archived id={} range_id={} error={}",
+            task.id,
+            task.replay_range_id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "<none>".to_string()),
+            crate::db::truncate_str(error, 300)
+        ),
+    );
+    anyhow::bail!("{error}")
+}
+
 async fn process_extraction_task(task: &db::ExtractionTask) -> Result<ExtractionTaskOutcome> {
     match task.task_kind {
         db::ExtractionTaskKind::CapturedGitLink => {

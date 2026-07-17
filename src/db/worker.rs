@@ -34,6 +34,14 @@ pub fn current_worker_owner(mode: &str, pid: u32, epoch_millis: i64) -> String {
     format!("{CURRENT_WORKER_OWNER_PREFIX}{mode}-{pid}-{epoch_millis}")
 }
 
+pub(crate) fn exact_replay_worker_owner(pid: u32, epoch_millis: i64) -> String {
+    current_worker_owner("exact-replay", pid, epoch_millis)
+}
+
+pub(crate) fn is_exact_replay_worker_owner(owner: &str) -> bool {
+    owner.starts_with(&format!("{CURRENT_WORKER_OWNER_PREFIX}exact-replay-"))
+}
+
 pub fn is_current_daemon_worker_owner(owner: &str) -> bool {
     owner.starts_with(&format!("{CURRENT_WORKER_OWNER_PREFIX}daemon-"))
 }

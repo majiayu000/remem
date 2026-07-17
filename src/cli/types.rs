@@ -16,6 +16,7 @@ pub(in crate::cli) use super::review_types::{
     GraphReviewAction, ReviewAction, ReviewBatchFilterArgs,
 };
 pub(in crate::cli) use super::rule_types::{RuleActionArg, RuleHostArg, RulesAction};
+pub(in crate::cli) use super::worker_types::WorkerArgs;
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -102,12 +103,8 @@ pub(super) enum Commands {
         #[arg(long)]
         profile: Option<String>,
     },
-    /// Run the background worker loop or one drain pass.
-    Worker {
-        /// Process ready work once and exit.
-        #[arg(long)]
-        once: bool,
-    },
+    /// Run the background worker loop, one drain pass, or one exact replay.
+    Worker(WorkerArgs),
     /// Run the MCP server over stdio.
     Mcp,
     /// Install remem MCP and hooks into supported hosts.
@@ -762,6 +759,12 @@ pub(in crate::cli) enum PendingAction {
         /// Explicitly allow retrying one quarantined range.
         #[arg(long, requires = "id")]
         acknowledge_quarantine: bool,
+        /// Validate an archived quarantined exact range without mutating it.
+        #[arg(
+            long,
+            requires_all = ["id", "acknowledge_quarantine", "dry_run"]
+        )]
+        include_archived: bool,
         #[arg(long)]
         dry_run: bool,
     },
