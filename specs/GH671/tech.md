@@ -20,28 +20,36 @@ Authoritative contract:
 | Reinforcement metadata | `src/memory_candidate/apply.rs`, `src/memory/preference/reinforcement.rs`, `src/migrations/v062_preference_rule_state.sql`, `src/migrations/v065_preference_reinforcement.sql` | Active preferences carry canonical, evidence-backed reinforcement counts plus machine-checkable, risk, and source-evidence state; each event set counts once, disjoint evidence and overrides merge only across the same safe predicate, and opposing direct saves or cleanup rewrites clear stale rule provenance. | Eligibility reads real repeated-correction state without allowing duplicate evidence, contradictory content, or unsafe preferences to inherit confidence. |
 | Suppression and lifecycle | `src/memory/suppression.rs`, `src/memory/lifecycle.rs`, `src/migrations/v051_memory_suppressions_feedback.sql` | Memories can be suppressed or soft-superseded. | Derived rules must disappear when source memories stop being authoritative. |
 | Worker path | `src/worker.rs`, `src/db_job.rs`, `src/summarize.rs` | Background work runs outside interactive hooks. | Rule compilation belongs off the hook hot path. |
-| Hook dispatch and install | `src/cli/dispatch.rs`, `src/install.rs`, hook configuration tests | Hooks inject context and capture observations; Claude PostToolUse is post-execution and Codex command observe is opt-in. | Warning/block enforcement needs a pre-execution Claude Bash hook and honest unsupported behavior elsewhere. |
+| Hook dispatch and install | `src/cli/dispatch.rs`, `src/install.rs`, hook configuration tests | When rule compilation is enabled and an eligible artifact exists, Claude PreToolUse(Bash) evaluates supported commands before execution; PostToolUse remains capture-only. Codex command observe is opt-in and has no pre-execution rule enforcement. | Preserve deterministic Claude enforcement and report Codex capability honestly without implying prose/prompt evaluation. |
 | CLI commands | `src/cli/types.rs`, `src/cli/dispatch.rs`, `src/cli/actions/` | User-facing commands manage memory and diagnostics. | `remem rules` must expose list, disable, enable, and action override flows. |
 | Doctor | `src/doctor/`, `src/doctor/tests.rs` | Doctor reports runtime and data health through human and JSON output. | Compile/evaluation status and host capability must be visible, not silently degraded. |
 
 ## Proposed Design
 
-Phase 1 task-ledger status: `SP671-T1` through `SP671-T3` and `SP671-T5`
-through `SP671-T7` are recorded as implemented.
+Phase 1 task-ledger status: `SP671-T1`, `SP671-T2`, and `SP671-T4` through
+`SP671-T7` are recorded as implemented.
 The state foundation, versioned artifact/evaluator, canonical preference
 reinforcement, deterministic compiler, lifecycle-triggered non-lossy enqueue
 path plus periodic convergence sweeps, same-predicate override transfer,
 persisted low-risk/source-trust/review eligibility, project-over-global
 precedence, stable diagnostics, worker-only artifact writes, CLI rule
 management, hook dispatch, doctor reporting, repeated-correction fixtures, and
-measured hook-latency evidence are present. The task ledger still leaves
-`SP671-T4` unchecked; `SP671-T8` owns its status reconciliation along with
-documentation and final acceptance.
+measured hook-latency evidence are present. #837 supplies the T4 management and
+warn round-trip evidence; #839 exact head
+`905a55f7219459dd7b33a1805f0d4da27a97622f`, merged as
+`f612b4a1ec4558ed6d2df85699cefb42109bdf7c`, supplies Claude Code
+PreToolUse and supported-host block evidence; #840 supplies the doctor
+human/JSON, capability, recovery, and privacy evidence. T8a reconciles that
+shipped behavior and its documentation, but `SP671-T8` remains incomplete
+pending final acceptance.
 
-GH-813 identified one remaining T3 eligibility correction: the current global
+GH-813 identified one remaining T3 eligibility correction and test-matrix
+gap: the current global
 branch accepts any non-null `owner_scope`; it must require the canonical
 `user` / `user:default` / no-target combination before the closed eligibility
-contract is complete.
+contract is complete. Therefore T3 and T8 remain incomplete and #671 stays
+open. #860 and #861 are separate follow-up backlog, while #863 is unrelated;
+none supplies GH671 completion evidence.
 
 - Add a `rules` module with a versioned artifact schema, closed predicate enum,
   pure evaluator, compiler, and atomic artifact writer.
@@ -121,12 +129,19 @@ contract is complete.
   artifacts are regenerated output.
 - Run artifact compilation and writes only from the background worker. Hooks
   only load and evaluate artifacts.
-- Add `remem rules list [--project <path>]`, `disable`, `enable`, and
-  `set-action warn|block`. Overrides update SQLite and become effective after
-  the next artifact build.
-- Add a Claude Code `PreToolUse` Bash hook for command evaluation before
-  execution. Keep PostToolUse observe capture-only. Report Codex command
-  enforcement as unsupported until Codex exposes a pre-execution command hook.
+- Expose `remem rules list [--project <path>]`, `disable`, `enable`,
+  `set-action <rule_id> warn [--host claude-code|codex-cli]`, and
+  `set-action <rule_id> block --host claude-code`. The host option is optional
+  and does not gate warn; block requires the explicit Claude Code host, while
+  omission or `--host codex-cli` is rejected. Overrides update SQLite and
+  become effective after the next artifact build.
+- Claude Code installation includes a `PreToolUse` Bash hook that invokes
+  `remem rules eval --host claude-code` before command execution. Each enabled,
+  valid short-lived CLI invocation reads and parses the artifact from disk; no
+  in-process cache is promised. PostToolUse observe remains capture-only.
+  Phase 1 evaluates supported command input, not arbitrary prose or prompts;
+  Codex command enforcement remains unsupported until Codex exposes a
+  pre-execution command hook.
 - Add doctor output for artifact presence, rule count, last compile time, last
   compile/evaluation error, and host enforcement capability.
 
@@ -192,12 +207,23 @@ derived artifact.
       reinforcement risk, one negative per eligibility dimension, exact
       owner/trust/review allowlists, unknown values, closed-enum completeness,
       policy failure, and critical cross-state cases without SQL text snapshots.
-- [ ] CLI tests: `rules list`, `disable`, `enable`, and `set-action` across
-      artifact deletion and recompile.
+- [x] CLI tests: #837 covers provenance listing plus the management/warn
+      disable/enable/action round trip and worker rebuild
+      (`src/rules/management/tests.rs:82-138`). The shared
+      unsupported-pre-execution rejection path
+      (`src/rules/management/tests.rs:142-174`)
+      proves no override or compile job is written, without separately
+      exercising host None and Codex CLI values. #839 exact head
+      `905a55f7219459dd7b33a1805f0d4da27a97622f` (merged as
+      `f612b4a1ec4558ed6d2df85699cefb42109bdf7c`) adds supported Claude block
+      persistence (`src/rules/management/tests.rs:177-204`). Existing compiler
+      coverage reconstructs stored overrides
+      (`src/rules/compiler/tests.rs:380-399`).
 - [x] Hook integration tests: simulated Claude PreToolUse Bash warning/block,
       PostToolUse capture-only behavior, and Codex unsupported enforcement.
-- [ ] Doctor tests: human and JSON output for count, compile time, host
-      capability, and last error.
+- [x] Doctor tests: #840 covers human and JSON output for artifact/rule count,
+      compile time, host capability, and latest compile/evaluation errors
+      without rule payloads.
 - [x] Fixture/eval tests: repeated-correction scenarios and hook latency
       benchmark with fixed `1.0 ms` delta and `15.0 ms` enabled-p95 budgets;
       MAD is informational only.

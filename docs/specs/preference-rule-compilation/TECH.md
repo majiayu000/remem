@@ -29,24 +29,32 @@ Tracking:
   worker-only artifact writes.
 - The current tree also contains rule CLI management, pre-execution Claude
   hook dispatch with honest Codex capability reporting, doctor diagnostics,
-  repeated-correction fixtures, and measured hook-latency evidence. The GH-671
-  task ledger records T5, T6, and T7 complete but still leaves T4 unchecked;
-  T8 owns the remaining task-status and final-acceptance reconciliation.
+  repeated-correction fixtures, and measured hook-latency evidence. #837 at
+  merge commit `4d5eafa9b217950b91e8cb46c20c52ce3d9de4a8` supplies management and
+  warn-mode round-trip evidence. #839 exact head
+  `905a55f7219459dd7b33a1805f0d4da27a97622f`, merged as
+  `f612b4a1ec4558ed6d2df85699cefb42109bdf7c`, supplies Claude Code
+  PreToolUse and supported-host block persistence. #840 at merge commit
+  `ca1a804c8f8b8889ac8b2ba29f5f1c8522f17884` supplies doctor enforcement
+  health evidence. T8a reconciles task status and public documentation; final
+  acceptance remains open.
 - The current compiler still accepts any non-null `owner_scope` for a global
   row. GH-813 tightens that existing gap to the canonical
   `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
-  until that implementation lands, malformed or legacy global ownership is not
-  proven fail-closed.
+  until that implementation and its exhaustive eligibility matrix land,
+  malformed or legacy global ownership is not proven fail-closed, T3/T8 remain
+  incomplete, and #671 must stay open.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
 - Lesson/preference metadata carries `reinforcement_count`
   (`src/memory_candidate/apply.rs`).
-- Hooks are dispatched through `src/cli/dispatch.rs`; Claude Code fires
-  SessionStart, UserPromptSubmit, PostToolUse, PreCompact, and Stop today;
-  Codex fires SessionStart/Stop with PostToolUse(Bash) opt-in. The existing
-  Claude Code PostToolUse observe hook is after command execution and cannot
-  provide block-mode enforcement.
+- Hooks are dispatched through `src/cli/dispatch.rs`; Claude Code installs
+  SessionStart, UserPromptSubmit, PreToolUse(Bash), PostToolUse, PreCompact,
+  and Stop, including `remem rules eval --host claude-code` on PreToolUse.
+  Codex installs SessionStart/Stop with PostToolUse(Bash) opt-in and no
+  pre-execution rule evaluator. Claude Code PostToolUse observe remains after
+  command execution and cannot provide block-mode enforcement.
 - The background worker (`src/worker.rs`) already runs extraction and
   consolidation off the interactive path.
 - `memory_suppressions` (v051) and soft supersession
@@ -92,9 +100,9 @@ resolved `REMEM_DATA_DIR` / `db::absolute_data_dir()` location:
 Predicate kinds in the first implementation:
 
 - `command_regex`: matched against pre-execution Bash command input on hosts
-  with a pre-tool hook. Claude Code support requires adding a `PreToolUse`
-  Bash hook that invokes a read-only `remem rules eval` path before the
-  command runs.
+  with a pre-tool hook. Claude Code installation already adds a `PreToolUse`
+  Bash hook that invokes the read-only `remem rules eval --host claude-code`
+  path before the command runs.
 - `commit_trailer_forbidden`: matched against `git commit` command strings for
   forbidden trailer substrings.
 
@@ -173,14 +181,17 @@ Nothing else. Further kinds require a spec update.
 
 ### Hook evaluation
 
-- PreToolUse (Claude Code Bash): load artifact (mtime-cached in process),
-  evaluate predicates against the command before execution, and return the
-  host's warning or blocking contract on match.
+- PreToolUse (Claude Code Bash): each enabled, valid short-lived `remem rules
+  eval` CLI invocation reads and parses the artifact from disk, evaluates
+  predicates against the command before execution, and returns the host's
+  warning or blocking contract on match. There is no in-process artifact-cache
+  contract.
 - PostToolUse observe remains capture-only; it may record violations for
   diagnostics but must not be the enforcement path for warning/block behavior.
 - Codex command rules are reported as unsupported for enforcement until Codex
-  exposes a pre-execution Bash hook; `set-action ... block` returns an error
-  for Codex-only projects instead of implying protection exists.
+  exposes a pre-execution Bash hook. `set-action <rule_id> block` without
+  `--host claude-code`, including `--host codex-cli`, returns an error instead
+  of implying protection exists.
 - Block action: only honored when the rule has `"action": "block"` set via
   explicit user CLI opt-in and the current host supports pre-execution
   enforcement.
@@ -193,18 +204,23 @@ Nothing else. Further kinds require a spec update.
 remem rules list [--project <path>]
 remem rules disable <rule_id>
 remem rules enable <rule_id>
-remem rules set-action <rule_id> warn|block
+remem rules set-action <rule_id> warn [--host claude-code|codex-cli]
+remem rules set-action <rule_id> block --host claude-code
 ```
 
 Disable/enable and action overrides are stored in SQLite (for example a
 `rule_overrides` table keyed by rule_id plus project scope). The worker emits
 the merged result into the derived artifact; deleting or regenerating the
-artifact cannot revert a user override.
+artifact cannot revert a user override. `--host` is optional for `warn` and
+does not gate that action; `block` requires the explicit
+`--host claude-code` capability assertion.
 
 ### Doctor
 
-Report artifact presence, rule count, compiled_at age, and last evaluation
-error.
+Report whether compilation is enabled, artifact presence/validity and rule
+count, compile status/time/error, the latest project/global evaluation error,
+and per-host enforcement capability. Human and JSON output must not expose rule
+payloads.
 
 ## Product-to-Test Mapping
 
@@ -291,6 +307,21 @@ hook-side writes.
 - [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
+- [x] CLI management tests: #837 covers provenance listing and the
+      management/warn round trip across artifact deletion and worker rebuild
+      (`src/rules/management/tests.rs:82-138`). The shared
+      unsupported-pre-execution rejection path
+      (`src/rules/management/tests.rs:142-174`)
+      proves no override/job persistence without separately exercising host
+      None and Codex CLI values. #839 exact head
+      `905a55f7219459dd7b33a1805f0d4da27a97622f` (merged as
+      `f612b4a1ec4558ed6d2df85699cefb42109bdf7c`) covers supported Claude block
+      persistence (`src/rules/management/tests.rs:177-204`). Existing compiler
+      coverage reconstructs stored overrides
+      (`src/rules/compiler/tests.rs:380-399`).
+- [x] Doctor tests: #840 covers human/JSON artifact and compile health, latest
+      evaluation diagnostics, Claude/Codex capability reporting, recovery, and
+      payload privacy.
 - [ ] Manual verification: real Claude Code session with a seeded preference;
       confirm warning appears and `remem rules list` shows provenance.
 
