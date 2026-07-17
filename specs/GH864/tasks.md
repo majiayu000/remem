@@ -209,8 +209,9 @@ GH-864
   - `remem model test --profile claude --live`
   - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived --dry-run`
   - `remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived`
+  - `remem pending list-extraction-ranges --id 308 --json`（取得本次 `replay_task_id`）
   - `remem worker --once --extraction-task-id <replay_task_id> --profile claude`
-  - `remem pending list-extraction-ranges --id 308 --json`
+  - `remem pending list-extraction-ranges --id 308 --json`（记录 worker 终态）
   - 按 exact list 返回的 `replay_task_id` 关联 worker 日志，记录 provider/profile 与 terminal outcome（脱敏）
 
 ## Handoff Notes
