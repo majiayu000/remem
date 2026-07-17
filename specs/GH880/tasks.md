@@ -23,10 +23,11 @@ GH-880
 - Owner：backend worker（单 lane）
 - Dependencies：GH-880 spec packet 完整；实现 route gate 与 duplicate-work evidence 通过；基于最新 `origin/main` 选择未占用的 migration 版本。
 - Files owned：`src/migrations/v*_web_console_governance.sql`、`src/migrate/types.rs`、`src/migrate/schema_drift/invariants.rs`、migration tests、`src/api/mutation.rs`、`src/api/cursor.rs`、共享模块声明。
-- Work：添加 candidate/memory integer version、`memories.web_archive_operation_id`、覆盖所有 Web 可见字段 writer 的 version triggers、任一 status transition 清除 archive marker 的 trigger、带 response schema version 的幂等账本、稳定 operation id/request hash helper、immutable-id typed cursor codec；不注册业务 endpoint，不提前声明 capability。
+- Work：添加 candidate/memory integer version、`memories.web_archive_operation_id`、覆盖所有 Web 可见字段 writer 的 version triggers、任一 status transition 清除 archive marker 的 trigger、只存 `idempotency_key_hash` 且带 response schema version 的幂等账本、稳定 operation id/request hash helper、immutable-id typed cursor codec；不注册业务 endpoint，不提前声明 capability。
 - Done when：
   - fresh/upgrade DB 具有正确 default、unique/index/trigger/schema invariant，CLI/worker/lifecycle 可见字段更新也推进 version，任一非 Web status transition 都清除旧 Web archive marker；
-  - same key + same payload 可读取同一 ledger 结果，不同 payload 明确 conflict；
+  - idempotency key trim 后必须为 `1..=128` ASCII bytes 且匹配 `[A-Za-z0-9._~-]+`；非法输入在 hash/事务/存储/日志前返回不含 `operation_id` 的 `idempotency_key_invalid`，只可携带独立 request/trace id；same key + same payload 可读取同一 ledger 结果，不同 payload 明确 conflict；
+  - raw/normalized idempotency key 不进入 DB、audit、日志或响应，仅 SHA-256 摘要进入 ledger，sentinel 测试同时证明明文不存在且摘要存在；
   - cursor 对 kind/filter/version 绑定且 malformed input fail closed；
   - 没有 token、raw payload 或 secret 写入 request hash/audit fixture。
 - Verify：
@@ -46,7 +47,8 @@ GH-880
   - detail 返回 version、evidence provenance、`can_review` 和稳定 blocked codes；
   - missing/cross-project/suppressed/unsafe evidence 均阻止审核；raw-only/`session_stop` evidence 返回 `evidence_safe_projection_unavailable`，candidate query/DTO 不读取 `captured_events.content_text`，non-secret transcript sentinel 和 secret 均不泄漏；
   - approve/reject/edit 的并发、重放、payload conflict 和失败回滚均有 E2E 证据；
-  - 新 safe review route 不改变旧 route/payload；`candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用。
+  - 新 safe review route 不改变旧 route/payload；空白、超长、Unicode、控制字符及字符集外 idempotency key fail closed，UUID/ULID key 可安全重放且明文不进入 DB/audit/log/response；
+  - `candidate_detail`、`candidate_evidence`、`candidate_review_safe` 在本 slice 保持 false，等待 T5 smoke/contract/release gate 后统一启用；contract test 预先固定 `candidate_detail` 和 `candidate_evidence` 两个 endpoint key 最终都映射 `/api/v1/candidates/{id}`。
 - Verify：
   - `cargo test api::tests::candidates --locked`
   - `cargo test api::tests::candidate_review_poisoning --locked`
@@ -77,11 +79,12 @@ GH-880
 - Owner：backend worker（单 lane）
 - Dependencies：SP880-T1；在 T3 后串行处理共享 router/capability 文件。
 - Files owned：`src/api/handlers/memory_governance.rs`、`src/memory/governance.rs`、memory governance API/types/tests、router/capability 增量。
-- Work：新增 archive/restore transaction primitive 与 Web endpoint；使用 version/idempotency/reason；同事务更新、audit、ledger；显式 `memory_delete=false`，不注册 delete route。
+- Work：新增 archive/restore transaction primitive 与 Web endpoint；让 memory list/detail additive 返回治理所需 version；使用 version/idempotency/reason；同事务更新、audit、ledger；显式 `memory_delete=false`，不注册 delete route。
 - Done when：
   - archive 仅允许 active，保留内容且 remem-web active list/search 不可见；Web archive 在 status trigger 清除旧 marker 后写入当前 `operation_id`，restore 只接受 marker 与成功 ledger/audit 精确匹配的当前 archived 行并在状态转换时清除 marker；canonical 无 status list 保持兼容；
-  - replay、different-payload、version race、not recoverable、DB failure rollback 有测试；Web archive -> restore -> scope cleanup 或无通用 audit 的非 Web archive 不可恢复，后续 fresh Web archive 写入新 marker 后可恢复；
-  - response 含完整 audit envelope；失败含稳定 operation id 且不泄漏 SQL/内容；
+  - active/archived list/detail 返回当前整数 version；客户端读取值可作为 expected_version，archive 成功返回的最终 version 可直接驱动 restore；
+  - replay、different-payload、非法 idempotency key、version race、not recoverable、DB failure rollback 有测试；非法 key 在 operation 建立前返回不含 `operation_id` 的 400；Web archive -> restore -> scope cleanup 或无通用 audit 的非 Web archive 不可恢复，后续 fresh Web archive 写入新 marker 后可恢复；
+  - response 含最终 version 和完整 audit envelope；key 校验通过后的失败含稳定 operation id 且不泄漏 SQL/内容；archive/restore E2E 证明 raw/normalized idempotency key sentinel 不进入 DB/audit/log/response，且 ledger 中对应 SHA-256 hash 存在；
   - 本 slice 的 archive/restore flag 仍为 false，delete 为 false 且无 endpoint；T5 通过后才发布 archive/restore map。
 - Verify：
   - `cargo test api::tests::memory_governance --locked`
@@ -97,7 +100,7 @@ GH-880
 - Files owned：`docs/specs/SPEC-web-api.md`、README、CHANGELOG、`scripts/smoke_native_web_api.sh`、version/release manifests；只做与 GH-880 对应的发布面同步。
 - Work：记录 endpoint/request/response/error/cursor/redaction/min-version 契约；扩展 native smoke；执行版本同步和 release gate；不宣称未发布 binary 已可用。
 - Done when：
-  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；
+  - contract、smoke 与 routes 精确一致，并在本 slice 首次把已完成能力 flag 置 true、加入 endpoint map；`candidate_detail` 和 `candidate_evidence` 两个 key 均显式映射 `/api/v1/candidates/{id}`；
   - smoke 覆盖 candidate detail/safe review、五类 read、archive/restore、delete absence；
   - source/package/plugin/server manifests 同步且 version bump gate 通过；
   - product B-001–B-017 均有测试或可审计命令对应。
@@ -121,8 +124,8 @@ GH-880
 - Files owned：仅 remem-web repo 的 API types/client、capability gates、resource/candidate/governance pages 和 tests；不与 remem backend lane 共享文件。
 - Work：按独立 capability 消费新 endpoint，完整展示 loading/empty/error/conflict/replay；永久 delete 不进入 UI；installed binary 继续受最低发布版本 gate。
 - Done when：
-  - candidate evidence 和安全审核 UI 只在三个 candidate capability 全 true 时启用；
-  - 五类资源逐项 gate，archive/restore 有 reason/version/idempotency 与冲突反馈；
+  - candidate evidence 和安全审核 UI 只在三个 candidate capability 全 true 且 detail/evidence endpoint key 均声明时启用；
+  - 五类资源逐项 gate，archive/restore 从 list/detail 获取 version，并有 reason/version/idempotency 与冲突反馈；
   - TypeScript typecheck/test/build/audit 通过；
   - GH-3 所有验收标准完成后使用 closing PR 并做 closure audit。
 - Verify：
@@ -147,13 +150,13 @@ GH-880
 - 每个 PR 都运行 focused tests、`cargo fmt --check`、`cargo check --locked` 和 `git diff --check`。
 - 最终后端 PR 运行 full test、clippy、native smoke、workflow/spec、version sync/bump/preflight。
 - `specrail-check-impl-against-spec` 对 B-001–B-017 输出无缺口。
-- 每个 merge-ready PR 有独立 native reviewer lane、当前 head SHA、绿色 CI、零 unresolved threads、clean merge state 和 serial PR gate。
+- 每个 merge-ready PR 有当前对话中的明确 human merge authorization evidence、独立 native reviewer lane、当前 head SHA、绿色 CI、零 unresolved threads、clean merge state 和 serial PR gate。
 - remem release 后再执行 remem-web T6 和 installed-binary smoke。
 - 最终 closure audit 确认 remem#880、remem-web#3 无遗留 actionable acceptance criterion。
 
 ## Handoff Notes
 
-- `implx auto` 是本轮 readiness-label 和满足全部证据后的 merge standing authorization，不是跳过独立审查或 CI 的授权。
+- 本 task packet 只定义 implementation/review orchestration 的工作范围，不能自行授权 readiness-label progression 或 merge；两者都必须满足仓库 human gate，每次 merge 还必须引用当前对话中的明确用户授权 evidence，并继续满足独立审查、当前 HEAD CI、零 unresolved threads、clean merge state 和串行 PR gate。
 - migration 文件名中的 v70 只是当前 main 的预期；实现前刷新 remote main，若版本已占用必须顺延并同步 planned changes。
 - 现有用户工作树 `/Users/lifcc/Desktop/code/AI/tool/remem` 很脏，禁止复用或清理；所有后端实现使用新的 clean worktree。
 - 旧 `candidate_review` capability/endpoint 保持兼容。新 remem-web 写 UI 必须看 `candidate_review_safe`，不能把旧 flag 解释成安全审核契约。
