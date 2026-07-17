@@ -213,6 +213,18 @@ storms.
 
 ## Compatibility
 
+- Extraction replay ranges have a precise manual recovery path:
+  `remem pending list-extraction-ranges --id <positive-id> [--json]`,
+  `retry-extraction-ranges --id <positive-id> [--dry-run]`, and
+  `quarantine-extraction-ranges --id <positive-id> [--dry-run]`. Explicit
+  `--id` conflicts with explicit batch `--project`/`--limit`; implicit batch
+  defaults do not make an ID-only command invalid. The list query has no active
+  status filter, so `replayed` terminal evidence remains queryable and includes
+  the linked replay task id/status/attempt/error without captured payloads or
+  provider secrets. Exact dry-run and mutation share the retryable predicate;
+  mutation revalidates inside one SQLite transaction and cannot select or
+  update a sibling range. Missing, non-positive, archived, active-task, and
+  non-retryable IDs fail instead of falling back to the batch path.
 - `remem pending list-failed` / `retry-extraction-ranges` keep working and
   can target archived rows explicitly (`--include-archived`), preserving the
   manual escape hatch for observations and extraction ranges.

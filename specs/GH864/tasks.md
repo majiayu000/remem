@@ -12,11 +12,11 @@ GH-864
 
 ## 实现任务
 
-- [ ] `SP864-T1` Owner: implementation agent; Done when: transcript evidence 截断稳定且原有校验不放宽； Verify: 见 SP864-T1。
-- [ ] `SP864-T2` Owner: implementation agent; Done when: exact range 路径原子且不改变 sibling ranges； Verify: 见 SP864-T2。
-- [ ] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 进程组在 deadline 后有界终止并执行统一 child/reader cleanup； Verify: 见 SP864-T3。
-- [ ] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
-- [ ] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
+- [x] `SP864-T1` Owner: implementation agent; Done when: transcript evidence 截断稳定且原有校验不放宽； Verify: 见 SP864-T1。
+- [x] `SP864-T2` Owner: implementation agent; Done when: exact range 路径原子且不改变 sibling ranges； Verify: 见 SP864-T2。
+- [x] `SP864-T3` Owner: implementation agent; Done when: 所有 Git metadata 进程组在 deadline 后有界终止并执行统一 child/reader cleanup； Verify: 见 SP864-T3。
+- [x] `SP864-T4` Owner: implementation agent; Done when: topic_key 使用共享 slug 规则且空结果 fail closed； Verify: 见 SP864-T4。
+- [x] `SP864-T5` Owner: release implementation agent; Done when: patch release 表面和 changelog 同步； Verify: 见 SP864-T5。
 
 ### SP864-T1 — 稳定 transcript evidence 截断
 

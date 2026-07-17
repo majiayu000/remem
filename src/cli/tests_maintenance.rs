@@ -2,7 +2,7 @@ use super::query_types::{
     ProfileSnapshotFormatArg, UserClaimScopeArg, UserClaimSensitivityArg, UserClaimTypeArg,
     UserClaimsAction, UserProfileAction, UserReviewAction, UserSummaryAction,
 };
-use super::types::{Cli, Commands, EmbeddingAction, UserAction};
+use super::types::{Cli, Commands, EmbeddingAction, PendingAction, UserAction};
 use clap::Parser;
 
 #[test]
@@ -41,6 +41,61 @@ fn cli_parses_cleanup_archived_failures_custom_horizon() {
             archived_failures, ..
         } => assert_eq!(archived_failures, Some(30)),
         _ => panic!("expected cleanup command"),
+    }
+}
+
+const EXTRACTION_RANGE_COMMANDS: [&str; 3] = [
+    "list-extraction-ranges",
+    "retry-extraction-ranges",
+    "quarantine-extraction-ranges",
+];
+
+#[test]
+fn pending_exact_range_id_accepts_implicit_default_limit() {
+    for command in EXTRACTION_RANGE_COMMANDS {
+        assert!(
+            Cli::try_parse_from(["remem", "pending", command, "--id", "42"]).is_ok(),
+            "{command} should accept --id without an explicit limit"
+        );
+    }
+    let list = Cli::parse_from([
+        "remem",
+        "pending",
+        "list-extraction-ranges",
+        "--id",
+        "41",
+        "--json",
+    ]);
+    match list.command {
+        Commands::Pending {
+            action: PendingAction::ListExtractionRanges { id, limit, .. },
+        } => assert_eq!((id, limit), (Some(41), None)),
+        _ => panic!("expected exact extraction range list"),
+    }
+}
+
+#[test]
+fn pending_exact_range_id_rejects_non_positive_before_dispatch() {
+    for command in EXTRACTION_RANGE_COMMANDS {
+        for id in ["0", "-1"] {
+            assert!(
+                Cli::try_parse_from(["remem", "pending", command, "--id", id]).is_err(),
+                "{command} should reject non-positive --id {id}"
+            );
+        }
+    }
+}
+
+#[test]
+fn pending_exact_range_id_conflicts_with_batch_filters() {
+    for command in EXTRACTION_RANGE_COMMANDS {
+        for (flag, value) in [("--project", "/repo"), ("--limit", "1")] {
+            assert!(
+                Cli::try_parse_from(["remem", "pending", command, "--id", "42", flag, value,])
+                    .is_err(),
+                "{command} should reject explicit {flag} with --id"
+            );
+        }
     }
 }
 

@@ -5,8 +5,11 @@ use crate::cli::types::PendingAction;
 use crate::db::{
     self,
     pending::admin::{FailedPendingRow, LegacyPendingMigration},
-    ExtractionReplayRange,
+    ExtractionReplayRange, ExtractionReplayRangeEvidence,
 };
+
+const LIST_EXTRACTION_RANGES_DEFAULT_LIMIT: i64 = 20;
+const MUTATE_EXTRACTION_RANGES_DEFAULT_LIMIT: i64 = 100;
 
 pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
     match action {
@@ -163,11 +166,22 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             }
         }
         PendingAction::ListExtractionRanges {
+            id,
             project,
             limit,
             json,
         } => {
             let conn = db::open_db_read_only()?;
+            if let Some(range_id) = id {
+                let evidence = db::get_extraction_replay_range_evidence(&conn, range_id)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&evidence)?);
+                } else {
+                    print_exact_extraction_range(&evidence);
+                }
+                return Ok(());
+            }
+            let limit = limit.unwrap_or(LIST_EXTRACTION_RANGES_DEFAULT_LIMIT);
             let ranges = db::list_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
             if json {
                 println!(
@@ -209,41 +223,101 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             }
         }
         PendingAction::RetryExtractionRanges {
+            id,
             project,
             limit,
             dry_run,
         } => {
+            let limit = limit.unwrap_or(MUTATE_EXTRACTION_RANGES_DEFAULT_LIMIT);
             if dry_run {
                 let conn = db::open_db_read_only()?;
-                let count =
-                    db::count_retryable_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Would requeue {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::ensure_extraction_replay_range_retryable(&conn, range_id)?;
+                    println!("Would requeue exhausted extraction range {range_id}.");
+                } else {
+                    let count = db::count_retryable_extraction_replay_ranges(
+                        &conn,
+                        project.as_deref(),
+                        limit,
+                    )?;
+                    println!("Would requeue {} exhausted extraction range(s).", count);
+                }
             } else {
                 let conn = db::open_db()?;
-                let count = db::retry_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Requeued {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::retry_extraction_replay_range(&conn, range_id)?;
+                    println!("Requeued exhausted extraction range {range_id}.");
+                } else {
+                    let count =
+                        db::retry_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                    println!("Requeued {} exhausted extraction range(s).", count);
+                }
             }
         }
         PendingAction::QuarantineExtractionRanges {
+            id,
             project,
             limit,
             dry_run,
         } => {
+            let limit = limit.unwrap_or(MUTATE_EXTRACTION_RANGES_DEFAULT_LIMIT);
             if dry_run {
                 let conn = db::open_db_read_only()?;
-                let count =
-                    db::count_retryable_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Would quarantine {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::ensure_extraction_replay_range_retryable(&conn, range_id)?;
+                    println!("Would quarantine exhausted extraction range {range_id}.");
+                } else {
+                    let count = db::count_retryable_extraction_replay_ranges(
+                        &conn,
+                        project.as_deref(),
+                        limit,
+                    )?;
+                    println!("Would quarantine {} exhausted extraction range(s).", count);
+                }
             } else {
                 let conn = db::open_db()?;
-                let count =
-                    db::quarantine_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
-                println!("Quarantined {} exhausted extraction range(s).", count);
+                if let Some(range_id) = id {
+                    db::quarantine_extraction_replay_range(&conn, range_id)?;
+                    println!("Quarantined exhausted extraction range {range_id}.");
+                } else {
+                    let count =
+                        db::quarantine_extraction_replay_ranges(&conn, project.as_deref(), limit)?;
+                    println!("Quarantined {} exhausted extraction range(s).", count);
+                }
             }
         }
     }
 
     Ok(())
+}
+
+fn print_exact_extraction_range(evidence: &ExtractionReplayRangeEvidence) {
+    let range = &evidence.range;
+    println!(
+        "Extraction replay range [{}] {} | {} | {} | events={}..{} | status={} | attempts={}",
+        range.id,
+        range.project,
+        range.session_id.as_deref().unwrap_or("<none>"),
+        range.task_kind,
+        range.from_event_id,
+        range.to_event_id,
+        range.status,
+        range.attempts
+    );
+    if let Some(error) = range.last_error.as_deref() {
+        println!("  range error: {}", db::truncate_str(error, 120));
+    }
+    if let Some(task) = &evidence.replay_task {
+        println!(
+            "  replay task [{}] status={} | attempts={}",
+            task.id, task.status, task.attempts
+        );
+        if let Some(error) = task.last_error.as_deref() {
+            println!("  task error: {}", db::truncate_str(error, 120));
+        }
+    } else {
+        println!("  replay task: <none>");
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -328,5 +402,39 @@ mod tests {
         assert_eq!(parsed["migrated"][0]["event_id"], "legacy-pending-7");
         assert_eq!(parsed["migrated"][0]["host"], "codex-cli");
         Ok(())
+    }
+
+    #[test]
+    fn exact_extraction_range_json_has_terminal_task_evidence() {
+        let evidence = ExtractionReplayRangeEvidence {
+            range: ExtractionReplayRange {
+                id: 308,
+                source_task_id: 10,
+                replay_task_id: Some(11),
+                task_kind: "observation_extract".to_string(),
+                project: "/repo".to_string(),
+                session_id: Some("session".to_string()),
+                from_event_id: 20,
+                to_event_id: 30,
+                status: "replayed".to_string(),
+                attempts: 1,
+                updated_at_epoch: 40,
+                last_error: None,
+            },
+            replay_task: Some(db::ExtractionReplayTaskEvidence {
+                id: 11,
+                status: "done".to_string(),
+                attempts: 0,
+                last_error: None,
+            }),
+        };
+
+        let value = serde_json::to_value(evidence).expect("serialize exact evidence");
+        assert_eq!(value["range"]["id"], 308);
+        assert_eq!(value["range"]["status"], "replayed");
+        assert_eq!(value["replay_task"]["id"], 11);
+        assert_eq!(value["replay_task"]["status"], "done");
+        assert!(value.get("payload").is_none());
+        assert!(value.get("provider").is_none());
     }
 }

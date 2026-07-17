@@ -214,13 +214,8 @@ pub(crate) fn open_configured_read_only_connection(
 }
 
 pub fn detect_git_branch(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let output =
+        crate::git_util::git_output_soft(Path::new(cwd), &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -253,13 +248,8 @@ impl Drop for DataDirOverrideGuard {
 }
 
 pub fn detect_git_commit(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let output =
+        crate::git_util::git_output_soft(Path::new(cwd), &["rev-parse", "--short", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
