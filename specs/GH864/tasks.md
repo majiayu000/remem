@@ -145,13 +145,14 @@ GH-864
 - Files: `src/cli/types.rs`, `src/cli/worker_types.rs`, `src/cli/mod.rs`, `src/cli/dispatch.rs`, `src/cli/actions/pending.rs`, `src/cli/tests_maintenance.rs`, `src/db/extraction_replay.rs`, `src/db/extraction/retry_regression_tests.rs`, `src/db/extraction/lifecycle.rs`, `src/db/extraction/tests.rs`, `src/extraction_worker.rs`, `src/worker.rs`, README、failure-lifecycle contract 与 release version surfaces
 - Covers: B-020, B-021, B-022
 - Done when:
-  - `--include-archived` 在解析阶段只允许正数 exact `--id`；archived quarantine 同时要求
-    `--acknowledge-quarantine`，普通 exact/batch 集合不变。
-  - retry 事务用同一双确认 predicate 复验，清除目标 archive marker 并只 requeue 目标；失败、竞争与
-    sibling 均无副作用。
+  - `--include-archived` 在解析阶段只允许正数 exact `--id` 与 `--dry-run`；archived quarantine 同时要求
+    `--acknowledge-quarantine`，pending 命令不提供 archived 写路径，普通 exact/batch 集合不变。
+  - exact worker 的一个事务用同一双确认 predicate 复验，清除目标 archive marker、只 requeue 目标并立即
+    exact-claim；事务不能提交 daemon 可见的未 claim pending task，失败、竞争与 sibling 均无副作用。
   - `worker --once --replay-range-id <id> --acknowledge-quarantine --include-archived --profile <name>` 在任何
-    写入前验证 profile 并取得 singleton，持锁 requeue/claim/process 指定 range 的 task 一次；ID claim 保留
-    普通 retry readiness，不执行全局 maintenance、其它 extraction、job 或 backfill。
+    写入前验证 profile 并取得 singleton，持锁原子 requeue+claim 后 process 指定 range 的 task 一次；ID
+    claim 保留普通 retry readiness。非成功结果和 exact owner 过期 lease 均恢复 archived quarantine，不能
+    进入 daemon 默认 profile 路径；不执行全局 maintenance、其它 extraction、job 或 backfill。
   - CLI 类型拆分后受影响文件保持低于 800 行；版本面同步到 0.6.4。
 - Verify:
   - `cargo test archived_quarantined_range_requires_dual_exact_acknowledgement --locked`
@@ -203,7 +204,8 @@ GH-864
 - Covers: B-015, B-019, B-020, B-021, B-022
 - Done when:
   - 记录成功的 Claude profile live check，先执行带 quarantine/archive 双确认的 exact-ID dry-run，再由持锁
-    exact worker 完成同一 range 的 retry、claim 与处理；锁被 daemon 持有时在写入前失败。
+    exact worker 原子完成同一 range 的 retry+claim 并处理；锁被 daemon 持有时在写入前失败，非成功时保持
+    archived quarantine 而不是留下 daemon 可 claim 的 pending task。
   - 等待 worker 终态后运行 exact list；GH-864 记录 range 308 的精确 range/task ID、状态、attempt/error
     以及对应 replay task 的已脱敏 provider/profile 日志证据。
   - 失败时保留 issue open 并记录可诊断错误，不批量重试 sibling ranges。

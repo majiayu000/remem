@@ -145,21 +145,28 @@ archived、active-task、replayed 和重复确认的失败路径。生产 range 
 
 ### 7. Archived quarantine 与 exact worker follow-up
 
-`RetryExtractionRanges` 增加 `include_archived: bool`，Clap 通过 `requires = "id"` 限制为 exact 路径。
+`RetryExtractionRanges` 增加 `include_archived: bool`，Clap 通过
+`requires_all = ["id", "dry_run", "acknowledge_quarantine"]` 限制为 exact 双确认只读验证路径。
 DB predicate 分别接收 quarantine/archive 两个显式布尔值：archive 确认只放宽
 `archived_at_epoch IS NULL`，quarantine 确认只放宽状态；因此 range 308 必须同时提供两个 flag。
-事务内使用同一 predicate 复验，enqueue 成功时现有 range update 一并把 `archived_at_epoch` 清空；batch
-和自动 lifecycle 始终传入两个 `false`。fixture 断言 archive marker 清除、active/terminal 拒绝和 sibling
-不变。
+pending CLI 只用该 predicate dry-run；任何非 dry-run archived retry 在参数解析阶段失败并提示使用 exact
+worker。batch 和自动 lifecycle 始终传入两个 `false`。fixture 断言只读双确认、active/terminal 拒绝和
+sibling 不变。
 
 `Worker` 参数拆到 `src/cli/worker_types.rs`，避免继续增长接近 800 行的 `src/cli/types.rs`。新增
 `--replay-range-id <positive-i64>`（requires `--once`）、双确认 flag 和 `--profile <name>`。exact worker
-先验证 profile，再取得 worker singleton；锁被 daemon 持有时在任何 DB 写入前失败。持锁后调用 exact
-range retry 事务并取得 replay task ID，再通过 `db::claim_extraction_task_by_id` 只 claim 该 task。ID claim
-复用普通 claim 的 `status='pending' AND (next_retry_epoch IS NULL OR next_retry_epoch <= now)` readiness，
-不存在、未到期或竞争返回明确错误，不调用普通 priority query。随后只调用一次 extraction processor 并
-沿用既有 done/defer/fail transition；不执行 maintenance sweep、job 或 backfill。task clone 仅在内存中
-覆盖 `ai_profile`，无需 schema migration。
+先验证 profile，再取得 worker singleton；锁被 daemon 持有时在任何 DB 写入前失败。持锁后调用新的 DB
+事务 API，在一个 transaction 内以双确认 predicate 复验 range、建立 replay task，并通过 exact ID 与普通
+`status='pending' AND (next_retry_epoch IS NULL OR next_retry_epoch <= now)` readiness 立即取得 lease；事务
+不得提交一个尚未 exact-claim 的 pending replay task。不存在、未到期或竞争返回明确错误且整个事务回滚，
+不调用普通 priority query。
+
+随后 exact processor 只处理已 claim 的 task 一次，并在内存 task clone 覆盖已验证的 `ai_profile`。done
+沿用正常完成 transition；defer、wait、timeout、provider error 或其它非成功结果不进入普通 retry 队列，
+而是在一个事务中把 replay task 标成 failed/archived，并把 range 恢复为 quarantined/archived，返回明确错误。
+exact lease owner 使用固定可识别前缀；过期 lease recovery 对该前缀执行相同隔离归档，而不是普通 pending
+requeue，从而覆盖进程在 model call 或 transition 前被终止的情况。无需持久化 profile 或新增 schema；再次
+恢复必须由运维人员重跑带 profile 的 exact worker。不执行 maintenance sweep、job 或 backfill。
 
 ## Product-to-Test Mapping
 
@@ -225,12 +232,12 @@ quarantined exact retry
 
 archived quarantined exact retry
   -> --id + --acknowledge-quarantine + --include-archived required
-  -> transaction revalidates exact target and no active replay task
-  -> clear archive marker + requeue one target; batch/default unchanged
+  -> pending command permits read-only --dry-run only
   -> worker --once --replay-range-id <id> + dual ack + --profile claude
   -> acquire singleton before retry; fail if daemon owns lock
-  -> retry returns task ID; claim only if pending and retry-due
+  -> one transaction: revalidate + clear archive + requeue + exact claim
   -> process one task only; no global drain or fallback
+  -> non-success / expired exact lease returns task+range to archived quarantine
 
 LLM topic_key
   -> required + trim
@@ -259,6 +266,10 @@ LLM topic_key
 - **给 batch retry 增加 include-quarantined**：拒绝。批量确认无法证明运维人员逐项审查了隔离原因。
 - **直接 SQL 清除 range 308 的 archive marker**：拒绝。绕过事务复验、双确认与 sibling 证据。
 - **先 requeue 再另起 exact worker**：拒绝。daemon 可在两个命令之间按默认 profile 抢先 claim。
+- **持锁但分别提交 requeue 与 claim**：拒绝。进程在两次 transaction 之间退出会留下 daemon 可 claim 的
+  pending task；二者必须原子提交。
+- **只在 task clone 覆盖 profile 后沿用普通 retry**：拒绝。defer/timeout/中断后的普通 daemon 会从 captured
+  evidence 重新解析默认 profile；非成功 exact task 必须重新归档隔离。
 - **使用普通 `worker --once` 等待 308**：拒绝。它会继续排空其它 ready work，无法证明 exact 范围。
 - **临时改全局 codex profile 为 Claude**：拒绝。会影响其它任务，且日志 profile 身份不诚实。
 
@@ -278,8 +289,9 @@ LLM topic_key
 - **Maintenance**：四项修复共用一个 release bump，但保持四个原子 commits，便于回溯和 cherry-pick。
 - **Quarantine safety**：显式确认是用户可见的窄授权，不是通用 force；parser、共享 predicate 与事务
   重验必须使用同一个布尔值，避免 dry-run/执行漂移。
-- **Archive/worker safety**：archive 与 quarantine 使用独立确认位；exact worker 在任何写入前验证 profile
-  并取得 singleton，ID claim 保留 retry readiness，且不运行全局 maintenance/drain。
+- **Archive/worker safety**：archive 与 quarantine 使用独立确认位；pending CLI 对 archive 只有 dry-run。
+  exact worker 在任何写入前验证 profile 并取得 singleton，requeue+ID claim 原子提交且保留 retry
+  readiness；非成功和 exact lease 过期均重新归档隔离，且不运行全局 maintenance/drain。
 
 ## 测试计划
 

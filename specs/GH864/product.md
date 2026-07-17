@@ -100,17 +100,21 @@ GH-864
 19. **B-019**：range 308 的运维证据必须同时记录 quarantine 确认、成功的 Claude profile live check、
     exact dry-run、实际 retry、最终 range/task 状态及已脱敏 provider/profile 日志；任一步失败时 issue
     保持 open，且不得用直接数据库更新或批量 retry 代替。
-20. **B-020**：`retry-extraction-ranges` 的 `--include-archived` 只能与正数 exact `--id` 一起使用，且
-    archived `quarantined` 目标必须同时提供 `--acknowledge-quarantine`。缺少任一确认时 dry-run 与执行
-    都必须失败；普通 exact、所有 batch、active-task、`requeued|replayed` 和不存在目标的集合不变。
-21. **B-021**：带双重显式确认的 archived exact retry 必须在同一事务中重新验证目标 ID、状态和无 active
-    replay task，清除该目标的 `archived_at_epoch` 并只 requeue 该目标。失败、重复、竞争或确认不完整不得
-    修改目标或 sibling；成功后不得留下 pending work 带 archived marker。
+20. **B-020**：`retry-extraction-ranges` 的 `--include-archived` 只能与正数 exact `--id` 和 `--dry-run`
+    一起使用，且 archived `quarantined` 目标必须同时提供 `--acknowledge-quarantine`。缺少任一确认或尝试
+    从 pending 命令执行写入时都必须失败；普通 exact、所有 batch、active-task、`requeued|replayed` 和
+    不存在目标的集合不变。
+21. **B-021**：带双重显式确认的 archived exact retry 只能由持有 worker singleton 的 exact worker 执行；
+    它必须在同一事务中重新验证目标 ID、状态和无 active replay task，清除该目标的 archive marker、只
+    requeue 该目标并立即取得该 replay task 的 exact lease，事务提交前不得暴露可由 daemon claim 的
+    pending task。失败、重复、竞争或确认不完整不得修改目标或 sibling。
 22. **B-022**：worker 必须提供只恢复一个正数 replay range ID 的 `--once` 模式；它在任何写入前取得
-    worker singleton，持锁执行 B-020/B-021、取得新 replay task ID，再以与普通 claim 相同的 pending/到期
-    predicate 只 claim/process 该 task。`--profile` 在写入前通过现有 resolver 验证并只用于该 task；锁被
-    daemon 持有、task 未到期、缺失或竞争时失败且不回退到全局 claim、maintenance、job、backfill 或第二个
-    task。普通 `remem worker [--once]` 行为保持不变。
+    worker singleton，持锁原子执行 B-020/B-021，并以与普通 claim 相同的 pending/到期 predicate 只
+    process 已 claim 的 task。`--profile` 在写入前通过现有 resolver 验证并只用于该 task；done 正常提交，
+    defer/wait/timeout/provider error 等非成功结果必须把 task 与 range 恢复为 archived quarantine。exact
+    owner 的过期 lease 也必须归档隔离而非普通 requeue，保证中断后不会被 daemon 以默认 profile claim。
+    锁被 daemon 持有、task 未到期、缺失或竞争时失败，且不回退到全局 claim、maintenance、job、backfill
+    或第二个 task。普通 `remem worker [--once]` 行为保持不变。
 
 ## 验收标准
 
@@ -130,9 +134,9 @@ GH-864
 - [ ] CLI parser 证明 `--acknowledge-quarantine` 缺少 `--id` 时失败；DB 双-range fixture 证明只有显式
       确认的 quarantined 目标被 requeue，默认 exact 与 batch 均继续跳过 quarantine。
 - [ ] README 记录 exact-ID list/retry/quarantine 示例，failure-lifecycle PRODUCT/TECH 同步精确恢复合同。
-- [ ] archived quarantine fixture 证明只有 `--id + --include-archived + --acknowledge-quarantine` 可恢复目标，
-      且同一事务清除 archive marker；exact worker fixture 证明持锁后才写入、只 claim 目标 task、保留
-      retry readiness 并使用显式 profile。
+- [ ] archived quarantine fixture 证明 pending 命令只允许双确认 dry-run，且只有 exact worker 可写恢复；
+      exact worker fixture 证明持锁后才写入、同一事务 requeue+claim 目标 task、保留 retry readiness、使用
+      显式 profile，并在非成功或 exact lease 过期后重新归档而不暴露给 daemon。
 
 ## 边界情况
 

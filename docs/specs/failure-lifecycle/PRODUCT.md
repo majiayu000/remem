@@ -116,14 +116,17 @@ surface that #381/#383 evidence collection depends on.
   transaction, changes only that target, and rejects missing, non-positive,
   active-task, or otherwise non-retryable targets without batch fallback;
   archived targets are also rejected unless exact retry supplies the explicit
-  archived-recovery opt-in. Exact retry of a quarantined range additionally requires an
-  explicit acknowledgement; without it the sticky quarantine state is
-  preserved. Archived quarantine additionally requires exact
-  `--include-archived`; the transaction clears only that target's archive
-  marker. Neither acknowledgement widens active-task, terminal, or batch
-  eligibility. An exact replay worker acquires the worker singleton before it
-  revalidates/requeues the range, then claims and processes only the returned
-  task with an explicitly validated profile, without a daemon race or sibling drain.
+  archived-recovery opt-in. Exact retry of a quarantined range additionally
+  requires an explicit acknowledgement; without it the sticky quarantine
+  state is preserved. Archived quarantine additionally requires exact
+  `--include-archived`, but the pending command exposes that combination only
+  as read-only dry-run validation. Neither acknowledgement widens active-task,
+  terminal, or batch eligibility. An exact replay worker validates the profile
+  and acquires the worker singleton before any write, then revalidates,
+  requeues, and claims only that target in one transaction. It processes only
+  the claimed task. Any non-successful exact attempt, including expired exact
+  worker ownership after interruption, returns the task and range to archived
+  quarantine rather than exposing default-profile work to a daemon.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.
