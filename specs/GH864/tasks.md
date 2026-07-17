@@ -199,7 +199,9 @@ GH-864
 - Evidence (2026-07-18): implementation PR #879 head
   `7336ec24df52dbf0d61798393fab9e6264ae6b80` passed the full 18-check PR preflight, GitHub CI,
   independent Codex review, resolved-thread audit, and the required SpecRail PR gate (`allowed`) before merge
-  `d38c21e9168cf028edbb1fa6598fdeb3e932a8cd`.
+  `d38c21e9168cf028edbb1fa6598fdeb3e932a8cd`. The Git subprocess lifecycle and exact-range DB transaction
+  maintainer review is recorded in
+  [GH-864](https://github.com/majiayu000/remem/issues/864#issuecomment-5006885226).
 
 ### SP864-T7 — 真实 range 308 运维收口
 
@@ -223,7 +225,9 @@ GH-864
   308; exact task 23467 processed source task 6359 for events 12162..12177 and finished `done`; range 308
   finished `replayed` with `last_error = null`. The redacted operator log records profile `claude`, executor
   `claude-cli`, raw archive `duplicate_only` (626 duplicates, zero parse/insert/read errors), and exact replay
-  completion. Full production evidence is recorded in GH-864.
+  completion. The quarantine acknowledgement, live profile check, exact dry-run, exact worker runs, final exact
+  list, and redacted provider/profile logs are recorded in the
+  [GH-864 production evidence](https://github.com/majiayu000/remem/issues/864#issuecomment-5006703434).
 
 ## Handoff Notes
 

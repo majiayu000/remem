@@ -130,7 +130,8 @@ GH-864
 - [x] `v0.2-release-audit`、既有 kebab-case/snake_case key、重复标点及纯标点 key 均有 parser 测试。
 - [x] `cargo fmt --check`、`cargo check --locked`、focused tests、`cargo test --locked --quiet`、
       Clippy、插件版本同步与 PR preflight 通过。
-- [x] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核。
+- [x] 维护者对 Git 子进程生命周期和 exact-range DB 事务完成安全/正确性审核（见
+      [GH-864 维护者审查记录](https://github.com/majiayu000/remem/issues/864#issuecomment-5006885226)）。
 - [x] Claude profile 可用后，range 308 通过 exact-ID 路径重放并把结果记录在 GH-864。
 - [x] CLI parser 证明 `--acknowledge-quarantine` 缺少 `--id` 时失败；DB 双-range fixture 证明只有显式
       确认的 quarantined 目标被 requeue，默认 exact 与 batch 均继续跳过 quarantine。
