@@ -226,13 +226,18 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             id,
             project,
             limit,
+            acknowledge_quarantine,
             dry_run,
         } => {
             let limit = limit.unwrap_or(MUTATE_EXTRACTION_RANGES_DEFAULT_LIMIT);
             if dry_run {
                 let conn = db::open_db_read_only()?;
                 if let Some(range_id) = id {
-                    db::ensure_extraction_replay_range_retryable(&conn, range_id)?;
+                    db::ensure_extraction_replay_range_retryable(
+                        &conn,
+                        range_id,
+                        acknowledge_quarantine,
+                    )?;
                     println!("Would requeue exhausted extraction range {range_id}.");
                 } else {
                     let count = db::count_retryable_extraction_replay_ranges(
@@ -245,7 +250,7 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             } else {
                 let conn = db::open_db()?;
                 if let Some(range_id) = id {
-                    db::retry_extraction_replay_range(&conn, range_id)?;
+                    db::retry_extraction_replay_range(&conn, range_id, acknowledge_quarantine)?;
                     println!("Requeued exhausted extraction range {range_id}.");
                 } else {
                     let count =
@@ -264,7 +269,7 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
             if dry_run {
                 let conn = db::open_db_read_only()?;
                 if let Some(range_id) = id {
-                    db::ensure_extraction_replay_range_retryable(&conn, range_id)?;
+                    db::ensure_extraction_replay_range_retryable(&conn, range_id, false)?;
                     println!("Would quarantine exhausted extraction range {range_id}.");
                 } else {
                     let count = db::count_retryable_extraction_replay_ranges(

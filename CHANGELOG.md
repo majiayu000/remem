@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.3` for GH-864: operators can explicitly
+  acknowledge and retry one quarantined extraction replay range by exact ID;
+  dry-run and execution share the same transactional eligibility checks while
+  default exact retry and every batch retry continue to exclude quarantine.
 - Staged source version `0.6.2` for GH-864: transcript evidence truncation is
   stable across replay, Git branch/commit probes use bounded process-group and
   pipe-reader cleanup, exhausted extraction ranges support exact-ID

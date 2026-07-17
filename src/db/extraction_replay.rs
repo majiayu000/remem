@@ -153,13 +153,15 @@ fn query_retryable_replay_range_ids(
     conn: &Connection,
     project: Option<&str>,
     range_id: Option<i64>,
+    acknowledge_quarantine: bool,
     limit: i64,
 ) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare(
         "SELECT r.id
          FROM extraction_replay_ranges r
          JOIN projects p ON p.id = r.project_id
-         WHERE r.status IN ('pending', 'failed')
+         WHERE (r.status IN ('pending', 'failed')
+                OR (?3 = 1 AND r.status = 'quarantined'))
            AND r.archived_at_epoch IS NULL
            AND NOT EXISTS (
              SELECT 1
@@ -170,17 +172,23 @@ fn query_retryable_replay_range_ids(
            AND (?1 IS NULL OR p.project_path = ?1)
            AND (?2 IS NULL OR r.id = ?2)
          ORDER BY r.updated_at_epoch ASC, r.id ASC
-         LIMIT ?3",
+         LIMIT ?4",
     )?;
-    let rows = stmt.query_map(params![project, range_id, limit.max(1)], |row| {
-        row.get::<_, i64>(0)
-    })?;
+    let rows = stmt.query_map(
+        params![project, range_id, acknowledge_quarantine, limit.max(1)],
+        |row| row.get::<_, i64>(0),
+    )?;
     crate::db::query::collect_rows(rows)
 }
 
-pub fn ensure_extraction_replay_range_retryable(conn: &Connection, range_id: i64) -> Result<()> {
+pub fn ensure_extraction_replay_range_retryable(
+    conn: &Connection,
+    range_id: i64,
+    acknowledge_quarantine: bool,
+) -> Result<()> {
     ensure!(range_id > 0, "extraction replay range id must be positive");
-    let range_ids = query_retryable_replay_range_ids(conn, None, Some(range_id), 1)?;
+    let range_ids =
+        query_retryable_replay_range_ids(conn, None, Some(range_id), acknowledge_quarantine, 1)?;
     ensure!(
         range_ids == [range_id],
         "extraction replay range {range_id} is not retryable"
@@ -188,17 +196,21 @@ pub fn ensure_extraction_replay_range_retryable(conn: &Connection, range_id: i64
     Ok(())
 }
 
-pub fn retry_extraction_replay_range(conn: &Connection, range_id: i64) -> Result<()> {
+pub fn retry_extraction_replay_range(
+    conn: &Connection,
+    range_id: i64,
+    acknowledge_quarantine: bool,
+) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    ensure_extraction_replay_range_retryable(&tx, range_id)?;
-    enqueue_replay_extraction_task(&tx, range_id)?;
+    ensure_extraction_replay_range_retryable(&tx, range_id, acknowledge_quarantine)?;
+    enqueue_replay_extraction_task(&tx, range_id, acknowledge_quarantine)?;
     tx.commit()?;
     Ok(())
 }
 
 pub fn quarantine_extraction_replay_range(conn: &Connection, range_id: i64) -> Result<()> {
     let tx = conn.unchecked_transaction()?;
-    ensure_extraction_replay_range_retryable(&tx, range_id)?;
+    ensure_extraction_replay_range_retryable(&tx, range_id, false)?;
     let now = chrono::Utc::now().timestamp();
     tx.execute(
         "UPDATE extraction_replay_ranges
@@ -217,9 +229,9 @@ pub fn retry_extraction_replay_ranges(
     limit: i64,
 ) -> Result<usize> {
     let tx = conn.unchecked_transaction()?;
-    let range_ids = query_retryable_replay_range_ids(&tx, project, None, limit)?;
+    let range_ids = query_retryable_replay_range_ids(&tx, project, None, false, limit)?;
     for range_id in &range_ids {
-        enqueue_replay_extraction_task(&tx, *range_id)?;
+        enqueue_replay_extraction_task(&tx, *range_id, false)?;
     }
     tx.commit()?;
     Ok(range_ids.len())
@@ -231,7 +243,7 @@ pub fn quarantine_extraction_replay_ranges(
     limit: i64,
 ) -> Result<usize> {
     let tx = conn.unchecked_transaction()?;
-    let range_ids = query_retryable_replay_range_ids(&tx, project, None, limit)?;
+    let range_ids = query_retryable_replay_range_ids(&tx, project, None, false, limit)?;
     let now = chrono::Utc::now().timestamp();
     for range_id in &range_ids {
         tx.execute(
@@ -246,14 +258,20 @@ pub fn quarantine_extraction_replay_ranges(
     Ok(range_ids.len())
 }
 
-pub(crate) fn enqueue_replay_extraction_task(conn: &Connection, range_id: i64) -> Result<i64> {
+pub(crate) fn enqueue_replay_extraction_task(
+    conn: &Connection,
+    range_id: i64,
+    acknowledge_quarantine: bool,
+) -> Result<i64> {
     let (task_kind, host_id, workspace_id, project_id, session_row_id, from_event_id, to_event_id) =
         conn.query_row(
             "SELECT task_kind, host_id, workspace_id, project_id, session_row_id,
                     from_event_id, to_event_id
              FROM extraction_replay_ranges
-             WHERE id = ?1 AND status IN ('pending', 'failed')",
-            params![range_id],
+             WHERE id = ?1
+               AND (status IN ('pending', 'failed')
+                    OR (?2 = 1 AND status = 'quarantined'))",
+            params![range_id, acknowledge_quarantine],
             |row| {
                 Ok((
                     row.get::<_, String>(0)?,
