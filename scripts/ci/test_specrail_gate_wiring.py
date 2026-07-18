@@ -100,11 +100,20 @@ def assert_runtime_verifier() -> None:
             ("aliased importlib module", "import importlib; il = importlib; il.import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
             ("getattr importlib import", "import importlib; getattr(importlib, 'import_module')('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
             ("foreign import_module attribute", "import checks_loader_stub as stub; stub.import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("importlib util submodule", "import importlib.util as loader_util; spec = loader_util.spec_from_file_location('specrail_untracked_helper', 'checks/specrail_untracked_helper.py'); module = loader_util.module_from_spec(spec); spec.loader.exec_module(module)", "checks/specrail_untracked_helper.py", "UNSUPPORTED IMPORTLIB LOADER SURFACE"),
+            ("importlib named util", "from importlib import util as loader_util; spec = loader_util.spec_from_file_location('specrail_untracked_helper', 'checks/specrail_untracked_helper.py'); module = loader_util.module_from_spec(spec); spec.loader.exec_module(module)", "checks/specrail_untracked_helper.py", "UNSUPPORTED IMPORTLIB LOADER SURFACE"),
+            ("source file loader alias", "from importlib.machinery import SourceFileLoader as Loader; Loader('specrail_untracked_helper', 'checks/specrail_untracked_helper.py').load_module()", "checks/specrail_untracked_helper.py", "UNSUPPORTED IMPORTLIB LOADER SURFACE"),
+            ("exec file contents", "from pathlib import Path; exec(Path('checks/specrail_untracked_helper.py').read_text())", "checks/specrail_untracked_helper.py", "UNSUPPORTED DYNAMIC CODE EXECUTION"),
+            ("eval file contents", "from pathlib import Path; eval(Path('checks/specrail_untracked_helper.py').read_text().splitlines()[-1])", "checks/specrail_untracked_helper.py", "UNSUPPORTED DYNAMIC CODE EXECUTION"),
+            ("import-only exec alias", "from builtins import exec as run_code", None, "UNSUPPORTED DYNAMIC CODE EXECUTION"),
+            ("import-only eval", "from builtins import eval", None, "UNSUPPORTED DYNAMIC CODE EXECUTION"),
+            ("imported exec alias", "from builtins import exec as run_code; from pathlib import Path; run_code(Path('checks/specrail_untracked_helper.py').read_text())", "checks/specrail_untracked_helper.py", "UNSUPPORTED DYNAMIC CODE EXECUTION"),
+            ("builtins eval attribute", "import builtins as builtin_api; from pathlib import Path; builtin_api.eval(Path('checks/specrail_untracked_helper.py').read_text().splitlines()[-1])", "checks/specrail_untracked_helper.py", "UNSUPPORTED DYNAMIC CODE EXECUTION"),
             ("sys path insert", "import sys; sys.path.insert(0, 'tools'); import specrail_untrusted_helper", "tools/specrail_untrusted_helper.py", "UNSUPPORTED SYS PATH ACCESS"),
             ("sys path assignment", "import sys; sys.path = ['tools'] + sys.path", None, "UNSUPPORTED SYS PATH ACCESS"),
             ("from sys import path alias", "from sys import path as search_path; search_path.append('tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
             ("sys star import", "from sys import *", None, "UNSUPPORTED SYS PATH ACCESS"),
-            ("importlib star import", "from importlib import *; import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "DYNAMIC IMPORT ALIAS"),
+            ("importlib star import", "from importlib import *; import_module('specrail_untracked_helper')", "checks/specrail_untracked_helper.py", "UNSUPPORTED IMPORTLIB LOADER SURFACE"),
             ("builtins star import", "from builtins import *", None, "DYNAMIC IMPORT ALIAS"),
             ("sys alias assignment", "import sys; s = sys; getattr(s, 'path').insert(0, 'tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
             ("sys import-alias getattr", "import sys as s; getattr(s, 'path').insert(0, 'tools')", None, "UNSUPPORTED SYS PATH ACCESS"),
@@ -161,6 +170,11 @@ def assert_runtime_verifier() -> None:
             assert unclassified_import.returncode != 0, f"{label} import must fail"
             assert "files match lock" in unclassified_import.stdout
             assert expected in unclassified_import.stderr
+            if expected in {
+                "UNSUPPORTED IMPORTLIB LOADER SURFACE",
+                "UNSUPPORTED DYNAMIC CODE EXECUTION",
+            }:
+                assert "checks/github_evidence_common.py" in unclassified_import.stderr
             if helper_relative and expected == "UNCLASSIFIED LOCAL IMPORT":
                 assert helper_relative in unclassified_import.stderr
             elif label == "path escape":

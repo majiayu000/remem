@@ -276,11 +276,19 @@ for relative_path in sorted(classified_checks_python):
     import_module_aliases = set()
     builtins_aliases = {"builtins"}
     builtin_import_aliases = set()
+    dynamic_code_names = {"exec", "eval"}
     sys_aliases = {"sys"}
     sys_path_aliases = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
+                if alias.name.startswith("importlib."):
+                    print(
+                        f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                        f"import {alias.name} is outside the import_module allowlist",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
                 if alias.name == "importlib":
                     importlib_aliases.add(alias.asname or alias.name)
                 elif alias.name == "builtins":
@@ -288,27 +296,96 @@ for relative_path in sorted(classified_checks_python):
                 elif alias.name == "sys":
                     sys_aliases.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom) and not node.level:
-            if node.module in {"importlib", "builtins"} and any(
+            module = node.module or ""
+            if module == "importlib" and any(
+                alias.name != "import_module" for alias in node.names
+            ):
+                print(
+                    f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                    f"from {module} import "
+                    f"{', '.join(alias.name for alias in node.names)} is outside "
+                    "the import_module allowlist",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if module.startswith("importlib."):
+                print(
+                    f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                    f"from {module} import ... is outside the import_module allowlist",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if module == "builtins" and any(
                 alias.name == "*" for alias in node.names
             ):
                 print(
                     f"DYNAMIC IMPORT ALIAS: {relative_path}: star import of "
-                    f"{node.module} cannot be classified safely",
+                    "builtins cannot be classified safely",
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
-            if node.module == "importlib":
+            if module == "builtins" and any(
+                alias.name in {"exec", "eval"} for alias in node.names
+            ):
+                print(
+                    f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                    f"from builtins import "
+                    f"{', '.join(alias.name for alias in node.names)} cannot be "
+                    "classified through the import graph",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if module == "importlib":
                 for alias in node.names:
                     if alias.name == "import_module":
                         import_module_aliases.add(alias.asname or alias.name)
-            elif node.module == "builtins":
+            elif module == "builtins":
                 for alias in node.names:
                     if alias.name == "__import__":
                         builtin_import_aliases.add(alias.asname or alias.name)
-            elif node.module == "sys":
+            elif module == "sys":
                 for alias in node.names:
                     if alias.name in {"path", "*"}:
                         sys_path_aliases.add(alias.asname or alias.name)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in dynamic_code_names:
+            print(
+                f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                f"{node.id} cannot be classified through the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in {"exec", "eval"}
+            and isinstance(node.value, ast.Name)
+            and node.value.id in builtins_aliases
+        ):
+            print(
+                f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                f"{node.value.id}.{node.attr} cannot be classified through "
+                "the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id in builtins_aliases
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in {"exec", "eval"}
+        ):
+            print(
+                f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                f"getattr({node.args[0].id}, {node.args[1].value!r}) cannot be "
+                "classified through the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
 
     # Fail closed on aliased dynamic-import callables and sys.path mutation:
     # only direct, literal importlib.import_module / __import__ calls are
