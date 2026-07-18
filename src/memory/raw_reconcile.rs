@@ -69,7 +69,17 @@ struct MessageKey {
     content_hash: String,
 }
 
-type SessionMessages = BTreeMap<i64, BTreeMap<MessageKey, usize>>;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SessionKey {
+    TranscriptIdentity(i64),
+    Legacy {
+        source_root: String,
+        project: String,
+        session_id: String,
+    },
+}
+
+type SessionMessages = BTreeMap<SessionKey, BTreeMap<MessageKey, usize>>;
 
 struct CapturedTranscript {
     identity: IdentityRecord,
@@ -90,20 +100,14 @@ pub(crate) fn reconcile_raw_archive(
     let captured = capture_candidates(conn, roots, since_epoch, until_epoch)?;
     let mut transcript_sessions = SessionMessages::new();
     let mut exclusions = ReconcileExclusions::default();
-    let mut candidate_ids = BTreeSet::new();
     let mut conflict_groups = BTreeSet::new();
 
     for candidate in captured {
         let identity = candidate.identity;
-        candidate_ids.insert(identity.id);
-        if identity.status == "conflict" {
-            conflict_groups.insert((
-                identity.source_root.clone(),
-                identity.fallback_session_id.clone(),
-            ));
-        }
-        let messages = transcript_sessions.entry(identity.id).or_default();
+        let session_key = SessionKey::TranscriptIdentity(identity.id);
+        let messages = transcript_sessions.entry(session_key.clone()).or_default();
         let mut ordinal = 0_i64;
+        let mut participates_in_window = false;
         super::raw_transcript::stream_captured_transcript(
             candidate.file,
             candidate.byte_limit,
@@ -112,24 +116,33 @@ pub(crate) fn reconcile_raw_archive(
                 ordinal += 1;
                 match classify_transcript_line(line, Some((since_epoch, until_epoch))) {
                     TranscriptRecordClass::Conversation(message) => {
+                        participates_in_window = true;
                         insert_transcript_key(messages, current_ordinal, message);
                     }
                     TranscriptRecordClass::MetaUser(message) => {
+                        participates_in_window = true;
                         exclusions.meta_user += 1;
                         insert_transcript_key(messages, current_ordinal, message);
                     }
                     TranscriptRecordClass::XmlControlUser(message) => {
+                        participates_in_window = true;
                         exclusions.xml_control_user += 1;
                         insert_transcript_key(messages, current_ordinal, message);
                     }
                     TranscriptRecordClass::MissingEventTime(_) => {
+                        participates_in_window = true;
                         exclusions.missing_event_time += 1;
                     }
-                    TranscriptRecordClass::EmptyText => exclusions.empty_text += 1,
+                    TranscriptRecordClass::EmptyText => {
+                        participates_in_window = true;
+                        exclusions.empty_text += 1;
+                    }
                     TranscriptRecordClass::UnsupportedRecord => {
+                        participates_in_window = true;
                         exclusions.unsupported_record += 1;
                     }
                     TranscriptRecordClass::MalformedRecord => {
+                        participates_in_window = true;
                         exclusions.malformed_record += 1;
                     }
                     TranscriptRecordClass::OutsideWindow => {}
@@ -138,17 +151,17 @@ pub(crate) fn reconcile_raw_archive(
         )
         .context("read captured transcript boundary")?;
         if messages.is_empty() {
-            transcript_sessions.remove(&identity.id);
+            transcript_sessions.remove(&session_key);
+        }
+        if identity.status == "conflict" && participates_in_window {
+            conflict_groups.insert((
+                identity.source_root.clone(),
+                identity.fallback_session_id.clone(),
+            ));
         }
     }
 
-    let archive_sessions = load_archive_messages(
-        conn,
-        &candidate_ids,
-        since_epoch,
-        until_epoch,
-        &mut exclusions,
-    )?;
+    let archive_sessions = load_archive_messages(conn, since_epoch, until_epoch, &mut exclusions)?;
     let transcript = summarize_side(&transcript_sessions);
     let archive = summarize_side(&archive_sessions);
     let mut comparison = compare_sessions(&transcript_sessions, &archive_sessions);
@@ -209,21 +222,24 @@ fn capture_candidates(
             let metadata = file.metadata().context("stat transcript snapshot")?;
             let byte_limit = metadata.len();
             let mtime_ns = modified_ns(&metadata);
+            let is_conflict = identity.status == "conflict";
             if identity.transcript_path != transcript_path
-                || identity.contract_version != 1
                 || identity.observed_size_bytes != i64::try_from(byte_limit).unwrap_or(i64::MAX)
                 || identity.observed_mtime_ns != mtime_ns
             {
                 stale_count += 1;
                 continue;
             }
-            if !crate::ingest::sessions::cursor_matches_identity(
-                conn,
-                root,
-                &path,
-                identity.observed_mtime_ns,
-                identity.observed_size_bytes,
-            )? {
+            if !is_conflict
+                && (identity.contract_version != 1
+                    || !crate::ingest::sessions::cursor_matches_identity(
+                        conn,
+                        root,
+                        &path,
+                        identity.observed_mtime_ns,
+                        identity.observed_size_bytes,
+                    )?)
+            {
                 stale_count += 1;
                 continue;
             }
@@ -231,7 +247,7 @@ fn capture_candidates(
                 .first_event_epoch
                 .zip(identity.last_event_epoch)
                 .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
-            if !intersects && identity.missing_event_time_count == 0 {
+            if !is_conflict && !intersects && identity.missing_event_time_count == 0 {
                 continue;
             }
             captured.push(CapturedTranscript {
@@ -292,64 +308,67 @@ fn insert_transcript_key(
 
 fn load_archive_messages(
     conn: &Connection,
-    candidate_ids: &BTreeSet<i64>,
     since_epoch: i64,
     until_epoch: i64,
     exclusions: &mut ReconcileExclusions,
 ) -> Result<SessionMessages> {
-    if candidate_ids.is_empty() {
-        return Ok(SessionMessages::new());
-    }
-    let placeholders = (1..=candidate_ids.len())
-        .map(|index| format!("?{index}"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let since_index = candidate_ids.len() + 1;
-    let until_index = candidate_ids.len() + 2;
-    let sql = format!(
-        "SELECT transcript_identity_id, transcript_record_ordinal, role,
-                content_hash, event_time_source
+    let mut statement = conn.prepare(
+        "SELECT id, transcript_identity_id, transcript_record_ordinal,
+                source_root, project, session_id, role, content_hash,
+                event_time_source
          FROM raw_messages
-         WHERE transcript_identity_id IN ({placeholders})
-           AND (
+         WHERE (
              (event_time_source = 'transcript_event'
-              AND created_at_epoch >= ?{since_index}
-              AND created_at_epoch <= ?{until_index})
+              AND created_at_epoch >= ?1
+              AND created_at_epoch <= ?2)
              OR event_time_source != 'transcript_event'
            )
-         ORDER BY transcript_identity_id, transcript_record_ordinal, id"
-    );
-    let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = candidate_ids
-        .iter()
-        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
-        .collect();
-    binds.push(Box::new(since_epoch));
-    binds.push(Box::new(until_epoch));
-    let mut statement = conn.prepare(&sql)?;
-    let rows = statement.query_map(
-        rusqlite::params_from_iter(crate::db::to_sql_refs(&binds)),
-        |row| {
-            Ok((
-                row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, String>(3)?,
-                row.get::<_, String>(4)?,
-            ))
-        },
+         ORDER BY transcript_identity_id, source_root, project, session_id,
+                  transcript_record_ordinal, id",
     )?;
+    let rows = statement.query_map(rusqlite::params![since_epoch, until_epoch], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, Option<i64>>(1)?,
+            row.get::<_, Option<i64>>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, String>(5)?,
+            row.get::<_, String>(6)?,
+            row.get::<_, String>(7)?,
+            row.get::<_, String>(8)?,
+        ))
+    })?;
     let mut sessions = SessionMessages::new();
     for row in rows {
-        let (identity_id, ordinal, role, content_hash, event_time_source) = row?;
+        let (
+            raw_id,
+            identity_id,
+            ordinal,
+            source_root,
+            project,
+            session_id,
+            role,
+            content_hash,
+            event_time_source,
+        ) = row?;
         match event_time_source.as_str() {
             "transcript_event" => {
+                let session_key = identity_id.map_or_else(
+                    || SessionKey::Legacy {
+                        source_root,
+                        project,
+                        session_id,
+                    },
+                    SessionKey::TranscriptIdentity,
+                );
                 let key = MessageKey {
-                    ordinal,
+                    ordinal: ordinal.unwrap_or(raw_id),
                     role,
                     content_hash,
                 };
                 *sessions
-                    .entry(identity_id)
+                    .entry(session_key)
                     .or_default()
                     .entry(key)
                     .or_default() += 1;
@@ -384,7 +403,8 @@ fn compare_sessions(
     archive: &SessionMessages,
 ) -> ReconcileComparison {
     let mut comparison = ReconcileComparison::default();
-    let session_ids: BTreeSet<i64> = transcript.keys().chain(archive.keys()).copied().collect();
+    let session_ids: BTreeSet<SessionKey> =
+        transcript.keys().chain(archive.keys()).cloned().collect();
     for session_id in session_ids {
         match (transcript.get(&session_id), archive.get(&session_id)) {
             (Some(left), Some(right)) if left == right => comparison.exact_sessions += 1,

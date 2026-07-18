@@ -304,6 +304,98 @@ fn conflicts_are_scoped_to_selected_window_identities() {
 }
 
 #[test]
+fn production_contract_zero_conflict_is_counted_instead_of_rejected_as_stale() {
+    let conn = setup();
+    let root = TempRoot::new("real-conflict");
+    std::fs::create_dir_all(root.path.join("first")).expect("create first alias directory");
+    std::fs::create_dir_all(root.path.join("second")).expect("create second alias directory");
+    let first = line("canonical-one", "user", 100, "first claim");
+    let second = line("canonical-two", "user", 100, "second claim");
+    root.write("first/shared.jsonl", &[&first]);
+    root.write("second/shared.jsonl", &[&second]);
+
+    let summary = run_ingest_sessions(&conn, &[root.scan_root()], &IngestOptions::default())
+        .expect("ingest conflicting fallback group");
+    assert_eq!(summary.failed_files, 2);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identities
+             WHERE status = 'conflict' AND contract_version = 0",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .expect("count production conflict rows"),
+        2
+    );
+
+    let report = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect("current conflict snapshot should produce an aggregate report");
+
+    assert_eq!(report.comparison.identity_conflicts, 1);
+    assert!(!report.parity);
+}
+
+#[test]
+fn raw_rows_without_discoverable_transcripts_remain_archive_only_or_explained() {
+    let conn = setup();
+    crate::memory::raw_archive::insert_raw_message_from_root_at(
+        &conn,
+        "historical",
+        "project",
+        "user",
+        "windowed historical row",
+        crate::memory::raw_archive::SOURCE_TRANSCRIPT,
+        None,
+        None,
+        "local",
+        Some(100),
+    )
+    .expect("insert windowed historical row");
+    crate::memory::raw_archive::insert_raw_message_from_root_at(
+        &conn,
+        "fallback",
+        "project",
+        "assistant",
+        "timestamp fallback row",
+        crate::memory::raw_archive::SOURCE_TRANSCRIPT,
+        None,
+        None,
+        "local",
+        None,
+    )
+    .expect("insert fallback-time row");
+    crate::memory::raw_archive::insert_raw_message_from_root_at(
+        &conn,
+        "manual",
+        "project",
+        "user",
+        "unknown-time row",
+        crate::memory::raw_archive::SOURCE_MANUAL,
+        None,
+        None,
+        "local",
+        Some(100),
+    )
+    .expect("insert unknown-time row");
+
+    let report =
+        reconcile_raw_archive(&conn, &[], 100, 100).expect("reconcile archive without transcripts");
+
+    assert_eq!(report.archive.sessions, 1);
+    assert_eq!(report.archive.messages, 1);
+    assert_eq!(report.comparison.archive_only_sessions, 1);
+    assert_eq!(report.comparison.archive_only_messages, 1);
+    assert_eq!(
+        report
+            .intentional_exclusions
+            .archive_ingest_fallback_event_time,
+        1
+    );
+    assert_eq!(report.intentional_exclusions.archive_unknown_event_time, 1);
+    assert!(!report.parity);
+}
+
+#[test]
 fn inverted_window_is_rejected() {
     let conn = setup();
     let error = reconcile_raw_archive(&conn, &[], 200, 100).expect_err("inverted window must fail");

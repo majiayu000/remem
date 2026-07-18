@@ -125,7 +125,6 @@ CHECK(
 
 CREATE UNIQUE INDEX idx_raw_messages_transcript_occurrence
     ON raw_messages(
-        source_root, project, session_id,
         transcript_identity_id, transcript_record_ordinal
     )
     WHERE transcript_identity_id IS NOT NULL;
@@ -306,9 +305,13 @@ Processing:
    root and `subagents/` rules as `ingest-sessions`, but do not parse them yet.
 2. Open each discovered path, capture its file-descriptor mtime/size tuple and
    immutable read boundary once, then require that captured tuple to match its
-   version-1 ledger/cursor entry exactly. Reject stale, missing, or extra
-   required-root entries with an actionable `run remem ingest-sessions`
-   diagnostic. Appends after the captured boundary are outside this run.
+   ledger entry exactly. Active identities must also match a version-1 cursor.
+   Sticky conflict identities remain contract version 0 because ingestion
+   deliberately refuses mutation; when their ledger tuple is current, stream
+   their captured boundary directly so the report can count window-relevant
+   conflicts. Reject other stale, missing, or extra required-root entries with
+   an actionable `run remem ingest-sessions` diagnostic. Appends after the
+   captured boundary are outside this run.
 3. Select files whose inclusive first/last event bounds can intersect the
    requested window, plus every file whose ledger
    `missing_event_time_count > 0`. Stream only complete records through each
@@ -317,9 +320,13 @@ Processing:
 5. Aggregate transcript-side archive-eligible message identities
    `(transcript identity, record ordinal, role, content_hash)` and the explicit
    exclusion taxonomy inside the fixed UTC window.
-6. Aggregate raw message identities by
-   `(source_root, project, session_id, transcript_identity_id,
-   transcript_record_ordinal, role, content_hash)` for the same window.
+6. Aggregate all raw message identities for the same window. Rows with a
+   transcript identity compare by
+   `(transcript_identity_id, transcript_record_ordinal, role, content_hash)`.
+   Historical/manual rows without a transcript identity group internally by
+   `(source_root, project, session_id)` and remain archive-only; their private
+   grouping keys are never serialized. Rows with ingest-fallback or
+   legacy-unknown event time increment their explicit exclusion counter.
 7. Query distinct persisted `status = 'conflict'` fallback groups only through
    the selected/window-relevant ledger identities (including selected
    missing-time files); count them even when transcript/raw totals otherwise

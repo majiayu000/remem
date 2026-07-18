@@ -316,3 +316,35 @@ mod reconcile_exit_tests {
         assert!(ensure_reconcile_parity(true).is_ok());
     }
 }
+
+#[cfg(test)]
+mod lock_contention_tests {
+    use anyhow::Result;
+
+    use super::{run_raw_search, run_raw_sessions};
+
+    #[test]
+    fn raw_search_and_sessions_actions_succeed_during_normal_write_contention() -> Result<()> {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("raw-actions-write-lock");
+        let writer = crate::db::open_db()?;
+        crate::memory::raw_archive::insert_raw_message(
+            &writer,
+            "lock-session",
+            "lock-project",
+            crate::memory::raw_archive::ROLE_USER,
+            "visible during writer lock",
+            crate::memory::raw_archive::SOURCE_MANUAL,
+            None,
+            None,
+        )?;
+        writer.execute_batch("BEGIN IMMEDIATE")?;
+
+        let search_result = run_raw_search("visible", None, None, None, 20, 0, None, None, true);
+        let sessions_result = run_raw_sessions(None, None, None, 0, true);
+        writer.execute_batch("ROLLBACK")?;
+
+        search_result?;
+        sessions_result?;
+        Ok(())
+    }
+}

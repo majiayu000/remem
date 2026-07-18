@@ -397,8 +397,8 @@ pub(crate) fn rekey_legacy_rows(
             "SELECT id, role, content, content_hash, source, created_at_epoch,
                     event_time_source
              FROM raw_messages
-             WHERE source_root = ?1 AND session_id = ?2
-               AND project IN (?3, ?4) AND transcript_identity_id IS NULL
+             WHERE source_root = ?1 AND session_id IN (?2, ?3)
+               AND project IN (?4, ?5) AND transcript_identity_id IS NULL
              ORDER BY id",
         )?;
         let rows = statement
@@ -406,6 +406,7 @@ pub(crate) fn rekey_legacy_rows(
                 params![
                     identity.source_root,
                     identity.fallback_session_id,
+                    identity.canonical_session_id,
                     identity.project,
                     identity.legacy_project
                 ],

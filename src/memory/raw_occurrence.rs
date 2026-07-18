@@ -357,6 +357,77 @@ mod tests {
     }
 
     #[test]
+    fn split_fallback_and_canonical_legacy_aliases_converge_to_one_occurrence() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute(
+            "INSERT INTO raw_session_identities (
+                id, source_root, transcript_path, fallback_session_id,
+                canonical_session_id, project, legacy_project, status,
+                contract_version, observed_mtime_ns, observed_size_bytes,
+                first_seen_at_epoch, last_seen_at_epoch
+             ) VALUES (1, 'local', '/tmp/split-alias.jsonl', 'fallback',
+                       'canonical', 'current-project', 'legacy-project',
+                       'active', 0, 1, 1, 1, 1)",
+            [],
+        )?;
+        let hash = crate::db::content_identity_hash(b"same occurrence");
+        conn.execute(
+            "INSERT INTO raw_messages (
+                id, session_id, project, role, content, content_hash, source,
+                created_at_epoch, source_root, event_time_source
+             ) VALUES
+                (41, 'fallback', 'legacy-project', 'user', 'same occurrence',
+                 ?1, 'transcript', 7, 'local', 'legacy_unknown'),
+                (42, 'canonical', 'current-project', 'user', 'same occurrence',
+                 ?1, 'transcript', 8, 'local', 'legacy_unknown')",
+            [hash],
+        )?;
+
+        let claimed = insert_transcript_occurrence(
+            &conn,
+            "canonical",
+            "current-project",
+            "user",
+            "same occurrence",
+            None,
+            None,
+            "local",
+            Some(100),
+            1,
+            0,
+        )?
+        .expect("claim one legacy alias");
+        assert_eq!(claimed.id, 41);
+
+        let identity = crate::ingest::session_identity::load(&conn, 1)?;
+        let report = crate::ingest::session_identity::rekey_legacy_rows(&conn, &identity)?;
+
+        assert_eq!(report.merged, 1);
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM raw_messages
+                 WHERE transcript_identity_id = 1
+                   AND transcript_record_ordinal = 0",
+                [],
+                |row| row.get::<_, i64>(0)
+            )?,
+            1
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT id FROM raw_messages
+                 WHERE transcript_identity_id = 1
+                   AND transcript_record_ordinal = 0",
+                [],
+                |row| row.get::<_, i64>(0)
+            )?,
+            41
+        );
+        Ok(())
+    }
+
+    #[test]
     fn replayed_ordinal_with_different_stable_fields_is_a_conflict() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
