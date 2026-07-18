@@ -199,3 +199,81 @@ fn force_push_rule_keeps_expanded_env_split_wrapper_semantics() {
     assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
 }
+
+#[test]
+fn force_push_rule_preserves_quoted_all_argument_fields() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c '"$@"' _ git push --force"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c '"$@"' _ 'git push --force'"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_keeps_possible_set_positionals() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        r#"bash -c 'unknown && set -- --force; git push "$1"' _ origin"#,
+        r#"bash -c 'unknown && set -- origin; git push "$1"' _ --force"#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_restores_positionals_after_child_scopes() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        r#"bash -c '(set -- --force); git push "$1"' _ origin"#,
+        r#"bash -c '$(set -- --force); git push "$1"' _ origin"#,
+        r#"bash -c 'set -- --force | true; git push "$1"' _ origin"#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_resolves_alias_before_set_state() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command =
+        "bash -c $'shopt -s expand_aliases\nalias set=echo\nset -- --force\ngit push \"$1\"' _ origin";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}

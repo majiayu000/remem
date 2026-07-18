@@ -57,7 +57,12 @@ gaps can either miss a forbidden command or report a false block.
    Empty unquoted expansions shall remove their argv field, quoted default
    words shall retain their grouping, and statically selected `+`/`:+`
    alternative words shall be materialized. A definite `set --` shall replace
-   the active positional mapping. Expandable outer heredocs shall finish
+   the active positional mapping; a possibly executed `set --` shall retain
+   both the prior and replacement mappings for conservative matching. Quoted
+   `"$@"` shall preserve one field per operand. Positional changes inside a
+   subshell, command substitution, or non-final pipeline process shall not
+   leak into its parent, and an alias named `set` shall resolve before builtin
+   positional state is applied. Expandable outer heredocs shall finish
    parent-side expansion before entering a child `-c` scope, while explicit
    arguments to `source /dev/stdin` shall bind `$1...` only for the sourced
    body. A command name materialized from a positional shall not be
@@ -93,6 +98,8 @@ gaps can either miss a forbidden command or report a false block.
       grouping, `+`/`:+` alternatives, `set --`, parent-expanded heredoc stdin,
       explicit `source /dev/stdin` arguments, command-word provenance, and
       here-string source text.
+- [x] Red-first fixtures cover quoted `"$@"` cardinality, uncertain `set --`
+      alternatives, child-scope restoration, and alias-before-builtin ordering.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.
@@ -106,8 +113,8 @@ gaps can either miss a forbidden command or report a false block.
 - Quoted and concatenated positional references follow the evaluator's
   existing static word-expansion limits; unknown expansion remains unknown.
 - Definite static `set --` and explicit sourced-file arguments update only
-  their Bash-defined positional scope; uncertain state changes invalidate the
-  known mapping.
+  their Bash-defined positional scope; uncertain `set --` retains every known
+  possible mapping so a forbidden argument on either path remains visible.
 - Function shadowing is evaluated in command order and existing subshell,
   pipeline, and child-shell scope rules remain unchanged.
 

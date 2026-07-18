@@ -133,8 +133,13 @@ Artifact v2 additionally supports:
   unquoted-delimiter heredoc body do not suppress that expansion, while a
   quoted delimiter preserves literal text. Whole unquoted positionals may
   produce zero or multiple argv fields; default and alternative words retain
-  quote-aware grouping, definite `set --` replaces the active mapping, and
-  explicit sourced-file arguments receive their own positional scope.
+  quote-aware grouping, exact quoted `"$@"` preserves operand cardinality,
+  definite `set --` replaces the active mapping, and a possibly executed
+  `set --` retains both prior and replacement mappings for conservative
+  matching. Positional changes in subshells, command substitutions, and
+  non-final pipeline processes restore the parent mapping, and aliases resolve
+  before builtin positional state. Explicit sourced-file arguments receive
+  their own positional scope.
   Expandable heredoc stdin finishes parent-side positional expansion before a
   child `-c` context is installed. Nested command substitutions and arithmetic
   source use their own syntax context, and function-definition names remain

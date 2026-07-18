@@ -68,6 +68,7 @@ impl CommandCollector {
             Some(PositionalContext {
                 zero_argument,
                 arguments: source_arguments.to_vec(),
+                possible_arguments: Vec::new(),
             }),
             |collector| collector.collect_source(&payload),
         )

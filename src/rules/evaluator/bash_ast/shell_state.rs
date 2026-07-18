@@ -25,9 +25,19 @@ impl CommandCollector {
             self.positional_context = Some(PositionalContext {
                 zero_argument,
                 arguments: arguments.to_vec(),
+                possible_arguments: Vec::new(),
             });
+        } else if let Some(context) = &mut self.positional_context {
+            let arguments = arguments.to_vec();
+            if arguments != context.arguments && !context.possible_arguments.contains(&arguments) {
+                context.possible_arguments.push(arguments);
+            }
         } else {
-            self.positional_context = None;
+            self.positional_context = Some(PositionalContext {
+                zero_argument: None,
+                arguments: Vec::new(),
+                possible_arguments: vec![arguments.to_vec()],
+            });
         }
     }
 
@@ -219,7 +229,7 @@ impl CommandCollector {
         collect: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
         let saved = self.snapshot_shell_state();
-        let saved_positional_context = self.positional_context.take();
+        self.positional_context = None;
         if inherit_exported {
             self.functions
                 .retain(|name, _| self.exported_functions.contains(name));
@@ -246,7 +256,6 @@ impl CommandCollector {
             Ok(value)
         });
         self.restore_shell_state(saved);
-        self.positional_context = saved_positional_context;
         result
     }
 
@@ -291,6 +300,7 @@ impl CommandCollector {
             exit_traps: self.exit_traps.clone(),
             execution_terminated: self.execution_terminated,
             inherited_stdin: self.inherited_stdin.clone(),
+            positional_context: self.positional_context.clone(),
         }
     }
 
@@ -310,6 +320,7 @@ impl CommandCollector {
         self.exit_traps = saved.exit_traps;
         self.execution_terminated = saved.execution_terminated;
         self.inherited_stdin = saved.inherited_stdin;
+        self.positional_context = saved.positional_context;
     }
 }
 
@@ -329,6 +340,7 @@ struct ShellStateSnapshot {
     exit_traps: Vec<ExitTrapDefinition>,
     execution_terminated: bool,
     inherited_stdin: Option<String>,
+    positional_context: Option<PositionalContext>,
 }
 
 fn quote_alias_argument(value: &str) -> String {

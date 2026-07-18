@@ -18,7 +18,7 @@ mod stdin_payload;
 pub(super) mod unwrap;
 
 use function_args::{
-    bare_shell_positional_fields, expand_function_body, expand_shell_arithmetic,
+    bare_shell_positional_variant_fields, expand_function_body, expand_shell_arithmetic,
     expand_shell_command, has_shell_positional_reference,
 };
 use static_execution::{
@@ -89,6 +89,7 @@ struct CommandCollector {
 struct PositionalContext {
     zero_argument: Option<String>,
     arguments: Vec<String>,
+    possible_arguments: Vec<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -377,7 +378,6 @@ impl CommandCollector {
         self.apply_static_shell_state(&tokens);
         let resolves_to_function =
             direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name));
-        self.apply_static_positional_state(&tokens, resolves_to_function);
         if !resolves_to_function {
             if let Some(names) = static_unset_function_names(&tokens) {
                 for name in names {
@@ -404,6 +404,7 @@ impl CommandCollector {
         if self.collect_static_alias_call(&tokens)? || self.collect_static_function_call(&tokens)? {
             return Ok(());
         }
+        self.apply_static_positional_state(&tokens, resolves_to_function);
         if let Some(payload) = static_eval_payload(&tokens) {
             self.collect_source(&payload)?;
         }
@@ -418,6 +419,7 @@ impl CommandCollector {
                         Some(PositionalContext {
                             zero_argument: shell_command.zero_argument,
                             arguments: shell_command.arguments,
+                            possible_arguments: Vec::new(),
                         }),
                         |collector| {
                             collector.collect_source(&shell_command.payload)?;
@@ -473,6 +475,7 @@ impl CommandCollector {
                             .map(|context| PositionalContext {
                                 zero_argument: context.zero_argument.clone(),
                                 arguments: Vec::new(),
+                                possible_arguments: Vec::new(),
                             });
                     collector.with_positional_context(function_context, |collector| {
                         collector.collect_source(&source)
@@ -693,11 +696,12 @@ impl CommandCollector {
 
     fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
         if let Some(context) = &self.positional_context {
-            if let Some(fields) = bare_shell_positional_fields(
+            if let Some(fields) = bare_shell_positional_variant_fields(
                 &word.value,
                 &self.options,
                 context.zero_argument.as_deref(),
                 &context.arguments,
+                &context.possible_arguments,
             )? {
                 return Ok(fields);
             }
