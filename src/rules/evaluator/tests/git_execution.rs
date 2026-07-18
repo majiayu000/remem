@@ -514,6 +514,97 @@ fn force_push_rule_prunes_static_non_execution_and_honors_overrides() {
 }
 
 #[test]
+fn force_push_rule_recognizes_exe_shell_basenames() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "bash.exe -c 'git push --force'",
+        "/usr/bin/bash.exe -c 'git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    let command = "notbash.exe -c 'git push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_binds_shell_command_positional_parameters() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "bash -c 'git push \"$1\"' _ --force",
+        "bash -c '\"$0\" push --force' git",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    for command in [
+        "bash -c 'git push \"$1\"' _ origin",
+        "bash -c 'git push \"$1\"' _",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_resolves_unset_function_before_builtin_state() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let shadowed = "f(){ git push --force;}; unset(){ :;}; unset -f f; f";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: shadowed.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{shadowed}");
+    assert!(outcome.diagnostics.is_empty(), "{shadowed}");
+
+    let explicit_builtin = "f(){ git push --force;}; unset(){ :;}; builtin unset -f f; f";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: explicit_builtin.into(),
+        },
+    );
+    assert_eq!(
+        outcome.verdict,
+        EvaluationVerdict::Allow,
+        "{explicit_builtin}"
+    );
+    assert!(outcome.matches.is_empty(), "{explicit_builtin}");
+    assert!(outcome.diagnostics.is_empty(), "{explicit_builtin}");
+}
+
+#[test]
 fn force_push_rule_closes_wrapper_option_parsing_gaps() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     for command in [

@@ -124,12 +124,17 @@ Artifact v2 additionally supports:
   uninvoked function definitions remain inert. Static expansion is bounded;
   security-critical static variants remain visible when full materialization
   is capped, and later words or command segments are never discarded. Git
-  executable basenames are recognized through static paths; force and mirror
+  executable basenames are recognized through static paths, including the
+  exact `.exe` suffix used by Git-for-Windows shells; static shell `-c`
+  operands bind `$0` and later positional parameters before recursive payload
+  parsing; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
   Function definitions follow Bash subshell, pipeline, shadowing, and static
-  `unset -f` state; explicitly exported functions alone enter child Bash,
+  `unset -f` state; a function named `unset` resolves before builtin-like state
+  mutation, while explicit `builtin unset` retains builtin semantics;
+  explicitly exported functions alone enter child Bash,
   while other child shells start empty. Shell `-n`/`noexec` payloads remain
   inert. Shell `-s` and nested static shells inherit the effective final fd-0
   payload under Bash redirection semantics. `env -S` performs bounded argv

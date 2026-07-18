@@ -1,0 +1,106 @@
+# Product Spec
+
+## Linked Issue
+
+GH-860
+
+Complexity: small
+
+## User Problem
+
+The compiled preference-rule evaluator statically recognizes common Bash forms
+so it can warn or block an honest coding agent before a forbidden Git force
+push runs. Three plausible command forms still produce incorrect results:
+Git-for-Windows shell executables ending in `.exe` are not recognized, `bash
+-c` positional arguments are not bound into the static script, and a
+user-defined function named `unset` is mistaken for the Bash builtin. These
+gaps can either miss a forbidden command or report a false block.
+
+## Goals
+
+- Recognize the remaining three common, statically knowable Bash forms from
+  GH-860.
+- Preserve the evaluator's existing bounded, deterministic, local behavior.
+- Keep bypass detection and false-block precision covered together.
+
+## Non-Goals
+
+- Turning the evaluator into a sandbox against deliberately dynamic evasion.
+- Executing shell code, consulting a live shell, or interpreting non-static
+  values.
+- Reopening deferred GH-860 items already covered by the merged GH-671 work.
+- Changing rule compilation, rule actions, hook installation, or host support.
+
+## Behavior Invariants
+
+1. B-001 When a statically parsed command invokes a supported shell basename
+   with the Windows/Git-for-Windows `.exe` suffix, such as `bash.exe`, the
+   evaluator shall apply the same shell-payload analysis as for the equivalent
+   suffix-free basename.
+2. B-002 Path-qualified supported `.exe` shell commands shall be recognized by
+   basename, while unrelated executables whose names merely contain a shell
+   name shall remain ordinary commands.
+3. B-003 For a statically known shell `-c` invocation, the evaluator shall bind
+   the operands after the command string according to Bash semantics: the
+   first operand supplies `$0` and later operands supply positional parameters
+   used by the command string. A forbidden force-push argument supplied through
+   `$1` shall therefore remain detectable.
+4. B-004 Missing shell `-c` operands and positional references without a known
+   operand shall remain unresolved and shall not be invented, shifted, or
+   borrowed from surrounding commands.
+5. B-005 When static shell state contains a function named `unset`, invoking
+   `unset -f <name>` shall be analyzed as that function call and shall not
+   remove `<name>` from the evaluator's function state merely because its argv
+   resembles the builtin.
+6. B-006 An explicit Bash builtin invocation, such as `builtin unset -f
+   <name>`, shall retain builtin unset semantics even when a function named
+   `unset` exists.
+7. B-007 Each new recognition path shall be bounded and deterministic and shall
+   preserve the existing conservative behavior for dynamic or unsupported
+   shell constructs.
+8. B-008 Regression fixtures shall cover both the newly detected force-push
+   forms and nearby allowed forms so the precision fixes do not weaken existing
+   bypass coverage or create false blocks.
+
+## Acceptance Criteria
+
+- [x] A red-first fixture proves `bash.exe` and a path-qualified supported
+      `.exe` shell detect a static forbidden Git force push, with a nearby
+      unrelated `.exe` command remaining allowed.
+- [x] A red-first fixture proves `bash -c 'git push "$1"' _ --force` is
+      detected and a missing/unrelated positional value does not fabricate a
+      match.
+- [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
+      the target function, while `builtin unset -f` still does.
+- [x] Existing rule-evaluator tests continue to pass.
+- [ ] Repository formatting, build, workflow, and full test gates pass.
+
+## Edge Cases
+
+- Supported shell names without `.exe` keep their current behavior.
+- Static path qualification changes only basename recognition, not path
+  resolution or filesystem access.
+- Quoted and concatenated positional references follow the evaluator's
+  existing static word-expansion limits; unknown expansion remains unknown.
+- Function shadowing is evaluated in command order and existing subshell,
+  pipeline, and child-shell scope rules remain unchanged.
+
+## Boundary Checklist
+
+| Boundary | Verdict |
+| --- | --- |
+| Empty / missing input | Covered by B-004. |
+| Error and failure paths | Covered by B-004 and B-007; unresolved static values stay conservative. |
+| Authorization / permission | N/A: this is a pure local evaluator with no authorization state. |
+| Concurrency / race / ordering | Covered by B-005 and the command-order requirement in Edge Cases; concurrency is N/A for pure evaluation. |
+| Retry / repetition / idempotency | Covered by B-007; identical input produces identical output. |
+| Illegal state transitions | Covered by B-005 and B-006 for function-state mutation. |
+| Compatibility / migration | Covered by B-001, B-002, and B-007; no stored-data migration exists. |
+| Degradation / fallback | Covered by B-004 and B-007; unknown values are not presented as successful static resolution. |
+| Evidence and audit integrity | Covered by B-008 through paired positive and negative fixtures. |
+| Cancellation / interruption / partial completion | N/A: evaluation is an in-process bounded pure operation. |
+
+## Rollout Notes
+
+No configuration or migration is required. The change ships as a compatible
+precision update to the existing artifact-v2 structural force-push evaluator.

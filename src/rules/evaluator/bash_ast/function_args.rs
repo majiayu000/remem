@@ -4,6 +4,22 @@ const MAX_DEFAULT_EXPANSION_DEPTH: usize = 8;
 
 pub(super) fn expand_function_body(body: &FunctionBody, arguments: &[String]) -> String {
     let source = body.to_string();
+    expand_positional_source(&source, None, arguments)
+}
+
+pub(super) fn expand_shell_command(
+    source: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+) -> String {
+    expand_positional_source(source, zero_argument, arguments)
+}
+
+fn expand_positional_source(
+    source: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+) -> String {
     let mut expanded = String::with_capacity(source.len());
     let mut index = 0;
     let mut single_quoted = false;
@@ -45,7 +61,7 @@ pub(super) fn expand_function_body(body: &FunctionBody, arguments: &[String]) ->
         }
         if ch == '$' && !single_quoted {
             if let Some((consumed, replacement)) =
-                positional_replacement(rest, arguments, double_quoted, 0)
+                positional_replacement(rest, zero_argument, arguments, double_quoted, 0)
             {
                 expanded.push_str(&replacement);
                 index += consumed;
@@ -74,6 +90,7 @@ fn quoted_collection_replacement(rest: &str, arguments: &[String]) -> Option<(us
 
 fn positional_replacement(
     rest: &str,
+    zero_argument: Option<&str>,
     arguments: &[String],
     double_quoted: bool,
     depth: usize,
@@ -94,7 +111,7 @@ fn positional_replacement(
     }
 
     let (consumed, expression) = parameter_expression(rest)?;
-    let value = resolve_parameter_expression(expression, arguments, depth)?;
+    let value = resolve_parameter_expression(expression, zero_argument, arguments, depth)?;
     let replacement = if double_quoted {
         escape_double_quoted(&value)
     } else {
@@ -139,6 +156,7 @@ fn matching_parameter_brace(source: &str) -> Option<usize> {
 
 fn resolve_parameter_expression(
     expression: &str,
+    zero_argument: Option<&str>,
     arguments: &[String],
     depth: usize,
 ) -> Option<String> {
@@ -150,30 +168,39 @@ fn resolve_parameter_expression(
         .unwrap_or(expression.len());
     let digits = &expression[..digit_end];
     let position = digits.parse::<usize>().ok()?;
-    if position == 0 {
+    if position == 0 && zero_argument.is_none() {
         return None;
     }
-    let argument = arguments.get(position - 1);
+    let argument = if position == 0 {
+        zero_argument
+    } else {
+        arguments.get(position - 1).map(String::as_str)
+    };
     let suffix = &expression[digit_end..];
     let selected = if let Some(fallback) = suffix.strip_prefix(":-") {
-        if argument.is_none_or(String::is_empty) {
-            return expand_default_value(fallback, arguments, depth + 1);
+        if argument.is_none_or(str::is_empty) {
+            return expand_default_value(fallback, zero_argument, arguments, depth + 1);
         }
-        argument.map(String::as_str)
+        argument
     } else if let Some(fallback) = suffix.strip_prefix('-') {
         if argument.is_none() {
-            return expand_default_value(fallback, arguments, depth + 1);
+            return expand_default_value(fallback, zero_argument, arguments, depth + 1);
         }
-        argument.map(String::as_str)
+        argument
     } else if suffix.is_empty() {
-        argument.map(String::as_str).or(Some(""))
+        argument.or(Some(""))
     } else {
         return None;
     };
     Some(selected.unwrap_or("").to_string())
 }
 
-fn expand_default_value(source: &str, arguments: &[String], depth: usize) -> Option<String> {
+fn expand_default_value(
+    source: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+    depth: usize,
+) -> Option<String> {
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
     }
@@ -210,7 +237,12 @@ fn expand_default_value(source: &str, arguments: &[String], depth: usize) -> Opt
                 continue;
             }
             let (consumed, expression) = parameter_expression(rest)?;
-            expanded.push_str(&resolve_parameter_expression(expression, arguments, depth)?);
+            expanded.push_str(&resolve_parameter_expression(
+                expression,
+                zero_argument,
+                arguments,
+                depth,
+            )?);
             index += consumed;
             continue;
         }

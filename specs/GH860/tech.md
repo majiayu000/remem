@@ -1,0 +1,187 @@
+# Tech Spec
+
+## Linked Issue
+
+GH-860
+
+## Product Spec
+
+[`product.md`](product.md)
+
+## Codebase Context
+
+| Area | Files | Current behavior | Why relevant |
+| --- | --- | --- | --- |
+| Static command collection | `src/rules/evaluator/bash_ast.rs:332` | `collect_static_tokens` mutates static `unset -f` state before attempting a function call, then recursively parses static shell `-c` payloads | The mutation order causes a user-defined `unset` function to be treated as the builtin |
+| Shell recognition and `-c` parsing | `src/rules/evaluator/bash_ast/static_execution.rs:445` | `static_shell_command_payload` returns only the literal command string; `shell_name` accepts five suffix-free basenames | `.exe` recognition and the shell argument boundary belong in this normalization layer |
+| Positional expansion | `src/rules/evaluator/bash_ast/function_args.rs:5` | Function-body expansion already handles quoted/unquoted positional parameters with bounded default expansion, but assumes function arguments where `$1` starts at the first operand and `$0` is unavailable | Shell `-c` can reuse the parser only with an explicit Bash `$0`/`$1...` argument mapping |
+| Structural regression fixtures | `src/rules/evaluator/tests/git_execution.rs:398` | Paired block/allow tables cover static shell state, indirect execution, function arguments, and false-block precision | The three GH-860 behaviors fit the existing table-driven evidence style |
+| Authoritative rule contract | `docs/specs/preference-rule-compilation/TECH.md:114` | Artifact-v2 documents shell payloads, function state, positional function arguments, and bounded evaluation | The shipped contract must name the additional `.exe`, shell-`-c`, and shadowed-builtin semantics |
+| Release/version gates | `scripts/ci/check_version_bump.py`, `scripts/ci/check_plugin_version_sync.py` | Any `src/` change requires a package version above the base and synchronized release surfaces | This PR must stage one synchronized patch version |
+
+## Proposed Design
+
+### 1. Normalize supported `.exe` shell basenames
+
+Keep `shell_name` as the single recognition point. Resolve the static command's
+basename and accept the existing closed shell set both without a suffix and
+with one exact lowercase `.exe` suffix. Return the normalized suffix-free shell
+name so `static_shell_is_bash` preserves exported-function inheritance for
+`bash.exe`. Do not perform filesystem lookup, case folding, or substring
+matching.
+
+### 2. Expand statically known shell `-c` arguments
+
+Replace the literal-only shell payload helper with a helper that returns the
+command string plus the static operands after it. Refactor the existing
+function positional expander into a string-source helper with an explicit
+`$0` value and positional-argument slice:
+
+- function calls preserve the existing unresolved outer-shell `$0` behavior
+  and pass their current argument slice as `$1...`;
+- shell `-c` passes the first operand after the command string as `$0`, and
+  the remaining operands as `$1...`;
+- absent `$0` is represented as an unknown/empty shell name without shifting
+  `$1`;
+- missing positional operands keep the existing conservative empty expansion;
+  dynamic sentinel operands do not become fabricated static commands.
+
+The expanded command string is then parsed through the existing child-shell
+scope. Quoting, recursive defaults, and materialization bounds remain owned by
+the existing positional-expansion implementation.
+
+### 3. Resolve functions before builtin-like state mutation
+
+Determine whether the direct command position names a currently known function
+before applying builtin state changes. A plain `unset ...` call resolves to the
+function and returns after analyzing its body. Explicit builtin-selection
+forms (`builtin unset ...` and the existing `command unset ...` behavior) skip
+function resolution and may mutate static function state. The state mutation
+helper shall use the shared builtin command-position normalizer so repeated
+`builtin` wrappers remain deterministic.
+
+This ordering change is scoped to `unset -f`; it does not change alias
+expansion, export handling, subshell scopes, or dynamic command resolution.
+
+### 4. Contract and staged version
+
+Add paired positive/negative cases to the existing structural evaluator tests,
+update the authoritative technical contract, and stage source version `0.6.8`.
+Synchronize Cargo, plugin, npm, MCP server, release manifest, lockfile, and
+changelog metadata. The release manifest remains `state: unreleased` with no
+assets; this PR does not publish a release.
+
+## Product-to-Test Mapping
+
+| Product invariant | Implementation area | Verification |
+| --- | --- | --- |
+| B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
+| B-002 basename-only precision | normalized `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers a path-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
+| B-003 shell `-c` positional binding | generic positional source expansion plus shell payload extraction | `force_push_rule_binds_shell_command_positional_parameters` covers `$0` and `bash -c 'git push "$1"' _ --force` → Block |
+| B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1` → Allow |
+| B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
+| B-006 explicit builtin `unset` | shared builtin command-position normalization | `force_push_rule_resolves_unset_function_before_builtin_state` covers `builtin unset -f f` → Allow |
+| B-007 bounded deterministic behavior | existing parser/expansion limits and evaluator regression suite | `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
+| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs` | both focused block and allow test tables pass, followed by full `cargo test` |
+
+## Data Flow
+
+```text
+static Bash command text
+  -> Brush AST and bounded token variants
+  -> command-position / shell-basename normalization
+  -> function resolution OR explicit builtin state mutation
+  -> shell -c positional expansion when statically known
+  -> recursive child-shell parsing
+  -> structural Git force-push predicate
+  -> Allow | Warn | Block
+```
+
+There are no database writes, network calls, migrations, or new persisted
+fields. Release metadata changes only stage the required source version.
+
+## Alternatives Considered
+
+- Add special-case string replacements in the Git predicate: rejected because
+  shell semantics belong in the AST normalization layer and must also apply to
+  nested commands.
+- Spawn Bash to expand `-c` arguments: rejected because hook evaluation must be
+  deterministic, local, bounded, and free of code execution.
+- Treat every `unset -f` token sequence as builtin syntax: rejected because it
+  reproduces the false block when a function shadows `unset`.
+- Recognize arbitrary case-insensitive `.EXE` names: rejected because the issue
+  evidence establishes the exact `.exe` form and broader Windows command-name
+  normalization is not specified.
+
+## Risks
+
+- Security: Under-expansion can miss a forbidden force push; over-expansion can
+  false-block. Paired fixtures cover both directions, and dynamic values remain
+  conservative.
+- Compatibility: Existing suffix-free shell and function-call semantics must
+  remain byte-for-byte equivalent at the evaluator output boundary.
+- Performance: The design reuses bounded in-memory expansion and adds no I/O;
+  the full evaluator suite guards against accidental recursion changes.
+- Maintenance: Function and shell positional semantics share mechanics but
+  retain explicit `$0` mappings to avoid future index drift.
+
+## Test Plan
+
+- [x] Focused red/green fixtures for `.exe` recognition, shell `-c` positional
+      binding, and shadowed-versus-explicit-builtin `unset`.
+- [x] `cargo test -q rules::evaluator --lib`
+- [x] `python3 checks/check_workflow.py --repo . --spec-dir specs/GH860`
+- [x] `python3 scripts/ci/check_plugin_version_sync.py`
+- [x] `python3 scripts/ci/check_version_bump.py origin/main WORKTREE`
+- [x] `cargo fmt --check`
+- [x] `cargo check`
+- [ ] `cargo test`
+- [x] `cargo clippy --all-targets -- -D warnings`
+
+The required worktree-local full suite produced 2640 passes and one ignored
+test, plus one path-sensitive pre-existing failure: the worktree path contains
+`.codex`, so the high-context-path guard fires before the test's expected
+`skill-root path` diagnostic. Fresh hosted CI remains the authoritative
+normal-path full-suite evidence.
+
+## Rollback Plan
+
+Revert the evaluator, fixtures, contract delta, and synchronized `0.6.8`
+staging together before release. No stored data or artifact schema changes need
+rollback. Do not leave a lower Cargo version paired with higher plugin/npm/MCP
+metadata, and do not publish or fabricate release assets as part of rollback.
+
+<!-- specrail-planned-changes
+{
+  "version": 1,
+  "issue": 860,
+  "complete": true,
+  "paths": [
+    "specs/GH860/product.md",
+    "specs/GH860/tech.md",
+    "specs/GH860/tasks.md",
+    "src/rules/evaluator/bash_ast.rs",
+    "src/rules/evaluator/bash_ast/static_execution.rs",
+    "src/rules/evaluator/bash_ast/function_args.rs",
+    "src/rules/evaluator/tests/git_execution.rs",
+    "docs/specs/preference-rule-compilation/TECH.md",
+    "Cargo.toml",
+    "Cargo.lock",
+    "plugins/remem/.codex-plugin/plugin.json",
+    "plugins/remem/runtimes/remem-releases.json",
+    "npm/remem/package.json",
+    "server.json",
+    "CHANGELOG.md"
+  ],
+  "spec_refs": [
+    "specs/GH860/product.md",
+    "specs/GH860/tech.md",
+    "docs/specs/preference-rule-compilation/TECH.md"
+  ]
+}
+-->
+
+This document does not claim `spec_approval`. The current `implx auto`
+invocation authorizes drafting and implementation for this bounded issue, while
+the normal independent review, CI, PR-gate, and merge-evidence requirements
+remain in force.

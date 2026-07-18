@@ -410,10 +410,7 @@ fn env_escape(escaped: char) -> Option<char> {
 }
 
 pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>> {
-    let mut index = unwrap::direct_command_index(tokens)?;
-    while tokens.get(index)? == "command" {
-        index = unwrap::command_wrapper_target(tokens, index)?;
-    }
+    let mut index = static_builtin_command_index(tokens)?;
     if tokens.get(index)? != "unset" {
         return None;
     }
@@ -442,7 +439,7 @@ pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>
     })
 }
 
-pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
+pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<String> {
     let command_index = unwrap::effective_command_index(tokens)?;
     if !is_shell(tokens.get(command_index)?) {
         return None;
@@ -451,7 +448,16 @@ pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
         return None;
     };
     let payload = tokens.get(payload_index)?;
-    (payload != DYNAMIC_SHELL_WORD).then_some(payload.as_str())
+    if payload == DYNAMIC_SHELL_WORD {
+        return None;
+    }
+    let zero_argument = tokens.get(payload_index + 1).map(String::as_str);
+    let arguments = tokens.get(payload_index + 2..).unwrap_or_default();
+    Some(super::function_args::expand_shell_command(
+        payload,
+        zero_argument,
+        arguments,
+    ))
 }
 
 pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
@@ -565,10 +571,11 @@ fn is_shell(command: &str) -> bool {
 }
 
 fn shell_name(command: &str) -> Option<&str> {
-    std::path::Path::new(command)
+    let name = std::path::Path::new(command)
         .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|name| matches!(*name, "bash" | "dash" | "ksh" | "sh" | "zsh"))
+        .and_then(|value| value.to_str())?;
+    let normalized = name.strip_suffix(".exe").unwrap_or(name);
+    matches!(normalized, "bash" | "dash" | "ksh" | "sh" | "zsh").then_some(normalized)
 }
 
 fn shell_option_takes_argument(option: &str) -> bool {

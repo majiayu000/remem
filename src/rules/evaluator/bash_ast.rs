@@ -343,14 +343,18 @@ impl CommandCollector {
             tokens = expanded;
         }
         self.apply_static_shell_state(&tokens);
-        if let Some(names) = static_unset_function_names(&tokens) {
-            for name in names {
-                if self.execution_is_definite {
-                    self.functions.remove(name);
-                    self.exported_functions.remove(name);
-                } else if let Some(definitions) = self.functions.get_mut(name) {
-                    for definition in definitions {
-                        definition.is_definite = false;
+        let resolves_to_function =
+            direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name));
+        if !resolves_to_function {
+            if let Some(names) = static_unset_function_names(&tokens) {
+                for name in names {
+                    if self.execution_is_definite {
+                        self.functions.remove(name);
+                        self.exported_functions.remove(name);
+                    } else if let Some(definitions) = self.functions.get_mut(name) {
+                        for definition in definitions {
+                            definition.is_definite = false;
+                        }
                     }
                 }
             }
@@ -377,7 +381,7 @@ impl CommandCollector {
             };
             self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
                 collector.with_inherited_stdin(inherited_stdin, |collector| {
-                    collector.collect_source(payload)
+                    collector.collect_source(&payload)
                 })
             })?;
         }
