@@ -606,6 +606,16 @@ fn force_push_rule_preserves_missing_shell_zero() {
     assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
     assert!(outcome.matches.is_empty(), "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
+
+    let command = "bash -c '$1' _ 'git push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
 }
 
 #[test]
@@ -657,6 +667,9 @@ EOF' _ --force"#,
         r#"bash -c 'sh <<EOF
 git push '\''$1'\''
 EOF' _ --force"#,
+        r#"bash -c 'sh <<EOF
+${1:-"git push --force"}
+EOF' _"#,
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -708,6 +721,34 @@ fn force_push_rule_keeps_nested_command_substitution_quotes_independent() {
 }
 
 #[test]
+fn force_push_rule_does_not_expand_function_definition_names() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c '$1(){ :; }; git push --force' _ git"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_expands_shell_positionals_as_arithmetic_source() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c '(( $1 ))' _ 'x[$(git push --force)]'"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
 fn force_push_rule_resolves_unset_function_before_builtin_state() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     let shadowed = "f(){ git push --force;}; unset(){ :;}; unset -f f; f";
@@ -734,7 +775,6 @@ fn force_push_rule_resolves_unset_function_before_builtin_state() {
     );
     assert!(outcome.matches.is_empty(), "{explicit_builtin}");
     assert!(outcome.diagnostics.is_empty(), "{explicit_builtin}");
-
     let mixed_wrappers = "f(){ git push --force;}; unset(){ :;}; builtin command unset -f f; f";
     let outcome = evaluate_artifact(
         &artifact,
@@ -749,43 +789,4 @@ fn force_push_rule_resolves_unset_function_before_builtin_state() {
     );
     assert!(outcome.matches.is_empty(), "{mixed_wrappers}");
     assert!(outcome.diagnostics.is_empty(), "{mixed_wrappers}");
-}
-
-#[test]
-fn force_push_rule_closes_wrapper_option_parsing_gaps() {
-    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
-    for command in [
-        "git push -od origin +HEAD:main",
-        "git push -od origin +main",
-        "git() { command git \"$@\"; }; git push --force",
-        "env -uHOME git push --force",
-        "env A-B=1 git push --force",
-        "exec -aNAME git push --force",
-        "git --config-env push.default=REMEM push --force",
-    ] {
-        let outcome = evaluate_artifact(
-            &artifact,
-            &EvaluationInput {
-                command: command.into(),
-            },
-        );
-        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
-        assert!(outcome.diagnostics.is_empty(), "{command}");
-    }
-    for command in [
-        "git push -o d origin main",
-        "git push -od origin main",
-        "git push -d origin stale-branch",
-        "env -uHOME true",
-        "env A-B=1 true",
-    ] {
-        let outcome = evaluate_artifact(
-            &artifact,
-            &EvaluationInput {
-                command: command.into(),
-            },
-        );
-        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
-        assert!(outcome.diagnostics.is_empty(), "{command}");
-    }
 }

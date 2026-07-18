@@ -51,6 +51,9 @@ gaps can either miss a forbidden command or report a false block.
    traps and for expandable heredoc text before it is handed to a nested shell;
    quote characters inside an unquoted-delimiter heredoc body shall not suppress
    that expansion, while a quoted delimiter shall keep the body literal.
+   Unquoted whole-word positionals may yield multiple argv fields; arithmetic
+   and nested command-substitution contexts shall parse the expanded source
+   under their own Bash syntax rather than inheriting surrounding quote state.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.
@@ -60,7 +63,7 @@ gaps can either miss a forbidden command or report a false block.
    resembles the builtin.
 6. B-006 An explicit Bash builtin invocation, such as `builtin unset -f
    <name>`, shall retain builtin unset semantics even when a function named
-   `unset` exists.
+   `unset` exists, including valid mixed `builtin command` wrapper sequences.
 7. B-007 Each new recognition path shall be bounded and deterministic and shall
    preserve the existing conservative behavior for dynamic or unsupported
    shell constructs.

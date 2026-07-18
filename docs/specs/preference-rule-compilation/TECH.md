@@ -131,7 +131,11 @@ Artifact v2 additionally supports:
   `$1...` mapping into function bodies, while remaining active for EXIT traps
   and expandable heredoc stdin passed to nested shells; quote characters in an
   unquoted-delimiter heredoc body do not suppress that expansion, while a
-  quoted delimiter preserves literal text; force and mirror
+  quoted delimiter preserves literal text. Whole unquoted positionals may
+  produce multiple argv fields; nested command substitutions and arithmetic
+  source use their own syntax context, and function-definition names remain
+  unexpanded. Mixed `builtin`/`command` wrappers share the same static builtin
+  normalization; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.

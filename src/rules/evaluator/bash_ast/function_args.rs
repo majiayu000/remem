@@ -44,6 +44,22 @@ pub(super) fn expand_shell_heredoc(
     ))
 }
 
+pub(super) fn expand_shell_arithmetic(
+    source: &str,
+    options: &ParserOptions,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+) -> Result<String, String> {
+    let pieces = brush_parser::word::parse(source, options)
+        .map_err(|error| format!("Bash positional arithmetic parse error: {error}"))?;
+    Ok(expand_heredoc_range(
+        source,
+        &pieces,
+        zero_argument,
+        arguments,
+    ))
+}
+
 pub(super) fn bare_shell_positional_fields(
     source: &str,
     options: &ParserOptions,

@@ -45,6 +45,11 @@ function positional expander into a string-source helper with an explicit
   `$1`;
 - missing positional operands keep the existing conservative empty expansion;
   dynamic sentinel operands do not become fabricated static commands.
+- an entire unquoted positional word may materialize multiple static argv
+  fields, while function-definition names are never parameter-expanded;
+- nested command substitutions are parsed from their own source before
+  applying the inherited positional context, and arithmetic positionals are
+  expanded as arithmetic source rather than shell-quoted argv.
 
 Parse the literal command string through the existing child-shell scope while
 carrying the mapping as collector context. Expand each executed word in that
@@ -55,8 +60,8 @@ the child shell context, and expand unquoted heredoc payloads in the current
 context before a nested shell receives stdin. Use heredoc-specific expansion
 semantics so quote characters in an unquoted-delimiter body are literal and do
 not suppress `$0/$1...`; quoted-delimiter heredocs remain literal. Quoting,
-recursive defaults, and materialization bounds remain owned by the existing
-positional-expansion implementation.
+recursive defaults, default-word quote removal, and materialization bounds
+remain owned by the existing positional-expansion implementation.
 
 ### 3. Resolve functions before builtin-like state mutation
 
@@ -65,8 +70,9 @@ before applying builtin state changes. A plain `unset ...` call resolves to the
 function and returns after analyzing its body. Explicit builtin-selection
 forms (`builtin unset ...` and the existing `command unset ...` behavior) skip
 function resolution and may mutate static function state. The state mutation
-helper shall use the shared builtin command-position normalizer so repeated
-`builtin` wrappers remain deterministic.
+helper shall use the shared builtin command-position normalizer, which keeps
+peeling valid `builtin` and `command` wrappers in either order so mixed and
+repeated wrappers remain deterministic.
 
 This ordering change is scoped to `unset -f`; it does not change alias
 expansion, export handling, subshell scopes, or dynamic command resolution.
@@ -85,12 +91,12 @@ assets; this PR does not publish a release.
 | --- | --- | --- |
 | B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
 | B-002 basename-only precision | platform-independent `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers POSIX- and Windows-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
-| B-003 shell `-c` positional binding | scoped positional collector context plus shell payload extraction | `force_push_rule_binds_shell_command_positional_parameters` covers `$0` and `$1`; paired function-local arguments, EXIT traps, and unquoted-versus-quoted heredoc handoff have focused tests |
+| B-003 shell `-c` positional binding | scoped positional collector context plus shell payload extraction | focused tests cover `$0`, multi-field `$1`, function-local arguments, nested command substitutions, arithmetic source, EXIT traps, and unquoted-versus-quoted heredoc handoff |
 | B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1`; `force_push_rule_preserves_missing_shell_zero` leaves `${0:-git}` unknown rather than fabricating `git` |
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
-| B-006 explicit builtin `unset` | shared builtin command-position normalization | `force_push_rule_resolves_unset_function_before_builtin_state` covers `builtin unset -f f` → Allow |
+| B-006 explicit builtin `unset` | shared builtin command-position normalization | `force_push_rule_resolves_unset_function_before_builtin_state` covers `builtin unset -f f` and `builtin command unset -f f` → Allow |
 | B-007 bounded deterministic behavior | existing parser/expansion limits and evaluator regression suite | `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
-| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs` | focused block/allow tables pass; a large brace-expanded argv beginning with a non-shell remains Allow even when a later word is `bash.exe` |
+| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs` | focused block/allow tables pass; nested single-quoted substitution and brace-expanded non-shell argv remain Allow while adjacent executable forms Block |
 
 ## Data Flow
 
@@ -173,7 +179,9 @@ metadata, and do not publish or fabricate release assets as part of rollback.
     "src/rules/evaluator/bash_ast/static_execution.rs",
     "src/rules/evaluator/bash_ast/function_args.rs",
     "src/rules/evaluator/bash_ast/stdin_payload.rs",
+    "src/rules/evaluator/tests.rs",
     "src/rules/evaluator/tests/git_execution.rs",
+    "src/rules/evaluator/tests/git_execution_wrapper_options.rs",
     "docs/specs/preference-rule-compilation/TECH.md",
     "Cargo.toml",
     "Cargo.lock",
