@@ -122,7 +122,7 @@ pub(in crate::api) async fn handle_list_memories(
         "project AS effective_project".to_string()
     };
     let sql = format!(
-        "SELECT {}, {} FROM memories WHERE {} ORDER BY updated_at_epoch DESC LIMIT ?{idx} OFFSET ?{}",
+        "SELECT {}, {}, version FROM memories WHERE {} ORDER BY updated_at_epoch DESC LIMIT ?{idx} OFFSET ?{}",
         crate::memory::types::MEMORY_COLS,
         effective_project_sql,
         where_sql,
@@ -137,13 +137,15 @@ pub(in crate::api) async fn handle_list_memories(
         let rows = stmt.query_map(binds_refs2.as_slice(), |row| {
             let memory = crate::memory::types::map_memory_row_pub(row)?;
             let effective_project: String = row.get(13)?;
-            Ok((memory, effective_project))
+            let version: i64 = row.get(14)?;
+            Ok((memory, effective_project, version))
         })?;
         let mut out = Vec::new();
         for row in rows {
-            let (memory, effective_project) = row?;
+            let (memory, effective_project, version) = row?;
             let mut item = memory_to_item_with_conn(&conn, &memory)?;
             item.project = effective_project;
+            item.version = Some(version);
             out.push(item);
         }
         Ok(out)

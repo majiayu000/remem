@@ -6,6 +6,7 @@ mod handlers;
 mod helpers;
 #[allow(dead_code)]
 pub(crate) mod mutation;
+mod read_resources;
 mod server;
 #[cfg(test)]
 mod tests;

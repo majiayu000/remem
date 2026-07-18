@@ -972,6 +972,11 @@ make user-context auto-promote configuration-driven: the default lowers only the
 confidence threshold to `0.7`, `strict = true` restores the old `0.9` threshold,
 existing hard gates remain review/no-retention gates, and `remem status` reports
 user-context claim/candidate counts and pending block reasons.
+Source version `0.6.6` implements the GH-880 safe console API: candidate
+detail/evidence and idempotent safe review, five independently gated safe read
+resources, and recoverable memory archive/restore. Installed clients must wait
+for a published `v0.6.6` release and require the exact capability/endpoint-map
+bundle; the staged `unreleased` source manifest is not release evidence.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more
@@ -998,10 +1003,24 @@ frequently than the returned `cache.ttl_secs`; use
 |---|---|---|
 | `/api/v1/stats` | GET | Product stats for local dashboards |
 | `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
+| `/api/v1/candidates/{id}` | GET | Safe candidate detail, evidence, and review decision |
+| `/api/v1/candidates/{id}/review/approve` | POST | Versioned, audited, idempotent safe approval |
+| `/api/v1/candidates/{id}/review/reject` | POST | Versioned, audited, idempotent safe rejection |
+| `/api/v1/candidates/{id}/review/edit` | POST | Versioned, audited, idempotent safe edit-and-approve |
 | `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate; quarantined candidates require `acknowledge_pattern` |
 | `/api/v1/candidates/{id}/reject` | POST | Reject a pending memory candidate |
 | `/api/v1/candidates/{id}/edit` | POST | Edit and approve a pending memory candidate |
 | `/api/v1/graph?project=&limit=&include_suppressed=` | GET | DB-backed entity graph read model |
+| `/api/v1/observations[/{id}]` | GET | Safe observation list/detail with typed cursor |
+| `/api/v1/sessions[/{id}]` | GET | Safe session list/detail with typed cursor |
+| `/api/v1/workstreams[/{id}]` | GET | Safe workstream list/detail with typed cursor |
+| `/api/v1/events[/{id}]` | GET | Safe event metadata list/detail without raw content |
+| `/api/v1/tasks[/{id}]` | GET | Safe task list/detail without raw payload/error text |
+| `/api/v1/memories/{id}/archive` | POST | Recoverably archive an active memory |
+| `/api/v1/memories/{id}/restore` | POST | Restore only the current exact Web archive |
+
+Permanent Web delete is intentionally unavailable. `memory_delete=false` and
+the capability endpoint map contains no delete key.
 
 ### Compatibility aliases
 

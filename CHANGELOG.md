@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.6` for GH-880: the authenticated native API now
+  advertises safe candidate detail/review, five independently gated read
+  resources, and recoverable memory archive/restore. Typed cursor, redaction,
+  optimistic-version, idempotency, audit, and current-provenance contracts are
+  covered by native smoke and regression gates; permanent Web delete remains
+  unavailable. Release metadata stays `unreleased` until publication.
 - Staged source version `0.6.5` for GH-880 SP880-T1: schema v70 adds
   fail-closed migration recovery, Web-visible resource versions, an
   idempotency replay ledger, and stable cursor foundations without advertising

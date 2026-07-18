@@ -1,6 +1,6 @@
 use axum::{
     body::to_bytes,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -9,9 +9,19 @@ use serde_json::Value;
 use crate::db;
 use crate::db::test_support::ScopedTestDataDir;
 
-use super::super::handlers::handle_list_candidates;
+use super::super::handlers::{handle_candidate_detail, handle_list_candidates};
 use super::super::types::CandidateParams;
 use super::super::DbState;
+use super::candidate_safe_review::insert_safe_review_candidate;
+
+async fn candidate_detail_payload(id: i64) -> anyhow::Result<(StatusCode, Value)> {
+    let response = handle_candidate_detail(State(DbState), Path(id))
+        .await
+        .into_response();
+    let status = response.status();
+    let body = to_bytes(response.into_body(), usize::MAX).await?;
+    Ok((status, serde_json::from_slice(&body)?))
+}
 
 #[tokio::test]
 async fn list_candidates_defaults_to_pending_review() -> anyhow::Result<()> {
@@ -259,5 +269,239 @@ async fn list_candidates_rejects_out_of_range_min_confidence() -> anyhow::Result
         let payload: Value = serde_json::from_slice(&body)?;
         assert_eq!(payload["error"]["code"], "candidate_filter_invalid");
     }
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_projects_safe_metadata_without_raw_evidence() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-safe");
+    let raw_sentinel = "RAW_EVIDENCE_SENTINEL token=super-secret-value";
+    let (candidate_id, event_id) = insert_safe_review_candidate(
+        "candidate-detail-safe",
+        "file_edit",
+        raw_sentinel,
+        "Use a transaction for review writes.",
+    )?;
+
+    let (status, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["data"]["id"], candidate_id);
+    assert_eq!(payload["evidence"][0]["source_id"], event_id);
+    assert_eq!(payload["evidence"][0]["event_type"], "file_edit");
+    assert_eq!(payload["evidence"][0]["summary"], "File edit evidence");
+    assert_eq!(payload["evidence"][0]["preview"], "");
+    assert_eq!(payload["evidence"][0]["redacted"], true);
+    assert_eq!(payload["decision"]["can_review"], true);
+    let serialized = serde_json::to_string(&payload)?;
+    assert!(!serialized.contains(raw_sentinel));
+    assert!(!serialized.contains("super-secret-value"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_fails_closed_for_unsafe_event_type() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-unsafe");
+    let (candidate_id, _) = insert_safe_review_candidate(
+        "candidate-detail-unsafe",
+        "session_stop",
+        "raw-only transcript",
+        "Candidate derived from a stopped session.",
+    )?;
+
+    let (status, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["decision"]["can_review"], false);
+    assert_eq!(
+        payload["decision"]["blocked_reasons"],
+        serde_json::json!(["evidence_safe_projection_unavailable"])
+    );
+    assert_eq!(payload["evidence"][0]["summary"], "");
+    assert_eq!(payload["evidence"][0]["preview"], "");
+    assert_eq!(
+        payload["evidence"][0]["provenance_status"],
+        "unsafe_projection"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_fails_closed_for_missing_and_cross_project_evidence() -> anyhow::Result<()>
+{
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-provenance");
+    let (candidate_id, _) = insert_safe_review_candidate(
+        "candidate-detail-home",
+        "file_edit",
+        "home evidence",
+        "Candidate with invalid provenance.",
+    )?;
+    let (_, cross_event_id) = insert_safe_review_candidate(
+        "candidate-detail-other",
+        "file_edit",
+        "other evidence",
+        "Other candidate.",
+    )?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_candidates SET evidence_event_ids = ?1 WHERE id = ?2",
+        rusqlite::params![
+            serde_json::to_string(&vec![cross_event_id, 9_999_999_i64])?,
+            candidate_id
+        ],
+    )?;
+    drop(conn);
+
+    let (status, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["decision"]["can_review"], false);
+    let reasons = payload["decision"]["blocked_reasons"]
+        .as_array()
+        .expect("blocked reasons should be an array");
+    assert!(reasons.contains(&Value::String("evidence_cross_project".to_string())));
+    assert!(reasons.contains(&Value::String("evidence_missing".to_string())));
+    assert_eq!(payload["evidence"][0]["event_type"], Value::Null);
+    assert_eq!(payload["evidence"][1]["event_type"], Value::Null);
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_rejects_malformed_nonpositive_and_duplicate_evidence_ids(
+) -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-invalid-ids");
+    let (candidate_id, event_id) = insert_safe_review_candidate(
+        "candidate-detail-invalid-ids",
+        "file_edit",
+        "safe evidence",
+        "Candidate with malformed references.",
+    )?;
+    let cases = [
+        ("not-json", "evidence_ids_invalid"),
+        ("[0]", "evidence_id_invalid"),
+        (&format!("[{event_id},{event_id}]"), "evidence_id_duplicate"),
+    ];
+    for (evidence_json, expected_reason) in cases {
+        let conn = db::open_db()?;
+        conn.execute(
+            "UPDATE memory_candidates SET evidence_event_ids = ?1 WHERE id = ?2",
+            rusqlite::params![evidence_json, candidate_id],
+        )?;
+        drop(conn);
+        let (_, payload) = candidate_detail_payload(candidate_id).await?;
+        assert_eq!(payload["decision"]["can_review"], false);
+        assert_eq!(
+            payload["decision"]["blocked_reasons"],
+            serde_json::json!([expected_reason])
+        );
+        assert_eq!(payload["evidence"], serde_json::json!([]));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_applies_active_candidate_suppression() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-suppressed");
+    let (candidate_id, _) = insert_safe_review_candidate(
+        "candidate-detail-suppressed",
+        "file_edit",
+        "safe evidence",
+        "Candidate suppressed by policy.",
+    )?;
+    let conn = db::open_db()?;
+    let topic_key: String = conn.query_row(
+        "SELECT topic_key FROM memory_candidates WHERE id = ?1",
+        rusqlite::params![candidate_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "INSERT INTO memory_suppressions
+         (target_kind, target_value, reason, actor, status, created_at_epoch, updated_at_epoch)
+         VALUES ('topic_key', ?1, 'policy decision', 'test', 'active', 1, 1)",
+        rusqlite::params![topic_key],
+    )?;
+    drop(conn);
+
+    let (_, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(payload["decision"]["can_review"], false);
+    assert!(payload["decision"]["blocked_reasons"]
+        .as_array()
+        .expect("blocked reasons should be an array")
+        .contains(&Value::String("candidate_policy_suppressed".to_string())));
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_requires_at_least_one_evidence_reference() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-empty-evidence");
+    let (candidate_id, _) = insert_safe_review_candidate(
+        "candidate-detail-empty-evidence",
+        "file_edit",
+        "safe evidence",
+        "Candidate whose evidence list is empty.",
+    )?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_candidates SET evidence_event_ids = '[]' WHERE id = ?1",
+        rusqlite::params![candidate_id],
+    )?;
+    drop(conn);
+
+    let (_, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(payload["decision"]["can_review"], false);
+    assert_eq!(
+        payload["decision"]["blocked_reasons"],
+        serde_json::json!(["evidence_required"])
+    );
+    assert_eq!(payload["evidence"], serde_json::json!([]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_ignores_user_context_candidate_id_suppressions() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-id-domain");
+    let (candidate_id, _) = insert_safe_review_candidate(
+        "candidate-detail-id-domain",
+        "file_edit",
+        "safe evidence",
+        "Memory candidate in a distinct identifier domain.",
+    )?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memory_suppressions
+         (target_kind, target_id, reason, actor, status, created_at_epoch, updated_at_epoch)
+         VALUES ('user_candidate', ?1, 'different id domain', 'test', 'active', 1, 1)",
+        rusqlite::params![candidate_id],
+    )?;
+    drop(conn);
+
+    let (_, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(payload["decision"]["can_review"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_applies_pattern_suppression_before_redaction() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-pattern-order");
+    let secret = "candidate-policy-secret-value";
+    let (candidate_id, _) = insert_safe_review_candidate(
+        "candidate-detail-pattern-order",
+        "file_edit",
+        "safe evidence",
+        &format!("token={secret}"),
+    )?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "INSERT INTO memory_suppressions
+         (target_kind, target_value, reason, actor, status, created_at_epoch, updated_at_epoch)
+         VALUES ('pattern', ?1, 'secret policy', 'test', 'active', 1, 1)",
+        rusqlite::params![secret],
+    )?;
+    drop(conn);
+
+    let (_, payload) = candidate_detail_payload(candidate_id).await?;
+    assert_eq!(payload["decision"]["can_review"], false);
+    assert!(payload["decision"]["blocked_reasons"]
+        .as_array()
+        .expect("blocked reasons should be an array")
+        .contains(&Value::String("candidate_policy_suppressed".to_string())));
+    assert!(!serde_json::to_string(&payload)?.contains(secret));
     Ok(())
 }
