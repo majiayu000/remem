@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.6.4"
+version = "0.6.5"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
 license = "MIT"
@@ -30,6 +30,7 @@ clap = { version = "4", features = ["derive", "string"] }
 rusqlite = { version = "0.32", features = ["bundled-sqlcipher-vendored-openssl", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 regex = "1"
 regex-lite = "0.1"
 brush-parser = "0.4.0"

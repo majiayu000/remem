@@ -8,37 +8,132 @@ use super::state::{applied_versions, ensure_migration_table, has_migration_table
 use super::transition::transition_from_old_system;
 use super::types::{MIGRATIONS, OLD_BASELINE_VERSION};
 
+const WEB_CONSOLE_GOVERNANCE_VERSION: i64 = 70;
+
 pub fn run_migrations(conn: &Connection) -> Result<()> {
+    set_foreign_keys(conn, true).context("enable foreign keys before migration")?;
     ensure_migration_table(conn)?;
 
-    conn.execute_batch("BEGIN IMMEDIATE")
-        .context("begin migration transaction")?;
-    let result = run_migrations_locked(conn);
-    match result {
-        Ok(()) => {
-            conn.execute_batch("COMMIT")
-                .context("commit migration transaction")?;
-            Ok(())
+    let applied = applied_versions(conn)?;
+    let v070_pending = !applied.contains(&WEB_CONSOLE_GOVERNANCE_VERSION);
+    if v070_pending {
+        set_foreign_keys(conn, false).context("disable foreign keys for v070 table rebuild")?;
+    }
+
+    let outcome = run_migration_transaction(conn, v070_pending);
+    match outcome {
+        MigrationOutcome::Completed(result) => restore_foreign_keys(conn, result),
+        MigrationOutcome::DiscardConnection(error) => Err(error),
+    }
+}
+
+enum MigrationOutcome {
+    Completed(Result<()>),
+    DiscardConnection(anyhow::Error),
+}
+
+fn run_migration_transaction(conn: &Connection, verify_rebuild: bool) -> MigrationOutcome {
+    if let Err(error) = conn
+        .execute_batch("BEGIN IMMEDIATE")
+        .context("begin migration transaction")
+    {
+        return MigrationOutcome::Completed(Err(error));
+    }
+
+    let migration_result = run_migrations_locked(conn).and_then(|()| {
+        if verify_rebuild {
+            verify_migration_integrity(conn)?;
         }
-        Err(error) => {
-            if let Err(rollback_error) = conn.execute_batch("ROLLBACK") {
-                // A failed rollback can leave the database in a partially-migrated
-                // state, so this is never a benign warning (U-29). Surface it at
-                // error level and keep both error chains.
-                crate::log::error(
-                    "migrate",
-                    &format!(
-                        "rollback failed after migration error: {rollback_error}; \
-                         original migration error: {error:#}"
-                    ),
-                );
-                return Err(
-                    error.context(format!("migration rollback also failed: {rollback_error}"))
-                );
-            }
-            Err(error)
+        Ok(())
+    });
+
+    finish_migration_transaction(conn, migration_result)
+}
+
+fn finish_migration_transaction(
+    conn: &Connection,
+    migration_result: Result<()>,
+) -> MigrationOutcome {
+    match migration_result {
+        Ok(()) => match conn.execute_batch("COMMIT") {
+            Ok(()) => MigrationOutcome::Completed(Ok(())),
+            Err(commit_error) => rollback_after_error(
+                conn,
+                anyhow!(commit_error).context("commit migration transaction"),
+            ),
+        },
+        Err(error) => rollback_after_error(conn, error),
+    }
+}
+
+fn rollback_after_error(conn: &Connection, error: anyhow::Error) -> MigrationOutcome {
+    match conn.execute_batch("ROLLBACK") {
+        Ok(()) => MigrationOutcome::Completed(Err(error)),
+        Err(rollback_error) => {
+            crate::log::error(
+                "migrate",
+                &format!(
+                    "fatal migration rollback failure; discard connection: {rollback_error}; \
+                     original migration error: {error:#}"
+                ),
+            );
+            MigrationOutcome::DiscardConnection(error.context(format!(
+                "migration rollback also failed; connection must be discarded: {rollback_error}"
+            )))
         }
     }
+}
+
+fn restore_foreign_keys(conn: &Connection, result: Result<()>) -> Result<()> {
+    let restored = set_foreign_keys(conn, true).context("restore foreign keys after migration");
+    match (result, restored) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(restore_error)) => Err(restore_error),
+        (Err(error), Err(restore_error)) => Err(error.context(format!(
+            "foreign key restoration also failed: {restore_error:#}"
+        ))),
+    }
+}
+
+fn set_foreign_keys(conn: &Connection, enabled: bool) -> Result<()> {
+    let statement = if enabled {
+        "PRAGMA foreign_keys = ON"
+    } else {
+        "PRAGMA foreign_keys = OFF"
+    };
+    conn.execute_batch(statement)?;
+    let actual: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+    if (actual != 0) != enabled {
+        return Err(anyhow!(
+            "foreign key mode verification failed: expected {}, got {}",
+            if enabled { "ON" } else { "OFF" },
+            if actual != 0 { "ON" } else { "OFF" }
+        ));
+    }
+    Ok(())
+}
+
+fn verify_migration_integrity(conn: &Connection) -> Result<()> {
+    let mut foreign_key_check = conn.prepare("PRAGMA foreign_key_check")?;
+    let mut foreign_key_rows = foreign_key_check.query([])?;
+    if let Some(row) = foreign_key_rows.next()? {
+        let table: String = row.get(0)?;
+        let row_id: Option<i64> = row.get(1)?;
+        let parent: String = row.get(2)?;
+        return Err(anyhow!(
+            "foreign key check failed for table {table}, row {row_id:?}, parent {parent}"
+        ));
+    }
+
+    let mut integrity_check = conn.prepare("PRAGMA integrity_check")?;
+    let messages = integrity_check
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    if messages.len() != 1 || messages[0] != "ok" {
+        return Err(anyhow!("integrity check failed: {}", messages.join("; ")));
+    }
+    Ok(())
 }
 
 pub(crate) fn ensure_schema_current(conn: &Connection) -> Result<()> {
@@ -265,4 +360,59 @@ fn log_v069_reconciliation_counts(conn: &Connection) -> Result<()> {
     conn.execute_batch("DROP TABLE temp._v069_reconciled")
         .context("drop v069 reconciliation evidence after logging")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod transaction_failure_tests {
+    use anyhow::anyhow;
+    use rusqlite::Connection;
+
+    use super::{
+        finish_migration_transaction, restore_foreign_keys, rollback_after_error, MigrationOutcome,
+    };
+
+    #[test]
+    fn commit_failure_rolls_back_and_restores_foreign_keys() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE parent(id INTEGER PRIMARY KEY);
+             CREATE TABLE child(
+                 id INTEGER PRIMARY KEY,
+                 parent_id INTEGER REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED
+             );
+             BEGIN IMMEDIATE;
+             INSERT INTO child(id, parent_id) VALUES (1, 99);",
+        )?;
+
+        let outcome = finish_migration_transaction(&conn, Ok(()));
+        let result = match outcome {
+            MigrationOutcome::Completed(result) => restore_foreign_keys(&conn, result),
+            MigrationOutcome::DiscardConnection(error) => Err(error),
+        };
+        let error = result.expect_err("deferred foreign key must fail COMMIT");
+        assert!(format!("{error:#}").contains("commit migration transaction"));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM child", [], |row| row.get::<_, i64>(0))?,
+            0
+        );
+        assert_eq!(
+            conn.query_row("PRAGMA foreign_keys", [], |row| row.get::<_, i64>(0))?,
+            1
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rollback_failure_requires_connection_discard() -> anyhow::Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let outcome = rollback_after_error(&conn, anyhow!("injected migration failure"));
+        let MigrationOutcome::DiscardConnection(error) = outcome else {
+            panic!("ROLLBACK without a transaction must require connection discard");
+        };
+        let message = format!("{error:#}");
+        assert!(message.contains("injected migration failure"));
+        assert!(message.contains("connection must be discarded"));
+        Ok(())
+    }
 }

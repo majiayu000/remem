@@ -713,8 +713,11 @@ fn job_queue_atomicity_migration_rolls_back_all_changes_on_validation_error() ->
 }
 
 #[test]
-fn v069_migration_is_latest_and_named_stably() {
-    let migration = MIGRATIONS.last().expect("v069 migration");
+fn v069_migration_remains_named_stably_after_v070() {
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == 69)
+        .expect("v069 migration");
     assert_eq!(migration.version, 69);
     assert_eq!(migration.name, "job_queue_atomicity");
 }

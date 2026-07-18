@@ -519,6 +519,17 @@ fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<
     conn.execute_batch("PRAGMA user_version = 65")?;
     let now = chrono::Utc::now().timestamp();
     conn.execute(
+        "INSERT INTO workspaces(id, root_path, created_at_epoch, updated_at_epoch)
+         VALUES (1, '/tmp/status-v053-source-kind', ?1, ?1)",
+        params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO projects(id, workspace_id, project_path, project_key,
+                              created_at_epoch, updated_at_epoch)
+         VALUES (1, 1, '/tmp/status-v053-source-kind', 'status-v053-source-kind', ?1, ?1)",
+        params![now],
+    )?;
+    conn.execute(
         "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
                                        evidence_event_ids, confidence, risk_class,
                                        review_status, auto_promote_block_reason,
