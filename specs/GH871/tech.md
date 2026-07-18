@@ -60,6 +60,7 @@ CREATE TABLE raw_session_identities (
     observed_size_bytes INTEGER NOT NULL,
     first_event_epoch INTEGER,
     last_event_epoch INTEGER,
+    missing_event_time_count INTEGER NOT NULL DEFAULT 0,
     first_seen_at_epoch INTEGER NOT NULL,
     last_seen_at_epoch INTEGER NOT NULL,
     UNIQUE(source_root, transcript_path, canonical_session_id)
@@ -83,9 +84,10 @@ unkeyed path hash that could be dictionary-tested.
 `project` is the current canonical `project_from_cwd` value. `legacy_project`
 is the historical transcript-directory slug used by the GH720-era importer.
 The ledger keeps both so v071 can locate legacy raw rows without guessing or
-changing the public canonical grouping. The observed cursor tuple and inclusive
-event range form a privacy-local transcript index used to avoid parsing
-out-of-window history during reconciliation.
+changing the public canonical grouping. The observed cursor tuple, inclusive
+event range, and missing-event-time count form a privacy-local transcript index
+used to avoid parsing unrelated history without losing timestamp-less records
+during reconciliation.
 
 v071 also adds these additive raw-message fields:
 
@@ -250,12 +252,15 @@ Processing:
 
 1. Reject `since_epoch > until_epoch`. Discover transcript paths with the same
    root and `subagents/` rules as `ingest-sessions`, but do not parse them yet.
-2. Require an exact version-1 ledger/cursor match for every discovered path
-   (observed mtime/size included) and reject stale, missing, or extra required
-   root entries with an actionable `run remem ingest-sessions` diagnostic.
-3. Use the ledger's inclusive first/last event bounds to select only transcript
-   files that can intersect the requested window. Capture each candidate file
-   length once and stream only complete records through that boundary.
+2. Open each discovered path, capture its file-descriptor mtime/size tuple and
+   immutable read boundary once, then require that captured tuple to match its
+   version-1 ledger/cursor entry exactly. Reject stale, missing, or extra
+   required-root entries with an actionable `run remem ingest-sessions`
+   diagnostic. Appends after the captured boundary are outside this run.
+3. Select files whose inclusive first/last event bounds can intersect the
+   requested window, plus every file whose ledger
+   `missing_event_time_count > 0`. Stream only complete records through each
+   selected file's already-validated captured boundary.
 4. Derive the same canonical identity and project key as ingestion.
 5. Aggregate transcript-side archive-eligible message identities
    `(role, content_hash)` and the explicit exclusion taxonomy inside the fixed
@@ -431,8 +436,9 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
   filename fallback.
 - Performance: unchanged files receive a bounded context probe, but no full
   reparse during normal ingestion after the v1 upgrade. Reconciliation validates
-  the ledger and parses only files whose indexed event ranges intersect the
-  requested window; it never scans or counts unrelated historical records.
+  the captured file tuple and parses only files whose indexed event ranges
+  intersect the requested window or contain timestamp-less records; it never
+  opens unrelated historical files or counts out-of-window records.
 - Data integrity: rekey can collide with canonical rows. Complete-set sticky
   conflict checks, stable-field equality preflight, in-place updates,
   evidence-reference rewrites, savepoints, the existing unique key, FTS
@@ -451,7 +457,8 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
       transactional legacy event-time provenance upgrade with rollback/version
       retry, validated read-only lock contention, equal-count message
       substitution, persisted-conflict reporting, inverted bounds, stale-index
-      refusal, bounded candidate-file reads, and fixed-window fixtures.
+      and append-race refusal, missing-time-only file selection, bounded
+      candidate-file reads, and fixed-window fixtures.
 - [ ] Migration tests: v071 name/order, upgrade preservation, declared
       table/index/check constraints, rerun, rollback, and schema-drift
       detection.

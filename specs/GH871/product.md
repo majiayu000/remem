@@ -153,8 +153,10 @@ inclusion-rule difference.
 - A user record is meta, begins with XML/control markup, or contains no
   supported text. The report assigns exactly one exclusion category.
 - The same session spans the UTC window boundary. Only records whose transcript
-  event time is inside the inclusive window participate in parity counts; the
-  report does not scan or count the session's out-of-window records.
+  event time is inside the inclusive window participate in parity counts. The
+  report does not open transcript files whose indexed event range cannot
+  intersect the window and does not count out-of-window records; a selected
+  candidate file is still streamed through its captured boundary.
 
 ## Rollout Notes
 
