@@ -2,7 +2,7 @@ use brush_parser::word::{
     BraceExpressionMember, BraceExpressionOrText, WordPiece, WordPieceWithSource,
 };
 
-use super::{DYNAMIC_SHELL_WORD, MAX_STATIC_WORD_VARIANTS};
+use super::MAX_STATIC_WORD_VARIANTS;
 use crate::rules::evaluator::git_push_arg_changes_force_state;
 
 const CRITICAL_STATIC_TOKENS: &[&str] = &[
@@ -26,11 +26,7 @@ const CRITICAL_STATIC_TOKENS: &[&str] = &[
 
 pub(super) fn append_word_variants(segments: &mut [Vec<String>], variants: Vec<String>) {
     for segment in segments {
-        if variants.is_empty() {
-            segment.push(DYNAMIC_SHELL_WORD.to_string());
-        } else {
-            segment.extend(variants.iter().cloned());
-        }
+        segment.extend(variants.iter().cloned());
     }
 }
 

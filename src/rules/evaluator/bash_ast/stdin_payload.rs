@@ -4,7 +4,8 @@ use brush_parser::ast::{
     CommandPrefixOrSuffixItem, IoFileRedirectKind, IoFileRedirectTarget, IoRedirect, SimpleCommand,
 };
 
-use super::{CommandCollector, DYNAMIC_SHELL_WORD};
+use super::function_args::expand_shell_heredoc;
+use super::{CommandCollector, PositionalContext, DYNAMIC_SHELL_WORD};
 
 pub(super) enum EffectiveStdin {
     Untouched,
@@ -12,6 +13,47 @@ pub(super) enum EffectiveStdin {
 }
 
 impl CommandCollector {
+    pub(super) fn expand_positional_heredoc(&self, source: &str) -> Result<String, String> {
+        let (zero_argument, arguments) =
+            self.positional_context
+                .as_ref()
+                .map_or((None, &[][..]), |context| {
+                    (
+                        context.zero_argument.as_deref(),
+                        context.arguments.as_slice(),
+                    )
+                });
+        expand_shell_heredoc(source, &self.options, zero_argument, arguments)
+    }
+
+    pub(super) fn collect_source_stdin_payload(
+        &mut self,
+        command: &SimpleCommand,
+        source_arguments: &[String],
+    ) -> Result<(), String> {
+        let payload = match self.effective_stdin_payload(command)? {
+            EffectiveStdin::Replaced(payload) => payload,
+            EffectiveStdin::Untouched => self.inherited_stdin.clone(),
+        };
+        let Some(payload) = payload else {
+            return Ok(());
+        };
+        if source_arguments.is_empty() {
+            return self.collect_source(&payload);
+        }
+        let zero_argument = self
+            .positional_context
+            .as_ref()
+            .and_then(|context| context.zero_argument.clone());
+        self.with_positional_context(
+            Some(PositionalContext {
+                zero_argument,
+                arguments: source_arguments.to_vec(),
+            }),
+            |collector| collector.collect_source(&payload),
+        )
+    }
+
     /// Select the static fd-0 payload after applying Bash redirections left-to-right.
     pub(super) fn effective_stdin_payload(
         &self,

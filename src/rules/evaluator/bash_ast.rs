@@ -19,12 +19,12 @@ pub(super) mod unwrap;
 
 use function_args::{
     bare_shell_positional_fields, expand_function_body, expand_shell_arithmetic,
-    expand_shell_command, expand_shell_heredoc,
+    expand_shell_command,
 };
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
-    static_shell_is_bash, static_shell_reads_stdin, static_source_reads_stdin,
+    static_shell_is_bash, static_shell_reads_stdin, static_source_stdin_arguments,
     static_unset_function_names,
 };
 use static_words::{
@@ -356,6 +356,7 @@ impl CommandCollector {
         self.apply_static_shell_state(&tokens);
         let resolves_to_function =
             direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name));
+        self.apply_static_positional_state(&tokens, resolves_to_function);
         if !resolves_to_function {
             if let Some(names) = static_unset_function_names(&tokens) {
                 for name in names {
@@ -415,14 +416,8 @@ impl CommandCollector {
                     collector.collect_source(&payload)
                 })?;
             }
-        } else if static_source_reads_stdin(&tokens) {
-            let payload = match self.effective_stdin_payload(command)? {
-                EffectiveStdin::Replaced(payload) => payload,
-                EffectiveStdin::Untouched => self.inherited_stdin.clone(),
-            };
-            if let Some(payload) = payload {
-                self.collect_source(&payload)?;
-            }
+        } else if let Some(arguments) = static_source_stdin_arguments(&tokens) {
+            self.collect_source_stdin_payload(command, arguments)?;
         }
         let shell_exits = static_shell_exits(&tokens);
         self.segments.push(tokens);
@@ -717,20 +712,6 @@ impl CommandCollector {
             || Ok(source.to_string()),
             |context| {
                 expand_shell_command(
-                    source,
-                    &self.options,
-                    context.zero_argument.as_deref(),
-                    &context.arguments,
-                )
-            },
-        )
-    }
-
-    pub(super) fn expand_positional_heredoc(&self, source: &str) -> Result<String, String> {
-        self.positional_context.as_ref().map_or_else(
-            || Ok(source.to_string()),
-            |context| {
-                expand_shell_heredoc(
                     source,
                     &self.options,
                     context.zero_argument.as_deref(),

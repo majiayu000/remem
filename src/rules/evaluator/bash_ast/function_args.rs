@@ -78,16 +78,186 @@ pub(super) fn bare_shell_positional_fields(
         return Ok(None);
     }
     let raw = &source[piece.start_index..piece.end_index];
-    let Some(value) = positional_source_value(raw, zero_argument, arguments, 0) else {
+    let Some(fields) = positional_source_fields(raw, zero_argument, arguments, 0) else {
         return Ok(None);
     };
-    Ok(Some(
-        value
-            .split([' ', '\t', '\n'])
-            .filter(|field| !field.is_empty())
-            .map(str::to_string)
-            .collect(),
-    ))
+    Ok(Some(fields))
+}
+
+fn positional_source_fields(
+    source: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+    depth: usize,
+) -> Option<Vec<String>> {
+    if matches!(source, "${@}" | "$@" | "${*}" | "$*") {
+        return Some(
+            arguments
+                .iter()
+                .flat_map(|value| split_fields(value))
+                .collect(),
+        );
+    }
+    let (consumed, expression) = parameter_expression(source)?;
+    (consumed == source.len())
+        .then(|| resolve_parameter_expression_fields(expression, zero_argument, arguments, depth))?
+}
+
+fn resolve_parameter_expression_fields(
+    expression: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+    depth: usize,
+) -> Option<Vec<String>> {
+    if depth > MAX_DEFAULT_EXPANSION_DEPTH {
+        return None;
+    }
+    let digit_end = expression
+        .find(|ch: char| !ch.is_ascii_digit())
+        .unwrap_or(expression.len());
+    let position = expression[..digit_end].parse::<usize>().ok()?;
+    if position == 0 && zero_argument.is_none() {
+        return None;
+    }
+    let argument = if position == 0 {
+        zero_argument
+    } else {
+        arguments.get(position - 1).map(String::as_str)
+    };
+    let suffix = &expression[digit_end..];
+    if let Some(fallback) = suffix.strip_prefix(":-") {
+        return if argument.is_none_or(str::is_empty) {
+            expand_default_fields(fallback, zero_argument, arguments, depth + 1)
+        } else {
+            Some(split_fields(argument.unwrap_or_default()))
+        };
+    }
+    if let Some(fallback) = suffix.strip_prefix('-') {
+        return if argument.is_none() {
+            expand_default_fields(fallback, zero_argument, arguments, depth + 1)
+        } else {
+            Some(split_fields(argument.unwrap_or_default()))
+        };
+    }
+    if let Some(alternative) = suffix.strip_prefix(":+") {
+        return if argument.is_some_and(|value| !value.is_empty()) {
+            expand_default_fields(alternative, zero_argument, arguments, depth + 1)
+        } else {
+            Some(Vec::new())
+        };
+    }
+    if let Some(alternative) = suffix.strip_prefix('+') {
+        return if argument.is_some() {
+            expand_default_fields(alternative, zero_argument, arguments, depth + 1)
+        } else {
+            Some(Vec::new())
+        };
+    }
+    suffix
+        .is_empty()
+        .then(|| split_fields(argument.unwrap_or_default()))
+}
+
+fn expand_default_fields(
+    source: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+    depth: usize,
+) -> Option<Vec<String>> {
+    if depth > MAX_DEFAULT_EXPANSION_DEPTH {
+        return None;
+    }
+    let mut fields = Vec::new();
+    let mut field = String::new();
+    let mut field_started = false;
+    let mut index = 0;
+    let mut single_quoted = false;
+    let mut double_quoted = false;
+    while index < source.len() {
+        let rest = &source[index..];
+        let ch = rest.chars().next()?;
+        if ch == '\'' && !double_quoted {
+            single_quoted = !single_quoted;
+            field_started = true;
+            index += 1;
+            continue;
+        }
+        if ch == '"' && !single_quoted {
+            double_quoted = !double_quoted;
+            field_started = true;
+            index += 1;
+            continue;
+        }
+        if ch == '\\' && !single_quoted {
+            let next = source[index + 1..].chars().next()?;
+            field.push(next);
+            field_started = true;
+            index += 1 + next.len_utf8();
+            continue;
+        }
+        if ch == '$' && !single_quoted {
+            let (consumed, expression) = parameter_expression(rest)?;
+            let nested = resolve_parameter_expression_fields(
+                expression,
+                zero_argument,
+                arguments,
+                depth + 1,
+            )?;
+            if double_quoted {
+                field.push_str(&nested.join(" "));
+                field_started = true;
+            } else {
+                append_expanded_fields(&mut fields, &mut field, &mut field_started, nested);
+            }
+            index += consumed;
+            continue;
+        }
+        if ch == '`' && !single_quoted {
+            return None;
+        }
+        if ch.is_ascii_whitespace() && !single_quoted && !double_quoted {
+            if field_started {
+                fields.push(std::mem::take(&mut field));
+                field_started = false;
+            }
+        } else {
+            field.push(ch);
+            field_started = true;
+        }
+        index += ch.len_utf8();
+    }
+    if single_quoted || double_quoted {
+        return None;
+    }
+    if field_started {
+        fields.push(field);
+    }
+    Some(fields)
+}
+
+fn append_expanded_fields(
+    fields: &mut Vec<String>,
+    field: &mut String,
+    field_started: &mut bool,
+    expanded: Vec<String>,
+) {
+    let Some((first, remaining)) = expanded.split_first() else {
+        return;
+    };
+    field.push_str(first);
+    *field_started = true;
+    for value in remaining {
+        fields.push(std::mem::take(field));
+        field.push_str(value);
+    }
+}
+
+fn split_fields(value: &str) -> Vec<String> {
+    value
+        .split([' ', '\t', '\n'])
+        .filter(|field| !field.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 fn expand_word_range(
@@ -350,6 +520,16 @@ fn resolve_parameter_expression(
             return expand_default_value(fallback, zero_argument, arguments, depth + 1);
         }
         argument
+    } else if let Some(alternative) = suffix.strip_prefix(":+") {
+        if argument.is_some_and(|value| !value.is_empty()) {
+            return expand_default_value(alternative, zero_argument, arguments, depth + 1);
+        }
+        Some("")
+    } else if let Some(alternative) = suffix.strip_prefix('+') {
+        if argument.is_some() {
+            return expand_default_value(alternative, zero_argument, arguments, depth + 1);
+        }
+        Some("")
     } else if suffix.is_empty() {
         argument.or(Some(""))
     } else {

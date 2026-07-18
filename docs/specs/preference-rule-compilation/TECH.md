@@ -132,7 +132,11 @@ Artifact v2 additionally supports:
   and expandable heredoc stdin passed to nested shells; quote characters in an
   unquoted-delimiter heredoc body do not suppress that expansion, while a
   quoted delimiter preserves literal text. Whole unquoted positionals may
-  produce multiple argv fields; nested command substitutions and arithmetic
+  produce zero or multiple argv fields; default and alternative words retain
+  quote-aware grouping, definite `set --` replaces the active mapping, and
+  explicit sourced-file arguments receive their own positional scope.
+  Expandable heredoc stdin finishes parent-side positional expansion before a
+  child `-c` context is installed. Nested command substitutions and arithmetic
   source use their own syntax context, and function-definition names remain
   unexpanded. Mixed `builtin`/`command` wrappers share the same static builtin
   normalization; force and mirror

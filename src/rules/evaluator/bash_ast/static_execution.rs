@@ -484,17 +484,25 @@ pub(super) fn static_shell_is_bash(tokens: &[String]) -> bool {
         .is_some_and(|command| shell_name(command) == Some("bash"))
 }
 
-pub(super) fn static_source_reads_stdin(tokens: &[String]) -> bool {
-    let Some(index) = static_builtin_command_index(tokens) else {
-        return false;
-    };
-    matches!(tokens[index].as_str(), "source" | ".")
-        && tokens.get(index + 1).is_some_and(|path| {
+pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[String]> {
+    let index = static_builtin_command_index(tokens)?;
+    if !matches!(tokens[index].as_str(), "source" | ".")
+        || !tokens.get(index + 1).is_some_and(|path| {
             matches!(
                 path.as_str(),
                 "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0"
             )
         })
+    {
+        return None;
+    }
+    Some(tokens.get(index + 2..).unwrap_or_default())
+}
+
+pub(super) fn static_set_positional_arguments(tokens: &[String]) -> Option<&[String]> {
+    let index = static_builtin_command_index(tokens)?;
+    (tokens[index] == "set" && tokens.get(index + 1).is_some_and(|value| value == "--"))
+        .then(|| tokens.get(index + 2..).unwrap_or_default())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

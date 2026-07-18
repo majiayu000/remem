@@ -54,6 +54,13 @@ gaps can either miss a forbidden command or report a false block.
    Unquoted whole-word positionals may yield multiple argv fields; arithmetic
    and nested command-substitution contexts shall parse the expanded source
    under their own Bash syntax rather than inheriting surrounding quote state.
+   Empty unquoted expansions shall remove their argv field, quoted default
+   words shall retain their grouping, and statically selected `+`/`:+`
+   alternative words shall be materialized. A definite `set --` shall replace
+   the active positional mapping. Expandable outer heredocs shall finish
+   parent-side expansion before entering a child `-c` scope, while explicit
+   arguments to `source /dev/stdin` shall bind `$1...` only for the sourced
+   body.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.
@@ -79,6 +86,9 @@ gaps can either miss a forbidden command or report a false block.
 - [x] A red-first fixture proves `bash -c 'git push "$1"' _ --force` is
       detected and a missing/unrelated positional value does not fabricate a
       match.
+- [x] Red-first fixtures cover zero-field positional removal, quoted default
+      grouping, `+`/`:+` alternatives, `set --`, parent-expanded heredoc stdin,
+      and explicit `source /dev/stdin` arguments.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.
@@ -91,6 +101,9 @@ gaps can either miss a forbidden command or report a false block.
   resolution or filesystem access.
 - Quoted and concatenated positional references follow the evaluator's
   existing static word-expansion limits; unknown expansion remains unknown.
+- Definite static `set --` and explicit sourced-file arguments update only
+  their Bash-defined positional scope; uncertain state changes invalidate the
+  known mapping.
 - Function shadowing is evaluated in command order and existing subshell,
   pipeline, and child-shell scope rules remain unchanged.
 

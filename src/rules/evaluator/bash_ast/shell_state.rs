@@ -1,11 +1,36 @@
 use super::static_execution::{
     direct_command_name, static_alias_definitions, static_exit_trap_change, static_monitor_mode,
-    static_shopt_expand_aliases, static_shopt_lastpipe, static_shopt_nocasematch,
-    static_unalias_names, ExitTrapChange,
+    static_set_positional_arguments, static_shopt_expand_aliases, static_shopt_lastpipe,
+    static_shopt_nocasematch, static_unalias_names, ExitTrapChange,
 };
-use super::{unwrap, AliasDefinition, CommandCollector, ExitTrapDefinition};
+use super::{unwrap, AliasDefinition, CommandCollector, ExitTrapDefinition, PositionalContext};
 
 impl CommandCollector {
+    pub(super) fn apply_static_positional_state(
+        &mut self,
+        tokens: &[String],
+        resolves_to_function: bool,
+    ) {
+        let Some(arguments) = (!resolves_to_function)
+            .then(|| static_set_positional_arguments(tokens))
+            .flatten()
+        else {
+            return;
+        };
+        if self.execution_is_definite {
+            let zero_argument = self
+                .positional_context
+                .as_ref()
+                .and_then(|context| context.zero_argument.clone());
+            self.positional_context = Some(PositionalContext {
+                zero_argument,
+                arguments: arguments.to_vec(),
+            });
+        } else {
+            self.positional_context = None;
+        }
+    }
+
     pub(super) fn apply_static_shell_state(&mut self, tokens: &[String]) {
         if let Some(enabled) = static_shopt_expand_aliases(tokens) {
             if enabled || self.execution_is_definite {
