@@ -648,14 +648,35 @@ fn force_push_rule_keeps_shell_positionals_for_exit_traps() {
 #[test]
 fn force_push_rule_expands_shell_positionals_in_heredoc_handoff() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
-    let command = "bash -c 'sh <<EOF\ngit push \"$1\"\nEOF' _ --force";
+    for command in [
+        r#"bash -c 'sh <<EOF
+git push "$1"
+EOF' _ --force"#,
+        r#"bash -c 'sh <<EOF
+git push '\''$1'\''
+EOF' _ --force"#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    let command = r#"bash -c 'sh <<'\''EOF'\''
+git push "$1"
+EOF' _ --force"#;
     let outcome = evaluate_artifact(
         &artifact,
         &EvaluationInput {
             command: command.into(),
         },
     );
-    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
 }
 

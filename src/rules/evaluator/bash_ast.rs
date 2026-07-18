@@ -17,7 +17,7 @@ mod static_words;
 mod stdin_payload;
 pub(super) mod unwrap;
 
-use function_args::{expand_function_body, expand_shell_command};
+use function_args::{expand_function_body, expand_heredoc, expand_shell_command};
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
@@ -700,6 +700,13 @@ impl CommandCollector {
             |context| {
                 expand_shell_command(source, context.zero_argument.as_deref(), &context.arguments)
             },
+        )
+    }
+
+    pub(super) fn expand_heredoc_source(&self, source: &str) -> String {
+        self.positional_context.as_ref().map_or_else(
+            || source.to_string(),
+            |context| expand_heredoc(source, context.zero_argument.as_deref(), &context.arguments),
         )
     }
 

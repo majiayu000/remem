@@ -2,9 +2,15 @@ use brush_parser::ast::FunctionBody;
 
 const MAX_DEFAULT_EXPANSION_DEPTH: usize = 8;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PositionalExpansionMode {
+    ShellWord,
+    Heredoc,
+}
+
 pub(super) fn expand_function_body(body: &FunctionBody, arguments: &[String]) -> String {
     let source = body.to_string();
-    expand_positional_source(&source, None, arguments)
+    expand_positional_source(&source, None, arguments, PositionalExpansionMode::ShellWord)
 }
 
 pub(super) fn expand_shell_command(
@@ -12,13 +18,32 @@ pub(super) fn expand_shell_command(
     zero_argument: Option<&str>,
     arguments: &[String],
 ) -> String {
-    expand_positional_source(source, zero_argument, arguments)
+    expand_positional_source(
+        source,
+        zero_argument,
+        arguments,
+        PositionalExpansionMode::ShellWord,
+    )
+}
+
+pub(super) fn expand_heredoc(
+    source: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+) -> String {
+    expand_positional_source(
+        source,
+        zero_argument,
+        arguments,
+        PositionalExpansionMode::Heredoc,
+    )
 }
 
 fn expand_positional_source(
     source: &str,
     zero_argument: Option<&str>,
     arguments: &[String],
+    mode: PositionalExpansionMode,
 ) -> String {
     let mut expanded = String::with_capacity(source.len());
     let mut index = 0;
@@ -29,13 +54,13 @@ fn expand_positional_source(
         let Some(ch) = rest.chars().next() else {
             break;
         };
-        if ch == '\'' && !double_quoted {
+        if mode == PositionalExpansionMode::ShellWord && ch == '\'' && !double_quoted {
             single_quoted = !single_quoted;
             expanded.push(ch);
             index += 1;
             continue;
         }
-        if ch == '"' && !single_quoted {
+        if mode == PositionalExpansionMode::ShellWord && ch == '"' && !single_quoted {
             if !double_quoted {
                 if let Some((consumed, replacement)) =
                     quoted_collection_replacement(rest, arguments)
@@ -59,9 +84,9 @@ fn expand_positional_source(
             }
             continue;
         }
-        if ch == '$' && !single_quoted {
+        if ch == '$' && (mode == PositionalExpansionMode::Heredoc || !single_quoted) {
             if let Some((consumed, replacement)) =
-                positional_replacement(rest, zero_argument, arguments, double_quoted, 0)
+                positional_replacement(rest, zero_argument, arguments, double_quoted, mode, 0)
             {
                 expanded.push_str(&replacement);
                 index += consumed;
@@ -93,11 +118,14 @@ fn positional_replacement(
     zero_argument: Option<&str>,
     arguments: &[String],
     double_quoted: bool,
+    mode: PositionalExpansionMode,
     depth: usize,
 ) -> Option<(usize, String)> {
     for pattern in ["${@}", "$@", "${*}", "$*"] {
         if rest.starts_with(pattern) {
-            let replacement = if double_quoted {
+            let replacement = if mode == PositionalExpansionMode::Heredoc {
+                arguments.join(" ")
+            } else if double_quoted {
                 if pattern.contains('@') {
                     expand_at_in_double_quotes(arguments)
                 } else {
@@ -111,8 +139,10 @@ fn positional_replacement(
     }
 
     let (consumed, expression) = parameter_expression(rest)?;
-    let value = resolve_parameter_expression(expression, zero_argument, arguments, depth)?;
-    let replacement = if double_quoted {
+    let value = resolve_parameter_expression(expression, zero_argument, arguments, mode, depth)?;
+    let replacement = if mode == PositionalExpansionMode::Heredoc {
+        value
+    } else if double_quoted {
         escape_double_quoted(&value)
     } else {
         split_argument(&value)
@@ -158,6 +188,7 @@ fn resolve_parameter_expression(
     expression: &str,
     zero_argument: Option<&str>,
     arguments: &[String],
+    mode: PositionalExpansionMode,
     depth: usize,
 ) -> Option<String> {
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
@@ -179,12 +210,12 @@ fn resolve_parameter_expression(
     let suffix = &expression[digit_end..];
     let selected = if let Some(fallback) = suffix.strip_prefix(":-") {
         if argument.is_none_or(str::is_empty) {
-            return expand_default_value(fallback, zero_argument, arguments, depth + 1);
+            return expand_default_value(fallback, zero_argument, arguments, mode, depth + 1);
         }
         argument
     } else if let Some(fallback) = suffix.strip_prefix('-') {
         if argument.is_none() {
-            return expand_default_value(fallback, zero_argument, arguments, depth + 1);
+            return expand_default_value(fallback, zero_argument, arguments, mode, depth + 1);
         }
         argument
     } else if suffix.is_empty() {
@@ -199,6 +230,7 @@ fn expand_default_value(
     source: &str,
     zero_argument: Option<&str>,
     arguments: &[String],
+    mode: PositionalExpansionMode,
     depth: usize,
 ) -> Option<String> {
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
@@ -211,12 +243,12 @@ fn expand_default_value(
     while index < source.len() {
         let rest = &source[index..];
         let ch = rest.chars().next()?;
-        if ch == '\'' && !double_quoted {
+        if mode == PositionalExpansionMode::ShellWord && ch == '\'' && !double_quoted {
             single_quoted = !single_quoted;
             index += 1;
             continue;
         }
-        if ch == '"' && !single_quoted {
+        if mode == PositionalExpansionMode::ShellWord && ch == '"' && !single_quoted {
             double_quoted = !double_quoted;
             index += 1;
             continue;
@@ -227,7 +259,7 @@ fn expand_default_value(
             index += 1 + next.len_utf8();
             continue;
         }
-        if ch == '$' && !single_quoted {
+        if ch == '$' && (mode == PositionalExpansionMode::Heredoc || !single_quoted) {
             if let Some(pattern) = ["${@}", "$@", "${*}", "$*"]
                 .into_iter()
                 .find(|pattern| rest.starts_with(pattern))
@@ -241,6 +273,7 @@ fn expand_default_value(
                 expression,
                 zero_argument,
                 arguments,
+                mode,
                 depth,
             )?);
             index += consumed;
@@ -252,7 +285,8 @@ fn expand_default_value(
         expanded.push(ch);
         index += ch.len_utf8();
     }
-    (!single_quoted && !double_quoted).then_some(expanded)
+    (mode == PositionalExpansionMode::Heredoc || !single_quoted && !double_quoted)
+        .then_some(expanded)
 }
 
 fn quote_arguments(arguments: &[String]) -> String {

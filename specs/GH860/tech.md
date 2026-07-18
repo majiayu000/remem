@@ -52,9 +52,11 @@ context, but store function definitions without outer positional replacement;
 when a function is invoked, its `$1...` values come from the function call and
 only the shell `$0` context remains visible. Execute EXIT traps before restoring
 the child shell context, and expand unquoted heredoc payloads in the current
-context before a nested shell receives stdin. Quoted heredocs remain literal.
-Quoting, recursive defaults, and materialization bounds remain owned by the
-existing positional-expansion implementation.
+context before a nested shell receives stdin. Use heredoc-specific expansion
+semantics so quote characters in an unquoted-delimiter body are literal and do
+not suppress `$0/$1...`; quoted-delimiter heredocs remain literal. Quoting,
+recursive defaults, and materialization bounds remain owned by the existing
+positional-expansion implementation.
 
 ### 3. Resolve functions before builtin-like state mutation
 
@@ -83,7 +85,7 @@ assets; this PR does not publish a release.
 | --- | --- | --- |
 | B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
 | B-002 basename-only precision | platform-independent `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers POSIX- and Windows-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
-| B-003 shell `-c` positional binding | scoped positional collector context plus shell payload extraction | `force_push_rule_binds_shell_command_positional_parameters` covers `$0` and `$1`; paired function-local arguments, EXIT traps, and expandable-heredoc handoff have focused tests |
+| B-003 shell `-c` positional binding | scoped positional collector context plus shell payload extraction | `force_push_rule_binds_shell_command_positional_parameters` covers `$0` and `$1`; paired function-local arguments, EXIT traps, and unquoted-versus-quoted heredoc handoff have focused tests |
 | B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1`; `force_push_rule_preserves_missing_shell_zero` leaves `${0:-git}` unknown rather than fabricating `git` |
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
 | B-006 explicit builtin `unset` | shared builtin command-position normalization | `force_push_rule_resolves_unset_function_before_builtin_state` covers `builtin unset -f f` → Allow |
