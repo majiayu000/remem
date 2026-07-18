@@ -49,7 +49,55 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             sample,
             json,
         ),
+        RawAction::Reconcile {
+            since,
+            until,
+            roots,
+            json,
+        } => run_raw_reconcile(
+            parse_time_lower_bound(&since)?,
+            parse_time_upper_bound(&until)?,
+            &roots,
+            json,
+        ),
     }
+}
+
+fn run_raw_reconcile(
+    since_epoch: i64,
+    until_epoch: i64,
+    root_specs: &[String],
+    json: bool,
+) -> Result<()> {
+    let mut roots = crate::ingest::sessions::default_scan_roots();
+    roots.extend(
+        root_specs
+            .iter()
+            .map(|spec| crate::ingest::sessions::ScanRoot::parse(spec))
+            .collect::<Result<Vec<_>>>()?,
+    );
+    let conn = db::open_db_read_only_current()?;
+    let report = crate::memory::raw_reconcile::reconcile_raw_archive(
+        &conn,
+        &roots,
+        since_epoch,
+        until_epoch,
+    )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!(
+            "{}",
+            crate::memory::raw_reconcile::render_reconcile_human(&report)
+        );
+    }
+    if report.comparison.identity_conflicts > 0 {
+        anyhow::bail!(
+            "raw reconciliation found {} window-relevant identity conflict(s)",
+            report.comparison.identity_conflicts
+        );
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -64,7 +112,7 @@ pub(super) fn run_raw_search(
     until_epoch: Option<i64>,
     json: bool,
 ) -> Result<()> {
-    let conn = db::open_db()?;
+    let conn = db::open_db_read_only_current()?;
     let normalized_limit = limit.max(1);
     let normalized_offset = offset.max(0);
     let request = build_raw_search_request(
@@ -135,7 +183,7 @@ pub(super) fn run_raw_sessions(
     sample: i64,
     json: bool,
 ) -> Result<()> {
-    let conn = db::open_db()?;
+    let conn = db::open_db_read_only_current()?;
     let query = RawSessionQuery {
         since_epoch,
         until_epoch,

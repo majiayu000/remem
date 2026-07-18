@@ -170,10 +170,14 @@ fn update_trigger_columns(conn: &Connection, trigger: &str) -> Result<Vec<String
 }
 
 #[test]
-fn v070_migration_is_latest_and_named_stably() {
-    let migration = MIGRATIONS.last().expect("v070 migration");
+fn v070_migration_remains_named_stably() -> Result<()> {
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V070)
+        .context("v070 migration is missing")?;
     assert_eq!(migration.version, V070);
     assert_eq!(migration.name, "web_console_governance");
+    Ok(())
 }
 
 #[test]

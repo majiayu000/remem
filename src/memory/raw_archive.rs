@@ -1,8 +1,3 @@
-//! Raw archive layer — captures every user/assistant turn regardless of
-//! whether summarize/promote choose to keep it.
-//!
-//! Spec: SPEC-raw-archive-vs-curated-memory-2026-04-22.md
-
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -13,9 +8,6 @@ pub const SOURCE_TRANSCRIPT: &str = "transcript";
 pub const SOURCE_HOOK: &str = "hook";
 pub const SOURCE_MANUAL: &str = "manual";
 
-/// Default source-root label for rows ingested on this machine (hook path
-/// and default `ingest-sessions` roots). Matches the `raw_messages.source_root`
-/// column default from v055.
 pub const SOURCE_ROOT_LOCAL: &str = "local";
 
 #[derive(Debug, Clone)]
@@ -42,17 +34,6 @@ fn legacy_exact_content_hash(content: &str) -> String {
     crate::db::legacy_content_identity_hash(content.as_bytes())
 }
 
-/// Insert one raw message. UNIQUE(project, session_id, role, content_hash)
-/// makes this idempotent across repeated Stop-hook drains of the same
-/// transcript while still preserving identical text spoken in different
-/// sessions (issue #237).
-/// Returns the row id of the existing or newly inserted message, or None
-/// when the content is empty.
-/// Outcome of a raw-message insert attempt.
-///
-/// `inserted == false` means a row with the same `(source_root, project,
-/// session_id, role, content_hash)` already existed and `id` points at the
-/// pre-existing row rather than a newly created one.
 #[derive(Debug, Clone, Copy)]
 pub struct RawInsertOutcome {
     pub id: i64,
@@ -181,12 +162,20 @@ pub fn insert_raw_message_from_root_at(
     }
     let inserted_at = created_at_epoch.unwrap_or_else(|| chrono::Utc::now().timestamp());
 
+    let event_time_source = if source == SOURCE_TRANSCRIPT {
+        if created_at_epoch.is_some() {
+            "transcript_event"
+        } else {
+            "ingest_fallback"
+        }
+    } else {
+        "legacy_unknown"
+    };
     let inserted = conn.execute(
-        "INSERT INTO raw_messages \
+        "INSERT OR IGNORE INTO raw_messages \
          (session_id, project, role, content, content_hash, source, branch, cwd, \
-          created_at_epoch, source_root) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10) \
-         ON CONFLICT(source_root, project, session_id, role, content_hash) DO NOTHING",
+          created_at_epoch, source_root, event_time_source) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         params![
             session_id,
             project,
@@ -197,7 +186,8 @@ pub fn insert_raw_message_from_root_at(
             branch,
             cwd,
             inserted_at,
-            source_root
+            source_root,
+            event_time_source
         ],
     )?;
 
@@ -210,7 +200,8 @@ pub fn insert_raw_message_from_root_at(
         let existing: i64 = conn.query_row(
             "SELECT id FROM raw_messages \
              WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 \
-               AND role = ?4 AND content_hash = ?5",
+               AND role = ?4 AND content_hash = ?5
+               AND transcript_identity_id IS NULL",
             params![source_root, project, session_id, role, hash],
             |row| row.get(0),
         )?;
@@ -234,7 +225,8 @@ fn find_matching_legacy_raw_message(
         .query_row(
             "SELECT id, content FROM raw_messages
              WHERE source_root = ?1 AND project = ?2 AND session_id = ?3 \
-               AND role = ?4 AND content_hash = ?5",
+               AND role = ?4 AND content_hash = ?5
+               AND transcript_identity_id IS NULL",
             params![source_root, project, session_id, role, legacy_hash],
             |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
         )
@@ -260,6 +252,9 @@ pub struct TranscriptDrainOptions<'a> {
     /// partial tail instead of a parse error (issue #722). The caller decides
     /// this from the file mtime; see `RawIngestReport::partial_tail`.
     pub tolerate_partial_tail: bool,
+    /// Stable local transcript identity. When present, line ordinals preserve
+    /// repeated identical turns while making Stop/batch replay idempotent.
+    pub transcript_identity_id: Option<i64>,
 }
 
 impl Default for TranscriptDrainOptions<'_> {
@@ -267,6 +262,7 @@ impl Default for TranscriptDrainOptions<'_> {
         Self {
             source_root: SOURCE_ROOT_LOCAL,
             tolerate_partial_tail: false,
+            transcript_identity_id: None,
         }
     }
 }
@@ -338,41 +334,68 @@ pub(crate) fn drain_transcript_with_capture_limit(
     byte_limit: Option<u64>,
 ) -> Result<RawIngestReport> {
     let mut report = RawIngestReport::default();
+    let mut record_ordinal = 0_i64;
     let stream_result = with_raw_archive_drain_savepoint(conn, || {
         crate::memory::raw_transcript::stream_transcript_lines(
             transcript_path,
             byte_limit,
             |line, is_final| {
-                let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
-                    if options.tolerate_partial_tail && is_final {
-                        report.partial_tail = true;
-                    } else {
-                        report.parse_errors += 1;
-                    }
-                    return;
+                let ordinal = record_ordinal;
+                record_ordinal += 1;
+                use crate::memory::raw_transcript::TranscriptRecordClass;
+                let message =
+                    match crate::memory::raw_transcript::classify_transcript_line(line, None) {
+                        TranscriptRecordClass::Conversation(message)
+                        | TranscriptRecordClass::MetaUser(message)
+                        | TranscriptRecordClass::XmlControlUser(message)
+                        | TranscriptRecordClass::MissingEventTime(message) => message,
+                        TranscriptRecordClass::MalformedRecord => {
+                            if options.tolerate_partial_tail && is_final {
+                                report.partial_tail = true;
+                            } else {
+                                report.parse_errors += 1;
+                            }
+                            return;
+                        }
+                        TranscriptRecordClass::EmptyText => {
+                            report.empty_messages += 1;
+                            return;
+                        }
+                        TranscriptRecordClass::UnsupportedRecord
+                        | TranscriptRecordClass::OutsideWindow => {
+                            report.skipped_messages += 1;
+                            return;
+                        }
+                    };
+                let insert_result = if let Some(identity_id) = options.transcript_identity_id {
+                    crate::memory::raw_occurrence::insert_transcript_occurrence(
+                        conn,
+                        session_id,
+                        project,
+                        message.role,
+                        &message.text,
+                        branch,
+                        cwd,
+                        options.source_root,
+                        message.created_at_epoch,
+                        identity_id,
+                        ordinal,
+                    )
+                } else {
+                    insert_raw_message_from_root_at(
+                        conn,
+                        session_id,
+                        project,
+                        message.role,
+                        &message.text,
+                        SOURCE_TRANSCRIPT,
+                        branch,
+                        cwd,
+                        options.source_root,
+                        message.created_at_epoch,
+                    )
                 };
-                let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value)
-                else {
-                    report.skipped_messages += 1;
-                    return;
-                };
-                if message.text.trim().is_empty() {
-                    report.empty_messages += 1;
-                    return;
-                }
-
-                match insert_raw_message_from_root_at(
-                    conn,
-                    session_id,
-                    project,
-                    message.role,
-                    &message.text,
-                    SOURCE_TRANSCRIPT,
-                    branch,
-                    cwd,
-                    options.source_root,
-                    message.created_at_epoch,
-                ) {
+                match insert_result {
                     Ok(Some(outcome)) if outcome.inserted => report.inserted += 1,
                     Ok(Some(_)) => report.duplicates += 1,
                     Ok(None) => report.empty_messages += 1,
@@ -386,20 +409,25 @@ pub(crate) fn drain_transcript_with_capture_limit(
                 }
             },
         )
-        .map_err(anyhow::Error::from)
+        .map_err(anyhow::Error::from)?;
+        if report.parse_errors > 0 || report.insert_errors > 0 {
+            anyhow::bail!("raw archive drain validation failed");
+        }
+        Ok(())
     })?;
     if let Err(error) = stream_result {
-        report = RawIngestReport {
-            read_error: Some(format!("read transcript {transcript_path} failed: {error}")),
-            ..RawIngestReport::default()
-        };
-        crate::log::warn(
-            "raw-archive",
-            report
-                .read_error
-                .as_deref()
-                .unwrap_or("read transcript failed"),
-        );
+        report.inserted = 0;
+        report.duplicates = 0;
+        if report.parse_errors == 0 && report.insert_errors == 0 {
+            report.read_error = Some(format!("read transcript {transcript_path} failed: {error}"));
+            crate::log::warn(
+                "raw-archive",
+                report
+                    .read_error
+                    .as_deref()
+                    .unwrap_or("read transcript failed"),
+            );
+        }
     }
     if report.has_failures() {
         record_raw_ingest_failure(
@@ -591,6 +619,8 @@ pub struct RawSessionSummary {
     pub first_epoch: i64,
     pub last_epoch: i64,
     pub message_count: i64,
+    pub user_message_count: i64,
+    pub assistant_message_count: i64,
     /// First N role=user message texts (truncated), ascending by epoch.
     pub user_message_samples: Vec<String>,
 }
@@ -600,7 +630,9 @@ pub struct RawSessionSummary {
 pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<RawSessionSummary>> {
     let mut sql = String::from(
         "SELECT source_root, project, session_id, \
-                MIN(created_at_epoch), MAX(created_at_epoch), COUNT(*) \
+                MIN(created_at_epoch), MAX(created_at_epoch), COUNT(*), \
+                SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END), \
+                SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) \
          FROM raw_messages WHERE 1=1",
     );
     let mut binds: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -618,6 +650,8 @@ pub fn list_sessions(conn: &Connection, query: &RawSessionQuery) -> Result<Vec<R
                 first_epoch: row.get(3)?,
                 last_epoch: row.get(4)?,
                 message_count: row.get(5)?,
+                user_message_count: row.get(6)?,
+                assistant_message_count: row.get(7)?,
                 user_message_samples: Vec::new(),
             })
         },

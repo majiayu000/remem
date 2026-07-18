@@ -171,8 +171,8 @@ async fn session_rollup_unbounded_transcript_without_captured_conversation_fails
     assert_eq!(summary_count(&conn), 0);
     let archived: i64 = conn.query_row(
         "SELECT COUNT(*) FROM raw_messages
-         WHERE session_id = ?1 AND content = ?2",
-        params![session_id, transcript_text],
+         WHERE content = ?1",
+        [transcript_text],
         |row| row.get(0),
     )?;
     assert_eq!(archived, 1);
@@ -553,10 +553,9 @@ async fn session_rollup_drains_every_coalesced_stop_payload() -> Result<()> {
     let mut stmt = conn.prepare(
         "SELECT content, source
          FROM raw_messages
-         WHERE session_id = ?1
          ORDER BY content ASC",
     )?;
-    let rows = stmt.query_map(params![session_id], |row| {
+    let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
     })?;
     let archived = rows.collect::<rusqlite::Result<Vec<_>>>()?;
@@ -636,11 +635,10 @@ async fn session_rollup_deduplicates_same_transcript_at_widest_stop_boundary() -
     let mut stmt = conn.prepare(
         "SELECT content
          FROM raw_messages
-         WHERE session_id = ?1
          ORDER BY id ASC",
     )?;
     let archived = stmt
-        .query_map([session_id], |row| row.get::<_, String>(0))?
+        .query_map([], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     assert_eq!(
         archived,

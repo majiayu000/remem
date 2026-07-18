@@ -875,8 +875,12 @@ remem ingest-sessions --since 2026-06-01 --root starlight=~/remote-sessions/star
 Default scan roots are `~/.claude/projects` and `~/.codex/sessions`.
 Additional `--root label=path` entries are required roots: a missing explicit
 root is reported as a failed file so backfills do not silently do nothing. Each
-raw row keeps the source-root label and the transcript event timestamp, and
-re-running the command is incremental and idempotent.
+transcript has a path-stable local identity ledger. Metadata IDs take
+precedence over filename fallbacks, Stop and batch ingest use the same
+identity, repeated identical turns retain separate occurrence ordinals, and
+event-time provenance distinguishes transcript timestamps from ingest
+fallbacks and legacy unknowns. Re-running the command is incremental and
+idempotent; ambiguous identity claims fail visibly without rewriting raw rows.
 
 Use raw time-window queries for recap or audit workflows that need original
 chat turns rather than curated memories:
@@ -884,13 +888,29 @@ chat turns rather than curated memories:
 ```bash
 remem raw search "deployment decision" --since 2026-06-01 --until 2026-06-30 --json
 remem raw sessions --since 2026-06-01 --until 2026-06-30 --sample 3 --json
+remem raw reconcile --since 2026-06-01 --until 2026-06-30 --json
 ```
 
 `remem raw sessions` groups rows by source root, project, and session ID, and
-can include the first N user-message samples per session. A date-only `since`
-starts at `00:00:00` UTC, while a date-only `until` includes that entire UTC
-day through `23:59:59`. MCP `search_raw` returns the same JSON envelope and
-pagination fields as `remem raw search ... --json`.
+reports total, user, and assistant message counts; it can include the first N
+user-message samples per session. `raw search`, `raw sessions`, and `raw
+reconcile` open the current schema read-only, so a writer lock does not trigger
+migration contention and stale schemas fail with a migration diagnostic.
+
+`raw reconcile` requires both bounds and compares stable per-occurrence
+identities, not only aggregate counts. It validates the captured file
+mtime/size tuple against the current identity ledger before reading, scans only
+event-range candidates plus files with missing event time, and emits aggregate
+counts only—never paths, projects, session IDs, hashes, or message text.
+Timestamped records outside the inclusive UTC window are discarded before
+classification. Meta/XML user rows remain in archive parity but are reported
+as conversational exclusions; missing/fallback/legacy event time and malformed
+records make `parity` false. Window-relevant identity conflicts also return a
+non-zero status after the aggregate report is emitted.
+
+A date-only `since` starts at `00:00:00` UTC, while a date-only `until`
+includes that entire UTC day through `23:59:59`. MCP `search_raw` returns the
+same JSON envelope and pagination fields as `remem raw search ... --json`.
 
 ### Scriptable JSON output
 
@@ -904,7 +924,8 @@ is set:
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |
 | `remem raw search ... --json` | `query`, `project`, `branch`, `role`, `limit`, `offset`, `since_epoch`, `until_epoch`, `count`, `has_more`, `next_offset`, `source_type`, `note`, `results` |
-| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions` |
+| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions`; each session includes `message_count`, `user_message_count`, and `assistant_message_count` |
+| `remem raw reconcile ... --json` | `policy_version`, `since_epoch`, `until_epoch`, `transcript`, `archive`, `comparison`, `intentional_exclusions`, `parity` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem procedures list --json` | `project`, `limit`, `offset`, `count`, `procedures` |
 | `remem memory suppress <target> --json` | `status`, `suppression` |
