@@ -149,5 +149,8 @@ actions.
   branch for GH-863.
 - The threat model remains accidental or honest-maintainer bypasses. A
   malicious committer who can edit the verifier is explicitly out of scope.
+- GH-863 does not claim a general Python sandbox: frame introspection,
+  unrelated string-import helpers, and process cwd mutation remain explicit
+  residual risks for a separate architectural decision.
 - All Cargo commands must run only inside the GH-863 worktree and must be
   serialized.

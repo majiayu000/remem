@@ -40,6 +40,9 @@ before the verifier reports any problem.
   itself.
 - Build a general-purpose Python taint tracker, sandbox, bytecode analyzer, or
   security scanner.
+- Enumerate every reflective frame API, standard-library string-import helper,
+  process working-directory mutation, or other behavior a deliberately chosen
+  Python program can use to load or execute code.
 - Execute a loaded file in a sandbox to decide whether its behavior is safe.
 - Add an allowlist for individual loader or `exec`/`eval` call sites in this
   tranche.
@@ -84,6 +87,12 @@ before the verifier reports any problem.
 8. `B-008`: Syntax errors, unreadable classified sources, or a verifier
    analysis failure remain explicit errors; no analysis failure may degrade to
    executing the classified modules.
+
+These invariants define a bounded, syntax-directed honest-mistake guard for the
+named loader and dynamic-code surfaces. They do not claim that arbitrary Python
+module execution is statically sandboxed; frame introspection, unrelated
+string-import helpers, and process-global cwd mutation remain residual risks
+outside GH-863.
 
 ## Acceptance Criteria
 

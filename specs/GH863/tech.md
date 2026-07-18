@@ -125,6 +125,11 @@ existing local Git queries and module imports.
 - Security: This closes honest-mistake bypasses but is not a security boundary
   against a committer who can modify the verifier. Diagnostics and docs must
   not overstate the threat model.
+- Residual execution surface: Python exposes unbounded reflective, import, and
+  process-state paths beyond the issue's named importlib and dynamic-code
+  classes. Frame introspection, unrelated string-import helpers, and cwd
+  mutation are not added to the syntax denylist; covering them requires a
+  separately approved sandbox or no-execution verifier architecture.
 - Compatibility: A future synchronized check that legitimately needs an
   importlib submodule or `exec`/`eval` will fail closed and require an explicit
   design change rather than silently passing.
