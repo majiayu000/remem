@@ -218,6 +218,7 @@ for relative_path in sorted(classified_checks_python):
     builtin_import_aliases = set()
     dynamic_code_names = {"compile", "exec", "eval"}
     dynamic_namespace_names = {"globals", "locals", "vars"}
+    loader_module_attributes = {"sys", "__loader__", "__spec__"}
     loader_sys_names = {"modules", "meta_path", "path_hooks", "path_importer_cache"}
     sys_aliases = {"sys"}
     sys_path_aliases = set()
@@ -242,6 +243,20 @@ for relative_path in sorted(classified_checks_python):
                     sys_aliases.add(alias.asname or alias.name)
         elif isinstance(node, ast.ImportFrom) and not node.level:
             module = node.module or ""
+            if any(alias.name in loader_module_attributes for alias in node.names):
+                print(
+                    f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                    f"from {module} import ... exposes loader namespaces",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if any(alias.name == "__builtins__" for alias in node.names):
+                print(
+                    f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                    f"from {module} import __builtins__ exposes dynamic-code namespaces",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
             if module == "importlib" and any(
                 alias.name != "import_module" for alias in node.names
             ):
@@ -359,7 +374,7 @@ for relative_path in sorted(classified_checks_python):
         if (
             isinstance(node, ast.Attribute)
             and (
-                node.attr in {"__loader__", "__spec__", "sys"}
+                node.attr in loader_module_attributes
                 or (
                     node.attr in loader_sys_names
                     and isinstance(node.value, ast.Name)
