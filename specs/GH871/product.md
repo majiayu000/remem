@@ -95,9 +95,11 @@ inclusion-rule difference.
    the reconciliation universe or an aggregate counter. Every record in the
    reconciliation universe receives exactly one category under a documented
    precedence order.
-9. Raw capture remains lossless for supported non-empty text. A record excluded
-   from the reconciliation's conversational-user count is not deleted from the
-   archive.
+9. Raw capture remains lossless for supported non-empty text. Each transcript
+   record has a stable local occurrence identity, so repeated identical
+   user/assistant turns remain distinct archive rows while Stop/batch replays of
+   the same occurrence remain idempotent. A record excluded from the
+   reconciliation's conversational-user count is not deleted from the archive.
 10. `remem raw reconcile --since <epoch> --until <epoch> --json` requires
     `since <= until`, uses inclusive UTC event-time bounds, and compares
     internal per-message identities before producing aggregate counts for exact
@@ -121,7 +123,8 @@ inclusion-rule difference.
       provenance, unchanged-cursor mapping refresh, conflict-safe legacy rekey,
       historical project-slug lookup, all-claims-before-mutation ordering,
       collision merge with evidence-reference preservation, Stop-hook canonical
-      capture, and idempotent rerun behavior.
+      capture, repeated-identical-turn preservation, and idempotent rerun
+      behavior.
 - [ ] Raw session JSON exposes total/user/assistant counts with compatibility
       tests for existing fields and grouping.
 - [ ] Reconciliation fixtures cover exact per-message parity, equal-count

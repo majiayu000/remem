@@ -89,19 +89,44 @@ event range, and missing-event-time count form a privacy-local transcript index
 used to avoid parsing unrelated history without losing timestamp-less records
 during reconciliation.
 
-v071 also adds these additive raw-message fields:
+v071 rebuilds `raw_messages` once to add event-time provenance and stable
+transcript occurrence identity:
 
 ```sql
-ALTER TABLE raw_messages ADD COLUMN event_time_source TEXT NOT NULL
-    DEFAULT 'legacy_unknown'
+event_time_source TEXT NOT NULL DEFAULT 'legacy_unknown'
     CHECK(event_time_source IN (
         'transcript_event', 'ingest_fallback', 'legacy_unknown'
-    ));
+    )),
+transcript_identity_id INTEGER
+    REFERENCES raw_session_identities(id) ON DELETE RESTRICT,
+transcript_record_ordinal INTEGER,
+CHECK(
+    (transcript_identity_id IS NULL AND transcript_record_ordinal IS NULL)
+    OR
+    (transcript_identity_id IS NOT NULL AND transcript_record_ordinal IS NOT NULL)
+);
+
+CREATE UNIQUE INDEX idx_raw_messages_transcript_occurrence
+    ON raw_messages(
+        source_root, project, session_id,
+        transcript_identity_id, transcript_record_ordinal
+    )
+    WHERE transcript_identity_id IS NOT NULL;
+
+CREATE UNIQUE INDEX idx_raw_messages_non_transcript_content
+    ON raw_messages(source_root, project, session_id, role, content_hash)
+    WHERE transcript_identity_id IS NULL;
 ```
 
 New transcript rows use `transcript_event` only when `created_at_epoch` came
 from a parsed record timestamp. Missing timestamps use `ingest_fallback`.
-Existing rows begin as `legacy_unknown`.
+The zero-based complete-JSONL record ordinal is captured inside the same
+immutable file boundary used by Stop, batch, and reconcile, and the ledger row
+identifies its transcript path. Replaying one occurrence is idempotent, while
+two identical turns at different ordinals remain two rows. Existing rows begin
+as `legacy_unknown` with null occurrence fields; the version-1 redrain assigns
+the lowest matching ordinal to an existing legacy row and inserts every
+additional repeated occurrence, transactionally restoring lossless cardinality.
 
 Move transcript context probing before the unchanged-cursor return. Every
 discovered file therefore upserts its identity ledger claim even when message
@@ -130,9 +155,10 @@ When transcript metadata produces a canonical ID different from the filename
 stem:
 
 1. Query all identity rows, including prior conflicts, for the same
-   `(source_root, fallback_session_id)` and both project aliases. Query legacy
-   raw rows under `legacy_project` and canonical rows under `project`; never
-   assume the two project values are equal.
+   `(source_root, fallback_session_id)` and both project aliases. Query fallback
+   raw rows under both `legacy_project` and current `project`, and canonical
+   rows under `project`; never assume the aliases are equal or that a
+   filename-fallback row used only the legacy slug.
 2. Treat the expected filename-fallback self-claim
    (`identity_source = 'filename_fallback'` and
    `canonical_session_id = fallback_session_id`) as promotable evidence, not a
@@ -142,12 +168,13 @@ stem:
    group `conflict`. Once any group row is `conflict`, all future automatic
    rekeys for that fallback remain blocked. Retain all raw rows unchanged, emit
    an error-level diagnostic, and increment `identity_conflicts`.
-3. Before mutation, compare every fallback/canonical collision on stable message
-   identity and provenance: role, exact content, content hash, source,
-   `created_at_epoch`, and `event_time_source`. Hook-time `branch` and `cwd` are
-   volatile provenance and are not conflict keys. When stable fields match,
-   retain the canonical transcript-derived row's branch/cwd; when they do not,
-   mark the group conflict and abort the whole rekey without mutation.
+3. Before mutation, compare every fallback/canonical collision on stable
+   occurrence identity and provenance: transcript ledger ID, record ordinal,
+   role, exact content, content hash, source, `created_at_epoch`, and
+   `event_time_source`. Hook-time `branch` and `cwd` are volatile provenance and
+   are not conflict keys. When stable fields match, retain the canonical
+   transcript-derived row's branch/cwd; when they do not, mark the group
+   conflict and abort the whole rekey without mutation.
 4. Otherwise run one savepoint:
    - update a non-colliding legacy row's project/session identity in place so
      its `raw_messages.id` remains stable;
@@ -166,8 +193,8 @@ new store is added without the rewrite helper. The algorithm never rewrites
 rows whose old ID is not the deterministic filename fallback for the
 discovered transcript.
 
-The version-1 redrain also refreshes event-time provenance on existing unique
-rows instead of relying on ignored inserts:
+The version-1 redrain also refreshes occurrence/event-time provenance on
+existing legacy rows instead of relying on ignored inserts:
 
 - exact content/hash/role matches may update `event_time_source` from
   `legacy_unknown` to `transcript_event` and set `created_at_epoch` to the
@@ -176,7 +203,9 @@ rows instead of relying on ignored inserts:
   `legacy_unknown` to `ingest_fallback` but retains its stored ingestion epoch;
 - a row already marked `transcript_event` must match the parsed event epoch or
   the identity group becomes a sticky conflict;
-- no other non-identity field changes during provenance refresh.
+- an unclaimed legacy content match is assigned to the lowest matching
+  transcript ordinal, and later identical occurrences insert distinct rows;
+- no other stable non-identity field changes during provenance refresh.
 
 Provenance refresh, collision equality preflight, in-place/reference-safe rekey, and cursor
 advance execute in one transaction. `contract_version` advances from 0 to 1
@@ -189,9 +218,10 @@ Extend `raw_transcript` with a record classifier used by both archive draining
 and reconciliation. Classification precedence is:
 
 1. malformed JSON;
-2. unsupported record/role;
-3. missing event timestamp;
-4. outside the inclusive UTC window (discarded before classification counters);
+2. when a timestamp is parseable, outside the inclusive UTC window (discarded
+   before all classification counters);
+3. unsupported record/role;
+4. missing event timestamp;
 5. empty supported text;
 6. meta user;
 7. XML/control user;
@@ -263,13 +293,16 @@ Processing:
    selected file's already-validated captured boundary.
 4. Derive the same canonical identity and project key as ingestion.
 5. Aggregate transcript-side archive-eligible message identities
-   `(role, content_hash)` and the explicit exclusion taxonomy inside the fixed
-   UTC window.
+   `(transcript identity, record ordinal, role, content_hash)` and the explicit
+   exclusion taxonomy inside the fixed UTC window.
 6. Aggregate raw message identities by
-   `(source_root, project, session_id, role, content_hash)` for the same window.
-7. Query distinct persisted `status = 'conflict'` fallback groups relevant to
-   the discovered roots; count them even when transcript/raw totals otherwise
-   match.
+   `(source_root, project, session_id, transcript_identity_id,
+   transcript_record_ordinal, role, content_hash)` for the same window.
+7. Query distinct persisted `status = 'conflict'` fallback groups only through
+   the selected/window-relevant ledger identities (including selected
+   missing-time files); count them even when transcript/raw totals otherwise
+   match. Conflicts belonging only to out-of-window ledger entries do not affect
+   this report.
 8. Compare internal per-message multisets before collapsing them to aggregate
    counts; do not serialize any key or hash.
 
@@ -322,11 +355,12 @@ Stable JSON shape:
 ```
 
 For each mismatched shared session, multiset differences of internal
-`(role, content_hash)` identities accumulate into the transcript-excess or
-archive-excess fields. Equal role counts with a missing message and an
-unrelated extra message therefore produce both excess counters instead of an
-exact session. Hashes remain process-local comparison keys and are never
-serialized.
+`(transcript identity, record ordinal, role, content_hash)` identities
+accumulate into the transcript-excess or archive-excess fields. Equal role
+counts with a missing message and an unrelated extra message therefore produce
+both excess counters instead of an exact session, and repeated identical turns
+remain distinct. Ordinals, ledger IDs, and hashes remain process-local
+comparison keys and are never serialized.
 
 `parity` is true only when message mismatches, transcript/archive-only and
 role-split excess counts, identity conflicts, malformed records, missing event
@@ -441,8 +475,8 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
   opens unrelated historical files or counts out-of-window records.
 - Data integrity: rekey can collide with canonical rows. Complete-set sticky
   conflict checks, stable-field equality preflight, in-place updates,
-  evidence-reference rewrites, savepoints, the existing unique key, FTS
-  triggers, and idempotency tests protect against loss.
+  evidence-reference rewrites, savepoints, the occurrence/content partial
+  unique indexes, FTS triggers, and idempotency tests protect against loss.
 - Maintenance: ingestion and reconciliation must share discovery, identity,
   timestamp, and classification helpers so the contracts cannot drift.
 
@@ -456,9 +490,10 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
       two-phase rekey and collision merge, Stop/batch canonical identity,
       transactional legacy event-time provenance upgrade with rollback/version
       retry, validated read-only lock contention, equal-count message
-      substitution, persisted-conflict reporting, inverted bounds, stale-index
-      and append-race refusal, missing-time-only file selection, bounded
-      candidate-file reads, and fixed-window fixtures.
+      substitution, repeated-identical-turn preservation, window-scoped
+      persisted-conflict reporting, inverted bounds, stale pre-capture index
+      refusal, post-capture append snapshot preservation, missing-time-only file
+      selection, bounded candidate-file reads, and fixed-window fixtures.
 - [ ] Migration tests: v071 name/order, upgrade preservation, declared
       table/index/check constraints, rerun, rollback, and schema-drift
       detection.
