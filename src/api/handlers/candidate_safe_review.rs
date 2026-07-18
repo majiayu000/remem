@@ -28,6 +28,22 @@ use super::candidate_detail::load_candidate_detail;
 const RESOURCE_KIND: &str = "candidate";
 const REVIEW_ACTOR: &str = "api";
 
+struct SafeReviewFailure(Box<Response>);
+
+impl From<Response> for SafeReviewFailure {
+    fn from(response: Response) -> Self {
+        Self(Box::new(response))
+    }
+}
+
+impl SafeReviewFailure {
+    fn into_response(self) -> Response {
+        *self.0
+    }
+}
+
+type SafeReviewResult<T> = Result<T, SafeReviewFailure>;
+
 pub(in crate::api) async fn handle_safe_approve_candidate(
     State(_state): State<DbState>,
     Path(id): Path<i64>,
@@ -35,7 +51,7 @@ pub(in crate::api) async fn handle_safe_approve_candidate(
 ) -> Response {
     parse_safe_request(&body, SafeActionKind::Approve)
         .and_then(|(identity, request)| execute_safe_review(id, identity, request))
-        .unwrap_or_else(|response| response)
+        .unwrap_or_else(SafeReviewFailure::into_response)
 }
 
 pub(in crate::api) async fn handle_safe_reject_candidate(
@@ -45,7 +61,7 @@ pub(in crate::api) async fn handle_safe_reject_candidate(
 ) -> Response {
     parse_safe_request(&body, SafeActionKind::Reject)
         .and_then(|(identity, request)| execute_safe_review(id, identity, request))
-        .unwrap_or_else(|response| response)
+        .unwrap_or_else(SafeReviewFailure::into_response)
 }
 
 pub(in crate::api) async fn handle_safe_edit_candidate(
@@ -55,7 +71,7 @@ pub(in crate::api) async fn handle_safe_edit_candidate(
 ) -> Response {
     parse_safe_request(&body, SafeActionKind::Edit)
         .and_then(|(identity, request)| execute_safe_review(id, identity, request))
-        .unwrap_or_else(|response| response)
+        .unwrap_or_else(SafeReviewFailure::into_response)
 }
 
 #[derive(Clone, Copy)]
@@ -174,7 +190,7 @@ impl CredentialFreeMutationBody for SafeEditHashBody<'_> {}
 fn parse_safe_request(
     body: &[u8],
     kind: SafeActionKind,
-) -> Result<(MutationIdentity, SafeRequest), Response> {
+) -> SafeReviewResult<(MutationIdentity, SafeRequest)> {
     let value: Value = serde_json::from_slice(body).map_err(|_| {
         safe_error(
             StatusCode::BAD_REQUEST,
@@ -224,7 +240,7 @@ fn parse_safe_request(
 fn validate_safe_request(
     request: &mut SafeRequest,
     operation_id: Option<&str>,
-) -> Result<(), Response> {
+) -> SafeReviewResult<()> {
     let reason = request.reason().trim().to_string();
     if reason.is_empty() || reason.len() > 1024 {
         return Err(safe_error(
@@ -232,10 +248,11 @@ fn validate_safe_request(
             "reason_invalid",
             "reason must contain between 1 and 1024 UTF-8 bytes",
             operation_id,
-        ));
+        )
+        .into());
     }
     if request.expected_version() < 0 {
-        return Err(invalid_typed_request(operation_id));
+        return Err(invalid_typed_request(operation_id).into());
     }
     match request {
         SafeRequest::Approve(request) => {
@@ -275,9 +292,9 @@ fn execute_safe_review(
     id: i64,
     identity: MutationIdentity,
     request: SafeRequest,
-) -> Result<Response, Response> {
+) -> SafeReviewResult<Response> {
     if id <= 0 {
-        return Err(invalid_typed_request(Some(&identity.operation_id)));
+        return Err(invalid_typed_request(Some(&identity.operation_id)).into());
     }
     let mut conn = crate::db::open_db()
         .map_err(|_| safe_internal_error("db_open_failed", Some(&identity.operation_id)))?;
@@ -289,7 +306,7 @@ fn execute_safe_review_on_connection(
     id: i64,
     identity: MutationIdentity,
     request: SafeRequest,
-) -> Result<Response, Response> {
+) -> SafeReviewResult<Response> {
     let request_hash = request.request_hash(id).map_err(|_| {
         safe_internal_error("candidate_review_hash_failed", Some(&identity.operation_id))
     })?;
@@ -331,7 +348,8 @@ fn execute_safe_review_on_connection(
                 "idempotency_conflict",
                 "idempotency key was already used for a different request",
                 Some(&identity.operation_id),
-            ));
+            )
+            .into());
         }
         MutationLookup::UnsupportedSchema(_) => {
             return Err(safe_error(
@@ -339,7 +357,8 @@ fn execute_safe_review_on_connection(
                 "idempotency_schema_unsupported",
                 "stored response schema is not supported",
                 Some(&identity.operation_id),
-            ));
+            )
+            .into());
         }
         MutationLookup::Miss => {}
     }
@@ -376,7 +395,8 @@ fn execute_safe_review_on_connection(
             code,
             "candidate cannot be reviewed safely",
             Some(&identity.operation_id),
-        ));
+        )
+        .into());
     }
     let before_status = projection.response.data.review_status.clone();
     if projection.response.data.version != request.expected_version() {
@@ -385,7 +405,8 @@ fn execute_safe_review_on_connection(
             "version_conflict",
             "candidate version does not match expected_version",
             Some(&identity.operation_id),
-        ));
+        )
+        .into());
     }
     let project = projection.response.data.project.clone().ok_or_else(|| {
         safe_internal_error(
@@ -506,7 +527,7 @@ pub(in crate::api) fn execute_safe_review_for_test(
         .and_then(|(identity, request)| {
             execute_safe_review_on_connection(conn, id, identity, request)
         })
-        .unwrap_or_else(|response| response)
+        .unwrap_or_else(SafeReviewFailure::into_response)
 }
 
 fn apply_safe_action(

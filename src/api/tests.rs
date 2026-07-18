@@ -25,6 +25,7 @@ use super::DbState;
 mod candidate_review_poisoning;
 mod candidate_safe_review;
 mod candidates;
+mod read_resources;
 mod web_regressions;
 
 fn authorized_request(method: Method, uri: &str, token: &str, body: Body) -> Request<Body> {
