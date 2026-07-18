@@ -207,13 +207,6 @@ fn capture_candidates(
                 stale_count += 1;
                 continue;
             };
-            let intersects = identity
-                .first_event_epoch
-                .zip(identity.last_event_epoch)
-                .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
-            if !intersects && identity.missing_event_time_count == 0 {
-                continue;
-            }
             let file = File::open(&path).context("open transcript snapshot")?;
             let metadata = file.metadata().context("stat transcript snapshot")?;
             let byte_limit = metadata.len();
@@ -224,6 +217,23 @@ fn capture_candidates(
                 || identity.observed_mtime_ns != mtime_ns
             {
                 stale_count += 1;
+                continue;
+            }
+            if !crate::ingest::sessions::cursor_matches_identity(
+                conn,
+                root,
+                &path,
+                identity.observed_mtime_ns,
+                identity.observed_size_bytes,
+            )? {
+                stale_count += 1;
+                continue;
+            }
+            let intersects = identity
+                .first_event_epoch
+                .zip(identity.last_event_epoch)
+                .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
+            if !intersects && identity.missing_event_time_count == 0 {
                 continue;
             }
             captured.push(CapturedTranscript {
@@ -437,7 +447,8 @@ pub(crate) fn render_reconcile_human(report: &RawReconcileReport) -> String {
         "Raw reconciliation policy={} window={}..{} parity={}\n\
          transcript: sessions={} messages={} user={} assistant={}\n\
          archive: sessions={} messages={} user={} assistant={}\n\
-         mismatches: sessions={} transcript_only={} archive_only={} conflicts={}\n\
+         comparison: exact_sessions={} mismatch_sessions={} transcript_only_sessions={} transcript_only_messages={} archive_only_sessions={} archive_only_messages={}\n\
+         excess: transcript={} transcript_user={} transcript_assistant={} archive={} archive_user={} archive_assistant={} conflicts={}\n\
          exclusions: meta={} xml={} empty={} unsupported={} missing_time={} fallback_time={} unknown_time={} malformed={}\n",
         report.policy_version,
         report.since_epoch,
@@ -451,9 +462,18 @@ pub(crate) fn render_reconcile_human(report: &RawReconcileReport) -> String {
         report.archive.messages,
         report.archive.user_messages,
         report.archive.assistant_messages,
+        report.comparison.exact_sessions,
         report.comparison.message_mismatch_sessions,
         report.comparison.transcript_only_sessions,
+        report.comparison.transcript_only_messages,
         report.comparison.archive_only_sessions,
+        report.comparison.archive_only_messages,
+        report.comparison.transcript_excess_messages,
+        report.comparison.transcript_excess_user_messages,
+        report.comparison.transcript_excess_assistant_messages,
+        report.comparison.archive_excess_messages,
+        report.comparison.archive_excess_user_messages,
+        report.comparison.archive_excess_assistant_messages,
         report.comparison.identity_conflicts,
         report.intentional_exclusions.meta_user,
         report.intentional_exclusions.xml_control_user,

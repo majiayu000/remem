@@ -64,7 +64,12 @@ pub(super) fn drain_with_identity(
             input.path,
             u64::try_from(plan.observed_size_bytes).unwrap_or(u64::MAX),
         )?;
-        crate::ingest::session_identity::mark_complete(conn, identity.id, index, now)?;
+        crate::ingest::session_identity::record_unfinalized_event_index(
+            conn,
+            identity.id,
+            index,
+            now,
+        )?;
     }
     Ok(report)
 }

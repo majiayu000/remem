@@ -106,6 +106,22 @@ fn exact_reconcile_preserves_repeated_turns_and_counts_meta_xml() {
     assert!(!serialized.contains("reconcile-project"));
     assert!(!serialized.contains("stable-session"));
     assert!(!serialized.contains("repeat"));
+    let human = render_reconcile_human(&report);
+    for counter in [
+        "exact_sessions=",
+        "mismatch_sessions=",
+        "transcript_only_messages=",
+        "archive_only_messages=",
+        "transcript_user=",
+        "archive_assistant=",
+        "conflicts=",
+        "unsupported=",
+        "fallback_time=",
+        "unknown_time=",
+        "malformed=",
+    ] {
+        assert!(human.contains(counter), "human output omitted {counter}");
+    }
 }
 
 #[test]
@@ -180,7 +196,7 @@ fn stale_pre_capture_tuple_fails_before_reconciliation() {
 }
 
 #[test]
-fn stale_out_of_window_file_does_not_block_bounded_reconciliation() {
+fn stale_out_of_window_file_blocks_bounded_reconciliation() {
     let conn = setup();
     let root = TempRoot::new("stale-outside");
     let outside = line("stale-outside", "user", 500, "outside");
@@ -191,10 +207,47 @@ fn stale_out_of_window_file_does_not_block_bounded_reconciliation() {
     content.push('\n');
     std::fs::write(path, content).expect("append outside fixture");
 
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 200)
+        .expect_err("every discovered transcript must have a fresh snapshot tuple");
+
+    assert!(error.to_string().contains("run `remem ingest-sessions`"));
+}
+
+#[test]
+fn missing_cursor_blocks_reconciliation() {
+    let conn = setup();
+    let root = TempRoot::new("missing-cursor");
+    let user = line("missing-cursor", "user", 100, "cursor required");
+    root.write("missing-cursor.jsonl", &[&user]);
+    ingest(&conn, &root);
+    conn.execute("DELETE FROM ingest_cursors", [])
+        .expect("remove cursor");
+
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect_err("contract v1 without a matching cursor is stale");
+
+    assert!(error.to_string().contains("run `remem ingest-sessions`"));
+}
+
+#[test]
+fn timestamped_unsupported_records_participate_in_candidate_bounds() {
+    let conn = setup();
+    let root = TempRoot::new("unsupported-bounds");
+    let unsupported = serde_json::json!({
+        "type": "progress",
+        "sessionId": "unsupported-bounds",
+        "timestamp": 150,
+        "payload": {"status": "working"}
+    })
+    .to_string();
+    root.write("unsupported-bounds.jsonl", &[&unsupported]);
+    ingest(&conn, &root);
+
     let report = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 200)
-        .expect("out-of-window append must not enter the bounded candidate set");
+        .expect("timestamped unsupported record should select the transcript");
 
     assert!(report.parity);
+    assert_eq!(report.intentional_exclusions.unsupported_record, 1);
     assert_eq!(report.transcript.messages, 0);
     assert_eq!(report.archive.messages, 0);
 }

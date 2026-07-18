@@ -341,4 +341,30 @@ mod tests {
             TranscriptRecordClass::XmlControlUser(_)
         ));
     }
+
+    #[test]
+    fn captured_boundary_excludes_post_capture_append() -> std::io::Result<()> {
+        use std::io::Write;
+
+        let path = std::env::temp_dir().join(format!(
+            "remem-captured-boundary-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, b"{\"type\":\"progress\",\"timestamp\":100}\n")?;
+        let file = std::fs::File::open(&path)?;
+        let byte_limit = file.metadata()?.len();
+        let mut append = std::fs::OpenOptions::new().append(true).open(&path)?;
+        append.write_all(b"{\"type\":\"progress\",\"timestamp\":101}\n")?;
+        append.flush()?;
+        let mut lines = Vec::new();
+
+        stream_captured_transcript(file, byte_limit, |line, _| {
+            lines.push(line.to_string());
+        })?;
+
+        assert_eq!(lines, vec![r#"{"type":"progress","timestamp":100}"#]);
+        std::fs::remove_file(path)?;
+        Ok(())
+    }
 }

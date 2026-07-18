@@ -148,31 +148,36 @@ pub fn run_ingest_sessions(
                 }
             };
             let mtime_epoch = plan.observed_mtime_ns / 1_000_000_000;
-            if options.since_epoch.is_some_and(|since| mtime_epoch < since) {
-                summary.skipped += 1;
-                continue;
-            }
-            discovered.push((root.clone(), plan));
+            let phase_b_eligible = !options.since_epoch.is_some_and(|since| mtime_epoch < since);
+            discovered.push((root.clone(), plan, phase_b_eligible));
         }
     }
+    if summary.failed_files > 0 {
+        crate::log::error(
+            "ingest-sessions",
+            "Phase A discovery/probe was incomplete; Phase B mutation is blocked",
+        );
+        return Ok(summary);
+    }
     conn.execute_batch("SAVEPOINT gh871_identity_phase_a")?;
-    let phase_a = (|| -> Result<Vec<(ScanRoot, super::session_identity::TranscriptPlan, i64)>> {
-        let mut prepared = Vec::with_capacity(discovered.len());
-        let mut groups = BTreeSet::new();
-        for (root, plan) in discovered {
-            let identity_id = super::session_identity::upsert_claim(conn, &plan, now)?;
-            groups.insert((plan.source_root.clone(), plan.fallback_session_id.clone()));
-            prepared.push((root, plan, identity_id));
-        }
-        for (source_root, fallback_session_id) in groups {
-            super::session_identity::resolve_fallback_group(
-                conn,
-                &source_root,
-                &fallback_session_id,
-            )?;
-        }
-        Ok(prepared)
-    })();
+    let phase_a =
+        (|| -> Result<Vec<(ScanRoot, super::session_identity::TranscriptPlan, i64, bool)>> {
+            let mut prepared = Vec::with_capacity(discovered.len());
+            let mut groups = BTreeSet::new();
+            for (root, plan, phase_b_eligible) in discovered {
+                let identity_id = super::session_identity::upsert_claim(conn, &plan, now)?;
+                groups.insert((plan.source_root.clone(), plan.fallback_session_id.clone()));
+                prepared.push((root, plan, identity_id, phase_b_eligible));
+            }
+            for (source_root, fallback_session_id) in groups {
+                super::session_identity::resolve_fallback_group(
+                    conn,
+                    &source_root,
+                    &fallback_session_id,
+                )?;
+            }
+            Ok(prepared)
+        })();
     let prepared = match phase_a {
         Ok(prepared) => {
             conn.execute_batch("RELEASE gh871_identity_phase_a")?;
@@ -188,8 +193,34 @@ pub fn run_ingest_sessions(
 
     for chunk in prepared.chunks(PHASE_B_COMMIT_CHUNK_FILES) {
         conn.execute_batch("SAVEPOINT gh871_identity_phase_b_chunk")?;
-        for (root, plan, identity_id) in chunk {
-            ingest_prepared_file(conn, root, plan, *identity_id, now, &mut summary);
+        for (root, plan, identity_id, phase_b_eligible) in chunk {
+            if !phase_b_eligible {
+                summary.skipped += 1;
+                continue;
+            }
+            conn.execute_batch("SAVEPOINT gh871_identity_phase_b_file")?;
+            let inserted_before = summary.ingested_messages;
+            let result = ingest_prepared_file(conn, root, plan, *identity_id, now, &mut summary);
+            match result {
+                PreparedFileResult::Commit => {
+                    conn.execute_batch("RELEASE gh871_identity_phase_b_file")?;
+                }
+                PreparedFileResult::Rollback { identity_conflict } => {
+                    conn.execute_batch(
+                        "ROLLBACK TO gh871_identity_phase_b_file;
+                         RELEASE gh871_identity_phase_b_file",
+                    )?;
+                    summary.ingested_messages = inserted_before;
+                    if identity_conflict {
+                        super::session_identity::mark_fallback_group_conflict(
+                            conn,
+                            &plan.source_root,
+                            &plan.fallback_session_id,
+                            "stable_occurrence_mismatch",
+                        )?;
+                    }
+                }
+            }
         }
         conn.execute_batch("RELEASE gh871_identity_phase_b_chunk")?;
     }
@@ -268,6 +299,11 @@ fn collect_jsonl_files(dir: &Path, out: &mut Vec<PathBuf>, failures: &mut Vec<St
     }
 }
 
+enum PreparedFileResult {
+    Commit,
+    Rollback { identity_conflict: bool },
+}
+
 fn ingest_prepared_file(
     conn: &Connection,
     root: &ScanRoot,
@@ -275,7 +311,7 @@ fn ingest_prepared_file(
     identity_id: i64,
     now: i64,
     summary: &mut IngestSummary,
-) {
+) -> PreparedFileResult {
     let identity = match super::session_identity::load(conn, identity_id) {
         Ok(identity) => identity,
         Err(error) => {
@@ -284,7 +320,7 @@ fn ingest_prepared_file(
                 "ingest-sessions",
                 &format!("load identity {} failed: {error}", plan.path.display()),
             );
-            return;
+            return PreparedFileResult::Commit;
         }
     };
     if identity.status == "conflict" {
@@ -296,14 +332,14 @@ fn ingest_prepared_file(
                 plan.path.display()
             ),
         );
-        return;
+        return PreparedFileResult::Commit;
     }
     let mtime_epoch = plan.observed_mtime_ns / 1_000_000_000;
     let size_bytes = plan.observed_size_bytes;
     match cursor_unchanged(conn, root, &plan.path, mtime_epoch, size_bytes) {
         Ok(true) if identity.contract_version >= 1 => {
             summary.skipped += 1;
-            return;
+            return PreparedFileResult::Commit;
         }
         Ok(true) | Ok(false) => {}
         Err(error) => {
@@ -312,7 +348,7 @@ fn ingest_prepared_file(
                 "ingest-sessions",
                 &format!("cursor lookup {} failed: {}", plan.path.display(), error),
             );
-            return;
+            return PreparedFileResult::Commit;
         }
     }
 
@@ -327,7 +363,7 @@ fn ingest_prepared_file(
                 "ingest-sessions",
                 &format!("index {} failed: {error}", plan.path.display()),
             );
-            return;
+            return PreparedFileResult::Commit;
         }
     };
     let drain_options = TranscriptDrainOptions {
@@ -364,6 +400,11 @@ fn ingest_prepared_file(
                         report.read_error.is_some()
                     ),
                 );
+                if report.identity_conflicts > 0 {
+                    return PreparedFileResult::Rollback {
+                        identity_conflict: true,
+                    };
+                }
             } else if report.partial_tail {
                 summary.partial_files += 1;
             } else {
@@ -400,6 +441,12 @@ fn ingest_prepared_file(
                                 plan.path.display()
                             ),
                         );
+                        return PreparedFileResult::Rollback {
+                            identity_conflict: error
+                                .downcast_ref::<crate::memory::raw_occurrence::RawIdentityConflict>(
+                                )
+                                .is_some(),
+                        };
                     }
                 }
             }
@@ -412,6 +459,7 @@ fn ingest_prepared_file(
             );
         }
     }
+    PreparedFileResult::Commit
 }
 
 fn cursor_unchanged(
@@ -430,6 +478,22 @@ fn cursor_unchanged(
         )
         .optional()?;
     Ok(row == Some((mtime_epoch, size_bytes)))
+}
+
+pub(crate) fn cursor_matches_identity(
+    conn: &Connection,
+    root: &ScanRoot,
+    file: &Path,
+    observed_mtime_ns: i64,
+    observed_size_bytes: i64,
+) -> Result<bool> {
+    cursor_unchanged(
+        conn,
+        root,
+        file,
+        observed_mtime_ns / 1_000_000_000,
+        observed_size_bytes,
+    )
 }
 
 fn advance_cursor(

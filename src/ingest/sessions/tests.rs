@@ -248,6 +248,23 @@ fn since_bound_skips_older_files() {
     assert_eq!(summary.scanned, 1);
     assert_eq!(summary.skipped, 1);
     assert_eq!(summary.ingested_messages, 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap(),
+        1,
+        "Phase A must claim files that Phase B skips by --since"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identity_claims",
+            [],
+            |row| row.get::<_, i64>(0)
+        )
+        .unwrap(),
+        1
+    );
 }
 
 #[test]
@@ -403,6 +420,40 @@ fn missing_explicit_root_is_reported_as_failure() {
     assert_eq!(summary.exit_code(), 1);
 }
 
+#[test]
+fn incomplete_discovery_blocks_all_identity_and_raw_mutation() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("phase-a-fail-closed");
+    let cwd = root.path.to_string_lossy().to_string();
+    root.write(
+        "proj-a/good.jsonl",
+        &format!("{}\n", claude_line(&cwd, "user", "must not ingest")),
+    );
+    let missing = root.path.join("missing-required-root");
+    let roots = [
+        root.scan_root("local"),
+        ScanRoot {
+            label: "missing".to_string(),
+            path: missing,
+            required: true,
+        },
+    ];
+
+    let summary = run_ingest_sessions(&conn, &roots, &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.ingested_messages, 0);
+    assert_eq!(raw_message_count(&conn), 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    assert_eq!(cursor_count(&conn), 0);
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
@@ -424,9 +475,107 @@ fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
 
     std::fs::set_permissions(&blocked, original_permissions).unwrap();
 
-    assert_eq!(summary.ingested_messages, 1);
+    assert_eq!(summary.ingested_messages, 0);
     assert_eq!(summary.failed_files, 1);
-    assert_eq!(raw_message_count(&conn), 1);
+    assert_eq!(raw_message_count(&conn), 0);
+}
+
+#[test]
+fn completion_failure_rolls_back_raw_rows_ledger_and_cursor() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("completion-rollback");
+    let cwd = root.path.to_string_lossy().to_string();
+    root.write(
+        "proj-a/session-1.jsonl",
+        &format!(
+            "{}\n",
+            claude_line(&cwd, "user", "rollback all file writes")
+        ),
+    );
+    conn.execute_batch(
+        "CREATE TRIGGER fail_gh871_cursor
+         BEFORE INSERT ON ingest_cursors
+         BEGIN
+             SELECT RAISE(FAIL, 'forced cursor failure');
+         END;",
+    )?;
+
+    let summary =
+        run_ingest_sessions(&conn, &[root.scan_root("local")], &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.ingested_messages, 0);
+    assert_eq!(raw_message_count(&conn), 0);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT contract_version FROM raw_session_identities",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        0
+    );
+    Ok(())
+}
+
+#[test]
+fn ordinal_replay_conflict_is_sticky_and_preserves_existing_raw_row() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("ordinal-conflict");
+    let cwd = root.path.to_string_lossy().to_string();
+    let file = root.write(
+        "proj-a/session-1.jsonl",
+        &format!("{}\n", claude_line(&cwd, "user", "captured value")),
+    );
+    let scan_root = root.scan_root("local");
+    let plan =
+        crate::ingest::session_identity::probe(&scan_root.label, &scan_root.path, &file, None)?;
+    let identity_id = crate::ingest::session_identity::upsert_claim(&conn, &plan, 1)?;
+    crate::ingest::session_identity::resolve_fallback_group(
+        &conn,
+        &plan.source_root,
+        &plan.fallback_session_id,
+    )?;
+    conn.execute(
+        "INSERT INTO raw_messages (
+            session_id, project, role, content, content_hash, source,
+            created_at_epoch, source_root, event_time_source,
+            transcript_identity_id, transcript_record_ordinal
+         ) VALUES (?1, ?2, 'assistant', 'different value', ?3, 'transcript',
+                   1, ?4, 'transcript_event', ?5, 0)",
+        rusqlite::params![
+            plan.canonical_session_id,
+            plan.project,
+            crate::db::content_identity_hash(b"different value"),
+            plan.source_root,
+            identity_id
+        ],
+    )?;
+
+    let summary = run_ingest_sessions(&conn, &[scan_root], &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.ingested_messages, 0);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(
+        conn.query_row(
+            "SELECT status || ':' || conflict_reason
+             FROM raw_session_identities WHERE id = ?1",
+            [identity_id],
+            |row| row.get::<_, String>(0)
+        )?,
+        "conflict:stable_occurrence_mismatch"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT role || ':' || content FROM raw_messages
+             WHERE transcript_identity_id = ?1",
+            [identity_id],
+            |row| row.get::<_, String>(0)
+        )?,
+        "assistant:different value"
+    );
+    Ok(())
 }
 
 #[test]

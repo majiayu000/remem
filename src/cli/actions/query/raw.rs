@@ -91,10 +91,14 @@ fn run_raw_reconcile(
             crate::memory::raw_reconcile::render_reconcile_human(&report)
         );
     }
-    if report.comparison.identity_conflicts > 0 {
+    ensure_reconcile_parity(report.parity)?;
+    Ok(())
+}
+
+fn ensure_reconcile_parity(parity: bool) -> Result<()> {
+    if !parity {
         anyhow::bail!(
-            "raw reconciliation found {} window-relevant identity conflict(s)",
-            report.comparison.identity_conflicts
+            "raw reconciliation found strict parity failures; inspect the aggregate report"
         );
     }
     Ok(())
@@ -300,4 +304,15 @@ fn preview_raw_content(row: &RawMessage) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+#[cfg(test)]
+mod reconcile_exit_tests {
+    use super::ensure_reconcile_parity;
+
+    #[test]
+    fn every_non_parity_report_produces_a_cli_error() {
+        assert!(ensure_reconcile_parity(false).is_err());
+        assert!(ensure_reconcile_parity(true).is_ok());
+    }
 }

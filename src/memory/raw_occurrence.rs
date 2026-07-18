@@ -6,6 +6,23 @@ use super::raw_archive::RawInsertOutcome;
 pub(crate) const EVENT_TIME_TRANSCRIPT: &str = "transcript_event";
 pub(crate) const EVENT_TIME_FALLBACK: &str = "ingest_fallback";
 
+#[derive(Debug)]
+pub(crate) struct RawIdentityConflict {
+    pub reason: String,
+}
+
+impl std::fmt::Display for RawIdentityConflict {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "raw transcript identity conflict: {}",
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for RawIdentityConflict {}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn insert_transcript_occurrence(
     conn: &Connection,
@@ -38,6 +55,11 @@ pub(crate) fn insert_transcript_occurrence(
         session_id,
         transcript_identity_id,
         transcript_record_ordinal,
+        role,
+        trimmed,
+        &content_hash,
+        created_at_epoch,
+        event_time_source,
     )? {
         return Ok(Some(RawInsertOutcome {
             id,
@@ -92,25 +114,27 @@ pub(crate) fn insert_transcript_occurrence(
         }));
     }
 
-    let id = conn.query_row(
-        "SELECT id FROM raw_messages
-         WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
-           AND transcript_identity_id = ?4 AND transcript_record_ordinal = ?5",
-        params![
-            source_root,
-            project,
-            session_id,
-            transcript_identity_id,
-            transcript_record_ordinal
-        ],
-        |row| row.get(0),
-    )?;
+    let id = existing_occurrence(
+        conn,
+        source_root,
+        project,
+        session_id,
+        transcript_identity_id,
+        transcript_record_ordinal,
+        role,
+        trimmed,
+        &content_hash,
+        created_at_epoch,
+        event_time_source,
+    )?
+    .ok_or_else(|| anyhow::anyhow!("raw occurrence insert was ignored without a target row"))?;
     Ok(Some(RawInsertOutcome {
         id,
         inserted: false,
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn existing_occurrence(
     conn: &Connection,
     source_root: &str,
@@ -118,16 +142,50 @@ fn existing_occurrence(
     session_id: &str,
     identity_id: i64,
     ordinal: i64,
+    role: &str,
+    content: &str,
+    content_hash: &str,
+    created_at_epoch: Option<i64>,
+    event_time_source: &str,
 ) -> Result<Option<i64>> {
-    conn.query_row(
-        "SELECT id FROM raw_messages
-         WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
-           AND transcript_identity_id = ?4 AND transcript_record_ordinal = ?5",
-        params![source_root, project, session_id, identity_id, ordinal],
-        |row| row.get(0),
-    )
-    .optional()
-    .map_err(Into::into)
+    let existing: Option<(i64, String, String, String, String, i64)> = conn
+        .query_row(
+            "SELECT id, role, content, content_hash, event_time_source, created_at_epoch
+             FROM raw_messages
+             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
+               AND transcript_identity_id = ?4 AND transcript_record_ordinal = ?5",
+            params![source_root, project, session_id, identity_id, ordinal],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((id, stored_role, stored_content, stored_hash, stored_time_source, stored_epoch)) =
+        existing
+    else {
+        return Ok(None);
+    };
+    let timestamp_matches =
+        event_time_source != EVENT_TIME_TRANSCRIPT || created_at_epoch == Some(stored_epoch);
+    if stored_role != role
+        || stored_content != content
+        || stored_hash != content_hash
+        || stored_time_source != event_time_source
+        || !timestamp_matches
+    {
+        return Err(RawIdentityConflict {
+            reason: format!("ordinal {ordinal} stable fields differ from the captured transcript"),
+        }
+        .into());
+    }
+    Ok(Some(id))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -280,5 +338,63 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0], (41, 1, 0, EVENT_TIME_TRANSCRIPT.to_string()));
         assert_eq!(rows[1].2, 1);
+    }
+
+    #[test]
+    fn replayed_ordinal_with_different_stable_fields_is_a_conflict() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute(
+            "INSERT INTO raw_session_identities (
+                id, source_root, transcript_path, fallback_session_id,
+                canonical_session_id, project, legacy_project, status,
+                contract_version, observed_mtime_ns, observed_size_bytes,
+                first_seen_at_epoch, last_seen_at_epoch
+             ) VALUES (1, 'local', '/tmp/replay.jsonl', 'fallback',
+                       'canonical', 'project', 'legacy', 'active',
+                       0, 1, 1, 1, 1)",
+            [],
+        )?;
+
+        let first = insert_transcript_occurrence(
+            &conn,
+            "canonical",
+            "project",
+            "user",
+            "original",
+            None,
+            None,
+            "local",
+            Some(100),
+            1,
+            7,
+        )?;
+        assert!(first.is_some());
+        let error = insert_transcript_occurrence(
+            &conn,
+            "canonical",
+            "project",
+            "assistant",
+            "replacement",
+            None,
+            None,
+            "local",
+            Some(101),
+            1,
+            7,
+        )
+        .expect_err("ordinal reuse with changed stable fields must fail");
+
+        assert!(error.downcast_ref::<RawIdentityConflict>().is_some());
+        assert_eq!(
+            conn.query_row(
+                "SELECT role || ':' || content FROM raw_messages
+                 WHERE transcript_identity_id = 1 AND transcript_record_ordinal = 7",
+                [],
+                |row| row.get::<_, String>(0)
+            )?,
+            "user:original"
+        );
+        Ok(())
     }
 }

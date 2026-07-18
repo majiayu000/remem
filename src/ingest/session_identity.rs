@@ -262,6 +262,21 @@ pub(crate) fn resolve_fallback_group(
     Ok(())
 }
 
+pub(crate) fn mark_fallback_group_conflict(
+    conn: &Connection,
+    source_root: &str,
+    fallback_session_id: &str,
+    reason: &str,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE raw_session_identities
+         SET status = 'conflict', conflict_reason = ?3
+         WHERE source_root = ?1 AND fallback_session_id = ?2",
+        params![source_root, fallback_session_id, reason],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn load(conn: &Connection, identity_id: i64) -> Result<IdentityRecord> {
     conn.query_row(
         "SELECT id, source_root, transcript_path, fallback_session_id,
@@ -314,19 +329,38 @@ pub(crate) fn index_events(path: &str, byte_limit: u64) -> Result<EventIndex> {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
             return;
         };
-        let Some(message) = crate::memory::raw_transcript::parse_transcript_message(&value) else {
-            return;
-        };
-        if let Some(epoch) = message.created_at_epoch {
+        if let Some(epoch) = crate::memory::raw_transcript::transcript_timestamp_epoch(&value) {
             index.first_event_epoch =
                 Some(index.first_event_epoch.map_or(epoch, |old| old.min(epoch)));
             index.last_event_epoch =
                 Some(index.last_event_epoch.map_or(epoch, |old| old.max(epoch)));
-        } else {
+        } else if crate::memory::raw_transcript::parse_transcript_message(&value).is_some() {
             index.missing_event_time_count += 1;
         }
     })?;
     Ok(index)
+}
+
+pub(crate) fn record_unfinalized_event_index(
+    conn: &Connection,
+    identity_id: i64,
+    index: EventIndex,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE raw_session_identities
+         SET first_event_epoch = ?2, last_event_epoch = ?3,
+             missing_event_time_count = ?4, last_seen_at_epoch = ?5
+         WHERE id = ?1 AND status = 'active'",
+        params![
+            identity_id,
+            index.first_event_epoch,
+            index.last_event_epoch,
+            index.missing_event_time_count,
+            now
+        ],
+    )?;
+    Ok(())
 }
 
 pub(crate) fn mark_complete(
@@ -358,9 +392,11 @@ pub(crate) fn rekey_legacy_rows(
     if identity.status == "conflict" {
         return Ok(RekeyReport::default());
     }
-    let rows: Vec<(i64, String, String)> = {
+    let rows: Vec<LegacyRawRow> = {
         let mut statement = conn.prepare(
-            "SELECT id, role, content_hash FROM raw_messages
+            "SELECT id, role, content, content_hash, source, created_at_epoch,
+                    event_time_source
+             FROM raw_messages
              WHERE source_root = ?1 AND session_id = ?2
                AND project IN (?3, ?4) AND transcript_identity_id IS NULL
              ORDER BY id",
@@ -373,32 +409,47 @@ pub(crate) fn rekey_legacy_rows(
                     identity.project,
                     identity.legacy_project
                 ],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                |row| {
+                    Ok(LegacyRawRow {
+                        id: row.get(0)?,
+                        role: row.get(1)?,
+                        content: row.get(2)?,
+                        content_hash: row.get(3)?,
+                        source: row.get(4)?,
+                        created_at_epoch: row.get(5)?,
+                        event_time_source: row.get(6)?,
+                    })
+                },
             )?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         rows
     };
+    let mut mutations = Vec::with_capacity(rows.len());
+    for row in rows {
+        let targets = load_collision_targets(conn, identity, &row)?;
+        let compatible = targets
+            .iter()
+            .filter(|target| stable_collision_matches(&row, target))
+            .collect::<Vec<_>>();
+        if !targets.is_empty() && compatible.len() != 1 {
+            return Err(crate::memory::raw_occurrence::RawIdentityConflict {
+                reason: format!(
+                    "legacy row {} has {} canonical collision(s), {} stable match(es)",
+                    row.id,
+                    targets.len(),
+                    compatible.len()
+                ),
+            }
+            .into());
+        }
+        mutations.push((row.id, compatible.first().map(|target| target.id)));
+    }
+
     let mut report = RekeyReport::default();
-    for (old_id, role, hash) in rows {
-        let target: Option<i64> = conn
-            .query_row(
-                "SELECT id FROM raw_messages
-                 WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
-                   AND transcript_identity_id = ?4 AND role = ?5 AND content_hash = ?6
-                 ORDER BY transcript_record_ordinal, id LIMIT 1",
-                params![
-                    identity.source_root,
-                    identity.project,
-                    identity.canonical_session_id,
-                    identity.id,
-                    role,
-                    hash
-                ],
-                |row| row.get(0),
-            )
-            .optional()?;
-        if let Some(target_id) = target {
+    for (old_id, target_id) in mutations {
+        if let Some(target_id) = target_id {
             rewrite_evidence_references(conn, old_id, target_id)?;
+            assert_no_evidence_reference(conn, old_id)?;
             conn.execute("DELETE FROM raw_messages WHERE id = ?1", [old_id])?;
             report.merged += 1;
         } else {
@@ -410,6 +461,75 @@ pub(crate) fn rekey_legacy_rows(
         }
     }
     Ok(report)
+}
+
+#[derive(Debug)]
+struct LegacyRawRow {
+    id: i64,
+    role: String,
+    content: String,
+    content_hash: String,
+    source: String,
+    created_at_epoch: i64,
+    event_time_source: String,
+}
+
+#[derive(Debug)]
+struct CollisionTarget {
+    id: i64,
+    content: String,
+    source: String,
+    created_at_epoch: i64,
+    event_time_source: String,
+}
+
+fn load_collision_targets(
+    conn: &Connection,
+    identity: &IdentityRecord,
+    row: &LegacyRawRow,
+) -> Result<Vec<CollisionTarget>> {
+    let mut statement = conn.prepare(
+        "SELECT id, content, source, created_at_epoch, event_time_source
+         FROM raw_messages
+         WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
+           AND role = ?4 AND content_hash = ?5
+           AND transcript_identity_id = ?6 AND id != ?7
+         ORDER BY transcript_record_ordinal, id",
+    )?;
+    let targets = statement
+        .query_map(
+            params![
+                identity.source_root,
+                identity.project,
+                identity.canonical_session_id,
+                row.role,
+                row.content_hash,
+                identity.id,
+                row.id
+            ],
+            |row| {
+                Ok(CollisionTarget {
+                    id: row.get(0)?,
+                    content: row.get(1)?,
+                    source: row.get(2)?,
+                    created_at_epoch: row.get(3)?,
+                    event_time_source: row.get(4)?,
+                })
+            },
+        )?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(targets)
+}
+
+fn stable_collision_matches(old: &LegacyRawRow, target: &CollisionTarget) -> bool {
+    let provenance_matches = old.event_time_source == target.event_time_source
+        || (old.source == "transcript"
+            && old.event_time_source == "legacy_unknown"
+            && target.event_time_source == "transcript_event");
+    old.content == target.content
+        && old.source == target.source
+        && old.created_at_epoch == target.created_at_epoch
+        && provenance_matches
 }
 
 fn rewrite_evidence_references(conn: &Connection, old_id: i64, new_id: i64) -> Result<()> {
@@ -439,6 +559,40 @@ fn rewrite_evidence_references(conn: &Connection, old_id: i64, new_id: i64) -> R
              SET evidence_raw_message_ids = ?2 WHERE id = ?1",
             params![event_id, serde_json::to_string(&ids)?],
         )?;
+    }
+    let old_token = format!("raw_message:{old_id}:");
+    let new_token = format!("raw_message:{new_id}:");
+    conn.execute(
+        "UPDATE memory_lessons
+         SET source_evidence = REPLACE(source_evidence, ?1, ?2)
+         WHERE source_evidence IS NOT NULL AND INSTR(source_evidence, ?1) > 0",
+        params![old_token, new_token],
+    )?;
+    Ok(())
+}
+
+fn assert_no_evidence_reference(conn: &Connection, raw_message_id: i64) -> Result<()> {
+    let json_reference_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_lesson_feed_events
+         WHERE EXISTS (
+             SELECT 1 FROM json_each(evidence_raw_message_ids)
+             WHERE CAST(value AS INTEGER) = ?1
+         )",
+        [raw_message_id],
+        |row| row.get(0),
+    )?;
+    let token = format!("raw_message:{raw_message_id}:");
+    let text_reference_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_lessons
+         WHERE source_evidence IS NOT NULL AND INSTR(source_evidence, ?1) > 0",
+        [token],
+        |row| row.get(0),
+    )?;
+    if json_reference_count > 0 || text_reference_count > 0 {
+        bail!(
+            "raw row {raw_message_id} still has {json_reference_count} JSON and \
+             {text_reference_count} text evidence reference(s)"
+        );
     }
     Ok(())
 }

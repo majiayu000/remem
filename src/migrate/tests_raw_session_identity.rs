@@ -107,3 +107,56 @@ fn v071_occurrence_key_preserves_repeated_turns_and_replay_idempotency() -> Resu
     );
     Ok(())
 }
+
+#[test]
+fn v071_enforces_identity_foreign_keys_and_closed_values() -> Result<()> {
+    let conn = pre_v071()?;
+    let migration = MIGRATIONS.last().context("v071 migration is missing")?;
+    conn.execute_batch(migration.sql)?;
+
+    let claim_fk_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_foreign_key_list('raw_session_identity_claims')
+         WHERE \"table\" = 'raw_session_identities'
+           AND \"from\" = 'transcript_identity_id'
+           AND on_delete = 'RESTRICT'",
+        [],
+        |row| row.get(0),
+    )?;
+    let raw_fk_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM pragma_foreign_key_list('raw_messages')
+         WHERE \"table\" = 'raw_session_identities'
+           AND \"from\" = 'transcript_identity_id'
+           AND on_delete = 'RESTRICT'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(claim_fk_count, 1);
+    assert_eq!(raw_fk_count, 1);
+
+    let identity_sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master
+         WHERE type = 'table' AND name = 'raw_session_identities'",
+        [],
+        |row| row.get(0),
+    )?;
+    let claim_sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master
+         WHERE type = 'table' AND name = 'raw_session_identity_claims'",
+        [],
+        |row| row.get(0),
+    )?;
+    let raw_sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master
+         WHERE type = 'table' AND name = 'raw_messages'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(identity_sql.contains("CHECK(status IN ('active', 'conflict'))"));
+    assert!(claim_sql
+        .contains("CHECK(identity_source IN ('transcript_metadata', 'filename_fallback'))"));
+    assert!(raw_sql.contains("'transcript_event', 'ingest_fallback', 'legacy_unknown'"));
+    assert!(
+        raw_sql.contains("transcript_identity_id IS NULL AND transcript_record_ordinal IS NULL")
+    );
+    Ok(())
+}

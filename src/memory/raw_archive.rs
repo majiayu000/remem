@@ -48,6 +48,7 @@ pub struct RawIngestReport {
     pub skipped_messages: usize,
     pub parse_errors: usize,
     pub insert_errors: usize,
+    pub identity_conflicts: usize,
     pub read_error: Option<String>,
     /// The last line failed JSON parse while the drain was told to tolerate an
     /// actively-appended tail (issue #722). Not counted as a parse error; the
@@ -401,6 +402,12 @@ pub(crate) fn drain_transcript_with_capture_limit(
                     Ok(None) => report.empty_messages += 1,
                     Err(error) => {
                         report.insert_errors += 1;
+                        if error
+                            .downcast_ref::<crate::memory::raw_occurrence::RawIdentityConflict>()
+                            .is_some()
+                        {
+                            report.identity_conflicts += 1;
+                        }
                         crate::log::warn(
                             "raw-archive",
                             &format!("insert raw message failed: {}", error),
