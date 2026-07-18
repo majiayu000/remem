@@ -24,7 +24,7 @@ struct Fixture {
 }
 
 #[tokio::test]
-async fn read_resource_routes_are_authenticated_and_staged_capabilities_are_absent(
+async fn read_resource_routes_are_authenticated_and_published_capabilities_are_exact(
 ) -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-read-resource-auth");
     crate::api::ensure_api_token()?;
@@ -46,13 +46,15 @@ async fn read_resource_routes_are_authenticated_and_staged_capabilities_are_abse
 
     let (_, capabilities) = get_json(&app, "/api/v1/capabilities", &token).await?;
     for resource in ["observations", "sessions", "workstreams", "events", "tasks"] {
-        assert_eq!(capabilities["features"][resource], false, "{resource}");
-        assert!(capabilities["endpoints"]
-            .get(format!("{resource}_list"))
-            .is_none());
-        assert!(capabilities["endpoints"]
-            .get(format!("{resource}_detail"))
-            .is_none());
+        assert_eq!(capabilities["features"][resource], true, "{resource}");
+        assert_eq!(
+            capabilities["endpoints"][format!("{resource}_list")],
+            format!("/api/v1/{resource}")
+        );
+        assert_eq!(
+            capabilities["endpoints"][format!("{resource}_detail")],
+            format!("/api/v1/{resource}/{{id}}")
+        );
     }
     Ok(())
 }

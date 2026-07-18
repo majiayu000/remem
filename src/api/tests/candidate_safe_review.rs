@@ -12,9 +12,53 @@ use crate::db;
 use crate::db::test_support::ScopedTestDataDir;
 
 use super::super::handlers::execute_safe_review_for_test;
-use super::{authorized_json_request, insert_safe_review_candidate};
+use super::authorized_json_request;
 
 mod stable_errors;
+
+pub(super) fn insert_safe_review_candidate(
+    fixture: &str,
+    event_type: &str,
+    evidence_content: &str,
+    candidate_text: &str,
+) -> anyhow::Result<(i64, i64)> {
+    let conn = db::open_db()?;
+    let outcome = db::record_captured_event(
+        &conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id: fixture,
+            project: fixture,
+            cwd: None,
+            event_type,
+            role: Some("tool"),
+            tool_name: Some("Edit"),
+            content: evidence_content,
+            task_kind: None,
+        },
+    )?;
+    let project_id: i64 = conn.query_row(
+        "SELECT project_id FROM captured_events WHERE id = ?1",
+        params![outcome.event_row_id],
+        |row| row.get(0),
+    )?;
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_candidates
+          (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+           confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', ?2, ?3, ?4, 0.82,
+                 'medium', 'pending_review', ?5, ?5)",
+        params![
+            project_id,
+            format!("topic-{fixture}"),
+            candidate_text,
+            serde_json::to_string(&vec![outcome.event_row_id])?,
+            now
+        ],
+    )?;
+    Ok((conn.last_insert_rowid(), outcome.event_row_id))
+}
 
 fn candidate_version(id: i64) -> anyhow::Result<i64> {
     let conn = db::open_db()?;
@@ -291,7 +335,7 @@ async fn audit_failure_rolls_back_candidate_memory_and_ledger() -> anyhow::Resul
 }
 
 #[tokio::test]
-async fn staged_candidate_contract_stays_disabled_and_routes_require_auth() -> anyhow::Result<()> {
+async fn published_candidate_contract_is_exact_and_routes_require_auth() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-safe-review-contract-disabled");
     crate::api::ensure_api_token()?;
     let token = crate::api::load_api_token()?;
@@ -307,18 +351,29 @@ async fn staged_candidate_contract_stays_disabled_and_routes_require_auth() -> a
         .await?;
     assert_eq!(capabilities.status(), StatusCode::OK);
     let capabilities = response_json(capabilities).await?;
-    assert_eq!(capabilities["features"]["candidate_detail"], false);
-    assert_eq!(capabilities["features"]["candidate_evidence"], false);
-    assert_eq!(capabilities["features"]["candidate_review_safe"], false);
-    for key in [
-        "candidate_detail",
-        "candidate_evidence",
-        "candidate_review_safe_approve",
-        "candidate_review_safe_reject",
-        "candidate_review_safe_edit",
-    ] {
-        assert!(capabilities["endpoints"].get(key).is_none());
-    }
+    assert_eq!(capabilities["features"]["candidate_detail"], true);
+    assert_eq!(capabilities["features"]["candidate_evidence"], true);
+    assert_eq!(capabilities["features"]["candidate_review_safe"], true);
+    assert_eq!(
+        capabilities["endpoints"]["candidate_detail"],
+        "/api/v1/candidates/{id}"
+    );
+    assert_eq!(
+        capabilities["endpoints"]["candidate_evidence"],
+        "/api/v1/candidates/{id}"
+    );
+    assert_eq!(
+        capabilities["endpoints"]["candidate_review_safe_approve"],
+        "/api/v1/candidates/{id}/review/approve"
+    );
+    assert_eq!(
+        capabilities["endpoints"]["candidate_review_safe_reject"],
+        "/api/v1/candidates/{id}/review/reject"
+    );
+    assert_eq!(
+        capabilities["endpoints"]["candidate_review_safe_edit"],
+        "/api/v1/candidates/{id}/review/edit"
+    );
 
     for uri in [
         "/api/v1/candidates/1",

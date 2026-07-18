@@ -82,50 +82,6 @@ fn insert_review_candidate(topic_key: &str, text: &str) -> anyhow::Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
-fn insert_safe_review_candidate(
-    fixture: &str,
-    event_type: &str,
-    evidence_content: &str,
-    candidate_text: &str,
-) -> anyhow::Result<(i64, i64)> {
-    let conn = db::open_db()?;
-    let outcome = db::record_captured_event(
-        &conn,
-        &db::CaptureEventInput {
-            host: "codex-cli",
-            session_id: fixture,
-            project: fixture,
-            cwd: None,
-            event_type,
-            role: Some("tool"),
-            tool_name: Some("Edit"),
-            content: evidence_content,
-            task_kind: None,
-        },
-    )?;
-    let project_id: i64 = conn.query_row(
-        "SELECT project_id FROM captured_events WHERE id = ?1",
-        params![outcome.event_row_id],
-        |row| row.get(0),
-    )?;
-    let now = chrono::Utc::now().timestamp();
-    conn.execute(
-        "INSERT INTO memory_candidates
-          (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
-           confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
-         VALUES (?1, 'project', 'decision', ?2, ?3, ?4, 0.82,
-                 'medium', 'pending_review', ?5, ?5)",
-        params![
-            project_id,
-            format!("topic-{fixture}"),
-            candidate_text,
-            serde_json::to_string(&vec![outcome.event_row_id])?,
-            now
-        ],
-    )?;
-    Ok((conn.last_insert_rowid(), outcome.event_row_id))
-}
-
 fn default_status_extractors() -> (State<DbState>, Query<StatusParams>, Extension<StatusCache>) {
     (
         State(DbState),

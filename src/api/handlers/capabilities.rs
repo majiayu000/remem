@@ -20,13 +20,20 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
         ("graph", "/api/v1/graph"),
         ("user_recall", "/api/v1/user/recall"),
     ]);
-    endpoints.extend(candidate_console_endpoint_bundle(false));
+    endpoints.extend(candidate_console_endpoint_bundle(true));
     endpoints.extend(memory_governance_endpoint_bundle(
-        MemoryGovernanceFeatureSet::default(),
+        MemoryGovernanceFeatureSet {
+            archive: true,
+            restore: true,
+        },
     ));
-    endpoints.extend(read_resource_endpoint_bundle(
-        ReadResourceFeatureSet::default(),
-    ));
+    endpoints.extend(read_resource_endpoint_bundle(ReadResourceFeatureSet {
+        observations: true,
+        sessions: true,
+        workstreams: true,
+        events: true,
+        tasks: true,
+    }));
     Json(CapabilitiesResponse {
         version: crate::build_info::package_version(),
         schema_version: crate::build_info::binary_schema_version(),
@@ -40,20 +47,20 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             memory_list: true,
             memory_detail: true,
             save_memory: true,
-            memory_archive: false,
-            memory_restore: false,
+            memory_archive: true,
+            memory_restore: true,
             memory_delete: false,
             candidate_rows: true,
             candidate_filters: true,
             candidate_review: true,
-            candidate_detail: false,
-            candidate_evidence: false,
-            candidate_review_safe: false,
-            observations: false,
-            sessions: false,
-            workstreams: false,
-            events: false,
-            tasks: false,
+            candidate_detail: true,
+            candidate_evidence: true,
+            candidate_review_safe: true,
+            observations: true,
+            sessions: true,
+            workstreams: true,
+            events: true,
+            tasks: true,
             graph: true,
             user_recall: true,
             user_recall_usage_policy: true,

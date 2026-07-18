@@ -12,7 +12,7 @@ use crate::db::test_support::ScopedTestDataDir;
 use super::super::handlers::{handle_candidate_detail, handle_list_candidates};
 use super::super::types::CandidateParams;
 use super::super::DbState;
-use super::insert_safe_review_candidate;
+use super::candidate_safe_review::insert_safe_review_candidate;
 
 async fn candidate_detail_payload(id: i64) -> anyhow::Result<(StatusCode, Value)> {
     let response = handle_candidate_detail(State(DbState), Path(id))

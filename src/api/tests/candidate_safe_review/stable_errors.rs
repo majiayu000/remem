@@ -9,8 +9,8 @@ use crate::api::mutation::{
 use crate::db;
 use crate::db::test_support::ScopedTestDataDir;
 
+use super::insert_safe_review_candidate;
 use super::{candidate_version, response_json, send_safe_review};
-use crate::api::tests::insert_safe_review_candidate;
 
 #[tokio::test]
 async fn safe_review_distinguishes_nonreviewable_and_unknown_replay_schema() -> anyhow::Result<()> {

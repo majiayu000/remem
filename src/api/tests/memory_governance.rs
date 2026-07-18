@@ -273,7 +273,7 @@ async fn list_detail_and_search_observe_archive_state_and_version() -> anyhow::R
 }
 
 #[tokio::test]
-async fn staged_contract_is_disabled_routes_are_authenticated_and_delete_is_absent(
+async fn published_contract_is_exact_routes_are_authenticated_and_delete_is_absent(
 ) -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("api-memory-governance-contract");
     crate::api::ensure_api_token()?;
@@ -290,10 +290,18 @@ async fn staged_contract_is_disabled_routes_are_authenticated_and_delete_is_abse
         .await?;
     assert_eq!(capabilities.status(), StatusCode::OK);
     let capabilities = response_json(capabilities).await?;
-    for feature in ["memory_archive", "memory_restore", "memory_delete"] {
-        assert_eq!(capabilities["features"][feature], false);
-        assert!(capabilities["endpoints"].get(feature).is_none());
-    }
+    assert_eq!(capabilities["features"]["memory_archive"], true);
+    assert_eq!(capabilities["features"]["memory_restore"], true);
+    assert_eq!(capabilities["features"]["memory_delete"], false);
+    assert_eq!(
+        capabilities["endpoints"]["memory_archive"],
+        "/api/v1/memories/{id}/archive"
+    );
+    assert_eq!(
+        capabilities["endpoints"]["memory_restore"],
+        "/api/v1/memories/{id}/restore"
+    );
+    assert!(capabilities["endpoints"].get("memory_delete").is_none());
     for action in ["archive", "restore"] {
         let response = app
             .clone()
