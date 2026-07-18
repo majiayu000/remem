@@ -58,6 +58,12 @@ function positional expander into a string-source helper with an explicit
 - expandable heredocs materialize parent positionals before child-shell scope,
   and explicit `source /dev/stdin` arguments temporarily replace `$1...` while
   the sourced body is analyzed.
+- command-position words materialized from positional expansion retain a
+  bounded provenance marker so assignment-prefix and lexical-alias recognition
+  are not rerun after expansion; consumers strip that marker only when reading
+  the semantic executable name;
+- here-strings use a no-field-splitting positional expander so embedded
+  newlines reach nested stdin parsing as source text.
 
 Parse the literal command string through the existing child-shell scope while
 carrying the mapping as collector context. Expand each executed word in that
@@ -99,7 +105,7 @@ assets; this PR does not publish a release.
 | --- | --- | --- |
 | B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
 | B-002 basename-only precision | platform-independent `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers POSIX- and Windows-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
-| B-003 shell `-c` positional binding | scoped positional collector context, quote-aware field expansion, and shell/source payload extraction | focused tests cover `$0`, zero/multi-field `$1`, default/alternative words, `set --`, function-local and sourced arguments, nested command substitutions, arithmetic source, EXIT traps, and parent-versus-child heredoc handoff |
+| B-003 shell `-c` positional binding | scoped positional collector context, quote-aware field expansion, command provenance, and shell/source payload extraction | focused tests cover `$0`, zero/multi-field `$1`, default/alternative words, `set --`, assignment/alias provenance, function-local and sourced arguments, nested command substitutions, arithmetic source, EXIT traps, here-strings, and parent-versus-child heredoc handoff |
 | B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1`; `force_push_rule_preserves_missing_shell_zero` leaves `${0:-git}` unknown rather than fabricating `git` |
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
 | B-006 explicit builtin `unset` | shared builtin command-position normalization | `force_push_rule_resolves_unset_function_before_builtin_state` covers `builtin unset -f f` and `builtin command unset -f f` → Allow |

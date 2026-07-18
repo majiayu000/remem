@@ -138,7 +138,10 @@ Artifact v2 additionally supports:
   Expandable heredoc stdin finishes parent-side positional expansion before a
   child `-c` context is installed. Nested command substitutions and arithmetic
   source use their own syntax context, and function-definition names remain
-  unexpanded. Mixed `builtin`/`command` wrappers share the same static builtin
+  unexpanded. Positional command names retain provenance so assignment and
+  alias recognition are not rerun after expansion, and here-string positionals
+  preserve embedded source newlines. Mixed `builtin`/`command` wrappers share
+  the same static builtin
   normalization; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static

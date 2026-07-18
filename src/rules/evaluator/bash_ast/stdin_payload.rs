@@ -2,9 +2,11 @@ use std::collections::HashMap;
 
 use brush_parser::ast::{
     CommandPrefixOrSuffixItem, IoFileRedirectKind, IoFileRedirectTarget, IoRedirect, SimpleCommand,
+    Word,
 };
 
-use super::function_args::expand_shell_heredoc;
+use super::function_args::{expand_shell_here_string, expand_shell_heredoc};
+use super::static_words::static_word_pieces;
 use super::{CommandCollector, PositionalContext, DYNAMIC_SHELL_WORD};
 
 pub(super) enum EffectiveStdin {
@@ -13,6 +15,23 @@ pub(super) enum EffectiveStdin {
 }
 
 impl CommandCollector {
+    fn here_string_word(&self, word: &Word) -> Result<String, String> {
+        let source = self.positional_context.as_ref().map_or_else(
+            || Ok(word.value.clone()),
+            |context| {
+                expand_shell_here_string(
+                    &word.value,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    &context.arguments,
+                )
+            },
+        )?;
+        let pieces = brush_parser::word::parse(&source, &self.options)
+            .map_err(|error| format!("Bash here-string word parse error: {error}"))?;
+        Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
+    }
+
     pub(super) fn expand_positional_heredoc(&self, source: &str) -> Result<String, String> {
         let (zero_argument, arguments) =
             self.positional_context
@@ -87,7 +106,7 @@ impl CommandCollector {
                         payloads.insert(target_fd, Some(payload));
                     }
                     IoRedirect::HereString(fd, word) => {
-                        let value = self.command_word(word)?;
+                        let value = self.here_string_word(word)?;
                         let target_fd = fd.unwrap_or(0);
                         stdin_replaced |= target_fd == 0;
                         payloads.insert(target_fd, (value != DYNAMIC_SHELL_WORD).then_some(value));

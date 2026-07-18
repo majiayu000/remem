@@ -19,7 +19,7 @@ pub(super) mod unwrap;
 
 use function_args::{
     bare_shell_positional_fields, expand_function_body, expand_shell_arithmetic,
-    expand_shell_command,
+    expand_shell_command, has_shell_positional_reference,
 };
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
@@ -306,10 +306,17 @@ impl CommandCollector {
             return self.collect_command_items(command.prefix.as_ref().map(|prefix| &prefix.0));
         };
         let mut segments = vec![Vec::new()];
+        let mut expanded_command_start = None;
         if let Some(prefix) = &command.prefix {
             for item in &prefix.0 {
                 match item {
-                    CommandPrefixOrSuffixItem::AssignmentWord(_, word) => {
+                    CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
+                        if expanded_command_start.is_none()
+                            && self.positional_context.is_some()
+                            && has_shell_positional_reference(&assignment.name.to_string())
+                        {
+                            expanded_command_start = Some(segments.first().map_or(0, Vec::len));
+                        }
                         self.collect_word_commands(word)?;
                         let token = self.command_word(word)?;
                         for segment in &mut segments {
@@ -319,6 +326,13 @@ impl CommandCollector {
                     _ => self.collect_command_item(item)?,
                 }
             }
+        }
+        let command_start = segments.first().map_or(0, Vec::len);
+        if expanded_command_start.is_none()
+            && self.positional_context.is_some()
+            && has_shell_positional_reference(&name.value)
+        {
+            expanded_command_start = Some(command_start);
         }
         self.collect_word_commands(name)?;
         append_word_variants(&mut segments, self.command_word_variants(name)?);
@@ -331,6 +345,13 @@ impl CommandCollector {
                         append_word_variants(&mut segments, self.command_word_variants(word)?);
                     }
                     _ => self.collect_command_item(item)?,
+                }
+            }
+        }
+        if let Some(command_start) = expanded_command_start {
+            for segment in &mut segments {
+                if let Some(command_word) = segment.get_mut(command_start) {
+                    unwrap::mark_expanded_command_word(command_word);
                 }
             }
         }

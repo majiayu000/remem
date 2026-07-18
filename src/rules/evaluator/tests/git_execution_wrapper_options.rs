@@ -142,3 +142,46 @@ fn force_push_rule_binds_source_stdin_arguments() {
     assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
 }
+
+#[test]
+fn force_push_rule_does_not_reclassify_expanded_assignment_words() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c '$1=1 git push --force' _ FOO"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_does_not_alias_expand_positional_command_names() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c $'shopt -s expand_aliases\nalias git=echo\n$1 push --force' _ git";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_preserves_here_string_positionals_as_source_text() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c 'sh <<< $1' _ $'echo SAFE\ngit push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}

@@ -25,7 +25,43 @@ pub(super) fn expand_shell_command(
         false,
         zero_argument,
         arguments,
+        true,
     ))
+}
+
+pub(super) fn expand_shell_here_string(
+    source: &str,
+    options: &ParserOptions,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+) -> Result<String, String> {
+    let pieces = brush_parser::word::parse(source, options)
+        .map_err(|error| format!("Bash positional here-string parse error: {error}"))?;
+    Ok(expand_word_range(
+        source,
+        &pieces,
+        0,
+        source.len(),
+        false,
+        zero_argument,
+        arguments,
+        false,
+    ))
+}
+
+pub(super) fn has_shell_positional_reference(source: &str) -> bool {
+    let bytes = source.as_bytes();
+    (0..bytes.len()).any(|index| {
+        if bytes[index] != b'$' {
+            return false;
+        }
+        let next = bytes.get(index + 1).copied();
+        next.is_some_and(|value| value.is_ascii_digit() || matches!(value, b'@' | b'*'))
+            || next == Some(b'{')
+                && bytes
+                    .get(index + 2)
+                    .is_some_and(|value| value.is_ascii_digit() || matches!(value, b'@' | b'*'))
+    })
 }
 
 pub(super) fn expand_shell_heredoc(
@@ -268,6 +304,7 @@ fn expand_word_range(
     double_quoted: bool,
     zero_argument: Option<&str>,
     arguments: &[String],
+    split_unquoted: bool,
 ) -> String {
     let mut expanded = String::with_capacity(range_end.saturating_sub(range_start));
     let mut cursor = range_start;
@@ -284,13 +321,19 @@ fn expand_word_range(
                     true,
                     zero_argument,
                     arguments,
+                    split_unquoted,
                 ));
             }
             WordPiece::ParameterExpansion(_) => {
                 let raw = &source[piece.start_index..piece.end_index];
-                if let Some((consumed, replacement)) =
-                    positional_replacement(raw, zero_argument, arguments, double_quoted, 0)
-                {
+                if let Some((consumed, replacement)) = positional_replacement(
+                    raw,
+                    zero_argument,
+                    arguments,
+                    double_quoted,
+                    split_unquoted,
+                    0,
+                ) {
                     if consumed == raw.len() {
                         expanded.push_str(&replacement);
                     } else {
@@ -394,7 +437,7 @@ fn expand_positional_source(
         }
         if ch == '$' && !single_quoted {
             if let Some((consumed, replacement)) =
-                positional_replacement(rest, zero_argument, arguments, double_quoted, 0)
+                positional_replacement(rest, zero_argument, arguments, double_quoted, true, 0)
             {
                 expanded.push_str(&replacement);
                 index += consumed;
@@ -426,6 +469,7 @@ fn positional_replacement(
     zero_argument: Option<&str>,
     arguments: &[String],
     double_quoted: bool,
+    split_unquoted: bool,
     depth: usize,
 ) -> Option<(usize, String)> {
     for pattern in ["${@}", "$@", "${*}", "$*"] {
@@ -436,6 +480,8 @@ fn positional_replacement(
                 } else {
                     escape_double_quoted(&arguments.join(" "))
                 }
+            } else if !split_unquoted {
+                quote_argument(&arguments.join(" "))
             } else {
                 split_arguments(arguments)
             };
@@ -447,6 +493,8 @@ fn positional_replacement(
     let value = resolve_parameter_expression(expression, zero_argument, arguments, depth)?;
     let replacement = if double_quoted {
         escape_double_quoted(&value)
+    } else if !split_unquoted {
+        quote_argument(&value)
     } else {
         split_argument(&value)
     };

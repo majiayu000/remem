@@ -60,7 +60,9 @@ gaps can either miss a forbidden command or report a false block.
    the active positional mapping. Expandable outer heredocs shall finish
    parent-side expansion before entering a child `-c` scope, while explicit
    arguments to `source /dev/stdin` shall bind `$1...` only for the sourced
-   body.
+   body. A command name materialized from a positional shall not be
+   reclassified as an assignment or passed through lexical alias expansion,
+   and a here-string positional shall preserve embedded source newlines.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.
@@ -88,7 +90,8 @@ gaps can either miss a forbidden command or report a false block.
       match.
 - [x] Red-first fixtures cover zero-field positional removal, quoted default
       grouping, `+`/`:+` alternatives, `set --`, parent-expanded heredoc stdin,
-      and explicit `source /dev/stdin` arguments.
+      explicit `source /dev/stdin` arguments, command-word provenance, and
+      here-string source text.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.

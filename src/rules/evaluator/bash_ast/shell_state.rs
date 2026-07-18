@@ -123,6 +123,11 @@ impl CommandCollector {
         let Some(name) = direct_command_name(tokens) else {
             return Ok(false);
         };
+        let command_index = unwrap::direct_command_index(tokens)
+            .ok_or_else(|| "alias call lost its command position".to_string())?;
+        if unwrap::is_expanded_command_word(&tokens[command_index]) {
+            return Ok(false);
+        }
         let Some(definitions) = self.aliases.get(name).cloned() else {
             return Ok(false);
         };
@@ -130,8 +135,6 @@ impl CommandCollector {
         if !self.active_aliases.insert(name.to_string()) {
             return Ok(definitely_defined);
         }
-        let command_index = unwrap::direct_command_index(tokens)
-            .ok_or_else(|| "alias call lost its command position".to_string())?;
         let result = (|| {
             for definition in definitions {
                 let mut source = definition.payload;

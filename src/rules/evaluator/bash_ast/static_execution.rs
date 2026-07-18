@@ -14,12 +14,12 @@ pub(super) enum ExitTrapChange<'a> {
 }
 
 pub(super) fn direct_command_name(tokens: &[String]) -> Option<&str> {
-    unwrap::direct_command_index(tokens).map(|index| tokens[index].as_str())
+    unwrap::direct_command_index(tokens).map(|index| unwrap::semantic_token(&tokens[index]))
 }
 
 pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
     let index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "eval" {
+    if unwrap::semantic_token(tokens.get(index)?) != "eval" {
         return None;
     }
     let mut arguments = &tokens[index + 1..];
@@ -35,7 +35,7 @@ pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
 
 pub(super) fn static_exit_trap_change(tokens: &[String]) -> Option<ExitTrapChange<'_>> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "trap" {
+    if unwrap::semantic_token(tokens.get(index)?) != "trap" {
         return None;
     }
     index += 1;
@@ -76,7 +76,7 @@ pub(super) fn static_shopt_nocasematch(tokens: &[String]) -> Option<bool> {
 
 pub(super) fn static_monitor_mode(tokens: &[String]) -> Option<bool> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "set" {
+    if unwrap::semantic_token(tokens.get(index)?) != "set" {
         return None;
     }
     index += 1;
@@ -92,12 +92,12 @@ pub(super) fn static_monitor_mode(tokens: &[String]) -> Option<bool> {
 pub(super) fn static_shell_exits(tokens: &[String]) -> bool {
     static_builtin_command_index(tokens)
         .and_then(|index| tokens.get(index))
-        .is_some_and(|command| command == "exit")
+        .is_some_and(|command| unwrap::semantic_token(command) == "exit")
 }
 
 fn static_shopt_state(tokens: &[String], expected: &str) -> Option<bool> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "shopt" {
+    if unwrap::semantic_token(tokens.get(index)?) != "shopt" {
         return None;
     }
     index += 1;
@@ -114,7 +114,7 @@ fn static_shopt_state(tokens: &[String], expected: &str) -> Option<bool> {
 
 pub(super) fn static_alias_definitions(tokens: &[String]) -> Option<Vec<(&str, &str)>> {
     let index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "alias" {
+    if unwrap::semantic_token(tokens.get(index)?) != "alias" {
         return None;
     }
     Some(
@@ -134,7 +134,7 @@ pub(super) fn static_alias_definitions(tokens: &[String]) -> Option<Vec<(&str, &
 
 pub(super) fn static_unalias_names(tokens: &[String]) -> Option<Vec<&str>> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "unalias" {
+    if unwrap::semantic_token(tokens.get(index)?) != "unalias" {
         return None;
     }
     index += 1;
@@ -149,8 +149,9 @@ pub(super) fn static_unalias_names(tokens: &[String]) -> Option<Vec<&str>> {
 
 pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, Vec<&str>)> {
     let mut index = static_builtin_command_index(tokens)?;
-    let is_declare = matches!(tokens.get(index)?.as_str(), "declare" | "typeset");
-    if !is_declare && tokens.get(index)? != "export" {
+    let command = unwrap::semantic_token(tokens.get(index)?);
+    let is_declare = matches!(command, "declare" | "typeset");
+    if !is_declare && command != "export" {
         return None;
     }
     index += 1;
@@ -190,7 +191,7 @@ pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, 
 fn static_builtin_command_index(tokens: &[String]) -> Option<usize> {
     let mut index = unwrap::direct_command_index(tokens)?;
     loop {
-        match tokens.get(index)?.as_str() {
+        match unwrap::semantic_token(tokens.get(index)?) {
             "command" => index = unwrap::command_wrapper_target(tokens, index)?,
             "builtin" => index += 1,
             _ => break,
@@ -412,7 +413,7 @@ fn env_escape(escaped: char) -> Option<char> {
 
 pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "unset" {
+    if unwrap::semantic_token(tokens.get(index)?) != "unset" {
         return None;
     }
     index += 1;
@@ -448,7 +449,7 @@ pub(super) struct StaticShellCommand {
 
 pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<StaticShellCommand> {
     let command_index = unwrap::effective_command_index(tokens)?;
-    if !is_shell(tokens.get(command_index)?) {
+    if !is_shell(unwrap::semantic_token(tokens.get(command_index)?)) {
         return None;
     }
     let ShellInput::Command(payload_index) = shell_input(tokens, command_index) else {
@@ -471,7 +472,7 @@ pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
     };
     if !tokens
         .get(command_index)
-        .is_some_and(|command| is_shell(command))
+        .is_some_and(|command| is_shell(unwrap::semantic_token(command)))
     {
         return false;
     }
@@ -481,12 +482,12 @@ pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
 pub(super) fn static_shell_is_bash(tokens: &[String]) -> bool {
     unwrap::effective_command_index(tokens)
         .and_then(|index| tokens.get(index))
-        .is_some_and(|command| shell_name(command) == Some("bash"))
+        .is_some_and(|command| shell_name(unwrap::semantic_token(command)) == Some("bash"))
 }
 
 pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[String]> {
     let index = static_builtin_command_index(tokens)?;
-    if !matches!(tokens[index].as_str(), "source" | ".")
+    if !matches!(unwrap::semantic_token(&tokens[index]), "source" | ".")
         || !tokens.get(index + 1).is_some_and(|path| {
             matches!(
                 path.as_str(),
@@ -501,8 +502,9 @@ pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[Strin
 
 pub(super) fn static_set_positional_arguments(tokens: &[String]) -> Option<&[String]> {
     let index = static_builtin_command_index(tokens)?;
-    (tokens[index] == "set" && tokens.get(index + 1).is_some_and(|value| value == "--"))
-        .then(|| tokens.get(index + 2..).unwrap_or_default())
+    (unwrap::semantic_token(&tokens[index]) == "set"
+        && tokens.get(index + 1).is_some_and(|value| value == "--"))
+    .then(|| tokens.get(index + 2..).unwrap_or_default())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
