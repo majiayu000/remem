@@ -325,13 +325,22 @@ for relative_path in sorted(classified_checks_python):
                 )
                 raise SystemExit(1)
             if module == "builtins" and any(
-                alias.name in {"exec", "eval"} for alias in node.names
+                alias.name != "__import__" for alias in node.names
             ):
                 print(
                     f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
                     f"from builtins import "
                     f"{', '.join(alias.name for alias in node.names)} cannot be "
                     "classified through the import graph",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if module == "sys" and any(
+                alias.name == "modules" for alias in node.names
+            ):
+                print(
+                    f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                    "from sys import modules exposes loaded loader namespaces",
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
@@ -349,10 +358,30 @@ for relative_path in sorted(classified_checks_python):
                         sys_path_aliases.add(alias.asname or alias.name)
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == "__builtins__":
+            print(
+                f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                "__builtins__ namespace access cannot be classified through "
+                "the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         if isinstance(node, ast.Name) and node.id in dynamic_code_names:
             print(
                 f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
                 f"{node.id} cannot be classified through the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "modules"
+            and isinstance(node.value, ast.Name)
+            and node.value.id in sys_aliases
+        ):
+            print(
+                f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                f"{node.value.id}.modules exposes loaded loader namespaces",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -533,6 +562,28 @@ for relative_path in sorted(classified_checks_python):
                 print(
                     f"UNSUPPORTED RELATIVE LOCAL IMPORT: {relative_path}: "
                     "checks/ is a flat non-package layout",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if target.value == "builtins":
+                print(
+                    f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                    f"{dynamic_name} target builtins exposes exec/eval namespaces",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if target.value == "sys":
+                print(
+                    f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                    f"{dynamic_name} target sys exposes loaded loader namespaces",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+            if target.value == "importlib" or target.value.startswith("importlib."):
+                print(
+                    f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                    f"{dynamic_name} target {target.value} is outside the "
+                    "import_module allowlist",
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
