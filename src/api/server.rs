@@ -6,10 +6,11 @@ use axum::{
 
 use super::auth::{ensure_api_token, require_api_token};
 use super::handlers::{
-    handle_approve_candidate, handle_blocked_candidates, handle_capabilities,
-    handle_edit_candidate, handle_get_memory, handle_graph, handle_health, handle_list_candidates,
-    handle_list_memories, handle_memory_detail, handle_reject_candidate, handle_save_memory,
-    handle_search, handle_stats, handle_status, handle_user_recall,
+    handle_approve_candidate, handle_blocked_candidates, handle_candidate_detail,
+    handle_capabilities, handle_edit_candidate, handle_get_memory, handle_graph, handle_health,
+    handle_list_candidates, handle_list_memories, handle_memory_detail, handle_reject_candidate,
+    handle_safe_approve_candidate, handle_safe_edit_candidate, handle_safe_reject_candidate,
+    handle_save_memory, handle_search, handle_stats, handle_status, handle_user_recall,
 };
 use super::types::{DbState, StatusCache};
 
@@ -29,6 +30,7 @@ pub fn build_router(_port: u16) -> Router<DbState> {
         .route("/api/v1/memories/{id}", get(handle_memory_detail))
         .route("/api/v1/candidates", get(handle_list_candidates))
         .route("/api/v1/candidates/blocked", get(handle_blocked_candidates))
+        .route("/api/v1/candidates/{id}", get(handle_candidate_detail))
         .route(
             "/api/v1/candidates/{id}/approve",
             post(handle_approve_candidate),
@@ -38,6 +40,18 @@ pub fn build_router(_port: u16) -> Router<DbState> {
             post(handle_reject_candidate),
         )
         .route("/api/v1/candidates/{id}/edit", post(handle_edit_candidate))
+        .route(
+            "/api/v1/candidates/{id}/review/approve",
+            post(handle_safe_approve_candidate),
+        )
+        .route(
+            "/api/v1/candidates/{id}/review/reject",
+            post(handle_safe_reject_candidate),
+        )
+        .route(
+            "/api/v1/candidates/{id}/review/edit",
+            post(handle_safe_edit_candidate),
+        )
         .route("/api/v1/graph", get(handle_graph))
         .route("/api/v1/stats", get(handle_stats))
         .route_layer(middleware::from_fn(require_api_token))

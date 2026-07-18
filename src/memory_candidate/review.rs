@@ -5,9 +5,11 @@ use super::{
     normalize_memory_type, normalize_scope, normalize_topic_key, route_candidate, CandidateRoute,
     ParsedMemoryCandidate,
 };
-use crate::memory::poisoning::scan_instruction_pattern;
-
 mod approval;
+
+pub(crate) use approval::{
+    approve_candidate_in_transaction, edit_candidate_in_transaction, normalize_candidate_edit,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReviewCandidate {
@@ -292,31 +294,11 @@ pub(crate) fn edit_candidate(
     id: i64,
     edit: CandidateEdit,
 ) -> Result<Option<i64>> {
-    if edit.scope.is_none()
-        && edit.memory_type.is_none()
-        && edit.topic_key.is_none()
-        && edit.text.is_none()
-    {
-        bail!("edit requires at least one changed field");
-    }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let Some(row) = load_candidate(&tx, id)? else {
-        return Ok(None);
-    };
-    ensure_reviewable(&row)?;
-    let edited = row.apply_edit(edit)?;
-    if let Some(matched) = scan_instruction_pattern(&edited.text) {
-        bail!(
-            "edited candidate {} matched instruction-pattern {}@v{}; review and acknowledge the pattern before promotion",
-            row.id,
-            matched.pattern_id,
-            matched.pattern_set_version
-        );
-    }
     let meta = ReviewMeta::single(default_review_actor());
-    let promotion = approval::promote_row(&tx, &row, "edited", Some(&edited), &meta, None)?;
+    let result = approval::edit_candidate_in_transaction(&tx, id, edit, &meta)?;
     tx.commit()?;
-    Ok(Some(promotion.memory_id))
+    Ok(result)
 }
 
 pub(crate) fn resolve_batch(conn: &Connection, filter: &BatchFilter) -> Result<BatchPreview> {

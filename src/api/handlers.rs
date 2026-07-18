@@ -1,4 +1,6 @@
+mod candidate_detail;
 mod candidate_review;
+mod candidate_safe_review;
 mod candidates;
 mod capabilities;
 mod detail;
@@ -12,8 +14,14 @@ mod stats;
 mod status;
 mod user_recall;
 
+pub(super) use candidate_detail::handle_candidate_detail;
 pub(super) use candidate_review::{
     handle_approve_candidate, handle_edit_candidate, handle_reject_candidate,
+};
+#[cfg(test)]
+pub(super) use candidate_safe_review::execute_safe_review_for_test;
+pub(super) use candidate_safe_review::{
+    handle_safe_approve_candidate, handle_safe_edit_candidate, handle_safe_reject_candidate,
 };
 pub(super) use candidates::{handle_blocked_candidates, handle_list_candidates};
 pub(super) use capabilities::handle_capabilities;
