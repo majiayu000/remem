@@ -439,7 +439,13 @@ pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>
     })
 }
 
-pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<String> {
+pub(super) struct StaticShellCommand {
+    pub(super) payload: String,
+    pub(super) zero_argument: Option<String>,
+    pub(super) arguments: Vec<String>,
+}
+
+pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<StaticShellCommand> {
     let command_index = unwrap::effective_command_index(tokens)?;
     if !is_shell(tokens.get(command_index)?) {
         return None;
@@ -451,13 +457,11 @@ pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<String> 
     if payload == DYNAMIC_SHELL_WORD {
         return None;
     }
-    let zero_argument = tokens.get(payload_index + 1).map(String::as_str);
-    let arguments = tokens.get(payload_index + 2..).unwrap_or_default();
-    Some(super::function_args::expand_shell_command(
-        payload,
-        zero_argument,
-        arguments,
-    ))
+    Some(StaticShellCommand {
+        payload: payload.clone(),
+        zero_argument: tokens.get(payload_index + 1).cloned(),
+        arguments: tokens.get(payload_index + 2..).unwrap_or_default().to_vec(),
+    })
 }
 
 pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
@@ -571,9 +575,7 @@ fn is_shell(command: &str) -> bool {
 }
 
 fn shell_name(command: &str) -> Option<&str> {
-    let name = std::path::Path::new(command)
-        .file_name()
-        .and_then(|value| value.to_str())?;
+    let name = command.rsplit(['/', '\\']).next()?;
     let normalized = name.strip_suffix(".exe").unwrap_or(name);
     matches!(normalized, "bash" | "dash" | "ksh" | "sh" | "zsh").then_some(normalized)
 }

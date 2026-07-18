@@ -191,6 +191,7 @@ impl CommandCollector {
         collect: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
         let saved = self.snapshot_shell_state();
+        let saved_positional_context = self.positional_context.take();
         if inherit_exported {
             self.functions
                 .retain(|name, _| self.exported_functions.contains(name));
@@ -217,6 +218,7 @@ impl CommandCollector {
             Ok(value)
         });
         self.restore_shell_state(saved);
+        self.positional_context = saved_positional_context;
         result
     }
 

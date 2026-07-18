@@ -17,7 +17,7 @@ mod static_words;
 mod stdin_payload;
 pub(super) mod unwrap;
 
-use function_args::expand_function_body;
+use function_args::{expand_function_body, expand_shell_command};
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
@@ -53,6 +53,7 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         execution_terminated: false,
         execution_is_definite: true,
         inherited_stdin: None,
+        positional_context: None,
     };
     collector.collect_source(source)?;
     collector.collect_exit_traps()?;
@@ -78,6 +79,13 @@ struct CommandCollector {
     execution_terminated: bool,
     execution_is_definite: bool,
     inherited_stdin: Option<String>,
+    positional_context: Option<PositionalContext>,
+}
+
+#[derive(Clone)]
+struct PositionalContext {
+    zero_argument: Option<String>,
+    arguments: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -374,14 +382,20 @@ impl CommandCollector {
         if let Some(payload) = static_eval_payload(&tokens) {
             self.collect_source(&payload)?;
         }
-        if let Some(payload) = static_shell_command_payload(&tokens) {
+        if let Some(shell_command) = static_shell_command_payload(&tokens) {
             let inherited_stdin = match self.effective_stdin_payload(command)? {
                 EffectiveStdin::Replaced(payload) => payload,
                 EffectiveStdin::Untouched => None,
             };
             self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
                 collector.with_inherited_stdin(inherited_stdin, |collector| {
-                    collector.collect_source(&payload)
+                    collector.with_positional_context(
+                        Some(PositionalContext {
+                            zero_argument: shell_command.zero_argument,
+                            arguments: shell_command.arguments,
+                        }),
+                        |collector| collector.collect_source(&shell_command.payload),
+                    )
                 })
             })?;
         }
@@ -430,7 +444,17 @@ impl CommandCollector {
             for definition in definitions {
                 let source = expand_function_body(&definition.body, arguments);
                 self.with_execution_certainty(definition.is_definite, |collector| {
-                    collector.collect_source(&source)
+                    let function_context =
+                        collector
+                            .positional_context
+                            .as_ref()
+                            .map(|context| PositionalContext {
+                                zero_argument: context.zero_argument.clone(),
+                                arguments: Vec::new(),
+                            });
+                    collector.with_positional_context(function_context, |collector| {
+                        collector.collect_source(&source)
+                    })
                 })?;
             }
             Ok(())
@@ -508,7 +532,8 @@ impl CommandCollector {
     }
 
     fn collect_word_commands(&mut self, word: &Word) -> Result<(), String> {
-        let pieces = brush_parser::word::parse(&word.value, &self.options)
+        let source = self.expand_positional_source(&word.value);
+        let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
     }
@@ -517,7 +542,8 @@ impl CommandCollector {
         &mut self,
         expression: &UnexpandedArithmeticExpr,
     ) -> Result<(), String> {
-        let pieces = brush_parser::word::parse(&expression.value, &self.options)
+        let source = self.expand_positional_source(&expression.value);
+        let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash arithmetic word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
     }
@@ -625,21 +651,23 @@ impl CommandCollector {
     }
 
     fn collect_parameter_word(&mut self, value: &str) -> Result<(), String> {
-        let pieces = brush_parser::word::parse(value, &self.options)
+        let source = self.expand_positional_source(value);
+        let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash parameter word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
     }
 
     fn command_word(&self, word: &Word) -> Result<String, String> {
-        let pieces = brush_parser::word::parse(&word.value, &self.options)
+        let source = self.expand_positional_source(&word.value);
+        let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
     }
 
     fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
-        let Some(brace_pieces) =
-            brush_parser::word::parse_brace_expansions(&word.value, &self.options)
-                .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
+        let source = self.expand_positional_source(&word.value);
+        let Some(brace_pieces) = brush_parser::word::parse_brace_expansions(&source, &self.options)
+            .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
         else {
             return Ok(vec![self.command_word(word)?]);
         };
@@ -661,6 +689,26 @@ impl CommandCollector {
                 Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
             })
             .collect()
+    }
+
+    fn expand_positional_source(&self, source: &str) -> String {
+        self.positional_context.as_ref().map_or_else(
+            || source.to_string(),
+            |context| {
+                expand_shell_command(source, context.zero_argument.as_deref(), &context.arguments)
+            },
+        )
+    }
+
+    fn with_positional_context<T>(
+        &mut self,
+        context: Option<PositionalContext>,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved = std::mem::replace(&mut self.positional_context, context);
+        let result = collect(self);
+        self.positional_context = saved;
+        result
     }
 }
 

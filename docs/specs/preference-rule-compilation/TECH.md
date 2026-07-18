@@ -125,9 +125,10 @@ Artifact v2 additionally supports:
   security-critical static variants remain visible when full materialization
   is capped, and later words or command segments are never discarded. Git
   executable basenames are recognized through static paths, including the
-  exact `.exe` suffix used by Git-for-Windows shells; static shell `-c`
-  operands bind `$0` and later positional parameters before recursive payload
-  parsing; force and mirror
+  exact `.exe` suffix used by Git-for-Windows shells and both POSIX and Windows
+  command-string path separators; static shell `-c` operands bind `$0` and
+  later positional parameters in executed words without leaking the outer
+  `$1...` mapping into function bodies; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.

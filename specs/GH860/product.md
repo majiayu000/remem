@@ -38,13 +38,16 @@ gaps can either miss a forbidden command or report a false block.
    evaluator shall apply the same shell-payload analysis as for the equivalent
    suffix-free basename.
 2. B-002 Path-qualified supported `.exe` shell commands shall be recognized by
-   basename, while unrelated executables whose names merely contain a shell
-   name shall remain ordinary commands.
+   basename with either POSIX `/` or Windows `\\` separators, independent of
+   the remem host OS, while unrelated executables whose names merely contain a
+   shell name shall remain ordinary commands.
 3. B-003 For a statically known shell `-c` invocation, the evaluator shall bind
    the operands after the command string according to Bash semantics: the
    first operand supplies `$0` and later operands supply positional parameters
    used by the command string. A forbidden force-push argument supplied through
-   `$1` shall therefore remain detectable.
+   `$1` shall therefore remain detectable, without replacing positional
+   parameters inside a function definition before that function is invoked
+   with its own arguments.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.

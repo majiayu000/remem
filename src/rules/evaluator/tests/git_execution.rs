@@ -519,6 +519,7 @@ fn force_push_rule_recognizes_exe_shell_basenames() {
     for command in [
         "bash.exe -c 'git push --force'",
         "/usr/bin/bash.exe -c 'git push --force'",
+        r#""C:\Program Files\Git\bin\bash.exe" -c 'git push --force'"#,
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -573,6 +574,46 @@ fn force_push_rule_binds_shell_command_positional_parameters() {
         assert!(outcome.matches.is_empty(), "{command}");
         assert!(outcome.diagnostics.is_empty(), "{command}");
     }
+}
+
+#[test]
+fn force_push_rule_preserves_missing_shell_zero() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c '${0:-git} push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_function_positional_scope_inside_shell_command() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c 'f(){ git push \"$1\"; }; f origin' _ --force";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+
+    let command = "bash -c 'f(){ git push \"$1\"; }; f --force' _ origin";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
 }
 
 #[test]
