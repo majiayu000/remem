@@ -189,11 +189,12 @@ pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, 
 
 fn static_builtin_command_index(tokens: &[String]) -> Option<usize> {
     let mut index = unwrap::direct_command_index(tokens)?;
-    while tokens.get(index)? == "command" {
-        index = unwrap::command_wrapper_target(tokens, index)?;
-    }
-    while tokens.get(index)? == "builtin" {
-        index += 1;
+    loop {
+        match tokens.get(index)?.as_str() {
+            "command" => index = unwrap::command_wrapper_target(tokens, index)?,
+            "builtin" => index += 1,
+            _ => break,
+        }
     }
     tokens.get(index).map(|_| index)
 }

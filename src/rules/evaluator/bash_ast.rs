@@ -17,7 +17,9 @@ mod static_words;
 mod stdin_payload;
 pub(super) mod unwrap;
 
-use function_args::{expand_function_body, expand_heredoc, expand_shell_command};
+use function_args::{
+    bare_shell_positional_fields, expand_function_body, expand_shell_command, expand_shell_heredoc,
+};
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
@@ -535,7 +537,7 @@ impl CommandCollector {
     }
 
     fn collect_word_commands(&mut self, word: &Word) -> Result<(), String> {
-        let source = self.expand_positional_source(&word.value);
+        let source = self.expand_positional_source(&word.value)?;
         let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
@@ -545,7 +547,7 @@ impl CommandCollector {
         &mut self,
         expression: &UnexpandedArithmeticExpr,
     ) -> Result<(), String> {
-        let source = self.expand_positional_source(&expression.value);
+        let source = self.expand_positional_source(&expression.value)?;
         let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash arithmetic word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
@@ -654,21 +656,31 @@ impl CommandCollector {
     }
 
     fn collect_parameter_word(&mut self, value: &str) -> Result<(), String> {
-        let source = self.expand_positional_source(value);
+        let source = self.expand_positional_source(value)?;
         let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash parameter word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
     }
 
     fn command_word(&self, word: &Word) -> Result<String, String> {
-        let source = self.expand_positional_source(&word.value);
+        let source = self.expand_positional_source(&word.value)?;
         let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
     }
 
     fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
-        let source = self.expand_positional_source(&word.value);
+        if let Some(context) = &self.positional_context {
+            if let Some(fields) = bare_shell_positional_fields(
+                &word.value,
+                &self.options,
+                context.zero_argument.as_deref(),
+                &context.arguments,
+            )? {
+                return Ok(fields);
+            }
+        }
+        let source = self.expand_positional_source(&word.value)?;
         let Some(brace_pieces) = brush_parser::word::parse_brace_expansions(&source, &self.options)
             .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
         else {
@@ -694,19 +706,31 @@ impl CommandCollector {
             .collect()
     }
 
-    pub(super) fn expand_positional_source(&self, source: &str) -> String {
+    pub(super) fn expand_positional_source(&self, source: &str) -> Result<String, String> {
         self.positional_context.as_ref().map_or_else(
-            || source.to_string(),
+            || Ok(source.to_string()),
             |context| {
-                expand_shell_command(source, context.zero_argument.as_deref(), &context.arguments)
+                expand_shell_command(
+                    source,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    &context.arguments,
+                )
             },
         )
     }
 
-    pub(super) fn expand_heredoc_source(&self, source: &str) -> String {
+    pub(super) fn expand_positional_heredoc(&self, source: &str) -> Result<String, String> {
         self.positional_context.as_ref().map_or_else(
-            || source.to_string(),
-            |context| expand_heredoc(source, context.zero_argument.as_deref(), &context.arguments),
+            || Ok(source.to_string()),
+            |context| {
+                expand_shell_heredoc(
+                    source,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    &context.arguments,
+                )
+            },
         )
     }
 

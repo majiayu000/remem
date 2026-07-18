@@ -38,7 +38,7 @@ impl CommandCollector {
                         let target_fd = fd.unwrap_or(0);
                         stdin_replaced |= target_fd == 0;
                         let payload = if here_doc.requires_expansion {
-                            self.expand_heredoc_source(&here_doc.doc.value)
+                            self.expand_positional_heredoc(&here_doc.doc.value)?
                         } else {
                             here_doc.doc.value.clone()
                         };

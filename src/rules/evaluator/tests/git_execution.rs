@@ -564,6 +564,7 @@ fn force_push_rule_binds_shell_command_positional_parameters() {
     for command in [
         "bash -c 'git push \"$1\"' _ --force",
         "bash -c '\"$0\" push --force' git",
+        "bash -c '$1' _ 'git push --force'",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -578,6 +579,7 @@ fn force_push_rule_binds_shell_command_positional_parameters() {
     for command in [
         "bash -c 'git push \"$1\"' _ origin",
         "bash -c 'git push \"$1\"' _",
+        "bash -c '\"$1\"' _ 'git push --force'",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -678,6 +680,31 @@ EOF' _ --force"#;
     assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
     assert!(outcome.matches.is_empty(), "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
+
+    let command = "bash -c 'sh <<EOF\n$1\nEOF' _ 'git push --force; :'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_nested_command_substitution_quotes_independent() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c 'echo "$( : '\''$1'\'' )"' _ "x' ; git push --force; : '""#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
 }
 
 #[test]
@@ -707,6 +734,21 @@ fn force_push_rule_resolves_unset_function_before_builtin_state() {
     );
     assert!(outcome.matches.is_empty(), "{explicit_builtin}");
     assert!(outcome.diagnostics.is_empty(), "{explicit_builtin}");
+
+    let mixed_wrappers = "f(){ git push --force;}; unset(){ :;}; builtin command unset -f f; f";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: mixed_wrappers.into(),
+        },
+    );
+    assert_eq!(
+        outcome.verdict,
+        EvaluationVerdict::Allow,
+        "{mixed_wrappers}"
+    );
+    assert!(outcome.matches.is_empty(), "{mixed_wrappers}");
+    assert!(outcome.diagnostics.is_empty(), "{mixed_wrappers}");
 }
 
 #[test]
