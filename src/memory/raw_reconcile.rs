@@ -205,6 +205,7 @@ fn capture_candidates(
     until_epoch: i64,
 ) -> Result<Vec<CapturedTranscript>> {
     let mut captured = Vec::new();
+    let mut captured_identity_ids = BTreeSet::new();
     let mut stale_count = 0_usize;
     for root in roots {
         let (files, failures) = discover_transcript_files(root);
@@ -257,6 +258,9 @@ fn capture_candidates(
                 .zip(identity.last_event_epoch)
                 .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
             if !is_conflict && !intersects && identity.missing_event_time_count == 0 {
+                continue;
+            }
+            if !captured_identity_ids.insert(identity.id) {
                 continue;
             }
             captured.push(CapturedTranscript {

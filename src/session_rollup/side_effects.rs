@@ -77,22 +77,24 @@ pub(super) fn drain_raw_archive_from_range(
         ) {
             Ok(report) => report,
             Err(error) => {
+                let permits_hook_fallback = super::raw_identity::permits_hook_fallback(&error);
                 errors.push(error.context("session rollup raw archive drain failed"));
-                for fallback in payloads
-                    .iter()
-                    .filter(|candidate| stop_transcript_path(candidate) == Some(transcript_path))
-                {
-                    let fallback_cwd = stop_payload_cwd(fallback, &task.project);
-                    let fallback_branch = db::detect_git_branch(fallback_cwd);
-                    if let Err(error) = insert_raw_hook_fallback(
-                        conn,
-                        session_id,
-                        &task.project,
-                        fallback.last_assistant_message.as_deref(),
-                        fallback_branch.as_deref(),
-                        Some(fallback_cwd),
-                    ) {
-                        errors.push(error);
+                if permits_hook_fallback {
+                    for fallback in payloads.iter().filter(|candidate| {
+                        stop_transcript_path(candidate) == Some(transcript_path)
+                    }) {
+                        let fallback_cwd = stop_payload_cwd(fallback, &task.project);
+                        let fallback_branch = db::detect_git_branch(fallback_cwd);
+                        if let Err(error) = insert_raw_hook_fallback(
+                            conn,
+                            session_id,
+                            &task.project,
+                            fallback.last_assistant_message.as_deref(),
+                            fallback_branch.as_deref(),
+                            Some(fallback_cwd),
+                        ) {
+                            errors.push(error);
+                        }
                     }
                 }
                 continue;

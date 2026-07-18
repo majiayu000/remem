@@ -125,6 +125,24 @@ fn exact_reconcile_preserves_repeated_turns_and_counts_meta_xml() {
 }
 
 #[test]
+fn duplicate_roots_do_not_duplicate_transcript_occurrences() {
+    let conn = setup();
+    let root = TempRoot::new("duplicate-roots");
+    let user = line("duplicate-roots", "user", 100, "count once");
+    root.write("duplicate-roots.jsonl", &[&user]);
+    ingest(&conn, &root);
+    let scan_root = root.scan_root();
+
+    let report = reconcile_raw_archive(&conn, &[scan_root.clone(), scan_root], 100, 100)
+        .expect("reconcile duplicate roots");
+
+    assert!(report.parity);
+    assert_eq!(report.transcript.messages, 1);
+    assert_eq!(report.archive.messages, 1);
+    assert_eq!(report.comparison.exact_sessions, 1);
+}
+
+#[test]
 fn equal_count_substitution_is_a_message_mismatch() {
     let conn = setup();
     let root = TempRoot::new("substitution");

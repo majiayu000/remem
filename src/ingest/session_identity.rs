@@ -446,16 +446,8 @@ pub(crate) fn rekey_legacy_rows(
         let target_id = targets
             .iter()
             .find(|target| !assigned_targets.contains(&target.id))
+            .or_else(|| targets.first())
             .map(|target| target.id);
-        if !targets.is_empty() && target_id.is_none() {
-            return Err(crate::memory::raw_occurrence::RawIdentityConflict {
-                reason: format!(
-                    "legacy row {} has no unassigned canonical occurrence",
-                    row.id
-                ),
-            }
-            .into());
-        }
         if let Some(target_id) = target_id {
             assigned_targets.insert(target_id);
         }

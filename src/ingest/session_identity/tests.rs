@@ -107,14 +107,20 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
     resolve_fallback_group(&conn, "local", &plan.fallback_session_id)?;
     let identity = load(&conn, identity_id)?;
     let hash = crate::db::content_identity_hash(b"same");
-    conn.execute(
-        "INSERT INTO raw_messages (
+    let insert_legacy = |id: i64, session_id: &str, project: &str| -> anyhow::Result<()> {
+        conn.execute(
+            "INSERT INTO raw_messages (
             id, session_id, project, role, content, content_hash, source,
             created_at_epoch, source_root, event_time_source
-         ) VALUES (41, ?1, ?2, 'user', 'same', ?3, 'transcript',
+         ) VALUES (?1, ?2, ?3, 'user', 'same', ?4, 'transcript',
                    999, 'local', 'legacy_unknown')",
-        params![plan.fallback_session_id, plan.legacy_project, hash],
-    )?;
+            params![id, session_id, project, hash],
+        )?;
+        Ok(())
+    };
+    insert_legacy(41, &plan.fallback_session_id, &plan.legacy_project)?;
+    insert_legacy(43, &plan.canonical_session_id, &plan.legacy_project)?;
+    insert_legacy(44, &plan.fallback_session_id, &plan.project)?;
     conn.execute(
         "INSERT INTO raw_messages (
             id, session_id, project, role, content, content_hash, source,
@@ -134,7 +140,11 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
     conn.execute(
         "INSERT INTO memory_lessons (
             memory_id, source_evidence, last_reinforced_at_epoch
-         ) VALUES (9, 'raw_message:41:sha256', 1)",
+         ) VALUES (
+            9,
+            'raw_message:41:sha256 raw_message:43:sha256 raw_message:44:sha256',
+            1
+         )",
         [],
     )?;
     conn.execute(
@@ -143,16 +153,16 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             outcome_kind, status, evidence_raw_message_ids,
             created_at_epoch, updated_at_epoch
          ) VALUES (7, 'project', 'canonical-871', 'test', 'hash', 9,
-                   'failure', 'saved', '[41,42]', 1, 1)",
+                   'failure', 'saved', '[41,42,43,44]', 1, 1)",
         [],
     )?;
 
     let report = rekey_legacy_rows(&conn, &identity)?;
 
-    assert_eq!(report.merged, 1);
+    assert_eq!(report.merged, 3);
     assert_eq!(
         conn.query_row(
-            "SELECT COUNT(*) FROM raw_messages WHERE id = 41",
+            "SELECT COUNT(*) FROM raw_messages WHERE id IN (41, 43, 44)",
             [],
             |row| { row.get::<_, i64>(0) }
         )?,
@@ -173,7 +183,7 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             [],
             |row| row.get::<_, String>(0)
         )?,
-        "raw_message:42:sha256"
+        "raw_message:42:sha256 raw_message:42:sha256 raw_message:42:sha256"
     );
     std::fs::remove_file(path)?;
     Ok(())

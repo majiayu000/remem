@@ -5,6 +5,17 @@ use rusqlite::Connection;
 
 use crate::memory::raw_archive::{RawIngestReport, TranscriptDrainOptions, SOURCE_ROOT_LOCAL};
 
+#[derive(Debug)]
+struct StopTranscriptProbeFailed;
+
+impl std::fmt::Display for StopTranscriptProbeFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Stop transcript identity probe")
+    }
+}
+
+impl std::error::Error for StopTranscriptProbeFailed {}
+
 pub(super) struct StopTranscript<'a> {
     pub path: &'a str,
     pub byte_limit: Option<u64>,
@@ -25,7 +36,7 @@ pub(super) fn drain_with_identity(
         transcript,
         Some(input.project),
     )
-    .context("Stop transcript identity probe")?;
+    .map_err(|error| error.context(StopTranscriptProbeFailed))?;
     let now = chrono::Utc::now().timestamp();
     let identity_id = crate::ingest::session_identity::upsert_claim(conn, &plan, now)
         .context("Stop transcript identity claim")?;
@@ -72,6 +83,10 @@ pub(super) fn drain_with_identity(
         )?;
     }
     Ok(report)
+}
+
+pub(super) fn permits_hook_fallback(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<StopTranscriptProbeFailed>().is_some()
 }
 
 #[cfg(test)]
