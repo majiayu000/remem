@@ -180,9 +180,10 @@ stem:
    rows under `project`; never assume the aliases are equal or that a
    filename-fallback row used only the legacy slug.
 2. Treat the expected filename-fallback self-claim
-   (`identity_source = 'filename_fallback'` and
-   `canonical_session_id = fallback_session_id`) as promotable evidence, not a
-   competing authoritative ID. If any row is already `conflict`, two metadata
+   (`claim.identity_source = 'filename_fallback'` and
+   `claim.claimed_session_id = identity.fallback_session_id`) as promotable
+   evidence, not a competing authoritative ID. If any row is already
+   `conflict`, two metadata
    claims map the fallback to different canonical IDs, or one transcript path
    changes its metadata-derived canonical claim, mark every path-stable row in
    the fallback group `conflict`. Once any group row is `conflict`, all future automatic
