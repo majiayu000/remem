@@ -54,12 +54,14 @@ before the verifier reports any problem.
 2. `B-002`: `B-001` applies to direct submodule imports, named imports, aliases,
    star imports, literal dynamic imports of sensitive importlib namespaces,
    and loaded-module namespace access through `sys.modules`, including paths
-   that expose `importlib.util` and `importlib.machinery`.
+   that expose `importlib.util`, `importlib.machinery`, the frozen importlib
+   implementation modules, or module-provided `__loader__`/`__spec__` globals.
 3. `B-003`: A classified SpecRail Python file that directly calls or imports,
    aliases, or otherwise references the built-in `exec` or `eval` callable,
    dynamically imports the `builtins` namespace, or reaches the same callables
-   through `__builtins__` or an imported builtins dictionary must fail sync
-   verification before any classified check module executes.
+   through `__builtins__`, `globals()`/`locals()`, or an imported builtins
+   dictionary must fail sync verification before any classified check module
+   executes.
 4. `B-004`: Rejections must use a stable diagnostic category, include the
    classified source path, and identify whether the rejected surface is an
    importlib loader surface or a dynamic code-execution surface.
@@ -68,8 +70,10 @@ before the verifier reports any problem.
 6. `B-006`: Existing classified static imports and literal
    `importlib.import_module`/`__import__` calls continue to follow their current
    classification behavior for ordinary module targets. Sensitive targets
-   `importlib`, `importlib.*`, `builtins`, and `sys` fail closed because they
-   expose loader or dynamic-code namespaces outside the ordinary import graph.
+   `importlib`, `importlib.*`, `_frozen_importlib`,
+   `_frozen_importlib_external`, `builtins`, and `sys` fail closed because
+   they expose loader or dynamic-code namespaces outside the ordinary import
+   graph.
 7. `B-007`: Existing failures for unclassified local imports, non-literal
    dynamic imports, `sys.path` mutation, path escape, symlinks, sourceless local
    modules, and tracking/lock drift retain their fail-closed behavior.
@@ -83,11 +87,13 @@ before the verifier reports any problem.
       `importlib.util`/`importlib.machinery` and named loader-construction APIs
       before module execution.
 - [ ] Verification rejects the same loader namespaces reached through literal
-      dynamic imports or `sys.modules`.
+      dynamic imports, `sys.modules`, module-provided loader globals, or frozen
+      importlib implementation modules.
 - [ ] Verification rejects direct `exec`/`eval`, `builtins.exec`/`eval`, and
       named or aliased builtins imports before module execution.
 - [ ] Verification rejects dynamically imported builtins plus
-      `__builtins__`/builtins-dictionary access before module execution.
+      `__builtins__`, `globals()`/`locals()`, and builtins-dictionary access
+      before module execution.
 - [ ] Regression fixtures prove rejected helpers cannot create their sentinel
       side-effect file.
 - [ ] Diagnostics name the classified source and use stable loader-surface or
@@ -104,6 +110,10 @@ before the verifier reports any problem.
 - `exec`/`eval` is referenced without an immediate call, such as assignment to
   another variable.
 - A rejected file also contains an otherwise classified import.
+- A classified module reaches its automatically injected `__loader__` or
+  `__spec__` namespace without an import statement.
+- A classified module reads an imported namespace or builtins through
+  `globals()` or `locals()`.
 - The text passed to `exec`/`eval` is a literal rather than file content.
   This tranche rejects the execution surface conservatively instead of trying
   to infer data flow.

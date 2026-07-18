@@ -26,7 +26,8 @@ GH-863
 - Covers: `B-001`, `B-002`, `B-003`, `B-004`, `B-005`
 - Done when:
   - Isolated temporary-pack fixtures cover importlib loader construction and
-    direct/aliased `exec`/`eval`.
+    direct/aliased `exec`/`eval`, including implicit global namespace and
+    frozen-loader paths.
   - Fixtures assert stable diagnostics and prove the helper sentinel never
     executes.
   - At least one GH-863 fixture fails against the pre-fix verifier.
@@ -40,8 +41,9 @@ GH-863
 - Files: `scripts/sync-specrail-checks.sh`
 - Covers: `B-001` through `B-008`
 - Done when:
-  - The AST preflight rejects non-allowlisted importlib namespaces and dynamic
-    code-execution references before the classified-module import loop.
+  - The AST preflight rejects non-allowlisted or implicit loader namespaces
+    and dynamic code-execution references before the classified-module import
+    loop.
   - Existing classified static and literal dynamic import behavior remains
     green.
 - Verify:

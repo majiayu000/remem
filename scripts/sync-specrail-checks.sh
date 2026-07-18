@@ -265,6 +265,14 @@ def require_classified_import(source, module):
             raise SystemExit(1)
 
 
+def is_sensitive_loader_module(module):
+    return (
+        module == "importlib"
+        or module.startswith("importlib.")
+        or module in {"_frozen_importlib", "_frozen_importlib_external"}
+    )
+
+
 for relative_path in sorted(classified_checks_python):
     source_path = repo_root / relative_path
     try:
@@ -282,7 +290,10 @@ for relative_path in sorted(classified_checks_python):
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith("importlib."):
+                if (
+                    is_sensitive_loader_module(alias.name)
+                    and alias.name != "importlib"
+                ):
                     print(
                         f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
                         f"import {alias.name} is outside the import_module allowlist",
@@ -308,7 +319,7 @@ for relative_path in sorted(classified_checks_python):
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
-            if module.startswith("importlib."):
+            if is_sensitive_loader_module(module) and module != "importlib":
                 print(
                     f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
                     f"from {module} import ... is outside the import_module allowlist",
@@ -363,6 +374,27 @@ for relative_path in sorted(classified_checks_python):
                 f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
                 "__builtins__ namespace access cannot be classified through "
                 "the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if (
+            isinstance(node, ast.Name)
+            and node.id in {"globals", "locals"}
+        ):
+            print(
+                f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                f"{node.id} namespace access cannot be classified through "
+                "the import graph",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if (
+            isinstance(node, ast.Name)
+            and node.id in {"__loader__", "__spec__"}
+        ):
+            print(
+                f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                f"{node.id} exposes the module loader namespace",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -579,7 +611,7 @@ for relative_path in sorted(classified_checks_python):
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
-            if target.value == "importlib" or target.value.startswith("importlib."):
+            if is_sensitive_loader_module(target.value):
                 print(
                     f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
                     f"{dynamic_name} target {target.value} is outside the "

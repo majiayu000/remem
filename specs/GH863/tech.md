@@ -30,8 +30,9 @@ conservative, syntax-directed rejection policies:
      `import_module`; and
    - reject `from importlib.<submodule> import ...`.
    - reject literal dynamic-import targets `importlib`, `importlib.*`, and
-     `sys`; and
-   - reject direct or named access to `sys.modules`.
+     the frozen importlib implementation modules, as well as `sys`; and
+   - reject direct or named access to `sys.modules`; and
+   - reject module-provided `__loader__` and `__spec__` globals.
 
    The rejection is intentionally broader than enumerating current loader
    classes. It prevents a new loader-construction API from silently reopening
@@ -44,6 +45,9 @@ conservative, syntax-directed rejection policies:
      builtins module aliases; and
    - reject non-`__import__` named imports from `builtins`, literal dynamic
      imports of `builtins`, and direct `__builtins__` namespace access; and
+   - reject `globals()` and `locals()` namespace access, which can recover
+     builtins or imported loader modules outside the classified import graph;
+     and
    - run this rejection before the existing dynamic-import alias analysis and
      before any classified module import.
 
@@ -64,8 +68,8 @@ behavior changes.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| `B-001`, `B-002` | Import and sensitive-module namespace scan in `verify_python_imports` | Temporary-pack fixtures for static and literal-dynamic importlib loaders plus `sys.modules` access fail with the loader-surface diagnostic. |
-| `B-003` | Builtins import/namespace and AST reference scan | Fixtures for direct `exec`/`eval`, named builtins aliases, dynamically imported builtins, `__builtins__`, and builtins dictionaries fail with the code-execution diagnostic. |
+| `B-001`, `B-002` | Import and sensitive-module namespace scan in `verify_python_imports` | Temporary-pack fixtures for static and literal-dynamic importlib loaders, frozen importlib modules, `sys.modules`, and module loader globals fail before execution. |
+| `B-003` | Builtins import/namespace and AST reference scan | Fixtures for direct `exec`/`eval`, named builtins aliases, dynamically imported builtins, `__builtins__`, `globals()`/`locals()`, and builtins dictionaries fail with the code-execution diagnostic. |
 | `B-004` | New diagnostic branches | Every new fixture asserts the stable diagnostic and classified source path. |
 | `B-005` | Existing sentinel-based isolated harness | Every rejected loader/exec/eval fixture asserts `untrusted-helper-executed` was not created. |
 | `B-006`, `B-007` | Existing import and sync verifier behavior | The full `test_specrail_gate_wiring.py` suite and `scripts/sync-specrail-checks.sh --verify` remain green. |
@@ -77,8 +81,8 @@ behavior changes.
 classified checks/*.py source
   -> ast.parse
   -> collect import/module/callable aliases
-  -> reject non-allowlisted importlib namespaces
-  -> reject exec/eval names and builtins attributes
+  -> reject non-allowlisted and module-provided loader namespaces
+  -> reject exec/eval names and dynamic global namespace access
   -> existing static/dynamic import classification
   -> import classified module only if every source passed
 ```
@@ -114,8 +118,8 @@ existing local Git queries and module imports.
 - Performance: The added AST scans are linear in the already-parsed syntax
   trees and do not add subprocesses or file reads.
 - Maintenance: The allowlist must remain narrow; adding a loader-capable
-  importlib name without corresponding local-file classification would reopen
-  the issue.
+  importlib name or another implicit module namespace without corresponding
+  local-file classification would reopen the issue.
 
 ## Test Plan
 
