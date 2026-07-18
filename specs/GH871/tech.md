@@ -12,7 +12,7 @@ GH-871
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
-| Raw CLI open path | `src/cli/actions/query/raw.rs`, `src/db/core.rs` | `raw search` and `raw sessions` call `open_db()`, which configures a read-write connection and runs migrations. `open_db_read_only()` already opens an existing database without migration. | The migration path begins a write transaction and reproduces GH-871's lock failure. |
+| Raw CLI open path | `src/cli/actions/query/raw.rs`, `src/db/core.rs` | `raw search` and `raw sessions` call `open_db()`, which configures a read-write connection and runs migrations. `open_db_read_only()` already opens an existing database without migration, while `open_db_no_migrate()` contains the current-schema fail-closed check. | The migration path begins a write transaction and reproduces GH-871's lock failure; the replacement must retain schema validation without writes. |
 | Batch transcript identity | `src/ingest/sessions.rs`, `src/ingest/sessions/tests.rs` | A 20-line probe prefers top-level `sessionId`/`session_id` or Codex `session_meta.payload.id`, then falls back to filename stem. The result is not persisted independently of raw rows. Unchanged cursors skip before the probe. | New metadata support cannot reconcile unchanged historical files, and operators cannot audit which identity source was used. |
 | Stop-hook raw ingest | `src/session_rollup/side_effects.rs`, `src/memory/raw_archive.rs` | The worker drains the transcript under the hook/extraction task session ID. Raw uniqueness is `(source_root, project, session_id, role, content_hash)`. | Hook and batch identities can split one transcript; rekey must preserve the uniqueness contract. |
 | Raw session counts | `src/memory/raw_archive.rs` | Session grouping returns only `COUNT(*)` plus optional user-message text samples. | Fixed-window comparison needs total/user/assistant counts without reading samples. |
@@ -25,12 +25,17 @@ GH-871
 
 ### 1. Read-only raw query connections
 
-Change `run_raw_search`, `run_raw_sessions`, and the new reconciliation action
-to call `db::open_db_read_only()`.
+Add `db::open_db_read_only_current()`: it opens with the same read-only SQLite
+flags as `open_db_read_only()`, then runs the non-mutating schema-current and
+schema-drift checks shared with `open_db_no_migrate()`. Change
+`run_raw_search`, `run_raw_sessions`, and the new reconciliation action to use
+this wrapper.
 
-The read-only open remains fail-closed for a missing database or invalid
-SQLCipher key and does not create or migrate a store. `ingest-sessions` remains
-the explicit write/migration surface.
+The read-only open remains fail-closed for a missing database, invalid
+SQLCipher key, stale schema, or schema drift and does not create or migrate a
+store. A stale schema returns the same actionable "run a migration-capable
+remem command" diagnostic as the existing no-migrate path.
+`ingest-sessions` remains the explicit write/migration surface.
 
 ### 2. Durable transcript identity ledger
 
@@ -44,12 +49,17 @@ CREATE TABLE raw_session_identities (
     fallback_session_id TEXT NOT NULL,
     canonical_session_id TEXT NOT NULL,
     project TEXT NOT NULL,
+    legacy_project TEXT NOT NULL,
     identity_source TEXT NOT NULL
         CHECK(identity_source IN ('transcript_metadata', 'filename_fallback')),
     status TEXT NOT NULL
         CHECK(status IN ('active', 'conflict')),
     conflict_reason TEXT,
     contract_version INTEGER NOT NULL DEFAULT 0,
+    observed_mtime_ns INTEGER NOT NULL,
+    observed_size_bytes INTEGER NOT NULL,
+    first_event_epoch INTEGER,
+    last_event_epoch INTEGER,
     first_seen_at_epoch INTEGER NOT NULL,
     last_seen_at_epoch INTEGER NOT NULL,
     UNIQUE(source_root, transcript_path, canonical_session_id)
@@ -57,7 +67,7 @@ CREATE TABLE raw_session_identities (
 
 CREATE INDEX idx_raw_session_identities_fallback
     ON raw_session_identities(
-        source_root, project, fallback_session_id, status
+        source_root, legacy_project, fallback_session_id, status
     );
 CREATE INDEX idx_raw_session_identities_canonical
     ON raw_session_identities(
@@ -69,6 +79,13 @@ CREATE INDEX idx_raw_session_identities_canonical
 `ingest_cursors`. It remains inside the encrypted database and is never
 serialized by the reconciliation surface. Storing it directly avoids an
 unkeyed path hash that could be dictionary-tested.
+
+`project` is the current canonical `project_from_cwd` value. `legacy_project`
+is the historical transcript-directory slug used by the GH720-era importer.
+The ledger keeps both so v071 can locate legacy raw rows without guessing or
+changing the public canonical grouping. The observed cursor tuple and inclusive
+event range form a privacy-local transcript index used to avoid parsing
+out-of-window history during reconciliation.
 
 v071 also adds these additive raw-message fields:
 
@@ -87,9 +104,23 @@ Existing rows begin as `legacy_unknown`.
 Move transcript context probing before the unchanged-cursor return. Every
 discovered file therefore upserts its identity ledger claim even when message
 ingest is skipped. A ledger row remains `contract_version = 0` until a complete
-redrain has refreshed identity and event-time provenance; version 0 bypasses an
-otherwise unchanged cursor once. Successful redrain sets version 1, so later
-runs recover normal incremental behavior.
+redrain has refreshed identity/event-time provenance and recorded the observed
+cursor tuple plus event range; version 0 bypasses an otherwise unchanged cursor
+once. Successful redrain sets version 1, so later runs recover normal
+incremental behavior.
+
+Batch ingestion is explicitly two-phase. Phase A discovers every transcript in
+all requested roots, probes identity/project/event-range metadata, and upserts
+every ledger claim without changing raw rows or cursors. It then computes
+fallback-group conflicts across the complete persisted claim set. Only after
+Phase A commits with no new ambiguity does Phase B refresh/rekey/drain files.
+Filesystem order can therefore never decide which canonical claim wins.
+
+Stop-hook capture calls the same bounded identity/project probe for its
+transcript path and upserts the ledger claim before draining. It writes new
+messages under the metadata-derived canonical ID. The Stop path never performs
+legacy fallback rekey because it has not run the complete Phase-A discovery;
+the next batch pass performs that convergence safely.
 
 ### 3. Conflict-safe legacy rekey
 
@@ -97,7 +128,9 @@ When transcript metadata produces a canonical ID different from the filename
 stem:
 
 1. Query all identity rows, including prior conflicts, for the same
-   `(source_root, project, fallback_session_id)`.
+   `(source_root, fallback_session_id)` and both project aliases. Query legacy
+   raw rows under `legacy_project` and canonical rows under `project`; never
+   assume the two project values are equal.
 2. Treat the expected filename-fallback self-claim
    (`identity_source = 'filename_fallback'` and
    `canonical_session_id = fallback_session_id`) as promotable evidence, not a
@@ -107,22 +140,29 @@ stem:
    group `conflict`. Once any group row is `conflict`, all future automatic
    rekeys for that fallback remain blocked. Retain all raw rows unchanged, emit
    an error-level diagnostic, and increment `identity_conflicts`.
-3. Before mutation, compare every fallback/canonical collision on all
-   non-identity fields: role, exact content, content hash, source, branch, cwd,
-   `created_at_epoch`, and `event_time_source`. Any mismatch marks the group
-   conflict and aborts the whole rekey without mutation.
+3. Before mutation, compare every fallback/canonical collision on stable message
+   identity and provenance: role, exact content, content hash, source,
+   `created_at_epoch`, and `event_time_source`. Hook-time `branch` and `cwd` are
+   volatile provenance and are not conflict keys. When stable fields match,
+   retain the canonical transcript-derived row's branch/cwd; when they do not,
+   mark the group conflict and abort the whole rekey without mutation.
 4. Otherwise run one savepoint:
-   - copy legacy raw rows to the canonical ID with
-     `ON CONFLICT(source_root, project, session_id, role, content_hash)
-     DO NOTHING`;
-   - delete only the old fallback-ID rows after the copies succeed;
+   - update a non-colliding legacy row's project/session identity in place so
+     its `raw_messages.id` remains stable;
+   - for a collision, build an explicit old-row-ID to surviving-canonical-ID
+     map, rewrite and deduplicate every persisted raw-message evidence
+     reference (including lesson/feed JSON ID arrays) through one shared
+     helper, then delete only the now-unreferenced duplicate row;
+   - assert that no persisted reference targets a row scheduled for deletion;
    - release the savepoint.
 5. Record inserted/merged/rekeyed counts internally. A repeated pass finds no
    fallback rows and is a no-op.
 
-The raw FTS insert/delete triggers maintain index consistency during the
-copy/delete. The algorithm never rewrites rows whose old ID is not the
-deterministic filename fallback for the discovered transcript.
+The raw FTS update/delete triggers maintain index consistency. A schema-aware
+test enumerates every persisted raw-message reference store and fails when a
+new store is added without the rewrite helper. The algorithm never rewrites
+rows whose old ID is not the deterministic filename fallback for the
+discovered transcript.
 
 The version-1 redrain also refreshes event-time provenance on existing unique
 rows instead of relying on ignored inserts:
@@ -136,7 +176,7 @@ rows instead of relying on ignored inserts:
   the identity group becomes a sticky conflict;
 - no other non-identity field changes during provenance refresh.
 
-Provenance refresh, collision equality preflight, copy/delete rekey, and cursor
+Provenance refresh, collision equality preflight, in-place/reference-safe rekey, and cursor
 advance execute in one transaction. `contract_version` advances from 0 to 1
 only after all row updates and the cursor succeed. Any error rolls back the
 updates and leaves version 0 so the next run retries the complete upgrade.
@@ -149,7 +189,7 @@ and reconciliation. Classification precedence is:
 1. malformed JSON;
 2. unsupported record/role;
 3. missing event timestamp;
-4. outside the inclusive UTC window;
+4. outside the inclusive UTC window (discarded before classification counters);
 5. empty supported text;
 6. meta user;
 7. XML/control user;
@@ -161,10 +201,12 @@ The disjoint output classes are:
 - `meta_user` when the transcript marks the user event as metadata;
 - `xml_control_user` when normalized user text begins with `<`;
 - `missing_event_time`;
-- `outside_window`;
 - `empty_text`;
 - `unsupported_record`;
 - `malformed_record`.
+
+Records with a parsed timestamp outside the requested range are not members of
+the reconciliation universe and do not increment an `outside_window` counter.
 
 Raw draining preserves current behavior for supported non-empty text, including
 meta/XML user text. Reconciliation reports `meta_user` and
@@ -206,16 +248,25 @@ Inputs:
 
 Processing:
 
-1. Discover transcript files with the same root and `subagents/` rules as
-   `ingest-sessions`.
-2. Capture each file length once and stream only complete records through that
-   boundary.
-3. Derive the same canonical identity and project key as ingestion.
-4. Aggregate transcript-side archive-eligible role counts and the explicit
-   exclusion taxonomy inside the fixed UTC window.
-5. Aggregate raw rows by `(source_root, project, session_id)` for the same
-   window.
-6. Compare the internal keys and counts; do not serialize any key.
+1. Reject `since_epoch > until_epoch`. Discover transcript paths with the same
+   root and `subagents/` rules as `ingest-sessions`, but do not parse them yet.
+2. Require an exact version-1 ledger/cursor match for every discovered path
+   (observed mtime/size included) and reject stale, missing, or extra required
+   root entries with an actionable `run remem ingest-sessions` diagnostic.
+3. Use the ledger's inclusive first/last event bounds to select only transcript
+   files that can intersect the requested window. Capture each candidate file
+   length once and stream only complete records through that boundary.
+4. Derive the same canonical identity and project key as ingestion.
+5. Aggregate transcript-side archive-eligible message identities
+   `(role, content_hash)` and the explicit exclusion taxonomy inside the fixed
+   UTC window.
+6. Aggregate raw message identities by
+   `(source_root, project, session_id, role, content_hash)` for the same window.
+7. Query distinct persisted `status = 'conflict'` fallback groups relevant to
+   the discovered roots; count them even when transcript/raw totals otherwise
+   match.
+8. Compare internal per-message multisets before collapsing them to aggregate
+   counts; do not serialize any key or hash.
 
 Stable JSON shape:
 
@@ -238,7 +289,7 @@ Stable JSON shape:
   },
   "comparison": {
     "exact_sessions": 0,
-    "count_mismatch_sessions": 0,
+    "message_mismatch_sessions": 0,
     "transcript_only_sessions": 0,
     "transcript_only_messages": 0,
     "archive_only_sessions": 0,
@@ -256,8 +307,8 @@ Stable JSON shape:
     "xml_control_user": 0,
     "empty_text": 0,
     "unsupported_record": 0,
-    "outside_window": 0,
     "missing_event_time": 0,
+    "archive_ingest_fallback_event_time": 0,
     "archive_unknown_event_time": 0,
     "malformed_record": 0
   },
@@ -265,13 +316,18 @@ Stable JSON shape:
 }
 ```
 
-For each mismatched shared session, positive role/count deltas accumulate into
-the transcript-excess or archive-excess fields; equal-and-opposite session
-deltas therefore cannot disappear behind equal global totals.
+For each mismatched shared session, multiset differences of internal
+`(role, content_hash)` identities accumulate into the transcript-excess or
+archive-excess fields. Equal role counts with a missing message and an
+unrelated extra message therefore produce both excess counters instead of an
+exact session. Hashes remain process-local comparison keys and are never
+serialized.
 
-`parity` is true only when count mismatches, transcript/archive-only and
+`parity` is true only when message mismatches, transcript/archive-only and
 role-split excess counts, identity conflicts, malformed records, missing event
-time, and archive unknown event time are all zero. Meta/XML conversational
+time, archive ingest-fallback event time, and archive legacy-unknown event time
+are all zero. A persisted identity conflict makes the command return a
+non-zero status after emitting the aggregate report. Meta/XML conversational
 exclusions do not make archive parity false when their supported text remains
 present in raw totals.
 
@@ -291,8 +347,10 @@ remem raw reconcile \
 ```
 
 Both bounds are required so a script cannot accidentally scan and compare an
-unbounded private transcript history. Required custom roots fail loudly;
-missing optional default roots contribute zero.
+unbounded private transcript history, and `since > until` is rejected.
+Required custom roots fail loudly; missing optional default roots contribute
+zero. A stale transcript ledger also fails before content parsing so the
+operator must run `ingest-sessions` to refresh the bounded local index.
 
 After implementation evidence:
 
@@ -310,29 +368,33 @@ tranche.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| P1 | raw CLI actions + read-only DB open | Unit/subprocess lock test holds `BEGIN IMMEDIATE` while both raw queries succeed; `open_db_read_only` tests remain green. |
-| P2-P4 | context probe + v071 identity ledger | Claude/Codex metadata and filename-fallback fixtures; unchanged cursor still updates ledger. |
-| P5-P6 | legacy rekey savepoint and conflict detection | Unique legacy rekey, canonical collision merge, idempotent rerun, ambiguous fallback refusal, rollback-on-error tests. |
+| P1 | raw CLI actions + validated read-only DB open | Unit/subprocess lock test holds `BEGIN IMMEDIATE` while both raw queries succeed; stale/drifted schema tests prove fail-closed diagnostics without writes. |
+| P2-P4 | shared Stop/batch context probe + v071 identity ledger | Claude/Codex metadata and filename-fallback fixtures; unchanged cursor still updates ledger; Stop writes canonical rows. |
+| P5-P6 | two-phase discovery + legacy-project rekey savepoint and conflict detection | Filesystem-order-independent ambiguity refusal, GH720 directory-slug lookup, unique in-place rekey, collision merge with evidence-reference rewrite, idempotent rerun, rollback-on-error tests. |
 | P7 | raw session aggregate/JSON | SQL fixture proves total/user/assistant counts and preserved existing fields. |
 | P8-P9 | shared transcript classifier | Meta/XML/empty/unsupported/malformed fixtures prove disjoint categories while raw capture keeps supported text. |
-| P10-P12 | `raw_reconcile` + CLI parsing | Exact parity, transcript-only, archive-only, mismatch, conflict, UTC boundary, empty roots, missing required root, deterministic JSON, and sensitive-sentinel absence tests. |
+| P10-P12 | `raw_reconcile` + CLI parsing | Exact message-identity parity, equal-count substitution, transcript-only, archive-only, persisted conflict, ingest-fallback/legacy event-time counts, inverted/UTC bounds, stale index, empty roots, missing required root, deterministic JSON, bounded-file reads, and sensitive-sentinel absence tests. |
 
 ## Data Flow
 
 ```text
 transcript discovery
-  -> bounded context probe
+  -> phase A: all-path bounded identity/project/event-range probes
   -> encrypted-local transcript path + identity ledger upsert
-  -> conflict check
+  -> complete-set conflict check
+  -> phase B:
   -> versioned event-time provenance refresh
-  -> optional fallback-ID raw row rekey
+  -> optional legacy-project/fallback-ID in-place raw row rekey
+  -> collision evidence-reference rewrite
   -> unchanged cursor check
   -> normal bounded raw-message drain
 
 raw reconcile (read-only)
-  -> bounded transcript classifier aggregates
-  +  fixed-window raw session aggregates
-  -> internal identity/count comparison
+  -> current-ledger/cursor validation
+  -> event-range-selected transcript classifier aggregates
+  +  fixed-window raw message identities
+  +  persisted identity-conflict groups
+  -> internal message-identity multiset comparison
   -> privacy-safe aggregate JSON/human report
 ```
 
@@ -368,12 +430,13 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
   session grouping only when a deterministic metadata ID proves the old
   filename fallback.
 - Performance: unchanged files receive a bounded context probe, but no full
-  reparse during normal ingestion. Reconciliation is an explicit bounded
-  full-window scan and streams files.
-- Data integrity: copy/delete rekey can collide with canonical rows. A sticky
-  all-history conflict check, exact non-identity equality preflight, savepoint,
-  existing unique key, FTS triggers, and idempotency tests protect against
-  loss.
+  reparse during normal ingestion after the v1 upgrade. Reconciliation validates
+  the ledger and parses only files whose indexed event ranges intersect the
+  requested window; it never scans or counts unrelated historical records.
+- Data integrity: rekey can collide with canonical rows. Complete-set sticky
+  conflict checks, stable-field equality preflight, in-place updates,
+  evidence-reference rewrites, savepoints, the existing unique key, FTS
+  triggers, and idempotency tests protect against loss.
 - Maintenance: ingestion and reconciliation must share discovery, identity,
   timestamp, and classification helpers so the contracts cannot drift.
 
@@ -381,11 +444,14 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
 
 - [ ] Unit tests: transcript classification, identity probing/path-ledger
       persistence, promotable fallback self-claims, sticky metadata conflicts,
+      historical project aliases, evidence-reference enumeration/rewrite,
       aggregate counts, deterministic report serialization.
 - [ ] Integration tests: unchanged-cursor identity refresh, conflict-safe
-      rekey and collision merge, transactional legacy event-time provenance
-      upgrade with rollback/version retry, read-only lock contention, and
-      fixed-window reconciliation fixtures.
+      two-phase rekey and collision merge, Stop/batch canonical identity,
+      transactional legacy event-time provenance upgrade with rollback/version
+      retry, validated read-only lock contention, equal-count message
+      substitution, persisted-conflict reporting, inverted bounds, stale-index
+      refusal, bounded candidate-file reads, and fixed-window fixtures.
 - [ ] Migration tests: v071 name/order, upgrade preservation, declared
       table/index/check constraints, rerun, rollback, and schema-drift
       detection.
@@ -406,8 +472,10 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
 
 The read-only query change can be reverted independently. The v071 identity
 table is additive and can remain unused if identity reconciliation is disabled.
-Rekeyed rows retain the same content, role, source, timestamps, branch, and cwd;
-rollback does not attempt to reconstruct obsolete filename-fallback groupings.
+Rekeyed rows retain the same content, role, source, timestamps, and stable raw
+row/evidence identity; canonical transcript provenance may replace volatile
+hook-time branch/cwd values during a collision merge. Rollback does not attempt
+to reconstruct obsolete filename-fallback groupings.
 Disabling the reconciliation CLI removes no data. If identity conflicts are
 found, stop automatic rekey for those mappings and retain both the ledger
 evidence and original raw rows for a later explicit repair.

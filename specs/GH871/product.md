@@ -48,9 +48,12 @@ inclusion-rule difference.
 
 ## Behavior Invariants
 
-1. `remem raw search` and `remem raw sessions` open an existing current
-   database read-only, perform no schema migration or other write, and succeed
-   while another normal remem connection holds a write transaction.
+1. `remem raw search` and `remem raw sessions` open an existing database
+   read-only, validate that its schema is current without attempting a
+   migration or other write, and succeed while another normal remem connection
+   holds a write transaction. Missing, stale, or drifted schemas fail with the
+   existing actionable migration diagnostic rather than a low-level query
+   error.
 2. A transcript-provided session ID is the canonical raw archive session ID.
    The filename stem is used only when the supported transcript format has no
    session ID, and that fallback provenance remains auditable.
@@ -62,11 +65,17 @@ inclusion-rule difference.
 4. Batch ingestion refreshes the durable mapping even when the transcript's
    mtime and size cursor is unchanged. A file first ingested under a filename
    fallback can therefore converge after canonical metadata support is added.
-5. When one unambiguous filename-derived legacy identity maps to a canonical
-   identity, ingestion rekeys its raw rows transactionally. Rows that collide
-   with an already-canonical copy are merged by the existing raw-message
-   identity, not duplicated or dropped. Repeating the reconciliation is
-   idempotent.
+   Stop-hook capture uses the same metadata-first identity probe and ledger
+   claim before draining new raw rows, so the primary automatic path does not
+   create a new noncanonical split.
+5. Before any legacy mutation, a batch pass discovers and probes every
+   transcript in scope, persists all claims, and resolves fallback-group
+   ambiguity across both the current canonical project and the historical
+   directory-slug project. When one unambiguous filename-derived legacy
+   identity maps to a canonical identity, ingestion rekeys its raw rows
+   transactionally. Stable raw-message row IDs and every persisted evidence
+   reference are preserved or explicitly rewritten to the surviving
+   canonical row. Repeating the reconciliation is idempotent.
 6. Ambiguous, conflicting, missing, or unsafe legacy mappings are never
    guessed. A conflict is sticky for the whole fallback-identity group,
    including a transcript path later claiming a different canonical ID, until
@@ -80,25 +89,29 @@ inclusion-rule difference.
    policy. Archive eligibility and intentional exclusions are counted
    separately for:
    conversational user messages, assistant messages, meta user messages,
-   XML/control user messages, empty text, unsupported records, records outside
-   the fixed UTC window, missing or legacy-unknown event time, and malformed
-   records. Every transcript record receives exactly one category under a
-   documented precedence order.
+   XML/control user messages, empty text, unsupported records, missing event
+   time, archive ingest-fallback event time, archive legacy-unknown event time,
+   and malformed records. Records outside the fixed UTC window do not enter
+   the reconciliation universe or an aggregate counter. Every record in the
+   reconciliation universe receives exactly one category under a documented
+   precedence order.
 9. Raw capture remains lossless for supported non-empty text. A record excluded
    from the reconciliation's conversational-user count is not deleted from the
    archive.
-10. `remem raw reconcile --since <epoch> --until <epoch> --json` uses inclusive
-    UTC event-time bounds and produces aggregate counts for exact matches,
-    transcript-only sessions/messages, archive-only sessions/messages,
-    transcript-excess and archive-excess message deltas split by role, identity
-    conflicts, and every intentional exclusion category.
+10. `remem raw reconcile --since <epoch> --until <epoch> --json` requires
+    `since <= until`, uses inclusive UTC event-time bounds, and compares
+    internal per-message identities before producing aggregate counts for exact
+    matches, transcript-only sessions/messages, archive-only sessions/messages,
+    transcript-excess and archive-excess message deltas split by role, durable
+    identity conflicts, and every intentional exclusion category. Equal role
+    counts with different messages are a mismatch, never parity.
 11. Reconciliation output is deterministic for an unchanged database and
     transcript set. It emits no message text, samples, transcript paths, project
     names, full session IDs, or content hashes.
 12. An empty transcript set, empty archive window, missing optional default
     root, or zero mismatches produces a successful explicit zero-count report.
-    Missing required roots, database read failures, malformed bounds, and
-    identity conflicts fail loudly.
+    Missing required roots, database read failures, stale transcript index
+    state, malformed or inverted bounds, and identity conflicts fail loudly.
 
 ## Acceptance Criteria
 
@@ -106,12 +119,16 @@ inclusion-rule difference.
       while a separate connection holds a normal write transaction.
 - [ ] Automated tests prove metadata-first identity, filename fallback
       provenance, unchanged-cursor mapping refresh, conflict-safe legacy rekey,
-      collision merge, and idempotent rerun behavior.
+      historical project-slug lookup, all-claims-before-mutation ordering,
+      collision merge with evidence-reference preservation, Stop-hook canonical
+      capture, and idempotent rerun behavior.
 - [ ] Raw session JSON exposes total/user/assistant counts with compatibility
       tests for existing fields and grouping.
-- [ ] Reconciliation fixtures cover exact parity, transcript-only,
-      archive-only, conflicting identity, meta/XML exclusion, malformed record,
-      and fixed-window boundary cases without sensitive output.
+- [ ] Reconciliation fixtures cover exact per-message parity, equal-count
+      substitution, transcript-only, archive-only, persisted conflicting
+      identity, meta/XML exclusion, malformed record, archive event-time source,
+      inverted bounds, and fixed-window boundary cases without sensitive
+      output.
 - [ ] The recorded GH-871 UTC window is rerun with the privacy-safe command and
       reaches parity or reports a non-zero count for every remaining difference
       category.
@@ -124,8 +141,11 @@ inclusion-rule difference.
   complete JSONL records observed within the captured file boundary count.
 - A Stop hook has already inserted canonical rows and an older batch pass
   inserted the same messages under a filename fallback. Backfill converges to
-  one canonical session only when colliding rows have identical non-identity
-  metadata. A mismatch keeps both groups and records a sticky conflict.
+  one canonical session only when colliding rows have identical stable message
+  identity and event provenance. Volatile hook-time `branch`/`cwd` differences
+  do not manufacture a conflict; canonical transcript provenance wins. A
+  stable-content or event-provenance mismatch keeps both groups and records a
+  sticky conflict.
 - Two transcript paths claim the same fallback identity but different
   canonical IDs. Automatic rekey is refused and the conflict is counted.
 - A historical raw row has no discoverable transcript. It remains archive-only
@@ -133,7 +153,8 @@ inclusion-rule difference.
 - A user record is meta, begins with XML/control markup, or contains no
   supported text. The report assigns exactly one exclusion category.
 - The same session spans the UTC window boundary. Only records whose transcript
-  event time is inside the inclusive window participate in parity counts.
+  event time is inside the inclusive window participate in parity counts; the
+  report does not scan or count the session's out-of-window records.
 
 ## Rollout Notes
 
