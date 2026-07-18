@@ -137,4 +137,68 @@ mod tests {
         assert!(row.1.is_some());
         std::fs::remove_file(path.as_path()).expect("remove transcript");
     }
+
+    #[test]
+    fn stop_identity_conflict_does_not_permit_hook_fallback() {
+        let conn = Connection::open_in_memory().expect("open fixture database");
+        crate::migrate::run_migrations(&conn).expect("migrate fixture database");
+        let path = std::env::temp_dir().join(format!(
+            "remem-gh871-stop-conflict-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let write_claim = |session_id: &str, now: i64| {
+            std::fs::write(
+                &path,
+                serde_json::json!({
+                    "type": "user",
+                    "sessionId": session_id,
+                    "message": {"content": "first"}
+                })
+                .to_string(),
+            )
+            .expect("write transcript claim");
+            let plan = crate::ingest::session_identity::probe(
+                SOURCE_ROOT_LOCAL,
+                path.parent().expect("fixture parent"),
+                &path,
+                Some("/tmp/remem"),
+            )
+            .expect("probe transcript claim");
+            crate::ingest::session_identity::upsert_claim(&conn, &plan, now)
+                .expect("persist transcript claim");
+            crate::ingest::session_identity::resolve_fallback_group(
+                &conn,
+                &plan.source_root,
+                &plan.fallback_session_id,
+            )
+            .expect("resolve transcript identity");
+        };
+        write_claim("canonical-a", 1);
+        write_claim("canonical-b", 2);
+        let path_text = path.to_string_lossy();
+
+        let error = drain_with_identity(
+            &conn,
+            StopTranscript {
+                path: &path_text,
+                byte_limit: None,
+                project: "/tmp/remem",
+                branch: None,
+                cwd: "/tmp/remem",
+            },
+        )
+        .expect_err("identity conflict must remain retryable");
+
+        assert!(format!("{error:#}").contains("identity conflict"));
+        assert!(!permits_hook_fallback(&error));
+        assert_eq!(
+            conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count raw rows"),
+            0
+        );
+        std::fs::remove_file(path.as_path()).expect("remove transcript");
+    }
 }
