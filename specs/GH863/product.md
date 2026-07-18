@@ -53,13 +53,16 @@ before the verifier reports any problem.
    fail sync verification before any classified check module executes.
 2. `B-002`: `B-001` applies to direct submodule imports, named imports, aliases,
    star imports, literal dynamic imports of sensitive importlib namespaces,
-   and loaded-module namespace access through `sys.modules`, including paths
-   that expose `importlib.util` and `importlib.machinery`.
+   loaded-module namespace access through `sys.modules`, module loader metadata
+   such as `__loader__`/`__spec__`, frozen importlib implementation modules,
+   and dynamic namespace lookup, including paths that expose `importlib.util`
+   and `importlib.machinery`.
 3. `B-003`: A classified SpecRail Python file that directly calls or imports,
    aliases, or otherwise references the built-in `exec` or `eval` callable,
    dynamically imports the `builtins` namespace, or reaches the same callables
-   through `__builtins__` or an imported builtins dictionary must fail sync
-   verification before any classified check module executes.
+   through `__builtins__`, an imported builtins dictionary, or dynamic
+   `globals`/`locals`/`vars` namespace lookup must fail sync verification before
+   any classified check module executes.
 4. `B-004`: Rejections must use a stable diagnostic category, include the
    classified source path, and identify whether the rejected surface is an
    importlib loader surface or a dynamic code-execution surface.
@@ -83,11 +86,13 @@ before the verifier reports any problem.
       `importlib.util`/`importlib.machinery` and named loader-construction APIs
       before module execution.
 - [ ] Verification rejects the same loader namespaces reached through literal
-      dynamic imports or `sys.modules`.
+      dynamic imports, `sys.modules`, loader metadata, frozen importlib modules,
+      or dynamic namespace lookup.
 - [ ] Verification rejects direct `exec`/`eval`, `builtins.exec`/`eval`, and
       named or aliased builtins imports before module execution.
 - [ ] Verification rejects dynamically imported builtins plus
-      `__builtins__`/builtins-dictionary access before module execution.
+      `__builtins__`/builtins-dictionary/dynamic-namespace access before module
+      execution.
 - [ ] Regression fixtures prove rejected helpers cannot create their sentinel
       side-effect file.
 - [ ] Diagnostics name the classified source and use stable loader-surface or

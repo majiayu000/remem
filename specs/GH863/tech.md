@@ -31,7 +31,11 @@ conservative, syntax-directed rejection policies:
    - reject `from importlib.<submodule> import ...`.
    - reject literal dynamic-import targets `importlib`, `importlib.*`, and
      `sys`; and
-   - reject direct or named access to `sys.modules`.
+   - reject direct or named access to loader-bearing `sys` namespaces;
+   - reject `__loader__`, `__spec__`, and frozen importlib implementation
+     modules; and
+   - reject `globals`/`locals`/`vars` namespace access that can recover those
+     loader surfaces indirectly.
 
    The rejection is intentionally broader than enumerating current loader
    classes. It prevents a new loader-construction API from silently reopening
@@ -44,6 +48,8 @@ conservative, syntax-directed rejection policies:
      builtins module aliases; and
    - reject non-`__import__` named imports from `builtins`, literal dynamic
      imports of `builtins`, and direct `__builtins__` namespace access; and
+   - reject dynamic `globals`/`locals`/`vars` namespace access that can recover
+     `__builtins__` indirectly; and
    - run this rejection before the existing dynamic-import alias analysis and
      before any classified module import.
 
@@ -64,8 +70,8 @@ behavior changes.
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| `B-001`, `B-002` | Import and sensitive-module namespace scan in `verify_python_imports` | Temporary-pack fixtures for static and literal-dynamic importlib loaders plus `sys.modules` access fail with the loader-surface diagnostic. |
-| `B-003` | Builtins import/namespace and AST reference scan | Fixtures for direct `exec`/`eval`, named builtins aliases, dynamically imported builtins, `__builtins__`, and builtins dictionaries fail with the code-execution diagnostic. |
+| `B-001`, `B-002` | Import and sensitive-module namespace scan in `verify_python_imports` | Temporary-pack fixtures for static and literal-dynamic importlib loaders, loader-bearing `sys` namespaces, module loader metadata, frozen loader modules, and dynamic namespace lookup fail with the loader-surface diagnostic. |
+| `B-003` | Builtins import/namespace and AST reference scan | Fixtures for direct `exec`/`eval`, named builtins aliases, dynamically imported builtins, `__builtins__`, builtins dictionaries, and dynamic namespace lookup fail with the code-execution diagnostic. |
 | `B-004` | New diagnostic branches | Every new fixture asserts the stable diagnostic and classified source path. |
 | `B-005` | Existing sentinel-based isolated harness | Every rejected loader/exec/eval fixture asserts `untrusted-helper-executed` was not created. |
 | `B-006`, `B-007` | Existing import and sync verifier behavior | The full `test_specrail_gate_wiring.py` suite and `scripts/sync-specrail-checks.sh --verify` remain green. |
