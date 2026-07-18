@@ -380,7 +380,9 @@ mod tests {
                 (41, 'fallback', 'legacy-project', 'user', 'same occurrence',
                  ?1, 'transcript', 7, 'local', 'legacy_unknown'),
                 (42, 'canonical', 'current-project', 'user', 'same occurrence',
-                 ?1, 'transcript', 8, 'local', 'legacy_unknown')",
+                 ?1, 'transcript', 8, 'local', 'legacy_unknown'),
+                (43, 'fallback', 'current-project', 'user', 'same occurrence',
+                 ?1, 'hook', 9, 'local', 'legacy_unknown')",
             [hash],
         )?;
 
@@ -423,6 +425,14 @@ mod tests {
                 |row| row.get::<_, i64>(0)
             )?,
             41
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT session_id || ':' || source FROM raw_messages WHERE id = 43",
+                [],
+                |row| row.get::<_, String>(0)
+            )?,
+            "fallback:hook"
         );
         Ok(())
     }

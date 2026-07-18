@@ -151,6 +151,65 @@ fn equal_count_substitution_is_a_message_mismatch() {
 }
 
 #[test]
+fn transcript_only_message_is_reported() {
+    let conn = setup();
+    let root = TempRoot::new("transcript-only");
+    let user = line("transcript-only", "user", 100, "missing from archive");
+    root.write("transcript-only.jsonl", &[&user]);
+    ingest(&conn, &root);
+    conn.execute("DELETE FROM raw_messages", [])
+        .expect("remove archived occurrence");
+
+    let report = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect("reconcile transcript-only fixture");
+
+    assert_eq!(report.comparison.transcript_only_sessions, 1);
+    assert_eq!(report.comparison.transcript_only_messages, 1);
+    assert_eq!(report.transcript.messages, 1);
+    assert_eq!(report.archive.messages, 0);
+    assert!(!report.parity);
+}
+
+#[test]
+fn malformed_record_is_counted_from_a_current_snapshot() {
+    let conn = setup();
+    let root = TempRoot::new("malformed");
+    let path = root.write("malformed.jsonl", &["{not-json}"]);
+    let plan = crate::ingest::session_identity::probe("fixture", &root.path, &path, None)
+        .expect("probe malformed fixture path");
+    let identity_id = crate::ingest::session_identity::upsert_claim(&conn, &plan, 1)
+        .expect("persist malformed fixture ledger");
+    crate::ingest::session_identity::mark_complete(
+        &conn,
+        identity_id,
+        crate::ingest::session_identity::EventIndex {
+            first_event_epoch: None,
+            last_event_epoch: None,
+            missing_event_time_count: 1,
+        },
+        1,
+    )
+    .expect("mark fixture ledger current");
+    conn.execute(
+        "INSERT INTO ingest_cursors (
+            file_path, mtime_epoch, size_bytes, last_ingested_at
+         ) VALUES (?1, ?2, ?3, 1)",
+        rusqlite::params![
+            format!("fixture\0{}", path.to_string_lossy()),
+            plan.observed_mtime_ns / 1_000_000_000,
+            plan.observed_size_bytes
+        ],
+    )
+    .expect("persist fixture cursor");
+
+    let report = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect("reconcile malformed fixture");
+
+    assert_eq!(report.intentional_exclusions.malformed_record, 1);
+    assert!(!report.parity);
+}
+
+#[test]
 fn missing_event_time_is_selected_and_explained() {
     let conn = setup();
     let root = TempRoot::new("missing-time");
@@ -228,6 +287,24 @@ fn deleted_file_from_optional_root_blocks_reconciliation() {
         .expect_err("optional roots with ledger history cannot hide deleted files");
 
     assert!(error.to_string().contains("run `remem ingest-sessions`"));
+}
+
+#[test]
+fn missing_required_root_fails_loudly() {
+    let conn = setup();
+    let root = ScanRoot {
+        label: "required".to_string(),
+        path: std::env::temp_dir().join(format!(
+            "remem-missing-required-{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        )),
+        required: true,
+    };
+
+    let error = reconcile_raw_archive(&conn, &[root], 100, 100)
+        .expect_err("missing required root must fail");
+
+    assert!(error.to_string().contains("transcript discovery failed"));
 }
 
 #[test]
@@ -393,6 +470,53 @@ fn raw_rows_without_discoverable_transcripts_remain_archive_only_or_explained() 
     );
     assert_eq!(report.intentional_exclusions.archive_unknown_event_time, 1);
     assert!(!report.parity);
+}
+
+#[test]
+fn unchanged_inputs_produce_byte_stable_reports() {
+    let conn = setup();
+    let root = TempRoot::new("deterministic");
+    let user = line("deterministic", "user", 100, "stable");
+    root.write("deterministic.jsonl", &[&user]);
+    ingest(&conn, &root);
+
+    let first = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect("first deterministic report");
+    let second = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100)
+        .expect("second deterministic report");
+
+    assert_eq!(
+        serde_json::to_vec(&first).expect("serialize first report"),
+        serde_json::to_vec(&second).expect("serialize second report")
+    );
+}
+
+#[test]
+fn post_capture_append_is_outside_reconciliation_boundary() {
+    let conn = setup();
+    let root = TempRoot::new("bounded");
+    let before = line("bounded", "user", 100, "before capture");
+    let path = root.write("bounded.jsonl", &[&before]);
+    ingest(&conn, &root);
+    let captured =
+        capture_candidates(&conn, &[root.scan_root()], 100, 101).expect("capture candidates");
+    let mut content = std::fs::read_to_string(&path).expect("read bounded fixture");
+    content.push_str(&line(
+        "bounded",
+        "assistant",
+        101,
+        "private post-capture sentinel",
+    ));
+    content.push('\n');
+    std::fs::write(&path, content).expect("append after capture");
+
+    let report =
+        reconcile_captured(&conn, captured, 100, 101).expect("reconcile captured boundary");
+
+    assert!(report.parity);
+    assert_eq!(report.transcript.messages, 1);
+    let json = serde_json::to_string(&report).expect("serialize bounded report");
+    assert!(!json.contains("private post-capture sentinel"));
 }
 
 #[test]

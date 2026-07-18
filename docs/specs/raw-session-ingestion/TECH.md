@@ -36,10 +36,14 @@ Reconciliation:
 
 1. rejects an inverted window and missing required roots;
 2. captures a file descriptor, byte boundary, mtime, and size;
-3. requires an exact version-1 ledger tuple before content parsing;
+3. requires an exact ledger tuple before content parsing; active identities
+   also require a version-1 cursor, while current sticky conflicts remain
+   version 0 and are streamed only to count window-relevant conflicts;
 4. selects event-range intersections plus missing-time-bearing files;
 5. classifies complete records with the shared parser and window precedence;
-6. compares internal `(identity, ordinal, role, content_hash)` multisets;
+6. compares internal `(identity, ordinal, role, content_hash)` multisets, and
+   groups transcript-event archive rows without a discoverable identity by
+   their private `(source_root, project, session_id)` key as archive-only;
 7. counts only conflicts reached through selected identities; and
 8. serializes the fixed aggregate report.
 

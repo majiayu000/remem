@@ -98,6 +98,15 @@ pub(crate) fn reconcile_raw_archive(
     }
 
     let captured = capture_candidates(conn, roots, since_epoch, until_epoch)?;
+    reconcile_captured(conn, captured, since_epoch, until_epoch)
+}
+
+fn reconcile_captured(
+    conn: &Connection,
+    captured: Vec<CapturedTranscript>,
+    since_epoch: i64,
+    until_epoch: i64,
+) -> Result<RawReconcileReport> {
     let mut transcript_sessions = SessionMessages::new();
     let mut exclusions = ReconcileExclusions::default();
     let mut conflict_groups = BTreeSet::new();

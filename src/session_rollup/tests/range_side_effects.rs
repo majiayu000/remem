@@ -19,6 +19,44 @@ fn transcript_role_message(role: &str, text: &str) -> String {
     .to_string()
 }
 
+#[test]
+fn stop_identity_probe_failure_preserves_last_assistant_hook_fallback() -> Result<()> {
+    let data_dir = crate::db::test_support::ScopedTestDataDir::new("stop-probe-fallback");
+    let missing = data_dir.path.join("missing.jsonl");
+    let mut conn = setup_conn();
+    let session_id = "sess-stop-probe-fallback";
+    capture(
+        &conn,
+        session_id,
+        "session_stop",
+        &serde_json::json!({
+            "session_id": session_id,
+            "cwd": "/tmp/remem",
+            "transcript_path": missing,
+            "transcript_byte_len": 42,
+            "last_assistant_message": "preserve this Stop fallback"
+        })
+        .to_string(),
+    )?;
+    let task = claim_rollup_task(&mut conn)?;
+    let range = load_rollup_range(&conn, &task)?.expect("rollup range should load");
+
+    let error = super::super::side_effects::drain_raw_archive_from_range(&conn, &task, &range)
+        .expect_err("missing Stop transcript must remain retryable");
+
+    assert!(error.to_string().contains("raw archive drain failed"));
+    assert_eq!(
+        conn.query_row(
+            "SELECT session_id || ':' || source || ':' || content
+             FROM raw_messages",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        "sess-stop-probe-fallback:hook:preserve this Stop fallback"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn session_rollup_prompt_includes_only_bounded_transcript_text() -> Result<()> {
     let data_dir =

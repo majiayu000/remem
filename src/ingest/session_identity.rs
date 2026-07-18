@@ -399,6 +399,7 @@ pub(crate) fn rekey_legacy_rows(
              FROM raw_messages
              WHERE source_root = ?1 AND session_id IN (?2, ?3)
                AND project IN (?4, ?5) AND transcript_identity_id IS NULL
+               AND source = 'transcript'
              ORDER BY id",
         )?;
         let rows = statement
