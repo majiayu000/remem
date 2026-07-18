@@ -98,12 +98,15 @@ stem:
 
 1. Query all identity rows, including prior conflicts, for the same
    `(source_root, project, fallback_session_id)`.
-2. If any current or historical claim maps that fallback to a different
-   canonical ID, or one transcript path changes its canonical claim, mark every
-   row in the fallback group `conflict`. Once any group row is `conflict`, all
-   future automatic rekeys for that fallback remain blocked. Retain all raw
-   rows unchanged, emit an error-level diagnostic, and increment
-   `identity_conflicts`.
+2. Treat the expected filename-fallback self-claim
+   (`identity_source = 'filename_fallback'` and
+   `canonical_session_id = fallback_session_id`) as promotable evidence, not a
+   competing authoritative ID. If any row is already `conflict`, two metadata
+   claims map the fallback to different canonical IDs, or one transcript path
+   changes its metadata-derived canonical claim, mark every row in the fallback
+   group `conflict`. Once any group row is `conflict`, all future automatic
+   rekeys for that fallback remain blocked. Retain all raw rows unchanged, emit
+   an error-level diagnostic, and increment `identity_conflicts`.
 3. Before mutation, compare every fallback/canonical collision on all
    non-identity fields: role, exact content, content hash, source, branch, cwd,
    `created_at_epoch`, and `event_time_source`. Any mismatch marks the group
@@ -120,6 +123,23 @@ stem:
 The raw FTS insert/delete triggers maintain index consistency during the
 copy/delete. The algorithm never rewrites rows whose old ID is not the
 deterministic filename fallback for the discovered transcript.
+
+The version-1 redrain also refreshes event-time provenance on existing unique
+rows instead of relying on ignored inserts:
+
+- exact content/hash/role matches may update `event_time_source` from
+  `legacy_unknown` to `transcript_event` and set `created_at_epoch` to the
+  parsed transcript timestamp;
+- a re-observed record with no source timestamp updates
+  `legacy_unknown` to `ingest_fallback` but retains its stored ingestion epoch;
+- a row already marked `transcript_event` must match the parsed event epoch or
+  the identity group becomes a sticky conflict;
+- no other non-identity field changes during provenance refresh.
+
+Provenance refresh, collision equality preflight, copy/delete rekey, and cursor
+advance execute in one transaction. `contract_version` advances from 0 to 1
+only after all row updates and the cursor succeed. Any error rolls back the
+updates and leaves version 0 so the next run retries the complete upgrade.
 
 ### 4. Shared versioned transcript classification
 
@@ -140,6 +160,8 @@ The disjoint output classes are:
 - supported `user` or `assistant` text with event timestamp;
 - `meta_user` when the transcript marks the user event as metadata;
 - `xml_control_user` when normalized user text begins with `<`;
+- `missing_event_time`;
+- `outside_window`;
 - `empty_text`;
 - `unsupported_record`;
 - `malformed_record`.
@@ -300,8 +322,9 @@ tranche.
 ```text
 transcript discovery
   -> bounded context probe
-  -> path fingerprint + identity ledger upsert
+  -> encrypted-local transcript path + identity ledger upsert
   -> conflict check
+  -> versioned event-time provenance refresh
   -> optional fallback-ID raw row rekey
   -> unchanged cursor check
   -> normal bounded raw-message drain
@@ -356,12 +379,13 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
 
 ## Test Plan
 
-- [ ] Unit tests: transcript classification, identity probing/fingerprinting,
-      ledger upsert, conflict detection, aggregate counts, deterministic
-      report serialization.
+- [ ] Unit tests: transcript classification, identity probing/path-ledger
+      persistence, promotable fallback self-claims, sticky metadata conflicts,
+      aggregate counts, deterministic report serialization.
 - [ ] Integration tests: unchanged-cursor identity refresh, conflict-safe
-      rekey and collision merge, read-only lock contention, fixed-window
-      reconciliation fixtures.
+      rekey and collision merge, transactional legacy event-time provenance
+      upgrade with rollback/version retry, read-only lock contention, and
+      fixed-window reconciliation fixtures.
 - [ ] Migration tests: v071 name/order, upgrade preservation, declared
       table/index/check constraints, rerun, rollback, and schema-drift
       detection.
