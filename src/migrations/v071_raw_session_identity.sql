@@ -90,7 +90,6 @@ DROP TABLE raw_messages_old;
 
 CREATE UNIQUE INDEX idx_raw_messages_transcript_occurrence
     ON raw_messages(
-        source_root, project, session_id,
         transcript_identity_id, transcript_record_ordinal
     )
     WHERE transcript_identity_id IS NOT NULL;

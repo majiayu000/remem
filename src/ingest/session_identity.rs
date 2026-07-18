@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
@@ -118,7 +118,7 @@ fn probe_inner(
     if fallback_session_id.is_empty() {
         bail!("transcript {} has no filename identity", file.display());
     }
-    let context = probe_context(file);
+    let context = probe_context(file)?;
     let (canonical_session_id, identity_source) = match context.session_id {
         Some(session_id) if !session_id.trim().is_empty() => {
             (session_id, IdentitySource::TranscriptMetadata)
@@ -425,24 +425,39 @@ pub(crate) fn rekey_legacy_rows(
         rows
     };
     let mut mutations = Vec::with_capacity(rows.len());
+    let mut assigned_targets = BTreeSet::new();
     for row in rows {
         let targets = load_collision_targets(conn, identity, &row)?;
-        let compatible = targets
+        if targets
             .iter()
-            .filter(|target| stable_collision_matches(&row, target))
-            .collect::<Vec<_>>();
-        if !targets.is_empty() && compatible.len() != 1 {
+            .any(|target| !stable_collision_matches(&row, target))
+        {
             return Err(crate::memory::raw_occurrence::RawIdentityConflict {
                 reason: format!(
-                    "legacy row {} has {} canonical collision(s), {} stable match(es)",
+                    "legacy row {} has {} canonical collision(s) with a stable-field mismatch",
                     row.id,
-                    targets.len(),
-                    compatible.len()
+                    targets.len()
                 ),
             }
             .into());
         }
-        mutations.push((row.id, compatible.first().map(|target| target.id)));
+        let target_id = targets
+            .iter()
+            .find(|target| !assigned_targets.contains(&target.id))
+            .map(|target| target.id);
+        if !targets.is_empty() && target_id.is_none() {
+            return Err(crate::memory::raw_occurrence::RawIdentityConflict {
+                reason: format!(
+                    "legacy row {} has no unassigned canonical occurrence",
+                    row.id
+                ),
+            }
+            .into());
+        }
+        if let Some(target_id) = target_id {
+            assigned_targets.insert(target_id);
+        }
+        mutations.push((row.id, target_id));
     }
 
     let mut report = RekeyReport::default();
@@ -522,13 +537,14 @@ fn load_collision_targets(
 }
 
 fn stable_collision_matches(old: &LegacyRawRow, target: &CollisionTarget) -> bool {
-    let provenance_matches = old.event_time_source == target.event_time_source
-        || (old.source == "transcript"
-            && old.event_time_source == "legacy_unknown"
-            && target.event_time_source == "transcript_event");
+    let legacy_timestamp_upgrade = old.source == "transcript"
+        && old.event_time_source == "legacy_unknown"
+        && target.event_time_source == "transcript_event";
+    let provenance_matches =
+        old.event_time_source == target.event_time_source || legacy_timestamp_upgrade;
     old.content == target.content
         && old.source == target.source
-        && old.created_at_epoch == target.created_at_epoch
+        && (old.created_at_epoch == target.created_at_epoch || legacy_timestamp_upgrade)
         && provenance_matches
 }
 
@@ -604,16 +620,15 @@ struct TranscriptContext {
     branch: Option<String>,
 }
 
-fn probe_context(file: &Path) -> TranscriptContext {
+fn probe_context(file: &Path) -> Result<TranscriptContext> {
     let mut context = TranscriptContext::default();
-    let Ok(handle) = std::fs::File::open(file) else {
-        return context;
-    };
+    let handle = std::fs::File::open(file)
+        .with_context(|| format!("open transcript probe {}", file.display()))?;
     for line in std::io::BufReader::new(handle)
         .lines()
         .take(CONTEXT_PROBE_LINES)
     {
-        let Ok(line) = line else { break };
+        let line = line.with_context(|| format!("read transcript probe {}", file.display()))?;
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };
@@ -645,7 +660,7 @@ fn probe_context(file: &Path) -> TranscriptContext {
                 .map(str::to_string)
         });
     }
-    context
+    Ok(context)
 }
 
 fn fallback_project_slug(scan_root: &Path, file: &Path, source_root: &str) -> String {

@@ -454,6 +454,32 @@ fn incomplete_discovery_blocks_all_identity_and_raw_mutation() -> anyhow::Result
     Ok(())
 }
 
+#[test]
+fn incomplete_probe_blocks_all_phase_a_mutation() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("phase-a-probe-fail");
+    let cwd = root.path.to_string_lossy().to_string();
+    root.write(
+        "proj-a/good.jsonl",
+        &format!("{}\n", claude_line(&cwd, "user", "must not ingest")),
+    );
+    let broken = root.path.join("proj-a/broken.jsonl");
+    std::fs::write(&broken, [0xff, b'\n'])?;
+
+    let summary =
+        run_ingest_sessions(&conn, &[root.scan_root("local")], &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(raw_message_count(&conn), 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        0
+    );
+    Ok(())
+}
+
 #[cfg(unix)]
 #[test]
 fn unreadable_discovery_entry_is_isolated_and_batch_continues() {
@@ -574,6 +600,70 @@ fn ordinal_replay_conflict_is_sticky_and_preserves_existing_raw_row() -> anyhow:
             |row| row.get::<_, String>(0)
         )?,
         "assistant:different value"
+    );
+    Ok(())
+}
+
+#[test]
+fn filename_fallback_promotion_updates_one_existing_occurrence() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("occurrence-promotion");
+    let cwd = root.path.to_string_lossy().to_string();
+    let file = root.write(
+        "proj-a/fallback-name.jsonl",
+        &format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "cwd": cwd,
+                "timestamp": 100,
+                "message": {"content": "same occurrence"}
+            })
+        ),
+    );
+    let scan_root = root.scan_root("local");
+    let first = run_ingest_sessions(
+        &conn,
+        std::slice::from_ref(&scan_root),
+        &IngestOptions::default(),
+    )?;
+    assert_eq!(first.ingested_messages, 1);
+    let identity_id: i64 = conn.query_row(
+        "SELECT transcript_identity_id FROM raw_messages",
+        [],
+        |row| row.get(0),
+    )?;
+    std::fs::write(
+        &file,
+        format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "sessionId": "canonical-871",
+                "cwd": cwd,
+                "timestamp": 100,
+                "message": {"content": "same occurrence"}
+            })
+        ),
+    )?;
+
+    let second = run_ingest_sessions(&conn, &[scan_root], &IngestOptions::default())?;
+
+    assert_eq!(second.failed_files, 0);
+    assert_eq!(
+        conn.query_row("SELECT COUNT(*) FROM raw_messages", [], |row| {
+            row.get::<_, i64>(0)
+        })?,
+        1
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT transcript_identity_id || ':' || session_id
+             FROM raw_messages",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        format!("{identity_id}:canonical-871")
     );
     Ok(())
 }

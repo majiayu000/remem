@@ -148,13 +148,13 @@ fn existing_occurrence(
     created_at_epoch: Option<i64>,
     event_time_source: &str,
 ) -> Result<Option<i64>> {
-    let existing: Option<(i64, String, String, String, String, i64)> = conn
+    let existing: Option<(i64, String, String, String, String, i64, String)> = conn
         .query_row(
-            "SELECT id, role, content, content_hash, event_time_source, created_at_epoch
+            "SELECT id, role, content, content_hash, event_time_source,
+                    created_at_epoch, source_root
              FROM raw_messages
-             WHERE source_root = ?1 AND project = ?2 AND session_id = ?3
-               AND transcript_identity_id = ?4 AND transcript_record_ordinal = ?5",
-            params![source_root, project, session_id, identity_id, ordinal],
+             WHERE transcript_identity_id = ?1 AND transcript_record_ordinal = ?2",
+            params![identity_id, ordinal],
             |row| {
                 Ok((
                     row.get(0)?,
@@ -163,12 +163,20 @@ fn existing_occurrence(
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
                 ))
             },
         )
         .optional()?;
-    let Some((id, stored_role, stored_content, stored_hash, stored_time_source, stored_epoch)) =
-        existing
+    let Some((
+        id,
+        stored_role,
+        stored_content,
+        stored_hash,
+        stored_time_source,
+        stored_epoch,
+        stored_source_root,
+    )) = existing
     else {
         return Ok(None);
     };
@@ -178,6 +186,7 @@ fn existing_occurrence(
         || stored_content != content
         || stored_hash != content_hash
         || stored_time_source != event_time_source
+        || stored_source_root != source_root
         || !timestamp_matches
     {
         return Err(RawIdentityConflict {
@@ -185,6 +194,10 @@ fn existing_occurrence(
         }
         .into());
     }
+    conn.execute(
+        "UPDATE raw_messages SET project = ?2, session_id = ?3 WHERE id = ?1",
+        params![id, project, session_id],
+    )?;
     Ok(Some(id))
 }
 
@@ -226,10 +239,13 @@ fn claim_matching_legacy_row(
     if old_content.trim() != content {
         bail!("legacy raw row content disagrees with its content hash");
     }
-    if old_time_source == EVENT_TIME_TRANSCRIPT
-        && created_at_epoch.is_some_and(|epoch| epoch != old_epoch)
-    {
-        bail!("legacy transcript event time conflicts with the source occurrence");
+    if old_time_source == EVENT_TIME_TRANSCRIPT && created_at_epoch != Some(old_epoch) {
+        return Err(RawIdentityConflict {
+            reason: format!(
+                "ordinal {ordinal} transcript event time cannot be downgraded or changed"
+            ),
+        }
+        .into());
     }
     let stored_epoch = created_at_epoch.unwrap_or(old_epoch);
     conn.execute(
@@ -395,6 +411,50 @@ mod tests {
             )?,
             "user:original"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn transcript_timestamp_cannot_be_downgraded_to_ingest_fallback() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        conn.execute(
+            "INSERT INTO raw_session_identities (
+                id, source_root, transcript_path, fallback_session_id,
+                canonical_session_id, project, legacy_project, status,
+                contract_version, observed_mtime_ns, observed_size_bytes,
+                first_seen_at_epoch, last_seen_at_epoch
+             ) VALUES (1, 'local', '/tmp/downgrade.jsonl', 'fallback',
+                       'canonical', 'project', 'legacy', 'active',
+                       0, 1, 1, 1, 1)",
+            [],
+        )?;
+        let hash = crate::db::content_identity_hash(b"same");
+        conn.execute(
+            "INSERT INTO raw_messages (
+                session_id, project, role, content, content_hash, source,
+                created_at_epoch, source_root, event_time_source
+             ) VALUES ('fallback', 'legacy', 'user', 'same', ?1,
+                       'transcript', 100, 'local', 'transcript_event')",
+            [hash],
+        )?;
+
+        let error = insert_transcript_occurrence(
+            &conn,
+            "canonical",
+            "project",
+            "user",
+            "same",
+            None,
+            None,
+            "local",
+            None,
+            1,
+            0,
+        )
+        .expect_err("missing timestamp cannot downgrade transcript provenance");
+
+        assert!(error.downcast_ref::<RawIdentityConflict>().is_some());
         Ok(())
     }
 }

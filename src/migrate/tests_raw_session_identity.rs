@@ -158,5 +158,14 @@ fn v071_enforces_identity_foreign_keys_and_closed_values() -> Result<()> {
     assert!(
         raw_sql.contains("transcript_identity_id IS NULL AND transcript_record_ordinal IS NULL")
     );
+    let occurrence_index_sql: String = conn.query_row(
+        "SELECT sql FROM sqlite_master
+         WHERE type = 'index' AND name = 'idx_raw_messages_transcript_occurrence'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(occurrence_index_sql.contains("transcript_identity_id, transcript_record_ordinal"));
+    assert!(!occurrence_index_sql.contains("project"));
+    assert!(!occurrence_index_sql.contains("session_id"));
     Ok(())
 }

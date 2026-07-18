@@ -196,9 +196,7 @@ fn capture_candidates(
             .iter()
             .map(|path| path.to_string_lossy().to_string())
             .collect();
-        if root.required {
-            stale_count += extra_ledger_entry_count(conn, root, &discovered)?;
-        }
+        stale_count += extra_ledger_entry_count(conn, root, &discovered)?;
         for path in files {
             let transcript_path = path.to_string_lossy().to_string();
             let Some(identity) =

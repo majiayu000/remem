@@ -214,6 +214,23 @@ fn stale_out_of_window_file_blocks_bounded_reconciliation() {
 }
 
 #[test]
+fn deleted_file_from_optional_root_blocks_reconciliation() {
+    let conn = setup();
+    let root = TempRoot::new("deleted-optional");
+    let user = line("deleted-optional", "user", 100, "must stay accounted");
+    let path = root.write("deleted-optional.jsonl", &[&user]);
+    ingest(&conn, &root);
+    std::fs::remove_file(path).expect("delete indexed transcript");
+    let mut optional = root.scan_root();
+    optional.required = false;
+
+    let error = reconcile_raw_archive(&conn, &[optional], 100, 100)
+        .expect_err("optional roots with ledger history cannot hide deleted files");
+
+    assert!(error.to_string().contains("run `remem ingest-sessions`"));
+}
+
+#[test]
 fn missing_cursor_blocks_reconciliation() {
     let conn = setup();
     let root = TempRoot::new("missing-cursor");

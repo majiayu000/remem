@@ -112,7 +112,7 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             id, session_id, project, role, content, content_hash, source,
             created_at_epoch, source_root, event_time_source
          ) VALUES (41, ?1, ?2, 'user', 'same', ?3, 'transcript',
-                   100, 'local', 'legacy_unknown')",
+                   999, 'local', 'legacy_unknown')",
         params![plan.fallback_session_id, plan.legacy_project, hash],
     )?;
     conn.execute(
