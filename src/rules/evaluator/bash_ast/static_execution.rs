@@ -13,6 +13,11 @@ pub(super) enum ExitTrapChange<'a> {
     Reset,
 }
 
+pub(super) enum StaticPositionalChange<'a> {
+    Replace(&'a [String]),
+    Shift(usize),
+}
+
 pub(super) fn direct_command_name(tokens: &[String]) -> Option<&str> {
     unwrap::direct_command_index(tokens).map(|index| unwrap::semantic_token(&tokens[index]))
 }
@@ -500,11 +505,31 @@ pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[Strin
     Some(tokens.get(index + 2..).unwrap_or_default())
 }
 
-pub(super) fn static_set_positional_arguments(tokens: &[String]) -> Option<&[String]> {
+pub(super) fn static_positional_change(tokens: &[String]) -> Option<StaticPositionalChange<'_>> {
     let index = static_builtin_command_index(tokens)?;
-    (unwrap::semantic_token(&tokens[index]) == "set"
-        && tokens.get(index + 1).is_some_and(|value| value == "--"))
-    .then(|| tokens.get(index + 2..).unwrap_or_default())
+    match unwrap::semantic_token(&tokens[index]) {
+        "set" => {
+            let separator = tokens.get(index + 1)?;
+            if separator == "--" {
+                Some(StaticPositionalChange::Replace(
+                    tokens.get(index + 2..).unwrap_or_default(),
+                ))
+            } else if separator == "-" && tokens.get(index + 2).is_some() {
+                Some(StaticPositionalChange::Replace(&tokens[index + 2..]))
+            } else {
+                None
+            }
+        }
+        "shift" => match &tokens[index + 1..] {
+            [] => Some(StaticPositionalChange::Shift(1)),
+            [count] => count
+                .parse::<usize>()
+                .ok()
+                .map(StaticPositionalChange::Shift),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

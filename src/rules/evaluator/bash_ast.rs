@@ -11,6 +11,7 @@ use brush_parser::{Parser, ParserOptions};
 
 mod control_flow;
 mod function_args;
+mod positional_slice;
 mod shell_state;
 mod static_execution;
 mod static_words;
@@ -375,9 +376,9 @@ impl CommandCollector {
             }
             tokens = expanded;
         }
-        self.apply_static_shell_state(&tokens);
         let resolves_to_function =
             direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name));
+        self.apply_static_shell_state(&tokens, resolves_to_function);
         if !resolves_to_function {
             if let Some(names) = static_unset_function_names(&tokens) {
                 for name in names {

@@ -134,9 +134,11 @@ Artifact v2 additionally supports:
   quoted delimiter preserves literal text. Whole unquoted positionals may
   produce zero or multiple argv fields; default and alternative words retain
   quote-aware grouping, exact quoted `"$@"` preserves operand cardinality,
-  definite `set --` replaces the active mapping, and a possibly executed
-  `set --` retains both prior and replacement mappings for conservative
-  matching. Positional changes in subshells, command substitutions, and
+  static non-negative positional slices and substrings retain Bash field and
+  string semantics; definite `set --`, argument-bearing `set -`, and `shift`
+  update the active mapping, while possibly executed changes retain prior and
+  updated mappings for conservative matching. Positional changes in subshells,
+  command substitutions, and
   non-final pipeline processes restore the parent mapping, and aliases resolve
   before builtin positional state. Explicit sourced-file arguments receive
   their own positional scope.
@@ -152,8 +154,9 @@ Artifact v2 additionally supports:
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
   Function definitions follow Bash subshell, pipeline, shadowing, and static
-  `unset -f` state; a function named `unset` resolves before builtin-like state
-  mutation, while explicit `builtin unset` retains builtin semantics;
+  `unset -f` state; known functions resolve before builtin-like state mutation,
+  including functions named `unset` or `trap`, while explicit builtin forms
+  retain builtin semantics;
   explicitly exported functions alone enter child Bash,
   while other child shells start empty. Shell `-n`/`noexec` payloads remain
   inert. Shell `-s` and nested static shells inherit the effective final fd-0

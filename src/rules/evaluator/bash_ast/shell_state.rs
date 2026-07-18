@@ -1,7 +1,7 @@
 use super::static_execution::{
     direct_command_name, static_alias_definitions, static_exit_trap_change, static_monitor_mode,
-    static_set_positional_arguments, static_shopt_expand_aliases, static_shopt_lastpipe,
-    static_shopt_nocasematch, static_unalias_names, ExitTrapChange,
+    static_positional_change, static_shopt_expand_aliases, static_shopt_lastpipe,
+    static_shopt_nocasematch, static_unalias_names, ExitTrapChange, StaticPositionalChange,
 };
 use super::{unwrap, AliasDefinition, CommandCollector, ExitTrapDefinition, PositionalContext};
 
@@ -11,24 +11,63 @@ impl CommandCollector {
         tokens: &[String],
         resolves_to_function: bool,
     ) {
-        let Some(arguments) = (!resolves_to_function)
-            .then(|| static_set_positional_arguments(tokens))
+        let Some(change) = (!resolves_to_function)
+            .then(|| static_positional_change(tokens))
             .flatten()
         else {
             return;
         };
+        match change {
+            StaticPositionalChange::Replace(arguments) if self.execution_is_definite => {
+                let zero_argument = self
+                    .positional_context
+                    .as_ref()
+                    .and_then(|context| context.zero_argument.clone());
+                self.positional_context = Some(PositionalContext {
+                    zero_argument,
+                    arguments: arguments.to_vec(),
+                    possible_arguments: Vec::new(),
+                });
+            }
+            StaticPositionalChange::Replace(arguments) => {
+                self.retain_possible_positional_arguments(arguments.to_vec());
+            }
+            StaticPositionalChange::Shift(count) => self.apply_static_shift(count),
+        }
+    }
+
+    fn apply_static_shift(&mut self, count: usize) {
+        let Some(context) = &mut self.positional_context else {
+            return;
+        };
         if self.execution_is_definite {
-            let zero_argument = self
-                .positional_context
-                .as_ref()
-                .and_then(|context| context.zero_argument.clone());
-            self.positional_context = Some(PositionalContext {
-                zero_argument,
-                arguments: arguments.to_vec(),
-                possible_arguments: Vec::new(),
-            });
-        } else if let Some(context) = &mut self.positional_context {
-            let arguments = arguments.to_vec();
+            shift_positional_arguments(&mut context.arguments, count);
+            for arguments in &mut context.possible_arguments {
+                shift_positional_arguments(arguments, count);
+            }
+            context.possible_arguments.sort();
+            context.possible_arguments.dedup();
+            context
+                .possible_arguments
+                .retain(|arguments| arguments != &context.arguments);
+            return;
+        }
+        let mut shifted = std::iter::once(&context.arguments)
+            .chain(context.possible_arguments.iter())
+            .cloned()
+            .collect::<Vec<_>>();
+        for arguments in &mut shifted {
+            shift_positional_arguments(arguments, count);
+        }
+        for arguments in shifted {
+            if arguments != context.arguments && !context.possible_arguments.contains(&arguments) {
+                context.possible_arguments.push(arguments);
+            }
+        }
+    }
+
+    fn retain_possible_positional_arguments(&mut self, arguments: Vec<String>) {
+        if let Some(context) = &mut self.positional_context {
             if arguments != context.arguments && !context.possible_arguments.contains(&arguments) {
                 context.possible_arguments.push(arguments);
             }
@@ -36,12 +75,19 @@ impl CommandCollector {
             self.positional_context = Some(PositionalContext {
                 zero_argument: None,
                 arguments: Vec::new(),
-                possible_arguments: vec![arguments.to_vec()],
+                possible_arguments: vec![arguments],
             });
         }
     }
 
-    pub(super) fn apply_static_shell_state(&mut self, tokens: &[String]) {
+    pub(super) fn apply_static_shell_state(
+        &mut self,
+        tokens: &[String],
+        resolves_to_function: bool,
+    ) {
+        if resolves_to_function {
+            return;
+        }
         if let Some(enabled) = static_shopt_expand_aliases(tokens) {
             if enabled || self.execution_is_definite {
                 self.expand_aliases = enabled;
@@ -321,6 +367,12 @@ impl CommandCollector {
         self.execution_terminated = saved.execution_terminated;
         self.inherited_stdin = saved.inherited_stdin;
         self.positional_context = saved.positional_context;
+    }
+}
+
+fn shift_positional_arguments(arguments: &mut Vec<String>, count: usize) {
+    if count <= arguments.len() {
+        arguments.drain(..count);
     }
 }
 

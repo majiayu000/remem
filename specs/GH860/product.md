@@ -56,10 +56,13 @@ gaps can either miss a forbidden command or report a false block.
    under their own Bash syntax rather than inheriting surrounding quote state.
    Empty unquoted expansions shall remove their argv field, quoted default
    words shall retain their grouping, and statically selected `+`/`:+`
-   alternative words shall be materialized. A definite `set --` shall replace
-   the active positional mapping; a possibly executed `set --` shall retain
-   both the prior and replacement mappings for conservative matching. Quoted
-   `"$@"` shall preserve one field per operand. Positional changes inside a
+   alternative words shall be materialized. Static non-negative `${@:offset}`
+   slices and `${n:offset[:length]}` substrings shall retain their Bash field
+   or string semantics. A definite `set --` or argument-bearing `set -` shall
+   replace the active positional mapping; a definite static `shift` shall
+   advance it, while possibly executed changes shall retain every possible
+   mapping for conservative matching. Quoted `"$@"` shall preserve one field
+   per operand. Positional changes inside a
    subshell, command substitution, or non-final pipeline process shall not
    leak into its parent, and an alias named `set` shall resolve before builtin
    positional state is applied. Expandable outer heredocs shall finish
@@ -79,6 +82,9 @@ gaps can either miss a forbidden command or report a false block.
 6. B-006 An explicit Bash builtin invocation, such as `builtin unset -f
    <name>`, shall retain builtin unset semantics even when a function named
    `unset` exists, including valid mixed `builtin command` wrapper sequences.
+   The same function-before-builtin ordering applies to static EXIT-trap state:
+   a function named `trap` shall run as a function, while builtin `trap`
+   remains analyzable.
 7. B-007 Each new recognition path shall be bounded and deterministic and shall
    preserve the existing conservative behavior for dynamic or unsupported
    shell constructs.
@@ -100,6 +106,8 @@ gaps can either miss a forbidden command or report a false block.
       here-string source text.
 - [x] Red-first fixtures cover quoted `"$@"` cardinality, uncertain `set --`
       alternatives, child-scope restoration, and alias-before-builtin ordering.
+- [x] Red-first fixtures cover positional slices and substrings, definite
+      `shift`, argument-bearing `set -`, and function-shadowed `trap` ordering.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.
@@ -112,9 +120,10 @@ gaps can either miss a forbidden command or report a false block.
   resolution or filesystem access.
 - Quoted and concatenated positional references follow the evaluator's
   existing static word-expansion limits; unknown expansion remains unknown.
-- Definite static `set --` and explicit sourced-file arguments update only
-  their Bash-defined positional scope; uncertain `set --` retains every known
-  possible mapping so a forbidden argument on either path remains visible.
+- Definite static `set --`, argument-bearing `set -`, `shift`, and explicit
+  sourced-file arguments update only their Bash-defined positional scope;
+  uncertain changes retain every known possible mapping so a forbidden
+  argument on either path remains visible.
 - Function shadowing is evaluated in command order and existing subshell,
   pipeline, and child-shell scope rules remain unchanged.
 

@@ -2,6 +2,8 @@ use brush_parser::ast::FunctionBody;
 use brush_parser::word::{WordPiece, WordPieceWithSource};
 use brush_parser::ParserOptions;
 
+use super::positional_slice::{positional_collection_slice, positional_substring};
+
 const MAX_DEFAULT_EXPANSION_DEPTH: usize = 8;
 
 pub(super) fn expand_function_body(body: &FunctionBody, arguments: &[String]) -> String {
@@ -113,16 +115,17 @@ pub(super) fn bare_shell_positional_fields(
             return Ok(Some(vec![arguments.join(" ")]));
         }
         if let Some((consumed, expression)) = parameter_expression(inner) {
-            if consumed == inner.len() && expression.chars().all(|ch| ch.is_ascii_digit()) {
-                let Ok(position) = expression.parse::<usize>() else {
-                    return Ok(None);
-                };
-                let value = if position == 0 {
-                    zero_argument
-                } else {
-                    arguments.get(position - 1).map(String::as_str)
-                };
-                return Ok(Some(vec![value.unwrap_or_default().to_string()]));
+            if consumed == inner.len() {
+                if let Some(selected) =
+                    positional_collection_slice(expression, zero_argument, arguments)
+                {
+                    return Ok(Some(selected));
+                }
+                if expression.starts_with(|ch: char| ch.is_ascii_digit()) {
+                    let value =
+                        resolve_parameter_expression(expression, zero_argument, arguments, 0);
+                    return Ok(value.map(|value| vec![value]));
+                }
             }
         }
     }
@@ -191,6 +194,14 @@ fn resolve_parameter_expression_fields(
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
     }
+    if let Some(arguments) = positional_collection_slice(expression, zero_argument, arguments) {
+        return Some(
+            arguments
+                .iter()
+                .flat_map(|value| split_fields(value))
+                .collect(),
+        );
+    }
     let digit_end = expression
         .find(|ch: char| !ch.is_ascii_digit())
         .unwrap_or(expression.len());
@@ -204,6 +215,15 @@ fn resolve_parameter_expression_fields(
         arguments.get(position - 1).map(String::as_str)
     };
     let suffix = &expression[digit_end..];
+    if let Some(slice) = suffix
+        .strip_prefix(':')
+        .filter(|slice| slice.starts_with(|ch: char| ch.is_ascii_digit()))
+    {
+        return Some(split_fields(&positional_substring(
+            argument.unwrap_or_default(),
+            slice,
+        )?));
+    }
     if let Some(fallback) = suffix.strip_prefix(":-") {
         return if argument.is_none_or(str::is_empty) {
             expand_default_fields(fallback, zero_argument, arguments, depth + 1)
@@ -533,6 +553,16 @@ fn positional_replacement(
     }
 
     let (consumed, expression) = parameter_expression(rest)?;
+    if let Some(arguments) = positional_collection_slice(expression, zero_argument, arguments) {
+        let replacement = if double_quoted {
+            expand_at_in_double_quotes(&arguments)
+        } else if !split_unquoted {
+            quote_argument(&arguments.join(" "))
+        } else {
+            split_arguments(&arguments)
+        };
+        return Some((consumed, replacement));
+    }
     let value = resolve_parameter_expression(expression, zero_argument, arguments, depth)?;
     let replacement = if double_quoted {
         escape_double_quoted(&value)
@@ -587,6 +617,9 @@ fn resolve_parameter_expression(
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
     }
+    if let Some(arguments) = positional_collection_slice(expression, zero_argument, arguments) {
+        return Some(arguments.join(" "));
+    }
     let digit_end = expression
         .find(|ch: char| !ch.is_ascii_digit())
         .unwrap_or(expression.len());
@@ -601,6 +634,12 @@ fn resolve_parameter_expression(
         arguments.get(position - 1).map(String::as_str)
     };
     let suffix = &expression[digit_end..];
+    if let Some(slice) = suffix
+        .strip_prefix(':')
+        .filter(|slice| slice.starts_with(|ch: char| ch.is_ascii_digit()))
+    {
+        return positional_substring(argument.unwrap_or_default(), slice);
+    }
     let selected = if let Some(fallback) = suffix.strip_prefix(":-") {
         if argument.is_none_or(str::is_empty) {
             return expand_default_value(fallback, zero_argument, arguments, depth + 1);

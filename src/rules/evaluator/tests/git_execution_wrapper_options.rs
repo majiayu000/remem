@@ -277,3 +277,124 @@ fn force_push_rule_resolves_alias_before_set_state() {
     assert!(outcome.matches.is_empty(), "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
 }
+
+#[test]
+fn force_push_rule_expands_positional_argument_slices() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c '${@:1}' _ git push --force"#,
+            EvaluationVerdict::Block,
+        ),
+        (r#"bash -c '${@:2}' _ safe true"#, EvaluationVerdict::Allow),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_updates_positionals_after_shift() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'shift; git push "$1"' _ safe --force"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c 'shift; git push "$1"' _ --force safe"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_expands_positional_substrings() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c '${1:0}' _ 'git push --force'"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c '${1:4}' _ 'safegit push --force'"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c '${1:4:4}' _ 'safe true'"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_resolves_trap_function_before_builtin_state() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'trap(){ :;}; $1 '\''git push --force'\'' EXIT; exit' _ trap"#,
+            EvaluationVerdict::Allow,
+        ),
+        (
+            r#"bash -c 'trap '\''git push --force'\'' EXIT; exit'"#,
+            EvaluationVerdict::Block,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_updates_positionals_after_set_dash() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'set - --force; git push "$1"' _ origin"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c 'set - origin; git push "$1"' _ --force"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
