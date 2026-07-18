@@ -196,7 +196,12 @@ def is_sensitive_loader_module(module):
     return (
         module == "importlib"
         or module.startswith("importlib.")
-        or module in {"_frozen_importlib", "_frozen_importlib_external"}
+        or module in {
+            "_frozen_importlib",
+            "_frozen_importlib_external",
+            "pkgutil",
+            "runpy",
+        }
     )
 
 
@@ -211,7 +216,7 @@ for relative_path in sorted(classified_checks_python):
     import_module_aliases = set()
     builtins_aliases = {"builtins"}
     builtin_import_aliases = set()
-    dynamic_code_names = {"exec", "eval"}
+    dynamic_code_names = {"compile", "exec", "eval"}
     dynamic_namespace_names = {"globals", "locals", "vars"}
     loader_sys_names = {"modules", "meta_path", "path_hooks", "path_importer_cache"}
     sys_aliases = {"sys"}
@@ -298,6 +303,29 @@ for relative_path in sorted(classified_checks_python):
                         sys_path_aliases.add(alias.asname or alias.name)
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
+            function = node.value.func
+            if (
+                isinstance(function, ast.Name)
+                and function.id in dynamic_namespace_names
+                and isinstance(node.slice, ast.Constant)
+                and isinstance(node.slice.value, str)
+            ):
+                key = node.slice.value
+                if key == "__builtins__":
+                    print(
+                        f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                        f"{function.id}()['__builtins__'] exposes dynamic-code namespaces",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                if key in {"sys", "__loader__", "__spec__"} or is_sensitive_loader_module(key):
+                    print(
+                        f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                        f"{function.id}()[{key!r}] exposes loader namespaces",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
         if isinstance(node, ast.Name) and node.id in {"__loader__", "__spec__"}:
             print(
                 f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
@@ -330,19 +358,31 @@ for relative_path in sorted(classified_checks_python):
             raise SystemExit(1)
         if (
             isinstance(node, ast.Attribute)
-            and node.attr in loader_sys_names
-            and isinstance(node.value, ast.Name)
-            and node.value.id in sys_aliases
+            and (
+                node.attr in {"__loader__", "__spec__", "sys"}
+                or (
+                    node.attr in loader_sys_names
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id in sys_aliases
+                )
+            )
         ):
             print(
                 f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
-                f"{node.value.id}.{node.attr} exposes loaded loader namespaces",
+                f"attribute {node.attr} exposes loaded loader namespaces",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        if isinstance(node, ast.Attribute) and node.attr == "__builtins__":
+            print(
+                f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                "attribute __builtins__ exposes dynamic-code namespaces",
                 file=sys.stderr,
             )
             raise SystemExit(1)
         if (
             isinstance(node, ast.Attribute)
-            and node.attr in {"exec", "eval"}
+            and node.attr in dynamic_code_names
             and isinstance(node.value, ast.Name)
             and node.value.id in builtins_aliases
         ):
@@ -361,7 +401,7 @@ for relative_path in sorted(classified_checks_python):
             and isinstance(node.args[0], ast.Name)
             and node.args[0].id in builtins_aliases
             and isinstance(node.args[1], ast.Constant)
-            and node.args[1].value in {"exec", "eval"}
+            and node.args[1].value in dynamic_code_names
         ):
             print(
                 f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "

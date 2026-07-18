@@ -55,14 +55,17 @@ before the verifier reports any problem.
    star imports, literal dynamic imports of sensitive importlib namespaces,
    loaded-module namespace access through `sys.modules`, module loader metadata
    such as `__loader__`/`__spec__`, frozen importlib implementation modules,
-   and dynamic namespace lookup, including paths that expose `importlib.util`
-   and `importlib.machinery`.
+   standard-library loader facades such as `runpy`/`pkgutil`, equivalent
+   module attributes, and dynamic namespace lookup, including paths that
+   expose `importlib.util` and `importlib.machinery`.
 3. `B-003`: A classified SpecRail Python file that directly calls or imports,
-   aliases, or otherwise references the built-in `exec` or `eval` callable,
+   aliases, or otherwise references the built-in `exec`, `eval`, or `compile`
+   callable,
    dynamically imports the `builtins` namespace, or reaches the same callables
-   through `__builtins__`, an imported builtins dictionary, or dynamic
-   `globals`/`locals`/`vars` namespace lookup must fail sync verification before
-   any classified check module executes.
+   through `__builtins__`, a module-provided `__builtins__` attribute, an
+   imported builtins dictionary, or dynamic `globals`/`locals`/`vars`
+   namespace lookup must fail sync verification before any classified check
+   module executes.
 4. `B-004`: Rejections must use a stable diagnostic category, include the
    classified source path, and identify whether the rejected surface is an
    importlib loader surface or a dynamic code-execution surface.
@@ -72,9 +75,9 @@ before the verifier reports any problem.
    `importlib.import_module`/`__import__` calls continue to follow their current
    classification behavior for ordinary module targets. Sensitive targets
    `importlib`, `importlib.*`, `_frozen_importlib`,
-   `_frozen_importlib_external`, `builtins`, and `sys` fail closed because
-   they expose loader or dynamic-code namespaces outside the ordinary import
-   graph.
+   `_frozen_importlib_external`, `runpy`, `pkgutil`, `builtins`, and `sys` fail
+   closed because they expose loader or dynamic-code namespaces outside the
+   ordinary import graph.
 7. `B-007`: Existing failures for unclassified local imports, non-literal
    dynamic imports, `sys.path` mutation, path escape, symlinks, sourceless local
    modules, and tracking/lock drift retain their fail-closed behavior.

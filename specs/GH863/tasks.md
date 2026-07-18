@@ -26,8 +26,9 @@ GH-863
 - Covers: `B-001`, `B-002`, `B-003`, `B-004`, `B-005`
 - Done when:
   - Isolated temporary-pack fixtures cover importlib loader construction and
-    direct/aliased `exec`/`eval`, including module-loader metadata, frozen
-    importlib modules, and indirect dynamic-namespace access.
+    direct/aliased `exec`/`eval`/`compile`, including module-loader metadata,
+    frozen importlib modules, `runpy`/`pkgutil`, module attributes, and
+    indirect dynamic-namespace access.
   - Fixtures assert stable diagnostics and prove the helper sentinel never
     executes.
   - At least one GH-863 fixture fails against the pre-fix verifier.
