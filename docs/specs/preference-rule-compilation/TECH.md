@@ -137,7 +137,8 @@ Artifact v2 additionally supports:
   static non-negative positional slices and substrings retain Bash field and
   string semantics; definite `set --`, argument-bearing `set -`, and `shift`
   update the active mapping, while possibly executed changes retain prior and
-  updated mappings for conservative matching. Positional changes in subshells,
+  updated mappings for conservative matching in both whole and concatenated
+  words. Positional changes in subshells,
   command substitutions, and
   non-final pipeline processes restore the parent mapping, and aliases resolve
   before builtin positional state. Explicit sourced-file arguments receive
@@ -154,9 +155,9 @@ Artifact v2 additionally supports:
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
   Function definitions follow Bash subshell, pipeline, shadowing, and static
-  `unset -f` state; known functions resolve before builtin-like state mutation,
-  including functions named `unset` or `trap`, while explicit builtin forms
-  retain builtin semantics;
+  `unset -f` state; known functions resolve before builtin-like state mutation
+  or wrapper rewriting, including functions named `unset`, `trap`, `env`, or
+  `alias`, while explicit builtin forms retain builtin semantics;
   explicitly exported functions alone enter child Bash,
   while other child shells start empty. Shell `-n`/`noexec` payloads remain
   inert. Shell `-s` and nested static shells inherit the effective final fd-0

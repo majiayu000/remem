@@ -147,25 +147,6 @@ pub(super) fn bare_shell_positional_fields(
     Ok(Some(fields))
 }
 
-pub(super) fn bare_shell_positional_variant_fields(
-    source: &str,
-    options: &ParserOptions,
-    zero_argument: Option<&str>,
-    arguments: &[String],
-    possible_arguments: &[Vec<String>],
-) -> Result<Option<Vec<String>>, String> {
-    let mut combined = Vec::new();
-    for arguments in std::iter::once(arguments).chain(possible_arguments.iter().map(Vec::as_slice))
-    {
-        let Some(fields) = bare_shell_positional_fields(source, options, zero_argument, arguments)?
-        else {
-            return Ok(None);
-        };
-        combined.extend(fields);
-    }
-    Ok(Some(combined))
-}
-
 fn positional_source_fields(
     source: &str,
     zero_argument: Option<&str>,

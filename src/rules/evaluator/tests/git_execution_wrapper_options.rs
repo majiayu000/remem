@@ -398,3 +398,75 @@ fn force_push_rule_updates_positionals_after_set_dash() {
         assert!(outcome.diagnostics.is_empty(), "{command}");
     }
 }
+
+#[test]
+fn force_push_rule_keeps_possible_positionals_in_concatenated_words() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'unknown && set -- force; git push --$1' _ origin"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c 'unknown && set -- safe; git push --$1' _ origin"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_resolves_env_function_before_split_string() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'env(){ :;}; $1 -S "git push --force"' _ env"#,
+            EvaluationVerdict::Allow,
+        ),
+        (
+            r#"bash -c '$1 -S "git push --force"' _ env"#,
+            EvaluationVerdict::Block,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_resolves_alias_function_before_builtin_state() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c $'shopt -s expand_aliases\nalias(){ :;}\n$1 git=echo\ngit push --force' _ alias"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c $'shopt -s expand_aliases\n$1 git=echo\ngit push --force' _ alias"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}

@@ -12,6 +12,7 @@ use brush_parser::{Parser, ParserOptions};
 mod control_flow;
 mod function_args;
 mod positional_slice;
+mod positional_variants;
 mod shell_state;
 mod static_execution;
 mod static_words;
@@ -19,9 +20,10 @@ mod stdin_payload;
 pub(super) mod unwrap;
 
 use function_args::{
-    bare_shell_positional_variant_fields, expand_function_body, expand_shell_arithmetic,
-    expand_shell_command, has_shell_positional_reference,
+    expand_function_body, expand_shell_arithmetic, expand_shell_command,
+    has_shell_positional_reference,
 };
+use positional_variants::shell_positional_variant_fields;
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
@@ -697,7 +699,7 @@ impl CommandCollector {
 
     fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
         if let Some(context) = &self.positional_context {
-            if let Some(fields) = bare_shell_positional_variant_fields(
+            if let Some(fields) = shell_positional_variant_fields(
                 &word.value,
                 &self.options,
                 context.zero_argument.as_deref(),

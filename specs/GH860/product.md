@@ -61,8 +61,9 @@ gaps can either miss a forbidden command or report a false block.
    or string semantics. A definite `set --` or argument-bearing `set -` shall
    replace the active positional mapping; a definite static `shift` shall
    advance it, while possibly executed changes shall retain every possible
-   mapping for conservative matching. Quoted `"$@"` shall preserve one field
-   per operand. Positional changes inside a
+   mapping for conservative matching, including when a possible positional is
+   concatenated with literal command text. Quoted `"$@"` shall preserve one
+   field per operand. Positional changes inside a
    subshell, command substitution, or non-final pipeline process shall not
    leak into its parent, and an alias named `set` shall resolve before builtin
    positional state is applied. Expandable outer heredocs shall finish
@@ -83,8 +84,9 @@ gaps can either miss a forbidden command or report a false block.
    <name>`, shall retain builtin unset semantics even when a function named
    `unset` exists, including valid mixed `builtin command` wrapper sequences.
    The same function-before-builtin ordering applies to static EXIT-trap state:
-   a function named `trap` shall run as a function, while builtin `trap`
-   remains analyzable.
+   functions named `trap`, `env`, or `alias` shall run as functions before
+   builtin-like trap capture, `env -S` splitting, or alias-state mutation,
+   while the corresponding non-shadowed commands remain analyzable.
 7. B-007 Each new recognition path shall be bounded and deterministic and shall
    preserve the existing conservative behavior for dynamic or unsupported
    shell constructs.
@@ -108,6 +110,9 @@ gaps can either miss a forbidden command or report a false block.
       alternatives, child-scope restoration, and alias-before-builtin ordering.
 - [x] Red-first fixtures cover positional slices and substrings, definite
       `shift`, argument-bearing `set -`, and function-shadowed `trap` ordering.
+- [x] Focused fixtures cover uncertain concatenated positionals and prove that
+      positional `env`/`alias` command names still honor function lookup before
+      wrapper splitting or builtin-like state mutation.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.
