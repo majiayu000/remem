@@ -285,6 +285,7 @@ for relative_path in sorted(classified_checks_python):
     builtins_aliases = {"builtins"}
     builtin_import_aliases = set()
     dynamic_code_names = {"exec", "eval"}
+    dynamic_namespace_names = {"globals", "locals", "vars"}
     sys_aliases = {"sys"}
     sys_path_aliases = set()
     for node in ast.walk(tree):
@@ -369,6 +370,43 @@ for relative_path in sorted(classified_checks_python):
                         sys_path_aliases.add(alias.asname or alias.name)
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
+            function = node.value.func
+            if (
+                isinstance(function, ast.Name)
+                and function.id in dynamic_namespace_names
+                and isinstance(node.slice, ast.Constant)
+                and isinstance(node.slice.value, str)
+            ):
+                key = node.slice.value
+                if key in {
+                    "sys",
+                    "importlib",
+                    "__loader__",
+                    "__spec__",
+                    "_frozen_importlib",
+                    "_frozen_importlib_external",
+                } or key.startswith("importlib."):
+                    print(
+                        f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                        f"{function.id}()[{key!r}] exposes loader namespaces",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+                if key == "__builtins__":
+                    print(
+                        f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
+                        f"{function.id}()['__builtins__'] exposes exec/eval namespaces",
+                        file=sys.stderr,
+                    )
+                    raise SystemExit(1)
+        if isinstance(node, ast.Name) and node.id in {"__loader__", "__spec__"}:
+            print(
+                f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
+                f"{node.id} exposes the active module loader",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
         if isinstance(node, ast.Name) and node.id == "__builtins__":
             print(
                 f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
@@ -377,24 +415,11 @@ for relative_path in sorted(classified_checks_python):
                 file=sys.stderr,
             )
             raise SystemExit(1)
-        if (
-            isinstance(node, ast.Name)
-            and node.id in {"globals", "locals"}
-        ):
+        if isinstance(node, ast.Name) and node.id in dynamic_namespace_names:
             print(
                 f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
                 f"{node.id} namespace access cannot be classified through "
                 "the import graph",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        if (
-            isinstance(node, ast.Name)
-            and node.id in {"__loader__", "__spec__"}
-        ):
-            print(
-                f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
-                f"{node.id} exposes the module loader namespace",
                 file=sys.stderr,
             )
             raise SystemExit(1)
@@ -407,13 +432,13 @@ for relative_path in sorted(classified_checks_python):
             raise SystemExit(1)
         if (
             isinstance(node, ast.Attribute)
-            and node.attr == "modules"
+            and node.attr in {"modules", "meta_path", "path_hooks", "path_importer_cache"}
             and isinstance(node.value, ast.Name)
             and node.value.id in sys_aliases
         ):
             print(
                 f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
-                f"{node.value.id}.modules exposes loaded loader namespaces",
+                f"{node.value.id}.{node.attr} exposes loaded loader namespaces",
                 file=sys.stderr,
             )
             raise SystemExit(1)
