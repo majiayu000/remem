@@ -55,5 +55,8 @@ GH-871
 - Reconciliation output may contain aggregate integers and fixed policy/window
   metadata only. Paths, project names, message text, full IDs, and hashes are
   prohibited.
-- `auth_mode: auto` supplies standing merge authorization only after fresh CI,
-  reviewer, review-thread, merge-state, runtime-ledger, and PR-gate evidence.
+- A committed task packet never supplies merge authorization. For this run,
+  the runtime checkpoint must cite the user's current `implx auto` invocation
+  as standing authorization; later runs must independently record their own
+  current-conversation authorization. Fresh CI, reviewer, review-thread,
+  merge-state, runtime-ledger, and PR-gate evidence remain mandatory.

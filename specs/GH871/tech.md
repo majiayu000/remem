@@ -40,7 +40,7 @@ Add migration `v071_raw_session_identity.sql` with:
 CREATE TABLE raw_session_identities (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     source_root TEXT NOT NULL,
-    path_fingerprint TEXT NOT NULL,
+    transcript_path TEXT NOT NULL,
     fallback_session_id TEXT NOT NULL,
     canonical_session_id TEXT NOT NULL,
     project TEXT NOT NULL,
@@ -49,9 +49,10 @@ CREATE TABLE raw_session_identities (
     status TEXT NOT NULL
         CHECK(status IN ('active', 'conflict')),
     conflict_reason TEXT,
+    contract_version INTEGER NOT NULL DEFAULT 0,
     first_seen_at_epoch INTEGER NOT NULL,
     last_seen_at_epoch INTEGER NOT NULL,
-    UNIQUE(source_root, path_fingerprint)
+    UNIQUE(source_root, transcript_path, canonical_session_id)
 );
 
 CREATE INDEX idx_raw_session_identities_fallback
@@ -64,32 +65,56 @@ CREATE INDEX idx_raw_session_identities_canonical
     );
 ```
 
-`path_fingerprint` is the versioned SHA-256 identity of the normalized source
-root plus canonical transcript path. The ledger does not need to duplicate the
-plain path already held by the private local ingest cursor, and no CLI output
-returns either value.
+`transcript_path` is sensitive local metadata already present in
+`ingest_cursors`. It remains inside the encrypted database and is never
+serialized by the reconciliation surface. Storing it directly avoids an
+unkeyed path hash that could be dictionary-tested.
+
+v071 also adds these additive raw-message fields:
+
+```sql
+ALTER TABLE raw_messages ADD COLUMN event_time_source TEXT NOT NULL
+    DEFAULT 'legacy_unknown'
+    CHECK(event_time_source IN (
+        'transcript_event', 'ingest_fallback', 'legacy_unknown'
+    ));
+```
+
+New transcript rows use `transcript_event` only when `created_at_epoch` came
+from a parsed record timestamp. Missing timestamps use `ingest_fallback`.
+Existing rows begin as `legacy_unknown`.
 
 Move transcript context probing before the unchanged-cursor return. Every
-discovered file therefore upserts its identity ledger row even when message
-ingest is skipped.
+discovered file therefore upserts its identity ledger claim even when message
+ingest is skipped. A ledger row remains `contract_version = 0` until a complete
+redrain has refreshed identity and event-time provenance; version 0 bypasses an
+otherwise unchanged cursor once. Successful redrain sets version 1, so later
+runs recover normal incremental behavior.
 
 ### 3. Conflict-safe legacy rekey
 
 When transcript metadata produces a canonical ID different from the filename
 stem:
 
-1. Query active identity rows for the same
+1. Query all identity rows, including prior conflicts, for the same
    `(source_root, project, fallback_session_id)`.
-2. If another row maps that fallback to a different canonical ID, mark the
-   involved identity row `conflict`, retain all raw rows unchanged, emit an
-   error-level diagnostic, and increment `identity_conflicts`.
-3. Otherwise run one savepoint:
+2. If any current or historical claim maps that fallback to a different
+   canonical ID, or one transcript path changes its canonical claim, mark every
+   row in the fallback group `conflict`. Once any group row is `conflict`, all
+   future automatic rekeys for that fallback remain blocked. Retain all raw
+   rows unchanged, emit an error-level diagnostic, and increment
+   `identity_conflicts`.
+3. Before mutation, compare every fallback/canonical collision on all
+   non-identity fields: role, exact content, content hash, source, branch, cwd,
+   `created_at_epoch`, and `event_time_source`. Any mismatch marks the group
+   conflict and aborts the whole rekey without mutation.
+4. Otherwise run one savepoint:
    - copy legacy raw rows to the canonical ID with
      `ON CONFLICT(source_root, project, session_id, role, content_hash)
      DO NOTHING`;
    - delete only the old fallback-ID rows after the copies succeed;
    - release the savepoint.
-4. Record inserted/merged/rekeyed counts internally. A repeated pass finds no
+5. Record inserted/merged/rekeyed counts internally. A repeated pass finds no
    fallback rows and is a no-op.
 
 The raw FTS insert/delete triggers maintain index consistency during the
@@ -99,7 +124,18 @@ deterministic filename fallback for the discovered transcript.
 ### 4. Shared versioned transcript classification
 
 Extend `raw_transcript` with a record classifier used by both archive draining
-and reconciliation:
+and reconciliation. Classification precedence is:
+
+1. malformed JSON;
+2. unsupported record/role;
+3. missing event timestamp;
+4. outside the inclusive UTC window;
+5. empty supported text;
+6. meta user;
+7. XML/control user;
+8. conversational user or assistant.
+
+The disjoint output classes are:
 
 - supported `user` or `assistant` text with event timestamp;
 - `meta_user` when the transcript marks the user event as metadata;
@@ -112,6 +148,14 @@ Raw draining preserves current behavior for supported non-empty text, including
 meta/XML user text. Reconciliation reports `meta_user` and
 `xml_control_user` as conversational-count exclusions while still including
 their persisted rows in archive-parity totals.
+
+For raw persistence, `created_at_epoch` is transcript event time when parsed and
+`event_time_source = 'transcript_event'`; otherwise it is ingestion time with
+`event_time_source = 'ingest_fallback'`. Strict fixed-window parity includes
+only transcript events and raw rows with `transcript_event`. Missing transcript
+time, `ingest_fallback`, and `legacy_unknown` raw rows are counted separately
+and make `parity = false` until a successful version-1 redrain supplies event
+time or proves that no source timestamp exists.
 
 ### 5. Session count contract
 
@@ -177,6 +221,12 @@ Stable JSON shape:
     "transcript_only_messages": 0,
     "archive_only_sessions": 0,
     "archive_only_messages": 0,
+    "transcript_excess_messages": 0,
+    "transcript_excess_user_messages": 0,
+    "transcript_excess_assistant_messages": 0,
+    "archive_excess_messages": 0,
+    "archive_excess_user_messages": 0,
+    "archive_excess_assistant_messages": 0,
     "identity_conflicts": 0
   },
   "intentional_exclusions": {
@@ -185,15 +235,22 @@ Stable JSON shape:
     "empty_text": 0,
     "unsupported_record": 0,
     "outside_window": 0,
+    "missing_event_time": 0,
+    "archive_unknown_event_time": 0,
     "malformed_record": 0
   },
   "parity": true
 }
 ```
 
-`parity` is true only when count mismatches, transcript/archive-only counts,
-identity conflicts, and malformed records are all zero. Intentional exclusions
-do not make archive parity false when the corresponding supported text remains
+For each mismatched shared session, positive role/count deltas accumulate into
+the transcript-excess or archive-excess fields; equal-and-opposite session
+deltas therefore cannot disappear behind equal global totals.
+
+`parity` is true only when count mismatches, transcript/archive-only and
+role-split excess counts, identity conflicts, malformed records, missing event
+time, and archive unknown event time are all zero. Meta/XML conversational
+exclusions do not make archive parity false when their supported text remains
 present in raw totals.
 
 Human output renders the same aggregate fields. It must not add examples,
@@ -280,17 +337,20 @@ There are no network or LLM calls. SQLite remains the only persistence layer.
 ## Risks
 
 - Security: transcript paths and content are sensitive. The new public report
-  is aggregate-only; the ledger stores only a path fingerprint and existing
-  identity/project values already present in the local encrypted database.
+  is aggregate-only; the ledger stores the local path only inside the encrypted
+  database alongside identity/project values already present there. Plaintext
+  development databases retain their existing explicit opt-in warning and are
+  outside the report's confidentiality guarantee.
 - Compatibility: session JSON gains additive fields. Rekey changes historical
   session grouping only when a deterministic metadata ID proves the old
   filename fallback.
 - Performance: unchanged files receive a bounded context probe, but no full
   reparse during normal ingestion. Reconciliation is an explicit bounded
   full-window scan and streams files.
-- Data integrity: copy/delete rekey can collide with canonical rows. A
-  savepoint, existing unique key, conflict preflight, FTS triggers, and
-  idempotency tests protect against loss.
+- Data integrity: copy/delete rekey can collide with canonical rows. A sticky
+  all-history conflict check, exact non-identity equality preflight, savepoint,
+  existing unique key, FTS triggers, and idempotency tests protect against
+  loss.
 - Maintenance: ingestion and reconciliation must share discovery, identity,
   timestamp, and classification helpers so the contracts cannot drift.
 

@@ -55,9 +55,10 @@ inclusion-rule difference.
    The filename stem is used only when the supported transcript format has no
    session ID, and that fallback provenance remains auditable.
 3. Each discovered transcript has one durable local mapping containing its
-   source root, canonical session ID, project identity, identity source, and a
-   privacy-safe path fingerprint. The public reconciliation report never
-   exposes the underlying path or identifiers.
+   source root, local transcript path, canonical session ID, project identity,
+   identity source, and reconciliation contract version. The path remains
+   inside the encrypted local database; the public reconciliation report never
+   exposes the path or identifiers.
 4. Batch ingestion refreshes the durable mapping even when the transcript's
    mtime and size cursor is unchanged. A file first ingested under a filename
    fallback can therefore converge after canonical metadata support is added.
@@ -67,23 +68,30 @@ inclusion-rule difference.
    identity, not duplicated or dropped. Repeating the reconciliation is
    idempotent.
 6. Ambiguous, conflicting, missing, or unsafe legacy mappings are never
-   guessed. Their raw rows remain unchanged, the ingestion run returns an
-   error-level diagnostic, and the reconciliation report counts the conflict.
+   guessed. A conflict is sticky for the whole fallback-identity group,
+   including a transcript path later claiming a different canonical ID, until
+   an explicit future repair resolves it. Raw rows remain unchanged, the
+   ingestion run returns an error-level diagnostic, and the reconciliation
+   report counts the conflict.
 7. The session query contract reports `message_count`, `user_message_count`,
    and `assistant_message_count` for each session. Existing fields and grouping
    by `(source_root, project, session_id)` remain compatible.
-8. Reconciliation applies one versioned transcript inclusion policy. Archive
-   eligibility and intentional exclusions are counted separately for:
+8. Reconciliation applies one versioned transcript inclusion and event-time
+   policy. Archive eligibility and intentional exclusions are counted
+   separately for:
    conversational user messages, assistant messages, meta user messages,
    XML/control user messages, empty text, unsupported records, records outside
-   the fixed UTC window, and malformed records.
+   the fixed UTC window, missing or legacy-unknown event time, and malformed
+   records. Every transcript record receives exactly one category under a
+   documented precedence order.
 9. Raw capture remains lossless for supported non-empty text. A record excluded
    from the reconciliation's conversational-user count is not deleted from the
    archive.
 10. `remem raw reconcile --since <epoch> --until <epoch> --json` uses inclusive
-    UTC bounds and produces aggregate counts for exact matches, transcript-only
-    sessions/messages, archive-only sessions/messages, identity conflicts, and
-    every intentional exclusion category.
+    UTC event-time bounds and produces aggregate counts for exact matches,
+    transcript-only sessions/messages, archive-only sessions/messages,
+    transcript-excess and archive-excess message deltas split by role, identity
+    conflicts, and every intentional exclusion category.
 11. Reconciliation output is deterministic for an unchanged database and
     transcript set. It emits no message text, samples, transcript paths, project
     names, full session IDs, or content hashes.
@@ -116,7 +124,8 @@ inclusion-rule difference.
   complete JSONL records observed within the captured file boundary count.
 - A Stop hook has already inserted canonical rows and an older batch pass
   inserted the same messages under a filename fallback. Backfill converges to
-  one canonical session without losing unique messages.
+  one canonical session only when colliding rows have identical non-identity
+  metadata. A mismatch keeps both groups and records a sticky conflict.
 - Two transcript paths claim the same fallback identity but different
   canonical IDs. Automatic rekey is refused and the conflict is counted.
 - A historical raw row has no discoverable transcript. It remains archive-only
