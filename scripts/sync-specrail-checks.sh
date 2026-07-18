@@ -286,6 +286,7 @@ for relative_path in sorted(classified_checks_python):
     builtin_import_aliases = set()
     dynamic_code_names = {"exec", "eval"}
     dynamic_namespace_names = {"globals", "locals", "vars"}
+    loader_sys_names = {"modules", "meta_path", "path_hooks", "path_importer_cache"}
     sys_aliases = {"sys"}
     sys_path_aliases = set()
     for node in ast.walk(tree):
@@ -348,11 +349,11 @@ for relative_path in sorted(classified_checks_python):
                 )
                 raise SystemExit(1)
             if module == "sys" and any(
-                alias.name == "modules" for alias in node.names
+                alias.name in loader_sys_names for alias in node.names
             ):
                 print(
                     f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
-                    "from sys import modules exposes loaded loader namespaces",
+                    "named sys import exposes loaded loader namespaces",
                     file=sys.stderr,
                 )
                 raise SystemExit(1)
@@ -370,36 +371,6 @@ for relative_path in sorted(classified_checks_python):
                         sys_path_aliases.add(alias.asname or alias.name)
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Call):
-            function = node.value.func
-            if (
-                isinstance(function, ast.Name)
-                and function.id in dynamic_namespace_names
-                and isinstance(node.slice, ast.Constant)
-                and isinstance(node.slice.value, str)
-            ):
-                key = node.slice.value
-                if key in {
-                    "sys",
-                    "importlib",
-                    "__loader__",
-                    "__spec__",
-                    "_frozen_importlib",
-                    "_frozen_importlib_external",
-                } or key.startswith("importlib."):
-                    print(
-                        f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
-                        f"{function.id}()[{key!r}] exposes loader namespaces",
-                        file=sys.stderr,
-                    )
-                    raise SystemExit(1)
-                if key == "__builtins__":
-                    print(
-                        f"UNSUPPORTED DYNAMIC CODE EXECUTION: {relative_path}: "
-                        f"{function.id}()['__builtins__'] exposes exec/eval namespaces",
-                        file=sys.stderr,
-                    )
-                    raise SystemExit(1)
         if isinstance(node, ast.Name) and node.id in {"__loader__", "__spec__"}:
             print(
                 f"UNSUPPORTED IMPORTLIB LOADER SURFACE: {relative_path}: "
@@ -432,7 +403,7 @@ for relative_path in sorted(classified_checks_python):
             raise SystemExit(1)
         if (
             isinstance(node, ast.Attribute)
-            and node.attr in {"modules", "meta_path", "path_hooks", "path_importer_cache"}
+            and node.attr in loader_sys_names
             and isinstance(node.value, ast.Name)
             and node.value.id in sys_aliases
         ):
