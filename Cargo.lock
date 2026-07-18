@@ -2049,6 +2049,7 @@ version = "0.6.4"
 dependencies = [
  "anyhow",
  "axum",
+ "base64 0.22.1",
  "brush-parser",
  "chrono",
  "clap",
