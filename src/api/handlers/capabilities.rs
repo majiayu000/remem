@@ -21,6 +21,9 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
         ("user_recall", "/api/v1/user/recall"),
     ]);
     endpoints.extend(candidate_console_endpoint_bundle(false));
+    endpoints.extend(memory_governance_endpoint_bundle(
+        MemoryGovernanceFeatureSet::default(),
+    ));
     endpoints.extend(read_resource_endpoint_bundle(
         ReadResourceFeatureSet::default(),
     ));
@@ -37,6 +40,9 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
             memory_list: true,
             memory_detail: true,
             save_memory: true,
+            memory_archive: false,
+            memory_restore: false,
+            memory_delete: false,
             candidate_rows: true,
             candidate_filters: true,
             candidate_review: true,
@@ -54,6 +60,25 @@ pub(in crate::api) async fn handle_capabilities() -> impl IntoResponse {
         },
         endpoints,
     })
+}
+
+#[derive(Clone, Copy, Default)]
+struct MemoryGovernanceFeatureSet {
+    archive: bool,
+    restore: bool,
+}
+
+fn memory_governance_endpoint_bundle(
+    features: MemoryGovernanceFeatureSet,
+) -> BTreeMap<&'static str, &'static str> {
+    let mut endpoints = BTreeMap::new();
+    if features.archive {
+        endpoints.insert("memory_archive", "/api/v1/memories/{id}/archive");
+    }
+    if features.restore {
+        endpoints.insert("memory_restore", "/api/v1/memories/{id}/restore");
+    }
+    endpoints
 }
 
 #[derive(Clone, Copy, Default)]
@@ -172,6 +197,39 @@ mod tests {
                 ),
             ])
         );
+    }
+
+    #[test]
+    fn staged_memory_governance_endpoints_are_independent_and_delete_is_absent() {
+        assert!(
+            memory_governance_endpoint_bundle(MemoryGovernanceFeatureSet::default()).is_empty()
+        );
+        assert_eq!(
+            memory_governance_endpoint_bundle(MemoryGovernanceFeatureSet {
+                archive: true,
+                restore: false,
+            }),
+            BTreeMap::from([("memory_archive", "/api/v1/memories/{id}/archive")])
+        );
+        assert_eq!(
+            memory_governance_endpoint_bundle(MemoryGovernanceFeatureSet {
+                archive: false,
+                restore: true,
+            }),
+            BTreeMap::from([("memory_restore", "/api/v1/memories/{id}/restore")])
+        );
+        let all = memory_governance_endpoint_bundle(MemoryGovernanceFeatureSet {
+            archive: true,
+            restore: true,
+        });
+        assert_eq!(
+            all,
+            BTreeMap::from([
+                ("memory_archive", "/api/v1/memories/{id}/archive"),
+                ("memory_restore", "/api/v1/memories/{id}/restore"),
+            ])
+        );
+        assert!(!all.contains_key("memory_delete"));
     }
 
     #[test]

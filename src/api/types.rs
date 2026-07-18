@@ -75,6 +75,8 @@ pub(super) struct MultiHopInfo {
 #[derive(Serialize)]
 pub(super) struct MemoryItem {
     pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
     pub title: String,
     pub content: String,
     pub memory_type: String,
@@ -128,6 +130,9 @@ pub(super) struct CapabilitiesFeatures {
     pub memory_list: bool,
     pub memory_detail: bool,
     pub save_memory: bool,
+    pub memory_archive: bool,
+    pub memory_restore: bool,
+    pub memory_delete: bool,
     pub candidate_rows: bool,
     pub candidate_filters: bool,
     pub candidate_review: bool,
@@ -485,6 +490,28 @@ pub(super) struct CandidateSafeReviewResponse {
     pub candidate_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_id: Option<i64>,
+    pub action: String,
+    pub before_status: String,
+    pub after_status: String,
+    pub version: i64,
+    pub occurred_at_epoch: i64,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MemorySafeGovernanceRequest {
+    pub reason: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct MemorySafeGovernanceResponse {
+    pub response_schema_version: i64,
+    pub operation_id: String,
+    pub audit_id: i64,
+    pub memory_id: i64,
     pub action: String,
     pub before_status: String,
     pub after_status: String,

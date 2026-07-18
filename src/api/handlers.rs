@@ -8,6 +8,7 @@ mod events;
 mod graph;
 mod health;
 mod list;
+mod memory_governance;
 mod observations;
 mod save;
 mod search;
@@ -35,6 +36,9 @@ pub(super) use events::{handle_event_detail, handle_list_events};
 pub(super) use graph::handle_graph;
 pub(super) use health::handle_health;
 pub(super) use list::handle_list_memories;
+#[cfg(test)]
+pub(super) use memory_governance::execute_memory_governance_for_test;
+pub(super) use memory_governance::{handle_archive_memory, handle_restore_memory};
 pub(super) use observations::{handle_list_observations, handle_observation_detail};
 pub(super) use save::handle_save_memory;
 pub(super) use search::handle_search;

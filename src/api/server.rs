@@ -6,14 +6,15 @@ use axum::{
 
 use super::auth::{ensure_api_token, require_api_token};
 use super::handlers::{
-    handle_approve_candidate, handle_blocked_candidates, handle_candidate_detail,
-    handle_capabilities, handle_edit_candidate, handle_event_detail, handle_get_memory,
-    handle_graph, handle_health, handle_list_candidates, handle_list_events, handle_list_memories,
-    handle_list_observations, handle_list_sessions, handle_list_tasks, handle_list_workstreams,
-    handle_memory_detail, handle_observation_detail, handle_reject_candidate,
-    handle_safe_approve_candidate, handle_safe_edit_candidate, handle_safe_reject_candidate,
-    handle_save_memory, handle_search, handle_session_detail, handle_stats, handle_status,
-    handle_task_detail, handle_user_recall, handle_workstream_detail,
+    handle_approve_candidate, handle_archive_memory, handle_blocked_candidates,
+    handle_candidate_detail, handle_capabilities, handle_edit_candidate, handle_event_detail,
+    handle_get_memory, handle_graph, handle_health, handle_list_candidates, handle_list_events,
+    handle_list_memories, handle_list_observations, handle_list_sessions, handle_list_tasks,
+    handle_list_workstreams, handle_memory_detail, handle_observation_detail,
+    handle_reject_candidate, handle_restore_memory, handle_safe_approve_candidate,
+    handle_safe_edit_candidate, handle_safe_reject_candidate, handle_save_memory, handle_search,
+    handle_session_detail, handle_stats, handle_status, handle_task_detail, handle_user_recall,
+    handle_workstream_detail,
 };
 use super::types::{DbState, StatusCache};
 
@@ -31,6 +32,8 @@ pub fn build_router(_port: u16) -> Router<DbState> {
         .route("/api/v1/status", get(handle_status))
         .route("/api/v1/memories/list", get(handle_list_memories))
         .route("/api/v1/memories/{id}", get(handle_memory_detail))
+        .route("/api/v1/memories/{id}/archive", post(handle_archive_memory))
+        .route("/api/v1/memories/{id}/restore", post(handle_restore_memory))
         .route("/api/v1/candidates", get(handle_list_candidates))
         .route("/api/v1/candidates/blocked", get(handle_blocked_candidates))
         .route("/api/v1/candidates/{id}", get(handle_candidate_detail))
