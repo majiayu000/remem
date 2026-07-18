@@ -128,7 +128,8 @@ Artifact v2 additionally supports:
   exact `.exe` suffix used by Git-for-Windows shells and both POSIX and Windows
   command-string path separators; static shell `-c` operands bind `$0` and
   later positional parameters in executed words without leaking the outer
-  `$1...` mapping into function bodies; force and mirror
+  `$1...` mapping into function bodies, while remaining active for EXIT traps
+  and expandable heredoc stdin passed to nested shells; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.

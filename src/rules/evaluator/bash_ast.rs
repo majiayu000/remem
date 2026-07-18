@@ -394,7 +394,10 @@ impl CommandCollector {
                             zero_argument: shell_command.zero_argument,
                             arguments: shell_command.arguments,
                         }),
-                        |collector| collector.collect_source(&shell_command.payload),
+                        |collector| {
+                            collector.collect_source(&shell_command.payload)?;
+                            collector.collect_exit_traps()
+                        },
                     )
                 })
             })?;
@@ -691,7 +694,7 @@ impl CommandCollector {
             .collect()
     }
 
-    fn expand_positional_source(&self, source: &str) -> String {
+    pub(super) fn expand_positional_source(&self, source: &str) -> String {
         self.positional_context.as_ref().map_or_else(
             || source.to_string(),
             |context| {

@@ -14,7 +14,7 @@ GH-860
 | --- | --- | --- | --- |
 | Static command collection | `src/rules/evaluator/bash_ast.rs:332` | `collect_static_tokens` mutates static `unset -f` state before attempting a function call, then recursively parses static shell `-c` payloads | The mutation order causes a user-defined `unset` function to be treated as the builtin |
 | Shell recognition and `-c` parsing | `src/rules/evaluator/bash_ast/static_execution.rs:445` | `static_shell_command_payload` returns only the literal command string; `shell_name` accepts five suffix-free basenames | `.exe` recognition and the shell argument boundary belong in this normalization layer |
-| Positional expansion | `src/rules/evaluator/bash_ast.rs`, `src/rules/evaluator/bash_ast/shell_state.rs`, `src/rules/evaluator/bash_ast/function_args.rs` | Function-body expansion already handles quoted/unquoted positional parameters with bounded default expansion, but assumes function arguments where `$1` starts at the first operand and `$0` is unavailable | Shell `-c` needs an explicit Bash `$0`/`$1...` context that yields to function-call arguments inside function bodies |
+| Positional expansion | `src/rules/evaluator/bash_ast.rs`, `src/rules/evaluator/bash_ast/shell_state.rs`, `src/rules/evaluator/bash_ast/function_args.rs`, `src/rules/evaluator/bash_ast/stdin_payload.rs` | Function-body expansion already handles quoted/unquoted positional parameters with bounded default expansion, but assumes function arguments where `$1` starts at the first operand and `$0` is unavailable | Shell `-c` needs an explicit Bash `$0`/`$1...` context that yields to function-call arguments inside function bodies and remains active for deferred traps and expandable heredocs |
 | Structural regression fixtures | `src/rules/evaluator/tests/git_execution.rs:398` | Paired block/allow tables cover static shell state, indirect execution, function arguments, and false-block precision | The three GH-860 behaviors fit the existing table-driven evidence style |
 | Authoritative rule contract | `docs/specs/preference-rule-compilation/TECH.md:114` | Artifact-v2 documents shell payloads, function state, positional function arguments, and bounded evaluation | The shipped contract must name the additional `.exe`, shell-`-c`, and shadowed-builtin semantics |
 | Release/version gates | `scripts/ci/check_version_bump.py`, `scripts/ci/check_plugin_version_sync.py` | Any `src/` change requires a package version above the base and synchronized release surfaces | This PR must stage one synchronized patch version |
@@ -50,9 +50,11 @@ Parse the literal command string through the existing child-shell scope while
 carrying the mapping as collector context. Expand each executed word in that
 context, but store function definitions without outer positional replacement;
 when a function is invoked, its `$1...` values come from the function call and
-only the shell `$0` context remains visible. Quoting, recursive defaults, and
-materialization bounds remain owned by the existing positional-expansion
-implementation.
+only the shell `$0` context remains visible. Execute EXIT traps before restoring
+the child shell context, and expand unquoted heredoc payloads in the current
+context before a nested shell receives stdin. Quoted heredocs remain literal.
+Quoting, recursive defaults, and materialization bounds remain owned by the
+existing positional-expansion implementation.
 
 ### 3. Resolve functions before builtin-like state mutation
 
@@ -81,12 +83,12 @@ assets; this PR does not publish a release.
 | --- | --- | --- |
 | B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
 | B-002 basename-only precision | platform-independent `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers POSIX- and Windows-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
-| B-003 shell `-c` positional binding | scoped positional collector context plus shell payload extraction | `force_push_rule_binds_shell_command_positional_parameters` covers `$0` and `$1`; `force_push_rule_keeps_function_positional_scope_inside_shell_command` covers paired function-local arguments |
+| B-003 shell `-c` positional binding | scoped positional collector context plus shell payload extraction | `force_push_rule_binds_shell_command_positional_parameters` covers `$0` and `$1`; paired function-local arguments, EXIT traps, and expandable-heredoc handoff have focused tests |
 | B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1`; `force_push_rule_preserves_missing_shell_zero` leaves `${0:-git}` unknown rather than fabricating `git` |
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
 | B-006 explicit builtin `unset` | shared builtin command-position normalization | `force_push_rule_resolves_unset_function_before_builtin_state` covers `builtin unset -f f` → Allow |
 | B-007 bounded deterministic behavior | existing parser/expansion limits and evaluator regression suite | `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
-| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs` | both focused block and allow test tables pass, followed by full `cargo test` |
+| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs` | focused block/allow tables pass; a large brace-expanded argv beginning with a non-shell remains Allow even when a later word is `bash.exe` |
 
 ## Data Flow
 
@@ -168,6 +170,7 @@ metadata, and do not publish or fabricate release assets as part of rollback.
     "src/rules/evaluator/bash_ast/shell_state.rs",
     "src/rules/evaluator/bash_ast/static_execution.rs",
     "src/rules/evaluator/bash_ast/function_args.rs",
+    "src/rules/evaluator/bash_ast/stdin_payload.rs",
     "src/rules/evaluator/tests/git_execution.rs",
     "docs/specs/preference-rule-compilation/TECH.md",
     "Cargo.toml",

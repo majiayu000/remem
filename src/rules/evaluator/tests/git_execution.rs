@@ -368,6 +368,21 @@ fn single_word_brace_expansion_respects_the_materialization_bound() {
     assert_eq!(outcome.matches.len(), 1);
     assert!(outcome.diagnostics.is_empty());
 
+    let shell_alternatives = ["bash.exe".to_string()]
+        .into_iter()
+        .chain((0..=300).map(|value| format!("item{value}.exe")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: format!("{{{shell_alternatives}}} -c 'git push --force'"),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+    assert!(outcome.matches.is_empty());
+    assert!(outcome.diagnostics.is_empty());
+
     let semantic_alternatives = ["-vf".to_string(), "--mi".to_string()]
         .into_iter()
         .chain((0..=300).map(|value| format!("branch{value}")))
@@ -606,6 +621,34 @@ fn force_push_rule_keeps_function_positional_scope_inside_shell_command() {
     assert!(outcome.diagnostics.is_empty(), "{command}");
 
     let command = "bash -c 'f(){ git push \"$1\"; }; f --force' _ origin";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_shell_positionals_for_exit_traps() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c 'trap '\''git push "$1"'\'' EXIT' _ --force"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_expands_shell_positionals_in_heredoc_handoff() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c 'sh <<EOF\ngit push \"$1\"\nEOF' _ --force";
     let outcome = evaluate_artifact(
         &artifact,
         &EvaluationInput {

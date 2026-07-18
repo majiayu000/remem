@@ -47,7 +47,8 @@ gaps can either miss a forbidden command or report a false block.
    used by the command string. A forbidden force-push argument supplied through
    `$1` shall therefore remain detectable, without replacing positional
    parameters inside a function definition before that function is invoked
-   with its own arguments.
+   with its own arguments. The mapping shall remain active for deferred EXIT
+   traps and for expandable heredoc text before it is handed to a nested shell.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.

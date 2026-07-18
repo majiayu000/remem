@@ -37,7 +37,12 @@ impl CommandCollector {
                     IoRedirect::HereDocument(fd, here_doc) => {
                         let target_fd = fd.unwrap_or(0);
                         stdin_replaced |= target_fd == 0;
-                        payloads.insert(target_fd, Some(here_doc.doc.value.clone()));
+                        let payload = if here_doc.requires_expansion {
+                            self.expand_positional_source(&here_doc.doc.value)
+                        } else {
+                            here_doc.doc.value.clone()
+                        };
+                        payloads.insert(target_fd, Some(payload));
                     }
                     IoRedirect::HereString(fd, word) => {
                         let value = self.command_word(word)?;
