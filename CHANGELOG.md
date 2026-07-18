@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.7` for GH-882: memory-candidate extraction now
+  normalizes the model-emitted `fact` alias to `discovery` without weakening
+  the legal observation vocabulary, and both prompt layers explicitly direct
+  factual findings to the canonical type. Release metadata stays `unreleased`
+  until publication.
 - Staged source version `0.6.6` for GH-880: the authenticated native API now
   advertises safe candidate detail/review, five independently gated read
   resources, and recoverable memory archive/restore. Typed cursor, redaction,
