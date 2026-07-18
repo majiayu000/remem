@@ -57,11 +57,13 @@ inclusion-rule difference.
 2. A transcript-provided session ID is the canonical raw archive session ID.
    The filename stem is used only when the supported transcript format has no
    session ID, and that fallback provenance remains auditable.
-3. Each discovered transcript has one durable local mapping containing its
-   source root, local transcript path, canonical session ID, project identity,
-   identity source, and reconciliation contract version. The path remains
-   inside the encrypted local database; the public reconciliation report never
-   exposes the path or identifiers.
+3. Each discovered transcript has one path-stable durable local identity
+   containing its source root, local transcript path, active canonical session
+   ID, project identity, complete fallback/metadata claim history, and
+   reconciliation contract version. Fallback-to-canonical promotion never
+   changes that local transcript identity. The path remains inside the
+   encrypted local database; the public reconciliation report never exposes
+   the path or identifiers.
 4. Batch ingestion refreshes the durable mapping even when the transcript's
    mtime and size cursor is unchanged. A file first ingested under a filename
    fallback can therefore converge after canonical metadata support is added.

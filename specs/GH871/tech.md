@@ -50,8 +50,6 @@ CREATE TABLE raw_session_identities (
     canonical_session_id TEXT NOT NULL,
     project TEXT NOT NULL,
     legacy_project TEXT NOT NULL,
-    identity_source TEXT NOT NULL
-        CHECK(identity_source IN ('transcript_metadata', 'filename_fallback')),
     status TEXT NOT NULL
         CHECK(status IN ('active', 'conflict')),
     conflict_reason TEXT,
@@ -63,7 +61,19 @@ CREATE TABLE raw_session_identities (
     missing_event_time_count INTEGER NOT NULL DEFAULT 0,
     first_seen_at_epoch INTEGER NOT NULL,
     last_seen_at_epoch INTEGER NOT NULL,
-    UNIQUE(source_root, transcript_path, canonical_session_id)
+    UNIQUE(source_root, transcript_path)
+);
+
+CREATE TABLE raw_session_identity_claims (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transcript_identity_id INTEGER NOT NULL
+        REFERENCES raw_session_identities(id) ON DELETE RESTRICT,
+    claimed_session_id TEXT NOT NULL,
+    identity_source TEXT NOT NULL
+        CHECK(identity_source IN ('transcript_metadata', 'filename_fallback')),
+    first_seen_at_epoch INTEGER NOT NULL,
+    last_seen_at_epoch INTEGER NOT NULL,
+    UNIQUE(transcript_identity_id, claimed_session_id, identity_source)
 );
 
 CREATE INDEX idx_raw_session_identities_fallback
@@ -74,6 +84,8 @@ CREATE INDEX idx_raw_session_identities_canonical
     ON raw_session_identities(
         source_root, project, canonical_session_id, status
     );
+CREATE INDEX idx_raw_session_identity_claims_session
+    ON raw_session_identity_claims(claimed_session_id, identity_source);
 ```
 
 `transcript_path` is sensitive local metadata already present in
@@ -81,13 +93,18 @@ CREATE INDEX idx_raw_session_identities_canonical
 serialized by the reconciliation surface. Storing it directly avoids an
 unkeyed path hash that could be dictionary-tested.
 
-`project` is the current canonical `project_from_cwd` value. `legacy_project`
-is the historical transcript-directory slug used by the GH720-era importer.
-The ledger keeps both so v071 can locate legacy raw rows without guessing or
-changing the public canonical grouping. The observed cursor tuple, inclusive
-event range, and missing-event-time count form a privacy-local transcript index
-used to avoid parsing unrelated history without losing timestamp-less records
-during reconciliation.
+One `raw_session_identities.id` belongs permanently to one
+`(source_root, transcript_path)` and never changes when a filename fallback is
+promoted to metadata canonical identity. `canonical_session_id` is the latest
+non-conflicting active value; `raw_session_identity_claims` retains every
+fallback and metadata claim used to derive it. `project` is the current
+canonical `project_from_cwd` value, while `legacy_project` is the historical
+transcript-directory slug used by the GH720-era importer. The ledger keeps both
+so v071 can locate legacy raw rows without guessing or changing the public
+canonical grouping. The observed cursor tuple, inclusive event range, and
+missing-event-time count form a privacy-local transcript index used to avoid
+parsing unrelated history without losing timestamp-less records during
+reconciliation.
 
 v071 rebuilds `raw_messages` once to add event-time provenance and stable
 transcript occurrence identity:
@@ -121,12 +138,14 @@ CREATE UNIQUE INDEX idx_raw_messages_non_transcript_content
 New transcript rows use `transcript_event` only when `created_at_epoch` came
 from a parsed record timestamp. Missing timestamps use `ingest_fallback`.
 The zero-based complete-JSONL record ordinal is captured inside the same
-immutable file boundary used by Stop, batch, and reconcile, and the ledger row
-identifies its transcript path. Replaying one occurrence is idempotent, while
-two identical turns at different ordinals remain two rows. Existing rows begin
-as `legacy_unknown` with null occurrence fields; the version-1 redrain assigns
-the lowest matching ordinal to an existing legacy row and inserts every
-additional repeated occurrence, transactionally restoring lossless cardinality.
+immutable file boundary used by Stop, batch, and reconcile, and the path-stable
+ledger row identifies its transcript. Replaying one occurrence is idempotent,
+while two identical turns at different ordinals remain two rows. Promotion
+updates the ledger's active canonical value and raw project/session keys but
+never changes `transcript_identity_id`. Existing rows begin as `legacy_unknown`
+with null occurrence fields; the version-1 redrain assigns the lowest matching
+ordinal to an existing legacy row and inserts every additional repeated
+occurrence, transactionally restoring lossless cardinality.
 
 Move transcript context probing before the unchanged-cursor return. Every
 discovered file therefore upserts its identity ledger claim even when message
@@ -154,7 +173,8 @@ the next batch pass performs that convergence safely.
 When transcript metadata produces a canonical ID different from the filename
 stem:
 
-1. Query all identity rows, including prior conflicts, for the same
+1. Query all path-stable identity rows and their complete claim history,
+   including prior conflicts, for the same
    `(source_root, fallback_session_id)` and both project aliases. Query fallback
    raw rows under both `legacy_project` and current `project`, and canonical
    rows under `project`; never assume the aliases are equal or that a
@@ -164,12 +184,12 @@ stem:
    `canonical_session_id = fallback_session_id`) as promotable evidence, not a
    competing authoritative ID. If any row is already `conflict`, two metadata
    claims map the fallback to different canonical IDs, or one transcript path
-   changes its metadata-derived canonical claim, mark every row in the fallback
-   group `conflict`. Once any group row is `conflict`, all future automatic
+   changes its metadata-derived canonical claim, mark every path-stable row in
+   the fallback group `conflict`. Once any group row is `conflict`, all future automatic
    rekeys for that fallback remain blocked. Retain all raw rows unchanged, emit
    an error-level diagnostic, and increment `identity_conflicts`.
 3. Before mutation, compare every fallback/canonical collision on stable
-   occurrence identity and provenance: transcript ledger ID, record ordinal,
+   occurrence identity and provenance: path-stable transcript ledger ID, record ordinal,
    role, exact content, content hash, source, `created_at_epoch`, and
    `event_time_source`. Hook-time `branch` and `cwd` are volatile provenance and
    are not conflict keys. When stable fields match, retain the canonical
@@ -203,7 +223,8 @@ existing legacy rows instead of relying on ignored inserts:
   `legacy_unknown` to `ingest_fallback` but retains its stored ingestion epoch;
 - a row already marked `transcript_event` must match the parsed event epoch or
   the identity group becomes a sticky conflict;
-- an unclaimed legacy content match is assigned to the lowest matching
+- an unclaimed legacy content match is assigned the path-stable ledger ID and
+  lowest matching
   transcript ordinal, and later identical occurrences insert distinct rows;
 - no other stable non-identity field changes during provenance refresh.
 
