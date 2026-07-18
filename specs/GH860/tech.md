@@ -61,7 +61,8 @@ function positional expander into a string-source helper with an explicit
 - command-position words materialized from positional expansion retain a
   bounded provenance marker so assignment-prefix and lexical-alias recognition
   are not rerun after expansion; consumers strip that marker only when reading
-  the semantic executable name;
+  the semantic executable name, including `command`/`env`/`exec` and `env -S`
+  normalization;
 - here-strings use a no-field-splitting positional expander so embedded
   newlines reach nested stdin parsing as source text.
 

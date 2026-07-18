@@ -204,10 +204,10 @@ pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> 
     let prefix_end = unwrap::direct_command_index(tokens)?;
     let assignments = static_assignments(&tokens[..prefix_end]);
     let mut index = prefix_end;
-    while tokens.get(index)? == "command" {
+    while unwrap::semantic_token(tokens.get(index)?) == "command" {
         index = unwrap::command_wrapper_target(tokens, index)?;
     }
-    if tokens.get(index)? != "env" {
+    if unwrap::semantic_token(tokens.get(index)?) != "env" {
         return None;
     }
     index += 1;

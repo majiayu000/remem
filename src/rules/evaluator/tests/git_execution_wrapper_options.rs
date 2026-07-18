@@ -185,3 +185,17 @@ fn force_push_rule_preserves_here_string_positionals_as_source_text() {
     assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
     assert!(outcome.diagnostics.is_empty(), "{command}");
 }
+
+#[test]
+fn force_push_rule_keeps_expanded_env_split_wrapper_semantics() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c '$1 -S "git push --force"' _ env"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}

@@ -62,7 +62,8 @@ gaps can either miss a forbidden command or report a false block.
    arguments to `source /dev/stdin` shall bind `$1...` only for the sourced
    body. A command name materialized from a positional shall not be
    reclassified as an assignment or passed through lexical alias expansion,
-   and a here-string positional shall preserve embedded source newlines.
+   while recognized wrapper semantics remain active; a here-string positional
+   shall preserve embedded source newlines.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.
