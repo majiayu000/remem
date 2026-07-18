@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.5` for GH-880 SP880-T1: schema v70 adds
+  fail-closed migration recovery, Web-visible resource versions, an
+  idempotency replay ledger, and stable cursor foundations without advertising
+  unfinished endpoints or capabilities.
 - Staged source version `0.6.4` for GH-864: archived quarantined extraction
   ranges can be validated only by an exact dual-confirmation dry-run and
   recovered only by a singleton-locked worker that atomically requeues and
