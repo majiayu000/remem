@@ -53,12 +53,16 @@ GH-863
 
 - Owner: coordinator
 - Dependencies: `SP863-T2`
-- Files: no additional production files
+- Files: `scripts/ci/specrail_sync_lock.py`,
+  `scripts/ci/test_schema_contract.py`
 - Covers: all product acceptance criteria
 - Done when:
   - The sync verifier accepts the repository tree.
+  - The sync entrypoint remains below the 800-line ceiling after its unchanged
+    lock read/write boundary is extracted, and isolated packs copy that helper.
   - The workflow pack and GH-863 packet validators pass.
 - Verify:
+  - `python3 scripts/ci/check_file_size.py`
   - `scripts/sync-specrail-checks.sh --verify`
   - `python3 checks/check_workflow.py --repo .`
   - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH863`
@@ -122,6 +126,7 @@ actions.
 
 - `python3 scripts/ci/test_specrail_gate_wiring.py`
 - `scripts/sync-specrail-checks.sh --verify`
+- `python3 scripts/ci/check_file_size.py`
 - `python3 checks/check_workflow.py --repo .`
 - `python3 checks/check_workflow.py --repo . --spec-dir specs/GH863`
 - `cargo fmt --check`

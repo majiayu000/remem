@@ -39,86 +39,13 @@ LOCAL_OWNED_FILES=(
 
 write_lock() {
   local upstream_sha="$1"
-  python3 - "$LOCK_FILE" "$upstream_sha" "${SYNCED_FILES[@]}" -- "${LOCAL_OWNED_FILES[@]}" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-lock_path, upstream_sha, *classified = sys.argv[1:]
-separator = classified.index("--")
-files = classified[:separator]
-excluded = classified[separator + 1:]
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(lock_path)))
-entries = []
-for rel in files:
-    path = os.path.join(repo_root, rel)
-    digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
-    entries.append({"path": rel, "sha256": digest})
-lock = {
-    "upstream_repo": "https://github.com/majiayu000/specrail",
-    "upstream_sha": upstream_sha,
-    "excluded": excluded,
-    "files": entries,
-}
-with open(lock_path, "w") as fh:
-    json.dump(lock, fh, indent=2)
-    fh.write("\n")
-print(f"lock written: {lock_path} @ upstream {upstream_sha}")
-PY
+  python3 "$REPO_ROOT/scripts/ci/specrail_sync_lock.py" write \
+    "$LOCK_FILE" "$upstream_sha" "${SYNCED_FILES[@]}" -- "${LOCAL_OWNED_FILES[@]}"
 }
 
 verify_lock() {
-  python3 - "$LOCK_FILE" "${SYNCED_FILES[@]}" -- "${LOCAL_OWNED_FILES[@]}" <<'PY'
-import hashlib
-import json
-import os
-import sys
-
-lock_path, *classified = sys.argv[1:]
-separator = classified.index("--")
-expected_files = classified[:separator]
-expected_excluded = classified[separator + 1:]
-repo_root = os.path.dirname(os.path.dirname(os.path.abspath(lock_path)))
-with open(lock_path) as fh:
-    lock = json.load(fh)
-failed = False
-entries = lock.get("files")
-if not isinstance(entries, list):
-    print("INVALID: lock files must be a list")
-    sys.exit(1)
-lock_files = [entry.get("path") for entry in entries if isinstance(entry, dict)]
-if len(lock_files) != len(entries) or lock_files != expected_files:
-    print("INVALID: sync managed file list does not match lock")
-    print(f"script: {expected_files}")
-    print(f"lock:   {lock_files}")
-    failed = True
-excluded = lock.get("excluded")
-if excluded != expected_excluded:
-    print("INVALID: local-owned excluded file list does not match lock")
-    print(f"script: {expected_excluded}")
-    print(f"lock:   {excluded}")
-    failed = True
-for entry in entries:
-    if not isinstance(entry, dict):
-        continue
-    path = os.path.join(repo_root, entry["path"])
-    if not os.path.exists(path):
-        print(f"MISSING: {entry['path']}")
-        failed = True
-        continue
-    digest = hashlib.sha256(open(path, "rb").read()).hexdigest()
-    if digest != entry["sha256"]:
-        print(f"DRIFT: {entry['path']}")
-        failed = True
-if failed:
-    print(f"vendored SpecRail files drifted from lock (upstream {lock['upstream_sha']}); "
-          "re-run scripts/sync-specrail-checks.sh <specrail-repo> or restore the files")
-    sys.exit(1)
-print(f"ok: {len(lock['files'])} upstream-managed files match lock "
-      f"(upstream {lock['upstream_sha']})")
-print(f"ok: {len(expected_excluded)} local-owned files explicitly excluded from upstream sync")
-PY
+  python3 "$REPO_ROOT/scripts/ci/specrail_sync_lock.py" verify \
+    "$LOCK_FILE" "${SYNCED_FILES[@]}" -- "${LOCAL_OWNED_FILES[@]}"
 }
 
 verify_python_imports() {

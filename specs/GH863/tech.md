@@ -13,6 +13,7 @@ GH-863
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
 | Sync import guard | `scripts/sync-specrail-checks.sh` | The embedded Python verifier parses every classified `checks/*.py` file, classifies static and selected literal dynamic imports, then imports each classified module. It does not reject importlib loader namespaces or direct built-in `exec`/`eval`. | Both GH-863 bypass classes occur between AST parsing and module execution in this verifier. |
+| Sync lock boundary | `scripts/sync-specrail-checks.sh`, `scripts/ci/test_schema_contract.py` | Lock read/write logic is embedded in the shell script, which isolated-pack tests copy as a standalone file. | The added guard must not push the shell entrypoint over the repository's 800-line hard ceiling; extracting the unchanged lock boundary requires the isolated pack to copy its helper too. |
 | Isolated guard fixtures | `scripts/ci/test_specrail_gate_wiring.py` | A temporary copied pack proves unclassified imports, aliases, `sys.path` mutation, path escape, symlinks, and sourceless modules fail before helper side effects execute. | GH-863 needs regression cases in the same pre-execution sentinel harness. |
 | SpecRail packet | `specs/GH863/product.md`, `specs/GH863/tech.md`, `specs/GH863/tasks.md` | No GH-863 packet existed before this tranche. | The implementation route requires complete issue-local spec coverage. |
 
@@ -62,6 +63,12 @@ Each message includes the classified source path and the rejected symbol or
 module. The policy is deliberately reference-based rather than call/data-flow
 based: assignment or storage of one of these callables is rejected too, and
 literal `exec`/`eval` is rejected along with file-derived content.
+
+Keep the shell entrypoint below the repository's hard line-count ceiling by
+moving its existing lock serialization and verification boundary into
+`scripts/ci/specrail_sync_lock.py`. The shell wrappers retain the same
+arguments and output, and `copy_pack` includes the helper so isolated sync
+tests exercise the deployed layout.
 
 No lock schema, synchronized-file list, runtime database, or installed hook
 behavior changes.
@@ -131,6 +138,7 @@ existing local Git queries and module imports.
 - [ ] Focused integration:
       `python3 scripts/ci/test_specrail_gate_wiring.py`.
 - [ ] Sync verification: `scripts/sync-specrail-checks.sh --verify`.
+- [ ] Source-size verification: `python3 scripts/ci/check_file_size.py`.
 - [ ] Workflow pack:
       `python3 checks/check_workflow.py --repo .`.
 - [ ] Issue packet:
