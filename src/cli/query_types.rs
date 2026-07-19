@@ -184,6 +184,31 @@ pub(in crate::cli) enum RawAction {
         #[arg(long)]
         json: bool,
     },
+    /// Export one exact raw session in chronological order.
+    Messages {
+        /// Durable transcript source-root label.
+        #[arg(long)]
+        source_root: String,
+        /// Exact project identity.
+        #[arg(long, short)]
+        project: String,
+        /// Exact session identity.
+        #[arg(long)]
+        session_id: String,
+        /// Maximum messages to return (capped at 2000).
+        #[arg(
+            long,
+            short = 'n',
+            default_value_t = crate::memory::raw_query::RAW_SESSION_MESSAGES_DEFAULT_LIMIT
+        )]
+        limit: i64,
+        /// Opaque continuation cursor from a prior response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
     /// Compare indexed transcript occurrences with the raw archive.
     Reconcile {
         /// Inclusive lower bound (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
