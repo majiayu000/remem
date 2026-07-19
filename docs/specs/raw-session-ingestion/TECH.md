@@ -24,9 +24,10 @@ separately. File drains roll back on read, parse, or insert failure.
 3. Persist all path/claim rows and resolve complete fallback groups; any prior
    group conflict is inherited by later path identities.
 4. For active identities, use one fallback-group savepoint to stream immutable
-   boundaries, upgrade legacy provenance/occurrence rows, rewrite and
-   deduplicate evidence references, and advance ledgers/cursors only after the
-   entire group succeeds.
+   boundaries, merge exact unmatched legacy aliases before canonical rekey,
+   upgrade legacy provenance/occurrence rows, rewrite and deduplicate evidence
+   references, and advance ledgers/cursors only after the entire group
+   succeeds.
 5. Stop performs the shared identity/project probe inside its captured byte
    boundary and persists the claim, but leaves complete-set legacy convergence
    to the next batch pass.
@@ -40,14 +41,17 @@ Reconciliation:
 
 1. rejects an inverted window and missing required roots;
 2. captures a file descriptor, byte boundary, mtime, and size;
-3. requires an exact ledger tuple before content parsing; active identities
-   also require a version-1 cursor, while current sticky conflicts remain
-   version 0 and are streamed only to count window-relevant conflicts;
+3. requires an exact ledger tuple before content parsing; files skipped by an
+   ingest `--since` mtime bound retain an unfinalized event index and can be
+   omitted when wholly outside the requested event window, while selected
+   active identities require a version-1 cursor and current sticky conflicts
+   remain version 0;
 4. selects event-range intersections plus missing-time-bearing files;
 5. classifies complete records with the shared parser and window precedence;
-6. compares internal `(identity, ordinal, role, content_hash)` multisets, and
-   groups transcript-event archive rows without a discoverable identity by
-   their private `(source_root, project, session_id)` key as archive-only;
+6. compares internal `(identity, ordinal, role, content_hash)` multisets for
+   requested source-root labels only, and groups transcript-event archive rows
+   without a discoverable identity by their private
+   `(source_root, project, session_id)` key as archive-only;
 7. counts only conflicts reached through selected identities; and
 8. serializes the fixed aggregate report.
 

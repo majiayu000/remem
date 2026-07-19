@@ -283,6 +283,50 @@ fn ambiguous_or_inexact_collision_fails_before_any_mutation() -> anyhow::Result<
 }
 
 #[test]
+fn unmatched_exact_legacy_aliases_merge_before_canonical_rekey() -> anyhow::Result<()> {
+    let conn = setup_identity_db();
+    let path = temp_transcript(
+        "unmatched-aliases",
+        r#"{"type":"user","sessionId":"canonical-871","cwd":"/tmp/project","timestamp":100,"message":{"content":"current"}}"#,
+    );
+    let root = path.parent().context("fixture parent")?;
+    let plan = probe("local", root, &path, None)?;
+    let identity_id = upsert_claim(&conn, &plan, 1)?;
+    resolve_fallback_group(&conn, "local", &plan.fallback_session_id)?;
+    let identity = load(&conn, identity_id)?;
+    let hash = crate::db::content_identity_hash(b"removed legacy turn");
+    for (id, session_id, project) in [
+        (61, &plan.fallback_session_id, &plan.legacy_project),
+        (62, &plan.canonical_session_id, &plan.project),
+    ] {
+        conn.execute(
+            "INSERT INTO raw_messages (
+                id, session_id, project, role, content, content_hash, source,
+                created_at_epoch, source_root, event_time_source
+             ) VALUES (?1, ?2, ?3, 'user', 'removed legacy turn', ?4,
+                       'transcript', 100, 'local', 'legacy_unknown')",
+            params![id, session_id, project, hash],
+        )?;
+    }
+
+    let report = rekey_legacy_rows(&conn, &identity)?;
+
+    assert_eq!(report.merged, 1);
+    assert_eq!(report.rekeyed, 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_messages
+             WHERE project = ?1 AND session_id = ?2 AND content_hash = ?3",
+            params![plan.project, plan.canonical_session_id, hash],
+            |row| row.get::<_, i64>(0)
+        )?,
+        1
+    );
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
 fn schema_aware_evidence_store_inventory_matches_rewrite_coverage() -> anyhow::Result<()> {
     let conn = setup_identity_db();
     let mut statement = conn.prepare(

@@ -208,7 +208,28 @@ pub fn run_ingest_sessions(
         let mut identity_conflict = false;
         for (root, plan, identity_id, phase_b_eligible) in &group {
             if !phase_b_eligible {
-                summary.skipped += 1;
+                let indexed = super::session_identity::index_events(
+                    &plan.transcript_path,
+                    u64::try_from(plan.observed_size_bytes).unwrap_or(u64::MAX),
+                )
+                .and_then(|index| {
+                    super::session_identity::record_unfinalized_event_index(
+                        conn,
+                        *identity_id,
+                        index,
+                        now,
+                    )
+                });
+                match indexed {
+                    Ok(()) => summary.skipped += 1,
+                    Err(error) => {
+                        summary.failed_files += 1;
+                        crate::log::error(
+                            "ingest-sessions",
+                            &format!("index skipped {} failed: {error}", plan.path.display()),
+                        );
+                    }
+                }
                 continue;
             }
             conn.execute_batch("SAVEPOINT gh871_identity_phase_b_file")?;

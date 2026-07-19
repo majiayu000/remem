@@ -98,12 +98,14 @@ pub(crate) fn reconcile_raw_archive(
     }
 
     let captured = capture_candidates(conn, roots, since_epoch, until_epoch)?;
-    reconcile_captured(conn, captured, since_epoch, until_epoch)
+    let source_roots = roots.iter().map(|root| root.label.clone()).collect();
+    reconcile_captured(conn, captured, &source_roots, since_epoch, until_epoch)
 }
 
 fn reconcile_captured(
     conn: &Connection,
     captured: Vec<CapturedTranscript>,
+    source_roots: &BTreeSet<String>,
     since_epoch: i64,
     until_epoch: i64,
 ) -> Result<RawReconcileReport> {
@@ -170,7 +172,13 @@ fn reconcile_captured(
         }
     }
 
-    let archive_sessions = load_archive_messages(conn, since_epoch, until_epoch, &mut exclusions)?;
+    let archive_sessions = load_archive_messages(
+        conn,
+        source_roots,
+        since_epoch,
+        until_epoch,
+        &mut exclusions,
+    )?;
     let transcript = summarize_side(&transcript_sessions);
     let archive = summarize_side(&archive_sessions);
     let mut comparison = compare_sessions(&transcript_sessions, &archive_sessions);
@@ -240,6 +248,13 @@ fn capture_candidates(
                 stale_count += 1;
                 continue;
             }
+            let intersects = identity
+                .first_event_epoch
+                .zip(identity.last_event_epoch)
+                .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
+            if !is_conflict && !intersects && identity.missing_event_time_count == 0 {
+                continue;
+            }
             if !is_conflict
                 && (identity.contract_version != 1
                     || !crate::ingest::sessions::cursor_matches_identity(
@@ -251,13 +266,6 @@ fn capture_candidates(
                     )?)
             {
                 stale_count += 1;
-                continue;
-            }
-            let intersects = identity
-                .first_event_epoch
-                .zip(identity.last_event_epoch)
-                .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
-            if !is_conflict && !intersects && identity.missing_event_time_count == 0 {
                 continue;
             }
             if !captured_identity_ids.insert(identity.id) {
@@ -321,6 +329,7 @@ fn insert_transcript_key(
 
 fn load_archive_messages(
     conn: &Connection,
+    source_roots: &BTreeSet<String>,
     since_epoch: i64,
     until_epoch: i64,
     exclusions: &mut ReconcileExclusions,
@@ -365,6 +374,9 @@ fn load_archive_messages(
             content_hash,
             event_time_source,
         ) = row?;
+        if !source_roots.is_empty() && !source_roots.contains(&source_root) {
+            continue;
+        }
         match event_time_source.as_str() {
             "transcript_event" => {
                 let session_key = identity_id.map_or_else(

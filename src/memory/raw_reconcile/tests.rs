@@ -491,6 +491,59 @@ fn raw_rows_without_discoverable_transcripts_remain_archive_only_or_explained() 
 }
 
 #[test]
+fn archive_rows_from_unrequested_source_roots_are_ignored() {
+    let conn = setup();
+    let root = TempRoot::new("requested-root");
+    let user = line("requested", "user", 100, "requested row");
+    root.write("requested.jsonl", &[&user]);
+    ingest(&conn, &root);
+    crate::memory::raw_archive::insert_raw_message_from_root_at(
+        &conn,
+        "unrequested",
+        "project",
+        "user",
+        "other root row",
+        crate::memory::raw_archive::SOURCE_TRANSCRIPT,
+        None,
+        None,
+        "starlight",
+        Some(100),
+    )
+    .expect("insert row from unrequested source root");
+
+    let report =
+        reconcile_raw_archive(&conn, &[root.scan_root()], 100, 100).expect("reconcile one root");
+
+    assert!(report.parity);
+    assert_eq!(report.archive.messages, 1);
+    assert_eq!(report.comparison.archive_only_messages, 0);
+}
+
+#[test]
+fn since_skipped_identity_outside_window_does_not_make_reconcile_stale() {
+    let conn = setup();
+    let root = TempRoot::new("since-skipped");
+    let old = line("old-session", "user", 100, "old row");
+    root.write("old-session.jsonl", &[&old]);
+    let summary = run_ingest_sessions(
+        &conn,
+        &[root.scan_root()],
+        &IngestOptions {
+            since_epoch: Some(chrono::Utc::now().timestamp() + 3600),
+        },
+    )
+    .expect("index but skip old transcript");
+    assert_eq!(summary.skipped, 1);
+
+    let report = reconcile_raw_archive(&conn, &[root.scan_root()], 200, 300)
+        .expect("ignore indexed v0 identity outside requested event window");
+
+    assert!(report.parity);
+    assert_eq!(report.transcript.messages, 0);
+    assert_eq!(report.archive.messages, 0);
+}
+
+#[test]
 fn unchanged_inputs_produce_byte_stable_reports() {
     let conn = setup();
     let root = TempRoot::new("deterministic");
@@ -518,6 +571,7 @@ fn post_capture_append_is_outside_reconciliation_boundary() {
     ingest(&conn, &root);
     let captured =
         capture_candidates(&conn, &[root.scan_root()], 100, 101).expect("capture candidates");
+    let source_roots = BTreeSet::from([root.scan_root().label]);
     let mut content = std::fs::read_to_string(&path).expect("read bounded fixture");
     content.push_str(&line(
         "bounded",
@@ -528,8 +582,8 @@ fn post_capture_append_is_outside_reconciliation_boundary() {
     content.push('\n');
     std::fs::write(&path, content).expect("append after capture");
 
-    let report =
-        reconcile_captured(&conn, captured, 100, 101).expect("reconcile captured boundary");
+    let report = reconcile_captured(&conn, captured, &source_roots, 100, 101)
+        .expect("reconcile captured boundary");
 
     assert!(report.parity);
     assert_eq!(report.transcript.messages, 1);

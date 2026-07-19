@@ -880,7 +880,9 @@ precedence over filename fallbacks, Stop and batch ingest use the same
 identity, repeated identical turns retain separate occurrence ordinals, and
 event-time provenance distinguishes transcript timestamps from ingest
 fallbacks and legacy unknowns. Re-running the command is incremental and
-idempotent; ambiguous identity claims fail visibly without rewriting raw rows.
+idempotent; `--since`-skipped files still receive an event-range index for
+later bounded reconciliation, and ambiguous identity claims fail visibly
+without rewriting raw rows.
 
 Use raw time-window queries for recap or audit workflows that need original
 chat turns rather than curated memories:
@@ -900,8 +902,9 @@ migration contention and stale schemas fail with a migration diagnostic.
 `raw reconcile` requires both bounds and compares stable per-occurrence
 identities, not only aggregate counts. It validates the captured file
 mtime/size tuple against the current identity ledger before reading, scans only
-event-range candidates plus files with missing event time, and emits aggregate
-counts only—never paths, projects, session IDs, hashes, or message text.
+event-range candidates plus files with missing event time, scopes archive rows
+to the requested source-root labels, and emits aggregate counts only—never
+paths, projects, session IDs, hashes, or message text.
 Timestamped records outside the inclusive UTC window are discarded before
 classification. Meta/XML user rows remain in archive parity but are reported
 as conversational exclusions; missing/fallback/legacy event time and malformed

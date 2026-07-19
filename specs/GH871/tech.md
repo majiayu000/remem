@@ -196,6 +196,9 @@ stem:
    transcript-derived row's branch/cwd; when they do not, mark the group
    conflict and abort the whole rekey without mutation.
 4. Otherwise run one savepoint:
+   - merge exact unmatched fallback/canonical legacy aliases before any
+     canonical project/session update, so the surviving row cannot collide
+     with a still-present alias;
    - update a non-colliding legacy row's project/session identity in place so
      its `raw_messages.id` remains stable;
    - for a collision, build an explicit old-row-ID to surviving-canonical-ID
@@ -305,13 +308,16 @@ Processing:
    root and `subagents/` rules as `ingest-sessions`, but do not parse them yet.
 2. Open each discovered path, capture its file-descriptor mtime/size tuple and
    immutable read boundary once, then require that captured tuple to match its
-   ledger entry exactly. Active identities must also match a version-1 cursor.
-   Sticky conflict identities remain contract version 0 because ingestion
-   deliberately refuses mutation; when their ledger tuple is current, stream
-   their captured boundary directly so the report can count window-relevant
-   conflicts. Reject other stale, missing, or extra required-root entries with
-   an actionable `run remem ingest-sessions` diagnostic. Appends after the
-   captured boundary are outside this run.
+   ledger entry exactly. `ingest-sessions --since` records an unfinalized event
+   index for files excluded by the mtime bound; an indexed version-0 identity
+   wholly outside the requested event window is omitted, while a selected
+   active identity must match a version-1 cursor. Sticky conflict identities
+   remain contract version 0 because ingestion deliberately refuses mutation;
+   when their ledger tuple is current, stream their captured boundary directly
+   so the report can count window-relevant conflicts. Reject other stale,
+   missing, or extra required-root entries with an actionable
+   `run remem ingest-sessions` diagnostic. Appends after the captured boundary
+   are outside this run.
 3. Select files whose inclusive first/last event bounds can intersect the
    requested window, plus every file whose ledger
    `missing_event_time_count > 0`. Stream only complete records through each
@@ -320,8 +326,8 @@ Processing:
 5. Aggregate transcript-side archive-eligible message identities
    `(transcript identity, record ordinal, role, content_hash)` and the explicit
    exclusion taxonomy inside the fixed UTC window.
-6. Aggregate all raw message identities for the same window. Rows with a
-   transcript identity compare by
+6. Aggregate raw message identities for the same window and requested
+   `source_root` labels only. Rows with a transcript identity compare by
    `(transcript_identity_id, transcript_record_ordinal, role, content_hash)`.
    Historical/manual rows without a transcript identity group internally by
    `(source_root, project, session_id)` and remain archive-only; their private
