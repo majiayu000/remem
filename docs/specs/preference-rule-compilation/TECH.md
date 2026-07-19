@@ -133,9 +133,10 @@ Artifact v2 additionally supports:
   unquoted-delimiter heredoc body do not suppress that expansion, while a
   quoted delimiter preserves literal text. Whole unquoted positionals may
   produce zero or multiple argv fields; default and alternative words retain
-  quote-aware grouping, exact quoted `"$@"` preserves operand cardinality,
-  static non-negative positional slices and substrings retain Bash field and
-  string semantics; definite `set --`, argument-bearing `set -`, and `shift`
+  quote-aware grouping, known-set error/assignment forms preserve their known
+  operand, exact quoted `"$@"` preserves operand cardinality, static
+  non-negative positional slices and substrings retain Bash field and string
+  semantics; definite `set --`, argument-bearing `set -`, and `shift`
   update the active mapping, while possibly executed changes retain prior and
   updated mappings for conservative matching in both whole and concatenated
   words. Possible mappings are evaluated as separate argv alternatives under
@@ -169,8 +170,8 @@ Artifact v2 additionally supports:
   source use their own syntax context, and function-definition names remain
   unexpanded. Positional command names retain provenance so assignment and
   alias recognition are not rerun after expansion, and here-string positionals
-  preserve embedded source newlines. Mixed `builtin`/`command` wrappers share
-  the same static builtin
+  preserve embedded source newlines. Mixed `builtin`/`command` wrappers and
+  the `builtin --` option terminator share the same static builtin
   normalization; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static

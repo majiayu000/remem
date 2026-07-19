@@ -204,7 +204,15 @@ fn static_builtin_command_index(tokens: &[String]) -> Option<usize> {
     loop {
         match unwrap::semantic_token(tokens.get(index)?) {
             "command" => index = unwrap::command_wrapper_target(tokens, index)?,
-            "builtin" => index += 1,
+            "builtin" => {
+                index += 1;
+                if tokens
+                    .get(index)
+                    .is_some_and(|token| unwrap::semantic_token(token) == "--")
+                {
+                    index += 1;
+                }
+            }
             _ => break,
         }
     }

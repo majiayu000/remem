@@ -56,9 +56,11 @@ gaps can either miss a forbidden command or report a false block.
    under their own Bash syntax rather than inheriting surrounding quote state.
    Empty unquoted expansions shall remove their argv field, quoted default
    words shall retain their grouping, and statically selected `+`/`:+`
-   alternative words shall be materialized. Static non-negative `${@:offset}`
-   slices and `${n:offset[:length]}` substrings shall retain their Bash field
-   or string semantics. A definite `set --` or argument-bearing `set -` shall
+   alternative words shall be materialized. Known-set `${n?word}`,
+   `${n:?word}`, `${n=word}`, and `${n:=word}` forms shall retain the known
+   operand. Static non-negative `${@:offset}` slices and
+   `${n:offset[:length]}` substrings shall retain their Bash field or string
+   semantics. A definite `set --` or argument-bearing `set -` shall
    replace the active positional mapping; a definite static `shift` shall
    advance it, while possibly executed changes shall retain every possible
    mapping for conservative matching, including when a possible positional is
@@ -93,7 +95,7 @@ gaps can either miss a forbidden command or report a false block.
    child shell positional context. Function-mode `readonly -f` operands shall
    not be recorded as readonly variable names, while `readonly -p NAME` shall
    retain Bash's variable declaration behavior. Normalized `command`/`builtin`
-   wrappers shall retain known
+   wrappers, including `builtin --`, shall retain known
    `true`/`false`/`:` status; every terminating alternative shall run its EXIT
    traps before it can be filtered; and state from a terminated path shall not
    contaminate a continuing path.

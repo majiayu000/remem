@@ -379,6 +379,8 @@ fn single_word_brace_expansion_respects_the_materialization_bound() {
             command: format!("{{{shell_alternatives}}} -c 'git push --force'"),
         },
     );
+    // Brace expansion materializes every member as argv. Here `item0.exe` is
+    // the shell's script operand, so the later `-c` string is not executed.
     assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
     assert!(outcome.matches.is_empty());
     assert!(outcome.diagnostics.is_empty());
@@ -789,4 +791,19 @@ fn force_push_rule_resolves_unset_function_before_builtin_state() {
     );
     assert!(outcome.matches.is_empty(), "{mixed_wrappers}");
     assert!(outcome.diagnostics.is_empty(), "{mixed_wrappers}");
+
+    let option_terminator = "f(){ git push --force;}; unset(){ :;}; builtin -- unset -f f; f";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: option_terminator.into(),
+        },
+    );
+    assert_eq!(
+        outcome.verdict,
+        EvaluationVerdict::Allow,
+        "{option_terminator}"
+    );
+    assert!(outcome.matches.is_empty(), "{option_terminator}");
+    assert!(outcome.diagnostics.is_empty(), "{option_terminator}");
 }

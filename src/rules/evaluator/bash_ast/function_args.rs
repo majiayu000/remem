@@ -4,6 +4,13 @@ use brush_parser::ParserOptions;
 
 use super::static_words::{static_slice, static_substring};
 
+mod quoting;
+
+use quoting::{
+    escape_double_quoted, expand_at_in_double_quotes, quote_argument, quote_arguments,
+    split_argument, split_arguments,
+};
+
 const MAX_DEFAULT_EXPANSION_DEPTH: usize = 8;
 
 pub(super) fn expand_function_body(body: &FunctionBody, arguments: &[String]) -> String {
@@ -245,6 +252,12 @@ fn resolve_parameter_expression_fields(
         } else {
             Some(Vec::new())
         };
+    }
+    if suffix.starts_with(":?") || suffix.starts_with(":=") {
+        return argument.filter(|value| !value.is_empty()).map(split_fields);
+    }
+    if suffix.starts_with('?') || suffix.starts_with('=') {
+        return argument.map(split_fields);
     }
     if let Some(spec) = suffix.strip_prefix(':') {
         return static_substring(argument.unwrap_or_default(), spec)
@@ -642,6 +655,10 @@ fn resolve_parameter_expression(
             return expand_default_value(alternative, zero_argument, arguments, depth + 1);
         }
         Some("")
+    } else if suffix.starts_with(":?") || suffix.starts_with(":=") {
+        argument.filter(|value| !value.is_empty())
+    } else if suffix.starts_with('?') || suffix.starts_with('=') {
+        argument
     } else if let Some(spec) = suffix.strip_prefix(':') {
         return static_substring(argument.unwrap_or_default(), spec);
     } else if suffix.is_empty() {
@@ -730,64 +747,4 @@ fn expand_default_value(
         index += ch.len_utf8();
     }
     (!single_quoted && !double_quoted).then_some(expanded)
-}
-
-fn quote_arguments(arguments: &[String]) -> String {
-    arguments
-        .iter()
-        .map(|argument| quote_argument(argument))
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn split_arguments(arguments: &[String]) -> String {
-    arguments
-        .iter()
-        .map(|argument| split_argument(argument))
-        .filter(|argument| !argument.is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn split_argument(value: &str) -> String {
-    value
-        .split([' ', '\t', '\n'])
-        .filter(|word| !word.is_empty())
-        .map(quote_argument)
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
-fn expand_at_in_double_quotes(arguments: &[String]) -> String {
-    let Some((first, remaining)) = arguments.split_first() else {
-        return String::new();
-    };
-    let Some((last, middle)) = remaining.split_last() else {
-        return escape_double_quoted(first);
-    };
-
-    let mut expanded = escape_double_quoted(first);
-    expanded.push_str("\" ");
-    for argument in middle {
-        expanded.push_str(&quote_argument(argument));
-        expanded.push(' ');
-    }
-    expanded.push_str(&quote_argument(last));
-    expanded.push('"');
-    expanded
-}
-
-fn escape_double_quoted(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for ch in value.chars() {
-        if matches!(ch, '\\' | '"' | '$' | '`') {
-            escaped.push('\\');
-        }
-        escaped.push(ch);
-    }
-    escaped
-}
-
-fn quote_argument(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }

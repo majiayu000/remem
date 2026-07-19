@@ -14,7 +14,7 @@ GH-860
 | --- | --- | --- | --- |
 | Static command collection | `src/rules/evaluator/bash_ast.rs`, `src/rules/evaluator/bash_ast/command_resolution.rs`, `src/rules/evaluator/bash_ast/alternative_state.rs` | `collect_static_tokens` resolves normalized command variants and recursively parses static shell `-c` payloads while shell-state alternatives are isolated and merged | Resolution ordering, fallible setup, wrapper status, termination, and complete state correlation determine whether executable paths remain visible |
 | Shell recognition and `-c` parsing | `src/rules/evaluator/bash_ast/static_execution.rs:445` | `static_shell_command_payload` returns only the literal command string; `shell_name` accepts five suffix-free basenames | `.exe` recognition and the shell argument boundary belong in this normalization layer |
-| Positional expansion | `src/rules/evaluator/bash_ast.rs`, `src/rules/evaluator/bash_ast/shell_state.rs`, `src/rules/evaluator/bash_ast/function_args.rs`, `src/rules/evaluator/bash_ast/stdin_payload.rs` | Function-body expansion already handles quoted/unquoted positional parameters with bounded default expansion, but assumes function arguments where `$1` starts at the first operand and `$0` is unavailable | Shell `-c` needs an explicit Bash `$0`/`$1...` context that yields to function-call arguments inside function bodies and remains active for deferred traps and expandable heredocs |
+| Positional expansion | `src/rules/evaluator/bash_ast.rs`, `src/rules/evaluator/bash_ast/shell_state.rs`, `src/rules/evaluator/bash_ast/function_args.rs`, `src/rules/evaluator/bash_ast/function_args/quoting.rs`, `src/rules/evaluator/bash_ast/stdin_payload.rs` | Function-body expansion already handles quoted/unquoted positional parameters with bounded default expansion, but assumes function arguments where `$1` starts at the first operand and `$0` is unavailable | Shell `-c` needs an explicit Bash `$0`/`$1...` context that yields to function-call arguments inside function bodies and remains active for deferred traps and expandable heredocs |
 | Structural regression fixtures | `src/rules/evaluator/tests/git_execution.rs:398` | Paired block/allow tables cover static shell state, indirect execution, function arguments, and false-block precision | The three GH-860 behaviors fit the existing table-driven evidence style |
 | Authoritative rule contract | `docs/specs/preference-rule-compilation/TECH.md:114` | Artifact-v2 documents shell payloads, function state, positional function arguments, and bounded evaluation | The shipped contract must name the additional `.exe`, shell-`-c`, and shadowed-builtin semantics |
 | Release/version gates | `scripts/ci/check_version_bump.py`, `scripts/ci/check_plugin_version_sync.py` | Any `src/` change requires a package version above the base and synchronized release surfaces | This PR must stage one synchronized patch version |
@@ -52,7 +52,8 @@ function positional expander into a string-source helper with an explicit
   expanded as arithmetic source rather than shell-quoted argv.
 - zero-field unquoted expansions remove the word, default/alternative words
   preserve their own quote-aware field grouping, and `${n+word}` / `${n:+word}`
-  select statically when the operand state is known;
+  select statically when the operand state is known; known-set `${n?word}`,
+  `${n:?word}`, `${n=word}`, and `${n:=word}` forms preserve that operand;
 - definite static `set --` or argument-bearing `set -` replaces `$1...` while
   retaining `$0`, and definite static `shift [n]` advances every active
   argument alternative; an uncertain change retains both prior and updated
@@ -131,7 +132,8 @@ forms (`builtin unset ...` and the existing `command unset ...` behavior) skip
 function resolution and may mutate static function state. The state mutation
 helper shall use the shared builtin command-position normalizer, which keeps
 peeling valid `builtin` and `command` wrappers in either order so mixed and
-repeated wrappers remain deterministic.
+repeated wrappers remain deterministic, including the `builtin --` option
+terminator before the selected builtin name.
 
 Stateful shell builtins, including `trap`, alias/shopt state, positional
 mutation, `unset -f`, and function-export state, are applied only after alias
@@ -155,10 +157,10 @@ assets; this PR does not publish a release.
 | --- | --- | --- |
 | B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
 | B-002 basename-only precision | platform-independent `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers POSIX- and Windows-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
-| B-003 shell `-c` positional binding | scoped positional collector context, quote-aware field expansion, separately evaluated bounded positional variants, command provenance, isolated shell-state snapshots, and shell/source payload extraction | focused tests cover `$0`, zero/multi-field `$1`, quoted `"$@"`, command/suffix path alternatives, `${@:0}`, slices/substrings, default/alternative words, definite and uncertain `set --` (including concatenated words and distinct argv alternatives), `set -`, successful/failed `shift` control flow, alias/function and ordinary fallback ordering, fallible setup, wrapper status, terminated-path filtering, child-scope restoration, assignment/alias provenance, function-local and sourced arguments, nested command substitutions, arithmetic source, EXIT traps, here-strings, and parent-versus-child heredoc handoff |
+| B-003 shell `-c` positional binding | scoped positional collector context, quote-aware field expansion, separately evaluated bounded positional variants, command provenance, isolated shell-state snapshots, and shell/source payload extraction | focused tests cover `$0`, zero/multi-field `$1`, quoted `"$@"`, command/suffix path alternatives, `${@:0}`, slices/substrings, default/alternative and known-set error/assignment words, definite and uncertain `set --` (including concatenated words and distinct argv alternatives), `set -`, successful/failed `shift` control flow, alias/function and ordinary fallback ordering, fallible setup, wrapper status, terminated-path filtering, child-scope restoration, assignment/alias provenance, function-local and sourced arguments, nested command substitutions, arithmetic source, EXIT traps, here-strings, and parent-versus-child heredoc handoff |
 | B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1`; `force_push_rule_preserves_missing_shell_zero` leaves `${0:-git}` unknown rather than fabricating `git` |
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
-| B-006 explicit builtin and function ordering | shared builtin command-position normalization and function-aware shell-state/wrapper mutation | focused tests cover `builtin unset -f f` and `builtin command unset -f f` → Allow, function-shadowed positional `trap`/`env`/`alias` calls, and their ordinary non-shadowed builtin or wrapper behavior |
+| B-006 explicit builtin and function ordering | shared builtin command-position normalization and function-aware shell-state/wrapper mutation | focused tests cover `builtin unset -f f`, `builtin command unset -f f`, and `builtin -- unset -f f` → Allow, function-shadowed positional `trap`/`env`/`alias` calls, and their ordinary non-shadowed builtin or wrapper behavior |
 | B-007 bounded deterministic behavior | existing parser/expansion limits, `MAX_STATIC_WORD_VARIANTS`, critical positional prioritization, and evaluator regression suite | bounded positional regression retains a critical 301st candidate without unbounded state; `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
 | B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs`, `git_execution_wrapper_options.rs`, `git_execution_positional_regressions.rs`, and `git_execution_alternative_state.rs` | focused block/allow tables pass; quoted defaults, parent-expanded heredocs, nested single-quoted substitution, top-level assignment status, readonly function-versus-variable state, correlated setup/state alternatives, and brace-expanded non-shell argv remain precise while adjacent executable forms Block |
 
@@ -247,6 +249,7 @@ metadata, and do not publish or fabricate release assets as part of rollback.
     "src/rules/evaluator/bash_ast/shell_state.rs",
     "src/rules/evaluator/bash_ast/static_execution.rs",
     "src/rules/evaluator/bash_ast/function_args.rs",
+    "src/rules/evaluator/bash_ast/function_args/quoting.rs",
     "src/rules/evaluator/bash_ast/static_words.rs",
     "src/rules/evaluator/bash_ast/stdin_payload.rs",
     "src/rules/evaluator/bash_ast/unwrap.rs",

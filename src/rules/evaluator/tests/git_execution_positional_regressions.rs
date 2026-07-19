@@ -76,6 +76,42 @@ fn force_push_rule_expands_positional_substrings() {
 }
 
 #[test]
+fn force_push_rule_resolves_set_valued_positional_forms() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        r#"bash -c 'git push ${1?missing}' _ --force"#,
+        r#"bash -c 'git push ${1:?missing}' _ --force"#,
+        r#"bash -c 'git push ${1=missing}' _ --force"#,
+        r#"bash -c 'git push ${1:=missing}' _ --force"#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+    for command in [
+        r#"bash -c 'git push ${1?missing}' _"#,
+        r#"bash -c 'git push ${1:?missing}' _ ''"#,
+        r#"bash -c 'git push ${1=missing}' _"#,
+        r#"bash -c 'git push ${1:=missing}' _ ''"#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
 
 fn force_push_rule_keeps_possible_positionals_in_concatenated_words() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
@@ -249,15 +285,21 @@ EOF"#;
 #[test]
 fn force_push_rule_expands_possible_positionals_in_heredoc() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
-    let command = r#"bash -c 'unknown && set -- "git push --force"; sh <<EOF
+    for command in [
+        r#"bash -c 'unknown && set -- "git push --force"; sh <<EOF
 $1
-EOF' _ true"#;
-    let outcome = evaluate_artifact(
-        &artifact,
-        &EvaluationInput {
-            command: command.into(),
-        },
-    );
-    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
-    assert!(outcome.diagnostics.is_empty(), "{command}");
+EOF' _ true"#,
+        r#"bash -c 'unknown && set -- true; sh <<EOF
+$1
+EOF' _ "git push --force""#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
 }
