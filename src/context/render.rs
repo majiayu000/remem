@@ -5,10 +5,7 @@ use anyhow::Result;
 
 use crate::db;
 
-use super::audit::{
-    build_context_audit_items, final_governed_injected_count, record_context_injection_items,
-    ContextAuditItem,
-};
+use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
@@ -390,6 +387,8 @@ fn render_context_output_from_inputs(
     let mut output = String::new();
     let (mut lesson_ids, mut index_ids, mut session_ids, mut workstream_ids) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut lesson_item_ends, mut index_item_ends, mut session_item_ends) =
+        (Vec::new(), Vec::new(), Vec::new());
     output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
@@ -468,7 +467,7 @@ fn render_context_output_from_inputs(
         policy.limits.sessionstart_relevance_k,
         &relevance_candidates,
     );
-    let governed = selected_inputs(&loaded, &relevance_plan, &core_ids);
+    let governed = selected_inputs(&loaded, &relevance_plan, &core_ids)?;
     stats.relevance.state = relevance_plan.state;
     stats.relevance.k = relevance_plan.k;
     stats.relevance.threshold = relevance_plan.threshold;
@@ -489,6 +488,7 @@ fn render_context_output_from_inputs(
             &loaded.staleness_labels,
         );
         lesson_ids = lesson_summary.ids;
+        lesson_item_ends = lesson_summary.item_end_chars;
         stats.lessons = SectionRenderStats {
             count: lesson_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -511,6 +511,7 @@ fn render_context_output_from_inputs(
             &loaded.staleness_labels,
         );
         index_ids = index_summary.ids;
+        index_item_ends = index_summary.item_end_chars;
         stats.index = SectionRenderStats {
             count: index_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -552,6 +553,7 @@ fn render_context_output_from_inputs(
             policy.section_char_limit(SectionKind::Sessions, 2_200),
         );
         session_ids = session_summary.ids;
+        session_item_ends = session_summary.item_end_chars;
         stats.sessions = SectionRenderStats {
             count: session_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -561,7 +563,11 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
-    stats.relevance.final_injected = lesson_ids.len() + index_ids.len() + session_ids.len();
+    let pre_total_governed_count = lesson_ids.len() + index_ids.len() + session_ids.len();
+    stats.relevance.final_injected = pre_total_governed_count;
+    stats.relevance.section_limited = relevance_plan
+        .selected_count
+        .saturating_sub(pre_total_governed_count);
 
     if debug {
         let diagnostics_start = Instant::now();
@@ -580,40 +586,65 @@ fn render_context_output_from_inputs(
         ));
     }
 
-    stats.output_chars = char_len(&output);
-    let mut stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-    stats.output_chars += char_len(&stats_footer);
-    stats.truncated = stats.total_char_limit > 0 && stats.output_chars > stats.total_char_limit;
-    stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-    stats.output_chars = char_len(&output) + char_len(&stats_footer);
-    output.push_str(&stats_footer);
-    enforce_total_char_limit_preserving_footer(
-        &mut output,
-        policy.limits.total_char_limit,
-        &stats_footer,
-    );
+    let untruncated_body = std::mem::take(&mut output);
+    let mut final_lesson_ids = lesson_ids.clone();
+    let mut final_index_ids = index_ids.clone();
+    let mut final_session_ids = session_ids.clone();
+    for _ in 0..4 {
+        let mut stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
+        stats.output_chars = char_len(&untruncated_body) + char_len(&stats_footer);
+        stats.truncated = stats.total_char_limit > 0 && stats.output_chars > stats.total_char_limit;
+        stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
+        stats.output_chars = char_len(&untruncated_body) + char_len(&stats_footer);
+
+        let mut candidate_output = untruncated_body.clone();
+        candidate_output.push_str(&stats_footer);
+        let retained_body_chars = enforce_total_char_limit_preserving_footer(
+            &mut candidate_output,
+            policy.limits.total_char_limit,
+            &stats_footer,
+        );
+        let next_lesson_ids = surviving_ids(&lesson_ids, &lesson_item_ends, retained_body_chars)?;
+        let next_index_ids = surviving_ids(&index_ids, &index_item_ends, retained_body_chars)?;
+        let next_session_ids =
+            surviving_ids(&session_ids, &session_item_ends, retained_body_chars)?;
+        let next_final = next_lesson_ids.len() + next_index_ids.len() + next_session_ids.len();
+        let next_total_limited = pre_total_governed_count.saturating_sub(next_final);
+        let stable = next_final == stats.relevance.final_injected
+            && next_total_limited == stats.relevance.total_limited;
+        final_lesson_ids = next_lesson_ids;
+        final_index_ids = next_index_ids;
+        final_session_ids = next_session_ids;
+        stats.relevance.final_injected = next_final;
+        stats.relevance.total_limited = next_total_limited;
+        output = candidate_output;
+        if stable {
+            break;
+        }
+    }
+    let total_truncated_keys = lesson_ids
+        .iter()
+        .filter(|id| !final_lesson_ids.contains(id))
+        .chain(index_ids.iter().filter(|id| !final_index_ids.contains(id)))
+        .map(|id| super::relevance::memory_stable_key(*id))
+        .chain(
+            session_ids
+                .iter()
+                .filter(|id| !final_session_ids.contains(id))
+                .map(|id| super::relevance::session_stable_key(*id)),
+        )
+        .collect::<HashSet<_>>();
     let audit_start = Instant::now();
     let audit_items = build_context_audit_items(
         &loaded,
         &stats.core_ids,
-        &index_ids,
-        &lesson_ids,
-        &session_ids,
+        &final_index_ids,
+        &final_lesson_ids,
+        &final_session_ids,
         &workstream_ids,
         &relevance_plan,
+        &total_truncated_keys,
     );
-    let final_injected = final_governed_injected_count(&output, &audit_items);
-    if final_injected != stats.relevance.final_injected && output.ends_with(&stats_footer) {
-        output.truncate(output.len() - stats_footer.len());
-        stats.relevance.final_injected = final_injected;
-        stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-        output.push_str(&stats_footer);
-        enforce_total_char_limit_preserving_footer(
-            &mut output,
-            policy.limits.total_char_limit,
-            &stats_footer,
-        );
-    }
     stats.timings.push(crate::perf::PhaseTiming::elapsed(
         "audit_items",
         audit_start,
@@ -629,6 +660,25 @@ fn render_context_output_from_inputs(
         data_version,
         has_load_errors,
     })
+}
+
+fn surviving_ids(
+    ids: &[i64],
+    item_end_chars: &[usize],
+    retained_body_chars: usize,
+) -> Result<Vec<i64>> {
+    if ids.len() != item_end_chars.len() {
+        anyhow::bail!(
+            "context renderer returned {} identities but {} item boundaries",
+            ids.len(),
+            item_end_chars.len()
+        );
+    }
+    Ok(ids
+        .iter()
+        .zip(item_end_chars)
+        .filter_map(|(id, end_chars)| (*end_chars <= retained_body_chars).then_some(*id))
+        .collect())
 }
 
 fn open_context_connection_or_error(

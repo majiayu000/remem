@@ -16,6 +16,8 @@ pub(in crate::context) struct RelevanceRenderStats {
     pub final_injected: usize,
     pub below_threshold: usize,
     pub k_limited: usize,
+    pub section_limited: usize,
+    pub total_limited: usize,
 }
 
 impl Default for RelevanceRenderStats {
@@ -29,6 +31,8 @@ impl Default for RelevanceRenderStats {
             final_injected: 0,
             below_threshold: 0,
             k_limited: 0,
+            section_limited: 0,
+            total_limited: 0,
         }
     }
 }

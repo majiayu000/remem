@@ -489,6 +489,33 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
 }
 
 #[test]
+fn context_stats_footer_distinguishes_all_relevance_drop_stages() {
+    let mut stats = ContextRenderStats::default();
+    stats.relevance.state = "applied";
+    stats.relevance.k = 5;
+    stats.relevance.threshold = Some(0.375);
+    stats.relevance.candidates = 12;
+    stats.relevance.eligible = 8;
+    stats.relevance.final_injected = 2;
+    stats.relevance.below_threshold = 4;
+    stats.relevance.k_limited = 3;
+    stats.relevance.section_limited = 2;
+    stats.relevance.total_limited = 1;
+
+    let applied = build_context_stats_footer(&stats);
+    assert!(applied.contains("Relevance: applied"));
+    assert!(applied.contains("low=4"));
+    assert!(applied.contains("k_dropped=3"));
+    assert!(applied.contains("section_dropped=2"));
+    assert!(applied.contains("total_dropped=1"));
+
+    stats.relevance.state = "blank";
+    assert!(build_context_stats_footer(&stats).contains("Relevance: blank"));
+    stats.relevance.state = "disabled";
+    assert!(build_context_stats_footer(&stats).contains("Relevance: disabled"));
+}
+
+#[test]
 fn context_header_marks_compact_reload_visibly() {
     let header = super::super::style::context_header(
         "/tmp/remem",

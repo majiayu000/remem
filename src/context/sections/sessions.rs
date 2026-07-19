@@ -26,6 +26,7 @@ pub(in crate::context) fn render_recent_sessions_with_limit(
 pub(in crate::context) struct SessionRenderSummary {
     pub count: usize,
     pub ids: Vec<i64>,
+    pub item_end_chars: Vec<usize>,
 }
 
 pub(in crate::context) fn render_recent_sessions_with_summary(
@@ -37,6 +38,7 @@ pub(in crate::context) fn render_recent_sessions_with_summary(
         return SessionRenderSummary {
             count: 0,
             ids: Vec::new(),
+            item_end_chars: Vec::new(),
         };
     }
     let header = "## Sessions\n";
@@ -46,13 +48,16 @@ pub(in crate::context) fn render_recent_sessions_with_summary(
         return SessionRenderSummary {
             count: 0,
             ids: Vec::new(),
+            item_end_chars: Vec::new(),
         };
     }
 
+    let output_start_chars = char_len(output);
     let mut section = String::from(header);
     let mut total_chars = header_chars + trailer_chars;
     let mut rendered = 0usize;
     let mut ids = Vec::new();
+    let mut item_end_chars = Vec::new();
     for summary in summaries {
         let date = format_epoch_short(summary.created_at_epoch);
         let time = format_epoch_time(summary.created_at_epoch);
@@ -73,11 +78,13 @@ pub(in crate::context) fn render_recent_sessions_with_summary(
         total_chars += line_chars;
         rendered += 1;
         ids.push(summary.id);
+        item_end_chars.push(output_start_chars + total_chars - trailer_chars);
     }
     if rendered == 0 {
         return SessionRenderSummary {
             count: 0,
             ids: Vec::new(),
+            item_end_chars: Vec::new(),
         };
     }
     section.push('\n');
@@ -85,6 +92,7 @@ pub(in crate::context) fn render_recent_sessions_with_summary(
     SessionRenderSummary {
         count: rendered,
         ids,
+        item_end_chars,
     }
 }
 

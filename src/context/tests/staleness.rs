@@ -1,7 +1,7 @@
 use crate::memory::lesson::{save_lesson, LessonMemory, LessonMetadata, SaveLessonRequest};
 use crate::memory::memory_staleness_label_for_anchor;
 use rusqlite::{params, Connection};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::super::audit::build_context_audit_items;
 use super::super::query::load_context_data;
@@ -220,7 +220,16 @@ fn context_audit_uses_rendered_source_anchor_labels() {
     loaded.summaries.clear();
     loaded.diagnostics = ContextDiagnostics::default();
     let relevance = SessionStartRelevancePlan::disabled(&[]);
-    let audit_items = build_context_audit_items(&loaded, &[201], &[], &[], &[], &[], &relevance);
+    let audit_items = build_context_audit_items(
+        &loaded,
+        &[201],
+        &[],
+        &[],
+        &[],
+        &[],
+        &relevance,
+        &HashSet::new(),
+    );
 
     assert_eq!(audit_items.len(), 2);
     let core = audit_items

@@ -13,6 +13,7 @@ const PREVIEW_LEN: usize = 180;
 pub(in crate::context) struct LessonRenderSummary {
     pub count: usize,
     pub ids: Vec<i64>,
+    pub item_end_chars: Vec<usize>,
 }
 
 #[cfg(test)]
@@ -79,9 +80,11 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
         return LessonRenderSummary::default();
     }
 
+    let output_start_chars = char_len(output);
     let mut body = String::new();
     let mut rendered = 0usize;
     let mut ids = Vec::new();
+    let mut item_end_chars = Vec::new();
     for lesson in lessons.iter().take(item_limit) {
         let memory = &lesson.memory;
         let metadata = &lesson.metadata;
@@ -114,6 +117,7 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
         body.push('\n');
         total_chars += item_chars;
         ids.push(memory.id);
+        item_end_chars.push(output_start_chars + total_chars - trailer_chars);
         rendered += 1;
     }
     if rendered == 0 {
@@ -125,5 +129,6 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
     LessonRenderSummary {
         count: rendered,
         ids,
+        item_end_chars,
     }
 }

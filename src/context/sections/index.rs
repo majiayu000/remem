@@ -56,6 +56,7 @@ pub(in crate::context) fn render_memory_index_with_limits_excluding_and_stalenes
 pub(in crate::context) struct IndexRenderSummary {
     pub count: usize,
     pub ids: Vec<i64>,
+    pub item_end_chars: Vec<usize>,
 }
 
 #[cfg(test)]
@@ -114,6 +115,7 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
     let mut total_chars = 0usize;
     let mut rendered_count = 0usize;
     let mut rendered_ids = Vec::new();
+    let mut rendered_item_end_chars = Vec::new();
     let mut ordered_types = HashSet::new();
     for memory_type in display_order {
         let memory_type_key = memory_type.as_str();
@@ -130,6 +132,7 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
                 limits.memory_index_char_limit,
                 &mut total_chars,
                 &mut rendered_ids,
+                &mut rendered_item_end_chars,
                 render_reference_epoch,
                 staleness_labels,
             );
@@ -153,6 +156,7 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
                     limits.memory_index_char_limit,
                     &mut total_chars,
                     &mut rendered_ids,
+                    &mut rendered_item_end_chars,
                     render_reference_epoch,
                     staleness_labels,
                 );
@@ -162,12 +166,18 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
     if rendered_count == 0 {
         return IndexRenderSummary::default();
     }
+    let section_start_chars = char_len(output);
+    let header_chars = char_len("## Index\n");
     output.push_str("## Index\n");
     output.push_str(&body);
     output.push('\n');
     IndexRenderSummary {
         count: rendered_count,
         ids: rendered_ids,
+        item_end_chars: rendered_item_end_chars
+            .into_iter()
+            .map(|end| section_start_chars + header_chars + end)
+            .collect(),
     }
 }
 
@@ -179,6 +189,7 @@ fn push_memory_index_line(
     max_chars: usize,
     total_chars: &mut usize,
     rendered_ids: &mut Vec<i64>,
+    rendered_item_end_chars: &mut Vec<usize>,
     now_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> usize {
@@ -226,6 +237,7 @@ fn push_memory_index_line(
             line.push_str(&truncated);
             line_chars += char_len(separator) + char_len(&truncated);
             rendered_ids.push(memory.id);
+            rendered_item_end_chars.push(*total_chars + line_chars);
             rendered += 1;
             break;
         }
@@ -233,6 +245,7 @@ fn push_memory_index_line(
         line.push_str(&item);
         line_chars += next_len;
         rendered_ids.push(memory.id);
+        rendered_item_end_chars.push(*total_chars + line_chars);
         rendered += 1;
         first = false;
     }

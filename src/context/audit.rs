@@ -291,6 +291,7 @@ pub(in crate::context) fn build_context_audit_items(
     session_ids: &[i64],
     workstream_ids: &[i64],
     relevance: &SessionStartRelevancePlan,
+    total_truncated_keys: &HashSet<String>,
 ) -> Vec<ContextAuditItem> {
     let mut items = vec![ContextAuditItem::relevance_policy(relevance)];
     let mut render_order = 1_i64;
@@ -330,7 +331,13 @@ pub(in crate::context) fn build_context_audit_items(
             let decision = relevance.decision(&memory_stable_key(memory.id));
             let reason = decision
                 .and_then(|decision| decision.drop_reason)
-                .unwrap_or("section_budget");
+                .unwrap_or_else(|| {
+                    if total_truncated_keys.contains(&memory_stable_key(memory.id)) {
+                        "total_char_limit"
+                    } else {
+                        "section_budget"
+                    }
+                });
             let mut item = ContextAuditItem::dropped_memory(memory, "index", reason);
             if let Some(decision) = decision {
                 item = item.with_score(decision.score);
@@ -360,7 +367,13 @@ pub(in crate::context) fn build_context_audit_items(
             let decision = relevance.decision(&memory_stable_key(lesson_memory.memory.id));
             let reason = decision
                 .and_then(|decision| decision.drop_reason)
-                .unwrap_or("section_budget");
+                .unwrap_or_else(|| {
+                    if total_truncated_keys.contains(&memory_stable_key(lesson_memory.memory.id)) {
+                        "total_char_limit"
+                    } else {
+                        "section_budget"
+                    }
+                });
             let mut item =
                 ContextAuditItem::dropped_memory(&lesson_memory.memory, "lessons", reason);
             if let Some(decision) = decision {
@@ -385,7 +398,13 @@ pub(in crate::context) fn build_context_audit_items(
         } else {
             let reason = decision
                 .and_then(|decision| decision.drop_reason)
-                .unwrap_or("section_budget");
+                .unwrap_or_else(|| {
+                    if total_truncated_keys.contains(&session_stable_key(summary.id)) {
+                        "total_char_limit"
+                    } else {
+                        "section_budget"
+                    }
+                });
             items.push(ContextAuditItem::session_summary(
                 summary,
                 None,
@@ -424,34 +443,82 @@ fn finalize_items_for_decision(
     decision: &ContextGateDecision,
     rendered_items: &[ContextAuditItem],
 ) -> Vec<ContextAuditItem> {
+    let final_drop_reason = match decision.action {
+        ContextGateAction::Suppressed => Some("gate_suppressed"),
+        ContextGateAction::EmittedDelta => Some("delta_preview"),
+        ContextGateAction::Bypassed
+        | ContextGateAction::EmittedFull
+        | ContextGateAction::FailOpen => None,
+    };
     rendered_items
         .iter()
         .cloned()
         .map(|mut item| {
-            if item.status == "injected" && !decision.output.contains(&item.title) {
+            if item.status == "injected" && final_drop_reason.is_some() {
                 item.status = "dropped";
                 item.render_order = None;
-                item.drop_reason = Some(match decision.action {
-                    ContextGateAction::Suppressed => "gate_suppressed",
-                    ContextGateAction::EmittedDelta => "delta_preview",
-                    _ => "total_char_limit",
-                });
+                item.drop_reason = final_drop_reason;
             }
             item
         })
         .collect()
 }
 
-pub(in crate::context) fn final_governed_injected_count(
-    output: &str,
-    rendered_items: &[ContextAuditItem],
-) -> usize {
-    rendered_items
-        .iter()
-        .filter(|item| {
-            item.status == "injected"
-                && matches!(item.channel, "lessons" | "index" | "sessions")
-                && output.contains(&item.title)
-        })
-        .count()
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn injected_item(title: &str) -> ContextAuditItem {
+        ContextAuditItem {
+            item_kind: "memory",
+            item_id: Some(42),
+            memory_id: Some(42),
+            channel: "index",
+            score: Some(1.0),
+            render_order: Some(1),
+            status: "injected",
+            drop_reason: None,
+            title: title.to_string(),
+            provenance: "src=memory:#42".to_string(),
+            staleness: "fresh".to_string(),
+        }
+    }
+
+    fn decision(action: ContextGateAction, output: &str) -> ContextGateDecision {
+        ContextGateDecision {
+            output: output.to_string(),
+            action,
+            reason: "test",
+            key: None,
+            context_hash: None,
+            output_mode: None,
+        }
+    }
+
+    #[test]
+    fn full_gate_trusts_identity_safe_render_survivors_not_titles() {
+        let title = "a very long title whose rendered form was truncated";
+        let finalized = finalize_items_for_decision(
+            &decision(ContextGateAction::EmittedFull, "#42 a very long title..."),
+            &[injected_item(title)],
+        );
+
+        assert_eq!(finalized[0].status, "injected");
+        assert_eq!(finalized[0].drop_reason, None);
+    }
+
+    #[test]
+    fn suppressed_and_delta_outputs_have_closed_drop_reasons() {
+        let suppressed = finalize_items_for_decision(
+            &decision(ContextGateAction::Suppressed, ""),
+            &[injected_item("duplicate title")],
+        );
+        let delta = finalize_items_for_decision(
+            &decision(ContextGateAction::EmittedDelta, "duplicate title"),
+            &[injected_item("duplicate title")],
+        );
+
+        assert_eq!(suppressed[0].drop_reason, Some("gate_suppressed"));
+        assert_eq!(delta[0].drop_reason, Some("delta_preview"));
+    }
 }

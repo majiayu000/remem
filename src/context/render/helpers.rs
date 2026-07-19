@@ -49,9 +49,13 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     output: &mut String,
     char_limit: usize,
     footer: &str,
-) {
+) -> usize {
     if char_limit == 0 || output.chars().count() <= char_limit {
-        return;
+        return output
+            .strip_suffix(footer)
+            .unwrap_or(output.as_str())
+            .chars()
+            .count();
     }
 
     let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
@@ -64,19 +68,22 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
         let mut truncated = truncate_context_body_at_stable_boundary(body, keep_chars);
         truncated.push_str(marker);
         truncated.push_str(footer);
+        let retained_body_chars = truncated.chars().count() - marker_chars - footer_chars;
         *output = truncated;
-        return;
+        return retained_body_chars;
     }
 
     if marker_chars >= char_limit {
         *output = marker.chars().take(char_limit).collect();
-        return;
+        return 0;
     }
 
     let keep_chars = char_limit - marker_chars;
     let mut truncated = truncate_context_body_at_stable_boundary(output, keep_chars);
+    let retained_body_chars = truncated.chars().count();
     truncated.push_str(marker);
     *output = truncated;
+    retained_body_chars
 }
 
 pub(super) fn build_context_header_with_style(

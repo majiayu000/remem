@@ -70,7 +70,7 @@ pub(in crate::context) fn context_stats_footer(
                 .map(|value| format!("{value:.3}"))
                 .unwrap_or_else(|| "-".to_string());
             format!(
-                    "{} (k={}, threshold={}, candidates={}, eligible={}, injected={}, low={}, k_dropped={})",
+                    "{} (k={}, threshold={}, candidates={}, eligible={}, injected={}, low={}, k_dropped={}, section_dropped={}, total_dropped={})",
                     stats.relevance.state,
                     stats.relevance.k,
                     threshold,
@@ -78,7 +78,9 @@ pub(in crate::context) fn context_stats_footer(
                     stats.relevance.eligible,
                     stats.relevance.final_injected,
                     stats.relevance.below_threshold,
-                    stats.relevance.k_limited
+                    stats.relevance.k_limited,
+                    stats.relevance.section_limited,
+                    stats.relevance.total_limited
                 )
         }),
         (

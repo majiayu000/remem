@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
+use anyhow::{bail, Result};
+
 use crate::memory::lesson::LessonMemory;
 use crate::memory::{Memory, MemoryType};
 
@@ -40,6 +42,7 @@ pub(super) struct SessionStartRelevancePlan {
     pub selected_count: usize,
     pub below_threshold_count: usize,
     pub k_limited_count: usize,
+    selected_keys: Vec<String>,
     decisions: HashMap<String, RelevanceDecision>,
 }
 
@@ -73,6 +76,7 @@ impl SessionStartRelevancePlan {
             selected_count: candidates.len(),
             below_threshold_count: 0,
             k_limited_count: 0,
+            selected_keys: Vec::new(),
             decisions,
         }
     }
@@ -81,6 +85,7 @@ impl SessionStartRelevancePlan {
         self.decisions.get(stable_key).copied()
     }
 
+    #[cfg(test)]
     pub fn selected(&self, stable_key: &str) -> bool {
         self.decision(stable_key)
             .is_some_and(|decision| decision.selected)
@@ -146,28 +151,53 @@ pub(super) fn selected_inputs(
     loaded: &LoadedContext,
     plan: &SessionStartRelevancePlan,
     core_ids: &HashSet<i64>,
-) -> GovernedContextInputs {
-    GovernedContextInputs {
-        lessons: loaded
-            .lessons
-            .iter()
-            .filter(|lesson| plan.selected(&memory_stable_key(lesson.memory.id)))
-            .cloned()
-            .collect(),
-        memories: loaded
-            .memories
-            .iter()
-            .filter(|memory| !core_ids.contains(&memory.id))
-            .filter(|memory| plan.selected(&memory_stable_key(memory.id)))
-            .cloned()
-            .collect(),
-        summaries: loaded
-            .summaries
-            .iter()
-            .filter(|summary| plan.selected(&session_stable_key(summary.id)))
-            .cloned()
-            .collect(),
+) -> Result<GovernedContextInputs> {
+    if plan.state == "disabled" {
+        return Ok(GovernedContextInputs {
+            lessons: loaded.lessons.clone(),
+            memories: loaded
+                .memories
+                .iter()
+                .filter(|memory| !core_ids.contains(&memory.id))
+                .cloned()
+                .collect(),
+            summaries: loaded.summaries.clone(),
+        });
     }
+
+    let lessons = loaded
+        .lessons
+        .iter()
+        .map(|lesson| (memory_stable_key(lesson.memory.id), lesson))
+        .collect::<HashMap<_, _>>();
+    let memories = loaded
+        .memories
+        .iter()
+        .filter(|memory| !core_ids.contains(&memory.id))
+        .map(|memory| (memory_stable_key(memory.id), memory))
+        .collect::<HashMap<_, _>>();
+    let summaries = loaded
+        .summaries
+        .iter()
+        .map(|summary| (session_stable_key(summary.id), summary))
+        .collect::<HashMap<_, _>>();
+    let mut governed = GovernedContextInputs {
+        lessons: Vec::new(),
+        memories: Vec::new(),
+        summaries: Vec::new(),
+    };
+    for key in &plan.selected_keys {
+        if let Some(lesson) = lessons.get(key) {
+            governed.lessons.push((*lesson).clone());
+        } else if let Some(memory) = memories.get(key) {
+            governed.memories.push((*memory).clone());
+        } else if let Some(summary) = summaries.get(key) {
+            governed.summaries.push((*summary).clone());
+        } else {
+            bail!("selected SessionStart relevance identity is missing from loaded context: {key}");
+        }
+    }
+    Ok(governed)
 }
 
 pub(super) fn memory_stable_key(id: i64) -> String {
@@ -221,6 +251,7 @@ pub(super) fn build_sessionstart_relevance_plan(
 
     let mut selected_remaining = k;
     let mut decisions = HashMap::with_capacity(scored.len());
+    let mut selected_keys = Vec::with_capacity(k.min(scored.len()));
     let mut below_threshold_count = 0usize;
     let mut k_limited_count = 0usize;
     for (candidate, score) in scored {
@@ -233,6 +264,7 @@ pub(super) fn build_sessionstart_relevance_plan(
             (false, Some(SESSIONSTART_K_LIMIT))
         } else {
             selected_remaining -= 1;
+            selected_keys.push(candidate.stable_key.clone());
             (true, None)
         };
         decisions.insert(
@@ -258,6 +290,7 @@ pub(super) fn build_sessionstart_relevance_plan(
         selected_count,
         below_threshold_count,
         k_limited_count,
+        selected_keys,
         decisions,
     }
 }
@@ -334,6 +367,44 @@ fn is_stop_token(token: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::ownership::OwnerCounts;
+    use crate::context::sections::render_lessons_with_limit;
+    use crate::context::types::ContextDiagnostics;
+    use crate::memory::lesson::LessonMetadata;
+
+    fn lesson(id: i64, title: &str, text: &str) -> LessonMemory {
+        LessonMemory {
+            memory: Memory {
+                id,
+                session_id: None,
+                project: "demo/project".to_string(),
+                topic_key: None,
+                title: title.to_string(),
+                text: text.to_string(),
+                memory_type: "lesson".to_string(),
+                files: None,
+                created_at_epoch: 1_710_000_000,
+                updated_at_epoch: 1_710_000_000,
+                status: "active".to_string(),
+                branch: None,
+                scope: "project".to_string(),
+            },
+            metadata: LessonMetadata {
+                memory_id: id,
+                confidence: 0.9,
+                reinforcement_count: 1,
+                source_evidence: None,
+                last_reinforced_at_epoch: 1_710_000_000,
+                stale_after_epoch: None,
+                outcome_kind: "success".to_string(),
+                success_count: 1,
+                failure_count: 0,
+                recovery_count: 0,
+                correction_count: 0,
+                revert_count: 0,
+            },
+        }
+    }
 
     fn candidate(key: &str, section: RelevanceSection, text: &str) -> RelevanceCandidate {
         RelevanceCandidate {
@@ -414,5 +485,47 @@ mod tests {
         assert_eq!(disabled.state, "disabled");
         assert!(disabled.selected("memory:1"));
         assert!(disabled.selected("memory:2"));
+    }
+
+    #[test]
+    fn selector_preserves_ranked_keys_for_section_budgeting() {
+        let candidates = vec![
+            candidate("memory:20", RelevanceSection::Lessons, "alpha"),
+            candidate("memory:10", RelevanceSection::Lessons, "alpha beta"),
+        ];
+        let plan = build_sessionstart_relevance_plan(Some("alpha beta"), 2, &candidates);
+
+        assert_eq!(plan.selected_keys, vec!["memory:10", "memory:20"]);
+    }
+
+    #[test]
+    fn ranked_inputs_give_the_section_slot_to_the_higher_score() {
+        let loaded = LoadedContext {
+            render_reference_epoch: 1_710_000_000,
+            memories: Vec::new(),
+            staleness_labels: HashMap::new(),
+            lessons: vec![
+                lesson(20, "Lower relevance", "alpha"),
+                lesson(10, "Higher relevance", "alpha beta"),
+            ],
+            summaries: Vec::new(),
+            workstreams: Vec::new(),
+            relevance_query: Some("alpha beta".to_string()),
+            memory_abstained: false,
+            errors: Vec::new(),
+            owner_traces: Vec::new(),
+            owner_counts: OwnerCounts::default(),
+            diagnostics: ContextDiagnostics::default(),
+        };
+        let candidates = candidates_for_loaded(&loaded, &HashSet::new());
+        let plan =
+            build_sessionstart_relevance_plan(loaded.relevance_query.as_deref(), 2, &candidates);
+        let governed = selected_inputs(&loaded, &plan, &HashSet::new()).expect("ranked inputs");
+        let mut output = String::new();
+
+        render_lessons_with_limit(&mut output, &governed.lessons, 1, 1_000);
+
+        assert!(output.contains("#10 Higher relevance"));
+        assert!(!output.contains("#20 Lower relevance"));
     }
 }
