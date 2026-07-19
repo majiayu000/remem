@@ -20,7 +20,6 @@ use crate::memory::raw_archive::{self, TranscriptDrainOptions, SOURCE_ROOT_LOCAL
 /// actively-appended session: a JSON parse failure on its last line is a
 /// partial tail, not a file failure, and the cursor does not advance.
 const ACTIVE_TAIL_WINDOW_SECS: i64 = 60;
-const PHASE_B_COMMIT_CHUNK_FILES: usize = 128;
 
 /// One scan root: a label recorded as `raw_messages.source_root` plus the
 /// directory to walk.
@@ -191,9 +190,23 @@ pub fn run_ingest_sessions(
         }
     };
 
-    for chunk in prepared.chunks(PHASE_B_COMMIT_CHUNK_FILES) {
-        conn.execute_batch("SAVEPOINT gh871_identity_phase_b_chunk")?;
-        for (root, plan, identity_id, phase_b_eligible) in chunk {
+    let mut prepared_groups = BTreeMap::new();
+    for prepared_file in prepared {
+        let key = (
+            prepared_file.1.source_root.clone(),
+            prepared_file.1.fallback_session_id.clone(),
+        );
+        prepared_groups
+            .entry(key)
+            .or_insert_with(Vec::new)
+            .push(prepared_file);
+    }
+    for ((source_root, fallback_session_id), group) in prepared_groups {
+        conn.execute_batch("SAVEPOINT gh871_identity_phase_b_group")?;
+        let ingested_before = summary.ingested_messages;
+        let partial_before = summary.partial_files;
+        let mut identity_conflict = false;
+        for (root, plan, identity_id, phase_b_eligible) in &group {
             if !phase_b_eligible {
                 summary.skipped += 1;
                 continue;
@@ -205,24 +218,37 @@ pub fn run_ingest_sessions(
                 PreparedFileResult::Commit => {
                     conn.execute_batch("RELEASE gh871_identity_phase_b_file")?;
                 }
-                PreparedFileResult::Rollback { identity_conflict } => {
+                PreparedFileResult::Rollback {
+                    identity_conflict: file_identity_conflict,
+                } => {
                     conn.execute_batch(
                         "ROLLBACK TO gh871_identity_phase_b_file;
                          RELEASE gh871_identity_phase_b_file",
                     )?;
                     summary.ingested_messages = inserted_before;
-                    if identity_conflict {
-                        super::session_identity::mark_fallback_group_conflict(
-                            conn,
-                            &plan.source_root,
-                            &plan.fallback_session_id,
-                            "stable_occurrence_mismatch",
-                        )?;
+                    if file_identity_conflict {
+                        identity_conflict = true;
+                        break;
                     }
                 }
             }
         }
-        conn.execute_batch("RELEASE gh871_identity_phase_b_chunk")?;
+        if identity_conflict {
+            conn.execute_batch(
+                "ROLLBACK TO gh871_identity_phase_b_group;
+                 RELEASE gh871_identity_phase_b_group",
+            )?;
+            summary.ingested_messages = ingested_before;
+            summary.partial_files = partial_before;
+            super::session_identity::mark_fallback_group_conflict(
+                conn,
+                &source_root,
+                &fallback_session_id,
+                "stable_occurrence_mismatch",
+            )?;
+        } else {
+            conn.execute_batch("RELEASE gh871_identity_phase_b_group")?;
+        }
     }
 
     crate::log::info(

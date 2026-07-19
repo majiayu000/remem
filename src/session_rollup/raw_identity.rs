@@ -30,12 +30,21 @@ pub(super) fn drain_with_identity(
 ) -> Result<RawIngestReport> {
     let transcript = Path::new(input.path);
     let scan_root = transcript.parent().unwrap_or_else(|| Path::new("."));
-    let plan = crate::ingest::session_identity::probe(
-        SOURCE_ROOT_LOCAL,
-        scan_root,
-        transcript,
-        Some(input.project),
-    )
+    let plan = match input.byte_limit {
+        Some(byte_limit) => crate::ingest::session_identity::probe_bounded(
+            SOURCE_ROOT_LOCAL,
+            scan_root,
+            transcript,
+            Some(input.project),
+            byte_limit,
+        ),
+        None => crate::ingest::session_identity::probe(
+            SOURCE_ROOT_LOCAL,
+            scan_root,
+            transcript,
+            Some(input.project),
+        ),
+    }
     .map_err(|error| error.context(StopTranscriptProbeFailed))?;
     let now = chrono::Utc::now().timestamp();
     let identity_id = crate::ingest::session_identity::upsert_claim(conn, &plan, now)
@@ -135,6 +144,55 @@ mod tests {
             .expect("load raw occurrence");
         assert_eq!(row.0, "metadata-session");
         assert!(row.1.is_some());
+        std::fs::remove_file(path.as_path()).expect("remove transcript");
+    }
+
+    #[test]
+    fn stop_probe_ignores_identity_appended_after_capture_boundary() {
+        let conn = Connection::open_in_memory().expect("open fixture database");
+        crate::migrate::run_migrations(&conn).expect("migrate fixture database");
+        let path = std::env::temp_dir().join(format!(
+            "remem-gh871-stop-boundary-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        let captured = concat!(
+            "{\"type\":\"user\",\"cwd\":\"/tmp/captured\",",
+            "\"timestamp\":100,\"message\":{\"content\":\"before stop\"}}\n"
+        );
+        std::fs::write(&path, captured).expect("write captured transcript");
+        let byte_limit = u64::try_from(captured.len()).expect("captured length");
+        let appended = concat!(
+            "{\"type\":\"session_meta\",\"payload\":{\"id\":\"late-session\",",
+            "\"cwd\":\"/tmp/appended\"}}\n"
+        );
+        std::fs::write(&path, format!("{captured}{appended}")).expect("append after Stop");
+        let path_text = path.to_string_lossy();
+        let fallback_id = path
+            .file_stem()
+            .expect("fixture stem")
+            .to_string_lossy()
+            .to_string();
+
+        let report = drain_with_identity(
+            &conn,
+            StopTranscript {
+                path: &path_text,
+                byte_limit: Some(byte_limit),
+                project: "/tmp/fallback",
+                branch: None,
+                cwd: "/tmp/fallback",
+            },
+        )
+        .expect("drain captured Stop boundary");
+
+        assert_eq!(report.inserted, 1);
+        assert_eq!(
+            conn.query_row("SELECT session_id FROM raw_messages", [], |row| row
+                .get::<_, String>(0))
+                .expect("load bounded raw message"),
+            fallback_id
+        );
         std::fs::remove_file(path.as_path()).expect("remove transcript");
     }
 

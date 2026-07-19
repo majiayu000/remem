@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::BufRead;
+use std::io::{BufRead, Read};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -76,7 +76,24 @@ pub(crate) fn probe(
     file: &Path,
     fallback_project: Option<&str>,
 ) -> Result<TranscriptPlan> {
-    probe_inner(source_root, scan_root, file, fallback_project, None)
+    probe_inner(source_root, scan_root, file, fallback_project, None, None)
+}
+
+pub(crate) fn probe_bounded(
+    source_root: &str,
+    scan_root: &Path,
+    file: &Path,
+    fallback_project: Option<&str>,
+    byte_limit: u64,
+) -> Result<TranscriptPlan> {
+    probe_inner(
+        source_root,
+        scan_root,
+        file,
+        fallback_project,
+        None,
+        Some(byte_limit),
+    )
 }
 
 pub(crate) fn probe_with_project_cache(
@@ -92,6 +109,7 @@ pub(crate) fn probe_with_project_cache(
         file,
         fallback_project,
         Some(project_cache),
+        None,
     )
 }
 
@@ -101,6 +119,7 @@ fn probe_inner(
     file: &Path,
     fallback_project: Option<&str>,
     project_cache: Option<&mut BTreeMap<String, String>>,
+    byte_limit: Option<u64>,
 ) -> Result<TranscriptPlan> {
     let metadata =
         std::fs::metadata(file).with_context(|| format!("stat transcript {}", file.display()))?;
@@ -118,7 +137,7 @@ fn probe_inner(
     if fallback_session_id.is_empty() {
         bail!("transcript {} has no filename identity", file.display());
     }
-    let context = probe_context(file)?;
+    let context = probe_context(file, byte_limit)?;
     let (canonical_session_id, identity_source) = match context.session_id {
         Some(session_id) if !session_id.trim().is_empty() => {
             (session_id, IdentitySource::TranscriptMetadata)
@@ -225,6 +244,27 @@ pub(crate) fn resolve_fallback_group(
     source_root: &str,
     fallback_session_id: &str,
 ) -> Result<()> {
+    let inherited_conflict_reason = conn
+        .query_row(
+            "SELECT COALESCE(conflict_reason, 'inherited_group_conflict')
+             FROM raw_session_identities
+             WHERE source_root = ?1 AND fallback_session_id = ?2
+               AND status = 'conflict'
+             ORDER BY id
+             LIMIT 1",
+            params![source_root, fallback_session_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    if let Some(reason) = inherited_conflict_reason {
+        conn.execute(
+            "UPDATE raw_session_identities
+             SET status = 'conflict', conflict_reason = ?3
+             WHERE source_root = ?1 AND fallback_session_id = ?2",
+            params![source_root, fallback_session_id, reason],
+        )?;
+        return Ok(());
+    }
     let metadata_claims: Vec<String> = {
         let mut statement = conn.prepare(
             "SELECT DISTINCT c.claimed_session_id
@@ -570,15 +610,64 @@ fn rewrite_evidence_references(conn: &Connection, old_id: i64, new_id: i64) -> R
             params![event_id, serde_json::to_string(&ids)?],
         )?;
     }
+    rewrite_lesson_source_evidence(conn, old_id, new_id)?;
+    Ok(())
+}
+
+fn rewrite_lesson_source_evidence(conn: &Connection, old_id: i64, new_id: i64) -> Result<()> {
     let old_token = format!("raw_message:{old_id}:");
     let new_token = format!("raw_message:{new_id}:");
-    conn.execute(
-        "UPDATE memory_lessons
-         SET source_evidence = REPLACE(source_evidence, ?1, ?2)
-         WHERE source_evidence IS NOT NULL AND INSTR(source_evidence, ?1) > 0",
-        params![old_token, new_token],
-    )?;
+    let rows: Vec<(i64, String)> = {
+        let mut statement = conn.prepare(
+            "SELECT memory_id, source_evidence
+             FROM memory_lessons
+             WHERE source_evidence IS NOT NULL AND INSTR(source_evidence, ?1) > 0
+             ORDER BY memory_id",
+        )?;
+        let rows = statement
+            .query_map([&old_token], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows
+    };
+    for (memory_id, source_evidence) in rows {
+        let rewritten =
+            deduplicate_raw_message_references(&source_evidence.replace(&old_token, &new_token));
+        conn.execute(
+            "UPDATE memory_lessons SET source_evidence = ?2 WHERE memory_id = ?1",
+            params![memory_id, rewritten],
+        )?;
+    }
     Ok(())
+}
+
+fn deduplicate_raw_message_references(source_evidence: &str) -> String {
+    const PREFIX: &str = "raw_message:";
+    let mut output = String::with_capacity(source_evidence.len());
+    let mut seen = BTreeSet::new();
+    let mut cursor = 0;
+    while let Some(relative_start) = source_evidence[cursor..].find(PREFIX) {
+        let start = cursor + relative_start;
+        output.push_str(&source_evidence[cursor..start]);
+        let id_start = start + PREFIX.len();
+        let Some(relative_end) = source_evidence[id_start..].find(':') else {
+            output.push_str(&source_evidence[start..]);
+            return output;
+        };
+        let id_end = id_start + relative_end;
+        let id = &source_evidence[id_start..id_end];
+        if id.is_empty() || !id.bytes().all(|byte| byte.is_ascii_digit()) {
+            output.push_str(PREFIX);
+            cursor = id_start;
+            continue;
+        }
+        let token_end = id_end + 1;
+        if seen.insert(id.to_string()) {
+            output.push_str(&source_evidence[start..token_end]);
+        }
+        cursor = token_end;
+    }
+    output.push_str(&source_evidence[cursor..]);
+    output
 }
 
 fn assert_no_evidence_reference(conn: &Connection, raw_message_id: i64) -> Result<()> {
@@ -614,15 +703,32 @@ struct TranscriptContext {
     branch: Option<String>,
 }
 
-fn probe_context(file: &Path) -> Result<TranscriptContext> {
+fn probe_context(file: &Path, byte_limit: Option<u64>) -> Result<TranscriptContext> {
     let mut context = TranscriptContext::default();
     let handle = std::fs::File::open(file)
         .with_context(|| format!("open transcript probe {}", file.display()))?;
-    for line in std::io::BufReader::new(handle)
-        .lines()
-        .take(CONTEXT_PROBE_LINES)
-    {
-        let line = line.with_context(|| format!("read transcript probe {}", file.display()))?;
+    let mut reader = std::io::BufReader::new(handle);
+    let max_bytes = byte_limit.unwrap_or(u64::MAX);
+    let mut consumed = 0_u64;
+    for _ in 0..CONTEXT_PROBE_LINES {
+        if consumed >= max_bytes {
+            break;
+        }
+        let mut line = String::new();
+        let read = reader
+            .by_ref()
+            .take(max_bytes - consumed)
+            .read_line(&mut line)
+            .with_context(|| format!("read transcript probe {}", file.display()))?;
+        if read == 0 {
+            if byte_limit.is_some() && consumed < max_bytes {
+                bail!(
+                    "transcript truncated before captured probe boundary: expected {max_bytes} bytes, read {consumed}"
+                );
+            }
+            break;
+        }
+        consumed = consumed.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
         let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
             continue;
         };

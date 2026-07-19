@@ -21,11 +21,15 @@ separately. File drains roll back on read, parse, or insert failure.
 
 1. Discover JSONL files with the shared scan-root/subagents rules.
 2. Probe metadata ID, filename fallback, project aliases, and captured tuple.
-3. Persist all path/claim rows and resolve complete fallback groups.
-4. For active identities, stream the immutable boundary, upgrade legacy
-   provenance/occurrence rows, and advance ledger/cursor only after success.
-5. Stop performs the shared probe and claim but leaves complete-set legacy
-   convergence to the next batch pass.
+3. Persist all path/claim rows and resolve complete fallback groups; any prior
+   group conflict is inherited by later path identities.
+4. For active identities, use one fallback-group savepoint to stream immutable
+   boundaries, upgrade legacy provenance/occurrence rows, rewrite and
+   deduplicate evidence references, and advance ledgers/cursors only after the
+   entire group succeeds.
+5. Stop performs the shared identity/project probe inside its captured byte
+   boundary and persists the claim, but leaves complete-set legacy convergence
+   to the next batch pass.
 
 ## Read and Reconcile Flow
 

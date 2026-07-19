@@ -95,6 +95,49 @@ fn conflicting_metadata_claims_are_sticky() {
 }
 
 #[test]
+fn existing_group_conflict_is_inherited_by_later_identity() -> anyhow::Result<()> {
+    let conn = setup_identity_db();
+    conn.execute_batch(
+        "INSERT INTO raw_session_identities (
+            id, source_root, transcript_path, fallback_session_id,
+            canonical_session_id, project, legacy_project, status,
+            conflict_reason, observed_mtime_ns, observed_size_bytes,
+            first_seen_at_epoch, last_seen_at_epoch
+         ) VALUES
+            (31, 'local', '/tmp/first/shared.jsonl', 'shared',
+             'canonical-871', 'project', 'legacy', 'conflict',
+             'stable_occurrence_mismatch', 1, 1, 1, 1),
+            (32, 'local', '/tmp/second/shared.jsonl', 'shared',
+             'canonical-871', 'project', 'legacy', 'active',
+             NULL, 1, 1, 1, 1);
+         INSERT INTO raw_session_identity_claims (
+            transcript_identity_id, claimed_session_id, identity_source,
+            first_seen_at_epoch, last_seen_at_epoch
+         ) VALUES
+            (31, 'canonical-871', 'transcript_metadata', 1, 1),
+            (32, 'canonical-871', 'transcript_metadata', 1, 1);",
+    )?;
+
+    resolve_fallback_group(&conn, "local", "shared")?;
+
+    assert_eq!(
+        conn.query_row(
+            "SELECT GROUP_CONCAT(status || ':' || conflict_reason, ',')
+             FROM (
+                 SELECT status, conflict_reason
+                 FROM raw_session_identities
+                 WHERE source_root = 'local' AND fallback_session_id = 'shared'
+                 ORDER BY id
+             )",
+            [],
+            |row| row.get::<_, String>(0)
+        )?,
+        "conflict:stable_occurrence_mismatch,conflict:stable_occurrence_mismatch"
+    );
+    Ok(())
+}
+
+#[test]
 fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Result<()> {
     let conn = setup_identity_db();
     let path = temp_transcript(
@@ -183,7 +226,7 @@ fn exact_collision_rewrites_every_persisted_evidence_reference() -> anyhow::Resu
             [],
             |row| row.get::<_, String>(0)
         )?,
-        "raw_message:42:sha256 raw_message:42:sha256 raw_message:42:sha256"
+        "raw_message:42:sha256 sha256 sha256"
     );
     std::fs::remove_file(path)?;
     Ok(())

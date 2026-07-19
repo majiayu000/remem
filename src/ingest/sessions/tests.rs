@@ -605,6 +605,89 @@ fn ordinal_replay_conflict_is_sticky_and_preserves_existing_raw_row() -> anyhow:
 }
 
 #[test]
+fn fallback_group_conflict_rolls_back_earlier_member_mutations() -> anyhow::Result<()> {
+    let conn = setup_conn();
+    let root = TempRoot::new("group-atomicity");
+    let cwd = root.path.to_string_lossy().to_string();
+    let first = root.write(
+        "a/shared.jsonl",
+        &format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "sessionId": "canonical-871",
+                "cwd": cwd,
+                "timestamp": 100,
+                "message": {"content": "first group member"}
+            })
+        ),
+    );
+    let second = root.write(
+        "b/shared.jsonl",
+        &format!(
+            "{}\n",
+            serde_json::json!({
+                "type": "user",
+                "sessionId": "canonical-871",
+                "cwd": cwd,
+                "timestamp": 101,
+                "message": {"content": "second group member"}
+            })
+        ),
+    );
+    assert!(
+        first < second,
+        "fixture ordering must exercise earlier mutation"
+    );
+    let scan_root = root.scan_root("local");
+    let second_plan =
+        crate::ingest::session_identity::probe(&scan_root.label, &scan_root.path, &second, None)?;
+    let second_identity = crate::ingest::session_identity::upsert_claim(&conn, &second_plan, 1)?;
+    crate::ingest::session_identity::resolve_fallback_group(
+        &conn,
+        &second_plan.source_root,
+        &second_plan.fallback_session_id,
+    )?;
+    conn.execute(
+        "INSERT INTO raw_messages (
+            session_id, project, role, content, content_hash, source,
+            created_at_epoch, source_root, event_time_source,
+            transcript_identity_id, transcript_record_ordinal
+         ) VALUES (?1, ?2, 'assistant', 'preexisting mismatch', ?3, 'transcript',
+                   101, ?4, 'transcript_event', ?5, 0)",
+        rusqlite::params![
+            second_plan.canonical_session_id,
+            second_plan.project,
+            crate::db::content_identity_hash(b"preexisting mismatch"),
+            second_plan.source_root,
+            second_identity
+        ],
+    )?;
+
+    let summary = run_ingest_sessions(&conn, &[scan_root], &IngestOptions::default())?;
+
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(summary.ingested_messages, 0);
+    assert_eq!(cursor_count(&conn), 0);
+    assert_eq!(raw_message_count(&conn), 1);
+    assert_eq!(
+        conn.query_row("SELECT content FROM raw_messages", [], |row| row
+            .get::<_, String>(0))?,
+        "preexisting mismatch"
+    );
+    assert_eq!(
+        conn.query_row(
+            "SELECT COUNT(*) FROM raw_session_identities
+             WHERE fallback_session_id = 'shared' AND status = 'conflict'",
+            [],
+            |row| row.get::<_, i64>(0)
+        )?,
+        2
+    );
+    Ok(())
+}
+
+#[test]
 fn filename_fallback_promotion_updates_one_existing_occurrence() -> anyhow::Result<()> {
     let conn = setup_conn();
     let root = TempRoot::new("occurrence-promotion");
