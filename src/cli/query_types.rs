@@ -184,6 +184,21 @@ pub(in crate::cli) enum RawAction {
         #[arg(long)]
         json: bool,
     },
+    /// Compare indexed transcript occurrences with the raw archive.
+    Reconcile {
+        /// Inclusive lower bound (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        #[arg(long)]
+        since: String,
+        /// Inclusive upper bound; YYYY-MM-DD includes that full UTC day.
+        #[arg(long)]
+        until: String,
+        /// Additional required transcript root in label=path form.
+        #[arg(long = "root")]
+        roots: Vec<String>,
+        /// Emit the privacy-safe aggregate report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]

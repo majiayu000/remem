@@ -3,11 +3,17 @@
 ## Unreleased
 
 ### Fixed
-- Staged source version `0.6.8` for GH-860: the structural force-push evaluator
+- Staged source version `0.6.9` for GH-860: the structural force-push evaluator
   recognizes supported Git-for-Windows `.exe` shell basenames, binds static
   shell `-c` positional operands, and resolves a function-shadowed `unset`
   before applying builtin state changes. Paired fixtures preserve nearby
   allowed forms. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.8` for GH-871: raw transcript ingestion now uses
+  path-stable metadata-first identities and lossless occurrence ordinals;
+  validated read-only raw queries avoid migration-lock contention, session
+  JSON includes role counts, and bounded aggregate-only reconciliation proves
+  fixed-window archive parity without exposing transcript data. Release
+  metadata stays `unreleased` until publication.
 - Staged source version `0.6.7` for GH-882: memory-candidate extraction now
   normalizes the model-emitted `fact` alias to `discovery` without weakening
   the legal observation vocabulary, and both prompt layers explicitly direct

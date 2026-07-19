@@ -2,4 +2,5 @@
 //!
 //! Spec: specs/GH720/tech.md (Phase 1a, issue #722).
 
+pub(crate) mod session_identity;
 pub mod sessions;

@@ -4,10 +4,72 @@ use serde_json::Value;
 
 use super::raw_archive::{ROLE_ASSISTANT, ROLE_USER};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ParsedTranscriptMessage {
     pub role: &'static str,
     pub text: String,
     pub created_at_epoch: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum TranscriptRecordClass {
+    Conversation(ParsedTranscriptMessage),
+    MetaUser(ParsedTranscriptMessage),
+    XmlControlUser(ParsedTranscriptMessage),
+    MissingEventTime(ParsedTranscriptMessage),
+    EmptyText,
+    UnsupportedRecord,
+    MalformedRecord,
+    OutsideWindow,
+}
+
+pub(crate) fn classify_transcript_line(
+    line: &str,
+    window: Option<(i64, i64)>,
+) -> TranscriptRecordClass {
+    let Ok(value) = serde_json::from_str::<Value>(line) else {
+        return TranscriptRecordClass::MalformedRecord;
+    };
+    let event_epoch = transcript_timestamp_epoch(&value);
+    if event_epoch
+        .is_some_and(|epoch| window.is_some_and(|(since, until)| epoch < since || epoch > until))
+    {
+        return TranscriptRecordClass::OutsideWindow;
+    }
+    let Some(message) = parse_transcript_message(&value) else {
+        return TranscriptRecordClass::UnsupportedRecord;
+    };
+    if event_epoch.is_none() {
+        return TranscriptRecordClass::MissingEventTime(message);
+    }
+    if message.text.trim().is_empty() {
+        return TranscriptRecordClass::EmptyText;
+    }
+    if message.role == ROLE_USER && transcript_is_meta(&value) {
+        return TranscriptRecordClass::MetaUser(message);
+    }
+    if message.role == ROLE_USER && message.text.trim_start().starts_with('<') {
+        return TranscriptRecordClass::XmlControlUser(message);
+    }
+    TranscriptRecordClass::Conversation(message)
+}
+
+fn transcript_is_meta(value: &Value) -> bool {
+    value
+        .get("isMeta")
+        .or_else(|| value.get("is_meta"))
+        .or_else(|| {
+            value
+                .get("message")
+                .and_then(|message| message.get("isMeta"))
+        })
+        .or_else(|| {
+            value
+                .get("message")
+                .and_then(|message| message.get("is_meta"))
+        })
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 pub(crate) fn read_transcript_content(
@@ -45,6 +107,14 @@ pub(crate) fn stream_transcript_lines(
         Some(limit) => stream_reader(file.take(limit), Some(limit), &mut visit),
         None => stream_reader(file, None, &mut visit),
     }
+}
+
+pub(crate) fn stream_captured_transcript(
+    file: std::fs::File,
+    byte_limit: u64,
+    mut visit: impl FnMut(&str, bool),
+) -> std::io::Result<()> {
+    stream_reader(file.take(byte_limit), Some(byte_limit), &mut visit)
 }
 
 fn stream_reader(
@@ -162,7 +232,7 @@ fn extract_content_text(content: &Value) -> String {
     String::new()
 }
 
-fn transcript_timestamp_epoch(value: &Value) -> Option<i64> {
+pub(crate) fn transcript_timestamp_epoch(value: &Value) -> Option<i64> {
     value
         .get("timestamp")
         .or_else(|| value.get("created_at"))
@@ -238,5 +308,63 @@ mod tests {
         let parsed = parse_transcript_message(&value).expect("message should parse");
 
         assert_eq!(parsed.created_at_epoch, Some(1_781_222_403));
+    }
+
+    #[test]
+    fn classifier_applies_window_and_disjoint_exclusion_precedence() {
+        assert_eq!(
+            classify_transcript_line(
+                r#"{"timestamp":99,"type":"user","isMeta":true,"message":{"content":"secret"}}"#,
+                Some((100, 200))
+            ),
+            TranscriptRecordClass::OutsideWindow
+        );
+        assert!(matches!(
+            classify_transcript_line(
+                r#"{"type":"user","isMeta":true,"message":{"content":""}}"#,
+                Some((100, 200))
+            ),
+            TranscriptRecordClass::MissingEventTime(_)
+        ));
+        assert!(matches!(
+            classify_transcript_line(
+                r#"{"timestamp":100,"type":"user","isMeta":true,"message":{"content":"meta"}}"#,
+                Some((100, 200))
+            ),
+            TranscriptRecordClass::MetaUser(_)
+        ));
+        assert!(matches!(
+            classify_transcript_line(
+                r#"{"timestamp":100,"type":"user","message":{"content":"  <system>"}}"#,
+                Some((100, 200))
+            ),
+            TranscriptRecordClass::XmlControlUser(_)
+        ));
+    }
+
+    #[test]
+    fn captured_boundary_excludes_post_capture_append() -> std::io::Result<()> {
+        use std::io::Write;
+
+        let path = std::env::temp_dir().join(format!(
+            "remem-captured-boundary-{}-{}.jsonl",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::write(&path, b"{\"type\":\"progress\",\"timestamp\":100}\n")?;
+        let file = std::fs::File::open(&path)?;
+        let byte_limit = file.metadata()?.len();
+        let mut append = std::fs::OpenOptions::new().append(true).open(&path)?;
+        append.write_all(b"{\"type\":\"progress\",\"timestamp\":101}\n")?;
+        append.flush()?;
+        let mut lines = Vec::new();
+
+        stream_captured_transcript(file, byte_limit, |line, _| {
+            lines.push(line.to_string());
+        })?;
+
+        assert_eq!(lines, vec![r#"{"type":"progress","timestamp":100}"#]);
+        std::fs::remove_file(path)?;
+        Ok(())
     }
 }

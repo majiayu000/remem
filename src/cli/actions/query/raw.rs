@@ -49,7 +49,59 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             sample,
             json,
         ),
+        RawAction::Reconcile {
+            since,
+            until,
+            roots,
+            json,
+        } => run_raw_reconcile(
+            parse_time_lower_bound(&since)?,
+            parse_time_upper_bound(&until)?,
+            &roots,
+            json,
+        ),
     }
+}
+
+fn run_raw_reconcile(
+    since_epoch: i64,
+    until_epoch: i64,
+    root_specs: &[String],
+    json: bool,
+) -> Result<()> {
+    let mut roots = crate::ingest::sessions::default_scan_roots();
+    roots.extend(
+        root_specs
+            .iter()
+            .map(|spec| crate::ingest::sessions::ScanRoot::parse(spec))
+            .collect::<Result<Vec<_>>>()?,
+    );
+    let conn = db::open_db_read_only_current()?;
+    let report = crate::memory::raw_reconcile::reconcile_raw_archive(
+        &conn,
+        &roots,
+        since_epoch,
+        until_epoch,
+    )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        print!(
+            "{}",
+            crate::memory::raw_reconcile::render_reconcile_human(&report)
+        );
+    }
+    ensure_reconcile_parity(report.parity)?;
+    Ok(())
+}
+
+fn ensure_reconcile_parity(parity: bool) -> Result<()> {
+    if !parity {
+        anyhow::bail!(
+            "raw reconciliation found strict parity failures; inspect the aggregate report"
+        );
+    }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -64,7 +116,7 @@ pub(super) fn run_raw_search(
     until_epoch: Option<i64>,
     json: bool,
 ) -> Result<()> {
-    let conn = db::open_db()?;
+    let conn = db::open_db_read_only_current()?;
     let normalized_limit = limit.max(1);
     let normalized_offset = offset.max(0);
     let request = build_raw_search_request(
@@ -135,7 +187,7 @@ pub(super) fn run_raw_sessions(
     sample: i64,
     json: bool,
 ) -> Result<()> {
-    let conn = db::open_db()?;
+    let conn = db::open_db_read_only_current()?;
     let query = RawSessionQuery {
         since_epoch,
         until_epoch,
@@ -252,4 +304,47 @@ fn preview_raw_content(row: &RawMessage) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+#[cfg(test)]
+mod reconcile_exit_tests {
+    use super::ensure_reconcile_parity;
+
+    #[test]
+    fn every_non_parity_report_produces_a_cli_error() {
+        assert!(ensure_reconcile_parity(false).is_err());
+        assert!(ensure_reconcile_parity(true).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod lock_contention_tests {
+    use anyhow::Result;
+
+    use super::{run_raw_search, run_raw_sessions};
+
+    #[test]
+    fn raw_search_and_sessions_actions_succeed_during_normal_write_contention() -> Result<()> {
+        let _data_dir = crate::db::test_support::ScopedTestDataDir::new("raw-actions-write-lock");
+        let writer = crate::db::open_db()?;
+        crate::memory::raw_archive::insert_raw_message(
+            &writer,
+            "lock-session",
+            "lock-project",
+            crate::memory::raw_archive::ROLE_USER,
+            "visible during writer lock",
+            crate::memory::raw_archive::SOURCE_MANUAL,
+            None,
+            None,
+        )?;
+        writer.execute_batch("BEGIN IMMEDIATE")?;
+
+        let search_result = run_raw_search("visible", None, None, None, 20, 0, None, None, true);
+        let sessions_result = run_raw_sessions(None, None, None, 0, true);
+        writer.execute_batch("ROLLBACK")?;
+
+        search_result?;
+        sessions_result?;
+        Ok(())
+    }
 }

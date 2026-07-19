@@ -68,6 +68,9 @@ def copy_pack(repo: Path) -> None:
     target = repo / "scripts" / "sync-specrail-checks.sh"
     target.parent.mkdir(parents=True)
     shutil.copy2(ROOT / "scripts" / "sync-specrail-checks.sh", target)
+    helper = repo / "scripts" / "ci" / "specrail_sync_lock.py"
+    helper.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "ci" / "specrail_sync_lock.py", helper)
     assert_passed(run(["git", "init", "-q"], cwd=repo), "initialize isolated git repo")
     assert_passed(run(["git", "add", "-A"], cwd=repo), "track isolated pack")
 
