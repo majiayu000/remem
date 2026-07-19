@@ -1,5 +1,6 @@
 pub mod embedding;
 pub mod entity;
+pub mod graph;
 pub mod memory_search;
 pub mod query_expand;
 pub mod search;

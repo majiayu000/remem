@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.11` for GH-853: standard memory search now expands
+  eligible FTS/vector seeds through bounded trusted `graph_edges` paths, with
+  deterministic RRF ordering, explicit empty reasons, and a same-head literal
+  associative gate that records full gain without non-associative regression.
+  PPR and direct context traversal remain deferred. Release metadata stays
+  `unreleased` until publication.
 - Staged source version `0.6.10` for GH-854: SessionStart now preserves Core,
   Preferences, and Workstreams while applying one deterministic relevance
   budget to Lessons, non-Core MemoryIndex entries, and Sessions. Footer,
