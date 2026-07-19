@@ -540,9 +540,7 @@ pub(super) struct StaticShellStdin {
 }
 
 pub(super) fn static_shell_stdin(tokens: &[String]) -> Option<StaticShellStdin> {
-    let Some(command_index) = unwrap::effective_command_index(tokens) else {
-        return None;
-    };
+    let command_index = unwrap::effective_command_index(tokens)?;
     let command = tokens.get(command_index)?;
     let zero_argument = shell_name(unwrap::semantic_token(command))?.to_string();
     let ShellInput::Stdin(arguments_index) = shell_input(tokens, command_index) else {
