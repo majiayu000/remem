@@ -224,7 +224,7 @@ fields. Release metadata changes only stage the required source version.
 - [ ] `cargo test`
 - [x] `cargo clippy --all-targets -- -D warnings`
 
-The focused evaluator suite passes 113 tests on the current implementation.
+The focused evaluator suite passes 125 tests on the current implementation.
 The fresh worktree-local full suite reports 2702 passed, 1 ignored, and the
 single unrelated path-sensitive `writer_refuses_high_context_paths` failure
 caused by this required worktree living below `.codex/`. Hosted CI in a normal
