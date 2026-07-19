@@ -143,8 +143,27 @@ Artifact v2 additionally supports:
   rather than flattening incompatible paths. Positional changes in subshells,
   command substitutions, and
   non-final pipeline processes restore the parent mapping, and aliases resolve
-  before builtin positional state. Explicit sourced-file arguments receive
-  their own positional scope.
+  before builtin positional state. Possible mappings preserve separate
+  command-position argv groups and matching suffix paths, so last-option-wins
+  flags from mutually exclusive mappings are never concatenated. Static
+  non-negative collection slices and positional substrings are materialized,
+  with offset zero including `$0`; `shift` advances known mappings and exposes
+  static failure to control flow, while argument-bearing `set -` follows
+  `set --` assignment semantics. Path-specific positional state changes are
+  applied once per correlated mapping; mixed shift success/failure contexts
+  select the matching immediate `&&`/`||` branch before rejoining. Stateful
+  builtins and function state changes
+  such as `trap`, `unset -f`, and function export apply only after alias and
+  function resolution. Possible redefinitions preserve all-path alias/function
+  presence while retaining every payload/body variant. Each known command,
+  alias, function, ordinary fallback, and fallible assignment/redirection setup
+  outcome executes against an isolated full shell-state snapshot. Setup failure
+  preserves the pre-command state and reports failure; `command`/`builtin`
+  wrappers retain known `true`/`false`/`:` status unless a direct function
+  shadows the name. Every terminating alternative executes its EXIT traps
+  before filtering, and terminated state does not contaminate a continuing
+  path while its executable segments remain visible.
+  Explicit sourced-file arguments receive their own positional scope.
   Expandable heredoc stdin finishes parent-side positional expansion before a
   child `-c` context is installed. Nested command substitutions and arithmetic
   source use their own syntax context, and function-definition names remain
@@ -157,9 +176,8 @@ Artifact v2 additionally supports:
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
   Function definitions follow Bash subshell, pipeline, shadowing, and static
-  `unset -f` state; known functions resolve before builtin-like state mutation
-  or wrapper rewriting, including functions named `unset`, `trap`, `env`, or
-  `alias`, while explicit builtin forms retain builtin semantics;
+  `unset -f` state; a function named `unset` resolves before builtin-like state
+  mutation, while explicit `builtin unset` retains builtin semantics;
   explicitly exported functions alone enter child Bash,
   while other child shells start empty. Shell `-n`/`noexec` payloads remain
   inert. Shell `-s` and nested static shells inherit the effective final fd-0

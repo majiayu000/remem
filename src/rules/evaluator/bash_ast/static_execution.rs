@@ -8,18 +8,24 @@ use std::collections::HashMap;
 use super::unwrap;
 use super::DYNAMIC_SHELL_WORD;
 
+pub(super) fn static_token_measure(tokens: &[String]) -> usize {
+    tokens
+        .iter()
+        .map(|token| token.len().saturating_add(1))
+        .sum()
+}
+
 pub(super) enum ExitTrapChange<'a> {
     Set(&'a str),
     Reset,
 }
 
-pub(super) enum StaticPositionalChange<'a> {
-    Replace(&'a [String]),
-    Shift(usize),
-}
-
 pub(super) fn direct_command_name(tokens: &[String]) -> Option<&str> {
     unwrap::direct_command_index(tokens).map(|index| unwrap::semantic_token(&tokens[index]))
+}
+
+pub(super) fn static_builtin_command_name(tokens: &[String]) -> Option<&str> {
+    static_builtin_command_index(tokens).map(|index| unwrap::semantic_token(&tokens[index]))
 }
 
 pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
@@ -505,20 +511,18 @@ pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[Strin
     Some(tokens.get(index + 2..).unwrap_or_default())
 }
 
+pub(super) enum StaticPositionalChange<'a> {
+    Set(&'a [String]),
+    Shift(usize),
+}
+
 pub(super) fn static_positional_change(tokens: &[String]) -> Option<StaticPositionalChange<'_>> {
     let index = static_builtin_command_index(tokens)?;
     match unwrap::semantic_token(&tokens[index]) {
         "set" => {
-            let separator = tokens.get(index + 1)?;
-            if separator == "--" {
-                Some(StaticPositionalChange::Replace(
-                    tokens.get(index + 2..).unwrap_or_default(),
-                ))
-            } else if separator == "-" && tokens.get(index + 2).is_some() {
-                Some(StaticPositionalChange::Replace(&tokens[index + 2..]))
-            } else {
-                None
-            }
+            let marker = tokens.get(index + 1)?;
+            (marker == "--" || marker == "-" && tokens.get(index + 2).is_some())
+                .then(|| StaticPositionalChange::Set(&tokens[index + 2..]))
         }
         "shift" => match &tokens[index + 1..] {
             [] => Some(StaticPositionalChange::Shift(1)),

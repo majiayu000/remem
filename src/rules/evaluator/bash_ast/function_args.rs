@@ -2,7 +2,7 @@ use brush_parser::ast::FunctionBody;
 use brush_parser::word::{WordPiece, WordPieceWithSource};
 use brush_parser::ParserOptions;
 
-use super::positional_slice::{positional_collection_slice, positional_substring};
+use super::static_words::{static_slice, static_substring};
 
 const MAX_DEFAULT_EXPANSION_DEPTH: usize = 8;
 
@@ -111,21 +111,29 @@ pub(super) fn bare_shell_positional_fields(
         .strip_prefix('"')
         .and_then(|value| value.strip_suffix('"'))
     {
+        if let Some((_, expression)) = parameter_expression(inner) {
+            if expression.starts_with("@:") {
+                if let Some(fields) =
+                    positional_collection_slice_fields(expression, zero_argument, arguments)
+                {
+                    return Ok(Some(fields));
+                }
+            }
+        }
         if matches!(inner, "$*" | "${*}") {
             return Ok(Some(vec![arguments.join(" ")]));
         }
         if let Some((consumed, expression)) = parameter_expression(inner) {
-            if consumed == inner.len() {
-                if let Some(selected) =
-                    positional_collection_slice(expression, zero_argument, arguments)
-                {
-                    return Ok(Some(selected));
-                }
-                if expression.starts_with(|ch: char| ch.is_ascii_digit()) {
-                    let value =
-                        resolve_parameter_expression(expression, zero_argument, arguments, 0);
-                    return Ok(value.map(|value| vec![value]));
-                }
+            if consumed == inner.len() && expression.chars().all(|ch| ch.is_ascii_digit()) {
+                let Ok(position) = expression.parse::<usize>() else {
+                    return Ok(None);
+                };
+                let value = if position == 0 {
+                    zero_argument
+                } else {
+                    arguments.get(position - 1).map(String::as_str)
+                };
+                return Ok(Some(vec![value.unwrap_or_default().to_string()]));
             }
         }
     }
@@ -145,6 +153,25 @@ pub(super) fn bare_shell_positional_fields(
         return Ok(None);
     };
     Ok(Some(fields))
+}
+
+pub(super) fn bare_shell_positional_variant_fields(
+    source: &str,
+    options: &ParserOptions,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+    possible_arguments: &[Vec<String>],
+) -> Result<Option<Vec<String>>, String> {
+    let mut combined = Vec::new();
+    for arguments in std::iter::once(arguments).chain(possible_arguments.iter().map(Vec::as_slice))
+    {
+        let Some(fields) = bare_shell_positional_fields(source, options, zero_argument, arguments)?
+        else {
+            return Ok(None);
+        };
+        combined.extend(fields);
+    }
+    Ok(Some(combined))
 }
 
 fn positional_source_fields(
@@ -175,13 +202,8 @@ fn resolve_parameter_expression_fields(
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
     }
-    if let Some(arguments) = positional_collection_slice(expression, zero_argument, arguments) {
-        return Some(
-            arguments
-                .iter()
-                .flat_map(|value| split_fields(value))
-                .collect(),
-        );
+    if let Some(fields) = positional_collection_slice_fields(expression, zero_argument, arguments) {
+        return Some(fields);
     }
     let digit_end = expression
         .find(|ch: char| !ch.is_ascii_digit())
@@ -196,15 +218,6 @@ fn resolve_parameter_expression_fields(
         arguments.get(position - 1).map(String::as_str)
     };
     let suffix = &expression[digit_end..];
-    if let Some(slice) = suffix
-        .strip_prefix(':')
-        .filter(|slice| slice.starts_with(|ch: char| ch.is_ascii_digit()))
-    {
-        return Some(split_fields(&positional_substring(
-            argument.unwrap_or_default(),
-            slice,
-        )?));
-    }
     if let Some(fallback) = suffix.strip_prefix(":-") {
         return if argument.is_none_or(str::is_empty) {
             expand_default_fields(fallback, zero_argument, arguments, depth + 1)
@@ -232,6 +245,10 @@ fn resolve_parameter_expression_fields(
         } else {
             Some(Vec::new())
         };
+    }
+    if let Some(spec) = suffix.strip_prefix(':') {
+        return static_substring(argument.unwrap_or_default(), spec)
+            .map(|value| split_fields(&value));
     }
     suffix
         .is_empty()
@@ -534,16 +551,6 @@ fn positional_replacement(
     }
 
     let (consumed, expression) = parameter_expression(rest)?;
-    if let Some(arguments) = positional_collection_slice(expression, zero_argument, arguments) {
-        let replacement = if double_quoted {
-            expand_at_in_double_quotes(&arguments)
-        } else if !split_unquoted {
-            quote_argument(&arguments.join(" "))
-        } else {
-            split_arguments(&arguments)
-        };
-        return Some((consumed, replacement));
-    }
     let value = resolve_parameter_expression(expression, zero_argument, arguments, depth)?;
     let replacement = if double_quoted {
         escape_double_quoted(&value)
@@ -598,8 +605,8 @@ fn resolve_parameter_expression(
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
     }
-    if let Some(arguments) = positional_collection_slice(expression, zero_argument, arguments) {
-        return Some(arguments.join(" "));
+    if let Some(fields) = positional_collection_slice_fields(expression, zero_argument, arguments) {
+        return Some(fields.join(" "));
     }
     let digit_end = expression
         .find(|ch: char| !ch.is_ascii_digit())
@@ -615,12 +622,6 @@ fn resolve_parameter_expression(
         arguments.get(position - 1).map(String::as_str)
     };
     let suffix = &expression[digit_end..];
-    if let Some(slice) = suffix
-        .strip_prefix(':')
-        .filter(|slice| slice.starts_with(|ch: char| ch.is_ascii_digit()))
-    {
-        return positional_substring(argument.unwrap_or_default(), slice);
-    }
     let selected = if let Some(fallback) = suffix.strip_prefix(":-") {
         if argument.is_none_or(str::is_empty) {
             return expand_default_value(fallback, zero_argument, arguments, depth + 1);
@@ -641,12 +642,34 @@ fn resolve_parameter_expression(
             return expand_default_value(alternative, zero_argument, arguments, depth + 1);
         }
         Some("")
+    } else if let Some(spec) = suffix.strip_prefix(':') {
+        return static_substring(argument.unwrap_or_default(), spec);
     } else if suffix.is_empty() {
         argument.or(Some(""))
     } else {
         return None;
     };
     Some(selected.unwrap_or("").to_string())
+}
+
+fn positional_collection_slice_fields(
+    expression: &str,
+    zero_argument: Option<&str>,
+    arguments: &[String],
+) -> Option<Vec<String>> {
+    let spec = expression
+        .strip_prefix("@:")
+        .or_else(|| expression.strip_prefix("*:"))?;
+    let (offset, length) = static_slice(spec)?;
+    if offset == 0 {
+        let mut values = vec![zero_argument?.to_string()];
+        values.extend(arguments.iter().cloned());
+        values.truncate(length.unwrap_or(values.len()));
+        return Some(values);
+    }
+    let start = offset.checked_sub(1)?;
+    let values = arguments.get(start..).unwrap_or_default();
+    Some(values[..length.unwrap_or(values.len()).min(values.len())].to_vec())
 }
 
 fn expand_default_value(

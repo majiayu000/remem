@@ -2,17 +2,17 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use brush_parser::ast::{
-    AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    FunctionBody, IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand,
-    UnexpandedArithmeticExpr, Word,
+    Command, CommandPrefixOrSuffixItem, CompoundCommand, ExtendedTestExpr, FunctionBody,
+    IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand, UnexpandedArithmeticExpr,
+    Word,
 };
 use brush_parser::word::{Parameter, ParameterExpr, WordPiece, WordPieceWithSource};
 use brush_parser::{Parser, ParserOptions};
 
+mod alternative_state;
+mod command_resolution;
 mod control_flow;
 mod function_args;
-mod positional_slice;
-mod positional_variants;
 mod shell_state;
 mod static_execution;
 mod static_words;
@@ -20,20 +20,16 @@ mod stdin_payload;
 pub(super) mod unwrap;
 
 use function_args::{
-    expand_function_body, expand_shell_arithmetic, expand_shell_command,
+    bare_shell_positional_variant_fields, expand_shell_arithmetic, expand_shell_command,
     has_shell_positional_reference,
 };
-use static_execution::{
-    direct_command_name, static_env_split_tokens, static_eval_payload,
-    static_export_function_change, static_shell_command_payload, static_shell_exits,
-    static_shell_is_bash, static_shell_reads_stdin, static_source_stdin_arguments,
-    static_unset_function_names,
-};
-use static_words::{append_word_variants, static_word_pieces};
-use stdin_payload::EffectiveStdin;
+use static_words::{static_source_word_variants, static_word_pieces};
+
+#[cfg(test)]
+pub(super) use shell_state::bound_possible_positional_arguments;
 
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
-const MAX_STATIC_WORD_VARIANTS: usize = 256;
+pub(super) const MAX_STATIC_WORD_VARIANTS: usize = 256;
 
 pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String> {
     let mut collector = CommandCollector {
@@ -54,6 +50,10 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         exit_traps: Vec::new(),
         execution_terminated: false,
         execution_is_definite: true,
+        positional_execution_is_definite: true,
+        last_positional_status: None,
+        last_positional_success: None,
+        last_positional_failure: None,
         inherited_stdin: None,
         positional_context: None,
     };
@@ -80,6 +80,10 @@ struct CommandCollector {
     exit_traps: Vec<ExitTrapDefinition>,
     execution_terminated: bool,
     execution_is_definite: bool,
+    positional_execution_is_definite: bool,
+    last_positional_status: Option<bool>,
+    last_positional_success: Option<PositionalContext>,
+    last_positional_failure: Option<PositionalContext>,
     inherited_stdin: Option<String>,
     positional_context: Option<PositionalContext>,
 }
@@ -101,6 +105,8 @@ struct FunctionDefinition {
 struct AliasDefinition {
     payload: String,
     is_definite: bool,
+    is_expandable: bool,
+    is_definitely_expandable: bool,
 }
 
 #[derive(Clone)]
@@ -130,49 +136,13 @@ impl CommandCollector {
         Ok(())
     }
 
-    fn collect_list(&mut self, list: &CompoundList) -> Result<(), String> {
-        for item in &list.0 {
-            if self.execution_terminated {
-                break;
-            }
-            self.collect_pipeline(&item.0.first)?;
-            if self.execution_terminated {
-                break;
-            }
-            let mut static_success = self.static_pipeline_success(&item.0.first)?;
-            for additional in &item.0.additional {
-                if self.execution_terminated {
-                    break;
-                }
-                match additional {
-                    AndOr::And(_) if static_success == Some(false) => {}
-                    AndOr::Or(_) if static_success == Some(true) => {}
-                    AndOr::And(pipeline) => {
-                        let definitely_executes = static_success == Some(true);
-                        self.with_execution_certainty(definitely_executes, |collector| {
-                            collector.collect_pipeline(pipeline)
-                        })?;
-                        static_success =
-                            and_status(static_success, self.static_pipeline_success(pipeline)?);
-                    }
-                    AndOr::Or(pipeline) => {
-                        let definitely_executes = static_success == Some(false);
-                        self.with_execution_certainty(definitely_executes, |collector| {
-                            collector.collect_pipeline(pipeline)
-                        })?;
-                        static_success =
-                            or_status(static_success, self.static_pipeline_success(pipeline)?);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     fn static_pipeline_success(&self, pipeline: &Pipeline) -> Result<Option<bool>, String> {
         let [Command::Simple(command)] = pipeline.seq.as_slice() else {
             return Ok(None);
         };
+        if let Some(success) = self.last_positional_status {
+            return Ok(Some(if pipeline.bang { !success } else { success }));
+        }
         if command.prefix.is_some() || command.suffix.is_some() {
             return Ok(None);
         }
@@ -192,6 +162,9 @@ impl CommandCollector {
     }
 
     fn collect_pipeline(&mut self, pipeline: &Pipeline) -> Result<(), String> {
+        self.last_positional_status = None;
+        self.last_positional_success = None;
+        self.last_positional_failure = None;
         if pipeline.seq.len() == 1 {
             return self.collect_command(&pipeline.seq[0]);
         }
@@ -231,8 +204,10 @@ impl CommandCollector {
                         );
                     } else {
                         let definitions = self.functions.entry(name).or_default();
-                        for definition in definitions.iter_mut() {
-                            definition.is_definite = false;
+                        if !definitions.iter().any(|definition| definition.is_definite) {
+                            for definition in definitions.iter_mut() {
+                                definition.is_definite = false;
+                            }
                         }
                         definitions.push(FunctionDefinition {
                             body: function.body.clone(),
@@ -302,9 +277,6 @@ impl CommandCollector {
     }
 
     fn collect_simple_command(&mut self, command: &SimpleCommand) -> Result<(), String> {
-        if self.collect_possible_positional_command_variants(command)? {
-            return Ok(());
-        }
         let Some(name) = &command.word_or_name else {
             return self.collect_command_items(command.prefix.as_ref().map(|prefix| &prefix.0));
         };
@@ -338,14 +310,14 @@ impl CommandCollector {
             expanded_command_start = Some(command_start);
         }
         self.collect_word_commands(name)?;
-        append_word_variants(&mut segments, self.command_word_variants(name)?);
+        self.append_command_name_variants(&mut segments, name)?;
         if let Some(suffix) = &command.suffix {
             for item in &suffix.0 {
                 match item {
                     CommandPrefixOrSuffixItem::Word(word)
                     | CommandPrefixOrSuffixItem::AssignmentWord(_, word) => {
                         self.collect_word_commands(word)?;
-                        append_word_variants(&mut segments, self.command_word_variants(word)?);
+                        self.append_command_argument_variants(&mut segments, word)?;
                     }
                     _ => self.collect_command_item(item)?,
                 }
@@ -358,139 +330,20 @@ impl CommandCollector {
                 }
             }
         }
+        if !command_resolution::command_has_fallible_setup(command)
+            && self.collect_correlated_positional_tokens(&segments)
+        {
+            return Ok(());
+        }
+        if self.collect_correlated_command_variants(&segments, command)? {
+            return Ok(());
+        }
+        let mut seen = HashSet::new();
+        segments.retain(|tokens| seen.insert(tokens.clone()));
         for tokens in segments {
             self.collect_static_tokens(tokens, command)?;
         }
         Ok(())
-    }
-
-    fn collect_static_tokens(
-        &mut self,
-        mut tokens: Vec<String>,
-        command: &SimpleCommand,
-    ) -> Result<(), String> {
-        while !direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name)) {
-            let Some(expanded) = static_env_split_tokens(&tokens) else {
-                break;
-            };
-            let before = static_token_measure(&tokens);
-            let after = static_token_measure(&expanded);
-            if after >= before {
-                return Err("env -S static argv expansion did not make progress".to_string());
-            }
-            tokens = expanded;
-        }
-        let resolves_to_function =
-            direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name));
-        self.apply_static_shell_state(&tokens, resolves_to_function);
-        if !resolves_to_function {
-            if let Some(names) = static_unset_function_names(&tokens) {
-                for name in names {
-                    if self.execution_is_definite {
-                        self.functions.remove(name);
-                        self.exported_functions.remove(name);
-                    } else if let Some(definitions) = self.functions.get_mut(name) {
-                        for definition in definitions {
-                            definition.is_definite = false;
-                        }
-                    }
-                }
-            }
-        }
-        if let Some((exported, names)) = static_export_function_change(&tokens) {
-            for name in names {
-                if exported && self.functions.contains_key(name) {
-                    self.exported_functions.insert(name.to_string());
-                } else if !exported && self.execution_is_definite {
-                    self.exported_functions.remove(name);
-                }
-            }
-        }
-        if self.collect_static_alias_call(&tokens)? || self.collect_static_function_call(&tokens)? {
-            return Ok(());
-        }
-        self.apply_static_positional_state(&tokens, resolves_to_function);
-        if let Some(payload) = static_eval_payload(&tokens) {
-            self.collect_source(&payload)?;
-        }
-        if let Some(shell_command) = static_shell_command_payload(&tokens) {
-            let inherited_stdin = match self.effective_stdin_payload(command)? {
-                EffectiveStdin::Replaced(payload) => payload,
-                EffectiveStdin::Untouched => None,
-            };
-            self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
-                collector.with_inherited_stdin(inherited_stdin, |collector| {
-                    collector.with_positional_context(
-                        Some(PositionalContext {
-                            zero_argument: shell_command.zero_argument,
-                            arguments: shell_command.arguments,
-                            possible_arguments: Vec::new(),
-                        }),
-                        |collector| {
-                            collector.collect_source(&shell_command.payload)?;
-                            collector.collect_exit_traps()
-                        },
-                    )
-                })
-            })?;
-        }
-        if static_shell_reads_stdin(&tokens) {
-            let payload = match self.effective_stdin_payload(command)? {
-                EffectiveStdin::Replaced(payload) => payload,
-                EffectiveStdin::Untouched => self.inherited_stdin.clone(),
-            };
-            if let Some(payload) = payload {
-                self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
-                    collector.collect_source(&payload)
-                })?;
-            }
-        } else if let Some(arguments) = static_source_stdin_arguments(&tokens) {
-            self.collect_source_stdin_payload(command, arguments)?;
-        }
-        let shell_exits = static_shell_exits(&tokens);
-        self.segments.push(tokens);
-        if self.execution_is_definite && shell_exits {
-            self.execution_terminated = true;
-        }
-        Ok(())
-    }
-
-    fn collect_static_function_call(&mut self, tokens: &[String]) -> Result<bool, String> {
-        let Some(name) = direct_command_name(tokens) else {
-            return Ok(false);
-        };
-        let Some(definitions) = self.functions.get(name).cloned() else {
-            return Ok(false);
-        };
-        let definitely_defined = definitions.iter().any(|definition| definition.is_definite);
-        if !self.active_functions.insert(name.to_string()) {
-            return Ok(definitely_defined);
-        }
-        let result = (|| {
-            let command_index = unwrap::direct_command_index(tokens)
-                .ok_or_else(|| "function call lost its command position".to_string())?;
-            let arguments = &tokens[command_index + 1..];
-            for definition in definitions {
-                let source = expand_function_body(&definition.body, arguments);
-                self.with_execution_certainty(definition.is_definite, |collector| {
-                    let function_context =
-                        collector
-                            .positional_context
-                            .as_ref()
-                            .map(|context| PositionalContext {
-                                zero_argument: context.zero_argument.clone(),
-                                arguments: Vec::new(),
-                                possible_arguments: Vec::new(),
-                            });
-                    collector.with_positional_context(function_context, |collector| {
-                        collector.collect_source(&source)
-                    })
-                })?;
-            }
-            Ok(())
-        })();
-        self.active_functions.remove(name);
-        result.map(|()| definitely_defined)
     }
 
     fn collect_command_items(
@@ -699,6 +552,33 @@ impl CommandCollector {
         Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
     }
 
+    fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
+        if let Some(context) = &self.positional_context {
+            if let Some(fields) = bare_shell_positional_variant_fields(
+                &word.value,
+                &self.options,
+                context.zero_argument.as_deref(),
+                &context.arguments,
+                &context.possible_arguments,
+            )? {
+                return Ok(fields);
+            }
+            let mut variants = Vec::new();
+            for arguments in std::iter::once(context.arguments.as_slice())
+                .chain(context.possible_arguments.iter().map(Vec::as_slice))
+            {
+                let source = expand_shell_command(
+                    &word.value,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    arguments,
+                )?;
+                variants.extend(static_source_word_variants(&source, &self.options)?);
+            }
+            return Ok(variants);
+        }
+        static_source_word_variants(&word.value, &self.options)
+    }
     pub(super) fn expand_positional_source(&self, source: &str) -> Result<String, String> {
         self.positional_context.as_ref().map_or_else(
             || Ok(source.to_string()),
@@ -737,13 +617,6 @@ impl CommandCollector {
         self.positional_context = saved;
         result
     }
-}
-
-fn static_token_measure(tokens: &[String]) -> usize {
-    tokens
-        .iter()
-        .map(|token| token.len().saturating_add(1))
-        .sum()
 }
 
 fn and_status(left: Option<bool>, right: Option<bool>) -> Option<bool> {

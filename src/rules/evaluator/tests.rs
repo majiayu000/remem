@@ -3,6 +3,8 @@ use crate::rules::artifact::{CompiledRule, RuleOverrideState};
 use crate::rules::test_support::package_manager_rule;
 
 mod git_execution;
+mod git_execution_alternative_state;
+mod git_execution_positional_regressions;
 mod git_execution_wrapper_options;
 
 fn forbidden_trailer_rule() -> CompiledRule {
