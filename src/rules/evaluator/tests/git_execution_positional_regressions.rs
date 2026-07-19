@@ -186,6 +186,51 @@ fn force_push_rule_does_not_treat_plain_assignment_prefix_as_fallible() {
 }
 
 #[test]
+fn force_push_rule_preserves_top_level_assignment_prefix_status() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "FOO=x true || git push --force";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_readonly_function_names_out_of_variable_state() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        "f(){ :; }; readonly -f f; f=x true || git push --force",
+        "readonly -p >/dev/null; FLAG=x true || git push --force",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    let command = "readonly -p FLAG; FLAG=x true || git push --force";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert_eq!(outcome.matches.len(), 1, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
 fn force_push_rule_honors_source_option_terminator_before_stdin_path() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     let command = r#"bash -c 'source -- /dev/stdin --force' _ origin <<'EOF'

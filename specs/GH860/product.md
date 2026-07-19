@@ -88,8 +88,12 @@ gaps can either miss a forbidden command or report a false block.
    fallible readonly-assignment or redirection setup outcome shall execute
    against an isolated full shell-state snapshot. An ordinary assignment
    prefix shall not invent a setup-failure path. Setup failure shall preserve
-   pre-command state and a
-   failing status; normalized `command`/`builtin` wrappers shall retain known
+   pre-command state and a failing status. An ordinary assignment prefix shall
+   preserve the known status of `true`/`false`/`:` both inside and outside a
+   child shell positional context. Function-mode `readonly -f` operands shall
+   not be recorded as readonly variable names, while `readonly -p NAME` shall
+   retain Bash's variable declaration behavior. Normalized `command`/`builtin`
+   wrappers shall retain known
    `true`/`false`/`:` status; every terminating alternative shall run its EXIT
    traps before it can be filtered; and state from a terminated path shall not
    contaminate a continuing path.
@@ -144,9 +148,10 @@ gaps can either miss a forbidden command or report a false block.
       across uncertain redefinitions.
 - [x] Red-first fixtures cover isolated full shell-state alternatives,
       possible function/builtin fallback, readonly-assignment/redirection
-      setup, ordinary assignment-prefix status, wrapper-normalized status,
-      terminating-path filtering, and EXIT trap collection for every
-      terminated alternative.
+      setup, ordinary assignment-prefix status in child and top-level scopes,
+      readonly function-versus-variable state, wrapper-normalized status,
+      terminating-path filtering, and EXIT trap collection for every terminated
+      alternative.
 - [x] Focused fixtures cover `source -- /dev/stdin`, temporary source operands,
       caller-positional restoration, and possible positional heredoc expansion.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase

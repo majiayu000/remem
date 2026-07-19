@@ -145,7 +145,7 @@ impl CommandCollector {
         if let Some(success) = self.last_positional_status {
             return Ok(Some(if pipeline.bang { !success } else { success }));
         }
-        if command.prefix.is_some() || command.suffix.is_some() {
+        if self.command_has_fallible_setup(command) {
             return Ok(None);
         }
         let Some(name) = &command.word_or_name else {

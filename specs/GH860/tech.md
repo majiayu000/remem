@@ -89,7 +89,10 @@ function positional expander into a string-source helper with an explicit
   retains an isolated ordinary builtin/external fallback. Setup is branched
   before command resolution, with failure preserving the pre-command snapshot
   and reporting a failing status; plain assignment prefixes not targeting a
-  known readonly variable do not create a synthetic failure alternative. Known
+  known readonly variable do not create a synthetic failure alternative in
+  either top-level or positional child-shell control flow. Function-mode
+  `readonly -f` operands do not enter variable readonly state, while
+  `readonly -p NAME` retains Bash's variable declaration behavior. Known
   `true`/`false`/`:` status is read after the shared
   `command`/`builtin` wrapper normalizer unless a direct function shadows the
   name. Collect EXIT traps for every terminating alternative before snapshot
@@ -157,7 +160,7 @@ assets; this PR does not publish a release.
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
 | B-006 explicit builtin and function ordering | shared builtin command-position normalization and function-aware shell-state/wrapper mutation | focused tests cover `builtin unset -f f` and `builtin command unset -f f` → Allow, function-shadowed positional `trap`/`env`/`alias` calls, and their ordinary non-shadowed builtin or wrapper behavior |
 | B-007 bounded deterministic behavior | existing parser/expansion limits, `MAX_STATIC_WORD_VARIANTS`, critical positional prioritization, and evaluator regression suite | bounded positional regression retains a critical 301st candidate without unbounded state; `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
-| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs`, `git_execution_wrapper_options.rs`, and `git_execution_alternative_state.rs` | focused block/allow tables pass; quoted defaults, parent-expanded heredocs, nested single-quoted substitution, correlated setup/state alternatives, and brace-expanded non-shell argv remain Allow while adjacent executable forms Block |
+| B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs`, `git_execution_wrapper_options.rs`, `git_execution_positional_regressions.rs`, and `git_execution_alternative_state.rs` | focused block/allow tables pass; quoted defaults, parent-expanded heredocs, nested single-quoted substitution, top-level assignment status, readonly function-versus-variable state, correlated setup/state alternatives, and brace-expanded non-shell argv remain precise while adjacent executable forms Block |
 
 ## Data Flow
 

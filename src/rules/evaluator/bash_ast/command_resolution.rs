@@ -165,7 +165,7 @@ impl CommandCollector {
         self.last_positional_status = status;
     }
 
-    fn command_has_fallible_setup(&self, command: &SimpleCommand) -> bool {
+    pub(super) fn command_has_fallible_setup(&self, command: &SimpleCommand) -> bool {
         command_has_fallible_setup(command)
             || command
                 .prefix

@@ -458,13 +458,32 @@ pub(super) fn static_readonly_variable_names(tokens: &[String]) -> Option<Vec<&s
         return None;
     }
     index += 1;
+    let mut function_mode = false;
     let mut names = Vec::new();
     while let Some(token) = tokens.get(index) {
         let token = unwrap::semantic_token(token);
-        if token == "--" || token.starts_with('-') {
+        if token == "--" {
+            index += 1;
+            break;
+        }
+        if let Some(flags) = token.strip_prefix('-').filter(|flags| !flags.is_empty()) {
+            if flags
+                .chars()
+                .any(|flag| !matches!(flag, 'a' | 'A' | 'f' | 'p'))
+            {
+                return None;
+            }
+            function_mode |= flags.contains('f');
             index += 1;
             continue;
         }
+        break;
+    }
+    if function_mode {
+        return Some(Vec::new());
+    }
+    while let Some(token) = tokens.get(index) {
+        let token = unwrap::semantic_token(token);
         let name = token.split_once('=').map_or(token, |(name, _)| name);
         if is_shell_identifier(name) {
             names.push(name);
