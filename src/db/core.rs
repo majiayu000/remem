@@ -159,6 +159,14 @@ pub fn open_db_read_only() -> Result<Connection> {
     open_configured_read_only_connection(&path, key.as_ref())
 }
 
+/// Open an existing database read-only and fail closed unless its schema is
+/// current for this binary. This never creates, migrates, or repairs the store.
+pub fn open_db_read_only_current() -> Result<Connection> {
+    let conn = open_db_read_only()?;
+    crate::migrate::ensure_schema_current(&conn)?;
+    Ok(conn)
+}
+
 pub(crate) fn open_configured_connection(
     path: &Path,
     key: Option<&super::crypto::CipherKey>,
@@ -489,6 +497,51 @@ mod tests {
 
         assert_eq!(marker_exists, 1);
         assert_eq!(migrations_exists, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_read_only_current_works_while_writer_holds_immediate_lock() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("readonly-current-write-lock");
+        let writer = crate::db::open_db()?;
+        writer.execute_batch("BEGIN IMMEDIATE")?;
+
+        let readonly = crate::db::open_db_read_only_current()?;
+        let latest: i64 =
+            readonly.query_row("SELECT MAX(version) FROM _schema_migrations", [], |row| {
+                row.get(0)
+            })?;
+
+        assert_eq!(latest, crate::migrate::latest_schema_version());
+        writer.execute_batch("ROLLBACK")?;
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_read_only_current_rejects_stale_schema_without_writes() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("readonly-current-stale");
+        let setup = crate::db::open_db()?;
+        let latest = crate::migrate::latest_schema_version();
+        setup.execute(
+            "DELETE FROM _schema_migrations WHERE version = ?1",
+            [latest],
+        )?;
+        drop(setup);
+
+        let err =
+            crate::db::open_db_read_only_current().expect_err("stale schema must fail closed");
+        assert!(
+            err.to_string().contains("run a foreground remem command"),
+            "unexpected error: {err:#}"
+        );
+
+        let check = Connection::open(crate::db::db_path())?;
+        let rows: i64 = check.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations WHERE version = ?1",
+            [latest],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rows, 0);
         Ok(())
     }
 

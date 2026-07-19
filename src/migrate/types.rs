@@ -355,6 +355,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "web_console_governance",
         sql: include_str!("../migrations/v070_web_console_governance.sql"),
     },
+    Migration {
+        version: 71,
+        name: "raw_session_identity",
+        sql: include_str!("../migrations/v071_raw_session_identity.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

@@ -1,0 +1,64 @@
+{
+  "evidence_version": 1,
+  "remem_version": "0.6.8",
+  "window": {
+    "since_epoch": 1783653658,
+    "until_epoch": 1784258459
+  },
+  "ingest": {
+    "scanned": 37321,
+    "skipped": 36776,
+    "ingested_messages": 13372,
+    "failed_files": 0,
+    "partial_files": 0
+  },
+  "reconciliation": {
+    "policy_version": 1,
+    "transcript": {
+      "sessions": 293,
+      "messages": 13443,
+      "user_messages": 1403,
+      "assistant_messages": 12040
+    },
+    "archive": {
+      "sessions": 293,
+      "messages": 13443,
+      "user_messages": 1403,
+      "assistant_messages": 12040
+    },
+    "comparison": {
+      "exact_sessions": 293,
+      "message_mismatch_sessions": 0,
+      "transcript_only_sessions": 0,
+      "transcript_only_messages": 0,
+      "archive_only_sessions": 0,
+      "archive_only_messages": 0,
+      "transcript_excess_messages": 0,
+      "transcript_excess_user_messages": 0,
+      "transcript_excess_assistant_messages": 0,
+      "archive_excess_messages": 0,
+      "archive_excess_user_messages": 0,
+      "archive_excess_assistant_messages": 0,
+      "identity_conflicts": 0
+    },
+    "intentional_exclusions": {
+      "meta_user": 0,
+      "xml_control_user": 301,
+      "empty_text": 0,
+      "unsupported_record": 674440,
+      "missing_event_time": 0,
+      "archive_ingest_fallback_event_time": 0,
+      "archive_unknown_event_time": 0,
+      "malformed_record": 0
+    },
+    "parity": true
+  },
+  "privacy_review": {
+    "aggregate_only": true,
+    "contains_paths": false,
+    "contains_projects": false,
+    "contains_session_ids": false,
+    "contains_hashes": false,
+    "contains_message_text": false
+  }
+}

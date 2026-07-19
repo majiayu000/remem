@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.8` for GH-871: raw transcript ingestion now uses
+  path-stable metadata-first identities and lossless occurrence ordinals;
+  validated read-only raw queries avoid migration-lock contention, session
+  JSON includes role counts, and bounded aggregate-only reconciliation proves
+  fixed-window archive parity without exposing transcript data. Release
+  metadata stays `unreleased` until publication.
 - Staged source version `0.6.7` for GH-882: memory-candidate extraction now
   normalizes the model-emitted `fact` alias to `discovery` without weakening
   the legal observation vocabulary, and both prompt layers explicitly direct

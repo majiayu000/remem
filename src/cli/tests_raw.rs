@@ -91,3 +91,39 @@ fn cli_parses_raw_sessions_window() {
         _ => panic!("expected raw sessions command"),
     }
 }
+
+#[test]
+fn cli_parses_raw_reconcile_bounds_and_repeatable_roots() {
+    let cli = Cli::parse_from([
+        "remem",
+        "raw",
+        "reconcile",
+        "--since",
+        "1783653658",
+        "--until",
+        "1784258459",
+        "--root",
+        "fixture=/tmp/one",
+        "--root",
+        "fixture=/tmp/two",
+        "--json",
+    ]);
+
+    match cli.command {
+        Commands::Raw {
+            action:
+                RawAction::Reconcile {
+                    since,
+                    until,
+                    roots,
+                    json,
+                },
+        } => {
+            assert_eq!(since, "1783653658");
+            assert_eq!(until, "1784258459");
+            assert_eq!(roots, vec!["fixture=/tmp/one", "fixture=/tmp/two"]);
+            assert!(json);
+        }
+        _ => panic!("expected raw reconcile command"),
+    }
+}

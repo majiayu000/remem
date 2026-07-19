@@ -397,8 +397,17 @@ fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
         None,
     )?;
 
-    assert_eq!(report.inserted, 1);
+    assert_eq!(
+        report.inserted, 0,
+        "a malformed record rolls back every row from that file"
+    );
     assert_eq!(report.parse_errors, 1);
+    let stored: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages WHERE session_id = 'session-parse'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored, 0);
     assert_eq!(raw_ingest_failure_count(&conn)?, 1);
     let (kind, parse_errors): (String, i64) = conn.query_row(
         "SELECT error_kind, parse_errors FROM raw_ingest_failures",
@@ -637,6 +646,8 @@ fn list_sessions_groups_by_root_project_session_with_window_bounds() {
     assert_eq!(sessions[0].first_epoch, 100);
     assert_eq!(sessions[0].last_epoch, 150);
     assert_eq!(sessions[0].message_count, 2);
+    assert_eq!(sessions[0].user_message_count, 1);
+    assert_eq!(sessions[0].assistant_message_count, 1);
     assert_eq!(sessions[0].source_root, "local");
     assert_eq!(sessions[1].session_id, "s3", "ordered by first epoch");
     assert_eq!(sessions[2].session_id, "s2");
