@@ -24,6 +24,7 @@ pub(super) struct ShellStateSnapshot {
     exit_traps: Vec<ExitTrapDefinition>,
     execution_terminated: bool,
     positional_execution_is_definite: bool,
+    positional_set_generation: u64,
     last_positional_status: Option<bool>,
     last_positional_success: Option<PositionalContext>,
     last_positional_failure: Option<PositionalContext>,
@@ -151,6 +152,7 @@ impl CommandCollector {
             exit_traps: self.exit_traps.clone(),
             execution_terminated: self.execution_terminated,
             positional_execution_is_definite: self.positional_execution_is_definite,
+            positional_set_generation: self.positional_set_generation,
             last_positional_status: self.last_positional_status,
             last_positional_success: self.last_positional_success.clone(),
             last_positional_failure: self.last_positional_failure.clone(),
@@ -176,6 +178,7 @@ impl CommandCollector {
         self.exit_traps = saved.exit_traps;
         self.execution_terminated = saved.execution_terminated;
         self.positional_execution_is_definite = saved.positional_execution_is_definite;
+        self.positional_set_generation = saved.positional_set_generation;
         self.last_positional_status = saved.last_positional_status;
         self.last_positional_success = saved.last_positional_success;
         self.last_positional_failure = saved.last_positional_failure;
@@ -211,6 +214,9 @@ fn merge_shell_state_snapshots(mut states: Vec<ShellStateSnapshot>) -> Option<Sh
         merged.exit_traps = merge_exit_traps(merged.exit_traps, state.exit_traps);
         merged.execution_terminated &= state.execution_terminated;
         merged.positional_execution_is_definite &= state.positional_execution_is_definite;
+        merged.positional_set_generation = merged
+            .positional_set_generation
+            .max(state.positional_set_generation);
         if merged.last_positional_status != state.last_positional_status {
             merged.last_positional_status = None;
         }

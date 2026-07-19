@@ -52,6 +52,7 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         execution_terminated: false,
         execution_is_definite: true,
         positional_execution_is_definite: true,
+        positional_set_generation: 0,
         last_positional_status: None,
         last_positional_success: None,
         last_positional_failure: None,
@@ -83,6 +84,7 @@ struct CommandCollector {
     execution_terminated: bool,
     execution_is_definite: bool,
     positional_execution_is_definite: bool,
+    positional_set_generation: u64,
     last_positional_status: Option<bool>,
     last_positional_success: Option<PositionalContext>,
     last_positional_failure: Option<PositionalContext>,
@@ -615,8 +617,10 @@ impl CommandCollector {
         collect: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
         let saved = std::mem::replace(&mut self.positional_context, context);
+        let saved_set_generation = self.positional_set_generation;
         let result = collect(self);
         self.positional_context = saved;
+        self.positional_set_generation = saved_set_generation;
         result
     }
 }

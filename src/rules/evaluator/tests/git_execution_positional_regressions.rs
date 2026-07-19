@@ -291,6 +291,34 @@ EOF"#;
 }
 
 #[test]
+fn force_push_rule_preserves_definite_set_from_sourced_stdin() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'source /dev/stdin safe; git push "$1"' _ origin <<'EOF'
+set -- --force
+EOF"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c 'source /dev/stdin safe; git push "$1"' _ --force <<'EOF'
+set -- safe
+EOF"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
 fn force_push_rule_does_not_treat_plain_assignment_prefix_as_fallible() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     let command = r#"bash -c 'FOO=x true || git push --force'"#;

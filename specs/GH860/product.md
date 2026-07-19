@@ -80,9 +80,11 @@ gaps can either miss a forbidden command or report a false block.
    failing status to `&&`/`||` reachability, and `${@:0}` shall include the
    known `$0`. Expandable outer heredocs shall finish
    parent-side expansion before entering a child `-c` scope, while explicit
-   arguments to `source [--] /dev/stdin` shall bind `$1...` only for the
-   sourced body, then restore caller positionals before subsequent control-flow
-   branches. Static shells reading stdin, including `bash -s -- args`, shall
+   arguments to `source [--] /dev/stdin` shall bind `$1...` for the sourced
+   body, then restore caller positionals unless the sourced body performs a
+   definite `set --`; that mutation shall persist for subsequent control-flow
+   branches as it does in Bash. Static shells reading stdin, including
+   `bash -s -- args`, shall
    bind their post-option operands as `$1...`. Collection default/alternative
    forms such as `${@:-word}` and `${@:+word}` shall select statically when the
    operand set is known, and recognized `set` options before `--` shall not
@@ -173,8 +175,9 @@ gaps can either miss a forbidden command or report a false block.
   resolution or filesystem access.
 - Quoted and concatenated positional references follow the evaluator's
   existing static word-expansion limits; unknown expansion remains unknown.
-- Definite static `set --` and explicit sourced-file arguments update only
-  their Bash-defined positional scope; uncertain `set --` retains every known
+- Definite static `set --` and explicit sourced-file arguments follow their
+  Bash-defined positional scope, including persistence of a sourced body's
+  definite `set --`; uncertain `set --` retains every known
   possible mapping so a forbidden argument on either path remains visible.
   Later state changes transform each mapping once and retain its status/path
   correlation through an immediate `&&` or `||` branch.

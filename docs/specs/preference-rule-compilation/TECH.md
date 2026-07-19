@@ -118,7 +118,8 @@ Artifact v2 additionally supports:
   AST, removes unquoted backslash-newline continuations, traverses assignment
   words, parameter/arithmetic/command substitutions, expandable heredocs,
   static and `builtin eval`, EXIT traps, shell `-c` and stdin payloads,
-  `source /dev/stdin`, and statically invoked function bodies, and evaluates
+  `source /dev/stdin` (including persistence of a definite sourced `set --`),
+  and statically invoked function bodies, and evaluates
   static brace alternatives. `command`, `env`, and `exec` share one
   command-position normalizer. Quoted or echoed command text and
   uninvoked function definitions remain inert. Static expansion is bounded;

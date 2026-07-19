@@ -106,7 +106,8 @@ function positional expander into a string-source helper with an explicit
 - expandable heredocs materialize parent positionals before child-shell scope,
   and explicit `source [--] /dev/stdin` arguments temporarily replace `$1...`
   while the sourced body is analyzed; source success/failure is rebound to the
-  restored caller positional context before `&&`/`||` continues.
+  restored caller positional context before `&&`/`||` continues unless a
+  definite sourced `set --` persists a new mapping with Bash semantics.
 - stdin-reading shells bind post-option operands as `$1...` in their child
   scope, with the normalized shell basename retained as `$0`.
 - command-position words materialized from positional expansion retain a
@@ -224,7 +225,7 @@ fields. Release metadata changes only stage the required source version.
 - [ ] `cargo test`
 - [x] `cargo clippy --all-targets -- -D warnings`
 
-The focused evaluator suite passes 125 tests on the current implementation.
+The focused evaluator suite passes 126 tests on the current implementation.
 The fresh worktree-local full suite reports 2702 passed, 1 ignored, and the
 single unrelated path-sensitive `writer_refuses_high_context_paths` failure
 caused by this required worktree living below `.codex/`. Hosted CI in a normal

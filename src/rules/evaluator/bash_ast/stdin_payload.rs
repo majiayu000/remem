@@ -64,14 +64,21 @@ impl CommandCollector {
             .positional_context
             .as_ref()
             .and_then(|context| context.zero_argument.clone());
-        self.with_positional_context(
-            Some(PositionalContext {
-                zero_argument,
-                arguments: source_arguments.to_vec(),
-                possible_arguments: Vec::new(),
-            }),
-            |collector| collector.collect_source(&payload),
-        )?;
+        let saved_context = self.positional_context.replace(PositionalContext {
+            zero_argument,
+            arguments: source_arguments.to_vec(),
+            possible_arguments: Vec::new(),
+        });
+        let saved_set_generation = self.positional_set_generation;
+        let result = self.collect_source(&payload);
+        let sourced_context = self.positional_context.take();
+        if result.is_ok() && self.positional_set_generation != saved_set_generation {
+            self.positional_context = sourced_context;
+        } else {
+            self.positional_context = saved_context;
+            self.positional_set_generation = saved_set_generation;
+        }
+        result?;
         let success = self.last_positional_success.is_some();
         let failure = self.last_positional_failure.is_some();
         self.last_positional_success = success.then(|| self.positional_context.clone()).flatten();

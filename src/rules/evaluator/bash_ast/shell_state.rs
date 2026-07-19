@@ -202,7 +202,13 @@ impl CommandCollector {
             return;
         };
         let arguments = match change {
-            StaticPositionalChange::Set(arguments) => arguments,
+            StaticPositionalChange::Set(arguments) => {
+                if self.positional_execution_is_definite {
+                    self.positional_set_generation =
+                        self.positional_set_generation.saturating_add(1);
+                }
+                arguments
+            }
             StaticPositionalChange::Shift(count) => {
                 self.apply_static_shift(count);
                 return;
