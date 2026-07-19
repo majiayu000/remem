@@ -1,6 +1,9 @@
 use super::*;
 use rusqlite::Connection;
 
+#[path = "tests/since.rs"]
+mod since;
+
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
     crate::migrate::run_migrations(&conn).unwrap();
@@ -223,48 +226,6 @@ fn active_partial_tail_is_not_a_failure_and_keeps_cursor_behind() {
     let second = run(&conn, &roots);
     assert_eq!(second.skipped, 0);
     assert_eq!(second.ingested_messages, 0);
-}
-
-#[test]
-fn since_bound_skips_older_files() {
-    let conn = setup_conn();
-    let root = TempRoot::new("since");
-    let cwd = root.path.to_string_lossy().to_string();
-    root.write(
-        "proj-a/session-1.jsonl",
-        &format!("{}\n", claude_line(&cwd, "user", "recent message")),
-    );
-    let roots = [root.scan_root("local")];
-
-    let future = chrono::Utc::now().timestamp() + 3600;
-    let summary = run_ingest_sessions(
-        &conn,
-        &roots,
-        &IngestOptions {
-            since_epoch: Some(future),
-        },
-    )
-    .unwrap();
-    assert_eq!(summary.scanned, 1);
-    assert_eq!(summary.skipped, 1);
-    assert_eq!(summary.ingested_messages, 0);
-    assert_eq!(
-        conn.query_row("SELECT COUNT(*) FROM raw_session_identities", [], |row| {
-            row.get::<_, i64>(0)
-        })
-        .unwrap(),
-        1,
-        "Phase A must claim files that Phase B skips by --since"
-    );
-    assert_eq!(
-        conn.query_row(
-            "SELECT COUNT(*) FROM raw_session_identity_claims",
-            [],
-            |row| row.get::<_, i64>(0)
-        )
-        .unwrap(),
-        1
-    );
 }
 
 #[test]

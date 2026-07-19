@@ -28,7 +28,8 @@ separately. File drains roll back on read, parse, or insert failure.
    boundaries, merge exact unmatched legacy aliases before canonical rekey,
    upgrade legacy provenance/occurrence rows, rewrite and deduplicate evidence
    references, and advance ledgers/cursors only after the entire group
-   succeeds.
+   succeeds. A `--since`-excluded active identity may receive a bounded event
+   index, but a Phase-A conflict is a failed file rather than a skipped file.
 5. Stop performs the shared identity/project probe inside its captured byte
    boundary and persists the claim, but leaves complete-set legacy convergence
    to the next batch pass.

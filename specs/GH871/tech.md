@@ -162,6 +162,9 @@ every ledger claim without changing raw rows or cursors. It then computes
 fallback-group conflicts across the complete persisted claim set. Only after
 Phase A commits with no new ambiguity does Phase B refresh/rekey/drain files.
 Filesystem order can therefore never decide which canonical claim wins.
+When `--since` excludes a file from draining, Phase B may persist its bounded
+event index only while that identity remains active. A conflict discovered in
+Phase A is reported as a failed file and never counted as an ordinary skip.
 
 Stop-hook capture calls the same bounded identity/project probe for its
 transcript path and upserts the ledger claim before draining. It writes new

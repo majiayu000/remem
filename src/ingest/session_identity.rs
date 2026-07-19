@@ -416,7 +416,7 @@ pub(crate) fn record_since_skipped_event_index(
     index: EventIndex,
     now: i64,
 ) -> Result<()> {
-    conn.execute(
+    let updated = conn.execute(
         "UPDATE raw_session_identities
          SET event_index_status = 'since_indexed',
              first_event_epoch = ?2, last_event_epoch = ?3,
@@ -430,6 +430,25 @@ pub(crate) fn record_since_skipped_event_index(
             now
         ],
     )?;
+    if updated != 1 {
+        let status = conn
+            .query_row(
+                "SELECT status FROM raw_session_identities WHERE id = ?1",
+                [identity_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        match status {
+            Some(status) => bail!(
+                "cannot index --since-skipped transcript identity {identity_id}: \
+                 identity status is {status}"
+            ),
+            None => bail!(
+                "cannot index --since-skipped transcript identity {identity_id}: \
+                 identity is missing"
+            ),
+        }
+    }
     Ok(())
 }
 
