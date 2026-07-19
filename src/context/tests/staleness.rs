@@ -3,7 +3,7 @@ use crate::memory::memory_staleness_label_for_anchor;
 use rusqlite::{params, Connection};
 use std::collections::{HashMap, HashSet};
 
-use super::super::audit::build_context_audit_items;
+use super::super::audit::{build_context_audit_items, ContextAuditRenderState};
 use super::super::query::load_context_data;
 use super::super::relevance::SessionStartRelevancePlan;
 use super::super::sections::render_lessons_with_limit_and_staleness;
@@ -220,16 +220,19 @@ fn context_audit_uses_rendered_source_anchor_labels() {
     loaded.summaries.clear();
     loaded.diagnostics = ContextDiagnostics::default();
     let relevance = SessionStartRelevancePlan::disabled(&[]);
-    let audit_items = build_context_audit_items(
-        &loaded,
-        &[201],
-        &[],
-        &[],
-        &[],
-        &[],
-        &relevance,
-        &HashSet::new(),
-    );
+    let core_ids = [201];
+    let item_ends = HashMap::from([("memory:201".to_string(), 100)]);
+    let render = ContextAuditRenderState {
+        core_selected_ids: &core_ids,
+        core_final_ids: &core_ids,
+        index_final_ids: &[],
+        lesson_final_ids: &[],
+        session_final_ids: &[],
+        workstream_selected_ids: &[],
+        workstream_final_ids: &[],
+        item_end_chars: &item_ends,
+    };
+    let audit_items = build_context_audit_items(&loaded, &render, &relevance, &HashSet::new());
 
     assert_eq!(audit_items.len(), 2);
     let core = audit_items

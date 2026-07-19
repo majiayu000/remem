@@ -84,8 +84,58 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
     render_reference_epoch: i64,
     staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
 ) -> IndexRenderSummary {
+    render_memory_index_with_order_and_staleness(
+        output,
+        memories,
+        limits,
+        excluded_ids,
+        render_reference_epoch,
+        staleness_labels,
+        false,
+    )
+}
+
+pub(in crate::context) fn render_ranked_memory_index_with_summary_and_staleness(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
+    render_reference_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> IndexRenderSummary {
+    render_memory_index_with_order_and_staleness(
+        output,
+        memories,
+        limits,
+        excluded_ids,
+        render_reference_epoch,
+        staleness_labels,
+        true,
+    )
+}
+
+fn render_memory_index_with_order_and_staleness(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
+    render_reference_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+    preserve_input_order: bool,
+) -> IndexRenderSummary {
     if limits.memory_index_limit == 0 || limits.memory_index_char_limit == 0 {
         return IndexRenderSummary::default();
+    }
+
+    if preserve_input_order {
+        return render_memory_index_in_input_order(
+            output,
+            memories,
+            limits,
+            excluded_ids,
+            render_reference_epoch,
+            staleness_labels,
+        );
     }
 
     let mut by_type: HashMap<&str, Vec<&Memory>> = HashMap::new();
@@ -175,6 +225,60 @@ pub(in crate::context) fn render_memory_index_with_summary_and_staleness(
         count: rendered_count,
         ids: rendered_ids,
         item_end_chars: rendered_item_end_chars
+            .into_iter()
+            .map(|end| section_start_chars + header_chars + end)
+            .collect(),
+    }
+}
+
+fn render_memory_index_in_input_order(
+    output: &mut String,
+    memories: &[Memory],
+    limits: &ContextLimits,
+    excluded_ids: &HashSet<i64>,
+    render_reference_epoch: i64,
+    staleness_labels: &HashMap<i64, MemoryStalenessLabel>,
+) -> IndexRenderSummary {
+    let mut body = String::new();
+    let mut total_chars = 0usize;
+    let mut ids = Vec::new();
+    let mut item_end_chars = Vec::new();
+    for memory in memories
+        .iter()
+        .filter(|memory| MemoryType::parse(&memory.memory_type).is_none_or(MemoryType::is_indexed))
+        .filter(|memory| !excluded_ids.contains(&memory.id))
+        .take(limits.memory_index_limit)
+    {
+        let before = ids.len();
+        push_memory_index_line(
+            &mut body,
+            type_label(&memory.memory_type),
+            &memory.memory_type,
+            &[memory],
+            limits.memory_index_char_limit,
+            &mut total_chars,
+            &mut ids,
+            &mut item_end_chars,
+            render_reference_epoch,
+            staleness_labels,
+        );
+        if ids.len() == before {
+            break;
+        }
+    }
+    if ids.is_empty() {
+        return IndexRenderSummary::default();
+    }
+
+    let section_start_chars = char_len(output);
+    let header_chars = char_len("## Index\n");
+    output.push_str("## Index\n");
+    output.push_str(&body);
+    output.push('\n');
+    IndexRenderSummary {
+        count: ids.len(),
+        ids,
+        item_end_chars: item_end_chars
             .into_iter()
             .map(|end| section_start_chars + header_chars + end)
             .collect(),

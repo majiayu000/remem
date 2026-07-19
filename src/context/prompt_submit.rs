@@ -232,6 +232,7 @@ fn empty_prompt_submit_decision() -> ContextGateDecision {
         key: None,
         context_hash: None,
         output_mode: Some("prompt_submit"),
+        retained_context_chars: None,
     }
 }
 
@@ -243,6 +244,7 @@ fn prompt_submit_decision(output: String) -> ContextGateDecision {
         key: None,
         context_hash: None,
         output_mode: Some("prompt_submit"),
+        retained_context_chars: None,
     }
 }
 
@@ -259,6 +261,7 @@ fn prompt_submit_abstained_item(reason: &'static str) -> ContextAuditItem {
         title: "prompt context abstained".to_string(),
         provenance: "src=memory".to_string(),
         staleness: "staleness=none".to_string(),
+        render_end_chars: None,
     }
 }
 
@@ -489,6 +492,7 @@ mod tests {
             key: Some(injection_key_for_audit(&invocation)),
             context_hash: Some("seed-session-start-context".to_string()),
             output_mode: Some("full"),
+            retained_context_chars: None,
         };
         record_context_injection_items(
             &conn,

@@ -19,6 +19,7 @@ pub(super) use index::render_memory_index_with_limits;
 pub(super) use index::render_memory_index_with_limits_excluding;
 pub(super) use index::render_memory_index_with_limits_excluding_and_staleness;
 pub(super) use index::render_memory_index_with_summary_and_staleness;
+pub(super) use index::render_ranked_memory_index_with_summary_and_staleness;
 #[cfg(test)]
 pub(super) use lessons::render_lessons_with_limit;
 pub(super) use lessons::render_lessons_with_limit_and_staleness;

@@ -27,6 +27,7 @@ pub(in crate::context) struct ContextAuditItem {
     pub title: String,
     pub provenance: String,
     pub staleness: String,
+    pub(in crate::context) render_end_chars: Option<usize>,
 }
 
 impl ContextAuditItem {
@@ -68,6 +69,7 @@ impl ContextAuditItem {
             title: "memory context abstained".to_string(),
             provenance: "src=memory".to_string(),
             staleness: "staleness=none".to_string(),
+            render_end_chars: None,
         }
     }
 
@@ -89,6 +91,7 @@ impl ContextAuditItem {
             title: title.to_string(),
             provenance: format!("src=workstream:#{id}"),
             staleness: age_staleness_label(updated_at_epoch, chrono::Utc::now().timestamp()),
+            render_end_chars: None,
         }
     }
 
@@ -110,6 +113,7 @@ impl ContextAuditItem {
             title: title.to_string(),
             provenance: format!("src=workstream:#{id}"),
             staleness: age_staleness_label(updated_at_epoch, chrono::Utc::now().timestamp()),
+            render_end_chars: None,
         }
     }
 
@@ -138,6 +142,7 @@ impl ContextAuditItem {
                 summary.created_at_epoch,
                 chrono::Utc::now().timestamp(),
             ),
+            render_end_chars: None,
         }
     }
 
@@ -154,6 +159,7 @@ impl ContextAuditItem {
             title: "Relevance".to_string(),
             provenance: plan.provenance(),
             staleness: format!("policy={SESSIONSTART_RELEVANCE_POLICY_VERSION}"),
+            render_end_chars: None,
         }
     }
 
@@ -176,8 +182,25 @@ impl ContextAuditItem {
             title: memory.title.clone(),
             provenance: memory_provenance(memory),
             staleness: memory_staleness(memory, chrono::Utc::now().timestamp()),
+            render_end_chars: None,
         }
     }
+
+    fn with_render_end(mut self, render_end_chars: Option<usize>) -> Self {
+        self.render_end_chars = render_end_chars;
+        self
+    }
+}
+
+pub(in crate::context) struct ContextAuditRenderState<'a> {
+    pub core_selected_ids: &'a [i64],
+    pub core_final_ids: &'a [i64],
+    pub index_final_ids: &'a [i64],
+    pub lesson_final_ids: &'a [i64],
+    pub session_final_ids: &'a [i64],
+    pub workstream_selected_ids: &'a [i64],
+    pub workstream_final_ids: &'a [i64],
+    pub item_end_chars: &'a HashMap<String, usize>,
 }
 
 pub(in crate::context) fn memory_render_metadata_with_labels(
@@ -285,11 +308,7 @@ pub(in crate::context) fn record_context_injection_items(
 
 pub(in crate::context) fn build_context_audit_items(
     loaded: &LoadedContext,
-    core_ids: &[i64],
-    index_ids: &[i64],
-    lesson_ids: &[i64],
-    session_ids: &[i64],
-    workstream_ids: &[i64],
+    render: &ContextAuditRenderState<'_>,
     relevance: &SessionStartRelevancePlan,
     total_truncated_keys: &HashSet<String>,
 ) -> Vec<ContextAuditItem> {
@@ -298,20 +317,49 @@ pub(in crate::context) fn build_context_audit_items(
     if loaded.memory_abstained {
         items.push(ContextAuditItem::abstained_memory("no_relevant_context"));
     }
-    let core = core_ids.iter().copied().collect::<HashSet<_>>();
-    let index = index_ids.iter().copied().collect::<HashSet<_>>();
-    for id in core_ids {
+    let core = render
+        .core_selected_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let final_core = render
+        .core_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let index = render
+        .index_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    for id in render.core_selected_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory_with_labels(
-                memory,
-                "core",
-                render_order,
-                &loaded.staleness_labels,
-            ));
-            render_order += 1;
+            if final_core.contains(id) {
+                items.push(
+                    ContextAuditItem::injected_memory_with_labels(
+                        memory,
+                        "core",
+                        render_order,
+                        &loaded.staleness_labels,
+                    )
+                    .with_render_end(
+                        render
+                            .item_end_chars
+                            .get(&memory_stable_key(memory.id))
+                            .copied(),
+                    ),
+                );
+                render_order += 1;
+            } else {
+                items.push(ContextAuditItem::dropped_memory(
+                    memory,
+                    "core",
+                    "total_char_limit",
+                ));
+            }
         }
     }
-    for id in index_ids {
+    for id in render.index_final_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
             let mut item = ContextAuditItem::injected_memory_with_labels(
                 memory,
@@ -322,7 +370,14 @@ pub(in crate::context) fn build_context_audit_items(
             if let Some(decision) = relevance.decision(&memory_stable_key(memory.id)) {
                 item = item.with_score(decision.score);
             }
-            items.push(item);
+            items.push(
+                item.with_render_end(
+                    render
+                        .item_end_chars
+                        .get(&memory_stable_key(memory.id))
+                        .copied(),
+                ),
+            );
             render_order += 1;
         }
     }
@@ -345,8 +400,12 @@ pub(in crate::context) fn build_context_audit_items(
             items.push(item);
         }
     }
-    let lesson = lesson_ids.iter().copied().collect::<HashSet<_>>();
-    for id in lesson_ids {
+    let lesson = render
+        .lesson_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    for id in render.lesson_final_ids {
         if let Some(lesson_memory) = loaded.lessons.iter().find(|lesson| lesson.memory.id == *id) {
             let mut item = ContextAuditItem::injected_memory_with_labels(
                 &lesson_memory.memory,
@@ -358,7 +417,14 @@ pub(in crate::context) fn build_context_audit_items(
             {
                 item = item.with_score(decision.score);
             }
-            items.push(item);
+            items.push(
+                item.with_render_end(
+                    render
+                        .item_end_chars
+                        .get(&memory_stable_key(lesson_memory.memory.id))
+                        .copied(),
+                ),
+            );
             render_order += 1;
         }
     }
@@ -382,18 +448,30 @@ pub(in crate::context) fn build_context_audit_items(
             items.push(item);
         }
     }
-    let sessions = session_ids.iter().copied().collect::<HashSet<_>>();
+    let sessions = render
+        .session_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
     for summary in &loaded.summaries {
         let decision = relevance.decision(&session_stable_key(summary.id));
         let score = decision.map_or(0.0, |decision| decision.score);
         if sessions.contains(&summary.id) {
-            items.push(ContextAuditItem::session_summary(
-                summary,
-                Some(render_order),
-                "injected",
-                None,
-                score,
-            ));
+            items.push(
+                ContextAuditItem::session_summary(
+                    summary,
+                    Some(render_order),
+                    "injected",
+                    None,
+                    score,
+                )
+                .with_render_end(
+                    render
+                        .item_end_chars
+                        .get(&session_stable_key(summary.id))
+                        .copied(),
+                ),
+            );
             render_order += 1;
         } else {
             let reason = decision
@@ -414,16 +492,42 @@ pub(in crate::context) fn build_context_audit_items(
             ));
         }
     }
-    let workstream = workstream_ids.iter().copied().collect::<HashSet<_>>();
-    for id in workstream_ids {
+    let workstream = render
+        .workstream_selected_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    let final_workstream = render
+        .workstream_final_ids
+        .iter()
+        .copied()
+        .collect::<HashSet<_>>();
+    for id in render.workstream_selected_ids {
         if let Some(item) = loaded.workstreams.iter().find(|item| item.id == *id) {
-            items.push(ContextAuditItem::injected_workstream(
-                item.id,
-                &item.title,
-                render_order,
-                item.updated_at_epoch,
-            ));
-            render_order += 1;
+            if final_workstream.contains(id) {
+                items.push(
+                    ContextAuditItem::injected_workstream(
+                        item.id,
+                        &item.title,
+                        render_order,
+                        item.updated_at_epoch,
+                    )
+                    .with_render_end(
+                        render
+                            .item_end_chars
+                            .get(&workstream_stable_key(item.id))
+                            .copied(),
+                    ),
+                );
+                render_order += 1;
+            } else {
+                items.push(ContextAuditItem::dropped_workstream(
+                    item.id,
+                    &item.title,
+                    item.updated_at_epoch,
+                    "total_char_limit",
+                ));
+            }
         }
     }
     for item in &loaded.workstreams {
@@ -439,21 +543,34 @@ pub(in crate::context) fn build_context_audit_items(
     items
 }
 
+pub(in crate::context) fn workstream_stable_key(id: i64) -> String {
+    format!("workstream:{id}")
+}
+
 fn finalize_items_for_decision(
     decision: &ContextGateDecision,
     rendered_items: &[ContextAuditItem],
 ) -> Vec<ContextAuditItem> {
-    let final_drop_reason = match decision.action {
-        ContextGateAction::Suppressed => Some("gate_suppressed"),
-        ContextGateAction::EmittedDelta => Some("delta_preview"),
-        ContextGateAction::Bypassed
-        | ContextGateAction::EmittedFull
-        | ContextGateAction::FailOpen => None,
-    };
     rendered_items
         .iter()
         .cloned()
         .map(|mut item| {
+            let final_drop_reason = match decision.action {
+                ContextGateAction::Suppressed => Some("gate_suppressed"),
+                ContextGateAction::EmittedDelta
+                    if item.render_end_chars.is_some_and(|end| {
+                        decision
+                            .retained_context_chars
+                            .is_none_or(|retained| end > retained)
+                    }) =>
+                {
+                    Some("delta_preview")
+                }
+                ContextGateAction::Bypassed
+                | ContextGateAction::EmittedFull
+                | ContextGateAction::EmittedDelta
+                | ContextGateAction::FailOpen => None,
+            };
             if item.status == "injected" && final_drop_reason.is_some() {
                 item.status = "dropped";
                 item.render_order = None;
@@ -481,6 +598,7 @@ mod tests {
             title: title.to_string(),
             provenance: "src=memory:#42".to_string(),
             staleness: "fresh".to_string(),
+            render_end_chars: Some(200),
         }
     }
 
@@ -492,6 +610,7 @@ mod tests {
             key: None,
             context_hash: None,
             output_mode: None,
+            retained_context_chars: (action == ContextGateAction::EmittedDelta).then_some(0),
         }
     }
 
@@ -520,5 +639,16 @@ mod tests {
 
         assert_eq!(suppressed[0].drop_reason, Some("gate_suppressed"));
         assert_eq!(delta[0].drop_reason, Some("delta_preview"));
+    }
+
+    #[test]
+    fn delta_keeps_items_with_identity_boundaries_inside_preview() {
+        let mut delta_decision = decision(ContextGateAction::EmittedDelta, "preview");
+        delta_decision.retained_context_chars = Some(250);
+
+        let finalized = finalize_items_for_decision(&delta_decision, &[injected_item("title")]);
+
+        assert_eq!(finalized[0].status, "injected");
+        assert_eq!(finalized[0].drop_reason, None);
     }
 }

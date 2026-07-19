@@ -5,7 +5,10 @@ use anyhow::Result;
 
 use crate::db;
 
-use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
+use super::audit::{
+    build_context_audit_items, record_context_injection_items, ContextAuditItem,
+    ContextAuditRenderState,
+};
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
@@ -22,18 +25,21 @@ use super::render_inputs::{load_context_render_inputs, ContextRenderInputs};
 use super::sections::{
     empty_state_output, render_core_memory_with_limits_and_staleness,
     render_lessons_with_summary_and_staleness, render_memory_index_with_summary_and_staleness,
-    render_recent_sessions_with_summary, render_workstreams_with_summary,
+    render_ranked_memory_index_with_summary_and_staleness, render_recent_sessions_with_summary,
+    render_workstreams_with_summary,
 };
 use super::types::{ContextLoadError, ContextRequest};
 mod eval;
+mod finalize;
 mod helpers;
 mod stats;
 mod timer;
 mod truncation;
 pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
+use finalize::{finalize_context_output, RenderedIdentityBounds};
 use helpers::{
-    build_context_header_with_style, build_context_stats_footer_with_style, context_debug_enabled,
-    context_source_note, section_render_limits,
+    build_context_header_with_style, context_debug_enabled, context_source_note,
+    section_render_limits,
 };
 #[cfg(test)]
 pub(in crate::context) use helpers::{build_context_stats_footer, enforce_total_char_limit};
@@ -123,6 +129,7 @@ fn generate_context_output_for_invocation(
                     key: None,
                     context_hash: None,
                     output_mode: None,
+                    retained_context_chars: None,
                 }
             } else {
                 ContextGateDecision {
@@ -132,6 +139,7 @@ fn generate_context_output_for_invocation(
                     key: None,
                     context_hash: None,
                     output_mode: None,
+                    retained_context_chars: None,
                 }
             };
             if debug_enabled {
@@ -190,6 +198,7 @@ fn generate_context_output_for_invocation(
                     key: None,
                     context_hash: None,
                     output_mode: Some("fail_open"),
+                    retained_context_chars: None,
                 }
             } else {
                 let gate_start = Instant::now();
@@ -219,6 +228,7 @@ fn generate_context_output_for_invocation(
                 key: None,
                 context_hash: None,
                 output_mode: None,
+                retained_context_chars: None,
             },
             stats,
             ContextGatePrecheck::Off,
@@ -389,6 +399,7 @@ fn render_context_output_from_inputs(
         (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     let (mut lesson_item_ends, mut index_item_ends, mut session_item_ends) =
         (Vec::new(), Vec::new(), Vec::new());
+    let mut workstream_item_ends = Vec::new();
     output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
@@ -452,6 +463,7 @@ fn render_context_output_from_inputs(
         &loaded.staleness_labels,
     );
     stats.core_ids = core_summary.ids.clone();
+    let core_item_ends = core_summary.item_end_chars.clone();
     stats.core = SectionRenderStats {
         count: core_summary.count,
         chars: char_len(&core_output),
@@ -498,18 +510,30 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
+    let core_output_start = char_len(&output);
     output.push_str(&core_output);
     if !governed.memories.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
-        let index_summary = render_memory_index_with_summary_and_staleness(
-            &mut output,
-            &governed.memories,
-            &render_limits,
-            &core_ids,
-            loaded.render_reference_epoch,
-            &loaded.staleness_labels,
-        );
+        let index_summary = if relevance_plan.state == "disabled" {
+            render_memory_index_with_summary_and_staleness(
+                &mut output,
+                &governed.memories,
+                &render_limits,
+                &core_ids,
+                loaded.render_reference_epoch,
+                &loaded.staleness_labels,
+            )
+        } else {
+            render_ranked_memory_index_with_summary_and_staleness(
+                &mut output,
+                &governed.memories,
+                &render_limits,
+                &core_ids,
+                loaded.render_reference_epoch,
+                &loaded.staleness_labels,
+            )
+        };
         index_ids = index_summary.ids;
         index_item_ends = index_summary.item_end_chars;
         stats.index = SectionRenderStats {
@@ -531,6 +555,7 @@ fn render_context_output_from_inputs(
             policy.section_char_limit(SectionKind::Workstreams, 1_200),
         );
         workstream_ids = workstream_summary.ids;
+        workstream_item_ends = workstream_summary.item_end_chars;
         stats.workstreams = SectionRenderStats {
             count: workstream_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -586,64 +611,46 @@ fn render_context_output_from_inputs(
         ));
     }
 
-    let untruncated_body = std::mem::take(&mut output);
-    let mut final_lesson_ids = lesson_ids.clone();
-    let mut final_index_ids = index_ids.clone();
-    let mut final_session_ids = session_ids.clone();
-    for _ in 0..4 {
-        let mut stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-        stats.output_chars = char_len(&untruncated_body) + char_len(&stats_footer);
-        stats.truncated = stats.total_char_limit > 0 && stats.output_chars > stats.total_char_limit;
-        stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-        stats.output_chars = char_len(&untruncated_body) + char_len(&stats_footer);
-
-        let mut candidate_output = untruncated_body.clone();
-        candidate_output.push_str(&stats_footer);
-        let retained_body_chars = enforce_total_char_limit_preserving_footer(
-            &mut candidate_output,
-            policy.limits.total_char_limit,
-            &stats_footer,
-        );
-        let next_lesson_ids = surviving_ids(&lesson_ids, &lesson_item_ends, retained_body_chars)?;
-        let next_index_ids = surviving_ids(&index_ids, &index_item_ends, retained_body_chars)?;
-        let next_session_ids =
-            surviving_ids(&session_ids, &session_item_ends, retained_body_chars)?;
-        let next_final = next_lesson_ids.len() + next_index_ids.len() + next_session_ids.len();
-        let next_total_limited = pre_total_governed_count.saturating_sub(next_final);
-        let stable = next_final == stats.relevance.final_injected
-            && next_total_limited == stats.relevance.total_limited;
-        final_lesson_ids = next_lesson_ids;
-        final_index_ids = next_index_ids;
-        final_session_ids = next_session_ids;
-        stats.relevance.final_injected = next_final;
-        stats.relevance.total_limited = next_total_limited;
-        output = candidate_output;
-        if stable {
-            break;
-        }
-    }
-    let total_truncated_keys = lesson_ids
+    let core_item_ends = core_item_ends
         .iter()
-        .filter(|id| !final_lesson_ids.contains(id))
-        .chain(index_ids.iter().filter(|id| !final_index_ids.contains(id)))
-        .map(|id| super::relevance::memory_stable_key(*id))
-        .chain(
-            session_ids
-                .iter()
-                .filter(|id| !final_session_ids.contains(id))
-                .map(|id| super::relevance::session_stable_key(*id)),
-        )
-        .collect::<HashSet<_>>();
+        .map(|end| core_output_start + end)
+        .collect::<Vec<_>>();
+    let core_selected_ids = stats.core_ids.clone();
+    let bounds = RenderedIdentityBounds {
+        core_ids: &core_selected_ids,
+        core_ends: &core_item_ends,
+        lesson_ids: &lesson_ids,
+        lesson_ends: &lesson_item_ends,
+        index_ids: &index_ids,
+        index_ends: &index_item_ends,
+        session_ids: &session_ids,
+        session_ends: &session_item_ends,
+        workstream_ids: &workstream_ids,
+        workstream_ends: &workstream_item_ends,
+    };
+    let finalized = finalize_context_output(
+        std::mem::take(&mut output),
+        &mut stats,
+        request.use_colors,
+        &bounds,
+    )?;
+    output = finalized.output;
     let audit_start = Instant::now();
+    let audit_render = ContextAuditRenderState {
+        core_selected_ids: &core_selected_ids,
+        core_final_ids: &finalized.final_core_ids,
+        index_final_ids: &finalized.final_index_ids,
+        lesson_final_ids: &finalized.final_lesson_ids,
+        session_final_ids: &finalized.final_session_ids,
+        workstream_selected_ids: &workstream_ids,
+        workstream_final_ids: &finalized.final_workstream_ids,
+        item_end_chars: &finalized.item_end_chars,
+    };
     let audit_items = build_context_audit_items(
         &loaded,
-        &stats.core_ids,
-        &final_index_ids,
-        &final_lesson_ids,
-        &final_session_ids,
-        &workstream_ids,
+        &audit_render,
         &relevance_plan,
-        &total_truncated_keys,
+        &finalized.total_truncated_keys,
     );
     stats.timings.push(crate::perf::PhaseTiming::elapsed(
         "audit_items",
@@ -660,25 +667,6 @@ fn render_context_output_from_inputs(
         data_version,
         has_load_errors,
     })
-}
-
-fn surviving_ids(
-    ids: &[i64],
-    item_end_chars: &[usize],
-    retained_body_chars: usize,
-) -> Result<Vec<i64>> {
-    if ids.len() != item_end_chars.len() {
-        anyhow::bail!(
-            "context renderer returned {} identities but {} item boundaries",
-            ids.len(),
-            item_end_chars.len()
-        );
-    }
-    Ok(ids
-        .iter()
-        .zip(item_end_chars)
-        .filter_map(|(id, end_chars)| (*end_chars <= retained_body_chars).then_some(*id))
-        .collect())
 }
 
 fn open_context_connection_or_error(
