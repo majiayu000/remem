@@ -144,7 +144,7 @@ resolution.
 ### 4. Contract and staged version
 
 Add paired positive/negative cases to the existing structural evaluator tests,
-update the authoritative technical contract, and stage source version `0.6.8`.
+update the authoritative technical contract, and stage source version `0.6.9`.
 Synchronize Cargo, plugin, npm, MCP server, release manifest, lockfile, and
 changelog metadata. The release manifest remains `state: unreleased` with no
 assets; this PR does not publish a release.
@@ -225,7 +225,7 @@ local path-classification mismatch as a passing full-suite result.
 
 ## Rollback Plan
 
-Revert the evaluator, fixtures, contract delta, and synchronized `0.6.8`
+Revert the evaluator, fixtures, contract delta, and synchronized `0.6.9`
 staging together before release. No stored data or artifact schema changes need
 rollback. Do not leave a lower Cargo version paired with higher plugin/npm/MCP
 metadata, and do not publish or fabricate release assets as part of rollback.
