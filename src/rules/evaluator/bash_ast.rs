@@ -23,17 +23,13 @@ use function_args::{
     expand_function_body, expand_shell_arithmetic, expand_shell_command,
     has_shell_positional_reference,
 };
-use positional_variants::shell_positional_variant_fields;
 use static_execution::{
     direct_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
     static_shell_is_bash, static_shell_reads_stdin, static_source_stdin_arguments,
     static_unset_function_names,
 };
-use static_words::{
-    append_word_variants, critical_brace_variants, expand_brace_pieces, static_word_pieces,
-    StaticExpansionError,
-};
+use static_words::{append_word_variants, static_word_pieces};
 use stdin_payload::EffectiveStdin;
 
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
@@ -306,6 +302,9 @@ impl CommandCollector {
     }
 
     fn collect_simple_command(&mut self, command: &SimpleCommand) -> Result<(), String> {
+        if self.collect_possible_positional_command_variants(command)? {
+            return Ok(());
+        }
         let Some(name) = &command.word_or_name else {
             return self.collect_command_items(command.prefix.as_ref().map(|prefix| &prefix.0));
         };
@@ -370,7 +369,10 @@ impl CommandCollector {
         mut tokens: Vec<String>,
         command: &SimpleCommand,
     ) -> Result<(), String> {
-        while let Some(expanded) = static_env_split_tokens(&tokens) {
+        while !direct_command_name(&tokens).is_some_and(|name| self.functions.contains_key(name)) {
+            let Some(expanded) = static_env_split_tokens(&tokens) else {
+                break;
+            };
             let before = static_token_measure(&tokens);
             let after = static_token_measure(&expanded);
             if after >= before {
@@ -695,44 +697,6 @@ impl CommandCollector {
         let pieces = brush_parser::word::parse(&word.value, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
-    }
-
-    fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
-        if let Some(context) = &self.positional_context {
-            if let Some(fields) = shell_positional_variant_fields(
-                &word.value,
-                &self.options,
-                context.zero_argument.as_deref(),
-                &context.arguments,
-                &context.possible_arguments,
-            )? {
-                return Ok(fields);
-            }
-        }
-        let source = self.expand_positional_source(&word.value)?;
-        let Some(brace_pieces) = brush_parser::word::parse_brace_expansions(&source, &self.options)
-            .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
-        else {
-            return Ok(vec![self.command_word(word)?]);
-        };
-        let expanded = match expand_brace_pieces(&brace_pieces) {
-            Ok(expanded) => expanded,
-            Err(StaticExpansionError::Limit) => {
-                let mut variants = critical_brace_variants(&brace_pieces);
-                variants.truncate(MAX_STATIC_WORD_VARIANTS - 1);
-                variants.push(DYNAMIC_SHELL_WORD.to_string());
-                return Ok(variants);
-            }
-            Err(StaticExpansionError::Invalid(message)) => return Err(message),
-        };
-        expanded
-            .into_iter()
-            .map(|value| {
-                let pieces = brush_parser::word::parse(&value, &self.options)
-                    .map_err(|error| format!("Bash expanded word parse error: {error}"))?;
-                Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
-            })
-            .collect()
     }
 
     pub(super) fn expand_positional_source(&self, source: &str) -> Result<String, String> {

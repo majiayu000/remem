@@ -57,7 +57,10 @@ function positional expander into a string-source helper with an explicit
   retaining `$0`, and definite static `shift [n]` advances every active
   argument alternative; an uncertain change retains both prior and updated
   argument sets so each possible path contributes static fields, including
-  positional references concatenated with literal word content;
+  positional references concatenated with literal word content; each mapping
+  is evaluated as its own command argv rather than flattened with other paths;
+- possible mappings reuse `MAX_STATIC_WORD_VARIANTS` as a hard ceiling, with
+  security-relevant argument sets retained before non-critical alternatives;
 - static non-negative `${@:offset[:length]}` slices preserve selected argument
   cardinality, while `${n:offset[:length]}` applies a bounded Unicode-scalar
   substring before the existing quote-aware field handling;
@@ -121,11 +124,11 @@ assets; this PR does not publish a release.
 | --- | --- | --- |
 | B-001 `.exe` shell equivalence | normalized `shell_name` in `src/rules/evaluator/bash_ast/static_execution.rs` | `force_push_rule_recognizes_exe_shell_basenames` covers `bash.exe -c 'git push --force'` → Block |
 | B-002 basename-only precision | platform-independent `shell_name` and block/allow fixture tables | `force_push_rule_recognizes_exe_shell_basenames` covers POSIX- and Windows-qualified `bash.exe` → Block and unrelated `notbash.exe` → Allow |
-| B-003 shell `-c` positional binding | scoped positional collector context, quote-aware field expansion, possible positional variants, command provenance, and shell/source payload extraction | focused tests cover `$0`, zero/multi-field `$1`, quoted `"$@"`, slices/substrings, default/alternative words, definite and uncertain `set --` (including concatenated words), `set -`, `shift`, alias ordering, child-scope restoration, assignment/alias provenance, function-local and sourced arguments, nested command substitutions, arithmetic source, EXIT traps, here-strings, and parent-versus-child heredoc handoff |
+| B-003 shell `-c` positional binding | scoped positional collector context, quote-aware field expansion, separately evaluated bounded positional variants, command provenance, and shell/source payload extraction | focused tests cover `$0`, zero/multi-field `$1`, quoted `"$@"`, slices/substrings, default/alternative words, definite and uncertain `set --` (including concatenated words and distinct argv alternatives), `set -`, `shift`, alias ordering, child-scope restoration, assignment/alias provenance, function-local and sourced arguments, nested command substitutions, arithmetic source, EXIT traps, here-strings, and parent-versus-child heredoc handoff |
 | B-004 missing positional operands | shell payload extraction and positional expansion | `force_push_rule_binds_shell_command_positional_parameters` covers absent and safe `$1`; `force_push_rule_preserves_missing_shell_zero` leaves `${0:-git}` unknown rather than fabricating `git` |
 | B-005 function-shadowed `unset` | resolution order in `CommandCollector::collect_static_tokens` | `force_push_rule_resolves_unset_function_before_builtin_state` covers `f(){ git push --force; }; unset(){ :; }; unset -f f; f` → Block |
 | B-006 explicit builtin and function ordering | shared builtin command-position normalization and function-aware shell-state/wrapper mutation | focused tests cover `builtin unset -f f` and `builtin command unset -f f` → Allow, function-shadowed positional `trap`/`env`/`alias` calls, and their ordinary non-shadowed builtin or wrapper behavior |
-| B-007 bounded deterministic behavior | existing parser/expansion limits and evaluator regression suite | `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
+| B-007 bounded deterministic behavior | existing parser/expansion limits, `MAX_STATIC_WORD_VARIANTS`, critical positional prioritization, and evaluator regression suite | bounded positional regression retains a critical 301st candidate without unbounded state; `cargo test -q rules::evaluator --lib` passes with no new external calls or mutable global state |
 | B-008 paired bypass/precision evidence | `src/rules/evaluator/tests/git_execution.rs` and `git_execution_wrapper_options.rs` | focused block/allow tables pass; quoted defaults, parent-expanded heredocs, nested single-quoted substitution, and brace-expanded non-shell argv remain Allow while adjacent executable forms Block |
 
 ## Data Flow

@@ -470,3 +470,46 @@ fn force_push_rule_resolves_alias_function_before_builtin_state() {
         assert!(outcome.diagnostics.is_empty(), "{command}");
     }
 }
+
+#[test]
+fn force_push_rule_keeps_possible_positional_argv_sets_separate() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'unknown && set -- echo safe --force; "$@"' _ git push safe"#,
+            EvaluationVerdict::Allow,
+        ),
+        (
+            r#"bash -c 'unknown && set -- git push --force; "$@"' _ echo safe"#,
+            EvaluationVerdict::Block,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_bounds_possible_positionals_without_dropping_critical_variants() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let mut payload = String::new();
+    for index in 0..300 {
+        payload.push_str(&format!("unknown && set -- echo safe{index}; "));
+    }
+    payload.push_str("unknown && set -- git push --force; \"$@\"");
+    let command = format!("bash -c '{payload}' _ echo safe");
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.clone(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}

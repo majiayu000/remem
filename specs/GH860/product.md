@@ -62,8 +62,9 @@ gaps can either miss a forbidden command or report a false block.
    replace the active positional mapping; a definite static `shift` shall
    advance it, while possibly executed changes shall retain every possible
    mapping for conservative matching, including when a possible positional is
-   concatenated with literal command text. Quoted `"$@"` shall preserve one
-   field per operand. Positional changes inside a
+   concatenated with literal command text. Distinct possible mappings shall be
+   evaluated as alternative argv sets rather than flattened into one synthetic
+   command. Quoted `"$@"` shall preserve one field per operand. Positional changes inside a
    subshell, command substitution, or non-final pipeline process shall not
    leak into its parent, and an alias named `set` shall resolve before builtin
    positional state is applied. Expandable outer heredocs shall finish
@@ -87,9 +88,10 @@ gaps can either miss a forbidden command or report a false block.
    functions named `trap`, `env`, or `alias` shall run as functions before
    builtin-like trap capture, `env -S` splitting, or alias-state mutation,
    while the corresponding non-shadowed commands remain analyzable.
-7. B-007 Each new recognition path shall be bounded and deterministic and shall
-   preserve the existing conservative behavior for dynamic or unsupported
-   shell constructs.
+7. B-007 Each new recognition path shall be bounded and deterministic. Possible
+   positional mappings shall share the existing 256-variant ceiling and retain
+   security-relevant mappings first; dynamic or unsupported shell constructs
+   shall preserve the existing conservative behavior.
 8. B-008 Regression fixtures shall cover both the newly detected force-push
    forms and nearby allowed forms so the precision fixes do not weaken existing
    bypass coverage or create false blocks.
@@ -113,6 +115,8 @@ gaps can either miss a forbidden command or report a false block.
 - [x] Focused fixtures cover uncertain concatenated positionals and prove that
       positional `env`/`alias` command names still honor function lookup before
       wrapper splitting or builtin-like state mutation.
+- [x] Focused fixtures prove possible multi-field argv mappings remain separate
+      and the bounded mapping set retains a late security-critical alternative.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.

@@ -138,7 +138,9 @@ Artifact v2 additionally supports:
   string semantics; definite `set --`, argument-bearing `set -`, and `shift`
   update the active mapping, while possibly executed changes retain prior and
   updated mappings for conservative matching in both whole and concatenated
-  words. Positional changes in subshells,
+  words. Possible mappings are evaluated as separate argv alternatives under
+  the existing 256-variant ceiling, retaining security-relevant mappings first
+  rather than flattening incompatible paths. Positional changes in subshells,
   command substitutions, and
   non-final pipeline processes restore the parent mapping, and aliases resolve
   before builtin positional state. Explicit sourced-file arguments receive

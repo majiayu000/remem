@@ -1,3 +1,4 @@
+use super::positional_variants::bound_possible_positional_arguments;
 use super::static_execution::{
     direct_command_name, static_alias_definitions, static_exit_trap_change, static_monitor_mode,
     static_positional_change, static_shopt_expand_aliases, static_shopt_lastpipe,
@@ -45,11 +46,10 @@ impl CommandCollector {
             for arguments in &mut context.possible_arguments {
                 shift_positional_arguments(arguments, count);
             }
-            context.possible_arguments.sort();
-            context.possible_arguments.dedup();
-            context
-                .possible_arguments
-                .retain(|arguments| arguments != &context.arguments);
+            bound_possible_positional_arguments(
+                &context.arguments,
+                &mut context.possible_arguments,
+            );
             return;
         }
         let mut shifted = std::iter::once(&context.arguments)
@@ -64,6 +64,7 @@ impl CommandCollector {
                 context.possible_arguments.push(arguments);
             }
         }
+        bound_possible_positional_arguments(&context.arguments, &mut context.possible_arguments);
     }
 
     fn retain_possible_positional_arguments(&mut self, arguments: Vec<String>) {
@@ -71,6 +72,10 @@ impl CommandCollector {
             if arguments != context.arguments && !context.possible_arguments.contains(&arguments) {
                 context.possible_arguments.push(arguments);
             }
+            bound_possible_positional_arguments(
+                &context.arguments,
+                &mut context.possible_arguments,
+            );
         } else {
             self.positional_context = Some(PositionalContext {
                 zero_argument: None,
