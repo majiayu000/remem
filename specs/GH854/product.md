@@ -6,169 +6,120 @@ GH-854
 
 complexity: large
 
-## 用户问题
+status: approved
 
-remem 的 SessionStart 会在固定字符预算内注入 Core、Lessons、MemoryIndex、Sessions 等上下文。
-当前 Core 已有自身的最低分规则，但 Lessons、MemoryIndex 和 Sessions 主要按已有顺序和分区预算
-截取，没有共同的任务相关性门槛。结果是：与当前任务关系弱的历史内容仍可能占用输入预算，而真正
-有用的少量内容被更多噪声稀释；当某个分区为空时，用户也难以区分“没有数据”“相关性不足”
-“被 k 上限丢弃”和“被字符预算截断”。
+## User Problem
 
-GH-854 还要求用 `k in {1,3,5,10}` 的受控实验判断较小注入量是否改善真实编码任务效果。
-目前 issue 引用的 `docs/research/agent-memory-optimization-research-2026-07.md` 不存在于
-`origin/main`，仓库也没有现成的 SessionStart k sweep。外部数字、评分器、阈值、回归预算和
-默认 k 因而不能由本 spec 推定，必须以可复现证据和 human `spec_approval` 冻结。
+SessionStart currently fills the available character and section budgets with
+Lessons, MemoryIndex, and Sessions even when those items have little connection
+to the current task. Users can see when the final context was truncated, but
+they cannot see when non-Core items were omitted for low relevance or because
+the selected injection count was reached.
 
-## 目标
+The maintainer approved an evidence charter on 2026-07-19: use the existing
+golden evaluator at `k in {1,3,5,10}`, the existing capacity metrics, and the
+existing injection evaluator's rendered character count. Select the smallest
+`k` whose required per-slice `hit_at_k` is within one percentage point of the
+best arm. The approved charter replaces the earlier draft's proposed
+coding-bench and signed-tag requirements.
 
-- 对 SessionStart 的 Lessons、排除既有 Core 后的 MemoryIndex view 和 Sessions 建立“先相关、
-  再少量”的共同选择契约，不改变 Core 选择或让 Core 消耗 k。
-- 在内容不足够相关时宁可少注入或不注入，不用低相关内容填满预算。
-- 让每个候选项的最终命运以及空白、丢弃、截断和失败原因可见、可审计。
-- 用当前生产基线和 `k in {1,3,5,10}` 的可复现实验比较任务效果、噪声、token、延迟和失败。
-- 仅在预先批准的质量与回归预算内选择最小可接受 k，并保留独立的人类默认启用门禁。
+## Goals
 
-## 非目标
+- Prefer a small set of task-relevant non-Core SessionStart items over filling
+  the existing budget with weakly related content.
+- Reuse the existing local significant-token relevance behavior; do not add a
+  network, LLM, or second injection gate.
+- Select the default non-Core injection count from a reproducible four-arm
+  sweep instead of intuition.
+- Make low-relevance blanking, k limiting, existing section limits, and final
+  character truncation visible in the SessionStart footer and `remem status`
+  text/JSON.
 
-- 不改变 Core、Preferences、Workstreams、错误提示或检索诊断的既有语义。
-- 不用 GH-854 重新设计捕获、提取、数据库 schema、混合检索或全局 reranker。
-- 不把 UserPromptSubmit 的词元重叠门槛或其他 issue 的 reranker 分数直接声明为可用的
-  SessionStart 共同分数。
-- 不把 golden 选择准确率替代真实 coding-bench 下游效果，也不以一次样本或事后挑选指标
-  决定默认值。
-- 不在 spec-only PR 中实施、运行 PoC、修改默认值、迁移数据、发布或合并。
-- 不采纳缺失研究报告中的外部结论或 issue 引用数字，直到来源、适用性和复现证据获批。
+## Non-Goals
+
+- Changing Core selection, Preferences, Workstreams, host parity, capture,
+  extraction, retrieval storage, or database schema.
+- Replacing the hybrid retriever or implementing a global reranker.
+- Introducing coding-bench orchestration, signed approval tags, trust roots, or
+  another evaluation/gating framework.
+- Treating a larger `k` as better or worse before the sweep is measured.
 
 ## Behavior Invariants
 
-1. `B-001`：每次请求必须先用变更前完全相同的 Core 规则、候选输入和预算冻结 Core IDs；Core
-   不参与共同评分、不计入 k，且正文、顺序、数量和失败语义不得改变。共同评分候选闭集为
-   `Lessons`、`Sessions` 和排除这些冻结 Core IDs 后的 `MemoryIndex` view；Preferences、
-   Workstreams 和错误/检索提示继续遵守既有契约。
-2. `B-002`：相关性策略关闭时，三个受控分区的候选选择、正文顺序和既有 item/字符/总预算
-   结果必须与变更前一致；新增诊断元数据可以显示 `off`，但不得伪装成已执行相关性筛选。
-3. `B-003`：相关性策略启用时，每个受控候选必须先获得同一已批准量纲上的任务相关性分数；
-   只有达到已批准门槛、不是冻结 Core ID 且尚未以同一稳定身份出现的候选才有资格进入全局 k
-   选择。
-4. `B-004`：系统必须按“冻结 Core IDs → 构造排除 Core 的三个受控 view → 稳定身份去重 →
-   相关性门槛 → 全局 k → 既有分区 item/字符预算 → item-aware 总字符预算”的唯一顺序执行。
-   k 只计实际可进入受控分区的唯一候选；Core、被 Core 排除项和重复项不得虚耗 k。
-5. `B-005`：当达到门槛的候选少于 k 个时，系统必须少注入或保持分区空白；不得用低于门槛、
-   无分数或重复的内容回填预算。
-6. `B-006`：同一查询、候选快照、策略版本和配置必须产生相同分数、顺序与决策；分数相同时
-   使用稳定、公开且可复验的 tie-break，不能依赖哈希迭代或并发完成顺序。
-7. `B-007`：当启用策略但任务上下文为空、过弱或无法形成有效查询时，三个受控分区必须
-   `abstained` 并使用闭集原因说明；不得把“无法判断相关性”当作“全部相关”。非受控分区仍按
-   `B-001` 输出。
-8. `B-008`：当评分器不可用、超时、返回非法值或只完成部分候选时，本次三个受控分区必须
-   整体 fail-closed，不得注入部分评分结果；用户可见状态和错误诊断必须区分该失败与正常空白。
-9. `B-009`：缺失、越界或互相矛盾的启用配置必须被明确拒绝或进入可见错误状态；不得静默
-   换用一个未经批准的评分器、阈值或 k 后继续成功。
-10. `B-010`：总字符预算必须以完整 item 为原子进行规划，或由最终裁剪器返回实际完整存活的
-    stable keys；输出不得包含半截 item。审计中只有最终输出内完整存活且未被 total/delta 裁剪的
-    stable key 可以标记 `injected`，其余候选必须以真实闭集原因记录为 dropped/abstained，不能
-    通过 title 子串推断或把半截/已裁剪项记成注入。一次输出为空的 pre-render suppression
-    的最终注入数必须是零，不得把来源 run 的 `injected` 状态冒充为本次输出。
-11. `B-011`：SessionStart hook footer 必须区分 `off`、`applied`、`abstained` 和 `error`，并按
-    受控分区显示合格、最终完整注入和各原因丢弃数量；“相关性不足而空白”与“有合格项但被
-    section/total/delta 预算裁剪”不得共享同一显示或原因。
-12. `B-012`：若项目级审计写入失败，运行时不得把本次选择标记为完整审计成功；至少保留用户
-    可见的选择状态并记录 error 级诊断，不能只 warning 后静默丢失证据。
-13. `B-013`：并发 SessionStart 请求必须使用各自冻结的查询、候选快照和策略配置；一个请求的
-    得分、取消、失败或预算消耗不得改变另一个请求的决策。
-14. `B-014`：对同一冻结输入重试必须幂等；策略版本、门槛或 k 改变时必须形成新的选择身份，
-    不能因旧的重复注入证据而错误复用先前决策。
-15. `B-015`：请求被取消、超时或中断时不得发布半份受控选择或把未完成实验报告标为成功；
-    重试从新的完整请求开始，先前的部分证据不能用于默认值批准。
-16. `B-016`：k sweep 必须在同一不可变的 pre-run charter 中包含当前生产基线以及
-    `k=1,3,5,10` 四个实验臂，并固定评分器、门槛、候选集、任务集、受批准的执行代码树、
-    runner/model/environment、运行次数、执行顺序和回归预算。human approval 必须是独立于
-    charter 内容的可验签名载体，签名者必须命中运行者显式提供的可信 human identity/fingerprint；
-    charter 不得声明或内含承载它自身的 commit/tag 对象 ID。签名批准必须绑定 charter path/hash，
-    其目标 commit 必须是每个 raw run source/evidence commit 的祖先；runner 必须由运行者显式接收 exact
-    tag name/object ID，启动前验证签名、信任身份、祖先、
-    charter bytes/hash、受批准代码树和全部有效参数。charter/amendment 任何修改都要求新签名批准并
-    使旧 hash 下的全部 runs 失效；禁止跨 hash/批准载体拼接或在查看结果后排除失败样本。
-17. `B-017`：每个实验臂必须报告任务完成率、memory helped/hurt、irrelevant injection、
-    missing relevant、citation precision/recall、输入 token/字符、wall time、失败分类，以及各
-    受控分区的合格/注入/丢弃原因；原始证据引用和配置身份必须足以独立复验汇总。
-18. `B-018`：默认 k 只能从满足预先批准的任务质量、噪声、token、延迟和失败回归预算的实验臂
-    中选择最小值；若没有实验臂满足全部预算，结论必须是“不启用”，不得选择表现最不差者。
-19. `B-019`：golden 或确定性选择评测可以证明选择规则与相关项覆盖，但不能单独批准生产默认；
-    缺失、失败或不可复验的 coding-bench 证据必须阻止默认启用声明。
-20. `B-020`：评分和选择必须在本机、离线、有限资源内完成，只处理当前请求已获授权读取的内容；
-    不得为 SessionStart 额外发送网络/LLM 请求，日志和实验报告不得泄露原始记忆正文或任务查询。
-21. `B-021`：Claude Code 与 Codex 的 SessionStart 必须遵守同一策略版本和选择语义；存量数据
-    无需迁移，旧配置未显式启用时按 `off` 处理。新增可观测字段不得让旧数据被误判为已评分。
-22. `B-022`：在缺失研究来源、共同评分器与校准证据、精确阈值、实验回归预算、运行样本数和
-    human `spec_approval` 任一项未解决时，策略必须保持默认关闭，issue 不得进入实现或默认启用
-    完成状态。
-23. `B-023`：这里的持久化“状态”明确指现有 `remem status` 文本输出及其 `--json` 中的
-    `latest_session_memory_spend`，而不只指一次性 hook footer。它必须为最近一次 SessionStart
-    显示 relevance state、policy/scorer version、threshold、k、最终完整注入数、按闭集原因的
-    dropped counts 和 audit completeness。normal strict pre-render suppression 只有在与本次 context epoch
-    同一原子事务内写入新 suppression/reuse item evidence，且它精确引用同 injection key/context hash/
-    data-version/policy identity 的先前 complete emitted run 时，才可显示 audit-complete 的
-    `suppressed_reused`（或等价闭集状态）；本次 final injected 必须是零。无精确 complete 来源、
-    identity/hash 不符或原子写失败时，不得单独推进 context epoch；必须回滚 suppression 并走完整渲染/
-    审计路径，否则显示 `audit_incomplete`/`unavailable`。无新 item evidence 的旧数据库显示
-    `unavailable_legacy`，不得误报 `applied`。hook footer 仍按 `B-011` 提供本次请求即时状态。
+1. `P-001` Core, Preferences, Workstreams, host behavior, and the existing
+   section/total character budgets retain their current selection and rendering
+   semantics.
+2. `P-002` Lessons, the MemoryIndex view after Core IDs are excluded, and
+   Sessions use the same local significant-token relevance score before their
+   existing section limits are applied.
+3. `P-003` A candidate with zero significant-token overlap is never injected to
+   fill a slot. If no governed candidate is relevant, the three governed
+   sections may be blank while non-governed sections continue normally.
+4. `P-004` Positive candidates are ordered by descending score, then the stable
+   section order Lessons, MemoryIndex, Sessions, then stable item identity. The
+   result is deterministic for the same query, candidate snapshot, and policy.
+5. `P-005` One global non-Core `k` applies across the three governed sections.
+   Core items do not consume k. Eligible candidates outside k are omitted, and
+   fewer than k positive candidates are not backfilled.
+6. `P-006` The score is the fraction of significant query tokens found in the
+   candidate text, reusing the existing PromptSubmit tokenizer and stop-token
+   rules. The per-request threshold is derived from the selected k: use the
+   midpoint between the kth score and the next lower positive score when a gap
+   exists; otherwise use the kth score. Stable tie-breaking enforces k. With
+   fewer than k positive candidates, use the lowest positive score. With no
+   positive score, the governed selection is blank.
+7. `P-007` `REMEM_CONTEXT_RELEVANCE_K=0` restores the legacy governed-section
+   selection as a rollback switch. A positive override changes k without
+   changing the scorer. The evidence-selected value is the default.
+8. `P-008` The SessionStart footer distinguishes policy disabled, applied, and
+   blank states and reports k, threshold, candidate/eligible/final injected
+   counts, low-relevance drops, k drops, section drops, and total truncation.
+9. `P-009` The latest-session block in `remem status` and `remem status --json`
+   exposes the most recent available relevance policy state and audit counts
+   from `context_injection_items`. Legacy databases or runs without policy
+   evidence report unavailable rather than claiming relevance was applied.
+10. `P-010` The committed sweep report contains the exact commands, dataset and
+    source identity, `k={1,3,5,10}`, required per-slice and overall golden
+    metrics, representative SessionStart output characters, existing capacity
+    degradation metrics, and the deterministic recommendation.
+11. `P-011` An arm is eligible only when every populated golden slice's
+    `hit_at_k` is within `0.01` of that slice's best measured value. The
+    smallest eligible arm is selected. Ties choose the smaller k. Missing arms
+    or missing required slice data produce no recommendation.
+12. `P-012` The implementation records closed audit reasons for
+    `below_sessionstart_relevance_threshold`, `sessionstart_k_limit`,
+    `section_budget`, and existing final gate/truncation outcomes without
+    storing query or memory text in new diagnostics.
 
-## 验收标准
+## Acceptance Criteria
 
-- [ ] 对当前生产基线可复现：Core 有自身门槛，而 Lessons、MemoryIndex、Sessions 没有共同
-      任务相关性门槛，仓库没有 SessionStart k sweep。
-- [ ] 开启策略后先冻结既有 Core IDs，再对 Lessons、Sessions、排除 Core 的 MemoryIndex view 执行
-      “去重 → 门槛 → 全局 k → 现有分区预算 → item-aware 总预算”；Core/重复项不消耗 k。
-- [ ] 每个受控候选的最终状态与实际完整 item 一致；无半截 item，空白、低相关、k 丢弃、分区、
-      total 和 delta 裁剪可区分。
-- [ ] strict pre-render suppression 要么与本次 context epoch 原子写入可验的 reuse item run，
-      显示 `suppressed_reused` 且 final injected=0；要么不推进 epoch 并回到完整渲染/审计。
-- [ ] 空查询、评分失败、非法配置、并发、重试、取消和审计失败都按对应 invariant fail-visible。
-- [ ] 受控 sweep 比较生产基线与四个 k，产出可复验的任务效果、噪声、成本、延迟和失败证据。
-- [ ] sweep 前必须通过独立 signed annotated tag 批准；未签名/轻量 tag、不可信 signer、
-      错 issue/path/hash、非祖先 target、代码树或有效参数漂移均在任何 raw row 前失败。
-- [ ] `remem status` 和 `remem status --json` 在现有 latest-session memory footprint 中显示最近一次
-      relevance/audit 状态；hook footer 继续显示本次请求状态。
-- [ ] 只有在研究来源、评分契约、阈值、回归预算和样本规模获 human `spec_approval` 后，才可
-      写 tasks 并进入 `ready_to_implement`；默认启用仍需后续独立批准。
+- [ ] Four reproducible `remem eval --json` runs at k 1, 3, 5, and 10 are
+      committed as a summarized report with raw evidence hashes.
+- [ ] The report applies the all-populated-slices one-percentage-point rule and
+      records the selected default k without hiding secondary metric tradeoffs.
+- [ ] Low-relevance Lessons, MemoryIndex items, and Sessions do not backfill,
+      while Core, Preferences, and Workstreams are unchanged.
+- [ ] Selection, threshold derivation, ties, sparse candidates, no-positive
+      candidates, and the k=0 rollback path have focused tests.
+- [ ] SessionStart and `remem status` text/JSON distinguish relevance blanking
+      from k/section/total budget effects.
+- [ ] Existing capacity and eval gates pass, and the report includes their
+      degradation and SessionStart character evidence.
 
-## 边界情况
+## Edge Cases
 
-| 类别 | 结论 |
-| --- | --- |
-| Empty / missing input | covered: `B-005`, `B-007`, `B-009` |
-| Error and failure paths | covered: `B-008`, `B-009`, `B-012`, `B-019` |
-| Authorization / permission | covered: `B-020`, `B-022`；只读当前请求已授权内容，spec/default 均保留 human gates |
-| Concurrency / race / ordering | covered: `B-004`, `B-006`, `B-013` |
-| Retry / repetition / idempotency | covered: `B-014`, `B-016` |
-| Illegal state transitions | covered: `B-002`, `B-009`, `B-018`, `B-022` |
-| Compatibility / migration | covered: `B-001`, `B-002`, `B-021`, `B-023` |
-| Degradation / fallback | covered: `B-005`, `B-007`, `B-008`, `B-019` |
-| Evidence and audit integrity | covered: `B-010`, `B-011`, `B-012`, `B-016`, `B-017`, `B-023`；签名批准不自引用，suppression epoch/item evidence 同事务 |
-| Cancellation / interruption / partial completion | covered: `B-008`, `B-015` |
+- Empty or weak task signals: governed sections are blank and visible; other
+  sections still render.
+- Tied kth score: the threshold includes the tie, while stable identity order
+  enforces exactly k.
+- Fewer than k positive candidates: inject only those candidates.
+- Invalid environment value: preserve the existing env parsing convention and
+  use the evidence-selected default.
+- Legacy audit rows: status reports relevance evidence as unavailable.
+- Final character truncation: remains distinct from relevance and k drops.
 
-特殊组合：即使评分器曾对部分候选成功，只要同次请求有超时/非法分数，`B-008 + B-015`
-仍要求整体 fail-closed；即使某个 k 在事后看起来最好，只要预注册预算或可复验 coding-bench
-证据缺失，`B-018 + B-019 + B-022` 仍要求默认关闭。
+## Release Notes
 
-## 待 human `spec_approval` 冻结的问题
-
-- 补齐并审阅 issue 引用的研究报告，或明确撤销该引用；外部结论必须有可核查来源和对 remem
-  的适用性说明。
-- 选择共同评分器、版本、特征与归一化方式，证明三个受控分区的分数可比较；不得默认复用
-  UserPromptSubmit token overlap 或尚未合并的其他 issue 结果。
-- 冻结阈值、候选投影、最大执行时间、非法/弱查询判定、闭集 reason codes 和稳定 tie-break。
-- 以独立 signed annotated tag 冻结不可变 coding-bench charter：任务集、运行次数、reference
-  model/runner/environment、受批准代码树、执行 seed/order、主要指标，以及任务质量、噪声、token、
-  延迟和失败的精确非回归预算；固定信任根、human identity/fingerprint 和 tag trailer 契约。
-  amendment 必须使用新 charter hash/新签名 tag 并废止旧 runs。
-- sweep 完成后由 human 明确批准默认 k 和是否启用；实验授权、implementation 授权、merge
-  授权和 release 授权互不继承。
-
-## 发布说明
-
-本文件是 Draft 行为契约，不构成 `spec_approval`、PoC、`ready_to_implement`、merge 或 release
-授权。当前默认保持关闭。未来若获批实现，先以可回滚的关闭模式交付诊断与实验能力；任何默认
-启用必须引用完整 sweep 证据并通过独立 human gate。无需数据迁移；用户可见文档必须说明受控
-分区、选择状态、空白/截断原因、配置兼容性和关闭方法。
+This is a default behavior change with an explicit `k=0` rollback switch. The
+release note and README must name the governed sections, selected k, relevance
+method, status visibility, privacy boundary, and rollback environment variable.
