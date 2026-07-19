@@ -64,11 +64,29 @@ pub(super) fn append_graph_channel(
         })
         .collect::<Vec<_>>();
     let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
-    channels.push(
-        NamedChannel::enabled_with_hits("graph_traversal", weights.graph, hits)
-            .with_candidates_scanned(outcome.diagnostics.edges_scanned),
-    );
+    channels.push(graph_channel_after_suppression(
+        hits,
+        weights.graph,
+        outcome.diagnostics.edges_scanned,
+    ));
     Ok(())
+}
+
+fn graph_channel_after_suppression(
+    hits: Vec<WeightedRankedHit>,
+    weight: f64,
+    candidates_scanned: usize,
+) -> NamedChannel {
+    if hits.is_empty() {
+        return NamedChannel::disabled(
+            "graph_traversal",
+            weight,
+            "all eligible graph candidates were suppressed",
+        )
+        .with_candidates_scanned(candidates_scanned);
+    }
+    NamedChannel::enabled_with_hits("graph_traversal", weight, hits)
+        .with_candidates_scanned(candidates_scanned)
 }
 
 fn seed_ids(channels: &[NamedChannel], max_seeds: usize) -> Vec<i64> {
@@ -80,4 +98,23 @@ fn seed_ids(channels: &[NamedChannel], max_seeds: usize) -> Vec<i64> {
         .filter(|id| seen.insert(*id))
         .take(max_seeds)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn post_suppression_empty_graph_channel_has_stable_disabled_reason() {
+        let channel =
+            graph_channel_after_suppression(Vec::new(), SearchWeights::default().graph, 2);
+
+        assert!(!channel.is_enabled());
+        assert!(channel.hits.is_empty());
+        assert_eq!(channel.candidates_scanned, Some(2));
+        assert_eq!(
+            channel.disabled_reason.as_deref(),
+            Some("all eligible graph candidates were suppressed")
+        );
+    }
 }

@@ -75,6 +75,7 @@ pub struct GraphDecisionArmReport {
     pub overall: CategoryEvaluation,
     pub associative_slice: CategoryEvaluation,
     pub non_associative_slices: CategoryEvaluation,
+    pub non_associative_by_slice: BTreeMap<String, CategoryEvaluation>,
     pub associative_queries_with_two_or_more_hops: usize,
     pub scope_leak_count: usize,
     pub query_summaries: Vec<GraphDecisionQuerySummary>,
@@ -220,6 +221,7 @@ fn evaluate_arm(
     let mut overall = golden::run::CategoryAccumulator::default();
     let mut associative_slice = golden::run::CategoryAccumulator::default();
     let mut non_associative_slices = golden::run::CategoryAccumulator::default();
+    let mut non_associative_by_slice = BTreeMap::<String, golden::run::CategoryAccumulator>::new();
     let mut query_summaries = Vec::with_capacity(dataset.queries.len());
     let mut scope_leak_count = 0;
 
@@ -296,6 +298,13 @@ fn evaluate_arm(
             golden::run::record_bucket(&mut associative_slice, query, &evaluation);
         } else {
             golden::run::record_bucket(&mut non_associative_slices, query, &evaluation);
+            golden::run::record_bucket(
+                non_associative_by_slice
+                    .entry(query.slice_label().to_string())
+                    .or_default(),
+                query,
+                &evaluation,
+            );
         }
         scope_leak_count += results
             .iter()
@@ -333,6 +342,10 @@ fn evaluate_arm(
         overall: golden::run::bucket_evaluation(overall),
         associative_slice: golden::run::bucket_evaluation(associative_slice),
         non_associative_slices: golden::run::bucket_evaluation(non_associative_slices),
+        non_associative_by_slice: non_associative_by_slice
+            .into_iter()
+            .map(|(name, bucket)| (name, golden::run::bucket_evaluation(bucket)))
+            .collect(),
         associative_queries_with_two_or_more_hops,
         scope_leak_count,
         query_summaries,
@@ -451,12 +464,10 @@ fn build_checks(
         && literal_graph.associative_slice.scored_queries > 0;
     let literal_two_hop_observed = literal_graph.associative_queries_with_two_or_more_hops > 0;
     let benefit_threshold_met = deltas.associative_evidence_recall_at_k >= BENEFIT_THRESHOLD;
-    let non_associative_zero_regression =
-        metrics_not_lower(
-            standard.non_associative_slices.metrics.as_ref(),
-            literal_graph.non_associative_slices.metrics.as_ref(),
-        ) && literal_graph.non_associative_slices.abstention_passed
-            >= standard.non_associative_slices.abstention_passed;
+    let non_associative_zero_regression = non_associative_slices_not_lower(
+        &standard.non_associative_by_slice,
+        &literal_graph.non_associative_by_slice,
+    );
     let zero_scope_leak = literal_graph.scope_leak_count == 0;
     let p95_latency_within_budget =
         literal_graph.overall.retrieval_latency_p95_ms <= LATENCY_BUDGET_P95_MS;
@@ -494,6 +505,19 @@ fn metrics_not_lower(
         (None, None) => true,
         _ => false,
     }
+}
+
+fn non_associative_slices_not_lower(
+    standard: &BTreeMap<String, CategoryEvaluation>,
+    candidate: &BTreeMap<String, CategoryEvaluation>,
+) -> bool {
+    standard.len() == candidate.len()
+        && standard.iter().all(|(slice, standard)| {
+            candidate.get(slice).is_some_and(|candidate| {
+                metrics_not_lower(standard.metrics.as_ref(), candidate.metrics.as_ref())
+                    && candidate.abstention_passed >= standard.abstention_passed
+            })
+        })
 }
 
 fn seed_fixture_graph_edges(conn: &Connection, dataset: &GoldenDataset) -> Result<()> {
@@ -717,6 +741,36 @@ mod tests {
             literal_non_associative.precision_at_k,
             standard_non_associative.precision_at_k
         );
+        assert!(non_associative_slices_not_lower(
+            &report.standard.non_associative_by_slice,
+            &report.literal_graph.non_associative_by_slice,
+        ));
+        let mut degraded = report.literal_graph.non_associative_by_slice.clone();
+        let (slice, standard_slice) = report
+            .standard
+            .non_associative_by_slice
+            .iter()
+            .find(|(_, slice)| {
+                slice
+                    .metrics
+                    .as_ref()
+                    .is_some_and(|metrics| metrics.hit_at_k > 0.0)
+            })
+            .context("non-associative scored slice")?;
+        degraded
+            .get_mut(slice)
+            .and_then(|slice| slice.metrics.as_mut())
+            .context("candidate non-associative scored slice")?
+            .hit_at_k = standard_slice
+            .metrics
+            .as_ref()
+            .context("standard slice metrics")?
+            .hit_at_k
+            - 0.25;
+        assert!(!non_associative_slices_not_lower(
+            &report.standard.non_associative_by_slice,
+            &degraded,
+        ));
         Ok(())
     }
 
