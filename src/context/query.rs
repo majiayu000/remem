@@ -44,7 +44,7 @@ pub(super) fn load_context_data_with_policy(
 ) -> LoadedContext {
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let mut errors = Vec::new();
-    let summaries = query_recent_summaries(conn, project, policy.limits.session_limit)
+    let summaries = query_recent_summaries(conn, project, policy.limits.candidate_fetch_limit)
         .unwrap_or_else(|e| {
             let message = format!("failed to load recent summaries for {project}: {e}");
             crate::log::error("context", &message);
@@ -76,6 +76,7 @@ pub(super) fn load_context_data_with_policy(
         &workstreams,
     );
     errors.append(&mut memory_selection.errors);
+    let relevance_query = memory_selection.fact_label_query.clone();
     let mut memories = memory_selection.memories;
     sort_memories_by_branch(&mut memories, current_branch);
     if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts_for_query(
@@ -92,7 +93,7 @@ pub(super) fn load_context_data_with_policy(
         conn,
         project,
         current_branch,
-        policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit) as i64,
+        policy.limits.candidate_fetch_limit as i64,
     )
     .unwrap_or_else(|e| {
         let message = format!("failed to load lessons for {project}: {e}");
@@ -119,6 +120,7 @@ pub(super) fn load_context_data_with_policy(
         lessons,
         summaries,
         workstreams,
+        relevance_query,
         memory_abstained: memory_selection.abstained,
         errors,
         owner_traces: memory_selection.owner_traces,
@@ -595,7 +597,7 @@ fn query_summary_batch(
     offset: usize,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
     let mut stmt = conn.prepare(
-        "SELECT \
+        "SELECT ss.id, \
              CASE \
                WHEN ss.request LIKE 'Captured event range %..%' THEN \
                  COALESCE(NULLIF(ss.decisions, ''), NULLIF(ss.learned, ''), \
@@ -629,11 +631,12 @@ fn query_summary_batch(
         |row| {
             Ok(SessionSummaryQueryRow {
                 summary: SessionSummaryBrief {
-                    request: row.get(0)?,
-                    completed: row.get(1)?,
-                    created_at_epoch: row.get(2)?,
+                    id: row.get(0)?,
+                    request: row.get(1)?,
+                    completed: row.get(2)?,
+                    created_at_epoch: row.get(3)?,
                 },
-                session_key: row.get(3)?,
+                session_key: row.get(4)?,
             })
         },
     )?;

@@ -6,6 +6,7 @@ use super::super::format::{char_len, inline_context_text};
 pub(in crate::context) struct WorkstreamRenderSummary {
     pub count: usize,
     pub ids: Vec<i64>,
+    pub item_end_chars: Vec<usize>,
 }
 
 #[cfg(test)]
@@ -39,10 +40,12 @@ pub(in crate::context) fn render_workstreams_with_summary(
         return WorkstreamRenderSummary::default();
     }
 
+    let output_start_chars = char_len(output);
     let mut section = String::from(header);
     let mut total_chars = header_chars + trailer_chars;
     let mut rendered = 0usize;
     let mut ids = Vec::new();
+    let mut item_end_chars = Vec::new();
 
     for workstream in workstreams.iter().take(item_limit) {
         let line = format_workstream_line(workstream);
@@ -53,6 +56,7 @@ pub(in crate::context) fn render_workstreams_with_summary(
         section.push_str(&line);
         total_chars += line_chars;
         ids.push(workstream.id);
+        item_end_chars.push(output_start_chars + total_chars - trailer_chars);
         rendered += 1;
     }
 
@@ -65,6 +69,7 @@ pub(in crate::context) fn render_workstreams_with_summary(
     WorkstreamRenderSummary {
         count: rendered,
         ids,
+        item_end_chars,
     }
 }
 

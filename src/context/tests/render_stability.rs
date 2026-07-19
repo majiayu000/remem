@@ -5,6 +5,7 @@ use super::super::policy::ContextLimits;
 use super::super::sections::{
     render_core_memory_with_limits_and_staleness,
     render_memory_index_with_limits_excluding_and_staleness,
+    render_ranked_memory_index_with_summary_and_staleness,
 };
 use super::sample_memory_with_epoch;
 
@@ -50,6 +51,32 @@ fn index_render_applies_item_limit_before_type_grouping() {
 
     assert!(output.contains("Selected discovery"), "{output}");
     assert!(!output.contains("Unselected decision"), "{output}");
+}
+
+#[test]
+fn ranked_index_spends_cross_type_char_budget_in_relevance_order() {
+    let mut output = String::new();
+    let limits = ContextLimits {
+        memory_index_limit: 2,
+        memory_index_char_limit: 110,
+        ..ContextLimits::default()
+    };
+    let memories = vec![
+        sample_memory_with_epoch(2, "bugfix", "Higher relevance bugfix", REF_EPOCH),
+        sample_memory_with_epoch(1, "decision", "Lower relevance decision", REF_EPOCH),
+    ];
+
+    render_ranked_memory_index_with_summary_and_staleness(
+        &mut output,
+        &memories,
+        &limits,
+        &HashSet::new(),
+        REF_EPOCH,
+        &HashMap::new(),
+    );
+
+    assert!(output.contains("#2 Higher relevance"), "{output}");
+    assert!(!output.contains("#1 Lower relevance"), "{output}");
 }
 
 #[test]

@@ -280,12 +280,14 @@ New session starts
        ├─ Dedup against CLAUDE.md (skip already present)
        │
        ▼
-  Load recent 50 memories + 5 session summaries
+  Load bounded memory, lesson, and session candidates
        │
        ├─ Branch-aware: current branch first, then main, then others
        ├─ Score-based: decision > bugfix > architecture > discovery
-       ├─ Core section: top 6 scored, 200-char preview
-       ├─ Index section: grouped by type
+       ├─ Freeze Core section unchanged: top 6 scored, 200-char preview
+       ├─ Score Lessons + non-Core Index + Sessions against the implicit query
+       ├─ Apply one global relevance k (default 1), then section budgets
+       └─ Keep k=0 as the legacy-selection rollback
        │
        ▼
   Render to stdout → Claude Code injects into CLAUDE.md
@@ -499,6 +501,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_CORE_ITEM_LIMIT` | `6` | Core memory item budget |
 | `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `3000` | Core memory character budget |
 | `REMEM_CONTEXT_SESSION_COUNT` | `5` | Session summaries shown |
+| `REMEM_CONTEXT_RELEVANCE_K` | `1` | Global relevant item cap across Lessons, non-Core MemoryIndex, and Sessions; `0` restores legacy selection |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | Self-diagnostic memory cap |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
 | `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |

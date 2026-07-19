@@ -147,14 +147,10 @@ fn query_previously_injected_memory_ids(
 }
 
 fn prompt_relevance_passes(prompt: &str, memory: &Memory) -> bool {
-    let prompt_tokens = significant_prompt_tokens(prompt);
-    if prompt_tokens.is_empty() {
-        return false;
-    }
-    let memory_text = format!("{} {}", memory.title, memory.text).to_lowercase();
-    prompt_tokens
-        .iter()
-        .any(|token| memory_text.contains(token))
+    super::relevance::significant_token_relevance_score(
+        prompt,
+        &format!("{} {}", memory.title, memory.text),
+    ) > 0.0
 }
 
 fn render_prompt_submit_context(
@@ -236,6 +232,7 @@ fn empty_prompt_submit_decision() -> ContextGateDecision {
         key: None,
         context_hash: None,
         output_mode: Some("prompt_submit"),
+        retained_context_chars: None,
     }
 }
 
@@ -247,44 +244,8 @@ fn prompt_submit_decision(output: String) -> ContextGateDecision {
         key: None,
         context_hash: None,
         output_mode: Some("prompt_submit"),
+        retained_context_chars: None,
     }
-}
-
-fn significant_prompt_tokens(text: &str) -> HashSet<String> {
-    text.split_whitespace()
-        .map(|token| {
-            token
-                .trim_matches(|ch: char| ch.is_ascii_punctuation())
-                .to_lowercase()
-        })
-        .filter(|token| token.chars().count() >= 3 || !token.is_ascii())
-        .filter(|token| !is_prompt_stop_token(token))
-        .collect()
-}
-
-fn is_prompt_stop_token(token: &str) -> bool {
-    matches!(
-        token,
-        "the"
-            | "and"
-            | "for"
-            | "with"
-            | "from"
-            | "that"
-            | "this"
-            | "should"
-            | "when"
-            | "where"
-            | "what"
-            | "why"
-            | "how"
-            | "into"
-            | "was"
-            | "were"
-            | "does"
-            | "need"
-            | "about"
-    )
 }
 
 fn prompt_submit_abstained_item(reason: &'static str) -> ContextAuditItem {
@@ -300,6 +261,7 @@ fn prompt_submit_abstained_item(reason: &'static str) -> ContextAuditItem {
         title: "prompt context abstained".to_string(),
         provenance: "src=memory".to_string(),
         staleness: "staleness=none".to_string(),
+        render_end_chars: None,
     }
 }
 
@@ -530,6 +492,7 @@ mod tests {
             key: Some(injection_key_for_audit(&invocation)),
             context_hash: Some("seed-session-start-context".to_string()),
             output_mode: Some("full"),
+            retained_context_chars: None,
         };
         record_context_injection_items(
             &conn,

@@ -16,6 +16,7 @@ const MIN_ADDITIONAL_CORE_SCORE: f64 = 1.3;
 pub(in crate::context) struct CoreRenderSummary {
     pub count: usize,
     pub ids: Vec<i64>,
+    pub item_end_chars: Vec<usize>,
 }
 
 #[cfg(test)]
@@ -125,12 +126,14 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         return CoreRenderSummary::default();
     }
 
+    let output_start_chars = char_len(output);
     output.push_str(header);
     let selected_count = selected.len();
     let selected_ids = selected
         .iter()
         .map(|(memory, _, _)| memory.id)
         .collect::<Vec<_>>();
+    let mut item_end_chars = Vec::with_capacity(selected_count);
     for (memory, title, preview) in selected {
         let date = format_epoch_short(memory.updated_at_epoch);
         output.push_str(&format!(
@@ -143,11 +146,13 @@ pub(in crate::context) fn render_core_memory_with_limits_and_staleness(
         ));
         output.push_str(&preview);
         output.push('\n');
+        item_end_chars.push(char_len(output) - output_start_chars);
     }
     output.push('\n');
     CoreRenderSummary {
         count: selected_count,
         ids: selected_ids,
+        item_end_chars,
     }
 }
 
