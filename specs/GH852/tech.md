@@ -252,9 +252,12 @@ Codex official hooks
 ### 持久化与迁移
 
 本 spec 不预先声明新表。implementation discovery 必须优先复用现有 event/candidate provenance；
-只有无法以数据库约束实现 `B-008`/`B-010` 时才增加最小 migration。任何 migration 都需 schema
-drift、upgrade、rollback 和重复运行测试，并在当前 DB spec 中登记。Codex 源文件不进入 install
-receipt，也不被 remem 写回。
+当前 complete manifest 不声明新的 migration SQL。若 discovery 证明现有数据库约束无法实现
+`B-008`/`B-010`，implementation 必须在写 migration 或扩大任何文件路径前停止：先以准确的
+next-free migration 路径更新 tech spec 与 complete manifest，重新运行 parser，并重新取得 human
+spec/security review。获批后的 migration 仍需 schema drift、upgrade、rollback 和重复运行测试，
+并在当前 DB spec 中登记；不得在实现中用临时 SQL、进程内去重或未登记路径静默绕过。Codex
+源文件不进入 install receipt，也不被 remem 写回。
 
 ## 备选方案
 
@@ -400,7 +403,6 @@ hooks 审计本身无运行时回滚。任何后续 hooks 变更必须另走 iss
     "src/memory_candidate/tests.rs",
     "src/db/capture.rs",
     "src/db/capture/tests.rs",
-    "src/migrations/v0NN_codex_native_memory_import.sql",
     "src/migrate.rs",
     "src/migrate/types.rs",
     "src/migrate/run.rs",
@@ -429,9 +431,10 @@ hooks 审计本身无运行时回滚。任何后续 hooks 变更必须另走 iss
 }
 -->
 
-该 manifest 是当前 implementation 设计的完整预期文件边界，不包含尚未获批的 `tasks.md` 或
-Codex hooks runtime 改动。若真实 PoC、schema discovery 或 implementation 证明需要新增路径，
-必须先更新 tech spec、重新解析 manifest 并重走 human spec/security review，不能静默扩大范围。
+该 manifest 是当前 implementation 设计的完整预期文件边界，不包含尚未获批的 `tasks.md`、
+Codex hooks runtime 改动或条件性 migration SQL 占位。若真实 PoC、schema discovery 或
+implementation 证明需要 migration 或任何新增路径，必须在修改该路径前先用准确路径更新 tech
+spec 与 complete manifest、重新解析，并重走 human spec/security review，不能静默扩大范围。
 
 本文件不构成 `spec_approval`。报告核对、产品/技术批准和 `ready_to_implement` 完成后，才可生成
 `tasks.md` 并开始实现。
