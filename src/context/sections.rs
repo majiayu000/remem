@@ -26,6 +26,7 @@ pub(super) use lessons::render_lessons_with_summary_and_staleness;
 #[cfg(test)]
 pub(super) use sessions::render_recent_sessions;
 pub(super) use sessions::render_recent_sessions_with_limit;
+pub(super) use sessions::render_recent_sessions_with_summary;
 #[cfg(test)]
 pub(super) use workstreams::render_workstreams;
 pub(super) use workstreams::render_workstreams_with_limits;

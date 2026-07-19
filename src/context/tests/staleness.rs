@@ -5,6 +5,7 @@ use std::collections::HashMap;
 
 use super::super::audit::build_context_audit_items;
 use super::super::query::load_context_data;
+use super::super::relevance::SessionStartRelevancePlan;
 use super::super::sections::render_lessons_with_limit_and_staleness;
 use super::super::types::ContextDiagnostics;
 use super::{insert_memory, setup_context_schema};
@@ -218,13 +219,16 @@ fn context_audit_uses_rendered_source_anchor_labels() {
     loaded.workstreams.clear();
     loaded.summaries.clear();
     loaded.diagnostics = ContextDiagnostics::default();
-    let audit_items = build_context_audit_items(&loaded, &[201], &[], &[], &[]);
+    let relevance = SessionStartRelevancePlan::disabled(&[]);
+    let audit_items = build_context_audit_items(&loaded, &[201], &[], &[], &[], &[], &relevance);
 
-    assert_eq!(audit_items.len(), 1);
-    assert_eq!(audit_items[0].status, "injected");
-    assert!(audit_items[0]
-        .staleness
-        .contains("source_anchor=verify-before-trust"));
+    assert_eq!(audit_items.len(), 2);
+    let core = audit_items
+        .iter()
+        .find(|item| item.channel == "core")
+        .expect("core audit item");
+    assert_eq!(core.status, "injected");
+    assert!(core.staleness.contains("source_anchor=verify-before-trust"));
 }
 
 fn sample_lesson(id: i64, title: &str, confidence: f64, reinforcement_count: i64) -> LessonMemory {

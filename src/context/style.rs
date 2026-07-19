@@ -63,6 +63,24 @@ pub(in crate::context) fn context_stats_footer(
         ),
         ("Sessions", stats.sessions.count.to_string()),
         ("Workstreams", stats.workstreams.count.to_string()),
+        ("Relevance", {
+            let threshold = stats
+                .relevance
+                .threshold
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "-".to_string());
+            format!(
+                    "{} (k={}, threshold={}, candidates={}, eligible={}, injected={}, low={}, k_dropped={})",
+                    stats.relevance.state,
+                    stats.relevance.k,
+                    threshold,
+                    stats.relevance.candidates,
+                    stats.relevance.eligible,
+                    stats.relevance.final_injected,
+                    stats.relevance.below_threshold,
+                    stats.relevance.k_limited
+                )
+        }),
         (
             "Budget",
             format!(

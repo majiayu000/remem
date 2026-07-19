@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.10` for GH-854: SessionStart now preserves Core,
+  Preferences, and Workstreams while applying one deterministic relevance
+  budget to Lessons, non-Core MemoryIndex entries, and Sessions. Footer,
+  per-item audit, and latest-session status expose the selected threshold and
+  closed drop reasons; `REMEM_CONTEXT_RELEVANCE_K=0` restores legacy selection.
+  Release metadata stays `unreleased` until publication.
 - Staged source version `0.6.9` for GH-860: the structural force-push evaluator
   recognizes supported Git-for-Windows `.exe` shell basenames, binds static
   shell `-c` positional operands, and resolves a function-shadowed `unset`

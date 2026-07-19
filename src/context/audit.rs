@@ -8,7 +8,11 @@ use crate::memory::{
 
 use super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::invocation::ContextInvocation;
-use super::types::LoadedContext;
+use super::relevance::{
+    memory_stable_key, session_stable_key, SessionStartRelevancePlan,
+    SESSIONSTART_RELEVANCE_POLICY_VERSION,
+};
+use super::types::{LoadedContext, SessionSummaryBrief};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(in crate::context) struct ContextAuditItem {
@@ -44,6 +48,11 @@ impl ContextAuditItem {
 
     pub fn dropped_memory(memory: &Memory, channel: &'static str, reason: &'static str) -> Self {
         Self::memory_item(memory, channel, None, "dropped", Some(reason))
+    }
+
+    fn with_score(mut self, score: f64) -> Self {
+        self.score = Some(score);
+        self
     }
 
     pub fn abstained_memory(reason: &'static str) -> Self {
@@ -101,6 +110,50 @@ impl ContextAuditItem {
             title: title.to_string(),
             provenance: format!("src=workstream:#{id}"),
             staleness: age_staleness_label(updated_at_epoch, chrono::Utc::now().timestamp()),
+        }
+    }
+
+    fn session_summary(
+        summary: &SessionSummaryBrief,
+        render_order: Option<i64>,
+        status: &'static str,
+        drop_reason: Option<&'static str>,
+        score: f64,
+    ) -> Self {
+        Self {
+            item_kind: "session_summary",
+            item_id: Some(summary.id),
+            memory_id: None,
+            channel: "sessions",
+            score: Some(score),
+            render_order,
+            status,
+            drop_reason,
+            title: super::format::truncate_chars_with_ellipsis(
+                &super::format::inline_context_text(&summary.request),
+                160,
+            ),
+            provenance: format!("src=session_summary:#{}", summary.id),
+            staleness: age_staleness_label(
+                summary.created_at_epoch,
+                chrono::Utc::now().timestamp(),
+            ),
+        }
+    }
+
+    fn relevance_policy(plan: &SessionStartRelevancePlan) -> Self {
+        Self {
+            item_kind: "sessionstart_relevance_policy",
+            item_id: None,
+            memory_id: None,
+            channel: "policy",
+            score: plan.threshold,
+            render_order: Some(i64::MAX),
+            status: "injected",
+            drop_reason: None,
+            title: "Relevance".to_string(),
+            provenance: plan.provenance(),
+            staleness: format!("policy={SESSIONSTART_RELEVANCE_POLICY_VERSION}"),
         }
     }
 
@@ -235,9 +288,11 @@ pub(in crate::context) fn build_context_audit_items(
     core_ids: &[i64],
     index_ids: &[i64],
     lesson_ids: &[i64],
+    session_ids: &[i64],
     workstream_ids: &[i64],
+    relevance: &SessionStartRelevancePlan,
 ) -> Vec<ContextAuditItem> {
-    let mut items = Vec::new();
+    let mut items = vec![ContextAuditItem::relevance_policy(relevance)];
     let mut render_order = 1_i64;
     if loaded.memory_abstained {
         items.push(ContextAuditItem::abstained_memory("no_relevant_context"));
@@ -257,42 +312,86 @@ pub(in crate::context) fn build_context_audit_items(
     }
     for id in index_ids {
         if let Some(memory) = loaded.memories.iter().find(|memory| memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory_with_labels(
+            let mut item = ContextAuditItem::injected_memory_with_labels(
                 memory,
                 "index",
                 render_order,
                 &loaded.staleness_labels,
-            ));
+            );
+            if let Some(decision) = relevance.decision(&memory_stable_key(memory.id)) {
+                item = item.with_score(decision.score);
+            }
+            items.push(item);
             render_order += 1;
         }
     }
     for memory in &loaded.memories {
         if !core.contains(&memory.id) && !index.contains(&memory.id) {
-            items.push(ContextAuditItem::dropped_memory(
-                memory,
-                "memory",
-                "section_budget",
-            ));
+            let decision = relevance.decision(&memory_stable_key(memory.id));
+            let reason = decision
+                .and_then(|decision| decision.drop_reason)
+                .unwrap_or("section_budget");
+            let mut item = ContextAuditItem::dropped_memory(memory, "index", reason);
+            if let Some(decision) = decision {
+                item = item.with_score(decision.score);
+            }
+            items.push(item);
         }
     }
     let lesson = lesson_ids.iter().copied().collect::<HashSet<_>>();
     for id in lesson_ids {
         if let Some(lesson_memory) = loaded.lessons.iter().find(|lesson| lesson.memory.id == *id) {
-            items.push(ContextAuditItem::injected_memory_with_labels(
+            let mut item = ContextAuditItem::injected_memory_with_labels(
                 &lesson_memory.memory,
                 "lessons",
                 render_order,
                 &loaded.staleness_labels,
-            ));
+            );
+            if let Some(decision) = relevance.decision(&memory_stable_key(lesson_memory.memory.id))
+            {
+                item = item.with_score(decision.score);
+            }
+            items.push(item);
             render_order += 1;
         }
     }
     for lesson_memory in &loaded.lessons {
         if !lesson.contains(&lesson_memory.memory.id) {
-            items.push(ContextAuditItem::dropped_memory(
-                &lesson_memory.memory,
-                "lessons",
-                "section_budget",
+            let decision = relevance.decision(&memory_stable_key(lesson_memory.memory.id));
+            let reason = decision
+                .and_then(|decision| decision.drop_reason)
+                .unwrap_or("section_budget");
+            let mut item =
+                ContextAuditItem::dropped_memory(&lesson_memory.memory, "lessons", reason);
+            if let Some(decision) = decision {
+                item = item.with_score(decision.score);
+            }
+            items.push(item);
+        }
+    }
+    let sessions = session_ids.iter().copied().collect::<HashSet<_>>();
+    for summary in &loaded.summaries {
+        let decision = relevance.decision(&session_stable_key(summary.id));
+        let score = decision.map_or(0.0, |decision| decision.score);
+        if sessions.contains(&summary.id) {
+            items.push(ContextAuditItem::session_summary(
+                summary,
+                Some(render_order),
+                "injected",
+                None,
+                score,
+            ));
+            render_order += 1;
+        } else {
+            let reason = decision
+                .and_then(|decision| decision.drop_reason)
+                .unwrap_or("section_budget");
+            items.push(ContextAuditItem::session_summary(
+                summary,
+                None,
+                "dropped",
+                Some(reason),
+                score,
             ));
         }
     }
@@ -341,4 +440,18 @@ fn finalize_items_for_decision(
             item
         })
         .collect()
+}
+
+pub(in crate::context) fn final_governed_injected_count(
+    output: &str,
+    rendered_items: &[ContextAuditItem],
+) -> usize {
+    rendered_items
+        .iter()
+        .filter(|item| {
+            item.status == "injected"
+                && matches!(item.channel, "lessons" | "index" | "sessions")
+                && output.contains(&item.title)
+        })
+        .count()
 }

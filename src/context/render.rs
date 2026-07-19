@@ -1,10 +1,14 @@
+use std::collections::HashSet;
 use std::time::Instant;
 
 use anyhow::Result;
 
 use crate::db;
 
-use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
+use super::audit::{
+    build_context_audit_items, final_governed_injected_count, record_context_injection_items,
+    ContextAuditItem,
+};
 use super::format::{char_len, truncate_chars_with_ellipsis};
 use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
@@ -16,25 +20,35 @@ use super::invocation::{
     direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
 };
 use super::policy::{ContextPolicy, SectionKind};
+use super::relevance::{build_sessionstart_relevance_plan, candidates_for_loaded, selected_inputs};
 use super::render_inputs::{load_context_render_inputs, ContextRenderInputs};
 use super::sections::{
     empty_state_output, render_core_memory_with_limits_and_staleness,
     render_lessons_with_summary_and_staleness, render_memory_index_with_summary_and_staleness,
-    render_recent_sessions_with_limit, render_workstreams_with_summary,
+    render_recent_sessions_with_summary, render_workstreams_with_summary,
 };
 use super::types::{ContextLoadError, ContextRequest};
 mod eval;
+mod helpers;
 mod stats;
 mod timer;
 mod truncation;
 pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
+use helpers::{
+    build_context_header_with_style, build_context_stats_footer_with_style, context_debug_enabled,
+    context_source_note, section_render_limits,
+};
+#[cfg(test)]
+pub(in crate::context) use helpers::{build_context_stats_footer, enforce_total_char_limit};
+pub(in crate::context) use helpers::{
+    context_stdout_for_invocation, enforce_total_char_limit_preserving_footer,
+};
 pub(in crate::context) use stats::{ContextRenderStats, SectionRenderStats};
 use timer::log_context_timer;
-use truncation::truncate_context_body_at_stable_boundary;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
-pub(crate) const RENDER_CONTRACT_VERSION: u32 = 2;
+pub(crate) const RENDER_CONTRACT_VERSION: u32 = 3;
 
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
@@ -374,7 +388,8 @@ fn render_context_output_from_inputs(
     }
 
     let mut output = String::new();
-    let (mut lesson_ids, mut index_ids, mut workstream_ids) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut lesson_ids, mut index_ids, mut session_ids, mut workstream_ids) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
@@ -427,12 +442,47 @@ fn render_context_output_from_inputs(
         section_start,
     ));
 
-    if !loaded.lessons.is_empty() {
+    let render_limits = section_render_limits(&policy);
+    let section_start = Instant::now();
+    let mut core_output = String::new();
+    let core_summary = render_core_memory_with_limits_and_staleness(
+        &mut core_output,
+        &loaded.memories,
+        &render_limits,
+        loaded.render_reference_epoch,
+        &loaded.staleness_labels,
+    );
+    stats.core_ids = core_summary.ids.clone();
+    stats.core = SectionRenderStats {
+        count: core_summary.count,
+        chars: char_len(&core_output),
+    };
+    stats.timings.push(crate::perf::PhaseTiming::elapsed(
+        "section_core",
+        section_start,
+    ));
+    let core_ids = core_summary.ids.into_iter().collect::<HashSet<_>>();
+    let relevance_candidates = candidates_for_loaded(&loaded, &core_ids);
+    let relevance_plan = build_sessionstart_relevance_plan(
+        loaded.relevance_query.as_deref(),
+        policy.limits.sessionstart_relevance_k,
+        &relevance_candidates,
+    );
+    let governed = selected_inputs(&loaded, &relevance_plan, &core_ids);
+    stats.relevance.state = relevance_plan.state;
+    stats.relevance.k = relevance_plan.k;
+    stats.relevance.threshold = relevance_plan.threshold;
+    stats.relevance.candidates = relevance_plan.candidate_count;
+    stats.relevance.eligible = relevance_plan.eligible_count;
+    stats.relevance.below_threshold = relevance_plan.below_threshold_count;
+    stats.relevance.k_limited = relevance_plan.k_limited_count;
+
+    if !governed.lessons.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
         let lesson_summary = render_lessons_with_summary_and_staleness(
             &mut output,
-            &loaded.lessons,
+            &governed.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
             loaded.render_reference_epoch,
@@ -448,33 +498,13 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
-    if !loaded.memories.is_empty() {
-        let render_limits = section_render_limits(&policy);
+    output.push_str(&core_output);
+    if !governed.memories.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
-        let core_summary = render_core_memory_with_limits_and_staleness(
-            &mut output,
-            &loaded.memories,
-            &render_limits,
-            loaded.render_reference_epoch,
-            &loaded.staleness_labels,
-        );
-        let core_count = core_summary.count;
-        stats.core_ids = core_summary.ids.clone();
-        stats.core = SectionRenderStats {
-            count: core_count,
-            chars: char_len(&output).saturating_sub(before),
-        };
-        stats.timings.push(crate::perf::PhaseTiming::elapsed(
-            "section_core",
-            section_start,
-        ));
-        let section_start = Instant::now();
-        let before = char_len(&output);
-        let core_ids = core_summary.ids.into_iter().collect();
         let index_summary = render_memory_index_with_summary_and_staleness(
             &mut output,
-            &loaded.memories,
+            &governed.memories,
             &render_limits,
             &core_ids,
             loaded.render_reference_epoch,
@@ -509,16 +539,21 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
-    if !loaded.summaries.is_empty() {
+    if !governed.summaries.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
-        let session_count = render_recent_sessions_with_limit(
+        let session_item_limit =
+            policy.section_item_limit(SectionKind::Sessions, policy.limits.session_limit);
+        let session_summaries =
+            &governed.summaries[..governed.summaries.len().min(session_item_limit)];
+        let session_summary = render_recent_sessions_with_summary(
             &mut output,
-            &loaded.summaries,
+            session_summaries,
             policy.section_char_limit(SectionKind::Sessions, 2_200),
         );
+        session_ids = session_summary.ids;
         stats.sessions = SectionRenderStats {
-            count: session_count,
+            count: session_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
         stats.timings.push(crate::perf::PhaseTiming::elapsed(
@@ -526,6 +561,7 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
+    stats.relevance.final_injected = lesson_ids.len() + index_ids.len() + session_ids.len();
 
     if debug {
         let diagnostics_start = Instant::now();
@@ -562,8 +598,22 @@ fn render_context_output_from_inputs(
         &stats.core_ids,
         &index_ids,
         &lesson_ids,
+        &session_ids,
         &workstream_ids,
+        &relevance_plan,
     );
+    let final_injected = final_governed_injected_count(&output, &audit_items);
+    if final_injected != stats.relevance.final_injected && output.ends_with(&stats_footer) {
+        output.truncate(output.len() - stats_footer.len());
+        stats.relevance.final_injected = final_injected;
+        stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
+        output.push_str(&stats_footer);
+        enforce_total_char_limit_preserving_footer(
+            &mut output,
+            policy.limits.total_char_limit,
+            &stats_footer,
+        );
+    }
     stats.timings.push(crate::perf::PhaseTiming::elapsed(
         "audit_items",
         audit_start,
@@ -677,120 +727,4 @@ fn empty_stats(request: &ContextRequest) -> ContextRenderStats {
         hook_source: request.hook_source.clone(),
         ..ContextRenderStats::default()
     }
-}
-
-fn section_render_limits(policy: &ContextPolicy) -> super::policy::ContextLimits {
-    let mut limits = policy.limits;
-    limits.core_item_limit = policy.section_item_limit(SectionKind::Core, limits.core_item_limit);
-    limits.core_char_limit = policy.section_char_limit(SectionKind::Core, limits.core_char_limit);
-    limits.memory_index_limit =
-        policy.section_item_limit(SectionKind::MemoryIndex, limits.memory_index_limit);
-    limits.memory_index_char_limit =
-        policy.section_char_limit(SectionKind::MemoryIndex, limits.memory_index_char_limit);
-    limits
-}
-
-#[cfg(test)]
-pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats) -> String {
-    build_context_stats_footer_with_style(stats, false)
-}
-
-fn build_context_stats_footer_with_style(stats: &ContextRenderStats, use_colors: bool) -> String {
-    super::style::context_stats_footer(stats, use_colors)
-}
-
-fn context_source_note(source: Option<&str>) -> Option<&'static str> {
-    match source?.trim().to_ascii_lowercase().as_str() {
-        "compact" => Some("Codex compacted the chat, so remem refreshed memory context."),
-        "clear" => Some("Context was reloaded after an explicit clear."),
-        _ => None,
-    }
-}
-
-fn context_debug_enabled() -> bool {
-    std::env::var("REMEM_CONTEXT_DEBUG")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
-}
-
-#[cfg(test)]
-pub(in crate::context) fn enforce_total_char_limit(output: &mut String, char_limit: usize) {
-    enforce_total_char_limit_preserving_footer(output, char_limit, "");
-}
-
-pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
-    output: &mut String,
-    char_limit: usize,
-    footer: &str,
-) {
-    if char_limit == 0 || output.chars().count() <= char_limit {
-        return;
-    }
-
-    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
-    let marker_chars = marker.chars().count();
-    let footer_chars = footer.chars().count();
-
-    if !footer.is_empty() && output.ends_with(footer) && marker_chars + footer_chars <= char_limit {
-        let keep_chars = char_limit - marker_chars - footer_chars;
-        let body = output.strip_suffix(footer).unwrap_or(output.as_str());
-        let mut truncated = truncate_context_body_at_stable_boundary(body, keep_chars);
-        truncated.push_str(marker);
-        truncated.push_str(footer);
-        *output = truncated;
-        return;
-    }
-
-    if marker_chars >= char_limit {
-        *output = marker.chars().take(char_limit).collect();
-        return;
-    }
-
-    let keep_chars = char_limit - marker_chars;
-    let mut truncated = truncate_context_body_at_stable_boundary(output, keep_chars);
-    truncated.push_str(marker);
-    *output = truncated;
-}
-
-fn build_context_header_with_style(
-    project: &str,
-    current_branch: Option<&str>,
-    hook_source: Option<&str>,
-    host: super::host::HostKind,
-    use_colors: bool,
-) -> String {
-    super::style::context_header(project, current_branch, hook_source, host, use_colors)
-}
-
-pub(in crate::context) fn context_stdout_for_invocation(
-    output: &str,
-    invocation: &ContextInvocation,
-) -> Result<String> {
-    if output.is_empty() || !is_codex_session_start_hook(invocation) {
-        return Ok(output.to_string());
-    }
-
-    let additional_context = super::style::strip_ansi(output);
-    let hook_output = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": additional_context,
-        }
-    });
-    Ok(format!("{}\n", serde_json::to_string(&hook_output)?))
-}
-
-fn is_codex_session_start_hook(invocation: &ContextInvocation) -> bool {
-    if invocation.host != super::host::HostKind::CodexCli {
-        return false;
-    }
-
-    matches!(
-        invocation
-            .source
-            .as_deref()
-            .map(|source| source.trim().to_ascii_lowercase()),
-        Some(source)
-            if matches!(source.as_str(), "startup" | "resume" | "clear" | "compact")
-    )
 }

@@ -234,6 +234,13 @@ session start and summarizes the session at stop. Codex can also call the MCP
 tools exposed by `remem mcp`, including `search`, `get_observations`,
 `save_memory`, `workstreams`, and `timeline`.
 
+SessionStart keeps Core, Preferences, and Workstreams on their existing paths,
+then applies one deterministic relevance budget across Lessons, the non-Core
+MemoryIndex, and Sessions. The default keeps the single strongest matching
+item (`REMEM_CONTEXT_RELEVANCE_K=1`); set the value to `0` to restore the legacy
+per-section selection. The context footer and `remem status` expose the active
+state, threshold, selected count, and closed drop-reason counts.
+
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.
 For Codex hook invocations, remem emits the supported
