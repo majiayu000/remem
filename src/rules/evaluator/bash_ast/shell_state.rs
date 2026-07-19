@@ -1,23 +1,210 @@
+use brush_parser::ast::{SimpleCommand, Word};
+
+use super::function_args::{bare_shell_positional_fields, expand_shell_command};
 use super::static_execution::{
     direct_command_name, static_alias_definitions, static_exit_trap_change, static_monitor_mode,
-    static_set_positional_arguments, static_shopt_expand_aliases, static_shopt_lastpipe,
-    static_shopt_nocasematch, static_unalias_names, ExitTrapChange,
+    static_positional_change, static_shopt_expand_aliases, static_shopt_lastpipe,
+    static_shopt_nocasematch, static_unalias_names, ExitTrapChange, StaticPositionalChange,
 };
+use super::static_words::{append_word_variants, static_source_word_variants};
 use super::{unwrap, AliasDefinition, CommandCollector, ExitTrapDefinition, PositionalContext};
 
 impl CommandCollector {
+    pub(super) fn append_command_name_variants(
+        &self,
+        segments: &mut Vec<Vec<String>>,
+        word: &Word,
+    ) -> Result<(), String> {
+        if let Some(context) = &self.positional_context {
+            let mut field_variants = Vec::new();
+            for arguments in std::iter::once(context.arguments.as_slice())
+                .chain(context.possible_arguments.iter().map(Vec::as_slice))
+            {
+                field_variants.push(self.positional_word_fields(word, context, arguments)?);
+            }
+            if field_variants.len() > 1 {
+                let prefixes = std::mem::take(segments);
+                for prefix in prefixes {
+                    for fields in &field_variants {
+                        let mut segment = prefix.clone();
+                        segment.extend(fields.iter().cloned());
+                        segments.push(segment);
+                    }
+                }
+                return Ok(());
+            }
+        }
+        append_word_variants(segments, self.command_word_variants(word)?);
+        Ok(())
+    }
+
+    pub(super) fn append_command_argument_variants(
+        &self,
+        segments: &mut [Vec<String>],
+        word: &Word,
+    ) -> Result<(), String> {
+        let Some(context) = &self.positional_context else {
+            append_word_variants(segments, self.command_word_variants(word)?);
+            return Ok(());
+        };
+        let context_count = 1 + context.possible_arguments.len();
+        for (index, segment) in segments.iter_mut().enumerate() {
+            let arguments = if index % context_count == 0 {
+                context.arguments.as_slice()
+            } else {
+                &context.possible_arguments[index % context_count - 1]
+            };
+            segment.extend(self.positional_word_fields(word, context, arguments)?);
+        }
+        Ok(())
+    }
+
+    fn positional_word_fields(
+        &self,
+        word: &Word,
+        context: &PositionalContext,
+        arguments: &[String],
+    ) -> Result<Vec<String>, String> {
+        if let Some(fields) = bare_shell_positional_fields(
+            &word.value,
+            &self.options,
+            context.zero_argument.as_deref(),
+            arguments,
+        )? {
+            return Ok(fields);
+        }
+        let source = expand_shell_command(
+            &word.value,
+            &self.options,
+            context.zero_argument.as_deref(),
+            arguments,
+        )?;
+        static_source_word_variants(&source, &self.options)
+    }
+
+    pub(super) fn collect_correlated_positional_tokens(
+        &mut self,
+        segments: &[Vec<String>],
+    ) -> bool {
+        let Some(context) = self.positional_context.clone() else {
+            return false;
+        };
+        if context.possible_arguments.is_empty() {
+            return false;
+        }
+        let argument_sets = std::iter::once(context.arguments.clone())
+            .chain(context.possible_arguments.clone())
+            .collect::<Vec<_>>();
+        if segments.len() != argument_sets.len() {
+            return false;
+        }
+        let mut outputs = Vec::new();
+        let mut successes = Vec::new();
+        let mut failures = Vec::new();
+        for (tokens, arguments) in segments.iter().zip(&argument_sets) {
+            let Some(change) = static_positional_change(tokens) else {
+                return false;
+            };
+            let name = direct_command_name(tokens).unwrap_or_default();
+            let alias_resolves = unwrap::direct_command_index(tokens).is_some_and(|index| {
+                self.alias_expansion_active
+                    && self.aliases.contains_key(name)
+                    && !unwrap::is_expanded_command_word(&tokens[index])
+            });
+            if self.functions.contains_key(name) || alias_resolves {
+                return false;
+            }
+            let (output, success) = match change {
+                StaticPositionalChange::Set(arguments) => (arguments.to_vec(), true),
+                StaticPositionalChange::Shift(count) if count <= arguments.len() => {
+                    (arguments[count..].to_vec(), true)
+                }
+                StaticPositionalChange::Shift(_) => (arguments.clone(), false),
+            };
+            outputs.push(output.clone());
+            if success {
+                successes.push(output);
+            } else {
+                failures.push(output);
+            }
+        }
+        if !self.positional_execution_is_definite {
+            outputs.extend(argument_sets);
+        }
+        let zero_argument = context.zero_argument;
+        self.positional_context = positional_context_from_arguments(zero_argument.clone(), outputs);
+        self.last_positional_success =
+            positional_context_from_arguments(zero_argument.clone(), successes);
+        self.last_positional_failure = positional_context_from_arguments(zero_argument, failures);
+        self.last_positional_status = match (
+            self.last_positional_success.is_some(),
+            self.last_positional_failure.is_some(),
+        ) {
+            (true, false) => Some(true),
+            (false, true) => Some(false),
+            _ => None,
+        };
+        self.segments.extend(segments.iter().cloned());
+        true
+    }
+
+    pub(super) fn take_positional_outcomes(
+        &mut self,
+        negated: bool,
+        static_success: Option<bool>,
+    ) -> (Option<PositionalContext>, Option<PositionalContext>) {
+        let has_positional_outcomes =
+            self.last_positional_success.is_some() || self.last_positional_failure.is_some();
+        let mut success = self.last_positional_success.take();
+        let mut failure = self.last_positional_failure.take();
+        if !has_positional_outcomes {
+            match static_success {
+                Some(true) => success = self.positional_context.clone(),
+                Some(false) => failure = self.positional_context.clone(),
+                None => {
+                    success = self.positional_context.clone();
+                    failure = self.positional_context.clone();
+                }
+            }
+        }
+        self.last_positional_status = None;
+        if negated && has_positional_outcomes {
+            std::mem::swap(&mut success, &mut failure);
+        }
+        (success, failure)
+    }
+
+    pub(super) fn with_positional_branch_execution<T>(
+        &mut self,
+        definitely_executes: bool,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved = self.execution_is_definite;
+        self.execution_is_definite = saved && definitely_executes;
+        let result = collect(self);
+        self.execution_is_definite = saved;
+        result
+    }
+
     pub(super) fn apply_static_positional_state(
         &mut self,
         tokens: &[String],
         resolves_to_function: bool,
     ) {
-        let Some(arguments) = (!resolves_to_function)
-            .then(|| static_set_positional_arguments(tokens))
+        let Some(change) = (!resolves_to_function)
+            .then(|| static_positional_change(tokens))
             .flatten()
         else {
             return;
         };
-        if self.execution_is_definite {
+        let arguments = match change {
+            StaticPositionalChange::Set(arguments) => arguments,
+            StaticPositionalChange::Shift(count) => {
+                self.apply_static_shift(count);
+                return;
+            }
+        };
+        if self.positional_execution_is_definite {
             let zero_argument = self
                 .positional_context
                 .as_ref()
@@ -39,6 +226,70 @@ impl CommandCollector {
                 possible_arguments: vec![arguments.to_vec()],
             });
         }
+        self.last_positional_status = Some(true);
+        self.last_positional_success = self.positional_context.clone();
+        self.last_positional_failure = None;
+    }
+
+    fn apply_static_shift(&mut self, count: usize) {
+        let Some(context) = &mut self.positional_context else {
+            self.last_positional_status = Some(count == 0);
+            return;
+        };
+        let shift = |arguments: &[String]| {
+            if count <= arguments.len() {
+                arguments[count..].to_vec()
+            } else {
+                arguments.to_vec()
+            }
+        };
+        let statuses = std::iter::once(context.arguments.as_slice())
+            .chain(context.possible_arguments.iter().map(Vec::as_slice))
+            .map(|arguments| count <= arguments.len())
+            .collect::<Vec<_>>();
+        self.last_positional_status = statuses
+            .iter()
+            .all(|status| *status == statuses[0])
+            .then_some(statuses[0]);
+        let zero_argument = context.zero_argument.clone();
+        let argument_sets = std::iter::once(context.arguments.clone())
+            .chain(context.possible_arguments.clone())
+            .collect::<Vec<_>>();
+        self.last_positional_success = positional_context_from_arguments(
+            zero_argument.clone(),
+            argument_sets
+                .iter()
+                .filter(|arguments| count <= arguments.len())
+                .map(|arguments| shift(arguments))
+                .collect(),
+        );
+        self.last_positional_failure = positional_context_from_arguments(
+            zero_argument,
+            argument_sets
+                .into_iter()
+                .filter(|arguments| count > arguments.len())
+                .collect(),
+        );
+        if self.positional_execution_is_definite {
+            context.arguments = shift(&context.arguments);
+            context.possible_arguments = context
+                .possible_arguments
+                .iter()
+                .map(|arguments| shift(arguments))
+                .collect();
+        } else {
+            let shifted = std::iter::once(context.arguments.as_slice())
+                .chain(context.possible_arguments.iter().map(Vec::as_slice))
+                .map(shift)
+                .collect::<Vec<_>>();
+            for arguments in shifted {
+                if arguments != context.arguments
+                    && !context.possible_arguments.contains(&arguments)
+                {
+                    context.possible_arguments.push(arguments);
+                }
+            }
+        }
     }
 
     pub(super) fn apply_static_shell_state(&mut self, tokens: &[String]) {
@@ -46,6 +297,7 @@ impl CommandCollector {
             if enabled || self.execution_is_definite {
                 self.expand_aliases = enabled;
             }
+            self.update_alias_expandability(enabled);
         }
         if let Some(enabled) = static_shopt_lastpipe(tokens) {
             if enabled || self.execution_is_definite {
@@ -70,16 +322,22 @@ impl CommandCollector {
                         Some(vec![AliasDefinition {
                             payload: payload.to_string(),
                             is_definite: true,
+                            is_expandable: self.expand_aliases,
+                            is_definitely_expandable: self.expand_aliases,
                         }]),
                     );
                 } else {
                     let mut definitions = self.aliases.get(name).cloned().unwrap_or_default();
-                    definitions
-                        .iter_mut()
-                        .for_each(|definition| definition.is_definite = false);
+                    if !definitions.iter().any(|definition| definition.is_definite) {
+                        definitions
+                            .iter_mut()
+                            .for_each(|definition| definition.is_definite = false);
+                    }
                     definitions.push(AliasDefinition {
                         payload: payload.to_string(),
                         is_definite: false,
+                        is_expandable: self.expand_aliases,
+                        is_definitely_expandable: false,
                     });
                     self.pending_aliases
                         .insert(name.to_string(), Some(definitions));
@@ -126,7 +384,11 @@ impl CommandCollector {
         }
     }
 
-    pub(super) fn collect_static_alias_call(&mut self, tokens: &[String]) -> Result<bool, String> {
+    pub(super) fn collect_static_alias_call(
+        &mut self,
+        tokens: &[String],
+        command: &SimpleCommand,
+    ) -> Result<bool, String> {
         if !self.alias_expansion_active {
             return Ok(false);
         }
@@ -141,25 +403,39 @@ impl CommandCollector {
         let Some(definitions) = self.aliases.get(name).cloned() else {
             return Ok(false);
         };
-        let definitely_defined = definitions.iter().any(|definition| definition.is_definite);
-        if !self.active_aliases.insert(name.to_string()) {
-            return Ok(definitely_defined);
+        let definitions = definitions
+            .into_iter()
+            .filter(|definition| definition.is_expandable)
+            .collect::<Vec<_>>();
+        if definitions.is_empty() {
+            return Ok(false);
         }
-        let result = (|| {
-            for definition in definitions {
+        let definitely_defined = definitions.iter().any(|definition| definition.is_definite)
+            && definitions
+                .iter()
+                .any(|definition| definition.is_definitely_expandable);
+        if !self.active_aliases.insert(name.to_string()) {
+            self.collect_static_tokens_after_alias(tokens.to_vec(), command)?;
+            return Ok(true);
+        }
+        let mut alternatives = definitions.into_iter().map(Some).collect::<Vec<_>>();
+        if !definitely_defined {
+            alternatives.push(None);
+        }
+        let result =
+            self.collect_alternative_shell_states(alternatives, true, |collector, definition| {
+                let Some(definition) = definition else {
+                    return collector.collect_static_tokens_after_alias(tokens.to_vec(), command);
+                };
                 let mut source = definition.payload;
                 for argument in &tokens[command_index + 1..] {
                     source.push(' ');
                     source.push_str(&quote_alias_argument(argument));
                 }
-                self.with_execution_certainty(definition.is_definite, |collector| {
-                    collector.collect_source(&source)
-                })?;
-            }
-            Ok(())
-        })();
+                collector.collect_source(&source)
+            });
         self.active_aliases.remove(name);
-        result.map(|()| definitely_defined)
+        result.map(|()| true)
     }
 
     pub(super) fn commit_pending_alias_changes(&mut self) {
@@ -177,6 +453,26 @@ impl CommandCollector {
             }
         }
         self.pending_clear_aliases = false;
+    }
+
+    fn update_alias_expandability(&mut self, enabled: bool) {
+        let update = |definition: &mut AliasDefinition| {
+            if self.execution_is_definite {
+                definition.is_expandable = enabled;
+                definition.is_definitely_expandable = enabled;
+            } else if enabled {
+                definition.is_expandable = true;
+                definition.is_definitely_expandable = false;
+            } else {
+                definition.is_definitely_expandable = false;
+            }
+        };
+        self.aliases.values_mut().flatten().for_each(update);
+        self.pending_aliases
+            .values_mut()
+            .filter_map(Option::as_mut)
+            .flatten()
+            .for_each(update);
     }
 
     pub(super) fn collect_exit_traps(&mut self) -> Result<(), String> {
@@ -277,72 +573,46 @@ impl CommandCollector {
         collect: impl FnOnce(&mut Self) -> Result<T, String>,
     ) -> Result<T, String> {
         let saved = self.execution_is_definite;
+        let saved_positional = self.positional_execution_is_definite;
         self.execution_is_definite = saved && definitely_executes;
+        self.positional_execution_is_definite = saved_positional && definitely_executes;
         let result = collect(self);
         self.execution_is_definite = saved;
+        self.positional_execution_is_definite = saved_positional;
         result
     }
-
-    fn snapshot_shell_state(&self) -> ShellStateSnapshot {
-        ShellStateSnapshot {
-            functions: self.functions.clone(),
-            exported_functions: self.exported_functions.clone(),
-            active_functions: self.active_functions.clone(),
-            aliases: self.aliases.clone(),
-            pending_aliases: self.pending_aliases.clone(),
-            pending_clear_aliases: self.pending_clear_aliases,
-            active_aliases: self.active_aliases.clone(),
-            expand_aliases: self.expand_aliases,
-            alias_expansion_active: self.alias_expansion_active,
-            lastpipe: self.lastpipe,
-            nocasematch: self.nocasematch,
-            monitor_mode: self.monitor_mode,
-            exit_traps: self.exit_traps.clone(),
-            execution_terminated: self.execution_terminated,
-            inherited_stdin: self.inherited_stdin.clone(),
-            positional_context: self.positional_context.clone(),
-        }
-    }
-
-    fn restore_shell_state(&mut self, saved: ShellStateSnapshot) {
-        self.functions = saved.functions;
-        self.exported_functions = saved.exported_functions;
-        self.active_functions = saved.active_functions;
-        self.aliases = saved.aliases;
-        self.pending_aliases = saved.pending_aliases;
-        self.pending_clear_aliases = saved.pending_clear_aliases;
-        self.active_aliases = saved.active_aliases;
-        self.expand_aliases = saved.expand_aliases;
-        self.alias_expansion_active = saved.alias_expansion_active;
-        self.lastpipe = saved.lastpipe;
-        self.nocasematch = saved.nocasematch;
-        self.monitor_mode = saved.monitor_mode;
-        self.exit_traps = saved.exit_traps;
-        self.execution_terminated = saved.execution_terminated;
-        self.inherited_stdin = saved.inherited_stdin;
-        self.positional_context = saved.positional_context;
-    }
-}
-
-struct ShellStateSnapshot {
-    functions: std::collections::HashMap<String, Vec<super::FunctionDefinition>>,
-    exported_functions: std::collections::HashSet<String>,
-    active_functions: std::collections::HashSet<String>,
-    aliases: std::collections::HashMap<String, Vec<AliasDefinition>>,
-    pending_aliases: std::collections::HashMap<String, Option<Vec<AliasDefinition>>>,
-    pending_clear_aliases: bool,
-    active_aliases: std::collections::HashSet<String>,
-    expand_aliases: bool,
-    alias_expansion_active: bool,
-    lastpipe: bool,
-    nocasematch: bool,
-    monitor_mode: bool,
-    exit_traps: Vec<ExitTrapDefinition>,
-    execution_terminated: bool,
-    inherited_stdin: Option<String>,
-    positional_context: Option<PositionalContext>,
 }
 
 fn quote_alias_argument(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn positional_context_from_arguments(
+    zero_argument: Option<String>,
+    mut argument_sets: Vec<Vec<String>>,
+) -> Option<PositionalContext> {
+    argument_sets.dedup();
+    let arguments = argument_sets.first()?.clone();
+    Some(PositionalContext {
+        zero_argument,
+        arguments,
+        possible_arguments: argument_sets.into_iter().skip(1).collect(),
+    })
+}
+
+pub(super) fn merge_positional_contexts(
+    left: Option<PositionalContext>,
+    right: Option<PositionalContext>,
+) -> Option<PositionalContext> {
+    match (left, right) {
+        (Some(left), Some(right)) => positional_context_from_arguments(
+            left.zero_argument.or(right.zero_argument),
+            std::iter::once(left.arguments)
+                .chain(left.possible_arguments)
+                .chain(std::iter::once(right.arguments))
+                .chain(right.possible_arguments)
+                .collect(),
+        ),
+        (left, right) => left.or(right),
+    }
 }

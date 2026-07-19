@@ -62,13 +62,28 @@ gaps can either miss a forbidden command or report a false block.
    `"$@"` shall preserve one field per operand. Positional changes inside a
    subshell, command substitution, or non-final pipeline process shall not
    leak into its parent, and an alias named `set` shall resolve before builtin
-   positional state is applied. Expandable outer heredocs shall finish
+   positional state is applied. Each possible mapping shall retain its own
+   command-position argv grouping. Static `${@:offset}` collection slices,
+   `${n:offset}` substrings, `shift`, and the argument-bearing `set -` form
+   shall update or expand the known mapping with Bash semantics. A function
+   named like a stateful builtin, including `trap`, shall resolve before that
+   builtin state can be installed; alias resolution shall likewise precede
+   `unset -f` and function-export state. A failed static `shift` shall expose a
+   failing status to `&&`/`||` reachability, and `${@:0}` shall include the
+   known `$0`. Expandable outer heredocs shall finish
    parent-side expansion before entering a child `-c` scope, while explicit
    arguments to `source /dev/stdin` shall bind `$1...` only for the sourced
    body. A command name materialized from a positional shall not be
    reclassified as an assignment or passed through lexical alias expansion,
    while recognized wrapper semantics remain active; a here-string positional
-   shall preserve embedded source newlines.
+   shall preserve embedded source newlines. When statically known paths
+   diverge, each command, alias, function, builtin fallback, and fallible
+   assignment/redirection setup outcome shall execute against an isolated full
+   shell-state snapshot. Setup failure shall preserve pre-command state and a
+   failing status; normalized `command`/`builtin` wrappers shall retain known
+   `true`/`false`/`:` status; every terminating alternative shall run its EXIT
+   traps before it can be filtered; and state from a terminated path shall not
+   contaminate a continuing path.
 4. B-004 Missing shell `-c` operands and positional references without a known
    operand shall remain unresolved and shall not be invented, shifted, or
    borrowed from surrounding commands.
@@ -100,6 +115,18 @@ gaps can either miss a forbidden command or report a false block.
       here-string source text.
 - [x] Red-first fixtures cover quoted `"$@"` cardinality, uncertain `set --`
       alternatives, child-scope restoration, and alias-before-builtin ordering.
+- [x] Red-first fixtures cover possible command-position grouping, static
+      collection slices and substrings, `shift`, `set -`, and function-shadowed
+      `trap` ordering.
+- [x] Red-first fixtures cover mutually exclusive last-option-wins force flags,
+      `${@:0}`, failed-`shift` control flow, and alias-before-`unset -f` state.
+- [x] Red-first fixtures cover correlated path-specific `set` transitions,
+      mixed-success `shift` branches, and all-path alias/function presence
+      across uncertain redefinitions.
+- [x] Red-first fixtures cover isolated full shell-state alternatives,
+      possible function/builtin fallback, fallible assignment/redirection
+      setup, wrapper-normalized status, terminating-path filtering, and EXIT
+      trap collection for every terminated alternative.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.
@@ -115,6 +142,8 @@ gaps can either miss a forbidden command or report a false block.
 - Definite static `set --` and explicit sourced-file arguments update only
   their Bash-defined positional scope; uncertain `set --` retains every known
   possible mapping so a forbidden argument on either path remains visible.
+  Later state changes transform each mapping once and retain its status/path
+  correlation through an immediate `&&` or `||` branch.
 - Function shadowing is evaluated in command order and existing subshell,
   pipeline, and child-shell scope rules remain unchanged.
 
