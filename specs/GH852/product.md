@@ -2,7 +2,7 @@
 
 ## Linked Issue
 
-GH-852
+GH-852（Refs #852；Epic #849）
 
 ## 用户问题
 
@@ -43,8 +43,9 @@ warning。`autoMemoryDirectory` 若扩大该读取面，不能沿用这一直接
 - 不把当前 Claude native-memory topic-file 的直接 active-memory 导入扩大到自定义目录；该路径
   未接入与新来源相同的 redaction、source verdict、candidate review 和 error-visible 契约前，
   native bridge 必须保持 no-go。
-- 不在项目级 `.claude/settings*.json` 注入 `autoMemoryDirectory`；该设置只允许用户级、策略级或
-  显式 `--settings` 范围。
+- Claude 官方允许在 user、project、local、policy 与 `--settings` 来源配置
+  `autoMemoryDirectory`，其中 project/local 受 workspace trust 约束；remem 的产品策略主动拒绝
+  写入或接管 project/local，只允许 user、policy 或用户显式选择的 `--settings` 来源。
 - 除用户显式 opt-in 后维护 remem 专属文件及 `MEMORY.md` 中的 marker-bounded block 外，不合并、
   覆盖或删除用户手工维护的 Claude/Codex 内容。
 - 不在研究报告缺失时补写其结论或把 issue 摘要当作报告全文。
@@ -54,8 +55,10 @@ warning。`autoMemoryDirectory` 若扩大该读取面，不能沿用这一直接
 1. `B-001`：三个交付面均须 PoC 先行。PoC 记录必须包含宿主版本、隔离目录、输入步骤、观察到
    的文件/事件、退出状态和清理结果；推断或模拟输出不能替代真实 Claude Code/Codex 证据。本次
    spec recovery 不触碰真实用户目录，也不把未执行的 PoC 写成已完成证据。
-2. `B-002`：Claude `autoMemoryDirectory` 只可在官方允许的用户/策略/显式 settings 范围配置，
-   使用绝对路径或 `~/` 路径；不得写项目/本地 settings，也不得越出用户明确选择的目录。
+2. `B-002`：Claude 官方的 setting scope 包含 user、project、local、policy 与 `--settings`，
+   project/local 还受 workspace trust 约束；这是宿主能力边界，不是 remem 的授权。remem 产品
+   策略只允许 user、policy 或用户显式选择的 `--settings` 来源，主动拒绝 project/local，
+   使用绝对路径或 `~/` 路径，且不得越出用户明确选择的目录。
 3. `B-003`：remem 数据库始终是唯一权威；Claude 目录只是可重建的交付 cache。接管启用后，
    remem 只拥有 `remem_sessions.md` 和 `MEMORY.md` 内一个 marker-bounded 交付块，不拥有 Claude
    生成的其余 MEMORY/topic 内容。只有真实位于官方 startup 加载窗口内的交付块正文才算 native
@@ -136,9 +139,27 @@ warning。`autoMemoryDirectory` 若扩大该读取面，不能沿用这一直接
       memory；直接 active-memory 晋升、warning-only 失败或未统一 source verdict 任一仍存在时，
       `autoMemoryDirectory` 激活测试必须得到 no-go。
 - [ ] focused tests、格式/编译检查、完整测试和真实 PoC 清理检查通过。
-- [ ] spec PR 与 implementation PR 分离；本 spec 只有 product/tech，不含 tasks 或运行时代码。
+- [ ] spec PR 与 implementation PR 分离；本 spec 只有 product/tech，不含 tasks 或运行时代码，
+      并同时使用 `Refs #852` / `Refs #849`，不得关闭 implementation issue 或 epic。
 
 ## 边界情况
+
+### Boundary checklist
+
+| 边界类别 | 结论 |
+| --- | --- |
+| Empty / missing input | covered: `B-006`, `B-011`, `B-018` |
+| Error and failure paths | covered: `B-004`, `B-006`, `B-010`, `B-011`, `B-016`, `B-018`, `B-019` |
+| Authorization / permission | covered: `B-002`, `B-004`, `B-013`, `B-015` |
+| Concurrency / race / ordering | covered: `B-006`, `B-010`, `B-016`, `B-019` |
+| Retry / repetition / idempotency | covered: `B-004`, `B-007`, `B-008`, `B-010`, `B-016` |
+| Illegal state transitions | covered: `B-015`, `B-016`, `B-019` |
+| Compatibility / migration | covered: `B-001`, `B-002`, `B-006`, `B-012`, `B-015`, `B-016` |
+| Degradation / fallback | covered: `B-004`, `B-006`, `B-011`, `B-016`, `B-019` |
+| Evidence and audit integrity | covered: `B-001`, `B-008`, `B-009`, `B-012`, `B-013`, `B-014`, `B-015`, `B-017`, `B-018` |
+| Cancellation / interruption / partial completion | covered: `B-006`, `B-010`, `B-013`, `B-016` |
+| Resource exhaustion / bounded input | covered: `B-003`, `B-006`, `B-011`, `B-014` |
+| Offline / network failure | N/A — 配置、native files、导入和 hooks PoC 均为本地边界；不得通过插件下载或联网模拟来替代已安装真实宿主的 PoC |
 
 - Claude 设置已有用户自定义 `autoMemoryDirectory`：不得覆盖；dry-run 报告冲突，apply 要求显式
   所有权决策并保留可回滚值。
