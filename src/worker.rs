@@ -177,6 +177,64 @@ fn record_failed_job_transition(
     Ok(())
 }
 
+pub async fn run_exact_replay(
+    range_id: i64,
+    acknowledge_quarantine: bool,
+    include_archived: bool,
+    profile: &str,
+) -> Result<()> {
+    let started_at_epoch = chrono::Utc::now().timestamp();
+    let resolved = crate::runtime_config::resolve_memory_ai_profile(
+        crate::runtime_config::MemoryAiSelection {
+            host: None,
+            profile: Some(profile),
+        },
+    )?;
+    let lease_owner =
+        db::exact_replay_worker_owner(std::process::id(), chrono::Utc::now().timestamp_millis());
+    let Some(_singleton) = lock::acquire_worker_singleton()? else {
+        anyhow::bail!("worker singleton is held; exact replay range {range_id} was not modified");
+    };
+
+    crate::log::info(
+        "worker",
+        &format!(
+            "exact replay start range_id={range_id} profile={} executor={} model={}",
+            resolved.profile_name,
+            resolved.executor.as_str(),
+            resolved.model.as_deref().unwrap_or("<default>")
+        ),
+    );
+    let mut conn = db::open_db()?;
+    record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
+    let task = db::retry_and_claim_extraction_replay_range(
+        &mut conn,
+        range_id,
+        acknowledge_quarantine,
+        include_archived,
+        &lease_owner,
+        JOB_LEASE_SECS,
+    )?;
+    drop(conn);
+
+    crate::extraction_worker::run_claimed_exact(
+        task,
+        &resolved,
+        &lease_owner,
+        EXTRACTION_TASK_TIMEOUT_SECS,
+    )
+    .await?;
+    crate::log::info(
+        "worker",
+        &format!(
+            "exact replay done range_id={range_id} profile={} executor={}",
+            resolved.profile_name,
+            resolved.executor.as_str()
+        ),
+    );
+    Ok(())
+}
+
 pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     let started_at_epoch = chrono::Utc::now().timestamp();
     let mode = if once { "once" } else { "daemon" };
@@ -326,5 +384,7 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod exact_tests;
 #[cfg(all(test, unix))]
 mod tests;

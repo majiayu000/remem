@@ -297,6 +297,29 @@ fn dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift() -> Re
 }
 
 #[test]
+fn dry_run_pending_reports_v071_identity_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[71])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("v071 identity schema drift must be reported"))?;
+    assert!(error.contains("v071_raw_session_identity"), "got: {error}");
+    assert!(
+        error.contains("table raw_session_identities"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column raw_messages.transcript_identity_id"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
 fn v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_schema_with_pending_migrations_from(&conn, 68)?;

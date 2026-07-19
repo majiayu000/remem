@@ -8,18 +8,29 @@ use std::collections::HashMap;
 use super::unwrap;
 use super::DYNAMIC_SHELL_WORD;
 
+pub(super) fn static_token_measure(tokens: &[String]) -> usize {
+    tokens
+        .iter()
+        .map(|token| token.len().saturating_add(1))
+        .sum()
+}
+
 pub(super) enum ExitTrapChange<'a> {
     Set(&'a str),
     Reset,
 }
 
 pub(super) fn direct_command_name(tokens: &[String]) -> Option<&str> {
-    unwrap::direct_command_index(tokens).map(|index| tokens[index].as_str())
+    unwrap::direct_command_index(tokens).map(|index| unwrap::semantic_token(&tokens[index]))
+}
+
+pub(super) fn static_builtin_command_name(tokens: &[String]) -> Option<&str> {
+    static_builtin_command_index(tokens).map(|index| unwrap::semantic_token(&tokens[index]))
 }
 
 pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
     let index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "eval" {
+    if unwrap::semantic_token(tokens.get(index)?) != "eval" {
         return None;
     }
     let mut arguments = &tokens[index + 1..];
@@ -35,7 +46,7 @@ pub(super) fn static_eval_payload(tokens: &[String]) -> Option<String> {
 
 pub(super) fn static_exit_trap_change(tokens: &[String]) -> Option<ExitTrapChange<'_>> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "trap" {
+    if unwrap::semantic_token(tokens.get(index)?) != "trap" {
         return None;
     }
     index += 1;
@@ -76,7 +87,7 @@ pub(super) fn static_shopt_nocasematch(tokens: &[String]) -> Option<bool> {
 
 pub(super) fn static_monitor_mode(tokens: &[String]) -> Option<bool> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "set" {
+    if unwrap::semantic_token(tokens.get(index)?) != "set" {
         return None;
     }
     index += 1;
@@ -92,12 +103,12 @@ pub(super) fn static_monitor_mode(tokens: &[String]) -> Option<bool> {
 pub(super) fn static_shell_exits(tokens: &[String]) -> bool {
     static_builtin_command_index(tokens)
         .and_then(|index| tokens.get(index))
-        .is_some_and(|command| command == "exit")
+        .is_some_and(|command| unwrap::semantic_token(command) == "exit")
 }
 
 fn static_shopt_state(tokens: &[String], expected: &str) -> Option<bool> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "shopt" {
+    if unwrap::semantic_token(tokens.get(index)?) != "shopt" {
         return None;
     }
     index += 1;
@@ -114,7 +125,7 @@ fn static_shopt_state(tokens: &[String], expected: &str) -> Option<bool> {
 
 pub(super) fn static_alias_definitions(tokens: &[String]) -> Option<Vec<(&str, &str)>> {
     let index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "alias" {
+    if unwrap::semantic_token(tokens.get(index)?) != "alias" {
         return None;
     }
     Some(
@@ -134,7 +145,7 @@ pub(super) fn static_alias_definitions(tokens: &[String]) -> Option<Vec<(&str, &
 
 pub(super) fn static_unalias_names(tokens: &[String]) -> Option<Vec<&str>> {
     let mut index = static_builtin_command_index(tokens)?;
-    if tokens.get(index)? != "unalias" {
+    if unwrap::semantic_token(tokens.get(index)?) != "unalias" {
         return None;
     }
     index += 1;
@@ -149,8 +160,9 @@ pub(super) fn static_unalias_names(tokens: &[String]) -> Option<Vec<&str>> {
 
 pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, Vec<&str>)> {
     let mut index = static_builtin_command_index(tokens)?;
-    let is_declare = matches!(tokens.get(index)?.as_str(), "declare" | "typeset");
-    if !is_declare && tokens.get(index)? != "export" {
+    let command = unwrap::semantic_token(tokens.get(index)?);
+    let is_declare = matches!(command, "declare" | "typeset");
+    if !is_declare && command != "export" {
         return None;
     }
     index += 1;
@@ -189,11 +201,20 @@ pub(super) fn static_export_function_change(tokens: &[String]) -> Option<(bool, 
 
 fn static_builtin_command_index(tokens: &[String]) -> Option<usize> {
     let mut index = unwrap::direct_command_index(tokens)?;
-    while tokens.get(index)? == "command" {
-        index = unwrap::command_wrapper_target(tokens, index)?;
-    }
-    while tokens.get(index)? == "builtin" {
-        index += 1;
+    loop {
+        match unwrap::semantic_token(tokens.get(index)?) {
+            "command" => index = unwrap::command_wrapper_target(tokens, index)?,
+            "builtin" => {
+                index += 1;
+                if tokens
+                    .get(index)
+                    .is_some_and(|token| unwrap::semantic_token(token) == "--")
+                {
+                    index += 1;
+                }
+            }
+            _ => break,
+        }
     }
     tokens.get(index).map(|_| index)
 }
@@ -202,10 +223,10 @@ pub(super) fn static_env_split_tokens(tokens: &[String]) -> Option<Vec<String>> 
     let prefix_end = unwrap::direct_command_index(tokens)?;
     let assignments = static_assignments(&tokens[..prefix_end]);
     let mut index = prefix_end;
-    while tokens.get(index)? == "command" {
+    while unwrap::semantic_token(tokens.get(index)?) == "command" {
         index = unwrap::command_wrapper_target(tokens, index)?;
     }
-    if tokens.get(index)? != "env" {
+    if unwrap::semantic_token(tokens.get(index)?) != "env" {
         return None;
     }
     index += 1;
@@ -410,11 +431,8 @@ fn env_escape(escaped: char) -> Option<char> {
 }
 
 pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>> {
-    let mut index = unwrap::direct_command_index(tokens)?;
-    while tokens.get(index)? == "command" {
-        index = unwrap::command_wrapper_target(tokens, index)?;
-    }
-    if tokens.get(index)? != "unset" {
+    let mut index = static_builtin_command_index(tokens)?;
+    if unwrap::semantic_token(tokens.get(index)?) != "unset" {
         return None;
     }
     index += 1;
@@ -442,54 +460,192 @@ pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>
     })
 }
 
-pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<&str> {
+pub(super) fn static_readonly_variable_names(tokens: &[String]) -> Option<Vec<&str>> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if unwrap::semantic_token(tokens.get(index)?) != "readonly" {
+        return None;
+    }
+    index += 1;
+    let mut function_mode = false;
+    let mut names = Vec::new();
+    while let Some(token) = tokens.get(index) {
+        let token = unwrap::semantic_token(token);
+        if token == "--" {
+            index += 1;
+            break;
+        }
+        if let Some(flags) = token.strip_prefix('-').filter(|flags| !flags.is_empty()) {
+            if flags
+                .chars()
+                .any(|flag| !matches!(flag, 'a' | 'A' | 'f' | 'p'))
+            {
+                return None;
+            }
+            function_mode |= flags.contains('f');
+            index += 1;
+            continue;
+        }
+        break;
+    }
+    if function_mode {
+        return Some(Vec::new());
+    }
+    while let Some(token) = tokens.get(index) {
+        let token = unwrap::semantic_token(token);
+        let name = token.split_once('=').map_or(token, |(name, _)| name);
+        if is_shell_identifier(name) {
+            names.push(name);
+        }
+        index += 1;
+    }
+    Some(names)
+}
+
+fn is_shell_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+pub(super) struct StaticShellCommand {
+    pub(super) payload: String,
+    pub(super) zero_argument: Option<String>,
+    pub(super) arguments: Vec<String>,
+}
+
+pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<StaticShellCommand> {
     let command_index = unwrap::effective_command_index(tokens)?;
-    if !is_shell(tokens.get(command_index)?) {
+    if !is_shell(unwrap::semantic_token(tokens.get(command_index)?)) {
         return None;
     }
     let ShellInput::Command(payload_index) = shell_input(tokens, command_index) else {
         return None;
     };
     let payload = tokens.get(payload_index)?;
-    (payload != DYNAMIC_SHELL_WORD).then_some(payload.as_str())
+    if payload == DYNAMIC_SHELL_WORD {
+        return None;
+    }
+    Some(StaticShellCommand {
+        payload: payload.clone(),
+        zero_argument: tokens.get(payload_index + 1).cloned(),
+        arguments: tokens.get(payload_index + 2..).unwrap_or_default().to_vec(),
+    })
 }
 
-pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
-    let Some(command_index) = unwrap::effective_command_index(tokens) else {
-        return false;
+pub(super) struct StaticShellStdin {
+    pub(super) zero_argument: String,
+    pub(super) arguments: Vec<String>,
+}
+
+pub(super) fn static_shell_stdin(tokens: &[String]) -> Option<StaticShellStdin> {
+    let command_index = unwrap::effective_command_index(tokens)?;
+    let command = tokens.get(command_index)?;
+    let zero_argument = shell_name(unwrap::semantic_token(command))?.to_string();
+    let ShellInput::Stdin(arguments_index) = shell_input(tokens, command_index) else {
+        return None;
     };
-    if !tokens
-        .get(command_index)
-        .is_some_and(|command| is_shell(command))
-    {
-        return false;
-    }
-    shell_input(tokens, command_index) == ShellInput::Stdin
+    Some(StaticShellStdin {
+        zero_argument,
+        arguments: tokens.get(arguments_index..).unwrap_or_default().to_vec(),
+    })
 }
 
 pub(super) fn static_shell_is_bash(tokens: &[String]) -> bool {
     unwrap::effective_command_index(tokens)
         .and_then(|index| tokens.get(index))
-        .is_some_and(|command| shell_name(command) == Some("bash"))
+        .is_some_and(|command| shell_name(unwrap::semantic_token(command)) == Some("bash"))
 }
 
-pub(super) fn static_source_reads_stdin(tokens: &[String]) -> bool {
-    let Some(index) = static_builtin_command_index(tokens) else {
+pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[String]> {
+    let index = static_builtin_command_index(tokens)?;
+    if !matches!(unwrap::semantic_token(&tokens[index]), "source" | ".") {
+        return None;
+    }
+    let mut path_index = index + 1;
+    if tokens
+        .get(path_index)
+        .is_some_and(|option| unwrap::semantic_token(option) == "--")
+    {
+        path_index += 1;
+    }
+    if !tokens.get(path_index).is_some_and(|path| {
+        matches!(
+            unwrap::semantic_token(path),
+            "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0"
+        )
+    }) {
+        return None;
+    }
+    Some(tokens.get(path_index + 1..).unwrap_or_default())
+}
+
+pub(super) enum StaticPositionalChange<'a> {
+    Set(&'a [String]),
+    Shift(usize),
+}
+
+pub(super) fn static_positional_change(tokens: &[String]) -> Option<StaticPositionalChange<'_>> {
+    let index = static_builtin_command_index(tokens)?;
+    match unwrap::semantic_token(&tokens[index]) {
+        "set" => static_set_arguments(tokens, index).map(StaticPositionalChange::Set),
+        "shift" => match &tokens[index + 1..] {
+            [] => Some(StaticPositionalChange::Shift(1)),
+            [count] => count
+                .parse::<usize>()
+                .ok()
+                .map(StaticPositionalChange::Shift),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn static_set_arguments(tokens: &[String], command_index: usize) -> Option<&[String]> {
+    let mut index = command_index + 1;
+    while let Some(token) = tokens.get(index) {
+        let token = unwrap::semantic_token(token);
+        if token == "--" {
+            return Some(tokens.get(index + 1..).unwrap_or_default());
+        }
+        if token == "-" {
+            return tokens
+                .get(index + 1)
+                .map(|_| tokens.get(index + 1..).unwrap_or_default());
+        }
+        if matches!(token, "-o" | "+o") {
+            tokens.get(index + 1)?;
+            index += 2;
+            continue;
+        }
+        if is_static_set_option(token) {
+            index += 1;
+            continue;
+        }
+        if !token.starts_with('-') && !token.starts_with('+') {
+            return Some(tokens.get(index..).unwrap_or_default());
+        }
+        return None;
+    }
+    None
+}
+
+fn is_static_set_option(token: &str) -> bool {
+    let Some(flags) = token.strip_prefix('-').or_else(|| token.strip_prefix('+')) else {
         return false;
     };
-    matches!(tokens[index].as_str(), "source" | ".")
-        && tokens.get(index + 1).is_some_and(|path| {
-            matches!(
-                path.as_str(),
-                "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0"
-            )
-        })
+    !flags.is_empty()
+        && !token.starts_with("--")
+        && flags
+            .chars()
+            .all(|flag| "abefhkmnptuvxBCEHPT".contains(flag))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShellInput {
     Command(usize),
-    Stdin,
+    Stdin(usize),
     Other,
     NoExec,
 }
@@ -503,7 +659,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             return if noexec {
                 ShellInput::NoExec
             } else if reads_stdin || tokens.get(index + 1).is_none() {
-                ShellInput::Stdin
+                ShellInput::Stdin(index + 1)
             } else {
                 ShellInput::Other
             };
@@ -512,7 +668,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             return if noexec {
                 ShellInput::NoExec
             } else {
-                ShellInput::Stdin
+                ShellInput::Stdin(index + 1)
             };
         }
         if shell_option_takes_argument(option) {
@@ -548,7 +704,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             continue;
         }
         return if reads_stdin && !noexec {
-            ShellInput::Stdin
+            ShellInput::Stdin(index)
         } else {
             ShellInput::Other
         };
@@ -556,7 +712,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
     if noexec {
         ShellInput::NoExec
     } else {
-        ShellInput::Stdin
+        ShellInput::Stdin(index)
     }
 }
 
@@ -565,10 +721,9 @@ fn is_shell(command: &str) -> bool {
 }
 
 fn shell_name(command: &str) -> Option<&str> {
-    std::path::Path::new(command)
-        .file_name()
-        .and_then(|value| value.to_str())
-        .filter(|name| matches!(*name, "bash" | "dash" | "ksh" | "sh" | "zsh"))
+    let name = command.rsplit(['/', '\\']).next()?;
+    let normalized = name.strip_suffix(".exe").unwrap_or(name);
+    matches!(normalized, "bash" | "dash" | "ksh" | "sh" | "zsh").then_some(normalized)
 }
 
 fn shell_option_takes_argument(option: &str) -> bool {

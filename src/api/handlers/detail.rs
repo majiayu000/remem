@@ -29,14 +29,19 @@ pub(in crate::api) async fn handle_memory_detail(
     } else {
         crate::memory::suppression::memory_policy_filter_sql("memories")
     };
-    let mem = match conn.query_row(
+    let memory_row = match conn.query_row(
         &format!(
-            "SELECT {} FROM memories WHERE id = ?1 AND {}",
+            "SELECT {}, version FROM memories WHERE id = ?1 AND {}",
             crate::memory::types::MEMORY_COLS,
             policy_filter
         ),
         params![id],
-        crate::memory::types::map_memory_row_pub,
+        |row| {
+            Ok((
+                crate::memory::types::map_memory_row_pub(row)?,
+                row.get::<_, i64>(13)?,
+            ))
+        },
     ) {
         Ok(m) => m,
         Err(rusqlite::Error::QueryReturnedNoRows) => {
@@ -56,6 +61,7 @@ pub(in crate::api) async fn handle_memory_detail(
             .into_response()
         }
     };
+    let (mem, version) = memory_row;
 
     let result = (|| -> anyhow::Result<(Vec<String>, Vec<MemoryEdgeItem>)> {
         let mut stmt = conn.prepare(
@@ -98,7 +104,10 @@ pub(in crate::api) async fn handle_memory_detail(
     };
 
     let memory = match memory_to_item_with_conn(&conn, &mem) {
-        Ok(item) => item,
+        Ok(mut item) => {
+            item.version = Some(version);
+            item
+        }
         Err(err) => return staleness_error_response(&err).into_response(),
     };
 

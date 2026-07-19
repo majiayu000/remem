@@ -16,6 +16,7 @@ pub(in crate::cli) use super::review_types::{
     GraphReviewAction, ReviewAction, ReviewBatchFilterArgs,
 };
 pub(in crate::cli) use super::rule_types::{RuleActionArg, RuleHostArg, RulesAction};
+pub(in crate::cli) use super::worker_types::WorkerArgs;
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -102,12 +103,8 @@ pub(super) enum Commands {
         #[arg(long)]
         profile: Option<String>,
     },
-    /// Run the background worker loop or one drain pass.
-    Worker {
-        /// Process ready work once and exit.
-        #[arg(long)]
-        once: bool,
-    },
+    /// Run the background worker loop, one drain pass, or one exact replay.
+    Worker(WorkerArgs),
     /// Run the MCP server over stdio.
     Mcp,
     /// Install remem MCP and hooks into supported hosts.
@@ -732,28 +729,58 @@ pub(in crate::cli) enum PendingAction {
     },
     /// List exhausted extraction event ranges.
     ListExtractionRanges {
+        /// List exactly one range by ID, including terminal replay evidence.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         json: bool,
     },
     /// Requeue exhausted extraction event ranges.
     RetryExtractionRanges {
+        /// Requeue exactly one range by ID.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "100")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
+        /// Explicitly allow retrying one quarantined range.
+        #[arg(long, requires = "id")]
+        acknowledge_quarantine: bool,
+        /// Validate an archived quarantined exact range without mutating it.
+        #[arg(
+            long,
+            requires_all = ["id", "acknowledge_quarantine", "dry_run"]
+        )]
+        include_archived: bool,
         #[arg(long)]
         dry_run: bool,
     },
     /// Quarantine exhausted extraction event ranges.
     QuarantineExtractionRanges {
+        /// Quarantine exactly one range by ID.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "100")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         dry_run: bool,
     },

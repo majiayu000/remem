@@ -33,7 +33,7 @@ const MEMORY_CANDIDATE_SYSTEM: &str = "\
 Generate durable memory candidates from extracted observations.
 Return zero or more <memory_candidate> blocks.
 Each block must include <scope>, <type>, <topic_key>, <risk_class>, <confidence>, and <text>.
-<type> must be one of the valid candidate memory types listed in the task. Observations use a different type vocabulary (feature/refactor/change are not candidate types), so never copy an observation's type verbatim into <type>; map feature/refactor/change to discovery.
+<type> must be one of the valid candidate memory types listed in the task. Observations use a different type vocabulary (feature/refactor/change are not candidate types), so never copy an observation's type verbatim into <type>; map feature/refactor/change to discovery. Factual findings use discovery; never use fact.
 Use scope=project unless the observation is explicitly a stable user preference.
 Use risk_class=low only for factual project-scoped information that can be promoted without review.
 If there is no durable memory candidate, return exactly <no_candidates reason=\"...\"/>.
@@ -252,6 +252,9 @@ fn enqueue_graph_followup(
     task: &db::ExtractionTask,
     high_watermark_event_id: i64,
 ) -> Result<()> {
+    if crate::extraction_worker::exact_replay_task_active() {
+        return Ok(());
+    }
     db::enqueue_followup_extraction_task(
         conn,
         task,
@@ -723,7 +726,7 @@ fn build_candidate_prompt(
         .collect::<Vec<_>>()
         .join(", ");
     prompt.push_str(&format!(
-        "Valid candidate <type> values: {valid_candidate_types}.\nDo not copy an observation's type verbatim; observations use a different vocabulary and feature/refactor/change must be mapped to discovery.\n\n"
+        "Valid candidate <type> values: {valid_candidate_types}.\nDo not copy an observation's type verbatim; observations use a different vocabulary and feature/refactor/change must be mapped to discovery. Factual findings use discovery; never use fact.\n\n"
     ));
     for observation in &batch.observations {
         let evidence = observation

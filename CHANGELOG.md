@@ -3,6 +3,47 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.9` for GH-860: the structural force-push evaluator
+  recognizes supported Git-for-Windows `.exe` shell basenames, binds static
+  shell `-c` positional operands, and resolves a function-shadowed `unset`
+  before applying builtin state changes. Paired fixtures preserve nearby
+  allowed forms. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.8` for GH-871: raw transcript ingestion now uses
+  path-stable metadata-first identities and lossless occurrence ordinals;
+  validated read-only raw queries avoid migration-lock contention, session
+  JSON includes role counts, and bounded aggregate-only reconciliation proves
+  fixed-window archive parity without exposing transcript data. Release
+  metadata stays `unreleased` until publication.
+- Staged source version `0.6.7` for GH-882: memory-candidate extraction now
+  normalizes the model-emitted `fact` alias to `discovery` without weakening
+  the legal observation vocabulary, and both prompt layers explicitly direct
+  factual findings to the canonical type. Release metadata stays `unreleased`
+  until publication.
+- Staged source version `0.6.6` for GH-880: the authenticated native API now
+  advertises safe candidate detail/review, five independently gated read
+  resources, and recoverable memory archive/restore. Typed cursor, redaction,
+  optimistic-version, idempotency, audit, and current-provenance contracts are
+  covered by native smoke and regression gates; permanent Web delete remains
+  unavailable. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.5` for GH-880 SP880-T1: schema v70 adds
+  fail-closed migration recovery, Web-visible resource versions, an
+  idempotency replay ledger, and stable cursor foundations without advertising
+  unfinished endpoints or capabilities.
+- Staged source version `0.6.4` for GH-864: archived quarantined extraction
+  ranges can be validated only by an exact dual-confirmation dry-run and
+  recovered only by a singleton-locked worker that atomically requeues and
+  claims one task under an explicit AI profile. Non-successful or interrupted
+  exact attempts return to archived quarantine instead of entering the normal
+  daemon queue.
+- Staged source version `0.6.3` for GH-864: operators can explicitly
+  acknowledge and retry one quarantined extraction replay range by exact ID;
+  dry-run and execution share the same transactional eligibility checks while
+  default exact retry and every batch retry continue to exclude quarantine.
+- Staged source version `0.6.2` for GH-864: transcript evidence truncation is
+  stable across replay, Git branch/commit probes use bounded process-group and
+  pipe-reader cleanup, exhausted extraction ranges support exact-ID
+  list/retry/quarantine with terminal task evidence, and rollup topic keys
+  normalize punctuation without rewriting legacy snake/kebab identities.
 - Staged source version `0.6.1` for GH-861: project identity now delegates to
   Git whenever `GIT_COMMON_DIR` is set, so invalid or redirected common-dir
   layouts fail closed instead of being mistaken for plain marker discovery.

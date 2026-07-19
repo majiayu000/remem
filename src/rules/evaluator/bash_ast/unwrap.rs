@@ -7,6 +7,20 @@
 //! helpers and the structural evaluator resolve command position through
 //! this module so wrapper semantics cannot drift apart.
 
+const EXPANDED_COMMAND_PREFIX: &str = "\0remem-expanded-command:";
+
+pub(crate) fn mark_expanded_command_word(token: &mut String) {
+    token.insert_str(0, EXPANDED_COMMAND_PREFIX);
+}
+
+pub(crate) fn is_expanded_command_word(token: &str) -> bool {
+    token.starts_with(EXPANDED_COMMAND_PREFIX)
+}
+
+pub(crate) fn semantic_token(token: &str) -> &str {
+    token.strip_prefix(EXPANDED_COMMAND_PREFIX).unwrap_or(token)
+}
+
 /// Index of the first token that is not an environment-assignment prefix.
 pub(crate) fn direct_command_index(tokens: &[String]) -> Option<usize> {
     tokens.iter().position(|token| !is_env_assignment(token))
@@ -17,7 +31,7 @@ pub(crate) fn direct_command_index(tokens: &[String]) -> Option<usize> {
 pub(crate) fn effective_command_index(tokens: &[String]) -> Option<usize> {
     let mut index = direct_command_index(tokens)?;
     loop {
-        index = match tokens.get(index)?.as_str() {
+        index = match semantic_token(tokens.get(index)?) {
             "command" => command_wrapper_target(tokens, index)?,
             "env" => env_wrapper_target(tokens, index)?,
             "exec" => exec_wrapper_target(tokens, index)?,

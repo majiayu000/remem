@@ -145,7 +145,8 @@ Stop hook fires
        ├─ SessionRollup
        │    ├─ Load the captured_events range
        │    ├─ Idempotently link every proven Git commit in that range
-       │    ├─ Ingest raw transcript through the Stop-captured byte boundary
+       │    ├─ Resolve path-stable transcript identity and claim
+       │    ├─ Ingest raw occurrences through the Stop-captured byte boundary
        │    ├─ Finalize transcript-backed citations + failure lessons
        │    ├─ AI → semantic summary + topic segments
        │    ├─ Persist the exact event range
@@ -186,6 +187,34 @@ that already include the final assistant message may record those idempotent
 signals immediately. Versioned once-worker launch heartbeats prevent repeated
 Stop hooks from spawning overlapping current workers during an old-daemon
 upgrade window.
+
+Migration v071 separates a transcript's path-stable local identity from its
+filename and metadata claims. Stop and batch ingestion share the same
+metadata-first probe; the batch path persists the complete claim set before it
+mutates raw rows, keeps conflicts sticky, and upgrades legacy rows to stable
+transcript occurrence ordinals without losing repeated identical turns.
+`raw_messages.event_time_source` distinguishes transcript event time,
+ingest-time fallback, and legacy-unknown provenance.
+
+The raw query path is read-only and schema-validated:
+
+```text
+raw search / raw sessions
+  -> open_db_read_only_current
+  -> current-schema and drift validation
+  -> bounded SQL query
+
+raw reconcile
+  -> discover with ingest-sessions root/subagents rules
+  -> validate current identity-ledger mtime/size tuple
+  -> stream only window-intersecting or missing-time transcript snapshots
+  +  query matching raw occurrence identities
+  -> aggregate-only parity report
+```
+
+Reconciliation keeps paths, projects, session IDs, content, and hashes inside
+the process and encrypted local database. Public JSON contains counts and
+fixed policy/window metadata only.
 Migration v068 makes follow-up scheduling an exact-range transaction. New
 ranges persist their Compress job id and one structured Dream outcome with its
 referenced job id. Exact ranges created before v068 are marked

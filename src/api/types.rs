@@ -75,6 +75,8 @@ pub(super) struct MultiHopInfo {
 #[derive(Serialize)]
 pub(super) struct MemoryItem {
     pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<i64>,
     pub title: String,
     pub content: String,
     pub memory_type: String,
@@ -128,9 +130,20 @@ pub(super) struct CapabilitiesFeatures {
     pub memory_list: bool,
     pub memory_detail: bool,
     pub save_memory: bool,
+    pub memory_archive: bool,
+    pub memory_restore: bool,
+    pub memory_delete: bool,
     pub candidate_rows: bool,
     pub candidate_filters: bool,
     pub candidate_review: bool,
+    pub candidate_detail: bool,
+    pub candidate_evidence: bool,
+    pub candidate_review_safe: bool,
+    pub observations: bool,
+    pub sessions: bool,
+    pub workstreams: bool,
+    pub events: bool,
+    pub tasks: bool,
     pub graph: bool,
     pub user_recall: bool,
     pub user_recall_usage_policy: bool,
@@ -377,6 +390,147 @@ pub(super) struct CandidateReviewResponse {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateDetailResponse {
+    pub data: CandidateDetailItem,
+    pub evidence: Vec<CandidateEvidenceItem>,
+    pub decision: CandidateReviewDecision,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateDetailItem {
+    pub id: i64,
+    pub project: Option<String>,
+    pub scope: String,
+    pub memory_type: String,
+    pub topic_key: String,
+    pub text: String,
+    pub source_kind: Option<String>,
+    pub source_project: Option<String>,
+    pub target_project: Option<String>,
+    pub owner_scope: Option<String>,
+    pub owner_key: Option<String>,
+    pub topic_domain: Option<String>,
+    pub routing_confidence: Option<f64>,
+    pub routing_reason: Option<String>,
+    pub context_class: Option<String>,
+    pub confidence: f64,
+    pub risk_class: String,
+    pub review_status: String,
+    pub auto_promote_block_reason: Option<String>,
+    pub source_trust_class: String,
+    pub quarantine_pattern_id: Option<String>,
+    pub quarantine_pattern_version: Option<i64>,
+    pub version: i64,
+    pub created_at_epoch: i64,
+    pub updated_at_epoch: i64,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateEvidenceItem {
+    pub source_kind: &'static str,
+    pub source_id: i64,
+    pub event_type: Option<String>,
+    pub role: Option<String>,
+    pub tool_name: Option<String>,
+    pub created_at_epoch: Option<i64>,
+    pub summary: String,
+    pub preview: String,
+    pub provenance_status: String,
+    pub redacted: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateReviewDecision {
+    pub can_review: bool,
+    pub blocked_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CandidateSafeApproveRequest {
+    pub reason: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub acknowledge_pattern: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CandidateSafeRejectRequest {
+    pub reason: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CandidateSafeEditRequest {
+    pub reason: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+    #[serde(default)]
+    pub scope: Option<String>,
+    #[serde(default, rename = "memory_type")]
+    pub memory_type: Option<String>,
+    #[serde(default)]
+    pub topic_key: Option<String>,
+    #[serde(default)]
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct CandidateSafeReviewResponse {
+    pub response_schema_version: i64,
+    pub operation_id: String,
+    pub audit_id: i64,
+    pub candidate_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory_id: Option<i64>,
+    pub action: String,
+    pub before_status: String,
+    pub after_status: String,
+    pub version: i64,
+    pub occurred_at_epoch: i64,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct MemorySafeGovernanceRequest {
+    pub reason: String,
+    pub expected_version: i64,
+    pub idempotency_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct MemorySafeGovernanceResponse {
+    pub response_schema_version: i64,
+    pub operation_id: String,
+    pub audit_id: i64,
+    pub memory_id: i64,
+    pub action: String,
+    pub before_status: String,
+    pub after_status: String,
+    pub version: i64,
+    pub occurred_at_epoch: i64,
+    pub replayed: bool,
+}
+
+#[derive(Serialize)]
+pub(super) struct SafeMutationErrorResponse {
+    pub error: SafeMutationErrorDetail,
+}
+
+#[derive(Serialize)]
+pub(super) struct SafeMutationErrorDetail {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
 }
 
 #[derive(Deserialize)]
