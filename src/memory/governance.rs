@@ -78,6 +78,257 @@ pub struct GovernanceSelector<'a> {
     pub offset: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebMemoryGovernanceAction {
+    Archive,
+    Restore,
+}
+
+impl WebMemoryGovernanceAction {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Archive => "archive",
+            Self::Restore => "restore",
+        }
+    }
+
+    fn before_status(self) -> &'static str {
+        match self {
+            Self::Archive => "active",
+            Self::Restore => "archived",
+        }
+    }
+
+    fn after_status(self) -> &'static str {
+        match self {
+            Self::Archive => "archived",
+            Self::Restore => "active",
+        }
+    }
+}
+
+pub struct WebMemoryGovernanceRequest<'a> {
+    pub memory_id: i64,
+    pub action: WebMemoryGovernanceAction,
+    pub expected_version: i64,
+    pub operation_id: &'a str,
+    pub reason: &'a str,
+    pub actor: &'a str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebMemoryGovernanceResult {
+    pub memory_id: i64,
+    pub project: String,
+    pub before_status: String,
+    pub after_status: String,
+    pub version: i64,
+    pub audit_id: i64,
+    pub occurred_at_epoch: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WebMemoryGovernanceDecision {
+    Applied(WebMemoryGovernanceResult),
+    NotFound,
+    VersionConflict,
+    NotArchivable,
+    NotRecoverable,
+}
+
+pub fn govern_memory_for_web_in_transaction(
+    conn: &Connection,
+    req: &WebMemoryGovernanceRequest<'_>,
+) -> Result<WebMemoryGovernanceDecision> {
+    let target = conn
+        .query_row(
+            "SELECT project, title, status, version, web_archive_operation_id
+             FROM memories WHERE id = ?1",
+            params![req.memory_id],
+            |row| {
+                Ok(WebGovernanceTarget {
+                    project: row.get(0)?,
+                    title: row.get(1)?,
+                    status: row.get(2)?,
+                    version: row.get(3)?,
+                    web_archive_operation_id: row.get(4)?,
+                })
+            },
+        )
+        .optional()?;
+    let Some(target) = target else {
+        return Ok(match req.action {
+            WebMemoryGovernanceAction::Archive => WebMemoryGovernanceDecision::NotFound,
+            WebMemoryGovernanceAction::Restore => WebMemoryGovernanceDecision::NotRecoverable,
+        });
+    };
+    if target.version != req.expected_version {
+        return Ok(WebMemoryGovernanceDecision::VersionConflict);
+    }
+    match req.action {
+        WebMemoryGovernanceAction::Archive if target.status != "active" => {
+            return Ok(WebMemoryGovernanceDecision::NotArchivable)
+        }
+        WebMemoryGovernanceAction::Restore => {
+            if target.status != "archived"
+                || !current_web_archive_provenance_is_valid(conn, req.memory_id, &target)?
+            {
+                return Ok(WebMemoryGovernanceDecision::NotRecoverable);
+            }
+        }
+        WebMemoryGovernanceAction::Archive => {}
+    }
+
+    let occurred_at_epoch = chrono::Utc::now().timestamp();
+    let updated = conn.execute(
+        "UPDATE memories
+         SET status = ?1, updated_at_epoch = ?2
+         WHERE id = ?3 AND version = ?4 AND status = ?5",
+        params![
+            req.action.after_status(),
+            occurred_at_epoch,
+            req.memory_id,
+            req.expected_version,
+            req.action.before_status()
+        ],
+    )?;
+    if updated != 1 {
+        bail!("web memory governance guarded update did not affect exactly one row");
+    }
+    if req.action == WebMemoryGovernanceAction::Archive {
+        let marker_updated = conn.execute(
+            "UPDATE memories SET web_archive_operation_id = ?1 WHERE id = ?2 AND status = 'archived'",
+            params![req.operation_id, req.memory_id],
+        )?;
+        if marker_updated != 1 {
+            bail!("web archive marker update did not affect exactly one row");
+        }
+    }
+    let (after_status, version, marker): (String, i64, Option<String>) = conn.query_row(
+        "SELECT status, version, web_archive_operation_id FROM memories WHERE id = ?1",
+        params![req.memory_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    if after_status != req.action.after_status()
+        || (req.action == WebMemoryGovernanceAction::Archive
+            && marker.as_deref() != Some(req.operation_id))
+        || (req.action == WebMemoryGovernanceAction::Restore && marker.is_some())
+    {
+        bail!("web memory governance postcondition failed");
+    }
+    let audit_id = insert_web_audit_event(conn, req, &target, &after_status, occurred_at_epoch)?;
+    Ok(WebMemoryGovernanceDecision::Applied(
+        WebMemoryGovernanceResult {
+            memory_id: req.memory_id,
+            project: target.project,
+            before_status: target.status,
+            after_status,
+            version,
+            audit_id,
+            occurred_at_epoch,
+        },
+    ))
+}
+
+struct WebGovernanceTarget {
+    project: String,
+    title: String,
+    status: String,
+    version: i64,
+    web_archive_operation_id: Option<String>,
+}
+
+fn current_web_archive_provenance_is_valid(
+    conn: &Connection,
+    memory_id: i64,
+    target: &WebGovernanceTarget,
+) -> Result<bool> {
+    let Some(marker) = target.web_archive_operation_id.as_deref() else {
+        return Ok(false);
+    };
+    let evidence = conn
+        .query_row(
+            "SELECT r.audit_id, r.response_json, e.event_type, e.project, e.detail
+             FROM api_mutation_requests r
+             JOIN events e ON e.id = r.audit_id
+             WHERE r.operation_id = ?1
+               AND r.resource_kind = 'memory'
+               AND r.resource_id = ?2
+               AND r.action = 'archive'
+               AND r.response_schema_version = 1",
+            params![marker, memory_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((audit_id, response_json, event_type, project, detail)) = evidence else {
+        return Ok(false);
+    };
+    if event_type != "memory_governance" || project != target.project {
+        return Ok(false);
+    }
+    let response: serde_json::Value = match serde_json::from_str(&response_json) {
+        Ok(response) => response,
+        Err(_) => return Ok(false),
+    };
+    let detail: serde_json::Value = match detail.as_deref().map(serde_json::from_str).transpose() {
+        Ok(Some(detail)) => detail,
+        _ => return Ok(false),
+    };
+    Ok(response["operation_id"] == marker
+        && response["response_schema_version"] == 1
+        && response["audit_id"] == audit_id
+        && response["memory_id"] == memory_id
+        && response["action"] == "archive"
+        && response["before_status"] == "active"
+        && response["after_status"] == "archived"
+        && detail["operation_id"] == marker
+        && detail["memory_id"] == memory_id
+        && detail["action"] == "archive"
+        && detail["previous_status"] == "active"
+        && detail["new_status"] == "archived")
+}
+
+fn insert_web_audit_event(
+    conn: &Connection,
+    req: &WebMemoryGovernanceRequest<'_>,
+    target: &WebGovernanceTarget,
+    new_status: &str,
+    now: i64,
+) -> Result<i64> {
+    let detail = serde_json::json!({
+        "action": req.action.as_str(),
+        "memory_id": req.memory_id,
+        "title": target.title,
+        "previous_status": target.status,
+        "new_status": new_status,
+        "reason": req.reason,
+        "actor": req.actor,
+        "operation_id": req.operation_id,
+    })
+    .to_string();
+    conn.execute(
+        "INSERT INTO events
+         (session_id, project, event_type, summary, detail, files, exit_code, created_at_epoch)
+         VALUES (?1, ?2, 'memory_governance', ?3, ?4, NULL, NULL, ?5)",
+        params![
+            format!("api:{}", req.operation_id),
+            target.project,
+            format!("Web {} memory {}", req.action.as_str(), req.memory_id),
+            detail,
+            now
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
 pub fn select_memory_ids(conn: &Connection, selector: &GovernanceSelector<'_>) -> Result<Vec<i64>> {
     let mut conditions = vec!["project = ?1".to_string()];
     let mut params: Vec<Box<dyn rusqlite::types::ToSql>> =
@@ -379,3 +630,5 @@ fn insert_audit_event(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod web_tests;

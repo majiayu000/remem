@@ -674,6 +674,14 @@ remem usage --days 14 --weeks 8
 remem pending list-failed
 remem pending list-failed --json
 remem pending retry-failed --dry-run
+remem pending list-extraction-ranges --id 308 --json
+remem pending retry-extraction-ranges --id 308 --dry-run
+remem pending retry-extraction-ranges --id 308
+remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --dry-run
+remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine
+remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --include-archived --dry-run
+remem worker --once --replay-range-id 308 --acknowledge-quarantine --include-archived --profile claude
+remem pending quarantine-extraction-ranges --id 308 --dry-run
 remem pending migrate-legacy --dry-run
 remem pending purge-failed --dry-run --older-than-days 7
 remem govern --action stale --dry-run --json <id>
@@ -726,6 +734,23 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+Use the exact-ID extraction-range commands when recovering one known failure:
+preview the retry or quarantine first, apply it only after the preview succeeds,
+then query the same ID with `list-extraction-ranges --id <id> --json`. Exact
+listing includes terminal `replayed` ranges and their linked replay task, so the
+final range/task status and bounded error evidence remain auditable. `--id`
+cannot be combined with batch `--project` or `--limit` filters and never falls
+back to a sibling range. A quarantined range remains excluded from ordinary
+exact and batch retry; restoring one requires the exact positive `--id` plus
+`--acknowledge-quarantine`, first with `--dry-run` and then without it.
+If the quarantined range has also archived, the pending command accepts
+`--include-archived` only for a dual-confirmation dry-run. The write must use
+the exact worker command with the same ID, both acknowledgements, and an
+explicit `--profile`. That worker refuses to write while another worker holds
+the singleton, atomically requeues and claims only the target task, and returns
+partial, failed, timed-out, or interrupted attempts to archived quarantine
+instead of exposing them to the ordinary daemon queue.
 
 `remem procedures export` writes reviewable drafts for promoted procedure
 memories. The default output is `remem-drafts/`; export refuses high-context
@@ -850,8 +875,14 @@ remem ingest-sessions --since 2026-06-01 --root starlight=~/remote-sessions/star
 Default scan roots are `~/.claude/projects` and `~/.codex/sessions`.
 Additional `--root label=path` entries are required roots: a missing explicit
 root is reported as a failed file so backfills do not silently do nothing. Each
-raw row keeps the source-root label and the transcript event timestamp, and
-re-running the command is incremental and idempotent.
+transcript has a path-stable local identity ledger. Metadata IDs take
+precedence over filename fallbacks, Stop and batch ingest use the same
+identity, repeated identical turns retain separate occurrence ordinals, and
+event-time provenance distinguishes transcript timestamps from ingest
+fallbacks and legacy unknowns. Re-running the command is incremental and
+idempotent; `--since`-skipped files receive an explicitly marked event-range
+index for later bounded reconciliation, failed unindexed files remain stale,
+and ambiguous identity claims fail visibly without rewriting raw rows.
 
 Use raw time-window queries for recap or audit workflows that need original
 chat turns rather than curated memories:
@@ -859,13 +890,30 @@ chat turns rather than curated memories:
 ```bash
 remem raw search "deployment decision" --since 2026-06-01 --until 2026-06-30 --json
 remem raw sessions --since 2026-06-01 --until 2026-06-30 --sample 3 --json
+remem raw reconcile --since 2026-06-01 --until 2026-06-30 --json
 ```
 
 `remem raw sessions` groups rows by source root, project, and session ID, and
-can include the first N user-message samples per session. A date-only `since`
-starts at `00:00:00` UTC, while a date-only `until` includes that entire UTC
-day through `23:59:59`. MCP `search_raw` returns the same JSON envelope and
-pagination fields as `remem raw search ... --json`.
+reports total, user, and assistant message counts; it can include the first N
+user-message samples per session. `raw search`, `raw sessions`, and `raw
+reconcile` open the current schema read-only, so a writer lock does not trigger
+migration contention and stale schemas fail with a migration diagnostic.
+
+`raw reconcile` requires both bounds and compares stable per-occurrence
+identities, not only aggregate counts. It validates the captured file
+mtime/size tuple against the current identity ledger before reading, scans only
+event-range candidates plus files with missing event time, scopes archive rows
+to the requested source-root labels, and emits aggregate counts only—never
+paths, projects, session IDs, hashes, or message text.
+Timestamped records outside the inclusive UTC window are discarded before
+classification. Meta/XML user rows remain in archive parity but are reported
+as conversational exclusions; missing/fallback/legacy event time and malformed
+records make `parity` false. Window-relevant identity conflicts also return a
+non-zero status after the aggregate report is emitted.
+
+A date-only `since` starts at `00:00:00` UTC, while a date-only `until`
+includes that entire UTC day through `23:59:59`. MCP `search_raw` returns the
+same JSON envelope and pagination fields as `remem raw search ... --json`.
 
 ### Scriptable JSON output
 
@@ -879,7 +927,8 @@ is set:
 | `remem search ... --json` | `query`, `project`, `memory_type`, `limit`, `offset`, `branch`, `include_stale`, `include_suppressed`, `multi_hop_requested`, `explain_requested`, `count`, `has_more`, `next_offset`, `results`, `raw_hits`, `multi_hop`, `explain_details` |
 | `remem ingest-sessions --json` | `scanned`, `skipped`, `ingested_messages`, `failed_files`, `partial_files` |
 | `remem raw search ... --json` | `query`, `project`, `branch`, `role`, `limit`, `offset`, `since_epoch`, `until_epoch`, `count`, `has_more`, `next_offset`, `source_type`, `note`, `results` |
-| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions` |
+| `remem raw sessions ... --json` | `since_epoch`, `until_epoch`, `project`, `sample`, `count`, `sessions`; each session includes `message_count`, `user_message_count`, and `assistant_message_count` |
+| `remem raw reconcile ... --json` | `policy_version`, `since_epoch`, `until_epoch`, `transcript`, `archive`, `comparison`, `intentional_exclusions`, `parity` |
 | `remem show <id> --json` | `found`, `id`, `memory` |
 | `remem procedures list --json` | `project`, `limit`, `offset`, `count`, `procedures` |
 | `remem memory suppress <target> --json` | `status`, `suppression` |
@@ -901,6 +950,7 @@ is set:
 | `remem user review reject <id> --json` / `suppress <id> --json` | `status`, `candidate` |
 | `remem workstreams merge --json` | `project`, `result` |
 | `remem pending list-failed --json` | `project`, `limit`, `count`, `failed` |
+| `remem pending list-extraction-ranges --id <id> --json` | `range` (including `id`, `status`, `attempts`, `last_error`, `replay_task_id`) and nullable `replay_task` (`id`, `status`, `attempts`, `last_error`); terminal `replayed` ranges remain queryable |
 | `remem pending migrate-legacy --json` | `project`, `limit`, `count`, `migrated` |
 | `remem govern ... --json` | `dry_run`, `action`, `reason`, `affected` |
 
@@ -946,6 +996,11 @@ make user-context auto-promote configuration-driven: the default lowers only the
 confidence threshold to `0.7`, `strict = true` restores the old `0.9` threshold,
 existing hard gates remain review/no-retention gates, and `remem status` reports
 user-context claim/candidate counts and pending block reasons.
+Source version `0.6.6` implements the GH-880 safe console API: candidate
+detail/evidence and idempotent safe review, five independently gated safe read
+resources, and recoverable memory archive/restore. Installed clients must wait
+for a published `v0.6.6` release and require the exact capability/endpoint-map
+bundle; the staged `unreleased` source manifest is not release evidence.
 
 Use `/api/v1/health` as the cheap liveness probe and `/api/v1/capabilities` for
 feature detection. Use `/api/v1/status` for dashboard counters no more
@@ -972,10 +1027,24 @@ frequently than the returned `cache.ttl_secs`; use
 |---|---|---|
 | `/api/v1/stats` | GET | Product stats for local dashboards |
 | `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
+| `/api/v1/candidates/{id}` | GET | Safe candidate detail, evidence, and review decision |
+| `/api/v1/candidates/{id}/review/approve` | POST | Versioned, audited, idempotent safe approval |
+| `/api/v1/candidates/{id}/review/reject` | POST | Versioned, audited, idempotent safe rejection |
+| `/api/v1/candidates/{id}/review/edit` | POST | Versioned, audited, idempotent safe edit-and-approve |
 | `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate; quarantined candidates require `acknowledge_pattern` |
 | `/api/v1/candidates/{id}/reject` | POST | Reject a pending memory candidate |
 | `/api/v1/candidates/{id}/edit` | POST | Edit and approve a pending memory candidate |
 | `/api/v1/graph?project=&limit=&include_suppressed=` | GET | DB-backed entity graph read model |
+| `/api/v1/observations[/{id}]` | GET | Safe observation list/detail with typed cursor |
+| `/api/v1/sessions[/{id}]` | GET | Safe session list/detail with typed cursor |
+| `/api/v1/workstreams[/{id}]` | GET | Safe workstream list/detail with typed cursor |
+| `/api/v1/events[/{id}]` | GET | Safe event metadata list/detail without raw content |
+| `/api/v1/tasks[/{id}]` | GET | Safe task list/detail without raw payload/error text |
+| `/api/v1/memories/{id}/archive` | POST | Recoverably archive an active memory |
+| `/api/v1/memories/{id}/restore` | POST | Restore only the current exact Web archive |
+
+Permanent Web delete is intentionally unavailable. `memory_delete=false` and
+the capability endpoint map contains no delete key.
 
 ### Compatibility aliases
 

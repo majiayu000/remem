@@ -1,5 +1,10 @@
 use super::SchemaInvariant;
 
+mod v070;
+mod v071;
+pub(in crate::migrate) use v070::V070_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v071::V071_SCHEMA_INVARIANTS;
+
 macro_rules! v068_session_summary_column {
     ($column:literal) => {
         SchemaInvariant::column(

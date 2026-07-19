@@ -28,7 +28,10 @@ mod tests_raw;
 mod tests_rules;
 #[cfg(test)]
 mod tests_trace;
+#[cfg(test)]
+mod tests_worker;
 mod types;
+mod worker_types;
 
 use anyhow::Result;
 use clap::{Command, CommandFactory, FromArgMatches};

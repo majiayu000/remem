@@ -2,7 +2,36 @@ use anyhow::Result;
 use std::sync::{Arc, Mutex};
 
 use super::{insert_source_observation, setup_conn, setup_task};
-use crate::memory_candidate::{process_with_generator, MemoryCandidateResult};
+use crate::memory_candidate::{
+    build_eval_candidate_request, process_with_generator, CandidatePromptObservation,
+    MemoryCandidateResult,
+};
+
+#[test]
+fn memory_candidate_prompt_names_canonical_types_and_maps_fact() {
+    let prompt = build_eval_candidate_request(
+        "/tmp/remem",
+        "codex-cli",
+        Some("sess-candidate-prompt-contract"),
+        &[CandidatePromptObservation {
+            id: 1,
+            observation_type: "discovery",
+            text: "The worker uses one writer connection.",
+            evidence_event_ids: vec![1],
+            confidence: 0.91,
+        }],
+    );
+
+    assert!(prompt.contains(
+        "Valid candidate <type> values: decision, discovery, bugfix, architecture, lesson, preference, procedure."
+    ));
+    assert_eq!(
+        prompt
+            .matches("Factual findings use discovery; never use fact.")
+            .count(),
+        2
+    );
+}
 
 #[tokio::test]
 async fn memory_candidate_prompt_includes_existing_project_preferences() -> Result<()> {
