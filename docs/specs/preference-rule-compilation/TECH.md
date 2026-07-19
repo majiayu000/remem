@@ -134,10 +134,12 @@ Artifact v2 additionally supports:
   quoted delimiter preserves literal text. Whole unquoted positionals may
   produce zero or multiple argv fields; default and alternative words retain
   quote-aware grouping, known-set error/assignment forms preserve their known
-  operand, exact quoted `"$@"` preserves operand cardinality, static
+  operand, collection default/alternative forms select from known `$@`/`$*`
+  state, exact quoted `"$@"` preserves operand cardinality, static
   non-negative positional slices and substrings retain Bash field and string
-  semantics; definite `set --`, argument-bearing `set -`, and `shift`
-  update the active mapping, while possibly executed changes retain prior and
+  semantics; definite `set --`, argument-bearing `set -`, option-bearing
+  positional `set`, and `shift` update the active mapping, while possibly
+  executed changes retain prior and
   updated mappings for conservative matching in both whole and concatenated
   words. Possible mappings are evaluated as separate argv alternatives under
   the existing 256-variant ceiling, retaining security-relevant mappings first
@@ -164,7 +166,8 @@ Artifact v2 additionally supports:
   shadows the name. Every terminating alternative executes its EXIT traps
   before filtering, and terminated state does not contaminate a continuing
   path while its executable segments remain visible.
-  Explicit sourced-file arguments receive their own positional scope.
+  Explicit sourced-file arguments receive their own positional scope, and
+  stdin-reading shells bind post-option operands in their child scope.
   Expandable heredoc stdin finishes parent-side positional expansion before a
   child `-c` context is installed. Nested command substitutions and arithmetic
   source use their own syntax context, and function-definition names remain

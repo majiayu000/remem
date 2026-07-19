@@ -112,6 +112,90 @@ fn force_push_rule_resolves_set_valued_positional_forms() {
 }
 
 #[test]
+fn force_push_rule_binds_stdin_shell_operands() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -s -- --force <<'EOF'
+git push "$1"
+EOF"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -s -- safe <<'EOF'
+git push "$1"
+EOF"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_resolves_positional_collection_operators() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c '${@:+git push --force}' _ x"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c '${@:-git push --force}' _"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c '${@:+git push --force}' _"#,
+            EvaluationVerdict::Allow,
+        ),
+        (
+            r#"bash -c '${@:-git push --force}' _ true"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
+fn force_push_rule_parses_set_options_before_positionals() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for (command, expected) in [
+        (
+            r#"bash -c 'set -e -- --force; git push "$1"' _ origin"#,
+            EvaluationVerdict::Block,
+        ),
+        (
+            r#"bash -c 'set -e -- safe; git push "$1"' _ --force"#,
+            EvaluationVerdict::Allow,
+        ),
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, expected, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
 
 fn force_push_rule_keeps_possible_positionals_in_concatenated_words() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);

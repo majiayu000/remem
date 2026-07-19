@@ -54,9 +54,13 @@ function positional expander into a string-source helper with an explicit
   preserve their own quote-aware field grouping, and `${n+word}` / `${n:+word}`
   select statically when the operand state is known; known-set `${n?word}`,
   `${n:?word}`, `${n=word}`, and `${n:=word}` forms preserve that operand;
+  `${@:-word}` / `${@:+word}` and their non-colon forms select from the known
+  collection state;
 - definite static `set --` or argument-bearing `set -` replaces `$1...` while
   retaining `$0`, and definite static `shift [n]` advances every active
-  argument alternative; an uncertain change retains both prior and updated
+  argument alternative; recognized `set` options are consumed through the
+  positional boundary before that replacement. An uncertain change retains
+  both prior and updated
   argument sets so each possible path contributes static fields, including
   positional references concatenated with literal word content; each mapping
   is evaluated as its own command argv rather than flattened with other paths;
@@ -103,6 +107,8 @@ function positional expander into a string-source helper with an explicit
   and explicit `source [--] /dev/stdin` arguments temporarily replace `$1...`
   while the sourced body is analyzed; source success/failure is rebound to the
   restored caller positional context before `&&`/`||` continues.
+- stdin-reading shells bind post-option operands as `$1...` in their child
+  scope, with the normalized shell basename retained as `$0`.
 - command-position words materialized from positional expansion retain a
   bounded provenance marker so assignment-prefix and lexical-alias recognition
   are not rerun after expansion; consumers strip that marker only when reading
@@ -249,6 +255,7 @@ metadata, and do not publish or fabricate release assets as part of rollback.
     "src/rules/evaluator/bash_ast/shell_state.rs",
     "src/rules/evaluator/bash_ast/static_execution.rs",
     "src/rules/evaluator/bash_ast/function_args.rs",
+    "src/rules/evaluator/bash_ast/function_args/parameters.rs",
     "src/rules/evaluator/bash_ast/function_args/quoting.rs",
     "src/rules/evaluator/bash_ast/static_words.rs",
     "src/rules/evaluator/bash_ast/stdin_payload.rs",

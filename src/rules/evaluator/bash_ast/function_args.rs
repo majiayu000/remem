@@ -4,8 +4,10 @@ use brush_parser::ParserOptions;
 
 use super::static_words::{static_slice, static_substring};
 
+mod parameters;
 mod quoting;
 
+use parameters::positional_collection_operator_fields;
 use quoting::{
     escape_double_quoted, expand_at_in_double_quotes, quote_argument, quote_arguments,
     split_argument, split_arguments,
@@ -209,6 +211,11 @@ fn resolve_parameter_expression_fields(
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
     }
+    if let Some(fields) =
+        positional_collection_operator_fields(expression, zero_argument, arguments, depth)
+    {
+        return Some(fields);
+    }
     if let Some(fields) = positional_collection_slice_fields(expression, zero_argument, arguments) {
         return Some(fields);
     }
@@ -268,7 +275,7 @@ fn resolve_parameter_expression_fields(
         .then(|| split_fields(argument.unwrap_or_default()))
 }
 
-fn expand_default_fields(
+pub(super) fn expand_default_fields(
     source: &str,
     zero_argument: Option<&str>,
     arguments: &[String],
@@ -362,7 +369,7 @@ fn append_expanded_fields(
     }
 }
 
-fn split_fields(value: &str) -> Vec<String> {
+pub(super) fn split_fields(value: &str) -> Vec<String> {
     value
         .split([' ', '\t', '\n'])
         .filter(|field| !field.is_empty())
@@ -617,6 +624,11 @@ fn resolve_parameter_expression(
 ) -> Option<String> {
     if depth > MAX_DEFAULT_EXPANSION_DEPTH {
         return None;
+    }
+    if let Some(fields) =
+        positional_collection_operator_fields(expression, zero_argument, arguments, depth)
+    {
+        return Some(fields.join(" "));
     }
     if let Some(fields) = positional_collection_slice_fields(expression, zero_argument, arguments) {
         return Some(fields.join(" "));

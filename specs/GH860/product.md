@@ -82,7 +82,12 @@ gaps can either miss a forbidden command or report a false block.
    parent-side expansion before entering a child `-c` scope, while explicit
    arguments to `source [--] /dev/stdin` shall bind `$1...` only for the
    sourced body, then restore caller positionals before subsequent control-flow
-   branches. A command name materialized from a positional shall not be
+   branches. Static shells reading stdin, including `bash -s -- args`, shall
+   bind their post-option operands as `$1...`. Collection default/alternative
+   forms such as `${@:-word}` and `${@:+word}` shall select statically when the
+   operand set is known, and recognized `set` options before `--` shall not
+   hide the positional assignment that follows. A command name materialized
+   from a positional shall not be
    reclassified as an assignment or passed through lexical alias expansion,
    while recognized wrapper semantics remain active; a here-string positional
    shall preserve embedded source newlines. When statically known paths

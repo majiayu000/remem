@@ -4,8 +4,8 @@ use super::function_args::expand_function_body;
 use super::static_execution::{
     direct_command_name, static_builtin_command_name, static_env_split_tokens, static_eval_payload,
     static_export_function_change, static_shell_command_payload, static_shell_exits,
-    static_shell_is_bash, static_shell_reads_stdin, static_source_stdin_arguments,
-    static_token_measure, static_unset_function_names,
+    static_shell_is_bash, static_shell_stdin, static_source_stdin_arguments, static_token_measure,
+    static_unset_function_names,
 };
 use super::stdin_payload::EffectiveStdin;
 use super::{unwrap, CommandCollector, PositionalContext};
@@ -119,14 +119,21 @@ impl CommandCollector {
                 })
             })?;
         }
-        if static_shell_reads_stdin(&tokens) {
+        if let Some(shell_stdin) = static_shell_stdin(&tokens) {
             let payload = match self.effective_stdin_payload(command)? {
                 EffectiveStdin::Replaced(payload) => payload,
                 EffectiveStdin::Untouched => self.inherited_stdin.clone(),
             };
             if let Some(payload) = payload {
                 self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
-                    collector.collect_source(&payload)
+                    collector.with_positional_context(
+                        Some(PositionalContext {
+                            zero_argument: Some(shell_stdin.zero_argument),
+                            arguments: shell_stdin.arguments,
+                            possible_arguments: Vec::new(),
+                        }),
+                        |collector| collector.collect_source(&payload),
+                    )
                 })?;
             }
         } else if let Some(arguments) = static_source_stdin_arguments(&tokens) {

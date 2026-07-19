@@ -534,17 +534,24 @@ pub(super) fn static_shell_command_payload(tokens: &[String]) -> Option<StaticSh
     })
 }
 
-pub(super) fn static_shell_reads_stdin(tokens: &[String]) -> bool {
+pub(super) struct StaticShellStdin {
+    pub(super) zero_argument: String,
+    pub(super) arguments: Vec<String>,
+}
+
+pub(super) fn static_shell_stdin(tokens: &[String]) -> Option<StaticShellStdin> {
     let Some(command_index) = unwrap::effective_command_index(tokens) else {
-        return false;
+        return None;
     };
-    if !tokens
-        .get(command_index)
-        .is_some_and(|command| is_shell(unwrap::semantic_token(command)))
-    {
-        return false;
-    }
-    shell_input(tokens, command_index) == ShellInput::Stdin
+    let command = tokens.get(command_index)?;
+    let zero_argument = shell_name(unwrap::semantic_token(command))?.to_string();
+    let ShellInput::Stdin(arguments_index) = shell_input(tokens, command_index) else {
+        return None;
+    };
+    Some(StaticShellStdin {
+        zero_argument,
+        arguments: tokens.get(arguments_index..).unwrap_or_default().to_vec(),
+    })
 }
 
 pub(super) fn static_shell_is_bash(tokens: &[String]) -> bool {
@@ -584,11 +591,7 @@ pub(super) enum StaticPositionalChange<'a> {
 pub(super) fn static_positional_change(tokens: &[String]) -> Option<StaticPositionalChange<'_>> {
     let index = static_builtin_command_index(tokens)?;
     match unwrap::semantic_token(&tokens[index]) {
-        "set" => {
-            let marker = tokens.get(index + 1)?;
-            (marker == "--" || marker == "-" && tokens.get(index + 2).is_some())
-                .then(|| StaticPositionalChange::Set(&tokens[index + 2..]))
-        }
+        "set" => static_set_arguments(tokens, index).map(StaticPositionalChange::Set),
         "shift" => match &tokens[index + 1..] {
             [] => Some(StaticPositionalChange::Shift(1)),
             [count] => count
@@ -601,10 +604,50 @@ pub(super) fn static_positional_change(tokens: &[String]) -> Option<StaticPositi
     }
 }
 
+fn static_set_arguments(tokens: &[String], command_index: usize) -> Option<&[String]> {
+    let mut index = command_index + 1;
+    while let Some(token) = tokens.get(index) {
+        let token = unwrap::semantic_token(token);
+        if token == "--" {
+            return Some(tokens.get(index + 1..).unwrap_or_default());
+        }
+        if token == "-" {
+            return tokens
+                .get(index + 1)
+                .map(|_| tokens.get(index + 1..).unwrap_or_default());
+        }
+        if matches!(token, "-o" | "+o") {
+            tokens.get(index + 1)?;
+            index += 2;
+            continue;
+        }
+        if is_static_set_option(token) {
+            index += 1;
+            continue;
+        }
+        if !token.starts_with('-') && !token.starts_with('+') {
+            return Some(tokens.get(index..).unwrap_or_default());
+        }
+        return None;
+    }
+    None
+}
+
+fn is_static_set_option(token: &str) -> bool {
+    let Some(flags) = token.strip_prefix('-').or_else(|| token.strip_prefix('+')) else {
+        return false;
+    };
+    !flags.is_empty()
+        && !token.starts_with("--")
+        && flags
+            .chars()
+            .all(|flag| "abefhkmnptuvxBCEHPT".contains(flag))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ShellInput {
     Command(usize),
-    Stdin,
+    Stdin(usize),
     Other,
     NoExec,
 }
@@ -618,7 +661,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             return if noexec {
                 ShellInput::NoExec
             } else if reads_stdin || tokens.get(index + 1).is_none() {
-                ShellInput::Stdin
+                ShellInput::Stdin(index + 1)
             } else {
                 ShellInput::Other
             };
@@ -627,7 +670,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             return if noexec {
                 ShellInput::NoExec
             } else {
-                ShellInput::Stdin
+                ShellInput::Stdin(index + 1)
             };
         }
         if shell_option_takes_argument(option) {
@@ -663,7 +706,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
             continue;
         }
         return if reads_stdin && !noexec {
-            ShellInput::Stdin
+            ShellInput::Stdin(index)
         } else {
             ShellInput::Other
         };
@@ -671,7 +714,7 @@ fn shell_input(tokens: &[String], command_index: usize) -> ShellInput {
     if noexec {
         ShellInput::NoExec
     } else {
-        ShellInput::Stdin
+        ShellInput::Stdin(index)
     }
 }
 
