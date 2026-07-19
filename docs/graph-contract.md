@@ -1,8 +1,8 @@
 # Graph Contract
 
-remem keeps graph memory SQLite-first. The graph contract adds typed references
-and provenance rules without adopting a graph database or changing retrieval
-behavior.
+remem keeps graph memory SQLite-first. The graph contract adds typed references,
+provenance rules, and bounded trusted-edge retrieval without adopting a graph
+database.
 
 ## Scope
 
@@ -10,10 +10,11 @@ behavior.
 queries keep using it for replacement, merge, split, duplicate, conflict, and
 provenance summaries on durable memories.
 
-`graph_edges` is the first-class cross-node contract for future traversal. It
-can connect memory, entity, fact, episode, state, topic, and file nodes, but
-this PR only defines storage and Rust insertion types. Search, context
-injection, and retrieval ranking do not read `graph_edges` yet.
+`graph_edges` is the first-class cross-node contract for traversal. It can
+connect memory, entity, fact, episode, state, topic, and file nodes. Standard
+memory search reads trusted, currently valid `supersedes`, `mentions`, and
+`touches_file` paths through a bounded `graph_traversal` RRF channel seeded by
+eligible FTS/vector hits. Context injection does not traverse it directly.
 
 ## Node References
 
@@ -102,19 +103,22 @@ Diagnostic hints:
 | `candidate_hint` | Extractor candidate link that has not been promoted. |
 | `co_occurs_with` | Co-occurrence signal useful for debugging or review. |
 
-Diagnostic hints must not be treated as trusted retrieval edges without a later
-promotion operation that writes a trusted edge with full provenance.
+Diagnostic hints are excluded from retrieval ranking. They require a later
+promotion operation that writes a trusted edge with full provenance before
+they can contribute.
 
 ## Compatibility
 
-The graph contract is additive:
+The graph contract remains additive:
 
 - existing `memory_edges` writes and summaries continue unchanged
 - `memory_facts` remains the temporal fact table
 - `memory_state_keys` remains the mutable state identity table
 - `topic_segments` remains the topic continuity/evidence table
-- no search or context behavior reads `graph_edges` yet
+- standard search may expand eligible FTS/vector seeds through bounded trusted
+  paths; empty graphs contribute no candidates and expose a disabled reason
+- context injection does not traverse `graph_edges` directly
 
-Future traversal work should build on `GraphNodeRef`, `GraphEdgeType`,
-`GraphEdgeProvenance`, and `insert_graph_edge` instead of writing stringly typed
-node refs or raw edge type strings in new code.
+Graph writers build on `GraphNodeRef`, `GraphEdgeType`, `GraphEdgeProvenance`,
+and `insert_graph_edge` instead of writing stringly typed node refs or raw edge
+type strings in new code. Retrieval remains read-only and parameterized.

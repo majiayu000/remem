@@ -314,6 +314,7 @@ fn compare_candidates(
         .then_with(|| left.weights.fts.total_cmp(&right.weights.fts))
         .then_with(|| left.weights.vector.total_cmp(&right.weights.vector))
         .then_with(|| left.weights.entity.total_cmp(&right.weights.entity))
+        .then_with(|| left.weights.graph.total_cmp(&right.weights.graph))
         .then_with(|| left.weights.temporal.total_cmp(&right.weights.temporal))
         .then_with(|| left.weights.fact.total_cmp(&right.weights.fact))
         .then_with(|| {
@@ -414,6 +415,7 @@ fn weight_distance(candidate: SearchWeights, default: SearchWeights) -> f64 {
     (candidate.fts - default.fts).abs()
         + (candidate.vector - default.vector).abs()
         + (candidate.entity - default.entity).abs()
+        + (candidate.graph - default.graph).abs()
         + (candidate.temporal - default.temporal).abs()
         + (candidate.fact - default.fact).abs()
         + (candidate.like_fallback - default.like_fallback).abs()

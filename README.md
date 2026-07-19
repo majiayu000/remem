@@ -453,18 +453,19 @@ profiles that need backfill.
 
 ## Search Architecture
 
-remem uses 4-channel Reciprocal Rank Fusion (RRF) inspired by [Hindsight](https://github.com/vectorize-io/hindsight):
+remem uses multi-channel Reciprocal Rank Fusion (RRF) inspired by [Hindsight](https://github.com/vectorize-io/hindsight):
 
 ```
 Query: "database encryption"
         |
    +----+------------------------------------+
-   |          4 parallel channels            |
+   |       parallel retrieval channels       |
    +-----------------------------------------+
    | 1. FTS5 (BM25)   trigram + OR           |
    | 2. Entity Index  1600+ entities         |
    | 3. Temporal      "yesterday"/"last week" |
    | 4. LIKE fallback short tokens           |
+   | 5. Trusted graph bounded expansion      |
    +-------------+---------------------------+
                  |
         RRF score = sum(1 / (60 + rank_i))
@@ -474,7 +475,7 @@ Query: "database encryption"
 
 Enhancements:
 
-- Entity graph expansion (2-hop multi-hop retrieval)
+- Entity-index and trusted typed-graph expansion (bounded 2-hop retrieval)
 - Project-scoped entity search (no cross-project leakage)
 - CJK segmentation support
 - Chinese-English synonym expansion

@@ -57,7 +57,7 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 
 | Directory | Status | Notes |
 |---|---|---|
-| `associative-multihop-fixtures/` | Current contract | Product and technical contract for associative entity-hop golden fixtures and the two graph eval arms required before the graph decision gate can be re-evaluated. Refs #676. |
+| `associative-multihop-fixtures/` | Implemented evidence contract | Associative entity-hop golden fixtures used by the literal graph decision gate. GH-853 supplies the trusted `graph_edges` arm and same-head production decision. Refs #676, #853. |
 | `cache-stable-injection/` | Current contract | Product and technical contract for a deterministic, prefix-cache-stable context block: byte-identical renders for unchanged memory state, additive prompt-time injection, and churn evals. Refs #673. |
 | `capacity-eval-axis/` | Current contract | Product and technical contract for the retrieval-quality-vs-store-size degradation curve: seeded corpus synthesis, per-channel metrics, and a regression budget wired into eval gates. Refs #675, #384. |
 | `current-memory-contracts/` | Current contract | Product and technical contract for converging existing memory truth, temporal facts, injection audits, usage feedback, staleness labels, observability, and host/app boundaries without a second rewrite. Refs #381, #383, #384, #385, #390. |

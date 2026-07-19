@@ -90,7 +90,7 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
     let explain = explain.context("query explain should be present")?;
 
     assert!(!memories.is_empty());
-    for expected in ["fts", "entity", "temporal", "vector", "like_fallback"] {
+    for expected in "fts entity temporal vector graph_traversal like_fallback".split_whitespace() {
         assert!(
             explain
                 .channels
