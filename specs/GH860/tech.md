@@ -84,18 +84,21 @@ function positional expander into a string-source helper with an explicit
   successful and failed shift contexts separate while evaluating the immediate
   `&&`/`||` branch, then merge executed and skipped contexts afterward;
 - execute each known command, alias body, function body, ordinary fallback,
-  and fallible assignment/redirection setup outcome against an isolated full
-  shell-state snapshot. A possible alias or function retains an isolated
-  ordinary builtin/external fallback. Setup is branched before command
-  resolution, with failure preserving the pre-command snapshot and reporting a
-  failing status. Known `true`/`false`/`:` status is read after the shared
+  and statically fallible readonly-assignment or redirection setup outcome
+  against an isolated full shell-state snapshot. A possible alias or function
+  retains an isolated ordinary builtin/external fallback. Setup is branched
+  before command resolution, with failure preserving the pre-command snapshot
+  and reporting a failing status; plain assignment prefixes not targeting a
+  known readonly variable do not create a synthetic failure alternative. Known
+  `true`/`false`/`:` status is read after the shared
   `command`/`builtin` wrapper normalizer unless a direct function shadows the
   name. Collect EXIT traps for every terminating alternative before snapshot
   filtering, and discard terminated state from a continuing-state merge while
   preserving its already-collected executable segments;
 - expandable heredocs materialize parent positionals before child-shell scope,
-  and explicit `source /dev/stdin` arguments temporarily replace `$1...` while
-  the sourced body is analyzed.
+  and explicit `source [--] /dev/stdin` arguments temporarily replace `$1...`
+  while the sourced body is analyzed; source success/failure is rebound to the
+  restored caller positional context before `&&`/`||` continues.
 - command-position words materialized from positional expansion retain a
   bounded provenance marker so assignment-prefix and lexical-alias recognition
   are not rerun after expansion; consumers strip that marker only when reading

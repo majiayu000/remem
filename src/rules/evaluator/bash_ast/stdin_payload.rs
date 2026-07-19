@@ -71,7 +71,12 @@ impl CommandCollector {
                 possible_arguments: Vec::new(),
             }),
             |collector| collector.collect_source(&payload),
-        )
+        )?;
+        let success = self.last_positional_success.is_some();
+        let failure = self.last_positional_failure.is_some();
+        self.last_positional_success = success.then(|| self.positional_context.clone()).flatten();
+        self.last_positional_failure = failure.then(|| self.positional_context.clone()).flatten();
+        Ok(())
     }
 
     /// Select the static fd-0 payload after applying Bash redirections left-to-right.

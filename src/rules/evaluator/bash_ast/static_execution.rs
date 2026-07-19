@@ -452,6 +452,36 @@ pub(super) fn static_unset_function_names(tokens: &[String]) -> Option<Vec<&str>
     })
 }
 
+pub(super) fn static_readonly_variable_names(tokens: &[String]) -> Option<Vec<&str>> {
+    let mut index = static_builtin_command_index(tokens)?;
+    if unwrap::semantic_token(tokens.get(index)?) != "readonly" {
+        return None;
+    }
+    index += 1;
+    let mut names = Vec::new();
+    while let Some(token) = tokens.get(index) {
+        let token = unwrap::semantic_token(token);
+        if token == "--" || token.starts_with('-') {
+            index += 1;
+            continue;
+        }
+        let name = token.split_once('=').map_or(token, |(name, _)| name);
+        if is_shell_identifier(name) {
+            names.push(name);
+        }
+        index += 1;
+    }
+    Some(names)
+}
+
+fn is_shell_identifier(value: &str) -> bool {
+    let mut chars = value.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
 pub(super) struct StaticShellCommand {
     pub(super) payload: String,
     pub(super) zero_argument: Option<String>,
@@ -498,17 +528,25 @@ pub(super) fn static_shell_is_bash(tokens: &[String]) -> bool {
 
 pub(super) fn static_source_stdin_arguments(tokens: &[String]) -> Option<&[String]> {
     let index = static_builtin_command_index(tokens)?;
-    if !matches!(unwrap::semantic_token(&tokens[index]), "source" | ".")
-        || !tokens.get(index + 1).is_some_and(|path| {
-            matches!(
-                path.as_str(),
-                "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0"
-            )
-        })
-    {
+    if !matches!(unwrap::semantic_token(&tokens[index]), "source" | ".") {
         return None;
     }
-    Some(tokens.get(index + 2..).unwrap_or_default())
+    let mut path_index = index + 1;
+    if tokens
+        .get(path_index)
+        .is_some_and(|option| unwrap::semantic_token(option) == "--")
+    {
+        path_index += 1;
+    }
+    if !tokens.get(path_index).is_some_and(|path| {
+        matches!(
+            unwrap::semantic_token(path),
+            "/dev/stdin" | "/dev/fd/0" | "/proc/self/fd/0"
+        )
+    }) {
+        return None;
+    }
+    Some(tokens.get(path_index + 1..).unwrap_or_default())
 }
 
 pub(super) enum StaticPositionalChange<'a> {

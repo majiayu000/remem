@@ -16,7 +16,7 @@ impl CommandCollector {
         tokens: Vec<String>,
         command: &SimpleCommand,
     ) -> Result<(), String> {
-        if command_has_fallible_setup(command) {
+        if self.command_has_fallible_setup(command) {
             return self.collect_alternative_shell_states(
                 vec![true, false],
                 true,
@@ -165,6 +165,20 @@ impl CommandCollector {
         self.last_positional_status = status;
     }
 
+    fn command_has_fallible_setup(&self, command: &SimpleCommand) -> bool {
+        command_has_fallible_setup(command)
+            || command
+                .prefix
+                .iter()
+                .flat_map(|items| &items.0)
+                .any(|item| match item {
+                    CommandPrefixOrSuffixItem::AssignmentWord(assignment, _) => self
+                        .readonly_variables
+                        .contains(&assignment.name.to_string()),
+                    _ => false,
+                })
+    }
+
     fn collect_static_function_call(
         &mut self,
         tokens: &[String],
@@ -225,11 +239,10 @@ impl CommandCollector {
 }
 
 pub(super) fn command_has_fallible_setup(command: &SimpleCommand) -> bool {
-    command.prefix.is_some()
-        || command
-            .prefix
-            .iter()
-            .flat_map(|items| &items.0)
-            .chain(command.suffix.iter().flat_map(|items| &items.0))
-            .any(|item| matches!(item, CommandPrefixOrSuffixItem::IoRedirect(_)))
+    command
+        .prefix
+        .iter()
+        .flat_map(|items| &items.0)
+        .chain(command.suffix.iter().flat_map(|items| &items.0))
+        .any(|item| matches!(item, CommandPrefixOrSuffixItem::IoRedirect(_)))
 }

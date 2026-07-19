@@ -10,6 +10,7 @@ use super::{
 pub(super) struct ShellStateSnapshot {
     functions: HashMap<String, Vec<FunctionDefinition>>,
     exported_functions: HashSet<String>,
+    readonly_variables: HashSet<String>,
     active_functions: HashSet<String>,
     aliases: HashMap<String, Vec<AliasDefinition>>,
     pending_aliases: HashMap<String, Option<Vec<AliasDefinition>>>,
@@ -136,6 +137,7 @@ impl CommandCollector {
         ShellStateSnapshot {
             functions: self.functions.clone(),
             exported_functions: self.exported_functions.clone(),
+            readonly_variables: self.readonly_variables.clone(),
             active_functions: self.active_functions.clone(),
             aliases: self.aliases.clone(),
             pending_aliases: self.pending_aliases.clone(),
@@ -160,6 +162,7 @@ impl CommandCollector {
     pub(super) fn restore_shell_state(&mut self, saved: ShellStateSnapshot) {
         self.functions = saved.functions;
         self.exported_functions = saved.exported_functions;
+        self.readonly_variables = saved.readonly_variables;
         self.active_functions = saved.active_functions;
         self.aliases = saved.aliases;
         self.pending_aliases = saved.pending_aliases;
@@ -192,6 +195,7 @@ fn merge_shell_state_snapshots(mut states: Vec<ShellStateSnapshot>) -> Option<Sh
         merged.pending_aliases =
             merge_pending_alias_maps(merged.pending_aliases, state.pending_aliases);
         merged.exported_functions.extend(state.exported_functions);
+        merged.readonly_variables.extend(state.readonly_variables);
         merged
             .active_functions
             .retain(|name| state.active_functions.contains(name));

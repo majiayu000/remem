@@ -3,8 +3,9 @@ use brush_parser::ast::{SimpleCommand, Word};
 use super::function_args::{bare_shell_positional_fields, expand_shell_command};
 use super::static_execution::{
     direct_command_name, static_alias_definitions, static_exit_trap_change, static_monitor_mode,
-    static_positional_change, static_shopt_expand_aliases, static_shopt_lastpipe,
-    static_shopt_nocasematch, static_unalias_names, ExitTrapChange, StaticPositionalChange,
+    static_positional_change, static_readonly_variable_names, static_shopt_expand_aliases,
+    static_shopt_lastpipe, static_shopt_nocasematch, static_unalias_names, ExitTrapChange,
+    StaticPositionalChange,
 };
 use super::static_words::{append_word_variants, static_source_word_variants};
 use super::{
@@ -301,6 +302,10 @@ impl CommandCollector {
     }
 
     pub(super) fn apply_static_shell_state(&mut self, tokens: &[String]) {
+        if let Some(names) = static_readonly_variable_names(tokens) {
+            self.readonly_variables
+                .extend(names.into_iter().map(str::to_string));
+        }
         if let Some(enabled) = static_shopt_expand_aliases(tokens) {
             if enabled || self.execution_is_definite {
                 self.expand_aliases = enabled;
@@ -506,6 +511,7 @@ impl CommandCollector {
         if !inherit {
             self.functions.clear();
             self.exported_functions.clear();
+            self.readonly_variables.clear();
             self.aliases.clear();
             self.pending_aliases.clear();
             self.pending_clear_aliases = false;
@@ -534,6 +540,7 @@ impl CommandCollector {
     ) -> Result<T, String> {
         let saved = self.snapshot_shell_state();
         self.positional_context = None;
+        self.readonly_variables.clear();
         if inherit_exported {
             self.functions
                 .retain(|name, _| self.exported_functions.contains(name));

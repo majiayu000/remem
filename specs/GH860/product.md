@@ -78,14 +78,17 @@ gaps can either miss a forbidden command or report a false block.
    failing status to `&&`/`||` reachability, and `${@:0}` shall include the
    known `$0`. Expandable outer heredocs shall finish
    parent-side expansion before entering a child `-c` scope, while explicit
-   arguments to `source /dev/stdin` shall bind `$1...` only for the sourced
-   body. A command name materialized from a positional shall not be
+   arguments to `source [--] /dev/stdin` shall bind `$1...` only for the
+   sourced body, then restore caller positionals before subsequent control-flow
+   branches. A command name materialized from a positional shall not be
    reclassified as an assignment or passed through lexical alias expansion,
    while recognized wrapper semantics remain active; a here-string positional
    shall preserve embedded source newlines. When statically known paths
-   diverge, each command, alias, function, builtin fallback, and fallible
-   assignment/redirection setup outcome shall execute against an isolated full
-   shell-state snapshot. Setup failure shall preserve pre-command state and a
+   diverge, each command, alias, function, builtin fallback, and statically
+   fallible readonly-assignment or redirection setup outcome shall execute
+   against an isolated full shell-state snapshot. An ordinary assignment
+   prefix shall not invent a setup-failure path. Setup failure shall preserve
+   pre-command state and a
    failing status; normalized `command`/`builtin` wrappers shall retain known
    `true`/`false`/`:` status; every terminating alternative shall run its EXIT
    traps before it can be filtered; and state from a terminated path shall not
@@ -140,9 +143,12 @@ gaps can either miss a forbidden command or report a false block.
       mixed-success `shift` branches, and all-path alias/function presence
       across uncertain redefinitions.
 - [x] Red-first fixtures cover isolated full shell-state alternatives,
-      possible function/builtin fallback, fallible assignment/redirection
-      setup, wrapper-normalized status, terminating-path filtering, and EXIT
-      trap collection for every terminated alternative.
+      possible function/builtin fallback, readonly-assignment/redirection
+      setup, ordinary assignment-prefix status, wrapper-normalized status,
+      terminating-path filtering, and EXIT trap collection for every
+      terminated alternative.
+- [x] Focused fixtures cover `source -- /dev/stdin`, temporary source operands,
+      caller-positional restoration, and possible positional heredoc expansion.
 - [x] A red-first fixture proves a function-shadowed `unset -f` does not erase
       the target function, while `builtin unset -f` still does.
 - [x] Existing rule-evaluator tests continue to pass.
