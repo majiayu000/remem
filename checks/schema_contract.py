@@ -8,7 +8,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from specrail_lib import SUPPORTED_SCHEMA_KEYS
+from schema_validation import SUPPORTED_KEYS as SUPPORTED_SCHEMA_KEYS
 
 
 JSON_TYPES = frozenset(
