@@ -583,6 +583,36 @@ fn force_push_rule_keeps_possible_positional_argv_sets_separate() {
 }
 
 #[test]
+fn force_push_rule_resolves_unset_function_before_builtin_state() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let shadowed = "f(){ git push --force;}; unset(){ :;}; unset -f f; f";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: shadowed.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{shadowed}");
+    assert!(outcome.diagnostics.is_empty(), "{shadowed}");
+
+    for command in [
+        "f(){ git push --force;}; unset(){ :;}; builtin unset -f f; f",
+        "f(){ git push --force;}; unset(){ :;}; builtin command unset -f f; f",
+        "f(){ git push --force;}; unset(){ :;}; builtin -- unset -f f; f",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+}
+
+#[test]
 fn force_push_rule_bounds_possible_positionals_without_dropping_critical_variants() {
     let current = vec!["echo".to_string(), "safe".to_string()];
     let mut possible = (0..300)
