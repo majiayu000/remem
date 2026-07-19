@@ -19,6 +19,10 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 安装路径已经写入 `~/.codex/hooks.json`。本 issue 只审计官方事件面能否补齐 Codex observe 级
 捕获，并产出 go/no-go 结论，不实施第二次迁移。
 
+当前 main 还存在一个必须显式纳入安全门禁的事实：Claude PostToolUse 的 Write/Edit observe 路径
+会读取 `.claude/projects/*/memory/*.md`（不含 `MEMORY.md`）并直接写入 active memory，失败只记录
+warning。`autoMemoryDirectory` 若扩大该读取面，不能沿用这一直接晋升和 warning-only 语义。
+
 ## 目标
 
 - 用隔离的真实 Claude Code 环境验证 `autoMemoryDirectory` 的读取、写入、容量和生命周期行为，
@@ -36,6 +40,9 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 - 不在本 issue 中迁移、扩展或替换 Codex hooks；审计结论若要求运行时变更，另开 issue/spec。
 - 不推断、承诺或硬编码当前未由真实 PoC 确认的 Codex 生成文件格式。
 - 不绕过 `memory_candidates`、人工 review、来源信任分级或投毒隔离。
+- 不把当前 Claude native-memory topic-file 的直接 active-memory 导入扩大到自定义目录；该路径
+  未接入与新来源相同的 redaction、source verdict、candidate review 和 error-visible 契约前，
+  native bridge 必须保持 no-go。
 - 不在项目级 `.claude/settings*.json` 注入 `autoMemoryDirectory`；该设置只允许用户级、策略级或
   显式 `--settings` 范围。
 - 除用户显式 opt-in 后维护 remem 专属文件及 `MEMORY.md` 中的 marker-bounded block 外，不合并、
@@ -45,7 +52,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 ## Behavior Invariants
 
 1. `B-001`：三个交付面均须 PoC 先行。PoC 记录必须包含宿主版本、隔离目录、输入步骤、观察到
-   的文件/事件、退出状态和清理结果；推断或模拟输出不能替代真实 Claude Code/Codex 证据。
+   的文件/事件、退出状态和清理结果；推断或模拟输出不能替代真实 Claude Code/Codex 证据。本次
+   spec recovery 不触碰真实用户目录，也不把未执行的 PoC 写成已完成证据。
 2. `B-002`：Claude `autoMemoryDirectory` 只可在官方允许的用户/策略/显式 settings 范围配置，
    使用绝对路径或 `~/` 路径；不得写项目/本地 settings，也不得越出用户明确选择的目录。
 3. `B-003`：remem 数据库始终是唯一权威；Claude 目录只是可重建的交付 cache。接管启用后，
@@ -72,13 +80,17 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
     格式不识别属于错误。CLI 与 doctor 必须区分这些状态并给出可行动原因。
 12. `B-012`：Codex hooks 审计以 remem 当前官方 `hooks.json` 安装为基线，逐项记录 SessionStart、
     Stop 及可用工具事件的输入字段、触发时机、失败语义和 observe 等价性；结论只能是带缺口清单
-    的 go 或 no-go，不得通过本 issue 静默改变捕获链路。
+    的 go 或 no-go，不得通过本 issue 静默改变捕获链路。审计必须覆盖 core installer 与 Codex
+    plugin 的显式 hooks-only 激活，并证明两条入口生成相同基线；插件仅加载 MCP、未激活 hooks
+    的状态不得被误报为已捕获。
 13. `B-013`：PoC 使用隔离 HOME/数据目录，开始前记录基线，结束后恢复设置并证明没有修改真实
     用户宿主记忆。任何必须触碰真实宿主配置的步骤都需单独人工确认。
 14. `B-014`：导入和 doctor 输出不得泄露 memory 正文、凭据、token、绝对路径中的敏感用户名
     或宿主生成的隐私内容；详细诊断使用可安全展示的相对标识或摘要。
-15. `B-015`：研究报告合入并核对、产品/技术 spec 人工批准、`ready_to_implement`、最终 review、
-    merge 与 release 均保留为 human gates。
+15. `B-015`：遵守 SpecRail v0.2.1。当前 `ready_to_spec` 只授权 `write_spec`；研究报告合入并
+    核对、产品/技术 spec 人工批准、maintainer 设置 `ready_to_implement`、security decision、
+    最终 PR review、merge 与 release 均保留为 human gates。在这些门禁完成前不得生成
+    `tasks.md`、修改 runtime 或声称实现已获授权。
 16. `B-016`：native bridge 激活时，当前激活 manifest 中已由 Claude 原生 memory 交付的 remem
     条目必须从 SessionStart 注入集合排除；未激活、manifest 不完整/过期或回滚后只能走
     SessionStart。不得在一个 SessionStart 中同时交付同一 stable memory id/content hash，也不得
@@ -92,6 +104,11 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 18. `B-018`：任何 record 在写 event、candidate、embedding 或索引前必须通过既有 secret-redaction
     边界。检测到 secret、redaction 失败或分类器出错时，整批 apply 失败且不持久化正文、正文摘要、
     candidate 或“已导入”标记；dry-run 只报告脱敏文件标识和 `secret_blocked` 计数。
+19. `B-019`：Claude native-memory 的输入与输出必须有独立、可证明的所有权边界。现有
+    topic-file observe 直接写 active memory、warning-only 失败或任何 source-taint 缺口仍存在时，
+    `autoMemoryDirectory` 接管不得激活。若后续保留该输入能力，它必须先复用已批准的统一
+    redaction/poisoning verdict、candidate review、事务和 error-visible 契约；remem 自己生成的
+    delivery files 还必须被明确排除，避免自摄取循环。
 
 ## 验收标准
 
@@ -113,7 +130,11 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
       原文 hash、candidate、embedding 或导入标记。
 - [ ] doctor 能区分未配置、可用、不可读和不支持格式，且不输出记忆正文或 secret。
 - [ ] Codex hooks 审计使用真实会话事件，明确与 Claude observe 粒度的覆盖差异及 go/no-go，且
-      本 issue 不改变 hooks 运行时。
+      本 issue 不改变 hooks 运行时；core installer、plugin hooks-only 激活和 plugin-only MCP
+      三种状态均被区分。
+- [ ] Claude native-memory 输入路径已通过 closure audit：不得把 remem 生成文件摄取回 active
+      memory；直接 active-memory 晋升、warning-only 失败或未统一 source verdict 任一仍存在时，
+      `autoMemoryDirectory` 激活测试必须得到 no-go。
 - [ ] focused tests、格式/编译检查、完整测试和真实 PoC 清理检查通过。
 - [ ] spec PR 与 implementation PR 分离；本 spec 只有 product/tech，不含 tasks 或运行时代码。
 
@@ -124,6 +145,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
 - Claude MEMORY.md 或主题文件已存在：不得盲目拼接或截断；PoC 必须验证官方加载上限与 remem
   生成内容的去重边界。如果不移动/截断既有 startup-loaded 用户内容就没有足够窗口容纳 remem
   交付块，native bridge 必须保持关闭并继续只用 SessionStart。
+- Claude 在接管目录内写 topic file，或 remem 自己写 `remem_sessions.md`：输入 watcher 必须根据
+  receipt、canonical path 与文件 ownership 明确区分；无法证明不会自摄取或直接晋升时停止激活。
 - 同一 Claude 项目有多个 worktree：不得因路径归一化让不同项目误共享或让同项目重复注入。
 - Codex 目录为空、包含子目录、临时文件、符号链接、超大文件、非 UTF-8、并发写入或在扫描后
   被替换：必须遵守已验证格式与一致性边界，未知项不能静默忽略。
@@ -133,6 +156,8 @@ issue 与官方宿主文档已经支持的行为写成可审查契约。
   禁止把正文解释为命令、路径或配置。
 - 数据库在 apply 中失败：事务回滚，源文件不变，下次运行仍可重试。
 - 宿主升级改变格式或事件 schema：版本指纹不匹配即 fail-visible；先补 PoC/spec，再扩适配器。
+- Codex plugin 已加载但未显式激活 hooks：MCP 可用不等于 SessionStart/Stop 自动捕获已启用；
+  status、doctor 与审计必须报告真实状态。
 
 ## 发布说明
 
