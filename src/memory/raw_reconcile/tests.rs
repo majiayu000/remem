@@ -534,6 +534,15 @@ fn since_skipped_identity_outside_window_does_not_make_reconcile_stale() {
     )
     .expect("index but skip old transcript");
     assert_eq!(summary.skipped, 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT event_index_status FROM raw_session_identities",
+            [],
+            |row| row.get::<_, String>(0)
+        )
+        .expect("read since-index status"),
+        "since_indexed"
+    );
 
     let report = reconcile_raw_archive(&conn, &[root.scan_root()], 200, 300)
         .expect("ignore indexed v0 identity outside requested event window");
@@ -541,6 +550,30 @@ fn since_skipped_identity_outside_window_does_not_make_reconcile_stale() {
     assert!(report.parity);
     assert_eq!(report.transcript.messages, 0);
     assert_eq!(report.archive.messages, 0);
+}
+
+#[test]
+fn failed_unindexed_v0_identity_cannot_bypass_stale_check() {
+    let conn = setup();
+    let root = TempRoot::new("failed-v0");
+    root.write("malformed.jsonl", &["{not-json", r#"{"type":"summary"}"#]);
+    let summary = run_ingest_sessions(&conn, &[root.scan_root()], &IngestOptions::default())
+        .expect("failed ingest returns summary");
+    assert_eq!(summary.failed_files, 1);
+    assert_eq!(
+        conn.query_row(
+            "SELECT event_index_status FROM raw_session_identities",
+            [],
+            |row| row.get::<_, String>(0)
+        )
+        .expect("read failed-ingest index status"),
+        "pending"
+    );
+
+    let error = reconcile_raw_archive(&conn, &[root.scan_root()], 100, 200)
+        .expect_err("unindexed failed ingest must remain stale");
+
+    assert!(error.to_string().contains("stale or missing entries"));
 }
 
 #[test]

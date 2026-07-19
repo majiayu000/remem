@@ -35,6 +35,7 @@ pub(in crate::migrate) const V071_SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     identity_column!("status"),
     identity_column!("conflict_reason"),
     identity_column!("contract_version"),
+    identity_column!("event_index_status"),
     identity_column!("observed_mtime_ns"),
     identity_column!("observed_size_bytes"),
     identity_column!("first_event_epoch"),

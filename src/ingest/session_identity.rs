@@ -53,6 +53,7 @@ pub(crate) struct IdentityRecord {
     pub legacy_project: String,
     pub status: String,
     pub contract_version: i64,
+    pub event_index_status: String,
     pub observed_mtime_ns: i64,
     pub observed_size_bytes: i64,
     pub first_event_epoch: Option<i64>,
@@ -199,6 +200,12 @@ pub(crate) fn upsert_claim(conn: &Connection, plan: &TranscriptPlan, now: i64) -
             observed_mtime_ns = excluded.observed_mtime_ns,
             observed_size_bytes = excluded.observed_size_bytes,
             contract_version = CASE WHEN ?10 THEN 0 ELSE contract_version END,
+            event_index_status =
+                CASE WHEN ?10 THEN 'pending' ELSE event_index_status END,
+            first_event_epoch = CASE WHEN ?10 THEN NULL ELSE first_event_epoch END,
+            last_event_epoch = CASE WHEN ?10 THEN NULL ELSE last_event_epoch END,
+            missing_event_time_count =
+                CASE WHEN ?10 THEN 0 ELSE missing_event_time_count END,
             last_seen_at_epoch = excluded.last_seen_at_epoch",
         params![
             plan.source_root,
@@ -318,8 +325,9 @@ pub(crate) fn load(conn: &Connection, identity_id: i64) -> Result<IdentityRecord
     conn.query_row(
         "SELECT id, source_root, transcript_path, fallback_session_id,
                 canonical_session_id, project, legacy_project, status,
-                contract_version, observed_mtime_ns, observed_size_bytes,
-                first_event_epoch, last_event_epoch, missing_event_time_count
+                contract_version, event_index_status, observed_mtime_ns,
+                observed_size_bytes, first_event_epoch, last_event_epoch,
+                missing_event_time_count
          FROM raw_session_identities WHERE id = ?1",
         [identity_id],
         |row| {
@@ -333,11 +341,12 @@ pub(crate) fn load(conn: &Connection, identity_id: i64) -> Result<IdentityRecord
                 legacy_project: row.get(6)?,
                 status: row.get(7)?,
                 contract_version: row.get(8)?,
-                observed_mtime_ns: row.get(9)?,
-                observed_size_bytes: row.get(10)?,
-                first_event_epoch: row.get(11)?,
-                last_event_epoch: row.get(12)?,
-                missing_event_time_count: row.get(13)?,
+                event_index_status: row.get(9)?,
+                observed_mtime_ns: row.get(10)?,
+                observed_size_bytes: row.get(11)?,
+                first_event_epoch: row.get(12)?,
+                last_event_epoch: row.get(13)?,
+                missing_event_time_count: row.get(14)?,
             })
         },
     )
@@ -364,6 +373,7 @@ pub(crate) fn index_events(path: &str, byte_limit: u64) -> Result<EventIndex> {
     let mut index = EventIndex::default();
     crate::memory::raw_transcript::stream_transcript_lines(path, Some(byte_limit), |line, _| {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            index.missing_event_time_count += 1;
             return;
         };
         if let Some(epoch) = crate::memory::raw_transcript::transcript_timestamp_epoch(&value) {
@@ -371,7 +381,7 @@ pub(crate) fn index_events(path: &str, byte_limit: u64) -> Result<EventIndex> {
                 Some(index.first_event_epoch.map_or(epoch, |old| old.min(epoch)));
             index.last_event_epoch =
                 Some(index.last_event_epoch.map_or(epoch, |old| old.max(epoch)));
-        } else if crate::memory::raw_transcript::parse_transcript_message(&value).is_some() {
+        } else {
             index.missing_event_time_count += 1;
         }
     })?;
@@ -400,6 +410,29 @@ pub(crate) fn record_unfinalized_event_index(
     Ok(())
 }
 
+pub(crate) fn record_since_skipped_event_index(
+    conn: &Connection,
+    identity_id: i64,
+    index: EventIndex,
+    now: i64,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE raw_session_identities
+         SET event_index_status = 'since_indexed',
+             first_event_epoch = ?2, last_event_epoch = ?3,
+             missing_event_time_count = ?4, last_seen_at_epoch = ?5
+         WHERE id = ?1 AND status = 'active'",
+        params![
+            identity_id,
+            index.first_event_epoch,
+            index.last_event_epoch,
+            index.missing_event_time_count,
+            now
+        ],
+    )?;
+    Ok(())
+}
+
 pub(crate) fn mark_complete(
     conn: &Connection,
     identity_id: i64,
@@ -408,7 +441,8 @@ pub(crate) fn mark_complete(
 ) -> Result<()> {
     conn.execute(
         "UPDATE raw_session_identities
-         SET contract_version = 1, first_event_epoch = ?2, last_event_epoch = ?3,
+         SET contract_version = 1, event_index_status = 'complete',
+             first_event_epoch = ?2, last_event_epoch = ?3,
              missing_event_time_count = ?4, last_seen_at_epoch = ?5
          WHERE id = ?1 AND status = 'active'",
         params![

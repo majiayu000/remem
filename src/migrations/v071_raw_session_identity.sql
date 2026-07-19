@@ -11,6 +11,8 @@ CREATE TABLE raw_session_identities (
     status TEXT NOT NULL CHECK(status IN ('active', 'conflict')),
     conflict_reason TEXT,
     contract_version INTEGER NOT NULL DEFAULT 0,
+    event_index_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(event_index_status IN ('pending', 'since_indexed', 'complete')),
     observed_mtime_ns INTEGER NOT NULL,
     observed_size_bytes INTEGER NOT NULL,
     first_event_epoch INTEGER,

@@ -9,7 +9,8 @@ Migration v071 adds `raw_session_identities` keyed by
 `(source_root, transcript_path)` and a separate
 `raw_session_identity_claims` history. Ledger rows retain canonical and
 fallback IDs, current and legacy project aliases, sticky conflict state,
-captured mtime/size, event range, missing-time count, and contract version.
+captured mtime/size, event range, missing-time count, explicit event-index
+status, and contract version.
 
 `raw_messages` stores `event_time_source`, `transcript_identity_id`, and the
 complete JSONL record ordinal. A partial unique index makes occurrence replay
@@ -42,10 +43,11 @@ Reconciliation:
 1. rejects an inverted window and missing required roots;
 2. captures a file descriptor, byte boundary, mtime, and size;
 3. requires an exact ledger tuple before content parsing; files skipped by an
-   ingest `--since` mtime bound retain an unfinalized event index and can be
-   omitted when wholly outside the requested event window, while selected
-   active identities require a version-1 cursor and current sticky conflicts
-   remain version 0;
+   ingest `--since` mtime bound retain an explicit `since_indexed` event index
+   and can be omitted when wholly outside the requested event window, while
+   pending version-0 rows from failed ingestion remain stale, selected active
+   identities require a version-1 cursor, and current sticky conflicts remain
+   version 0;
 4. selects event-range intersections plus missing-time-bearing files;
 5. classifies complete records with the shared parser and window precedence;
 6. compares internal `(identity, ordinal, role, content_hash)` multisets for

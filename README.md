@@ -880,9 +880,9 @@ precedence over filename fallbacks, Stop and batch ingest use the same
 identity, repeated identical turns retain separate occurrence ordinals, and
 event-time provenance distinguishes transcript timestamps from ingest
 fallbacks and legacy unknowns. Re-running the command is incremental and
-idempotent; `--since`-skipped files still receive an event-range index for
-later bounded reconciliation, and ambiguous identity claims fail visibly
-without rewriting raw rows.
+idempotent; `--since`-skipped files receive an explicitly marked event-range
+index for later bounded reconciliation, failed unindexed files remain stale,
+and ambiguous identity claims fail visibly without rewriting raw rows.
 
 Use raw time-window queries for recap or audit workflows that need original
 chat turns rather than curated memories:

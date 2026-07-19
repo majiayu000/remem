@@ -252,7 +252,8 @@ fn capture_candidates(
                 .first_event_epoch
                 .zip(identity.last_event_epoch)
                 .is_some_and(|(first, last)| first <= until_epoch && last >= since_epoch);
-            if !is_conflict && !intersects && identity.missing_event_time_count == 0 {
+            let outside_window = !intersects && identity.missing_event_time_count == 0;
+            if !is_conflict && outside_window && identity.event_index_status == "since_indexed" {
                 continue;
             }
             if !is_conflict
@@ -266,6 +267,9 @@ fn capture_candidates(
                     )?)
             {
                 stale_count += 1;
+                continue;
+            }
+            if !is_conflict && outside_window {
                 continue;
             }
             if !captured_identity_ids.insert(identity.id) {

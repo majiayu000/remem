@@ -213,7 +213,7 @@ pub fn run_ingest_sessions(
                     u64::try_from(plan.observed_size_bytes).unwrap_or(u64::MAX),
                 )
                 .and_then(|index| {
-                    super::session_identity::record_unfinalized_event_index(
+                    super::session_identity::record_since_skipped_event_index(
                         conn,
                         *identity_id,
                         index,

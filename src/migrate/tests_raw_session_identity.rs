@@ -152,6 +152,8 @@ fn v071_enforces_identity_foreign_keys_and_closed_values() -> Result<()> {
         |row| row.get(0),
     )?;
     assert!(identity_sql.contains("CHECK(status IN ('active', 'conflict'))"));
+    assert!(identity_sql
+        .contains("CHECK(event_index_status IN ('pending', 'since_indexed', 'complete'))"));
     assert!(claim_sql
         .contains("CHECK(identity_source IN ('transcript_metadata', 'filename_fallback'))"));
     assert!(raw_sql.contains("'transcript_event', 'ingest_fallback', 'legacy_unknown'"));

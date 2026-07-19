@@ -54,6 +54,8 @@ CREATE TABLE raw_session_identities (
         CHECK(status IN ('active', 'conflict')),
     conflict_reason TEXT,
     contract_version INTEGER NOT NULL DEFAULT 0,
+    event_index_status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(event_index_status IN ('pending', 'since_indexed', 'complete')),
     observed_mtime_ns INTEGER NOT NULL,
     observed_size_bytes INTEGER NOT NULL,
     first_event_epoch INTEGER,
@@ -309,15 +311,18 @@ Processing:
 2. Open each discovered path, capture its file-descriptor mtime/size tuple and
    immutable read boundary once, then require that captured tuple to match its
    ledger entry exactly. `ingest-sessions --since` records an unfinalized event
-   index for files excluded by the mtime bound; an indexed version-0 identity
-   wholly outside the requested event window is omitted, while a selected
-   active identity must match a version-1 cursor. Sticky conflict identities
-   remain contract version 0 because ingestion deliberately refuses mutation;
-   when their ledger tuple is current, stream their captured boundary directly
-   so the report can count window-relevant conflicts. Reject other stale,
-   missing, or extra required-root entries with an actionable
-   `run remem ingest-sessions` diagnostic. Appends after the captured boundary
-   are outside this run.
+   index with explicit `event_index_status = 'since_indexed'` for files
+   excluded by the mtime bound; only that state may omit a version-0 identity
+   wholly outside the requested event window. Pending version-0 rows from
+   failed normal ingestion remain stale, and malformed or untimestamped records
+   keep the identity window-relevant rather than producing an empty-index
+   bypass. A selected active identity must match a version-1 cursor. Sticky
+   conflict identities remain contract version 0 because ingestion
+   deliberately refuses mutation; when their ledger tuple is current, stream
+   their captured boundary directly so the report can count window-relevant
+   conflicts. Reject other stale, missing, or extra required-root entries with
+   an actionable `run remem ingest-sessions` diagnostic. Appends after the
+   captured boundary are outside this run.
 3. Select files whose inclusive first/last event bounds can intersect the
    requested window, plus every file whose ledger
    `missing_event_time_count > 0`. Stream only complete records through each
