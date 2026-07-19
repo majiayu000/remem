@@ -81,9 +81,12 @@ Issue 引用的仓库研究报告
    不含原文的时间/计数；重复处理同一 range 不得新建重复 summary 或重复调用模型。
 8. `B-008`：SessionStart/context、Claude native memory、后续 observation/summary prompt、user-context
    extraction/recall 及任何其它 model-visible reader 必须通过同一 eligibility gate 读取 recent
-   session summaries，并复扫 legacy 或当前可注入文本。未持有精确 acknowledgement 的任何命中
-   summary 都必须 fail closed 地排除，同时返回其余安全输入并记录 error 级、可观测的 block；
-   scanner、schema 或状态查询失败时也不得把该 summary 交给模型或衍生写入。
+   session summaries。gate 必须在返回 row 前扫描所有下游 sink 可见字段的规范并集，而不是只扫描
+   当前 renderer 使用的字段；对有 exact source binding 的 legacy/current row 还必须重新加载 source
+   evidence 并复算与 quarantine 时相同的 source + generated combined verdict。未持有本次完整 verdict
+   精确 acknowledgement 的任何命中 summary 都必须 fail closed 地排除，同时返回其余安全输入并记录
+   error 级、可观测的 block；scanner、source、schema 或状态查询失败时也不得把该 summary 交给模型
+   或衍生写入。
 9. `B-009`：summary review 必须复用现有 governance 的 `acknowledge_pattern` 语义和审计事件，
    以显式 target kind 区分 memory 与 session summary；不得建立自动批准或互不相认的第二套 review
    queue。旧 CLI/MCP 调用未提供 target kind 时必须继续只作用于 memory。
@@ -105,9 +108,13 @@ Issue 引用的仓库研究报告
 14. `B-014`：quarantine、block、acknowledgement 和 side-effect release 的审计/log/status 只能包含
     稳定 ID、项目、阶段、pattern、version、trust、时间和计数；原始/生成内容最多提供再次 redaction
     后的有界 preview，默认输出不得包含载荷或 secret。
-15. `B-015`：升级前的 session summaries 必须迁移为保守的 `legacy_unscanned`，不批量调用 LLM、
-    不自动 acknowledgement。它们在首次注入前复扫：无命中可继续使用，命中或扫描失败按 `B-008`
-    处理；既有 memory/candidate 的 GH-672 acknowledgement 语义保持兼容。
+15. `B-015`：升级前的 session summaries 必须迁移为保守的 `legacy_unscanned`，并持久化不可伪造的
+    migration-origin provenance；不批量调用 LLM、不自动 acknowledgement。它们在首次注入前按
+    `B-008` 复扫：有完整 exact source binding 时使用 combined verdict；仅对经 migration provenance
+    证明、且升级时全部 source-binding 列均为空（历史上从未绑定）的 row，允许扫描全部 model-visible
+    generated fields 的 `legacy_generated_only` 模式。该模式命中后仍须 quarantine，但可由人工用精确 ID/version、reason、
+    actor 与确认 acknowledgement；runtime/current row 缺 source 必须继续 fail closed。既有 memory/
+    candidate 的 GH-672 acknowledgement 语义保持兼容。
 16. `B-016`：空 event range 继续产生既有 `EmptyRange` 结果；合法但所有结构化字段为空的 rollup
     仍须依据 summary 与 source range 判定。redaction 后所有生成字段均为空、缺失 required field 或
     输出无法解析时必须作为显式 extraction failure，不得写入伪安全的空 summary。
@@ -147,10 +154,13 @@ Issue 引用的仓库研究报告
 25. `B-025`：`poisoning_side_effects_released_at_epoch` 只能表示所有要求的 checkpointed side effects
     已完成，不能作为“已开始”标记提前写入。中途失败必须保留未完成 checkpoints 和空 completion
     marker，使同一 worker lease 的后续 retry 只补齐剩余工作；全部成功后才原子写 completion marker。
-26. `B-026`：summary acknowledgement 必须用与 quarantine 时相同的 source + generated combined
-    verdict 重验当前 generation。source-only laundering 命中必须从 exact captured evidence range
-    重新计算；只扫描 summary body、无法加载绑定 source、或 verdict identity/version 不一致均必须
-    拒绝且不发生部分写入。
+26. `B-026`：summary acknowledgement 必须重验 quarantine 时记录的 evidence mode 与当前 generation。
+    `source_bound` row 使用相同的 source + generated combined verdict；source-only laundering 命中必须
+    从 exact captured evidence range 重新计算，只扫描 summary body、无法加载绑定 source、或 verdict
+    identity/version 不一致均必须拒绝。唯一例外是 `B-015` 证明的 migration-origin
+    `legacy_generated_only` row：必须扫描全部 model-visible generated fields，并确认当前 match 与该
+    generated-only quarantine generation 精确一致；该例外不得被 runtime/current writer 选择。两条
+    路径任一验证失败都不得 acknowledgement 或发生部分写入。
 
 ## 验收标准
 
@@ -162,7 +172,8 @@ Issue 引用的仓库研究报告
 - [ ] quarantined summary 可用现有 governance action 的显式 summary target dry-run、拒绝错误 ack、
       接受准确 ack，并在并发/重试测试中只释放一次 checkpointed side effects。
 - [ ] legacy summary 在所有 model-visible reader 前复扫；命中、scanner error、schema/query error
-      都 fail closed 且可见，安全 legacy summary 保持兼容。
+      都 fail closed 且可见，安全 legacy summary 保持兼容；source-bound row 的新 pattern generation
+      必须重扫 exact source，migration-origin 无 source row 的 generated-only false positive 可精确确认。
 - [ ] 只有升级 fixture 的既有 row 会成为 `legacy_unscanned`；所有运行期 summary writer 在完整 source
       evidence 不可取得时返回错误、零 derived row/side effect，retry 不重复 LLM 且不能把状态回退为
       legacy/safe。
@@ -173,7 +184,8 @@ Issue 引用的仓库研究报告
 - [ ] quarantined rollup 的 pending segments 在 ack 前不可见，ack 后无需重调 LLM 即可按 checkpoint
       释放；任一副作用失败时 completion marker 保持为空，retry 只补齐剩余工作。
 - [ ] source-only laundering quarantine 的 ack 重载 exact source range 并计算 combined verdict；
-      只扫描生成 summary 的错误实现被 negative fixture 拒绝。
+      只扫描生成 summary 的错误实现被 negative fixture 拒绝；每个 model-visible structured field 都有
+      sink fixture，且 generated-only acknowledgement 仅接受不可伪造的 migration-origin row。
 - [ ] doctor、CLI status 与 API status 的 fresh/stale/error case 均提供不含载荷/secret 的 poisoning
       计数和诊断。
 - [ ] adversarial-policy 与新的 capture E2E eval 为确定性、离线且包含恶意/无害引用对照；相关
