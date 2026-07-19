@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.12` for GH-720 SP720-T5: `remem raw messages`
+  exports one exact `(source_root, project, session_id)` tuple with full stored
+  content, stable `(created_at_epoch, id)` ordering, and selector-bound
+  snapshot cursors for lossless downstream session consumers. Release metadata
+  stays `unreleased` until publication.
 - Staged source version `0.6.11` for GH-853: standard memory search now expands
   eligible FTS/vector seeds through bounded trusted `graph_edges` paths, with
   deterministic RRF ordering, explicit empty reasons, and a same-head literal
