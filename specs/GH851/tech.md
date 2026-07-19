@@ -211,9 +211,10 @@ non-regression，主指标 delta 必须 `>= 0.05`。现有其他 gated slices/ov
 shipping gate 只接收 maintainer 审阅并冻结的 PoC artifact：exact preset/revision/files/hash、top-N/top-k、
 document input limit、预登记指标、A/B raw metrics、参考机器、最小样本数、cold/warm 策略、warm rerank
 p95 增量预算、cold SessionStart p95 总预算及超预算处置。同时必须补回并审阅 issue 所引用的原始研究
-报告；不得由本 spec 或 PoC 对 issue 摘要做二次转述。只有这些证据分别获批且 `spec_approval` 与
-`ready_to_implement` 都存在，才能生成 implementation tasks/修改 runtime。default-on 仍是实现完成后
-独立 gate，要求 fresh CI、golden A/B、p95、人工 review、merge 和 release 授权全部满足。
+报告；不得由本 spec 或 PoC 对 issue 摘要做二次转述。`tasks.md` 可以预先记录这些依赖和后续工作，
+但不构成任何授权；只有这些证据分别获批且 `spec_approval` 与 `ready_to_implement` 都存在，才能执行
+implementation tasks 或修改 runtime。default-on 仍是实现完成后独立 gate，要求 fresh CI、golden
+A/B、p95、人工 review、merge 和 release 授权全部满足。
 
 ### 7. 配置、启用与回滚边界
 
@@ -238,9 +239,9 @@ p95 增量预算、cold SessionStart p95 总预算及超预算处置。同时必
 5. rerank-off/on 配对 eval artifact、预登记主指标及 >=0.05 本地提升证据。
 
 原始报告必须由可审阅的源文件关闭 blocker，本 spec 不重述其缺失内容。2-5 可以由第 6 节所述、
-明确人工批准的隔离 PoC 产出，但 PoC 完成不关闭第 1 项，也不改变本文件 Draft 状态。全部证据批准前
-不创建 `tasks.md`、不进入 `ready_to_implement`、不修改 runtime；implementation 完成后还必须单独
-通过 default-on gate。
+明确人工批准的隔离 PoC 产出，但 PoC 完成不关闭第 1 项，也不改变本文件 Draft 状态。全部证据批准前，
+`tasks.md` 中的 implementation tasks 保持 pending/blocked，不进入 `ready_to_implement`、不修改
+runtime；implementation 完成后还必须单独通过 default-on gate。
 
 ## Product-to-Test Mapping
 
@@ -367,6 +368,6 @@ commit 及其版本同步，不回滚/改写历史 spec。模型 manifest/schema
 版本或显式失败，不能自动加载未验证资产。
 
 本文件只定义技术 draft，不是 `spec_approval`。Refs #851 / #849；第 6 节的隔离 PoC 只有在明确人工
-授权后才可生成证据，且不授权 runtime。只有 maintainer 关闭第 8 节全部 blocker、批准本 spec 并将
-issue 置于 `ready_to_implement` 后，才可创建 `tasks.md` 或开始 runtime implementation。最终 review、
-merge、release 和 default-on 仍是彼此独立的 human gates。
+授权后才可生成证据，且不授权 runtime。`tasks.md` 只记录后续依赖与工作，不授予执行权限；只有
+maintainer 关闭第 8 节全部 blocker、批准本 spec 并将 issue 置于 `ready_to_implement` 后，才可开始
+runtime implementation。最终 review、merge、release 和 default-on 仍是彼此独立的 human gates。
