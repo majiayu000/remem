@@ -1,6 +1,6 @@
 {
   "upstream_repo": "https://github.com/majiayu000/specrail",
-  "upstream_sha": "75628b21ef676691344e1671f953644ef36da46e",
+  "upstream_sha": "0f903abe1794899071a9f19a4c46af1ce81129d3",
   "excluded": [
     "checks/check_workflow.py",
     "checks/schema_contract.py"
@@ -15,12 +15,24 @@
       "sha256": "eab228a33d84a43cde1ba3587d5edde50993ae11c5c5a522ee8d01b64b284d55"
     },
     {
+      "path": "checks/github_approved_spec_evidence.py",
+      "sha256": "d0bdb004586ec4e73870491e4590ca264a0fb298b4c16593c7369de51110ecc6"
+    },
+    {
+      "path": "checks/github_pr_snapshot.py",
+      "sha256": "ccc3dd834b07043c3f8b7f8d44cb893ad8e462ded0b2f62d8aae871f80549e12"
+    },
+    {
+      "path": "checks/sensitive_enforcement.py",
+      "sha256": "5aec14d61f7c473a24685a95d07afdaab1bb74ba0e6ee1d489f8f988ec5a7df8"
+    },
+    {
       "path": "checks/github_evidence_common.py",
-      "sha256": "46a28a0064c39291d76847b4250071fa0cfaeb48dcd8374acffa0d65e9158c05"
+      "sha256": "5494a59c862957cbfd8dc1c1399f18dbc84025b615e85fbe02a29bdfde6fb6ab"
     },
     {
       "path": "checks/github_issue_evidence.py",
-      "sha256": "cbeec2fe91fa5bfe40a855f5148d85f8880d10d8c2bbe91ef607094a50b6608e"
+      "sha256": "c7574a3bb0134fb8dc6ce34d64ea295a928007456adaa021b1fd356e6007fd0e"
     },
     {
       "path": "checks/github_issue_reference.py",
@@ -28,31 +40,59 @@
     },
     {
       "path": "checks/github_pr_evidence.py",
-      "sha256": "c2eff0eae0c90ace041b2a994e85fe8cc98f55deb7b320f7caaca6f1f510f022"
+      "sha256": "8a5072f5c0cb82545ace761775abe8383d45a4e27917316d2578ed94d05fe0a8"
     },
     {
       "path": "checks/pr_gate.py",
-      "sha256": "df3c6ca555b22f976d09a961d9945705530f302f2578208bac909805626a0405"
+      "sha256": "c656aa2e5988dd39f578eab42abf9da1dbf55cee55eda06eefa13bcfabdeac9e"
     },
     {
       "path": "checks/review_json_gate.py",
-      "sha256": "1d2adf224f81079e75149c4650fd79e3858ff4072bfac632747ad303a4e0f0ae"
+      "sha256": "a1774f59cbab3b9228c6ce846acfdf7175ee9b1d97c40627c18647a94f5031ee"
     },
     {
       "path": "checks/route_gate.py",
-      "sha256": "80277a491b8e1001339ab35b9bcde7311fd176f42bca5c1a4cdb86e8f480af8b"
+      "sha256": "d77cad0763713ca589be1c4278edcec7c90c017bc383fd6a7976402be22a7433"
     },
     {
       "path": "checks/runtime_gate_rules.py",
-      "sha256": "74b2901f13ba59eee9b7d95687732b13552e57412b08ea5000c8a2b06872e2f5"
+      "sha256": "9be5b7d6b25b5a24fe021bd3aa60caa935d2d5b008df47e89f8dec0a41da3690"
     },
     {
       "path": "checks/runtime_ledger_gate.py",
-      "sha256": "e2bc317062d895e6b9c1ee16d1d334ec74b45c82b1d3b67b7d113ada8ba57cee"
+      "sha256": "f523c7fac883460ef9bd2bb6a91d61194b348cf2a9dcb12bb1ffc77facf6e8c3"
     },
     {
       "path": "checks/specrail_lib.py",
-      "sha256": "b6139fd8c2961b2457eb1794250b1e0c02ab67ea58a0b2f324a85eb2755bfec0"
+      "sha256": "64faa5415aea51609ffeebdf46d2cc3c3e6ad5e877321c87c115990e704e0d18"
+    },
+    {
+      "path": "checks/session_telemetry.py",
+      "sha256": "2b56873c051edbea17a1c827217d574c7eed2ddde7cb8b5d0121c9d87549a9b9"
+    },
+    {
+      "path": "checks/runtime_budget_dimensions.py",
+      "sha256": "39d7795a123fdfec0986a66a49bc9af19d5056ee7847217faec4a917faca7f13"
+    },
+    {
+      "path": "checks/pr_review_contract.py",
+      "sha256": "5df6c416320e95d99dbcd98fa3a2d6d934e8c4e60f8785e4d845382e1321972c"
+    },
+    {
+      "path": "checks/review_result_semantics.py",
+      "sha256": "6e595c1850d5e138fd470e2d18b12052e92281eccd1928c615809ad3c8199323"
+    },
+    {
+      "path": "checks/github_review_evidence.py",
+      "sha256": "a101dea95f14e3b65dd4c43f19c3c61b0b609b8716ce732c42437c92e7f895dc"
+    },
+    {
+      "path": "checks/rejection_items.py",
+      "sha256": "641d266df9f3e15d5d91de135899e7f6c410b8ee2f254ad8c0e2cb679bd9485b"
+    },
+    {
+      "path": "checks/schema_validation.py",
+      "sha256": "8fca9ee07bdae2822579de46c09baeebb935bae9cb438191e2cb7199f6a8fc61"
     },
     {
       "path": "schemas/duplicate_work_evidence.schema.json",
@@ -60,15 +100,15 @@
     },
     {
       "path": "schemas/pr_review_gate.schema.json",
-      "sha256": "1a165144eec09b93ed8b794704d27b15ef3f943f8826d35fe289ff08021337eb"
+      "sha256": "d45bd1783da8d9616cfc9156a795d645c0aed505244c3bcaece87cfcc2df166a"
     },
     {
       "path": "schemas/review_result.schema.json",
-      "sha256": "1164adc4e50ff9fc735a6192d9581fae013563c7ad89e33be5dcebd196aa7f8b"
+      "sha256": "e76dae75633def6f2121ac356559711f3161f139a578070d6e1e671d209e57f6"
     },
     {
       "path": "schemas/runtime_checkpoint.schema.json",
-      "sha256": "03d01f0b92d4f76202c1a851b34eadbd20572c0487105b4a110ac0de23c26d3f"
+      "sha256": "1c4b5dffa042904fe5c82193ffc3d535e1bc1d18e4cb38b176ba70fcb17961c1"
     }
   ]
 }
