@@ -8,6 +8,7 @@ use crate::memory::raw_archive::{
 };
 use crate::memory::raw_query::{
     build_raw_search_json, parse_time_lower_bound, parse_time_upper_bound,
+    query_raw_session_messages, RawSessionMessagesRequest,
 };
 use crate::{db, memory::raw_archive::search_raw_messages};
 
@@ -49,6 +50,21 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             sample,
             json,
         ),
+        RawAction::Messages {
+            source_root,
+            project,
+            session_id,
+            limit,
+            cursor,
+            json,
+        } => run_raw_messages(
+            &source_root,
+            &project,
+            &session_id,
+            limit,
+            cursor.as_deref(),
+            json,
+        ),
         RawAction::Reconcile {
             since,
             until,
@@ -61,6 +77,39 @@ pub(in crate::cli) fn run_raw(action: RawAction) -> Result<()> {
             json,
         ),
     }
+}
+
+fn run_raw_messages(
+    source_root: &str,
+    project: &str,
+    session_id: &str,
+    limit: i64,
+    cursor: Option<&str>,
+    json: bool,
+) -> Result<()> {
+    let conn = db::open_db_read_only_current()?;
+    let output = query_raw_session_messages(
+        &conn,
+        &RawSessionMessagesRequest {
+            source_root: source_root.to_string(),
+            project: project.to_string(),
+            session_id: session_id.to_string(),
+            limit,
+            cursor: cursor.map(str::to_string),
+        },
+    )?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+    println!(
+        "{} raw messages for [{source_root}] {project} / {session_id} (order={}, has_more={})",
+        output.count, output.order, output.has_more
+    );
+    if let Some(cursor) = output.next_cursor {
+        println!("Next: remem raw messages --source-root <LABEL> --project <PROJECT> --session-id <SESSION_ID> --cursor {cursor}");
+    }
+    Ok(())
 }
 
 fn run_raw_reconcile(
