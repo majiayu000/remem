@@ -115,6 +115,14 @@ fn sweep_builds_global_rules_for_canonical_projects_without_local_memories() -> 
     crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
     let conn = db::open_db()?;
     insert_sweep_preference(&conn, 1, "/tmp/source", "global", "Use bun, not npm", 1)?;
+    // Production creates global preferences as owner_scope='user' / owner_key='user:default'
+    // (src/user_context/claims.rs DEFAULT_OWNER_KEY); the shared fixture helper hardcodes the
+    // project-scoped owner shape, so normalize this global to its real production shape. The
+    // tightened eligibility gate (GH671/#813) correctly rejects the malformed 'repo' global.
+    conn.execute(
+        "UPDATE memories SET owner_scope = 'user', owner_key = 'user:default' WHERE id = 1",
+        [],
+    )?;
     conn.execute(
         "INSERT INTO workspaces
          (id, root_path, created_at_epoch, updated_at_epoch)

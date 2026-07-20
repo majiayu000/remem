@@ -3,6 +3,17 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.14` for GH-671 / GH-813: the preference-rule
+  compiler now admits a global-scope preference only for the canonical
+  `owner_scope='user'` / `owner_key='user:default'` / no-project-target owner
+  tuple, and unknown owner/scope/risk/review/trust values fail closed instead
+  of compiling. The sweep-project projection uses the same closed predicate.
+  Adds an exhaustive behavior-based eligibility matrix (positive global
+  baseline, one independent negative per dimension, unknown-value fail-closed
+  cases, independently mutable candidate and reinforcement risk, the
+  wrong-owner-scope / wrong-owner-key / project-target regressions, and a
+  cross-state case). No hook or evaluator change. Release metadata stays
+  `unreleased` until publication.
 - Staged source version `0.6.13` for GH-900: the checked-in graph-decision
   report now carries a deterministic length-prefixed SHA-256 fingerprint of
   `eval/golden.json` and every evaluator/retrieval source that can affect the

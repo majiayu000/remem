@@ -38,12 +38,19 @@ Tracking:
   `ca1a804c8f8b8889ac8b2ba29f5f1c8522f17884` supplies doctor enforcement
   health evidence. T8a reconciles task status and public documentation; final
   acceptance remains open.
-- The current compiler still accepts any non-null `owner_scope` for a global
-  row. GH-813 tightens that existing gap to the canonical
-  `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
-  until that implementation and its exhaustive eligibility matrix land,
-  malformed or legacy global ownership is not proven fail-closed, T3/T8 remain
-  incomplete, and #671 must stay open.
+- GH-813's global-owner correction is implemented: the compiler's global
+  eligibility branch and the sweep-project projection now accept only the
+  canonical `owner_scope='user'`, `owner_key='user:default'`, no-target
+  combination. Malformed, legacy, or unknown global ownership fails closed via
+  exact equality against that closed tuple, and the exhaustive behavior-based
+  eligibility matrix in `src/rules/compiler/tests.rs` pins it: the
+  wrong-owner-scope, wrong-owner-key, and project-target regressions were red
+  before the WHERE-clause tightening and green after. The pre-existing sweep
+  fixture (`src/rules/compiler/sweep_tests.rs`) is aligned to the canonical
+  `owner_scope='user'` / `owner_key='user:default'` global tuple (production
+  never creates `owner_scope='repo'` globals; see `default_ownership()` in
+  `src/memory/store/write.rs`), so the full `cargo test` suite is green and
+  #671 closes; #813's remaining process-only follow-ups are tracked separately.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
@@ -353,11 +360,14 @@ hook-side writes.
 - [x] Existing unit tests: basic compile eligibility, conflict resolution,
       supersession removal, artifact atomicity, evaluator determinism, and
       fail-open behavior.
-- [ ] Exhaustive eligibility contract tests: one eligible baseline,
+- [x] Exhaustive eligibility contract tests: one eligible baseline,
       independently mutable candidate and reinforcement risk, one negative per
       dimension, unknown values, closed-enum completeness, and critical
       cross-state cases. Tests remain behavior-based and do not snapshot the
-      SQL/WHERE text.
+      SQL/WHERE text. Landed in `src/rules/compiler/tests.rs`; the four
+      security-critical global-owner negatives (wrong owner_scope, wrong
+      owner_key, project target, unknown owner_scope) were red before the
+      eligibility WHERE-clause/projection tightening and green after.
 - [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).
