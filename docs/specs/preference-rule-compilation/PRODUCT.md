@@ -33,10 +33,19 @@ repeated-correction fixtures, and fixed-budget latency evidence are
 implemented. The compiler uses persisted low-risk, source-trust, and review
 eligibility, combines lifecycle-triggered non-lossy jobs with periodic
 convergence sweeps, preserves same-predicate overrides, and resolves project
-rules ahead of global rules. GH-813 identified that the global-owner filter
-still accepts any non-null owner scope; the exact
-`user`/`user:default`/no-target correction, exhaustive eligibility matrix, and
-final closure remain pending. CLI management and warn-mode round trips are
+rules ahead of global rules. GH-813's global-owner correction is implemented:
+the global-scope eligibility filter now accepts only the canonical
+`owner_scope='user'` / `owner_key='user:default'` / no-project-target tuple,
+and unknown owner/scope/risk/review/trust values fail closed. The exhaustive
+behavior-based eligibility matrix (positive baseline, one independent negative
+per dimension, unknown-value fail-closed cases, independently mutable
+candidate and reinforcement risk, and a cross-state case) is implemented in
+`src/rules/compiler/tests.rs`. The pre-existing sweep fixture
+(`src/rules/compiler/sweep_tests.rs`) is aligned to the canonical
+`owner_scope='user'` / `owner_key='user:default'` global tuple (production
+never creates `owner_scope='repo'` globals), so the full `cargo test` suite is
+green and #671 closes. CLI management and
+warn-mode round trips are
 implemented by #837; Claude Code PreToolUse and supported-host block persistence
 are implemented by #839 at exact head
 `905a55f7219459dd7b33a1805f0d4da27a97622f` (merged as
@@ -108,11 +117,18 @@ implemented and reconciled by #840.
       covered across #837's management/warn tests and #839's supported Claude
       block test; the shared unsupported-pre-execution guard rejects block
       before persisting an override or compile job.
-- [ ] Compiler eligibility has one complete positive fixture, independent
+- [x] Compiler eligibility has one complete positive fixture, independent
       negative coverage for every eligibility dimension, and critical
       cross-state coverage. Candidate risk and reinforcement risk are
       independently mutable; coverage is behavioral and does not snapshot SQL
-      text.
+      text. Implemented in `src/rules/compiler/tests.rs` (global user-default
+      positive baseline; type/lifecycle/expiry/scope-owner-project/trust/
+      machine-checkability/threshold/review/suppression negatives; independent
+      candidate- and reinforcement-risk negatives; unknown owner/scope/risk/
+      review/trust values fail closed; the GH-813 wrong-owner-scope,
+      wrong-owner-key, and project-target regressions; and a risk
+      reclassification cross-state case). The security-critical global-owner
+      negatives were red before the WHERE-clause tightening and green after.
 - [x] Superseding, suppressing, expiring, or deleting the source preference
       removes the rule on the next compile pass, covered by tests.
 - [x] Doctor reports compiled-rule count, last compile time, host capability,
@@ -127,8 +143,11 @@ implemented and reconciled by #840.
 - A rule matching inside quoted or documentation text (for example a prompt
   that merely mentions `npm install`): first implementation only evaluates
   tool-invocation inputs (commands), not prose, to keep false positives low.
-- Global-scope preferences: eligible only when the owner scope is explicit;
-  project rules take precedence over global rules on conflict.
+- Global-scope preferences: eligible only for the canonical
+  `owner_scope='user'` / `owner_key='user:default'` tuple with no project
+  target; any other owner scope/key, a project target, or an unknown value is
+  ineligible (fail closed). Project rules take precedence over global rules on
+  conflict.
 
 ## Rollout Notes
 

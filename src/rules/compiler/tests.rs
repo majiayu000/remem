@@ -16,20 +16,22 @@ fn config(min: i64) -> RuleCompilationConfig {
     }
 }
 
-struct PrefSpec<'a> {
-    id: i64,
-    project: &'a str,
-    content: &'a str,
-    status: &'a str,
-    scope: &'a str,
-    owner_scope: Option<&'a str>,
-    updated_at: i64,
-    expires_at: Option<i64>,
-    reinforcement: i64,
-    machine_checkable: i64,
-    risk_class: &'a str,
-    review_status: &'a str,
-    source_trust_class: &'a str,
+pub(super) struct PrefSpec<'a> {
+    pub(super) id: i64,
+    pub(super) project: &'a str,
+    pub(super) content: &'a str,
+    pub(super) memory_type: &'a str,
+    pub(super) status: &'a str,
+    pub(super) scope: &'a str,
+    pub(super) owner_scope: Option<&'a str>,
+    pub(super) owner_key: Option<&'a str>,
+    pub(super) updated_at: i64,
+    pub(super) expires_at: Option<i64>,
+    pub(super) reinforcement: i64,
+    pub(super) machine_checkable: i64,
+    pub(super) risk_class: &'a str,
+    pub(super) review_status: &'a str,
+    pub(super) source_trust_class: &'a str,
 }
 
 impl Default for PrefSpec<'_> {
@@ -38,9 +40,11 @@ impl Default for PrefSpec<'_> {
             id: 1,
             project: PROJECT,
             content: "Use bun, not npm",
+            memory_type: "preference",
             status: "active",
             scope: "project",
             owner_scope: Some("repo"),
+            owner_key: None,
             updated_at: 100,
             expires_at: None,
             reinforcement: 3,
@@ -52,7 +56,19 @@ impl Default for PrefSpec<'_> {
     }
 }
 
-fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
+/// A legitimate user-default global preference: the only global ownership
+/// tuple the closed eligibility contract accepts.
+pub(super) fn global_default() -> PrefSpec<'static> {
+    PrefSpec {
+        project: "/tmp/global-source",
+        scope: "global",
+        owner_scope: Some("user"),
+        owner_key: Some("user:default"),
+        ..Default::default()
+    }
+}
+
+pub(super) fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_candidates
          (id, scope, memory_type, topic_key, text, evidence_event_ids,
@@ -71,12 +87,13 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
             spec.source_trust_class,
         ],
     )?;
+    let owner_key = spec.owner_key.or(spec.owner_scope.map(|_| PROJECT));
     conn.execute(
         "INSERT INTO memories
          (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
           status, scope, owner_scope, owner_key, expires_at_epoch, source_candidate_id,
           source_trust_class)
-         VALUES (?1, ?2, 'pref', ?3, 'preference', 1, ?4, ?5, ?6, ?7, ?8, ?9, ?1, ?10)",
+         VALUES (?1, ?2, 'pref', ?3, ?11, 1, ?4, ?5, ?6, ?7, ?8, ?9, ?1, ?10)",
         params![
             spec.id,
             spec.project,
@@ -85,9 +102,10 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
             spec.status,
             spec.scope,
             spec.owner_scope,
-            spec.owner_scope.map(|_| PROJECT),
+            owner_key,
             spec.expires_at,
             spec.source_trust_class,
+            spec.memory_type,
         ],
     )?;
     conn.execute(
@@ -107,7 +125,7 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
     Ok(())
 }
 
-fn compile(conn: &Connection) -> Result<Vec<String>> {
+pub(super) fn compile(conn: &Connection) -> Result<Vec<String>> {
     let artifact = compile_project_rules(conn, PROJECT, config(3))?;
     Ok(artifact.rules.iter().map(|r| r.rule_id.clone()).collect())
 }
@@ -449,6 +467,7 @@ fn project_rule_precedes_newer_global_conflict() -> Result<()> {
             content: "Use npm, not bun",
             scope: "global",
             owner_scope: Some("user"),
+            owner_key: Some("user:default"),
             updated_at: 200,
             ..Default::default()
         },
@@ -486,6 +505,7 @@ fn rerouted_project_rule_precedes_newer_global_conflict() -> Result<()> {
             content: "Use npm, not bun",
             scope: "global",
             owner_scope: Some("user"),
+            owner_key: Some("user:default"),
             updated_at: 200,
             ..Default::default()
         },
