@@ -135,8 +135,63 @@ typed/provenance graph writer, then invokes the same traversal core.
 - [ ] `cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json`
 - [ ] version sync, SpecRail workflow/spec checks, and full PR preflight
 
+## GH900 Follow-up: Report Evidence Fingerprint
+
+PR #899 wired the production graph channel but committed
+`eval/graph-decision/report.json` with metrics and a date string only — no
+content fingerprint of `eval/golden.json` or the evaluator/retrieval sources, so
+a stale report could survive source/dataset changes silently (GH-900).
+
+### Mechanism
+
+`src/eval/graph_decision/evidence_fingerprint.rs` computes a deterministic,
+length-prefixed SHA-256 fingerprint (`len(path) || path || len(content) ||
+content`, folded over a stable sorted file list) over:
+
+- the dataset: `eval/golden.json`;
+- the evaluator/retrieval sources that determine the result:
+  `src/eval/golden.rs`, `src/eval/golden/run.rs`, `src/eval/golden/types.rs`,
+  `src/eval/graph_decision.rs`, `src/retrieval/graph.rs`,
+  `src/retrieval/graph/query.rs`, `src/retrieval/graph/traverse.rs`,
+  `src/retrieval/graph/types.rs`, `src/retrieval/search/memory/text/graph.rs`.
+
+The report gains an `evidence_fingerprint` block (`algorithm`,
+`dataset_sha256`, `implementation_sha256`, `combined_sha256`, and the explicit
+per-input `inputs` list with `path`/`role`/`byte_len`/`sha256`). The fingerprint
+module is intentionally not hashed: it does not affect the graph-decision result,
+and hashing itself would be circular (any edit, even test-only, would force a
+regeneration). Fingerprint-logic drift is still caught because a changed
+`compute` yields different digests than the committed report.
+
+### Guard
+
+`checked_in_graph_decision_report_matches_generated_fingerprint` regenerates the
+report from the live tree and asserts the committed `evidence_fingerprint`
+matches, plus the deterministic decision/check/metric-delta fields. Latency
+fields (`deltas.p95_latency_ms`, per-query timings) are excluded because they
+vary per run. A stale report fails loudly with "fingerprint is stale; regenerate
+eval/graph-decision/report.json" (no warn-and-pass). Regenerate with
+`cargo run -- eval-graph-decision --json-out eval/graph-decision/report.json`.
+
+### Completed regression slices (GH-900 test matrix)
+
+`src/retrieval/graph/tests.rs`: `touches_file` two-hop, parameterized
+memory_type/branch/status eligibility, seed/candidate/edge-scan cap fail-closed
+(joining the existing degree-cap test), stable cycle/diamond ordering, read-only
+row invariance plus ignored-edge decode, non-positive-limit validation error, and
+stable per-status `disabled_reason`. The traversal's "invalid bridge kind" and
+"unknown trust" branches are defense-in-depth: the v034 migration enforces edge
+structure (CHECK + `edge_trust IN ('trusted','diagnostic_hint')` + node-existence
+triggers), so those states are unreachable through the graph contract; the
+reachable error behavior is the fail-closed limit/cap validation.
+
+`src/retrieval/search/memory/text/graph.rs`: FTS/vector-only seed selection
+(dedupe + cap), post-suppression channel construction, missing-table channel
+`disabled_reason` plus timing, and real two-hop graph hits with a suppression row.
+
 ## Rollback
 
 Set the graph weight to zero or revert the search-channel wiring and report/ADR
 update. The traversal core and existing graph rows are read-only/additive, so no
-database rollback is needed.
+database rollback is needed. The GH900 fingerprint is additive; rolling it back
+removes the `evidence_fingerprint` report field and its guard test.
