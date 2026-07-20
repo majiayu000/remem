@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.13` for GH-900: the checked-in graph-decision
+  report now carries a deterministic length-prefixed SHA-256 fingerprint of
+  `eval/golden.json` and every evaluator/retrieval source that can affect the
+  result, with a guard test that rejects a stale report. Completes the GH-853
+  focused regression matrix. No traversal ranking or production behavior
+  change. Release metadata stays `unreleased` until publication.
 - Staged source version `0.6.12` for GH-720 SP720-T5: `remem raw messages`
   exports one exact `(source_root, project, session_id)` tuple with full stored
   content, stable `(created_at_epoch, id)` ordering, and selector-bound
