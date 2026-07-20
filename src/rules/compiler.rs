@@ -538,6 +538,8 @@ fn latest_compile_diagnostic(
 }
 
 #[cfg(test)]
+mod eligibility_tests;
+#[cfg(test)]
 mod fixture_tests;
 #[cfg(test)]
 mod sweep_tests;

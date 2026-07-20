@@ -16,22 +16,22 @@ fn config(min: i64) -> RuleCompilationConfig {
     }
 }
 
-struct PrefSpec<'a> {
-    id: i64,
-    project: &'a str,
-    content: &'a str,
-    memory_type: &'a str,
-    status: &'a str,
-    scope: &'a str,
-    owner_scope: Option<&'a str>,
-    owner_key: Option<&'a str>,
-    updated_at: i64,
-    expires_at: Option<i64>,
-    reinforcement: i64,
-    machine_checkable: i64,
-    risk_class: &'a str,
-    review_status: &'a str,
-    source_trust_class: &'a str,
+pub(super) struct PrefSpec<'a> {
+    pub(super) id: i64,
+    pub(super) project: &'a str,
+    pub(super) content: &'a str,
+    pub(super) memory_type: &'a str,
+    pub(super) status: &'a str,
+    pub(super) scope: &'a str,
+    pub(super) owner_scope: Option<&'a str>,
+    pub(super) owner_key: Option<&'a str>,
+    pub(super) updated_at: i64,
+    pub(super) expires_at: Option<i64>,
+    pub(super) reinforcement: i64,
+    pub(super) machine_checkable: i64,
+    pub(super) risk_class: &'a str,
+    pub(super) review_status: &'a str,
+    pub(super) source_trust_class: &'a str,
 }
 
 impl Default for PrefSpec<'_> {
@@ -58,7 +58,7 @@ impl Default for PrefSpec<'_> {
 
 /// A legitimate user-default global preference: the only global ownership
 /// tuple the closed eligibility contract accepts.
-fn global_default() -> PrefSpec<'static> {
+pub(super) fn global_default() -> PrefSpec<'static> {
     PrefSpec {
         project: "/tmp/global-source",
         scope: "global",
@@ -68,7 +68,7 @@ fn global_default() -> PrefSpec<'static> {
     }
 }
 
-fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
+pub(super) fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
     conn.execute(
         "INSERT INTO memory_candidates
          (id, scope, memory_type, topic_key, text, evidence_event_ids,
@@ -125,7 +125,7 @@ fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> {
     Ok(())
 }
 
-fn compile(conn: &Connection) -> Result<Vec<String>> {
+pub(super) fn compile(conn: &Connection) -> Result<Vec<String>> {
     let artifact = compile_project_rules(conn, PROJECT, config(3))?;
     Ok(artifact.rules.iter().map(|r| r.rule_id.clone()).collect())
 }
@@ -643,216 +643,5 @@ fn disabled_config_skips_compilation() -> Result<()> {
     assert!(run_compile_rules_job(PROJECT)?.is_none());
     let data_dir = db::absolute_data_dir()?;
     assert!(!artifact_path_for_project(&data_dir, PROJECT).exists());
-    Ok(())
-}
-
-// Behavior-based eligibility contract matrix (GH-813 / SP813-T2). Each test
-// asserts only the compile / no-compile outcome for one eligibility dimension;
-// none snapshot the SQL text. The closed contract is conjunctive: any single
-// failing dimension, or any unknown enum value, must keep the source out.
-
-#[test]
-fn eligible_global_user_default_preference_compiles() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-global-eligible");
-    let conn = db::open_db()?;
-    insert_pref(&conn, &global_default())?;
-
-    assert_eq!(compile(&conn)?, vec!["pref-1-1".to_string()]);
-    Ok(())
-}
-
-#[test]
-fn non_preference_memory_type_is_not_compiled() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-memory-type");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            memory_type: "lesson",
-            ..Default::default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-// GH-813 regression: a global row is eligible only for the exact
-// owner_scope='user' / owner_key='user:default' / no-target tuple. Each of the
-// three deviations below must fail closed.
-
-#[test]
-fn global_preference_with_wrong_owner_scope_is_not_compiled() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-global-wrong-owner-scope");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            owner_scope: Some("repo"),
-            ..global_default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn global_preference_with_wrong_owner_key_is_not_compiled() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-global-wrong-owner-key");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            owner_key: Some("user:other"),
-            ..global_default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn global_preference_with_project_target_is_not_compiled() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-global-project-target");
-    let conn = db::open_db()?;
-    insert_pref(&conn, &global_default())?;
-    conn.execute(
-        "UPDATE memories SET target_project = ?1 WHERE id = 1",
-        ["/tmp/other-project"],
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-// Unknown / closed-enum values fail closed: a value the contract has not
-// explicitly classified is ineligible rather than accidentally eligible.
-
-#[test]
-fn global_preference_with_unknown_owner_scope_fails_closed() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-global-unknown-owner-scope");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            owner_scope: Some("team"),
-            ..global_default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn unknown_scope_value_fails_closed() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-unknown-scope");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            scope: "workspace",
-            ..Default::default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn unknown_risk_class_value_fails_closed() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-unknown-risk");
-    let conn = db::open_db()?;
-    // 'unknown' satisfies the schema CHECK constraint but is not classified
-    // eligible by the contract, so it must fail closed rather than compile.
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            risk_class: "unknown",
-            ..Default::default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn unknown_review_status_value_fails_closed() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-unknown-review-status");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            review_status: "unknown",
-            ..Default::default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn unknown_source_trust_value_fails_closed() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-unknown-source-trust");
-    let conn = db::open_db()?;
-    insert_pref(
-        &conn,
-        &PrefSpec {
-            source_trust_class: "web_scrape",
-            ..Default::default()
-        },
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-// Candidate risk and reinforcement risk are independent inputs: each alone
-// must gate eligibility even when the other stays low.
-
-#[test]
-fn high_reinforcement_risk_with_low_candidate_risk_is_not_compiled() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-reinforcement-risk-independent");
-    let conn = db::open_db()?;
-    insert_pref(&conn, &PrefSpec::default())?;
-    assert_eq!(compile(&conn)?.len(), 1);
-
-    conn.execute(
-        "UPDATE memory_preference_reinforcements SET risk_class = 'high' WHERE memory_id = 1",
-        [],
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn high_candidate_risk_with_low_reinforcement_risk_is_not_compiled() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-candidate-risk-independent");
-    let conn = db::open_db()?;
-    insert_pref(&conn, &PrefSpec::default())?;
-    assert_eq!(compile(&conn)?.len(), 1);
-
-    conn.execute(
-        "UPDATE memory_candidates SET risk_class = 'high' WHERE id = 1",
-        [],
-    )?;
-    assert!(compile(&conn)?.is_empty());
-    Ok(())
-}
-
-#[test]
-fn risk_reclassification_across_states_removes_rule() -> Result<()> {
-    let _dir = ScopedTestDataDir::new("compile-risk-cross-state");
-    let conn = db::open_db()?;
-    insert_pref(&conn, &PrefSpec::default())?;
-    assert_eq!(compile(&conn)?.len(), 1);
-
-    conn.execute(
-        "UPDATE memory_candidates SET risk_class = 'high' WHERE id = 1",
-        [],
-    )?;
-    assert!(compile(&conn)?.is_empty());
-
-    conn.execute(
-        "UPDATE memory_candidates SET risk_class = 'low' WHERE id = 1",
-        [],
-    )?;
-    assert_eq!(compile(&conn)?.len(), 1);
     Ok(())
 }
