@@ -77,6 +77,11 @@ the channel only when the same-head gate passes.
 12. `B-012`: `extracted_from` observations are diagnostic counts only in this
     tranche because the typed endpoints cannot produce a memory target within
     two edges. PPR is not a hidden fallback.
+13. `B-013` (GH-900): The committed graph-decision report carries a content
+    fingerprint of the golden dataset and of the evaluator/retrieval sources
+    that determine the result. A guard test regenerates the report from the live
+    tree and fails loudly when the committed fingerprint is stale; a stale
+    report never passes silently.
 
 ## Acceptance Criteria
 
@@ -91,6 +96,8 @@ the channel only when the same-head gate passes.
       empty reasons and no `diagnostic_hint` contribution.
 - [ ] No graph database, migration, context wiring, or PPR implementation is
       introduced.
+- [ ] (GH-900) The committed report's `evidence_fingerprint` matches a fresh
+      regeneration, and the guard test fails on a stale/mutated report.
 - [ ] Focused tests, full Rust checks, deterministic eval gates, version-sync,
       SpecRail workflow checks, and PR preflight pass.
 

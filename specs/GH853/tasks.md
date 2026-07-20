@@ -100,6 +100,20 @@ GH-853
     - `gh pr view <pr-number> --repo majiayu000/remem --json merged,mergeCommit`
     - `gh issue view 853 --repo majiayu000/remem --json state,closedByPullRequestsReferences`
 
+- [x] `SP853-T8` Owner: coordinator; Dependencies: `SP853-T4`; Done when: report carries dataset + implementation fingerprints and a guard test rejects stale reports; Verify: focused fingerprint + graph tests (GH-900 follow-up)
+  - Owner: coordinator
+  - Dependencies: `SP853-T4` (shipped production graph channel via PR #899)
+  - Files: `src/eval/graph_decision.rs`, `src/eval/graph_decision/evidence_fingerprint.rs`, `src/retrieval/graph/tests.rs`, `src/retrieval/search/memory/text/graph.rs`, `eval/graph-decision/report.json`
+  - Done when:
+    - `eval/graph-decision/report.json` carries an `evidence_fingerprint` block with dataset + implementation SHA-256 and an explicit per-input file list;
+    - `checked_in_graph_decision_report_matches_generated_fingerprint` fails on a stale/mutated report (proven: mutating the committed digest makes it fail with exit 101) and passes once regenerated;
+    - focused regression coverage exists for `touches_file` edges, filter eligibility, caps fail-closed, stable cycle/diamond ordering, read-only/error/decode behavior, parameterized filter values, FTS/vector seed selection, real graph hits/timing, missing-table `disabled_reason`, and suppression rows;
+    - existing assertions are not weakened (W-12) and there is no traversal ranking or production behavior change (U-04).
+  - Verify:
+    - `cargo test -q eval::graph_decision::evidence_fingerprint --lib`
+    - `cargo test -q retrieval::graph --lib`
+    - `cargo test -q retrieval::search::memory::text::graph --lib`
+
 ## Parallel Split
 
 Implementation is serial in this worktree because traversal, evaluator, search
