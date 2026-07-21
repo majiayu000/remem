@@ -292,6 +292,20 @@ class SensitiveImplementGateTests(unittest.TestCase):
         self.assertIn("scripts/ci/run_sensitive_implement_gate.py", workflow)
         self.assertNotIn("python3 checks/route_gate.py", workflow)
 
+    def test_ci_pins_trusted_default_branch_before_wrapper(self) -> None:
+        workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        pin = workflow.index("- name: Pin trusted default branch")
+        gate = workflow.index("- name: Run sensitive implementation gate")
+        self.assertLess(pin, gate)
+        trusted_block = workflow[pin:gate]
+        self.assertIn(
+            "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
+            trusted_block,
+        )
+        self.assertIn("git check-ref-format --branch", trusted_block)
+        self.assertIn("refs/remotes/origin/HEAD", trusted_block)
+        self.assertIn("refs/remotes/origin/$DEFAULT_BRANCH", trusted_block)
+
     def test_gate_input_hash_drift_fails(self) -> None:
         runner = FakeRunner()
         runner.mutate_route_input = True
