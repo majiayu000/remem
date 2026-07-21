@@ -144,7 +144,9 @@ SpecRail 证据格式变更必须分别完成；同步文件通常跟随上游 r
 且维护者明确授权时允许固定经过验证的 exact commit SHA，但仍必须通过既有同步流程和
 内容哈希验证进入 remem。exact-SHA 例外必须以同仓库的 durable maintainer evidence
 记录 actor、完整 SHA、授权范围和时间，并由实现 PR 引用；不能只依赖本地对话或未绑定
-SHA 的口头批准。2026-07-21 维护者已在 GH-813 durable comment
+SHA 的口头批准。当前 gate 不自动解析 GitHub comment；human final review 必须 live
+read-back 并人工核对 actor/scope/time/full-SHA，sync gate 只验证 lock SHA 与 hashes。
+2026-07-21 维护者声明已在 GH-813 durable comment
 `issuecomment-5030044760` 授权固定
 `0f903abe1794899071a9f19a4c46af1ce81129d3`，并选择 required-check ruleset。该授权只对
 此 SHA 有效，不能复用于其他 upstream head。GitHub

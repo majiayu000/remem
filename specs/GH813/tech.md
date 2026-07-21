@@ -1,7 +1,7 @@
 # Tech Spec
 
 <!-- specrail-planned-changes
-{"version":1,"issue":813,"complete":true,"paths":[".github/pull_request_template.md",".github/workflows/ci.yml",".github/workflows/closure-audit.yml","CONTRIBUTING.md","checks/check_workflow.py","checks/closure_audit.py","checks/duplicate_work_gate.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_evidence_common.py","checks/github_issue_evidence.py","checks/github_issue_reference.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/github_review_evidence.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/route_gate.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_validation.py","checks/sensitive_enforcement.py","checks/session_telemetry.py","checks/specrail-sync.lock.json","checks/specrail_lib.py","schemas/closure_audit_result.schema.json","schemas/duplicate_work_evidence.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","scripts/ci/check_pr_tier.py","scripts/ci/closure_follow_up.py","scripts/ci/test_closure_follow_up.py","scripts/ci/test_specrail_gate_wiring.py","scripts/sync-specrail-checks.sh","specs/GH813/product.md","specs/GH813/tasks.md","specs/GH813/tech.md","src/rules/compiler.rs","src/rules/compiler/tests.rs","workflow.yaml"],"spec_refs":["specs/GH813/product.md","specs/GH813/tech.md"]}
+{"version":1,"issue":813,"complete":true,"paths":[".github/pull_request_template.md",".github/workflows/ci.yml",".github/workflows/closure-audit.yml","CONTRIBUTING.md","checks/check_workflow.py","checks/closure_audit.py","checks/duplicate_work_gate.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_evidence_common.py","checks/github_issue_evidence.py","checks/github_issue_reference.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/github_review_evidence.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/route_gate.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_contract.py","checks/schema_validation.py","checks/sensitive_enforcement.py","checks/session_telemetry.py","checks/specrail-sync.lock.json","checks/specrail_lib.py","schemas/closure_audit_result.schema.json","schemas/duplicate_work_evidence.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","scripts/ci/check_pr_tier.py","scripts/ci/closure_follow_up.py","scripts/ci/test_closure_follow_up.py","scripts/ci/test_schema_contract.py","scripts/ci/test_specrail_gate_wiring.py","scripts/sync-specrail-checks.sh","specs/GH813/product.md","specs/GH813/tasks.md","specs/GH813/tech.md","src/rules/compiler.rs","src/rules/compiler/tests.rs","workflow.yaml"],"spec_refs":["specs/GH813/product.md","specs/GH813/tech.md"]}
 -->
 
 ## Linked Issue
@@ -102,10 +102,13 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 - 上游变更发布后，或维护者明确批准 exact-SHA pin 后，更新
   `checks/specrail-sync.lock.json` 并通过同步脚本更新 vendored 文件；禁止在 remem 内对
   synced 文件做永久性手改。exact-SHA 例外必须由同仓库 durable maintainer comment
-  记录 actor、完整 SHA、授权范围与时间；实现 PR 必须引用该 URL，且 sync/route gate
-  只接受 URL 中的同一 SHA。2026-07-21 维护者在
+  记录 actor、完整 SHA、授权范围与时间；实现 PR 必须引用该 URL。当前 sync/route gate
+  不解析 GitHub comment，也不自动证明授权；human final review 必须 live read-back URL，
+  人工核对 actor/scope/time/full-SHA 与 lock 完全一致，sync gate 只负责验证 lock SHA、
+  tracked-file closure 和 content hashes。2026-07-21 维护者在
   `https://github.com/majiayu000/remem/issues/813#issuecomment-5030044760`
-  批准固定 `0f903abe1794899071a9f19a4c46af1ce81129d3`。同日 live
+  批准固定 `0f903abe1794899071a9f19a4c46af1ce81129d3`。以下是维护者声明、必须在 human final
+  review 重新 live 验证的外部证据：同日
   `gh api repos/majiayu000/specrail/compare/v0.2.1...main` 返回 `ahead_by=168`；上游
   PR #103/#115/#116 均为 merged 且各自 `workflow-check` SUCCESS；clean checkout 在该
   exact SHA 执行 T3 指定的五个 pytest 文件，结果为 `254 passed in 7.12s`。
