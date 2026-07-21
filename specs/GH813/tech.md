@@ -148,7 +148,10 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   `--github-repo <owner/name> --issue <number> --pr <number> --head-sha <full-sha>`，验证 local
   `origin` remote 与 repository 一致，并通过 live GitHub API 验证该 open PR 属于同一仓库、
   head 精确匹配且引用该 issue。它自行查询 issue label timeline，要求 maintainer readiness
-  label event 的 actor/time 非空且与 `state_source=label`、`state_trusted=true` 一致；不得声称
+  label event 的 actor/time 非空，并通过 live GitHub repository permission/role API 证明 actor
+  类型是 `User`（拒绝 Bot/App/agent），且为 repository owner 或拥有 `admin|maintain` 权限；
+  durable result 保存 actor type、permission/role 与 authority query source，并与
+  `state_source=label`、`state_trusted=true` 一致；不得声称
   `github_issue_evidence.py` 提供其 schema 中不存在的 actor/time。wrapper 调用并校验
   `github_issue_evidence.py` 与 `github_duplicate_evidence.py` 的 live 产物，记录 repository、
   remote URL，并拒绝未来时间、不可解析时间或 gate 开始时已超过 300 秒的 `collected_at`。
@@ -197,7 +200,7 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 | `B-011` | protection status evidence、CONTRIBUTING | 无 protection 时仅报告 advisory；管理员设置由 live API/拒绝 merge 证据验证 |
 | `B-012` | review artifact lifecycle/runtime ledger | cancelled、superseded 与并发 current-head 终态 fixtures |
 | `B-013` | runtime ledger/PR evidence self-review recovery | 无 lane failure、无同 head 人类授权或缺 human final review 的 fixtures 失败 |
-| `B-014` | remem-local sensitive implement wrapper/result schema + live GitHub repository/PR/label timeline + issue/duplicate evidence + synced route gate | 裸 route JSON、wrong repository/remote/PR/head/head-ref、未来/不可解析/超过 300 秒的 `collected_at`、非 trusted label、缺 label-event actor/time、不完整 PR 列表、非当前 PR 冲突、其他匹配 branch、过宽 self-exemption、state/label override、gate 期间任一 evidence hash 改变和无 durable human decision 的 cleanup fixtures 失败；schema-valid current-head wrapper result、固定 argv、repository binding、live label event、仅当前 PR/head 及其 live-verified 唯一 remote head branch exemption、原始/过滤后 PR/branch artifact hashes 与 trusted evidence state 的正例通过 |
+| `B-014` | remem-local sensitive implement wrapper/result schema + live GitHub repository/PR/label timeline + issue/duplicate evidence + synced route gate | 裸 route JSON、wrong repository/remote/PR/head/head-ref、未来/不可解析/超过 300 秒的 `collected_at`、非 trusted label、缺 label-event actor/time、Bot/App/agent labeler、无 maintain/admin 权限的 labeler、不完整 PR 列表、非当前 PR 冲突、其他匹配 branch、过宽 self-exemption、state/label override、gate 期间任一 evidence hash 改变和无 durable human decision 的 cleanup fixtures 失败；schema-valid current-head wrapper result、固定 argv、repository binding、live human-maintainer label event 与 authority source、仅当前 PR/head 及其 live-verified 唯一 remote head branch exemption、原始/过滤后 PR/branch artifact hashes 与 trusted evidence state 的正例通过 |
 
 ## 数据流
 
