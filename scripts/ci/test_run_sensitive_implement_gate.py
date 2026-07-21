@@ -188,6 +188,17 @@ class SensitiveImplementGateTests(unittest.TestCase):
         runner.duplicate["collected_at"] = "2026-07-21T12:00:01Z"
         self.assert_blocked(runner, "future-dated")
 
+    def test_evidence_collected_after_wrapper_start_is_fresh(self) -> None:
+        runner = FakeRunner()
+        runner.duplicate["collected_at"] = "2026-07-21T12:00:00.500000Z"
+        clock = iter([
+            datetime(2026, 7, 21, 12, 0, 0, tzinfo=timezone.utc),
+            datetime(2026, 7, 21, 12, 0, 1, tzinfo=timezone.utc),
+            datetime(2026, 7, 21, 12, 0, 2, tzinfo=timezone.utc),
+        ])
+        result = gate.execute(config(), runner=runner, now=lambda: next(clock))
+        self.assertEqual(result["evidence_trust"]["duplicate_age_seconds"], 0.5)
+
     def test_incomplete_pr_collection_fails(self) -> None:
         runner = FakeRunner()
         runner.duplicate["open_prs_complete"] = False

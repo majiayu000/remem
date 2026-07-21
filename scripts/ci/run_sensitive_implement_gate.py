@@ -471,7 +471,8 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
             run_json(runner, [sys.executable, str(repo / "checks/github_duplicate_evidence.py"), "--github-repo", config.github_repo, "--issue", str(config.issue), "--remote", "origin", "--pr-limit", str(config.pr_limit), "--json"], "duplicate evidence collector"),
             config.issue,
         )
-        age = check_freshness(duplicate, started)
+        freshness_checked_at = now().astimezone(timezone.utc)
+        age = check_freshness(duplicate, freshness_checked_at)
         conflicts = [branch for branch in matching_branches(repo, config.issue, duplicate["remote_branches"]) if branch != head_ref]
         decision, decided_branches = ownership_decision(runner, config, pr_body, conflicts)
         filtered, exemptions = filter_duplicates(duplicate, config, head_ref, decided_branches)
