@@ -1,7 +1,7 @@
 # Tech Spec
 
 <!-- specrail-planned-changes
-{"version":1,"issue":813,"complete":true,"paths":[".github/pull_request_template.md",".github/workflows/ci.yml",".github/workflows/closure-audit.yml","CONTRIBUTING.md","checks/check_workflow.py","checks/closure_audit.py","checks/duplicate_work_gate.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_evidence_common.py","checks/github_issue_evidence.py","checks/github_issue_reference.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/github_review_evidence.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/route_gate.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_contract.py","checks/schema_validation.py","checks/sensitive_enforcement.py","checks/session_telemetry.py","checks/specrail-sync.lock.json","checks/specrail_lib.py","schemas/closure_audit_result.schema.json","schemas/duplicate_work_evidence.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","scripts/ci/check_pr_tier.py","scripts/ci/closure_follow_up.py","scripts/ci/test_closure_follow_up.py","scripts/ci/test_schema_contract.py","scripts/ci/test_specrail_gate_wiring.py","scripts/sync-specrail-checks.sh","specs/GH813/product.md","specs/GH813/tasks.md","specs/GH813/tech.md","src/rules/compiler.rs","src/rules/compiler/tests.rs","workflow.yaml"],"spec_refs":["specs/GH813/product.md","specs/GH813/tech.md"]}
+{"version":1,"issue":813,"complete":true,"paths":[".github/pull_request_template.md",".github/workflows/ci.yml",".github/workflows/closure-audit.yml","CONTRIBUTING.md","checks/check_workflow.py","checks/closure_audit.py","checks/duplicate_work_gate.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_evidence_common.py","checks/github_issue_evidence.py","checks/github_issue_reference.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/github_review_evidence.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/route_gate.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_contract.py","checks/schema_validation.py","checks/sensitive_enforcement.py","checks/session_telemetry.py","checks/specrail-sync.lock.json","checks/specrail_lib.py","schemas/closure_audit_result.schema.json","schemas/duplicate_work_evidence.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","scripts/ci/check_duplicate_evidence_freshness.py","scripts/ci/check_pr_tier.py","scripts/ci/closure_follow_up.py","scripts/ci/test_closure_follow_up.py","scripts/ci/test_duplicate_evidence_freshness.py","scripts/ci/test_schema_contract.py","scripts/ci/test_specrail_gate_wiring.py","scripts/sync-specrail-checks.sh","specs/GH813/product.md","specs/GH813/tasks.md","specs/GH813/tech.md","src/rules/compiler.rs","src/rules/compiler/tests.rs","workflow.yaml"],"spec_refs":["specs/GH813/product.md","specs/GH813/tech.md"]}
 -->
 
 ## Linked Issue
@@ -22,6 +22,7 @@ Product: `product.md`
 | PR evidence and gate | `checks/github_pr_evidence.py`, `checks/pr_gate.py` | evidence 接受调用方传入的 `review_source`；gate 检查 exact head、threads 与 merge ordering，但没有加载并验证对应的独立审查 artifact。 | 必须从可验证产物建立 review completion → gate → merge 的时序链。 |
 | Runtime ledger | `schemas/runtime_checkpoint.schema.json`, `checks/runtime_ledger_gate.py` | queue ledger 已记录 reviewer lane 和 review source，并可阻止 agent 自主推进。 | 可复用 lane/失败状态语义，但不能把本地 ledger 误称为 GitHub 服务端保护。 |
 | Synced SpecRail checks | `scripts/sync-specrail-checks.sh`, `checks/specrail-sync.lock.json` | review schema、GitHub evidence 和 PR gate 从上游 `majiayu000/specrail` 固定版本同步。 | remem 不得直接修改这些 vendored 文件；需要上游变更后再同步。 |
+| Prospective implementation readiness | `scripts/ci/check_duplicate_evidence_freshness.py`, `.github/workflows/ci.yml`, repo-local workflow adapter | 上游 duplicate-work schema 包含 `collected_at`，但 exact pinned gate 不检查 age；CLI `--label` 也不能证明 maintainer actor/time。 | remem-local pre-check 必须在 synced route gate 前验证 live trusted issue evidence、5 分钟 freshness 和 durable conflict decision，不能手改 vendored gate。 |
 | Repository governance | `workflow.yaml`, `CONTRIBUTING.md` | workflow 禁止 agent 最终批准、合并和权限变更；CONTRIBUTING 尚未说明 enforcement-sensitive 无 fast path。GitHub `main` 在 2026-07-13 无 branch protection/ruleset。 | 仓库内门禁只能约束 agent 流程；不可绕过的 merge enforcement 需要人类管理员配置服务端规则。 |
 
 ## 设计方案
@@ -140,6 +141,22 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   与 deletion，且不要求第二位 approver 以避免单维护者仓库自锁。该决策不等于设置已生效；
   仍需管理员完成 GitHub 配置并回读验证。
 
+### 5. prospective implement evidence pre-check
+
+- `SP813-T5` 在 remem 本地新增 `scripts/ci/check_duplicate_evidence_freshness.py` 及其
+  focused test；它不是 synced SpecRail 文件，不修改 lock 管理的 gate。pre-check 读取
+  `github_issue_evidence.py` 与 `github_duplicate_evidence.py` 产物，先做现有 schema 校验，
+  再验证 readiness 来源为 live maintainer label、actor/time 非空、`state_source=label`、
+  `state_trusted=true`，并拒绝未来时间、不可解析时间或 gate 开始时已超过 300 秒的
+  `collected_at`。
+- CI 在同一 job 中先运行 pre-check，再把相同 evidence 文件及其 SHA-256 交给 required
+  `route_gate.py`。只有 pre-check 通过且 route gate 返回 `decision=allowed`、`missing=[]`、
+  `sensitive_classification.enforcement_sensitive=true` 才允许开始新的 compiler 实现；任一
+  步骤 error/blocked 都不得降级。
+- duplicate evidence 命中当前实现 PR 或匹配远端分支时，保存原始 conflict artifact。
+  解除 blocker 必须引用 human decision 的 actor/time/rationale；如决定清理分支，还必须
+  同时保存 cleanup 前后 evidence 和 decision URL。agent 无权删除冲突分支来获得绿灯。
+
 ## Product-to-Test Mapping
 
 | Product invariant | Implementation area | Verification |
@@ -157,6 +174,7 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 | `B-011` | protection status evidence、CONTRIBUTING | 无 protection 时仅报告 advisory；管理员设置由 live API/拒绝 merge 证据验证 |
 | `B-012` | review artifact lifecycle/runtime ledger | cancelled、superseded 与并发 current-head 终态 fixtures |
 | `B-013` | runtime ledger/PR evidence self-review recovery | 无 lane failure、无同 head 人类授权或缺 human final review 的 fixtures 失败 |
+| `B-014` | remem-local duplicate-evidence freshness pre-check + live issue evidence + synced route gate | 未来/不可解析/超过 300 秒的 `collected_at`、非 trusted label、缺 actor/time、不完整 PR 列表、冲突 PR/branch 和无 durable human decision 的 cleanup fixtures 失败；同 job 的 fresh trusted evidence hash 绑定 route gate 并通过 |
 
 ## 数据流
 
