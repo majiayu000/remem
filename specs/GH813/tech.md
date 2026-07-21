@@ -101,9 +101,20 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 
 - 上游变更发布后，或维护者明确批准 exact-SHA pin 后，更新
   `checks/specrail-sync.lock.json` 并通过同步脚本更新 vendored 文件；禁止在 remem 内对
-  synced 文件做永久性手改。2026-07-21 维护者批准固定
-  `0f903abe1794899071a9f19a4c46af1ce81129d3`，因为最新正式 release `v0.2.1` 落后
-  upstream main 168 个提交，而该 SHA 已包含 GH97 的 review/pr-gate/closure-audit contract。
+  synced 文件做永久性手改。exact-SHA 例外必须由同仓库 durable maintainer comment
+  记录 actor、完整 SHA、授权范围与时间；实现 PR 必须引用该 URL，且 sync/route gate
+  只接受 URL 中的同一 SHA。2026-07-21 维护者在
+  `https://github.com/majiayu000/remem/issues/813#issuecomment-5030044760`
+  批准固定 `0f903abe1794899071a9f19a4c46af1ce81129d3`。同日 live
+  `gh api repos/majiayu000/specrail/compare/v0.2.1...main` 返回 `ahead_by=168`；上游
+  PR #103/#115/#116 均为 merged 且各自 `workflow-check` SUCCESS；clean checkout 在该
+  exact SHA 执行 T3 指定的五个 pytest 文件，结果为 `254 passed in 7.12s`。
+- 该 pin 已有必须保留的失败历史：PR #892 首次同步后因 remem 本地 schema-contract
+  断言与 upstream `SchemaDefinitionError` 合同不一致而使 main CI 失败，PR #893 紧急
+  revert。GH-894 的 spec PR #895 明确修复边界，PR #897 exact head
+  `5ca704454e618473e74ebb6c8c15ecbf77158797` 适配本地 schema-contract、重新同步同一 SHA，
+  CI run `29683610679` 的 `check` SUCCESS 后合并。当前授权确认的是 #897 已修复并验证的
+  re-land 状态，不追溯性把 #892 描述为合规。
 - 在 `CONTRIBUTING.md` 增加 `enforcement_sensitive` 分类、无 fast path、exact-head review
   顺序和 agent 权限边界。避免修改 `AGENTS.md`，除非维护者另行要求高上下文规则变更。
 - 同步并接入上游可执行 closure audit；`SP813-T5` 的 remem workflow integration controller
