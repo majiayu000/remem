@@ -5,6 +5,13 @@
 - [ ] Bugfix
 - [ ] Release/docs/process
 
+Tier: standard
+enforcement_sensitive: false
+
+`enforcement_sensitive` is machine-checked against `workflow.yaml`. Change it
+to `true` when the diff or linked spec matches the sensitive registry. There is
+no fast path for sensitive work.
+
 ## What
 
 Brief description of changes.
@@ -33,3 +40,21 @@ user-visible work must close an implementation issue, not a spec issue.
 
 - [ ] Tests pass
 - [ ] Tested manually
+
+## Review Gate
+
+- Final head SHA:
+- Independent review artifact or run:
+- Review completed at:
+- Prior findings carried forward and resolved/obsolete with evidence:
+- Actionable review threads resolved by an authorized reviewer or maintainer:
+
+These fields summarize evidence; `checks/pr_gate.py` and the underlying review
+artifact remain authoritative. A checked box or prose-only claim is not proof.
+
+## Merge Gate
+
+- [ ] Required `check` is green on the final head
+- [ ] Exact-head PR gate decision is `allowed`
+- [ ] Merge authorization is recorded
+- [ ] Server-side required-check ruleset is active, or the advisory-only gap is explicit

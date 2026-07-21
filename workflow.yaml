@@ -38,6 +38,20 @@ required_human_gates:
   - merge
   - release
 
+enforcement:
+  sensitive_registry:
+    paths:
+      - src/rules/compiler.rs
+      - src/rules/compiler/*
+      - checks/*
+      - scripts/sync-specrail-checks.sh
+      - scripts/ci/closure_follow_up.py
+      - .github/workflows/*
+      - workflow.yaml
+    specs:
+      - specs/GH813/*
+      - docs/specs/preference-rule-compilation/*
+
 artifacts:
   spec_packet: specs/GH{issue_number}/
   product_spec: specs/GH{issue_number}/product.md

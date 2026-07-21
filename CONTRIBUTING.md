@@ -60,3 +60,32 @@ such as plugin version synchronization and first-run smoke validation.
 1. Fork the repo and create your branch from `main`
 2. Ensure tests pass
 3. Submit a PR with a clear description
+
+### Enforcement-sensitive changes
+
+Every PR must include exactly one machine-readable declaration:
+
+```text
+enforcement_sensitive: false
+```
+
+Set it to `true` when the changed paths or linked specs match
+`workflow.yaml`'s `enforcement.sensitive_registry`. Sensitive work has no
+fast path: it requires an approved Product/Tech contract, a terminal
+independent review artifact bound to the final head, complete prior-finding
+carry-forward, authorized resolution of actionable threads, green CI, and an
+`allowed` exact-head PR gate result. Author-entered prose or a bare
+`review_source` value is not review evidence.
+
+The repository-local gates fail closed for agent workflows, but they are only
+advisory unless GitHub enforces them. The maintainer-selected server policy is
+a required-check ruleset for `main`: require the `check` status, require review
+conversation resolution, block force pushes and deletion, do not require a
+second approver in this single-maintainer repository, and do not permit bypass
+of the required check. Repository permission changes remain human-admin work.
+
+After an enforcement-sensitive PR is merged, the closure workflow audits the
+same-head gate/dispatch/merge chain. A missing chain creates or reopens one
+durable issue keyed by repository, PR number, final head, and violation code.
+GitHub write or read-back failures block closure; a local artifact alone does
+not count as a persisted follow-up.

@@ -1,0 +1,73 @@
+name: Closure Audit
+
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  audit:
+    if: >-
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.body, 'enforcement_sensitive: true')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted default branch
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Build external-merge closure evidence
+        run: |
+          mkdir -p .specrail/runtime
+          jq '{
+            repository: .repository.full_name,
+            pr_number: .pull_request.number,
+            final_head_sha: .pull_request.head.sha,
+            gate: null,
+            merge: {
+              merge_path: "merged_by_other",
+              remote_confirmed: .pull_request.merged,
+              merged_at: .pull_request.merged_at,
+              merged_head_sha: .pull_request.head.sha
+            }
+          }' "$GITHUB_EVENT_PATH" > .specrail/runtime/closure-evidence.json
+
+      - name: Audit closure chain and persist violations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 checks/closure_audit.py \
+            --repo . \
+            --evidence .specrail/runtime/closure-evidence.json \
+            --json > .specrail/runtime/closure-audit.json
+          audit_status=$?
+          set -e
+          if [ "$audit_status" -eq 2 ]; then
+            echo "closure audit input or schema validation failed" >&2
+            exit 2
+          fi
+          if [ "$audit_status" -eq 1 ]; then
+            python3 scripts/ci/closure_follow_up.py \
+              --repo . \
+              --audit-result .specrail/runtime/closure-audit.json \
+              --github-repo "$GITHUB_REPOSITORY" \
+              --json > .specrail/runtime/closure-follow-up.json
+          fi
+
+      - name: Upload closure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: closure-audit-pr-${{ github.event.pull_request.number }}
+          path: |
+            .specrail/runtime/closure-evidence.json
+            .specrail/runtime/closure-audit.json
+            .specrail/runtime/closure-follow-up.json
+          if-no-files-found: error

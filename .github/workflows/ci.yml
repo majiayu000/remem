@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -12,6 +13,8 @@ jobs:
           fetch-depth: 0
       - name: Test SpecRail gate wiring
         run: python3 scripts/ci/test_specrail_gate_wiring.py
+      - name: Test closure audit and durable follow-up wiring
+        run: python3 scripts/ci/test_closure_follow_up.py
       - name: Verify synced SpecRail checks
         run: scripts/sync-specrail-checks.sh --verify
       - name: Check plugin version sync
