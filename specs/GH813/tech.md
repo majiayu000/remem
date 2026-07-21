@@ -116,7 +116,7 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   断言与 upstream `SchemaDefinitionError` 合同不一致而使 main CI 失败，PR #893 紧急
   revert。GH-894 的 spec PR #895 明确修复边界，PR #897 exact head
   `5ca704454e618473e74ebb6c8c15ecbf77158797` 适配本地 schema-contract、重新同步同一 SHA，
-  CI run `29683610679` 的 `check` SUCCESS 后合并。当前授权确认的是 #897 已修复并验证的
+  maintainer-asserted CI run `29683610679` 的 `check` SUCCESS 后合并。当前授权确认的是 #897 已修复并验证的
   re-land 状态，不追溯性把 #892 描述为合规。
 - 在 `CONTRIBUTING.md` 增加 `enforcement_sensitive` 分类、无 fast path、exact-head review
   顺序和 agent 权限边界。避免修改 `AGENTS.md`，除非维护者另行要求高上下文规则变更。
