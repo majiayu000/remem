@@ -11,9 +11,10 @@ permissions:
 
 jobs:
   audit:
-    if: >-
-      github.event.pull_request.merged == true &&
-      contains(github.event.pull_request.body, 'enforcement_sensitive: true')
+    if: github.event.pull_request.merged == true
+    concurrency:
+      group: closure-audit-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - name: Check out trusted default branch
@@ -22,7 +23,58 @@ jobs:
           ref: main
           persist-credentials: false
 
+      - name: Classify changed paths from trusted default branch
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p .specrail/runtime
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
+            > .specrail/runtime/closure-changed-files-pages.json
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "checks")
+          from sensitive_enforcement import classify_sensitive_changes
+          from specrail_lib import load_pack
+
+          pages = json.loads(
+              Path(".specrail/runtime/closure-changed-files-pages.json").read_text()
+          )
+          if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+              raise SystemExit("GitHub changed-files response has an unexpected shape")
+          paths = []
+          for page in pages:
+              for item in page:
+                  filename = item.get("filename") if isinstance(item, dict) else None
+                  if not isinstance(filename, str) or not filename:
+                      raise SystemExit("GitHub changed-files entry is missing filename")
+                  paths.append(filename)
+          classification = classify_sensitive_changes(
+              load_pack(Path(".")),
+              Path("."),
+              paths,
+              paths,
+              source="github_changed_files",
+          )
+          Path(".specrail/runtime/closure-classification.json").write_text(
+              json.dumps(classification, indent=2) + "\n"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(
+                  "sensitive="
+                  + ("true" if classification["enforcement_sensitive"] else "false")
+                  + "\n"
+              )
+          PY
+
       - name: Build external-merge closure evidence
+        if: steps.classify.outputs.sensitive == 'true'
         run: |
           mkdir -p .specrail/runtime
           jq '{
@@ -39,6 +91,7 @@ jobs:
           }' "$GITHUB_EVENT_PATH" > .specrail/runtime/closure-evidence.json
 
       - name: Audit closure chain and persist violations
+        if: steps.classify.outputs.sensitive == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -59,15 +112,22 @@ jobs:
               --audit-result .specrail/runtime/closure-audit.json \
               --github-repo "$GITHUB_REPOSITORY" \
               --json > .specrail/runtime/closure-follow-up.json
+            jq -n \
+              --slurpfile audit .specrail/runtime/closure-audit.json \
+              --slurpfile follow_up .specrail/runtime/closure-follow-up.json \
+              '{audit: $audit[0], persisted_follow_up: $follow_up[0]}' \
+              > .specrail/runtime/closure-persistence-evidence.json
           fi
 
       - name: Upload closure evidence
-        if: always()
+        if: always() && steps.classify.outputs.sensitive == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: closure-audit-pr-${{ github.event.pull_request.number }}
           path: |
             .specrail/runtime/closure-evidence.json
+            .specrail/runtime/closure-classification.json
             .specrail/runtime/closure-audit.json
             .specrail/runtime/closure-follow-up.json
+            .specrail/runtime/closure-persistence-evidence.json
           if-no-files-found: error

@@ -26,7 +26,7 @@ class FakeGitHub:
         self.created = 0
         self.reopened = 0
         self.fail_write = False
-        self.corrupt_read_back = False
+        self.corrupt_read_back: str | None = None
 
     def list_issues(self) -> list[dict[str, Any]]:
         return copy.deepcopy(self.issues)
@@ -55,8 +55,10 @@ class FakeGitHub:
 
     def get_issue(self, number: int) -> dict[str, Any]:
         issue = copy.deepcopy(self._find(number))
-        if self.corrupt_read_back:
+        if self.corrupt_read_back == "body":
             issue["body"] = "marker missing"
+        elif self.corrupt_read_back == "title":
+            issue["title"] = "wrong title"
         return issue
 
     def _find(self, number: int) -> dict[str, Any]:
@@ -131,13 +133,47 @@ def test_api_write_failure_blocks_persistence() -> None:
 
 def test_read_back_mismatch_blocks_persistence() -> None:
     github = FakeGitHub()
-    github.corrupt_read_back = True
+    github.corrupt_read_back = "body"
     try:
         ensure_follow_up(violation_audit(), repository="example/remem", github=github)
     except FollowUpError as exc:
-        assert "idempotency marker" in str(exc)
+        assert "body does not match" in str(exc)
     else:
         raise AssertionError("unverified read-back must block closure")
+
+
+def test_read_back_title_mismatch_blocks_persistence() -> None:
+    github = FakeGitHub()
+    github.corrupt_read_back = "title"
+    try:
+        ensure_follow_up(violation_audit(), repository="example/remem", github=github)
+    except FollowUpError as exc:
+        assert "title does not match" in str(exc)
+    else:
+        raise AssertionError("mismatched closure title must block persistence")
+
+
+def test_preseeded_marker_with_wrong_fields_blocks_persistence() -> None:
+    audit = violation_audit()
+    follow_up = audit["required_follow_up"]
+    marker = f"<!-- specrail-closure-follow-up:{follow_up['idempotency_key']} -->"
+    github = FakeGitHub(
+        [
+            {
+                "number": 7,
+                "html_url": "https://github.com/example/remem/issues/7",
+                "state": "open",
+                "title": "unrelated issue",
+                "body": marker,
+            }
+        ]
+    )
+    try:
+        ensure_follow_up(audit, repository="example/remem", github=github)
+    except FollowUpError as exc:
+        assert "title does not match" in str(exc)
+    else:
+        raise AssertionError("preseeded marker must not bypass exact read-back")
 
 
 def test_duplicate_markers_block_persistence() -> None:
@@ -178,12 +214,19 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
         "issues: write",
         "pull-requests: read",
         "github.event.pull_request.merged == true",
+        "concurrency:",
+        "closure-audit-pr-${{ github.event.pull_request.number }}",
         "ref: main",
         "persist-credentials: false",
         'jq \'{',
         '"$GITHUB_EVENT_PATH"',
         "checks/closure_audit.py",
         "scripts/ci/closure_follow_up.py",
+        "closure-persistence-evidence.json",
+        "persisted_follow_up",
+        "Classify changed paths from trusted default branch",
+        "classify_sensitive_changes",
+        "gh api --paginate --slurp",
     ]
     for token in required:
         assert token in workflow, f"closure workflow is missing {token!r}"
@@ -192,6 +235,7 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
         "github.event.pull_request.head.repo",
         "ref: ${{ github.event.pull_request.head.sha }}",
         "persist-credentials: true",
+        "contains(github.event.pull_request.body",
     ]
     for token in forbidden:
         assert token not in workflow, f"closure workflow contains unsafe {token!r}"
@@ -203,6 +247,8 @@ def main() -> int:
     test_compliant_audit_performs_no_write()
     test_api_write_failure_blocks_persistence()
     test_read_back_mismatch_blocks_persistence()
+    test_read_back_title_mismatch_blocks_persistence()
+    test_preseeded_marker_with_wrong_fields_blocks_persistence()
     test_duplicate_markers_block_persistence()
     test_repository_mismatch_blocks_before_write()
     test_workflow_uses_trusted_checkout_and_least_privilege()

@@ -7,7 +7,7 @@ use crate::rules::store::{artifact_path_for_project, load_artifact_fail_open, Ar
 use crate::rules::{RuleAction, RulePredicate};
 use crate::runtime_config::RuleCompilationConfig;
 
-const PROJECT: &str = "/tmp/remem";
+pub(super) const PROJECT: &str = "/tmp/remem";
 
 fn config(min: i64) -> RuleCompilationConfig {
     RuleCompilationConfig {
@@ -29,7 +29,8 @@ pub(super) struct PrefSpec<'a> {
     pub(super) expires_at: Option<i64>,
     pub(super) reinforcement: i64,
     pub(super) machine_checkable: i64,
-    pub(super) risk_class: &'a str,
+    pub(super) candidate_risk: &'a str,
+    pub(super) reinforcement_risk: &'a str,
     pub(super) review_status: &'a str,
     pub(super) source_trust_class: &'a str,
 }
@@ -49,7 +50,8 @@ impl Default for PrefSpec<'_> {
             expires_at: None,
             reinforcement: 3,
             machine_checkable: 1,
-            risk_class: "low",
+            candidate_risk: "low",
+            reinforcement_risk: "low",
             review_status: "auto_promoted",
             source_trust_class: "local_tool_output",
         }
@@ -81,7 +83,7 @@ pub(super) fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> 
             spec.scope,
             format!("preference-{}", spec.id),
             spec.content,
-            spec.risk_class,
+            spec.candidate_risk,
             spec.review_status,
             spec.updated_at,
             spec.source_trust_class,
@@ -119,7 +121,7 @@ pub(super) fn insert_pref(conn: &Connection, spec: &PrefSpec<'_>) -> Result<()> 
             spec.reinforcement,
             spec.updated_at,
             spec.machine_checkable,
-            spec.risk_class,
+            spec.reinforcement_risk,
         ],
     )?;
     Ok(())
@@ -293,7 +295,7 @@ fn high_risk_preference_is_not_compiled() -> Result<()> {
     insert_pref(
         &conn,
         &PrefSpec {
-            risk_class: "high",
+            reinforcement_risk: "high",
             ..Default::default()
         },
     )?;
@@ -341,7 +343,7 @@ fn non_low_risk_preference_is_not_compiled() -> Result<()> {
     insert_pref(
         &conn,
         &PrefSpec {
-            risk_class: "medium",
+            reinforcement_risk: "medium",
             ..Default::default()
         },
     )?;

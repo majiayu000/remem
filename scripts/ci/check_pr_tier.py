@@ -21,8 +21,11 @@ from check_spec_lifecycle import pr_body_from_env
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "checks"))
 
-from sensitive_enforcement import classify_sensitive_changes  # noqa: E402
-from specrail_lib import SpecRailError, load_pack  # noqa: E402
+from sensitive_enforcement import (  # noqa: E402
+    classify_sensitive_changes,
+    sensitive_registry,
+)
+from specrail_lib import PackConfig, SpecRailError, load_pack, parse_yaml_subset  # noqa: E402
 
 TIER_RE = re.compile(r"^\s*Tier:\s*(\S+)\s*$", re.I | re.M)
 SENSITIVE_RE = re.compile(
@@ -72,26 +75,78 @@ def declared_sensitive(body: str) -> tuple[bool | None, list[str]]:
     return values[0], []
 
 
+def pack_at_revision(revision: str, head_config: PackConfig) -> PackConfig:
+    completed = subprocess.run(
+        ["git", "show", f"{revision}:workflow.yaml"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or "git show failed"
+        raise SpecRailError(f"cannot load trusted base workflow.yaml: {detail}")
+    workflow = parse_yaml_subset(completed.stdout)
+    if not isinstance(workflow, dict):
+        raise SpecRailError("trusted base workflow.yaml must be a mapping")
+    return PackConfig(
+        repo=ROOT,
+        workflow=workflow,
+        states=head_config.states,
+        labels=head_config.labels,
+    )
+
+
 def check_sensitive(
-    body: str, numstat: list[tuple[str, str, str]]
+    body: str,
+    numstat: list[tuple[str, str, str]],
+    *,
+    head_config: PackConfig | None = None,
+    base_config: PackConfig | None = None,
 ) -> list[str]:
     declaration, failures = declared_sensitive(body)
     if failures:
         return failures
     paths = [path for _added, _deleted, path in numstat]
     try:
-        classification = classify_sensitive_changes(
-            load_pack(ROOT),
-            ROOT,
-            paths,
-            paths,
-            source="github_changed_files",
-        )
+        head_config = head_config or load_pack(ROOT)
+        base_config = base_config or head_config
+        head_registry = sensitive_registry(head_config)
+        base_registry = sensitive_registry(base_config)
+        removed = {
+            key: sorted(set(base_registry[key]) - set(head_registry[key]))
+            for key in ("paths", "specs")
+        }
+        if any(removed.values()):
+            details = [
+                f"{key}: {', '.join(values)}"
+                for key, values in removed.items()
+                if values
+            ]
+            return [
+                "Sensitive registry must not remove trusted base entries: "
+                + "; ".join(details)
+            ]
+        classifications = [
+            classify_sensitive_changes(
+                config,
+                ROOT,
+                paths,
+                paths,
+                source="github_changed_files",
+            )
+            for config in (base_config, head_config)
+        ]
     except SpecRailError as exc:
         return [f"Sensitive classification failed closed: {exc}"]
-    computed = classification["enforcement_sensitive"]
+    computed = any(item["enforcement_sensitive"] for item in classifications)
     if computed and declaration is not True:
-        matched = classification["matched_paths"] + classification["matched_specs"]
+        matched = sorted(
+            {
+                path
+                for item in classifications
+                for path in item["matched_paths"] + item["matched_specs"]
+            }
+        )
         return [
             "Sensitive registry matched but PR declares false: " + ", ".join(matched)
         ]
@@ -134,8 +189,16 @@ def check_tier(body: str, numstat: list[tuple[str, str, str]]) -> list[str]:
     return failures
 
 
-def check_pr(body: str, numstat: list[tuple[str, str, str]]) -> list[str]:
-    return check_tier(body, numstat) + check_sensitive(body, numstat)
+def check_pr(
+    body: str,
+    numstat: list[tuple[str, str, str]],
+    *,
+    head_config: PackConfig | None = None,
+    base_config: PackConfig | None = None,
+) -> list[str]:
+    return check_tier(body, numstat) + check_sensitive(
+        body, numstat, head_config=head_config, base_config=base_config
+    )
 
 
 def self_test() -> int:
@@ -236,6 +299,27 @@ def self_test() -> int:
             print(text, file=sys.stderr)
             return 1
 
+    head_config = load_pack(ROOT)
+    weakened_workflow = dict(head_config.workflow)
+    weakened_workflow["enforcement"] = {
+        "sensitive_registry": {"paths": [], "specs": []}
+    }
+    weakened = PackConfig(
+        repo=ROOT,
+        workflow=weakened_workflow,
+        states=head_config.states,
+        labels=head_config.labels,
+    )
+    failures = check_sensitive(
+        "enforcement_sensitive: true",
+        [("1", "0", "workflow.yaml")],
+        head_config=weakened,
+        base_config=head_config,
+    )
+    if not any("must not remove trusted base entries" in item for item in failures):
+        print("self-test failed: registry shrinkage did not fail closed", file=sys.stderr)
+        return 1
+
     print("check_pr_tier self-test passed")
     return 0
 
@@ -252,7 +336,18 @@ def main() -> int:
     if not args.base:
         parser.error("base revision is required unless --self-test is used")
 
-    failures = check_pr(pr_body_from_env(), diff_numstat(args.base, args.head))
+    try:
+        head_config = load_pack(ROOT)
+        base_config = pack_at_revision(args.base, head_config)
+    except SpecRailError as exc:
+        print(f"PR tier check failed closed: {exc}", file=sys.stderr)
+        return 1
+    failures = check_pr(
+        pr_body_from_env(),
+        diff_numstat(args.base, args.head),
+        head_config=head_config,
+        base_config=base_config,
+    )
     if failures:
         print("PR tier check failed:", file=sys.stderr)
         for failure in failures:

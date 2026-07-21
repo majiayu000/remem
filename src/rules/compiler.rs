@@ -314,6 +314,148 @@ struct EligiblePreference {
     reinforcement_count: i64,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClosedValue {
+    Allowed,
+    Denied,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EligibilityScope {
+    Project,
+    Global,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuleEligibilityDecision {
+    Eligible,
+    Rejected(RejectReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RejectReason {
+    Type,
+    Lifecycle,
+    Expiry,
+    Scope,
+    Owner,
+    Trust,
+    MachineCheckable,
+    Threshold,
+    ReinforcementRisk,
+    CandidateRisk,
+    Review,
+    Policy,
+    Suppressed,
+}
+
+const KNOWN_TRUST: &[&str] = &[
+    "local_tool_output",
+    "repo_file",
+    "user_prompt",
+    "external_content",
+];
+const KNOWN_RISK: &[&str] = &["low", "medium", "high", "unknown"];
+const KNOWN_REVIEW: &[&str] = &[
+    "pending_review",
+    "quarantined",
+    "auto_promoted",
+    "approved",
+    "edited",
+    "rejected",
+    "discarded",
+    "deferred",
+];
+
+#[derive(Clone, Copy)]
+struct RuleEligibilityInput<'a> {
+    memory_type: ClosedValue,
+    lifecycle: ClosedValue,
+    expires_at: Option<i64>,
+    scope: Option<EligibilityScope>,
+    owner_scope: Option<&'a str>,
+    owner_key: Option<&'a str>,
+    target_project: Option<&'a str>,
+    legacy_project: &'a str,
+    current_project: &'a str,
+    trust: ClosedValue,
+    machine_checkable: i64,
+    reinforcement_count: i64,
+    min_reinforcement: i64,
+    reinforcement_risk: ClosedValue,
+    candidate_risk: ClosedValue,
+    review: ClosedValue,
+    policy: ClosedValue,
+    now: i64,
+}
+
+fn closed_value(value: &str, known: &[&str], allowed: &[&str]) -> ClosedValue {
+    if allowed.contains(&value) {
+        ClosedValue::Allowed
+    } else if known.contains(&value) {
+        ClosedValue::Denied
+    } else {
+        ClosedValue::Unknown
+    }
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.filter(|value| !value.is_empty())
+}
+
+fn eligibility_decision(input: &RuleEligibilityInput<'_>) -> RuleEligibilityDecision {
+    let reject = |reason| RuleEligibilityDecision::Rejected(reason);
+    if input.memory_type != ClosedValue::Allowed {
+        return reject(RejectReason::Type);
+    }
+    if input.lifecycle != ClosedValue::Allowed {
+        return reject(RejectReason::Lifecycle);
+    }
+    if input.expires_at.is_some_and(|expiry| expiry <= input.now) {
+        return reject(RejectReason::Expiry);
+    }
+    let owner_matches = match input.scope {
+        Some(EligibilityScope::Project) => {
+            let authority = non_empty(input.target_project)
+                .or_else(|| non_empty(input.owner_key))
+                .unwrap_or(input.legacy_project);
+            input.owner_scope == Some("repo") && authority == input.current_project
+        }
+        Some(EligibilityScope::Global) => {
+            input.owner_scope == Some("user")
+                && input.owner_key == Some("user:default")
+                && non_empty(input.target_project).is_none()
+        }
+        None => return reject(RejectReason::Scope),
+    };
+    if !owner_matches {
+        return reject(RejectReason::Owner);
+    }
+    for (value, reason) in [
+        (input.trust, RejectReason::Trust),
+        (input.reinforcement_risk, RejectReason::ReinforcementRisk),
+        (input.candidate_risk, RejectReason::CandidateRisk),
+        (input.review, RejectReason::Review),
+    ] {
+        if value != ClosedValue::Allowed {
+            return reject(reason);
+        }
+    }
+    if input.machine_checkable != 1 {
+        return reject(RejectReason::MachineCheckable);
+    }
+    if input.reinforcement_count < input.min_reinforcement {
+        return reject(RejectReason::Threshold);
+    }
+    match input.policy {
+        ClosedValue::Allowed => {}
+        ClosedValue::Denied => return reject(RejectReason::Suppressed),
+        ClosedValue::Unknown => return reject(RejectReason::Policy),
+    }
+    RuleEligibilityDecision::Eligible
+}
+
 fn select_eligible_preferences(
     conn: &Connection,
     project: &str,
@@ -322,54 +464,125 @@ fn select_eligible_preferences(
 ) -> Result<Vec<EligiblePreference>> {
     let policy_filter = crate::memory::suppression::memory_policy_filter_sql("m");
     let sql = format!(
-        "SELECT m.id, m.content, r.reinforcement_count
+        "SELECT m.id, m.content, m.memory_type, m.status, m.expires_at_epoch,
+                m.scope, m.owner_scope, m.owner_key, m.target_project, m.project,
+                m.source_trust_class, r.machine_checkable, r.reinforcement_count,
+                r.risk_class, c.risk_class, c.review_status,
+                CASE WHEN EXISTS (
+                    SELECT 1 FROM memory_suppressions malformed
+                    WHERE malformed.status NOT IN ('active', 'revoked')
+                       OR (malformed.status = 'active' AND COALESCE((
+                        (malformed.target_kind IN ('memory', 'user_claim', 'user_candidate')
+                         AND malformed.target_id > 0 AND malformed.target_value IS NULL)
+                        OR (malformed.target_kind IN ('topic_key', 'entity', 'pattern')
+                            AND malformed.target_id IS NULL
+                            AND length(trim(malformed.target_value)) > 0)
+                        OR (malformed.target_kind = 'summary'
+                            AND (malformed.target_id IS NULL OR malformed.target_id > 0)
+                            AND (malformed.target_id > 0
+                                 OR length(trim(malformed.target_value)) > 0))), 0) = 0))
+                     THEN -1 WHEN {policy_filter} THEN 1 ELSE 0 END
          FROM memories m
          JOIN memory_preference_reinforcements r ON r.memory_id = m.id
          JOIN memory_candidates c ON c.id = m.source_candidate_id
-         WHERE m.memory_type = 'preference'
-           AND m.status = 'active'
-           AND (m.expires_at_epoch IS NULL OR m.expires_at_epoch > ?1)
-           AND (
-               (COALESCE(m.scope, 'project') = 'project'
-                AND m.owner_scope = 'repo'
-                AND COALESCE(
-                    NULLIF(m.target_project, ''),
-                    NULLIF(m.owner_key, ''),
-                    m.project
-                ) = ?3)
-               OR
-               -- Closed global-ownership tuple (GH-813): a global rule is
-               -- eligible only for the canonical user-default owner with no
-               -- project target. Exact equality fails closed on any unknown
-               -- owner_scope/owner_key or a newly introduced value.
-               (COALESCE(m.scope, 'project') = 'global'
-                AND m.owner_scope = 'user'
-                AND m.owner_key = 'user:default'
-                AND COALESCE(NULLIF(m.target_project, ''), '') = '')
-           )
-           AND m.source_trust_class IN ('local_tool_output', 'repo_file', 'user_prompt')
-           AND r.machine_checkable = 1
-           AND r.risk_class = 'low'
-           AND r.reinforcement_count >= ?2
-           AND c.risk_class = 'low'
-           AND c.review_status IN ('approved', 'edited', 'auto_promoted')
-           AND {policy_filter}
-         ORDER BY CASE
-                    WHEN COALESCE(m.scope, 'project') = 'project' THEN 0
-                    ELSE 1
-                  END,
-                  m.updated_at_epoch DESC,
-                  m.id DESC"
+         WHERE m.project = ?1 OR m.target_project = ?1 OR m.owner_key = ?1
+            OR m.scope = 'global'
+         ORDER BY CASE WHEN m.scope = 'project' THEN 0 ELSE 1 END,
+                  m.updated_at_epoch DESC, m.id DESC"
     );
     let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params![now, min_reinforcement, project], |row| {
-        Ok(EligiblePreference {
-            memory_id: row.get(0)?,
-            content: row.get(1)?,
-            reinforcement_count: row.get(2)?,
-        })
+    let rows = stmt.query_map(params![project], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<String>>(5)?,
+            row.get::<_, Option<String>>(6)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, Option<String>>(8)?,
+            row.get::<_, String>(9)?,
+            row.get::<_, String>(10)?,
+            row.get::<_, i64>(11)?,
+            row.get::<_, i64>(12)?,
+            row.get::<_, String>(13)?,
+            row.get::<_, String>(14)?,
+            row.get::<_, String>(15)?,
+            row.get::<_, i64>(16)?,
+        ))
     })?;
-    crate::db::query::collect_rows(rows).context("load eligible preferences for rule compilation")
+    let rows = crate::db::query::collect_rows(rows)
+        .context("load rule eligibility candidates for compilation")?;
+    let mut eligible = Vec::new();
+    for row in rows {
+        let memory_type = match crate::memory::types::MemoryType::parse(&row.2) {
+            Some(crate::memory::types::MemoryType::Preference) => ClosedValue::Allowed,
+            Some(_) => ClosedValue::Denied,
+            None => ClosedValue::Unknown,
+        };
+        let input = RuleEligibilityInput {
+            memory_type,
+            lifecycle: closed_value(&row.3, &["active", "stale", "archived"], &["active"]),
+            expires_at: row.4,
+            scope: row.5.as_deref().and_then(|scope| match scope {
+                "project" => Some(EligibilityScope::Project),
+                "global" => Some(EligibilityScope::Global),
+                _ => None,
+            }),
+            owner_scope: row.6.as_deref(),
+            owner_key: row.7.as_deref(),
+            target_project: row.8.as_deref(),
+            legacy_project: &row.9,
+            current_project: project,
+            trust: closed_value(&row.10, KNOWN_TRUST, &KNOWN_TRUST[..3]),
+            machine_checkable: row.11,
+            reinforcement_count: row.12,
+            min_reinforcement,
+            reinforcement_risk: closed_value(&row.13, KNOWN_RISK, &["low"]),
+            candidate_risk: closed_value(&row.14, KNOWN_RISK, &["low"]),
+            review: closed_value(
+                &row.15,
+                KNOWN_REVIEW,
+                &["approved", "edited", "auto_promoted"],
+            ),
+            policy: match row.16 {
+                1 => ClosedValue::Allowed,
+                0 => ClosedValue::Denied,
+                _ => ClosedValue::Unknown,
+            },
+            now,
+        };
+        match eligibility_decision(&input) {
+            RuleEligibilityDecision::Eligible => eligible.push(EligiblePreference {
+                memory_id: row.0,
+                content: row.1,
+                reinforcement_count: row.12,
+            }),
+            RuleEligibilityDecision::Rejected(reason)
+                if matches!(memory_type, ClosedValue::Unknown)
+                    || [
+                        input.lifecycle,
+                        input.trust,
+                        input.reinforcement_risk,
+                        input.candidate_risk,
+                        input.review,
+                    ]
+                    .contains(&ClosedValue::Unknown)
+                    || matches!(
+                        reason,
+                        RejectReason::Scope | RejectReason::Owner | RejectReason::Policy
+                    ) =>
+            {
+                crate::log::error(
+                    "rules",
+                    &format!("rule eligibility rejected memory {}: {reason:?}", row.0),
+                )
+            }
+            RuleEligibilityDecision::Rejected(_) => {}
+        }
+    }
+    Ok(eligible)
 }
 
 fn load_rule_compilation_projects(conn: &Connection) -> Result<Vec<String>> {

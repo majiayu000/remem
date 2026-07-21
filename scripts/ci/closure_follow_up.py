@@ -183,17 +183,30 @@ def _issue_number(issue: dict[str, Any]) -> int:
     return number
 
 
-def _verify_read_back(issue: dict[str, Any], marker: str) -> dict[str, Any]:
+def _issue_title(follow_up: dict[str, Any]) -> str:
+    return (
+        f"[SpecRail closure] PR #{follow_up['pr_number']} "
+        f"{follow_up['violation_code']}"
+    )
+
+
+def _verify_read_back(
+    issue: dict[str, Any], follow_up: dict[str, Any]
+) -> dict[str, Any]:
     number = _issue_number(issue)
     url = issue.get("html_url")
     state = issue.get("state")
+    title = issue.get("title")
     body = issue.get("body")
     if not isinstance(url, str) or not url.strip():
         raise FollowUpError("GitHub issue read-back is missing html_url")
     if state != "open":
         raise FollowUpError("GitHub issue read-back is not open")
-    if not isinstance(body, str) or marker not in body:
-        raise FollowUpError("GitHub issue read-back does not contain the idempotency marker")
+    if title != _issue_title(follow_up):
+        raise FollowUpError("GitHub issue read-back title does not match the closure record")
+    expected_body = _issue_body(follow_up)
+    if body != expected_body:
+        raise FollowUpError("GitHub issue read-back body does not match the closure record")
     return {"number": number, "url": url, "state": state}
 
 
@@ -236,13 +249,13 @@ def ensure_follow_up(
             action = "reopened"
     else:
         created = github.create_issue(
-            f"[SpecRail closure] PR #{follow_up['pr_number']} {follow_up['violation_code']}",
+            _issue_title(follow_up),
             _issue_body(follow_up),
         )
         number = _issue_number(created)
         action = "created"
 
-    verified = _verify_read_back(github.get_issue(number), marker)
+    verified = _verify_read_back(github.get_issue(number), follow_up)
     return {
         "version": 1,
         "status": "persisted",

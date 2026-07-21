@@ -45,7 +45,15 @@ enforcement:
       - src/rules/compiler/*
       - checks/*
       - scripts/sync-specrail-checks.sh
+      - scripts/ci/check_pr_tier.py
       - scripts/ci/closure_follow_up.py
+      - scripts/ci/test_closure_follow_up.py
+      - scripts/ci/run_sensitive_implement_gate.py
+      - scripts/ci/test_run_sensitive_implement_gate.py
+      - schemas/closure_audit_result.schema.json
+      - schemas/sensitive_implement_gate_result.schema.json
+      - .github/pull_request_template.md
+      - CONTRIBUTING.md
       - .github/workflows/*
       - workflow.yaml
     specs:
