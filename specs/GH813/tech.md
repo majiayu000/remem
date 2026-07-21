@@ -22,7 +22,7 @@ Product: `product.md`
 | PR evidence and gate | `checks/github_pr_evidence.py`, `checks/pr_gate.py` | evidence 接受调用方传入的 `review_source`；gate 检查 exact head、threads 与 merge ordering，但没有加载并验证对应的独立审查 artifact。 | 必须从可验证产物建立 review completion → gate → merge 的时序链。 |
 | Runtime ledger | `schemas/runtime_checkpoint.schema.json`, `checks/runtime_ledger_gate.py` | queue ledger 已记录 reviewer lane 和 review source，并可阻止 agent 自主推进。 | 可复用 lane/失败状态语义，但不能把本地 ledger 误称为 GitHub 服务端保护。 |
 | Synced SpecRail checks | `scripts/sync-specrail-checks.sh`, `checks/specrail-sync.lock.json` | review schema、GitHub evidence 和 PR gate 从上游 `majiayu000/specrail` 固定版本同步。 | remem 不得直接修改这些 vendored 文件；需要上游变更后再同步。 |
-| Prospective implementation readiness | `scripts/ci/run_sensitive_implement_gate.py`, `schemas/sensitive_implement_gate_result.schema.json`, `.github/workflows/ci.yml`, repo-local workflow adapter | 上游 issue evidence 不包含 readiness label event 的 actor/time，duplicate-work evidence 也不绑定 repository/local remote；当前 implementation PR 还会作为自身 duplicate 命中。 | remem-local wrapper 必须 live 绑定 repository、local remote、current PR/exact head，自行查询 readiness label event，验证 5 分钟 freshness，并仅对精确当前 PR/head 做可审计自引用 exemption；不能手改 vendored gate。 |
+| Prospective implementation readiness | `scripts/ci/run_sensitive_implement_gate.py`, `schemas/sensitive_implement_gate_result.schema.json`, `.github/workflows/ci.yml`, repo-local workflow adapter | 上游 issue evidence 不包含 readiness label event 的 actor/time，duplicate-work evidence 也不绑定 repository/local remote；当前 implementation PR 及其 remote head branch 还会作为自身 duplicate 命中。 | remem-local wrapper 必须 live 绑定 repository、local remote、current PR/exact head，自行查询 readiness label event，验证 5 分钟 freshness，并仅对精确当前 PR/head 及其 live-verified 唯一 remote head branch 做可审计自引用 exemption；不能手改 vendored gate。 |
 | Repository governance | `workflow.yaml`, `CONTRIBUTING.md` | workflow 禁止 agent 最终批准、合并和权限变更；CONTRIBUTING 尚未说明 enforcement-sensitive 无 fast path。GitHub `main` 在 2026-07-13 无 branch protection/ruleset。 | 仓库内门禁只能约束 agent 流程；不可绕过的 merge enforcement 需要人类管理员配置服务端规则。 |
 
 ## 设计方案
@@ -153,8 +153,10 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   `github_issue_evidence.py` 与 `github_duplicate_evidence.py` 的 live 产物，记录 repository、
   remote URL，并拒绝未来时间、不可解析时间或 gate 开始时已超过 300 秒的 `collected_at`。
 - duplicate collector 的原始 artifact 必须完整保留。wrapper 只可复制并过滤出经上述 live
-  校验的当前 PR number + exact head 自引用，把 exemption 的 repository/PR/head、原始和过滤后
-  artifact hashes 写入 durable result；其他引用该 issue 的 PR 或匹配 remote branch 仍阻断。
+  校验的当前 PR number + exact head 自引用，以及该 PR API payload 的 head ref + exact head
+  唯一确定的 remote head branch 自引用；把 exemption 的 repository/PR/head/head-ref、原始和
+  过滤后 PR/branch artifact hashes 写入 durable result。其他引用该 issue 的 PR 或匹配
+  remote branch 仍阻断。
   synced route gate 只消费过滤后副本，wrong repository/remote/head 或无法证明唯一自引用时
   fail closed。
 - wrapper 对 issue evidence 与 duplicate-work evidence 分别计算 pre-gate SHA-256，再用
@@ -173,8 +175,8 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   schema 的 current-head artifact；裸 `route_gate.py` 输出缺少 wrapper identity/hash chain，
   即使 `decision=allowed` 也必须拒绝。`.github/workflows/ci.yml` 只能调用 wrapper，
   `CONTRIBUTING.md` 与 PR template 明确禁止把直接 gate 调用作为 sensitive readiness 证明。
-- duplicate evidence 除已验证 current PR/exact-head 自引用外命中实现 PR，或命中匹配远端
-  分支时，保存原始 conflict artifact。
+- duplicate evidence 除已验证 current PR/exact-head 及其唯一 remote head branch 自引用外
+  命中实现 PR，或命中其他匹配远端分支时，保存原始 conflict artifact。
   解除 blocker 必须引用 human decision 的 actor/time/rationale；如决定清理分支，还必须
   同时保存 cleanup 前后 evidence 和 decision URL。agent 无权删除冲突分支来获得绿灯。
 
@@ -195,7 +197,7 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 | `B-011` | protection status evidence、CONTRIBUTING | 无 protection 时仅报告 advisory；管理员设置由 live API/拒绝 merge 证据验证 |
 | `B-012` | review artifact lifecycle/runtime ledger | cancelled、superseded 与并发 current-head 终态 fixtures |
 | `B-013` | runtime ledger/PR evidence self-review recovery | 无 lane failure、无同 head 人类授权或缺 human final review 的 fixtures 失败 |
-| `B-014` | remem-local sensitive implement wrapper/result schema + live GitHub repository/PR/label timeline + issue/duplicate evidence + synced route gate | 裸 route JSON、wrong repository/remote/PR/head、未来/不可解析/超过 300 秒的 `collected_at`、非 trusted label、缺 label-event actor/time、不完整 PR 列表、非当前 PR 冲突、匹配 branch、过宽 self-exemption、state/label override、gate 期间任一 evidence hash 改变和无 durable human decision 的 cleanup fixtures 失败；schema-valid current-head wrapper result、固定 argv、repository binding、live label event、仅当前 PR/head exemption、原始/过滤后 artifact hashes 与 trusted evidence state 的正例通过 |
+| `B-014` | remem-local sensitive implement wrapper/result schema + live GitHub repository/PR/label timeline + issue/duplicate evidence + synced route gate | 裸 route JSON、wrong repository/remote/PR/head/head-ref、未来/不可解析/超过 300 秒的 `collected_at`、非 trusted label、缺 label-event actor/time、不完整 PR 列表、非当前 PR 冲突、其他匹配 branch、过宽 self-exemption、state/label override、gate 期间任一 evidence hash 改变和无 durable human decision 的 cleanup fixtures 失败；schema-valid current-head wrapper result、固定 argv、repository binding、live label event、仅当前 PR/head 及其 live-verified 唯一 remote head branch exemption、原始/过滤后 PR/branch artifact hashes 与 trusted evidence state 的正例通过 |
 
 ## 数据流
 
