@@ -151,6 +151,76 @@ def references_issue(text: str, issue: int) -> bool:
     return any(re.search(pattern, text, re.IGNORECASE) for pattern in patterns)
 
 
+def query_current_pr(runner: Runner, config: Config) -> dict[str, Any]:
+    return object_value(
+        run_json(
+            runner,
+            [
+                "gh", "pr", "view", str(config.pr), "--repo", config.github_repo,
+                "--json", "number,state,headRefName,headRefOid,headRepository,isCrossRepository,body,url",
+            ],
+            "current PR query",
+        ),
+        "current PR query",
+    )
+
+
+def validate_current_pr(
+    payload: dict[str, Any], config: Config, expected_body: str | None = None
+) -> tuple[str, str]:
+    if positive_int(payload, "number", "PR") != config.pr or text_field(payload, "state", "PR").upper() != "OPEN":
+        raise GateError("current implementation PR is not the requested open PR")
+    if payload.get("isCrossRepository") is not False:
+        raise GateError("current implementation PR must not be a fork/cross-repository PR")
+    head_repository = object_value(payload.get("headRepository"), "PR headRepository")
+    if text_field(head_repository, "nameWithOwner", "PR headRepository").casefold() != config.github_repo.casefold():
+        raise GateError("current implementation PR headRepository does not match --github-repo")
+    head_ref = text_field(payload, "headRefName", "PR")
+    if text_field(payload, "headRefOid", "PR").casefold() != config.head_sha.casefold():
+        raise GateError("current implementation PR head does not match --head-sha")
+    body = text_field(payload, "body", "PR")
+    if not references_issue(body, config.issue):
+        raise GateError("current implementation PR body does not reference the linked issue")
+    if expected_body is not None and body != expected_body:
+        raise GateError("current implementation PR body changed during gate execution")
+    return head_ref, body
+
+
+def verify_remote_head(runner: Runner, repo: Path, head_ref: str, head_sha: str) -> str:
+    remote_ref = f"refs/remotes/origin/{head_ref}"
+    run(runner, ["git", "-C", str(repo), "check-ref-format", remote_ref])
+    resolved = run(
+        runner,
+        ["git", "-C", str(repo), "rev-parse", "--verify", f"{remote_ref}^{{commit}}"],
+    ).strip()
+    if not FULL_SHA.fullmatch(resolved) or resolved.casefold() != head_sha.casefold():
+        raise GateError("origin remote-tracking head ref does not resolve to the exact PR head SHA")
+    return remote_ref
+
+
+def verify_current_ready_label(runner: Runner, config: Config) -> None:
+    payload = object_value(
+        run_json(
+            runner,
+            ["gh", "issue", "view", str(config.issue), "--repo", config.github_repo, "--json", "number,state,labels"],
+            "final issue readiness query",
+        ),
+        "final issue readiness query",
+    )
+    if positive_int(payload, "number", "issue") != config.issue or text_field(payload, "state", "issue").upper() != "OPEN":
+        raise GateError("linked issue is no longer open")
+    labels = payload.get("labels")
+    if not isinstance(labels, list):
+        raise GateError("final issue readiness labels must be an array")
+    names = {
+        item.get("name") if isinstance(item, dict) else item
+        for item in labels
+        if isinstance(item, (dict, str))
+    }
+    if READY_LABEL not in names:
+        raise GateError("ready_to_implement label was removed during gate execution")
+
+
 def validate_actor(login: str, actor_type: str) -> None:
     lowered = login.lower()
     if actor_type != "User" or "[bot]" in lowered or lowered.endswith("bot") or "agent" in lowered:
@@ -436,22 +506,9 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
     if normalize_remote(origin_url).casefold() != config.github_repo.casefold():
         raise GateError("local origin does not match --github-repo")
 
-    pr_payload = object_value(
-        run_json(
-            runner,
-            ["gh", "pr", "view", str(config.pr), "--repo", config.github_repo, "--json", "number,state,headRefName,headRefOid,body,url"],
-            "current PR query",
-        ),
-        "current PR query",
-    )
-    if positive_int(pr_payload, "number", "PR") != config.pr or text_field(pr_payload, "state", "PR").upper() != "OPEN":
-        raise GateError("current implementation PR is not the requested open PR")
-    head_ref = text_field(pr_payload, "headRefName", "PR")
-    if text_field(pr_payload, "headRefOid", "PR").casefold() != config.head_sha.casefold():
-        raise GateError("current implementation PR head does not match --head-sha")
-    pr_body = text_field(pr_payload, "body", "PR")
-    if not references_issue(pr_body, config.issue):
-        raise GateError("current implementation PR body does not reference the linked issue")
+    pr_payload = query_current_pr(runner, config)
+    head_ref, pr_body = validate_current_pr(pr_payload, config)
+    remote_head_ref = verify_remote_head(runner, repo, head_ref, config.head_sha)
 
     label_event, label_authority = latest_ready_event(runner, config.github_repo, config.issue)
     with tempfile.TemporaryDirectory(prefix="remem-sensitive-gate-") as temp_name:
@@ -490,6 +547,12 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
         if issue_pre != issue_post or duplicate_pre != duplicate_post:
             raise GateError("route input evidence changed during gate execution")
 
+    final_pr_payload = query_current_pr(runner, config)
+    final_head_ref, _final_body = validate_current_pr(final_pr_payload, config, pr_body)
+    if final_head_ref != head_ref:
+        raise GateError("current implementation PR head ref changed during gate execution")
+    verify_current_ready_label(runner, config)
+
     completed = now().astimezone(timezone.utc)
     result = {
         "schema_version": 1,
@@ -499,7 +562,7 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
         "repository": config.github_repo,
         "remote_url": origin_url,
         "issue": config.issue,
-        "pr": {"number": config.pr, "url": text_field(pr_payload, "url", "PR"), "state": "OPEN", "head_ref": head_ref, "head_sha": config.head_sha},
+        "pr": {"number": config.pr, "url": text_field(final_pr_payload, "url", "PR"), "state": "OPEN", "head_ref": head_ref, "head_sha": config.head_sha, "remote_head_ref": remote_head_ref},
         "label_event": label_event,
         "label_authority": label_authority,
         "evidence_trust": {"state": READY_LABEL, "state_source": "label", "state_trusted": True, "duplicate_age_seconds": age, "max_age_seconds": MAX_EVIDENCE_AGE_SECONDS, "fresh": True},

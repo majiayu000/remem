@@ -216,7 +216,7 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
         "github.event.pull_request.merged == true",
         "concurrency:",
         "closure-audit-pr-${{ github.event.pull_request.number }}",
-        "ref: main",
+        "ref: ${{ github.event.pull_request.base.sha }}",
         "persist-credentials: false",
         'jq \'{',
         '"$GITHUB_EVENT_PATH"',
@@ -224,13 +224,17 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
         "scripts/ci/closure_follow_up.py",
         "closure-persistence-evidence.json",
         "persisted_follow_up",
-        "Classify changed paths from trusted default branch",
+        "Classify changed paths with trusted pre-merge registry",
         "classify_sensitive_changes",
         "gh api --paginate --slurp",
+        "repo-local compensating audit is not the T6 trust root",
+        "Final enforcement requires an external GitHub App",
     ]
     for token in required:
         assert token in workflow, f"closure workflow is missing {token!r}"
     forbidden = [
+        "ref: main",
+        "ref: ${{ github.event.repository.default_branch }}",
         "github.event.pull_request.head.ref",
         "github.event.pull_request.head.repo",
         "ref: ${{ github.event.pull_request.head.sha }}",
@@ -239,6 +243,22 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
     ]
     for token in forbidden:
         assert token not in workflow, f"closure workflow contains unsafe {token!r}"
+
+
+def test_workflow_classification_cannot_be_shrunk_by_the_merged_pr() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "closure-audit.yml").read_text(
+        encoding="utf-8"
+    )
+    checkout = workflow.index("ref: ${{ github.event.pull_request.base.sha }}")
+    changed_files = workflow.index("pulls/$PR_NUMBER/files")
+    classification = workflow.index("from sensitive_enforcement import")
+    controller = workflow.index("checks/closure_audit.py")
+
+    assert checkout < changed_files < classification < controller
+    assert 'sys.path.insert(0, "checks")' in workflow
+    assert 'load_pack(Path("."))' in workflow
+    assert "github.event.pull_request.head.sha }}" not in workflow
+    assert "checkout" not in workflow[classification:controller].lower()
 
 
 def main() -> int:
@@ -252,6 +272,7 @@ def main() -> int:
     test_duplicate_markers_block_persistence()
     test_repository_mismatch_blocks_before_write()
     test_workflow_uses_trusted_checkout_and_least_privilege()
+    test_workflow_classification_cannot_be_shrunk_by_the_merged_pr()
     print("closure follow-up controller tests passed")
     return 0
 

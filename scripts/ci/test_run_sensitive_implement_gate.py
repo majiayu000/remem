@@ -41,8 +41,18 @@ class FakeRunner:
             "state": "OPEN",
             "headRefName": HEAD_REF,
             "headRefOid": HEAD,
+            "headRepository": {"nameWithOwner": REPO_NAME},
+            "isCrossRepository": False,
             "body": "Implements GH-813",
             "url": "https://github.com/majiayu000/remem/pull/908",
+        }
+        self.final_pr: dict[str, Any] | None = None
+        self.pr_query_count = 0
+        self.remote_head_sha = HEAD
+        self.current_issue = {
+            "number": 813,
+            "state": "OPEN",
+            "labels": [{"name": "ready_to_implement"}],
         }
         self.events: Any = [[{
             "id": 17,
@@ -75,8 +85,15 @@ class FakeRunner:
         self.commands.append(list(argv))
         if argv[:4] == ["git", "-C", str(REPO), "remote"]:
             return completed(argv, stdout=self.origin + "\n")
+        if argv[:4] == ["git", "-C", str(REPO), "check-ref-format"]:
+            return completed(argv, stdout="")
+        if argv[:4] == ["git", "-C", str(REPO), "rev-parse"]:
+            return completed(argv, stdout=self.remote_head_sha + "\n")
         if argv[:3] == ["gh", "pr", "view"]:
-            return completed(argv, self.pr)
+            self.pr_query_count += 1
+            return completed(argv, self.final_pr if self.pr_query_count > 1 and self.final_pr is not None else self.pr)
+        if argv[:3] == ["gh", "issue", "view"]:
+            return completed(argv, self.current_issue)
         if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
             return completed(argv, self.events)
         if argv[:2] == ["gh", "api"] and "/collaborators/" in argv[2]:
@@ -142,6 +159,17 @@ class SensitiveImplementGateTests(unittest.TestCase):
         runner.pr["headRefOid"] = "b" * 40
         self.assert_blocked(runner, "head does not match")
 
+    def test_fork_pr_fails_even_with_matching_head_sha(self) -> None:
+        runner = FakeRunner()
+        runner.pr["isCrossRepository"] = True
+        runner.pr["headRepository"] = {"nameWithOwner": "contributor/remem"}
+        self.assert_blocked(runner, "must not be a fork")
+
+    def test_same_named_remote_branch_at_different_sha_fails(self) -> None:
+        runner = FakeRunner()
+        runner.remote_head_sha = "b" * 40
+        self.assert_blocked(runner, "remote-tracking head ref does not resolve")
+
     def test_closed_pr_fails(self) -> None:
         runner = FakeRunner()
         runner.pr["state"] = "MERGED"
@@ -177,6 +205,23 @@ class SensitiveImplementGateTests(unittest.TestCase):
         runner = FakeRunner()
         runner.issue["state_trusted"] = False
         self.assert_blocked(runner, "not trusted label-derived")
+
+    def test_ready_label_removed_before_allowed_output_fails(self) -> None:
+        runner = FakeRunner()
+        runner.current_issue["labels"] = []
+        self.assert_blocked(runner, "label was removed")
+
+    def test_final_pr_head_drift_fails(self) -> None:
+        runner = FakeRunner()
+        runner.final_pr = deepcopy(runner.pr)
+        runner.final_pr["headRefOid"] = "b" * 40
+        self.assert_blocked(runner, "head does not match")
+
+    def test_final_pr_state_drift_fails(self) -> None:
+        runner = FakeRunner()
+        runner.final_pr = deepcopy(runner.pr)
+        runner.final_pr["state"] = "MERGED"
+        self.assert_blocked(runner, "not the requested open PR")
 
     def test_stale_duplicate_evidence_fails(self) -> None:
         runner = FakeRunner()

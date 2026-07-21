@@ -15,8 +15,8 @@
     "issue": {"type": "integer", "minimum": 1},
     "pr": {
       "type": "object", "additionalProperties": false,
-      "required": ["number", "url", "state", "head_ref", "head_sha"],
-      "properties": {"number": {"type": "integer", "minimum": 1}, "url": {"type": "string", "minLength": 1}, "state": {"const": "OPEN"}, "head_ref": {"type": "string", "minLength": 1}, "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}
+      "required": ["number", "url", "state", "head_ref", "head_sha", "remote_head_ref"],
+      "properties": {"number": {"type": "integer", "minimum": 1}, "url": {"type": "string", "minLength": 1}, "state": {"const": "OPEN"}, "head_ref": {"type": "string", "minLength": 1}, "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "remote_head_ref": {"type": "string", "pattern": "^refs/remotes/origin/.+$"}}
     },
     "label_event": {
       "type": "object", "additionalProperties": false,

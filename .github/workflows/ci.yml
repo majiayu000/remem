@@ -25,6 +25,8 @@ jobs:
         run: python3 scripts/ci/test_specrail_gate_wiring.py
       - name: Test closure audit and durable follow-up wiring
         run: python3 scripts/ci/test_closure_follow_up.py
+      - name: Test trusted sensitive governance advisory wiring
+        run: python3 scripts/ci/test_sensitive_governance_workflow.py
       - name: Test sensitive implementation wrapper
         run: python3 scripts/ci/test_run_sensitive_implement_gate.py
       - name: Verify synced SpecRail checks

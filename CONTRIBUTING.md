@@ -78,14 +78,21 @@ carry-forward, authorized resolution of actionable threads, green CI, and an
 `review_source` value is not review evidence.
 
 The repository-local gates fail closed for agent workflows, but they are only
-advisory unless GitHub enforces them. The maintainer-selected server policy is
-a required-check ruleset for `main`: require the `check` status, require review
-conversation resolution, block force pushes and deletion, do not require a
-second approver in this single-maintainer repository, and do not permit bypass
-of the required check. Repository permission changes remain human-admin work.
+advisory. The maintainer-selected `main` ruleset may require the `check` status,
+review-conversation resolution, and block force pushes and deletion without a
+second approver. GitHub required status checks do not bind a check name to one
+workflow or event, however, so a GitHub Actions-sourced `check` is an
+accidental-bypass mitigation, not an unforgeable authorization. Non-bypass
+enforcement requires a separately operated GitHub App whose expected source is
+pinned by the ruleset, or an organization-level required workflow from a
+protected governance repository. Repository permission and external trust-root
+changes remain human-admin work.
 
-After an enforcement-sensitive PR is merged, the closure workflow audits the
-same-head gate/dispatch/merge chain. A missing chain creates or reopens one
-durable issue keyed by repository, PR number, final head, and violation code.
-GitHub write or read-back failures block closure; a local artifact alone does
-not count as a persisted follow-up.
+After an enforcement-sensitive PR is merged, the repo-local closure workflow
+uses the PR's pre-merge base registry/controller to audit the same-head
+gate/dispatch/merge chain. A missing chain creates or reopens one durable issue
+keyed by repository, PR number, final head, and violation code. GitHub write or
+read-back failures block closure; a local artifact alone does not count as a
+persisted follow-up. Because a merged PR can delete a repository-owned workflow
+before its closed event is dispatched, this audit is compensating evidence, not
+the external T6 trust root.

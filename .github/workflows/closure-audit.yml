@@ -1,5 +1,11 @@
 name: Closure Audit
 
+# This repo-local compensating audit is not the T6 trust root: a merged PR can
+# delete an in-repository workflow before GitHub dispatches its closed event.
+# When dispatched, all classification and controller code is pinned to the
+# pre-merge base. Final enforcement requires an external GitHub App or
+# organization required workflow.
+
 on:
   pull_request_target:
     types: [closed]
@@ -17,13 +23,15 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
-      - name: Check out trusted default branch
+      - name: Check out trusted pre-merge base
         uses: actions/checkout@v6.0.2
         with:
-          ref: main
+          # Pin the pre-merge base so the PR under audit cannot replace the
+          # registry or controller that decides whether it was compliant.
+          ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
-      - name: Classify changed paths from trusted default branch
+      - name: Classify changed paths with trusted pre-merge registry
         id: classify
         env:
           GH_TOKEN: ${{ github.token }}

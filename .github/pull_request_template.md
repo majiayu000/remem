@@ -57,4 +57,4 @@ artifact remain authoritative. A checked box or prose-only claim is not proof.
 - [ ] Required `check` is green on the final head
 - [ ] Exact-head PR gate decision is `allowed`
 - [ ] Merge authorization is recorded
-- [ ] Server-side required-check ruleset is active, or the advisory-only gap is explicit
+- [ ] External-App/org-required-workflow trust root is active, or the advisory-only gap is explicit
