@@ -1,5 +1,9 @@
 # Tech Spec
 
+<!-- specrail-planned-changes
+{"version":1,"issue":813,"complete":true,"paths":[".github/pull_request_template.md",".github/workflows/ci.yml",".github/workflows/closure-audit.yml","CONTRIBUTING.md","checks/check_workflow.py","checks/closure_audit.py","checks/specrail-sync.lock.json","schemas/closure_audit_result.schema.json","scripts/ci/check_pr_tier.py","scripts/ci/closure_follow_up.py","scripts/ci/test_closure_follow_up.py","scripts/ci/test_specrail_gate_wiring.py","scripts/sync-specrail-checks.sh","specs/GH813/product.md","specs/GH813/tasks.md","specs/GH813/tech.md","workflow.yaml"],"spec_refs":["specs/GH813/product.md","specs/GH813/tech.md"]}
+-->
+
 ## Linked Issue
 
 GH-813
@@ -47,8 +51,10 @@ Product: `product.md`
 
 ### 2. 上游 SpecRail review completion evidence
 
-以下文件由 `checks/specrail-sync.lock.json` 管理，必须先在上游 SpecRail 实现和发布，
-remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
+以下文件由 `checks/specrail-sync.lock.json` 管理，必须先在上游 SpecRail 实现。remem
+通常同步正式 release；当 release 明显落后且维护者明确授权时，也可以固定经过验证的
+exact commit SHA。两种路径都必须由 `scripts/sync-specrail-checks.sh` 从 clean upstream
+checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 
 - 扩展 review artifact，至少要求 `reviewer_lane`（或等价独立身份）、`head_sha`、
   `review_started_at`、`review_completed_at`、终态、verdict 和结构化 findings。只有显式
@@ -93,8 +99,11 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 
 ### 3. remem 同步与仓库流程说明
 
-- 上游变更发布后更新 `checks/specrail-sync.lock.json` 并通过同步脚本更新 vendored 文件；
-  禁止在 remem 内对 synced 文件做永久性手改。
+- 上游变更发布后，或维护者明确批准 exact-SHA pin 后，更新
+  `checks/specrail-sync.lock.json` 并通过同步脚本更新 vendored 文件；禁止在 remem 内对
+  synced 文件做永久性手改。2026-07-21 维护者批准固定
+  `0f903abe1794899071a9f19a4c46af1ce81129d3`，因为最新正式 release `v0.2.1` 落后
+  upstream main 168 个提交，而该 SHA 已包含 GH97 的 review/pr-gate/closure-audit contract。
 - 在 `CONTRIBUTING.md` 增加 `enforcement_sensitive` 分类、无 fast path、exact-head review
   顺序和 agent 权限边界。避免修改 `AGENTS.md`，除非维护者另行要求高上下文规则变更。
 - 同步并接入上游可执行 closure audit；`SP813-T5` 的 remem workflow integration controller
@@ -112,6 +121,10 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
   required review 或 ruleset，并验证实际拒绝缺少 gate check 的 merge。
 - agent 不修改权限、不批准、不合并。服务端保护未启用时，工具必须把能力描述为
   advisory detection，而不是 prevention。
+- 2026-07-21 live API 返回 `main` 未受 branch protection/ruleset 保护；维护者已选择
+  required-check ruleset：要求 `check` 成功、解决 review conversations、禁止 force push
+  与 deletion，且不要求第二位 approver 以避免单维护者仓库自锁。该决策不等于设置已生效；
+  仍需管理员完成 GitHub 配置并回读验证。
 
 ## Product-to-Test Mapping
 
