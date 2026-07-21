@@ -15,7 +15,8 @@ printf '%s\t%s\n' "$event" "$(basename "$payload")" >>"$run_dir/events.tsv"
 transcript_path=$(jq -r 'select(.transcript_path | type == "string") | .transcript_path' "$payload")
 if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
   size=$(stat -f '%z' "$transcript_path")
-  lines=$(wc -l <"$transcript_path" | tr -d ' ')
+  lines=$(wc -l <"$transcript_path")
+  lines=$(printf '%s' "$lines" | tr -d ' ')
   printf '%s\t%s\t%s\n' "$event" "$size" "$lines" >>"$run_dir/transcript-metrics.tsv"
 fi
 

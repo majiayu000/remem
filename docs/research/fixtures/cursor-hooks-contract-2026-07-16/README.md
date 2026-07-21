@@ -14,8 +14,9 @@ account, path, UUID, model name, token count, transcript text, or stable hash.
   text.
 - `probe.sh`: stdin capture, transcript-size sampling, and bounded
   short/medium/long multibyte `additional_context` generator.
-- `hooks.template.json`: all probe entries. Placeholder paths must be replaced
-  before use; existing hook entries must be preserved when merging.
+- `hooks.template.json`: all probe entries. Placeholder paths must be validated
+  and replaced before use; existing hook entries must be preserved when
+  merging.
 
 No `preToolUse`, `postToolUse`, `postToolUseFailure`, MCP, subagent, cancelled
 Stop, or `preCompact` fixture is published because the real host did not emit
@@ -28,9 +29,27 @@ open contract question into false evidence.
 2. Create a private directory outside the repository with mode `0700`.
 3. Copy `~/.cursor/hooks.json` into a separate `0700` backup directory and
    record its SHA-256 locally. Do not publish the fingerprint or config body.
-4. Copy `hooks.template.json` to a temporary file, replacing
-   `<probe-script>`, `<private-run-dir>`, and `<context-mode-file>` with absolute
-   local paths. The mode file contains exactly `small`, `medium`, or `large`.
+4. Select absolute local paths for `<probe-script>`, `<private-run-dir>`, and
+   `<context-mode-file>`. Before replacing the placeholders, validate every
+   path with the following command. This template deliberately rejects spaces
+   and shell metacharacters rather than trying to quote arbitrary replacement
+   text:
+
+   ```sh
+   python3 - "$probe_script" "$private_run_dir" "$context_mode_file" <<'PY'
+   import re
+   import sys
+
+   pattern = re.compile(r"/[A-Za-z0-9._/-]+")
+   for path in sys.argv[1:]:
+       if pattern.fullmatch(path) is None:
+           raise SystemExit(f"unsafe probe path: {path!r}")
+   PY
+   ```
+
+   Only after that validation succeeds, copy `hooks.template.json` to a
+   temporary file and replace the three placeholders. The mode file contains
+   exactly `small`, `medium`, or `large`.
 5. Merge each entry by appending to the matching event array in the existing
    user config. Do not replace existing entries. Validate the result with
    `jq -e .` before atomically replacing the config.
