@@ -206,6 +206,17 @@ fn load_status_report() -> Result<StatusReport> {
                 context_estimated_tokens: spend.context_estimated_tokens,
                 context_emit_count: spend.context_emit_count,
                 context_suppress_count: spend.context_suppress_count,
+                relevance_state: spend.relevance_state,
+                relevance_policy_version: spend.relevance_policy_version,
+                relevance_k: spend.relevance_k,
+                relevance_threshold: spend.relevance_threshold,
+                relevance_candidate_count: spend.relevance_candidate_count,
+                relevance_eligible_count: spend.relevance_eligible_count,
+                relevance_final_injected_count: spend.relevance_final_injected_count,
+                relevance_below_threshold_count: spend.relevance_below_threshold_count,
+                relevance_k_limited_count: spend.relevance_k_limited_count,
+                relevance_section_budget_count: spend.relevance_section_budget_count,
+                relevance_total_char_limit_count: spend.relevance_total_char_limit_count,
                 ai_usage_attribution: spend.ai_usage_attribution,
                 ai_calls: spend.ai_calls,
                 ai_total_tokens: spend.ai_total_tokens,
@@ -646,6 +657,29 @@ fn print_status_report(report: &StatusReport) {
             "  Context runs: {:>6} emitted, {:>6} suppressed",
             spend.context_emit_count, spend.context_suppress_count
         );
+        if spend.relevance_state == "unavailable" {
+            println!("  Relevance:    unavailable on legacy context rows");
+        } else {
+            let threshold = spend
+                .relevance_threshold
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "  Relevance:    {} (k={}, threshold={}, {}/{} injected/eligible)",
+                spend.relevance_state,
+                spend.relevance_k.unwrap_or(0),
+                threshold,
+                spend.relevance_final_injected_count,
+                spend.relevance_eligible_count
+            );
+            println!(
+                "  Relevance drops: {} low, {} k-limit, {} section, {} total-limit",
+                spend.relevance_below_threshold_count,
+                spend.relevance_k_limited_count,
+                spend.relevance_section_budget_count,
+                spend.relevance_total_char_limit_count
+            );
+        }
         match spend.ai_usage_attribution.as_str() {
             "attributed" => {
                 println!(

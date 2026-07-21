@@ -229,7 +229,7 @@ fn git_subcommand_args<'a>(tokens: &'a [String], expected: &str) -> Option<&'a [
 
 fn git_subcommand_index(tokens: &[String]) -> Option<usize> {
     let command_index = bash_ast::unwrap::effective_command_index(tokens)?;
-    if !is_git_executable(tokens.get(command_index)?) {
+    if !is_git_executable(bash_ast::unwrap::semantic_token(tokens.get(command_index)?)) {
         return None;
     }
     let mut index = command_index;

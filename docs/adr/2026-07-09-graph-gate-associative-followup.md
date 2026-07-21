@@ -8,6 +8,9 @@ Accepted. Follow-up to
 [`docs/adr/2026-06-12-graph-decision-gate.md`](2026-06-12-graph-decision-gate.md)
 (“Keep `graph_edges` Retrieval Frozen Pending a Literal Graph Eval”).
 
+The freeze recorded below was superseded on 2026-07-19 by the GH-853
+same-head literal decision appended at the end of this ADR.
+
 ## Context
 
 The 2026-06-12 gate deferred a wire-or-freeze decision for `graph_edges`
@@ -152,3 +155,31 @@ traversal arm produced no evidence because it is not runnable at seed. The
 - `remem eval-graph-decision --json-out <report> --json` — writes the report,
   then exits non-zero by design (gate freeze); associative per-query summaries
   extracted from that report are quoted above.
+
+## 2026-07-19 GH-853 Literal Graph Decision
+
+Status: Accepted. Supersedes the earlier freeze for the bounded production
+channel described in `specs/GH853/`; it does not authorize PPR or context
+injection wiring.
+
+GH-853 added a shared SQLite-only traversal core, seeded the existing 15
+pre-registered associative fixtures through the trusted provenance contract,
+and ran standard (`graph=0`) and literal graph arms from the same code and
+dataset. The committed `eval/graph-decision/report.json` records:
+
+- associative evidence recall@5: `0.0 -> 1.0` (`delta=1.0`, threshold `0.05`)
+- associative real two-edge queries: `15/15`
+- non-associative recall/evidence/nDCG deltas: `0.0 / 0.0 / 0.0`
+- scope leaks: `0`
+- literal overall p95 latency below the `1000ms` budget
+- `checks.safe_to_wire_literal_graph=true` and `checks.all_checks_passed=true`
+
+Decision: `wire_literal_graph_traversal`. Standard memory search may use the
+bounded `graph_traversal` RRF channel with eligible FTS/vector seeds. Only
+trusted, currently valid `supersedes`, `mentions`, and `touches_file` paths are
+rankable; diagnostic hints and `extracted_from` do not produce memory
+candidates. Empty/no-seed/no-expansion states remain explicit disabled reasons,
+and execution errors fail closed.
+
+PPR, graph databases, schema changes, and direct SessionStart/context traversal
+remain outside this decision and require separate evidence before adoption.

@@ -338,8 +338,14 @@ fn select_eligible_preferences(
                     m.project
                 ) = ?3)
                OR
+               -- Closed global-ownership tuple (GH-813): a global rule is
+               -- eligible only for the canonical user-default owner with no
+               -- project target. Exact equality fails closed on any unknown
+               -- owner_scope/owner_key or a newly introduced value.
                (COALESCE(m.scope, 'project') = 'global'
-                AND m.owner_scope IS NOT NULL)
+                AND m.owner_scope = 'user'
+                AND m.owner_key = 'user:default'
+                AND COALESCE(NULLIF(m.target_project, ''), '') = '')
            )
            AND m.source_trust_class IN ('local_tool_output', 'repo_file', 'user_prompt')
            AND r.machine_checkable = 1
@@ -373,7 +379,11 @@ fn load_rule_compilation_projects(conn: &Connection) -> Result<Vec<String>> {
              SELECT DISTINCT project FROM memories
              UNION
              SELECT DISTINCT CASE
-                        WHEN COALESCE(m.scope, 'project') = 'global' THEN m.project
+                        WHEN COALESCE(m.scope, 'project') = 'global'
+                         AND m.owner_scope = 'user'
+                         AND m.owner_key = 'user:default'
+                         AND COALESCE(NULLIF(m.target_project, ''), '') = ''
+                        THEN m.project
                         ELSE COALESCE(
                             NULLIF(m.target_project, ''),
                             CASE WHEN m.owner_scope = 'repo' THEN NULLIF(m.owner_key, '') END,
@@ -527,6 +537,8 @@ fn latest_compile_diagnostic(
     .optional()
 }
 
+#[cfg(test)]
+mod eligibility_tests;
 #[cfg(test)]
 mod fixture_tests;
 #[cfg(test)]

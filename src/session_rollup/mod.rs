@@ -1,6 +1,7 @@
 mod parse;
 mod persist;
 mod prompt;
+mod raw_identity;
 mod side_effects;
 #[cfg(test)]
 mod tests;

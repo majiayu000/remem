@@ -77,6 +77,14 @@ surface that #381/#383 evidence collection depends on.
   persisted audit field and recovery counter unchanged.
 - `remem cleanup --archived-failures[=<days>]` purges archived rows older
   than the horizon, reporting what was removed.
+- Operators can inspect, preview, retry, or quarantine one extraction replay
+  range by positive ID. Exact listing remains available after the range reaches
+  terminal `replayed` state and returns the linked replay task's status,
+  attempts, and bounded error evidence. Exact mutation never selects or changes
+  a sibling range and never falls back to a batch operation. A quarantined
+  range remains ineligible by default and can be retried only by combining its
+  exact ID with an explicit quarantine acknowledgement; batch retry never
+  includes quarantined ranges.
 
 ## Acceptance Criteria
 
@@ -103,6 +111,22 @@ surface that #381/#383 evidence collection depends on.
   excludes the Summary while recovering the unrelated job. Direct per-row
   Summary input is skipped explicitly with byte/value-identical persisted
   fields and no requeued/coalesced count.
+- Exact listing of a terminal replay range returns that range and its linked
+  replay-task evidence. Exact retry/quarantine revalidates the same ID in one
+  transaction, changes only that target, and rejects missing, non-positive,
+  active-task, or otherwise non-retryable targets without batch fallback;
+  archived targets are also rejected unless exact retry supplies the explicit
+  archived-recovery opt-in. Exact retry of a quarantined range additionally
+  requires an explicit acknowledgement; without it the sticky quarantine
+  state is preserved. Archived quarantine additionally requires exact
+  `--include-archived`, but the pending command exposes that combination only
+  as read-only dry-run validation. Neither acknowledgement widens active-task,
+  terminal, or batch eligibility. An exact replay worker validates the profile
+  and acquires the worker singleton before any write, then revalidates,
+  requeues, and claims only that target in one transaction. It processes only
+  the claimed task. Any non-successful exact attempt, including expired exact
+  worker ownership after interruption, returns the task and range to archived
+  quarantine rather than exposing default-profile work to a daemon.
 - Doctor on a store with 1000 archived + 2 fresh failures reports the 2
   actionable failures prominently, archived count secondary, and exits with
   the severity driven by the 2.
@@ -118,8 +142,10 @@ surface that #381/#383 evidence collection depends on.
 - Misclassification: a permanent failure labeled transient wastes bounded
   retries (capped, acceptable); a transient labeled permanent archives
   something recoverable — mitigated by conservative mapping (unknown
-  defaults to transient) and by archived rows remaining replayable via
-  explicit `remem pending` tooling, including failed jobs.
+  defaults to transient) and by archived rows remaining recoverable through
+  explicit tooling: the locked exact worker for replay ranges and `remem
+  pending` paths for the other supported failure surfaces, including failed
+  jobs.
 - Retention window hides a recurring failure that re-fires after archiving:
   mitigated because each new occurrence is a fresh actionable row; only
   stale rows age out.

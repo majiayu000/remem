@@ -175,6 +175,17 @@ fn status_report_fixture() -> StatusReport {
             context_estimated_tokens: 801,
             context_emit_count: 3,
             context_suppress_count: 1,
+            relevance_state: "applied".to_string(),
+            relevance_policy_version: Some("sessionstart_significant_token_v1".to_string()),
+            relevance_k: Some(1),
+            relevance_threshold: Some(0.5),
+            relevance_candidate_count: 8,
+            relevance_eligible_count: 2,
+            relevance_final_injected_count: 1,
+            relevance_below_threshold_count: 6,
+            relevance_k_limited_count: 1,
+            relevance_section_budget_count: 0,
+            relevance_total_char_limit_count: 0,
             ai_usage_attribution: "partial".to_string(),
             ai_calls: 2,
             ai_total_tokens: 1_234,
@@ -306,6 +317,14 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(
         parsed["latest_session_memory_spend"]["context_estimated_tokens"],
         801
+    );
+    assert_eq!(
+        parsed["latest_session_memory_spend"]["relevance_state"],
+        "applied"
+    );
+    assert_eq!(
+        parsed["latest_session_memory_spend"]["relevance_final_injected_count"],
+        1
     );
     assert_eq!(
         parsed["latest_session_memory_spend"]["ai_usage_attribution"],
@@ -518,6 +537,17 @@ fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<
     }
     conn.execute_batch("PRAGMA user_version = 65")?;
     let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO workspaces(id, root_path, created_at_epoch, updated_at_epoch)
+         VALUES (1, '/tmp/status-v053-source-kind', ?1, ?1)",
+        params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO projects(id, workspace_id, project_path, project_key,
+                              created_at_epoch, updated_at_epoch)
+         VALUES (1, 1, '/tmp/status-v053-source-kind', 'status-v053-source-kind', ?1, ?1)",
+        params![now],
+    )?;
     conn.execute(
         "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
                                        evidence_event_ids, confidence, risk_class,

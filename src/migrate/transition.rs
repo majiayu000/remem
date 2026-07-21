@@ -79,6 +79,8 @@ pub(super) fn backfill_to_baseline(conn: &Connection) -> Result<()> {
         add_column_if_missing(conn, "session_summaries", col, typedef)?;
     }
 
+    ensure_observations_fts(conn)?;
+
     // --- tables that may not exist in older schemas ---
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS entities (
@@ -176,6 +178,53 @@ pub(super) fn backfill_to_baseline(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_memory_entities_entity ON memory_entities(entity_id);"
     )?;
 
+    Ok(())
+}
+
+fn ensure_observations_fts(conn: &Connection) -> Result<()> {
+    let fts_exists: bool = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1 FROM sqlite_schema
+             WHERE type = 'table' AND name = 'observations_fts'
+         )",
+        [],
+        |row| row.get(0),
+    )?;
+    conn.execute_batch(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS observations_fts USING fts5(
+            title, subtitle, narrative, facts, concepts,
+            content='observations',
+            content_rowid='id',
+            tokenize='trigram'
+        );
+        CREATE TRIGGER IF NOT EXISTS observations_ai AFTER INSERT ON observations BEGIN
+            INSERT INTO observations_fts(rowid, title, subtitle, narrative, facts, concepts)
+            VALUES (new.id, new.title, new.subtitle, new.narrative, new.facts, new.concepts);
+        END;
+        CREATE TRIGGER IF NOT EXISTS observations_ad AFTER DELETE ON observations BEGIN
+            INSERT INTO observations_fts(
+                observations_fts, rowid, title, subtitle, narrative, facts, concepts
+            )
+            VALUES (
+                'delete', old.id, old.title, old.subtitle, old.narrative, old.facts, old.concepts
+            );
+        END;
+        CREATE TRIGGER IF NOT EXISTS observations_au AFTER UPDATE ON observations BEGIN
+            INSERT INTO observations_fts(
+                observations_fts, rowid, title, subtitle, narrative, facts, concepts
+            )
+            VALUES (
+                'delete', old.id, old.title, old.subtitle, old.narrative, old.facts, old.concepts
+            );
+            INSERT INTO observations_fts(rowid, title, subtitle, narrative, facts, concepts)
+            VALUES (new.id, new.title, new.subtitle, new.narrative, new.facts, new.concepts);
+        END;",
+    )
+    .context("backfill observations FTS schema")?;
+    if !fts_exists {
+        conn.execute_batch("INSERT INTO observations_fts(observations_fts) VALUES ('rebuild');")
+            .context("backfill existing observations into FTS")?;
+    }
     Ok(())
 }
 

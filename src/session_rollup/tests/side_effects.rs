@@ -262,7 +262,7 @@ async fn session_rollup_worker_drains_raw_archive_from_stop_payload() -> Result<
     let transcript = data_dir.path.join("transcript.jsonl");
     std::fs::write(
         &transcript,
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"archived assistant turn"}]}}"#,
+        r#"{"type":"assistant","sessionId":"sess-rollup-raw","message":{"content":[{"type":"text","text":"archived assistant turn"}]}}"#,
     )?;
     let transcript_byte_len = std::fs::metadata(&transcript)?.len();
     let mut conn = crate::db::open_db()?;
@@ -645,7 +645,7 @@ async fn session_rollup_retries_incomplete_raw_archive_ingest() -> Result<()> {
     let transcript = data_dir.path.join("transcript.jsonl");
     std::fs::write(
         &transcript,
-        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"retry archived assistant turn"}]}}"#,
+        r#"{"type":"assistant","sessionId":"sess-rollup-raw-retry","message":{"content":[{"type":"text","text":"retry archived assistant turn"}]}}"#,
     )?;
     let transcript_byte_len = std::fs::metadata(&transcript)?.len();
     let mut conn = crate::db::open_db()?;

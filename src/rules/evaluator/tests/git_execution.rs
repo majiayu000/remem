@@ -368,6 +368,23 @@ fn single_word_brace_expansion_respects_the_materialization_bound() {
     assert_eq!(outcome.matches.len(), 1);
     assert!(outcome.diagnostics.is_empty());
 
+    let shell_alternatives = ["bash.exe".to_string()]
+        .into_iter()
+        .chain((0..=300).map(|value| format!("item{value}.exe")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: format!("{{{shell_alternatives}}} -c 'git push --force'"),
+        },
+    );
+    // Brace expansion materializes every member as argv. Here `item0.exe` is
+    // the shell's script operand, so the later `-c` string is not executed.
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow);
+    assert!(outcome.matches.is_empty());
+    assert!(outcome.diagnostics.is_empty());
+
     let semantic_alternatives = ["-vf".to_string(), "--mi".to_string()]
         .into_iter()
         .chain((0..=300).map(|value| format!("branch{value}")))
@@ -514,16 +531,12 @@ fn force_push_rule_prunes_static_non_execution_and_honors_overrides() {
 }
 
 #[test]
-fn force_push_rule_closes_wrapper_option_parsing_gaps() {
+fn force_push_rule_recognizes_exe_shell_basenames() {
     let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     for command in [
-        "git push -od origin +HEAD:main",
-        "git push -od origin +main",
-        "git() { command git \"$@\"; }; git push --force",
-        "env -uHOME git push --force",
-        "env A-B=1 git push --force",
-        "exec -aNAME git push --force",
-        "git --config-env push.default=REMEM push --force",
+        "bash.exe -c 'git push --force'",
+        "/usr/bin/bash.exe -c 'git push --force'",
+        r#""C:\Program Files\Git\bin\bash.exe" -c 'git push --force'"#,
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -534,12 +547,41 @@ fn force_push_rule_closes_wrapper_option_parsing_gaps() {
         assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
         assert!(outcome.diagnostics.is_empty(), "{command}");
     }
+
+    let command = "notbash.exe -c 'git push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_binds_shell_command_positional_parameters() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
     for command in [
-        "git push -o d origin main",
-        "git push -od origin main",
-        "git push -d origin stale-branch",
-        "env -uHOME true",
-        "env A-B=1 true",
+        "bash -c 'git push \"$1\"' _ --force",
+        "bash -c '\"$0\" push --force' git",
+        "bash -c '$1' _ 'git push --force'",
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    for command in [
+        "bash -c 'git push \"$1\"' _ origin",
+        "bash -c 'git push \"$1\"' _",
+        "bash -c '\"$1\"' _ 'git push --force'",
     ] {
         let outcome = evaluate_artifact(
             &artifact,
@@ -548,6 +590,162 @@ fn force_push_rule_closes_wrapper_option_parsing_gaps() {
             },
         );
         assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+        assert!(outcome.matches.is_empty(), "{command}");
         assert!(outcome.diagnostics.is_empty(), "{command}");
     }
+}
+
+#[test]
+fn force_push_rule_preserves_missing_shell_zero() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c '${0:-git} push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+
+    let command = "bash -c '$1' _ 'git push --force'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_function_positional_scope_inside_shell_command() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = "bash -c 'f(){ git push \"$1\"; }; f origin' _ --force";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+
+    let command = "bash -c 'f(){ git push \"$1\"; }; f --force' _ origin";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_shell_positionals_for_exit_traps() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c 'trap '\''git push "$1"'\'' EXIT' _ --force"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_expands_shell_positionals_in_heredoc_handoff() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    for command in [
+        r#"bash -c 'sh <<EOF
+git push "$1"
+EOF' _ --force"#,
+        r#"bash -c 'sh <<EOF
+git push '\''$1'\''
+EOF' _ --force"#,
+        r#"bash -c 'sh <<EOF
+${1:-"git push --force"}
+EOF' _"#,
+    ] {
+        let outcome = evaluate_artifact(
+            &artifact,
+            &EvaluationInput {
+                command: command.into(),
+            },
+        );
+        assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+        assert!(outcome.diagnostics.is_empty(), "{command}");
+    }
+
+    let command = r#"bash -c 'sh <<'\''EOF'\''
+git push "$1"
+EOF' _ --force"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+
+    let command = "bash -c 'sh <<EOF\n$1\nEOF' _ 'git push --force; :'";
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_keeps_nested_command_substitution_quotes_independent() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c 'echo "$( : '\''$1'\'' )"' _ "x' ; git push --force; : '""#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Allow, "{command}");
+    assert!(outcome.matches.is_empty(), "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_does_not_expand_function_definition_names() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c '$1(){ :; }; git push --force' _ git"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
+}
+
+#[test]
+fn force_push_rule_expands_shell_positionals_as_arithmetic_source() {
+    let artifact = CompiledRulesArtifact::new(99, vec![forbidden_force_push_rule()]);
+    let command = r#"bash -c '(( $1 ))' _ 'x[$(git push --force)]'"#;
+    let outcome = evaluate_artifact(
+        &artifact,
+        &EvaluationInput {
+            command: command.into(),
+        },
+    );
+    assert_eq!(outcome.verdict, EvaluationVerdict::Block, "{command}");
+    assert!(outcome.diagnostics.is_empty(), "{command}");
 }

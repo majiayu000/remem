@@ -20,6 +20,7 @@ pub(super) struct ContextRequest {
 
 #[derive(Debug, Clone)]
 pub(super) struct SessionSummaryBrief {
+    pub id: i64,
     pub request: String,
     pub completed: Option<String>,
     pub created_at_epoch: i64,
@@ -33,6 +34,7 @@ pub(super) struct LoadedContext {
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
+    pub relevance_query: Option<String>,
     pub memory_abstained: bool,
     pub errors: Vec<ContextLoadError>,
     pub owner_traces: Vec<OwnerTrace>,

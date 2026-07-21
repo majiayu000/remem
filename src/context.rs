@@ -20,6 +20,7 @@ mod poisoning;
 mod policy;
 mod prompt_submit;
 mod query;
+mod relevance;
 mod render;
 mod render_inputs;
 mod sections;

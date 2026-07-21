@@ -1,6 +1,6 @@
 {
   "name": "@remem-ai/remem",
-  "version": "0.6.1",
+  "version": "0.6.14",
   "mcpName": "io.github.majiayu000/remem",
   "description": "Local-first coding agent memory for Claude Code and OpenAI Codex",
   "license": "MIT",

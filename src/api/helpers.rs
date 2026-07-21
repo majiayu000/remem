@@ -42,6 +42,7 @@ fn memory_to_item_with_staleness(
 ) -> MemoryItem {
     MemoryItem {
         id: memory.id,
+        version: None,
         title: memory.title.clone(),
         content: memory.text.clone(),
         memory_type: memory.memory_type.clone(),

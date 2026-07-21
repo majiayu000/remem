@@ -48,6 +48,7 @@ pub(super) struct ContextGateDecision {
     pub key: Option<String>,
     pub context_hash: Option<String>,
     pub output_mode: Option<&'static str>,
+    pub retained_context_chars: Option<usize>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -267,15 +268,17 @@ pub(super) fn apply_context_gate_with_data_version(
         };
     }
 
-    let (output, action, output_mode) =
+    let (output, action, output_mode, retained_context_chars) =
         if matches!(mode, ContextGateMode::Auto | ContextGateMode::Delta) {
+            let delta = delta::build_delta_output(&output);
             (
-                delta::build_delta_output(&output),
+                delta.output,
                 ContextGateAction::EmittedDelta,
                 "delta",
+                Some(delta.retained_context_chars),
             )
         } else {
-            (output, ContextGateAction::EmittedFull, "full")
+            (output, ContextGateAction::EmittedFull, "full", None)
         };
 
     match upsert_emit_row(
@@ -290,7 +293,10 @@ pub(super) fn apply_context_gate_with_data_version(
     ) {
         Ok(()) => {
             log_gate("emit", invocation, &key, output_mode, &hash);
-            gate_decision(output, action, "changed_hash", &key, &hash, output_mode)
+            let mut decision =
+                gate_decision(output, action, "changed_hash", &key, &hash, output_mode);
+            decision.retained_context_chars = retained_context_chars;
+            decision
         }
         Err(error) => fail_open(output, "gate_write", error),
     }
@@ -308,6 +314,7 @@ fn decision(
         key: None,
         context_hash: None,
         output_mode: None,
+        retained_context_chars: None,
     }
 }
 
@@ -326,6 +333,7 @@ fn gate_decision(
         key: Some(key.to_string()),
         context_hash: Some(context_hash.to_string()),
         output_mode: Some(output_mode),
+        retained_context_chars: None,
     }
 }
 

@@ -15,7 +15,7 @@ pub(super) fn run_stop_hook_side_effects(
     if drain_raw_archive {
         capture_raw_archive(conn, hook, session_id, project, cwd, branch);
     }
-    if let Err(error) = distill_stop_failure_lessons(conn, session_id, project, branch) {
+    if let Err(error) = distill_stop_failure_lessons(conn, session_id, project, branch, &[]) {
         crate::log::error(
             "summary-job",
             &format!(
@@ -57,9 +57,14 @@ pub(crate) fn distill_stop_failure_lessons(
     session_id: &str,
     project: &str,
     branch: Option<&str>,
+    transcript_identity_ids: &[i64],
 ) -> Result<()> {
-    let report = crate::memory::failure_lesson::distill_session_failure_lessons(
-        conn, session_id, project, branch,
+    let report = crate::memory::failure_lesson::distill_stop_failure_lessons(
+        conn,
+        session_id,
+        project,
+        branch,
+        transcript_identity_ids,
     )
     .context("distill Stop-hook failure lessons")?;
     if report.inserted > 0 || report.duplicates > 0 {

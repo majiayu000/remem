@@ -17,6 +17,7 @@ use super::{
 };
 
 mod format;
+mod graph;
 use format::fts_normalized_hits;
 
 pub(super) struct QuerySearchWithExplain {
@@ -502,6 +503,19 @@ fn build_query_search_plan(
         }
     }
 
+    graph::append_graph_channel(
+        conn,
+        &mut channels,
+        &mut timings,
+        project,
+        memory_type,
+        branch,
+        include_stale,
+        include_suppressed,
+        fetch,
+        weights,
+    )?;
+
     if core_refs.is_empty() {
         channels.push(NamedChannel::disabled(
             "like_fallback",
@@ -763,6 +777,7 @@ fn has_trusted_non_text_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool
         .filter(|name| *name != "usage")
         .collect();
     contributing.contains(&"fact")
+        || contributing.contains(&"graph_traversal")
         || (!contributing.is_empty() && contributing.iter().all(|channel| *channel == "vector"))
 }
 

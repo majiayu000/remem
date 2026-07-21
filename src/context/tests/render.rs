@@ -22,6 +22,7 @@ use super::{insert_memory, sample_memory, sample_memory_with_epoch, sample_works
 fn render_recent_sessions_truncates_completed_line() {
     let mut output = String::new();
     let summaries = vec![SessionSummaryBrief {
+        id: 1,
         request: "Implement feature".to_string(),
         completed: Some(format!("{}\nignored", "x".repeat(130))),
         created_at_epoch: 1_710_000_000,
@@ -53,6 +54,7 @@ fn post_gate_debug_trace_preserves_request_source_for_delta_output() {
         key: Some("session:/tmp/remem:sess-1".to_string()),
         context_hash: Some("hash-a".to_string()),
         output_mode: Some("delta"),
+        retained_context_chars: Some(0),
     };
     let mut output = "[remem context delta truncated]\n".to_string();
 
@@ -69,6 +71,7 @@ fn render_recent_sessions_truncates_request_text() {
     let mut output = String::new();
     let long_request = format!("Investigate SessionStart budget {}", "x".repeat(300));
     let summaries = vec![SessionSummaryBrief {
+        id: 1,
         request: long_request.clone(),
         completed: Some("done".to_string()),
         created_at_epoch: 1_710_000_000,
@@ -86,11 +89,13 @@ fn render_recent_sessions_respects_char_limit() {
     let mut output = String::new();
     let summaries = vec![
         SessionSummaryBrief {
+            id: 1,
             request: "Short followup".to_string(),
             completed: Some("done".to_string()),
             created_at_epoch: 1_710_000_000,
         },
         SessionSummaryBrief {
+            id: 2,
             request: "Second session should not fit".to_string(),
             completed: Some("done".to_string()),
             created_at_epoch: 1_710_000_100,
@@ -464,6 +469,7 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
             count: 1,
             chars: 80,
         },
+        relevance: Default::default(),
         owner_counts: Default::default(),
         core_ids: vec![1, 2],
         output_chars: 3_200,
@@ -476,10 +482,38 @@ fn context_stats_footer_reports_budget_scope_and_truncation() {
     assert!(footer.contains("├─ Preferences: 3 total, 2 project, 1 global"));
     assert!(footer.contains("├─ Sessions: 4"));
     assert!(footer.contains("├─ Workstreams: 1"));
+    assert!(footer.contains("├─ Relevance: unavailable"));
     assert!(footer.contains("└─ Budget: 3200 chars (~800 tokens) / 12000, truncated: yes"));
     assert!(!footer.contains('╮'));
     assert!(!footer.contains('╯'));
     assert!(!footer.contains("owners repo="));
+}
+
+#[test]
+fn context_stats_footer_distinguishes_all_relevance_drop_stages() {
+    let mut stats = ContextRenderStats::default();
+    stats.relevance.state = "applied";
+    stats.relevance.k = 5;
+    stats.relevance.threshold = Some(0.375);
+    stats.relevance.candidates = 12;
+    stats.relevance.eligible = 8;
+    stats.relevance.final_injected = 2;
+    stats.relevance.below_threshold = 4;
+    stats.relevance.k_limited = 3;
+    stats.relevance.section_limited = 2;
+    stats.relevance.total_limited = 1;
+
+    let applied = build_context_stats_footer(&stats);
+    assert!(applied.contains("Relevance: applied"));
+    assert!(applied.contains("low=4"));
+    assert!(applied.contains("k_dropped=3"));
+    assert!(applied.contains("section_dropped=2"));
+    assert!(applied.contains("total_dropped=1"));
+
+    stats.relevance.state = "blank";
+    assert!(build_context_stats_footer(&stats).contains("Relevance: blank"));
+    stats.relevance.state = "disabled";
+    assert!(build_context_stats_footer(&stats).contains("Relevance: disabled"));
 }
 
 #[test]

@@ -17,6 +17,11 @@ Clients should call `GET /api/v1/capabilities` before enabling optional UI
 features.
 Candidate review queue filters and the blocked-reason aggregate endpoint are
 implemented in source version `0.5.162`.
+The GH-880 safe console contract is implemented in source version `0.6.6`:
+candidate detail/evidence and idempotent safe review, five independently gated
+safe read resources, and recoverable memory archive/restore. This source
+version remains unavailable to installed-binary clients until a corresponding
+release is published.
 
 ## Endpoint Groups
 
@@ -41,10 +46,26 @@ implemented in source version `0.5.162`.
 | GET | `/api/v1/stats` | Product stats for local dashboards. |
 | GET | `/api/v1/candidates?project=&status=&type=&block_reason=&topic_key=&contains=&min_confidence=&older_than_days=&limit=&offset=` | Compact memory-candidate list with review filters. |
 | GET | `/api/v1/candidates/blocked?project=` | Pending candidate block-reason aggregates with examples. |
+| GET | `/api/v1/candidates/{id}` | Safe candidate detail, evidence projection, and review decision. |
+| POST | `/api/v1/candidates/{id}/review/approve` | Versioned, audited, idempotent safe approval. |
+| POST | `/api/v1/candidates/{id}/review/reject` | Versioned, audited, idempotent safe rejection. |
+| POST | `/api/v1/candidates/{id}/review/edit` | Versioned, audited, idempotent safe edit-and-approve. |
 | POST | `/api/v1/candidates/{id}/approve` | Approve a pending candidate. |
 | POST | `/api/v1/candidates/{id}/reject` | Reject a pending candidate; persisted status is `discarded`. |
 | POST | `/api/v1/candidates/{id}/edit` | Edit and approve a pending candidate. |
 | GET | `/api/v1/graph?project=&limit=&include_suppressed=` | DB-backed entity graph. |
+| GET | `/api/v1/observations?page_size=&cursor=&project=` | Safe observation list with typed keyset cursor. |
+| GET | `/api/v1/observations/{id}` | Safe observation detail. |
+| GET | `/api/v1/sessions?page_size=&cursor=&project=` | Safe session list with typed keyset cursor. |
+| GET | `/api/v1/sessions/{id}` | Safe session detail. |
+| GET | `/api/v1/workstreams?page_size=&cursor=&project=` | Safe workstream list with typed keyset cursor. |
+| GET | `/api/v1/workstreams/{id}` | Safe workstream detail. |
+| GET | `/api/v1/events?page_size=&cursor=&project=` | Safe captured-event metadata list; raw content is excluded. |
+| GET | `/api/v1/events/{id}` | Safe captured-event metadata detail. |
+| GET | `/api/v1/tasks?page_size=&cursor=&project=` | Safe extraction-task list; payload and raw errors are excluded. |
+| GET | `/api/v1/tasks/{id}` | Safe extraction-task detail. |
+| POST | `/api/v1/memories/{id}/archive` | Recoverably archive an active memory. |
+| POST | `/api/v1/memories/{id}/restore` | Restore only the current exact Web archive. |
 
 ### Compatibility
 
@@ -59,8 +80,8 @@ implemented in source version `0.5.162`.
 
 ```json
 {
-  "version": "0.5.162",
-  "schema_version": 59,
+  "version": "0.6.6",
+  "schema_version": 70,
   "api_version": 1,
   "features": {
     "health": true,
@@ -71,9 +92,20 @@ implemented in source version `0.5.162`.
     "memory_list": true,
     "memory_detail": true,
     "save_memory": true,
+    "memory_archive": true,
+    "memory_restore": true,
+    "memory_delete": false,
     "candidate_rows": true,
     "candidate_filters": true,
     "candidate_review": true,
+    "candidate_detail": true,
+    "candidate_evidence": true,
+    "candidate_review_safe": true,
+    "observations": true,
+    "sessions": true,
+    "workstreams": true,
+    "events": true,
+    "tasks": true,
     "graph": true,
     "user_recall": true,
     "user_recall_usage_policy": true
@@ -87,9 +119,26 @@ implemented in source version `0.5.162`.
     "memory_list": "/api/v1/memories",
     "memory_detail": "/api/v1/memories/{id}",
     "save_memory": "/api/v1/memories",
+    "memory_archive": "/api/v1/memories/{id}/archive",
+    "memory_restore": "/api/v1/memories/{id}/restore",
     "candidate_rows": "/api/v1/candidates",
     "candidate_blocked": "/api/v1/candidates/blocked",
     "candidate_review": "/api/v1/candidates/{id}/approve",
+    "candidate_detail": "/api/v1/candidates/{id}",
+    "candidate_evidence": "/api/v1/candidates/{id}",
+    "candidate_review_safe_approve": "/api/v1/candidates/{id}/review/approve",
+    "candidate_review_safe_reject": "/api/v1/candidates/{id}/review/reject",
+    "candidate_review_safe_edit": "/api/v1/candidates/{id}/review/edit",
+    "observations_list": "/api/v1/observations",
+    "observations_detail": "/api/v1/observations/{id}",
+    "sessions_list": "/api/v1/sessions",
+    "sessions_detail": "/api/v1/sessions/{id}",
+    "workstreams_list": "/api/v1/workstreams",
+    "workstreams_detail": "/api/v1/workstreams/{id}",
+    "events_list": "/api/v1/events",
+    "events_detail": "/api/v1/events/{id}",
+    "tasks_list": "/api/v1/tasks",
+    "tasks_detail": "/api/v1/tasks/{id}",
     "graph": "/api/v1/graph",
     "user_recall": "/api/v1/user/recall"
   }
@@ -247,6 +296,109 @@ All normal control-flow errors use:
 Candidate review errors include `not_found`, `candidate_not_pending`,
 `candidate_quarantined`, `candidate_acknowledgement_invalid`,
 `candidate_edit_invalid`, and `candidate_review_failed`.
+
+### GH-880 safe candidate review
+
+`GET /api/v1/candidates/{id}` returns `data`, `evidence`, and `decision`.
+Candidate data includes the current integer `version`. Evidence contains only
+allowlisted provenance and derived summaries; it never returns captured-event
+`content_text`, blobs, environment payloads, or raw transcripts. If evidence is
+missing, cross-project, suppressed, unsafe, or otherwise unverifiable,
+`decision.can_review=false` and `blocked_reasons` contains stable codes. The
+server does not fall back to raw evidence.
+
+The three `/review/*` routes require:
+
+```json
+{
+  "reason": "reviewed against source evidence",
+  "expected_version": 4,
+  "idempotency_key": "client-generated-stable-key"
+}
+```
+
+Approve may additionally carry `acknowledge_pattern`; edit may carry the
+existing editable candidate fields. `reason` is trimmed and must contain
+1–1024 UTF-8 bytes. The idempotency key is trimmed and must contain 1–128 ASCII
+bytes from `[A-Za-z0-9._~-]`; its plaintext never enters DB, audit, log, or
+response. A successful response is an audit envelope:
+
+```json
+{
+  "response_schema_version": 1,
+  "operation_id": "op_<sha256>",
+  "audit_id": 42,
+  "candidate_id": 7,
+  "memory_id": 12,
+  "action": "approve",
+  "before_status": "pending_review",
+  "after_status": "approved",
+  "version": 5,
+  "occurred_at_epoch": 1784340000,
+  "replayed": false
+}
+```
+
+Same key and normalized payload replays that envelope with only
+`replayed=true`; a different payload returns `409 idempotency_conflict` before
+current candidate state is inspected. Stable safe-review errors include
+`version_conflict`, `candidate_not_reviewable`, `evidence_blocked`,
+`idempotency_key_invalid`, `reason_invalid`, `idempotency_conflict`, and
+`idempotency_schema_unsupported`.
+
+### GH-880 safe read resources
+
+Observations, sessions, workstreams, events, and tasks are separate capability
+bundles. Each list response has:
+
+```json
+{
+  "data": [],
+  "page_size": 50,
+  "next_cursor": null
+}
+```
+
+`page_size` defaults to 50, clamps parsed integers to 1–100, and rejects
+malformed or overflowing values with `page_size_invalid`. `next_cursor` is an
+opaque, versioned keyset cursor bound to the resource kind and effective
+filters. A malformed, cross-resource, or filter-mismatched cursor returns
+`cursor_invalid`. Suppression-aware bounded scans may return a partial or empty
+page with a non-null advancing cursor; clients must continue until
+`next_cursor=null`.
+
+Detail responses contain a single safe row under `data`; missing or suppressed
+rows return 404. Projection-policy failures return structured 5xx responses,
+not empty data. Events and observations exclude raw `content_text` and blobs;
+tasks expose only classified error state rather than `last_error` text; related
+resources are bounded safe references and are not recursively expanded. These
+routes intentionally have no `include_suppressed` override. Legacy
+`/api/v1/search.raw_hits[].preview` retains its pre-GH-880 compatibility
+contract and is not a safe-resource projection.
+
+### GH-880 recoverable memory governance
+
+Memory list and detail responses add the current integer `version` while
+preserving the canonical no-status list behavior. remem-web should request
+`status=active` for its default view and `status=archived` for restore/audit
+views. Default search continues excluding archived memories.
+
+Archive and restore use the same `reason`, `expected_version`, and
+`idempotency_key` validation as safe candidate review. Archive permits only
+`active -> archived`. Restore permits only an archived row whose current Web
+archive marker matches the exact successful archive ledger and audit; a
+historical ledger alone never authorizes restore. The success envelope uses
+the same schema as safe candidate review with `memory_id` in place of
+`candidate_id` and returns the final version, which can directly drive the next
+restore/archive request.
+
+Ledger replay/conflict is checked before current memory state. Missing,
+deleted, non-Web archived, or provenance-mismatched restore returns
+`404 memory_not_recoverable`; stale versions return `409 version_conflict`;
+non-active archive returns `409 memory_not_archivable`. State, marker, audit,
+and replay ledger commit atomically. Permanent Web delete is not implemented:
+`features.memory_delete=false`, there is no endpoint key, and no DELETE route
+is registered.
 
 `POST /api/v1/user/recall` accepts:
 
@@ -418,6 +570,16 @@ older binaries expose candidate rows while ignoring unknown filter parameters.
 Clients that render blocked-reason aggregates must also require
 `capabilities.endpoints.candidate_blocked`.
 
+For the GH-880 safe console contract, the release target is `remem 0.6.6`.
+Clients must require each feature flag together with its exact endpoint-map
+bundle; they must not infer paths. Candidate detail/evidence requires both
+detail keys plus all three safe-review action keys before enabling review.
+Each safe read resource requires its own list/detail pair. Archive and restore
+are gated independently. `memory_delete` remains false. Source metadata and an
+`unreleased` runtime manifest are not installed-binary evidence: remem-web must
+wait for the `v0.6.6` tag, published release assets, and the minimum-version
+gate before enabling these views.
+
 ## Smoke Test
 
 Run:
@@ -427,5 +589,8 @@ scripts/smoke_native_web_api.sh
 ```
 
 The smoke starts a local built `remem api` process in an isolated
-`REMEM_DATA_DIR`, reads the generated API token, and verifies the documented
-read endpoints under bearer-token auth. It must not print or leak the token.
+`REMEM_DATA_DIR`, reads the generated API token, and verifies every advertised
+GH-880 list/detail/action template under bearer-token auth. It covers safe
+candidate review, all five read-resource bundles, archive/restore, delete
+absence, and the legacy search raw-hit compatibility shape. It must not print
+or leak the token or raw idempotency keys.

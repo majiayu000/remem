@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, TransactionBehavior};
 
-use crate::memory::poisoning::{validate_trust_class, SourceTrustClass};
+use crate::memory::poisoning::{scan_instruction_pattern, validate_trust_class, SourceTrustClass};
 use crate::memory_candidate::{
     promote_candidate_to_memory_with_route, route_candidate, update_candidate_after_lifecycle,
     ParsedMemoryCandidate,
@@ -22,13 +22,82 @@ pub(super) fn approve_candidate_with_meta_and_ack(
     acknowledged_pattern_id: Option<&str>,
 ) -> Result<Option<i64>> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let Some(row) = super::load_candidate(&tx, id)? else {
+    let result = approve_candidate_in_transaction(&tx, id, meta, acknowledged_pattern_id)?;
+    tx.commit()?;
+    Ok(result)
+}
+
+pub(crate) fn approve_candidate_in_transaction(
+    conn: &Connection,
+    id: i64,
+    meta: &ReviewMeta,
+    acknowledged_pattern_id: Option<&str>,
+) -> Result<Option<i64>> {
+    let Some(row) = super::load_candidate(conn, id)? else {
         return Ok(None);
     };
     let acknowledgement = approval_acknowledgement(&row, acknowledged_pattern_id)?;
-    let promotion = promote_row(&tx, &row, "approved", None, meta, acknowledgement.as_ref())?;
-    tx.commit()?;
+    let promotion = promote_row(conn, &row, "approved", None, meta, acknowledgement.as_ref())?;
     Ok(Some(promotion.memory_id))
+}
+
+pub(crate) fn edit_candidate_in_transaction(
+    conn: &Connection,
+    id: i64,
+    edit: super::CandidateEdit,
+    meta: &ReviewMeta,
+) -> Result<Option<i64>> {
+    let edit = normalize_candidate_edit(edit)?;
+    let Some(row) = super::load_candidate(conn, id)? else {
+        return Ok(None);
+    };
+    super::ensure_reviewable(&row)?;
+    let edited = row.apply_edit(edit)?;
+    if let Some(matched) = scan_instruction_pattern(&edited.text) {
+        bail!(
+            "edited candidate {} matched instruction-pattern {}@v{}; review and acknowledge the pattern before promotion",
+            row.id,
+            matched.pattern_id,
+            matched.pattern_set_version
+        );
+    }
+    let promotion = promote_row(conn, &row, "edited", Some(&edited), meta, None)?;
+    Ok(Some(promotion.memory_id))
+}
+
+pub(crate) fn normalize_candidate_edit(
+    mut edit: super::CandidateEdit,
+) -> Result<super::CandidateEdit> {
+    if edit.scope.is_none()
+        && edit.memory_type.is_none()
+        && edit.topic_key.is_none()
+        && edit.text.is_none()
+    {
+        bail!("edit requires at least one changed field");
+    }
+    edit.scope = edit
+        .scope
+        .as_deref()
+        .map(crate::memory_candidate::normalize_scope)
+        .transpose()?;
+    edit.memory_type = edit
+        .memory_type
+        .as_deref()
+        .map(crate::memory_candidate::normalize_memory_type)
+        .transpose()?;
+    edit.topic_key = edit
+        .topic_key
+        .as_deref()
+        .map(crate::memory_candidate::normalize_topic_key)
+        .transpose()?;
+    if let Some(text) = edit.text.take() {
+        let text = text.trim().to_string();
+        if text.is_empty() {
+            bail!("edit text must not be empty");
+        }
+        edit.text = Some(text);
+    }
+    Ok(edit)
 }
 
 fn approval_acknowledgement(

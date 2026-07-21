@@ -65,20 +65,38 @@ pub(super) fn drain_raw_archive_from_range(
             continue;
         }
 
-        let options = crate::memory::raw_archive::TranscriptDrainOptions::default();
-        let report = match crate::memory::raw_archive::drain_transcript_with_capture_limit(
+        let report = match super::raw_identity::drain_with_identity(
             conn,
-            transcript_path,
-            session_id,
-            &task.project,
-            branch.as_deref(),
-            Some(cwd),
-            &options,
-            payload.transcript_byte_len,
+            super::raw_identity::StopTranscript {
+                path: transcript_path,
+                byte_limit: payload.transcript_byte_len,
+                project: &task.project,
+                branch: branch.as_deref(),
+                cwd,
+            },
         ) {
             Ok(report) => report,
             Err(error) => {
+                let permits_hook_fallback = super::raw_identity::permits_hook_fallback(&error);
                 errors.push(error.context("session rollup raw archive drain failed"));
+                if permits_hook_fallback {
+                    for fallback in payloads.iter().filter(|candidate| {
+                        stop_transcript_path(candidate) == Some(transcript_path)
+                    }) {
+                        let fallback_cwd = stop_payload_cwd(fallback, &task.project);
+                        let fallback_branch = db::detect_git_branch(fallback_cwd);
+                        if let Err(error) = insert_raw_hook_fallback(
+                            conn,
+                            session_id,
+                            &task.project,
+                            fallback.last_assistant_message.as_deref(),
+                            fallback_branch.as_deref(),
+                            Some(fallback_cwd),
+                        ) {
+                            errors.push(error);
+                        }
+                    }
+                }
                 continue;
             }
         };
@@ -156,11 +174,13 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     };
     let cwd = stop_payload_cwd(latest_payload, &task.project);
     let branch = db::detect_git_branch(cwd);
+    let transcript_identity_ids = stop_transcript_identity_ids(conn, &payloads)?;
     crate::summarize::distill_stop_failure_lessons(
         conn,
         session_id,
         &task.project,
         branch.as_deref(),
+        &transcript_identity_ids,
     )
     .context("session rollup failure-lesson side effect failed")?;
     for payload in &payloads {
@@ -230,6 +250,27 @@ pub(super) fn run_post_archive_stop_memory_side_effects(
     Ok(())
 }
 
+fn stop_transcript_identity_ids(
+    conn: &Connection,
+    payloads: &[StopHookPayload],
+) -> Result<Vec<i64>> {
+    let mut ids = Vec::new();
+    for path in payloads.iter().filter_map(stop_transcript_path) {
+        let identity = crate::ingest::session_identity::load_by_path(
+            conn,
+            crate::memory::raw_archive::SOURCE_ROOT_LOCAL,
+            path,
+        )
+        .with_context(|| format!("load Stop transcript identity for {path}"))?;
+        if let Some(identity) = identity {
+            ids.push(identity.id);
+        }
+    }
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
 pub(super) fn run_persisted_rollup_side_effects(
     conn: &mut Connection,
     task: &db::ExtractionTask,
@@ -258,8 +299,10 @@ pub(super) fn run_persisted_rollup_side_effects(
             ),
         );
     }
-    enqueue_user_context_followup(conn, task, range)?;
-    enqueue_summary_followup_jobs(conn, task, range, session_id)?;
+    if !crate::extraction_worker::exact_replay_task_active() {
+        enqueue_user_context_followup(conn, task, range)?;
+        enqueue_summary_followup_jobs(conn, task, range, session_id)?;
+    }
     Ok(())
 }
 

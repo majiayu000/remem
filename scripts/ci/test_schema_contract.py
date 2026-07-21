@@ -68,6 +68,9 @@ def copy_pack(repo: Path) -> None:
     target = repo / "scripts" / "sync-specrail-checks.sh"
     target.parent.mkdir(parents=True)
     shutil.copy2(ROOT / "scripts" / "sync-specrail-checks.sh", target)
+    helper = repo / "scripts" / "ci" / "specrail_sync_lock.py"
+    helper.parent.mkdir(parents=True)
+    shutil.copy2(ROOT / "scripts" / "ci" / "specrail_sync_lock.py", helper)
     assert_passed(run(["git", "init", "-q"], cwd=repo), "initialize isolated git repo")
     assert_passed(run(["git", "add", "-A"], cwd=repo), "track isolated pack")
 
@@ -365,11 +368,28 @@ def runtime_cases() -> tuple[tuple[str, tuple[str, ...], object, str], ...]:
 
 def assert_runtime_profile_matrix() -> None:
     runtime_accepts = {
-        "duplicate type array", "minLength bool", "minItems negative", "minimum bool",
-        "minLength missing type", "minLength unsafe union", "recursive additional keyword",
-        "unknown union member", "enum duplicate", "properties scalar bypass",
+        "duplicate type array",
+        "minLength missing type", "minLength unsafe union",
+        "enum duplicate", "properties scalar bypass", "Python-only runtime regex",
         "properties union bypass", "additionalProperties scalar bypass",
         "additionalProperties union bypass",
+    }
+    runtime_definition_rejects = {
+        "minLength bool": (
+            "$schema.properties.collected_at: minLength must be a non-negative integer",
+        ),
+        "minItems negative": (
+            "$schema.properties.open_prs: minItems must be a non-negative integer",
+        ),
+        "minimum bool": (
+            "$schema.properties.issue.minimum: must be a number",
+        ),
+        "unknown union member": (
+            "$schema.properties.issue.type: unsupported type 'uint64'",
+        ),
+        "recursive additional keyword": (
+            "$schema.additionalProperties: unsupported JSON Schema keyword 'minimun'",
+        ),
     }
     with tempfile.TemporaryDirectory(prefix="remem-runtime-schema-") as raw:
         repo = Path(raw)
@@ -423,6 +443,12 @@ def assert_runtime_profile_matrix() -> None:
             runtime = run_runtime(repo, schema_path)
             if label in runtime_accepts:
                 assert_passed(runtime, f"runtime contrast {label}")
+            elif label in runtime_definition_rejects:
+                assert runtime.returncode != 0, f"runtime definition must reject {label}"
+                assert "schema_validation.SchemaDefinitionError:" in runtime.stderr
+                assert "schema_validation.InstanceMismatch:" not in runtime.stderr
+                for fragment in runtime_definition_rejects[label]:
+                    assert fragment in runtime.stderr, runtime.stderr
             else:
                 assert runtime.returncode != 0, f"runtime must reject {label}"
             assert_contract_failure(repo, expected, label)

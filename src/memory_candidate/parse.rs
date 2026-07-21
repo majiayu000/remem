@@ -71,6 +71,11 @@ pub(super) fn normalize_memory_type(raw: &str) -> Result<String> {
             return Ok(memory_type.as_str().to_string());
         }
     }
+    // `fact` is an intuitive candidate label that LLMs emit for factual
+    // discoveries, but it is not part of either canonical vocabulary.
+    if value == "fact" {
+        return Ok(crate::memory::MemoryType::Discovery.as_str().to_string());
+    }
     // LLM 经常把 observation type（feature/refactor/change/discovery/bugfix/decision）
     // 误抄进 <type>。observation 与 candidate 是两套词汇表，复用 from_observation_type
     // 归一映射，避免单个误抄值让整批 candidate 被 bail 拖死。
@@ -132,9 +137,16 @@ mod tests {
 
     #[test]
     fn normalizes_canonical_candidate_types() {
-        assert_eq!(normalize_memory_type("discovery").unwrap(), "discovery");
-        assert_eq!(normalize_memory_type("Bugfix").unwrap(), "bugfix");
-        assert_eq!(normalize_memory_type("Preference").unwrap(), "preference");
+        for memory_type in crate::memory::MemoryType::ALL
+            .iter()
+            .copied()
+            .filter(|memory_type| *memory_type != crate::memory::MemoryType::SessionActivity)
+        {
+            assert_eq!(
+                normalize_memory_type(memory_type.as_str()).unwrap(),
+                memory_type.as_str()
+            );
+        }
     }
 
     #[test]
@@ -145,6 +157,21 @@ mod tests {
         assert_eq!(normalize_memory_type("change").unwrap(), "discovery");
         assert_eq!(normalize_memory_type("bugfix").unwrap(), "bugfix");
         assert_eq!(normalize_memory_type("decision").unwrap(), "decision");
+    }
+
+    #[test]
+    fn maps_fact_alias_without_dropping_neighbor_candidate() {
+        assert_eq!(normalize_memory_type(" Fact ").unwrap(), "discovery");
+
+        let parsed = parse_memory_candidates(
+            "<memory_candidate><scope>project</scope><type>fact</type><topic_key>worker-model</topic_key><risk_class>low</risk_class><confidence>0.91</confidence><text>The worker uses one writer connection.</text></memory_candidate>\
+             <memory_candidate><scope>project</scope><type>decision</type><topic_key>retry-policy</topic_key><risk_class>medium</risk_class><confidence>0.88</confidence><text>Retry malformed extraction output.</text></memory_candidate>",
+        )
+        .unwrap();
+
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].memory_type, "discovery");
+        assert_eq!(parsed[1].memory_type, "decision");
     }
 
     #[test]

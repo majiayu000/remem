@@ -1,6 +1,7 @@
 use brush_parser::word::{
     BraceExpressionMember, BraceExpressionOrText, WordPiece, WordPieceWithSource,
 };
+use brush_parser::ParserOptions;
 
 use super::{DYNAMIC_SHELL_WORD, MAX_STATIC_WORD_VARIANTS};
 use crate::rules::evaluator::git_push_arg_changes_force_state;
@@ -26,12 +27,41 @@ const CRITICAL_STATIC_TOKENS: &[&str] = &[
 
 pub(super) fn append_word_variants(segments: &mut [Vec<String>], variants: Vec<String>) {
     for segment in segments {
-        if variants.is_empty() {
-            segment.push(DYNAMIC_SHELL_WORD.to_string());
-        } else {
-            segment.extend(variants.iter().cloned());
-        }
+        segment.extend(variants.iter().cloned());
     }
+}
+
+pub(super) fn static_source_word_variants(
+    source: &str,
+    options: &ParserOptions,
+) -> Result<Vec<String>, String> {
+    let Some(brace_pieces) = brush_parser::word::parse_brace_expansions(source, options)
+        .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
+    else {
+        let pieces = brush_parser::word::parse(source, options)
+            .map_err(|error| format!("Bash word parse error: {error}"))?;
+        return Ok(vec![
+            static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string())
+        ]);
+    };
+    let expanded = match expand_brace_pieces(&brace_pieces) {
+        Ok(expanded) => expanded,
+        Err(StaticExpansionError::Limit) => {
+            let mut variants = critical_brace_variants(&brace_pieces);
+            variants.truncate(MAX_STATIC_WORD_VARIANTS - 1);
+            variants.push(DYNAMIC_SHELL_WORD.to_string());
+            return Ok(variants);
+        }
+        Err(StaticExpansionError::Invalid(message)) => return Err(message),
+    };
+    expanded
+        .into_iter()
+        .map(|value| {
+            let pieces = brush_parser::word::parse(&value, options)
+                .map_err(|error| format!("Bash expanded word parse error: {error}"))?;
+            Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
+        })
+        .collect()
 }
 
 pub(super) fn critical_brace_variants(pieces: &[BraceExpressionOrText]) -> Vec<String> {
@@ -381,4 +411,25 @@ where
 fn push_char_bytes(bytes: &mut Vec<u8>, ch: char) {
     let mut encoded = [0; 4];
     bytes.extend_from_slice(ch.encode_utf8(&mut encoded).as_bytes());
+}
+
+pub(super) fn static_substring(value: &str, spec: &str) -> Option<String> {
+    let (offset, length) = static_slice(spec)?;
+    Some(
+        value
+            .chars()
+            .skip(offset)
+            .take(length.unwrap_or(usize::MAX))
+            .collect(),
+    )
+}
+
+pub(super) fn static_slice(spec: &str) -> Option<(usize, Option<usize>)> {
+    let (offset, length) = spec
+        .split_once(':')
+        .map_or((spec, None), |(offset, length)| (offset, Some(length)));
+    Some((
+        offset.parse().ok()?,
+        length.map(str::parse).transpose().ok()?,
+    ))
 }

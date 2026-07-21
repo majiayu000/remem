@@ -145,7 +145,8 @@ Stop hook fires
        ├─ SessionRollup
        │    ├─ Load the captured_events range
        │    ├─ Idempotently link every proven Git commit in that range
-       │    ├─ Ingest raw transcript through the Stop-captured byte boundary
+       │    ├─ Resolve path-stable transcript identity and claim
+       │    ├─ Ingest raw occurrences through the Stop-captured byte boundary
        │    ├─ Finalize transcript-backed citations + failure lessons
        │    ├─ AI → semantic summary + topic segments
        │    ├─ Persist the exact event range
@@ -186,6 +187,34 @@ that already include the final assistant message may record those idempotent
 signals immediately. Versioned once-worker launch heartbeats prevent repeated
 Stop hooks from spawning overlapping current workers during an old-daemon
 upgrade window.
+
+Migration v071 separates a transcript's path-stable local identity from its
+filename and metadata claims. Stop and batch ingestion share the same
+metadata-first probe; the batch path persists the complete claim set before it
+mutates raw rows, keeps conflicts sticky, and upgrades legacy rows to stable
+transcript occurrence ordinals without losing repeated identical turns.
+`raw_messages.event_time_source` distinguishes transcript event time,
+ingest-time fallback, and legacy-unknown provenance.
+
+The raw query path is read-only and schema-validated:
+
+```text
+raw search / raw sessions
+  -> open_db_read_only_current
+  -> current-schema and drift validation
+  -> bounded SQL query
+
+raw reconcile
+  -> discover with ingest-sessions root/subagents rules
+  -> validate current identity-ledger mtime/size tuple
+  -> stream only window-intersecting or missing-time transcript snapshots
+  +  query matching raw occurrence identities
+  -> aggregate-only parity report
+```
+
+Reconciliation keeps paths, projects, session IDs, content, and hashes inside
+the process and encrypted local database. Public JSON contains counts and
+fixed policy/window metadata only.
 Migration v068 makes follow-up scheduling an exact-range transaction. New
 ranges persist their Compress job id and one structured Dream outcome with its
 referenced job id. Exact ranges created before v068 are marked
@@ -251,12 +280,14 @@ New session starts
        ├─ Dedup against CLAUDE.md (skip already present)
        │
        ▼
-  Load recent 50 memories + 5 session summaries
+  Load bounded memory, lesson, and session candidates
        │
        ├─ Branch-aware: current branch first, then main, then others
        ├─ Score-based: decision > bugfix > architecture > discovery
-       ├─ Core section: top 6 scored, 200-char preview
-       ├─ Index section: grouped by type
+       ├─ Freeze Core section unchanged: top 6 scored, 200-char preview
+       ├─ Score Lessons + non-Core Index + Sessions against the implicit query
+       ├─ Apply one global relevance k (default 1), then section budgets
+       └─ Keep k=0 as the legacy-selection rollback
        │
        ▼
   Render to stdout → Claude Code injects into CLAUDE.md
@@ -470,6 +501,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_CORE_ITEM_LIMIT` | `6` | Core memory item budget |
 | `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `3000` | Core memory character budget |
 | `REMEM_CONTEXT_SESSION_COUNT` | `5` | Session summaries shown |
+| `REMEM_CONTEXT_RELEVANCE_K` | `1` | Global relevant item cap across Lessons, non-Core MemoryIndex, and Sessions; `0` restores legacy selection |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | Self-diagnostic memory cap |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
 | `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |
@@ -604,7 +636,7 @@ observations (memory_session_id, project, type, title, subtitle, narrative, fact
 memories (session_id, project, topic_key, title, content, memory_type, files, branch,
           created_at_epoch, updated_at_epoch, status, scope[project|global])
 
--- Typed graph contract for future traversal; see docs/graph-contract.md
+-- Typed graph contract with bounded trusted-edge search traversal; see docs/graph-contract.md
 graph_file_nodes (project_id, source_project, path, created_at_epoch, updated_at_epoch)
 graph_edges (edge_type, edge_trust, from_node_kind/from_node_id, to_node_kind/to_node_id,
              source_event_ids, source_candidate_id, source_operation_id, confidence,

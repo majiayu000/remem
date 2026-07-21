@@ -38,12 +38,19 @@ Tracking:
   `ca1a804c8f8b8889ac8b2ba29f5f1c8522f17884` supplies doctor enforcement
   health evidence. T8a reconciles task status and public documentation; final
   acceptance remains open.
-- The current compiler still accepts any non-null `owner_scope` for a global
-  row. GH-813 tightens that existing gap to the canonical
-  `owner_scope='user'`, `owner_key='user:default'`, no-target combination;
-  until that implementation and its exhaustive eligibility matrix land,
-  malformed or legacy global ownership is not proven fail-closed, T3/T8 remain
-  incomplete, and #671 must stay open.
+- GH-813's global-owner correction is implemented: the compiler's global
+  eligibility branch and the sweep-project projection now accept only the
+  canonical `owner_scope='user'`, `owner_key='user:default'`, no-target
+  combination. Malformed, legacy, or unknown global ownership fails closed via
+  exact equality against that closed tuple, and the exhaustive behavior-based
+  eligibility matrix in `src/rules/compiler/tests.rs` pins it: the
+  wrong-owner-scope, wrong-owner-key, and project-target regressions were red
+  before the WHERE-clause tightening and green after. The pre-existing sweep
+  fixture (`src/rules/compiler/sweep_tests.rs`) is aligned to the canonical
+  `owner_scope='user'` / `owner_key='user:default'` global tuple (production
+  never creates `owner_scope='repo'` globals; see `default_ownership()` in
+  `src/memory/store/write.rs`), so the full `cargo test` suite is green and
+  #671 closes; #813's remaining process-only follow-ups are tracked separately.
 - Preferences are a first-class memory type (`src/memory/types.rs`), rendered
   as a dedicated section in the SessionStart context block
   (`src/context/render.rs`).
@@ -118,18 +125,72 @@ Artifact v2 additionally supports:
   AST, removes unquoted backslash-newline continuations, traverses assignment
   words, parameter/arithmetic/command substitutions, expandable heredocs,
   static and `builtin eval`, EXIT traps, shell `-c` and stdin payloads,
-  `source /dev/stdin`, and statically invoked function bodies, and evaluates
+  `source /dev/stdin` (including persistence of a definite sourced `set --`),
+  and statically invoked function bodies, and evaluates
   static brace alternatives. `command`, `env`, and `exec` share one
   command-position normalizer. Quoted or echoed command text and
   uninvoked function definitions remain inert. Static expansion is bounded;
   security-critical static variants remain visible when full materialization
   is capped, and later words or command segments are never discarded. Git
-  executable basenames are recognized through static paths; force and mirror
+  executable basenames are recognized through static paths, including the
+  exact `.exe` suffix used by Git-for-Windows shells and both POSIX and Windows
+  command-string path separators; static shell `-c` operands bind `$0` and
+  later positional parameters in executed words without leaking the outer
+  `$1...` mapping into function bodies, while remaining active for EXIT traps
+  and expandable heredoc stdin passed to nested shells; quote characters in an
+  unquoted-delimiter heredoc body do not suppress that expansion, while a
+  quoted delimiter preserves literal text. Whole unquoted positionals may
+  produce zero or multiple argv fields; default and alternative words retain
+  quote-aware grouping, known-set error/assignment forms preserve their known
+  operand, collection default/alternative forms select from known `$@`/`$*`
+  state, exact quoted `"$@"` preserves operand cardinality, static
+  non-negative positional slices and substrings retain Bash field and string
+  semantics; definite `set --`, argument-bearing `set -`, option-bearing
+  positional `set`, and `shift` update the active mapping, while possibly
+  executed changes retain prior and
+  updated mappings for conservative matching in both whole and concatenated
+  words. Possible mappings are evaluated as separate argv alternatives under
+  the existing 256-variant ceiling, retaining security-relevant mappings first
+  rather than flattening incompatible paths. Positional changes in subshells,
+  command substitutions, and
+  non-final pipeline processes restore the parent mapping, and aliases resolve
+  before builtin positional state. Possible mappings preserve separate
+  command-position argv groups and matching suffix paths, so last-option-wins
+  flags from mutually exclusive mappings are never concatenated. Static
+  non-negative collection slices and positional substrings are materialized,
+  with offset zero including `$0`; `shift` advances known mappings and exposes
+  static failure to control flow, while argument-bearing `set -` follows
+  `set --` assignment semantics. Path-specific positional state changes are
+  applied once per correlated mapping; mixed shift success/failure contexts
+  select the matching immediate `&&`/`||` branch before rejoining. Stateful
+  builtins and function state changes
+  such as `trap`, `unset -f`, and function export apply only after alias and
+  function resolution. Possible redefinitions preserve all-path alias/function
+  presence while retaining every payload/body variant. Each known command,
+  alias, function, ordinary fallback, and fallible assignment/redirection setup
+  outcome executes against an isolated full shell-state snapshot. Setup failure
+  preserves the pre-command state and reports failure; `command`/`builtin`
+  wrappers retain known `true`/`false`/`:` status unless a direct function
+  shadows the name. Every terminating alternative executes its EXIT traps
+  before filtering, and terminated state does not contaminate a continuing
+  path while its executable segments remain visible.
+  Explicit sourced-file arguments receive their own positional scope, and
+  stdin-reading shells bind post-option operands in their child scope.
+  Expandable heredoc stdin finishes parent-side positional expansion before a
+  child `-c` context is installed. Nested command substitutions and arithmetic
+  source use their own syntax context, and function-definition names remain
+  unexpanded. Positional command names retain provenance so assignment and
+  alias recognition are not rerun after expansion, and here-string positionals
+  preserve embedded source newlines. Mixed `builtin`/`command` wrappers and
+  the `builtin --` option terminator share the same static builtin
+  normalization; force and mirror
   boolean options use Git's last-option-wins behavior (including mirror
   abbreviations); and branches proven unreachable by bare static
   `true`/`false`/`:` guards are not evaluated across `&&`/`||` and `if`/`elif`.
   Function definitions follow Bash subshell, pipeline, shadowing, and static
-  `unset -f` state; explicitly exported functions alone enter child Bash,
+  `unset -f` state; a function named `unset` resolves before builtin-like state
+  mutation, while explicit `builtin unset` retains builtin semantics;
+  explicitly exported functions alone enter child Bash,
   while other child shells start empty. Shell `-n`/`noexec` payloads remain
   inert. Shell `-s` and nested static shells inherit the effective final fd-0
   payload under Bash redirection semantics. `env -S` performs bounded argv
@@ -299,11 +360,14 @@ hook-side writes.
 - [x] Existing unit tests: basic compile eligibility, conflict resolution,
       supersession removal, artifact atomicity, evaluator determinism, and
       fail-open behavior.
-- [ ] Exhaustive eligibility contract tests: one eligible baseline,
+- [x] Exhaustive eligibility contract tests: one eligible baseline,
       independently mutable candidate and reinforcement risk, one negative per
       dimension, unknown values, closed-enum completeness, and critical
       cross-state cases. Tests remain behavior-based and do not snapshot the
-      SQL/WHERE text.
+      SQL/WHERE text. Landed in `src/rules/compiler/tests.rs`; the four
+      security-critical global-owner negatives (wrong owner_scope, wrong
+      owner_key, project target, unknown owner_scope) were red before the
+      eligibility WHERE-clause/projection tightening and green after.
 - [x] Integration test: end-to-end fixture (preference reinforced 3x -> rule
       compiled -> simulated PreToolUse Bash violation -> warning/block before
       execution).

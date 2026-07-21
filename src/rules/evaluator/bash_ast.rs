@@ -2,13 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::io::Cursor;
 
 use brush_parser::ast::{
-    AndOr, Command, CommandPrefixOrSuffixItem, CompoundCommand, CompoundList, ExtendedTestExpr,
-    FunctionBody, IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand,
-    UnexpandedArithmeticExpr, Word,
+    Command, CommandPrefixOrSuffixItem, CompoundCommand, ExtendedTestExpr, FunctionBody,
+    IoFileRedirectTarget, IoRedirect, Pipeline, Program, SimpleCommand, UnexpandedArithmeticExpr,
+    Word,
 };
 use brush_parser::word::{Parameter, ParameterExpr, WordPiece, WordPieceWithSource};
 use brush_parser::{Parser, ParserOptions};
 
+mod alternative_state;
+mod command_resolution;
 mod control_flow;
 mod function_args;
 mod shell_state;
@@ -17,21 +19,17 @@ mod static_words;
 mod stdin_payload;
 pub(super) mod unwrap;
 
-use function_args::expand_function_body;
-use static_execution::{
-    direct_command_name, static_env_split_tokens, static_eval_payload,
-    static_export_function_change, static_shell_command_payload, static_shell_exits,
-    static_shell_is_bash, static_shell_reads_stdin, static_source_reads_stdin,
-    static_unset_function_names,
+use function_args::{
+    bare_shell_positional_variant_fields, expand_shell_arithmetic, expand_shell_command,
+    has_shell_positional_reference,
 };
-use static_words::{
-    append_word_variants, critical_brace_variants, expand_brace_pieces, static_word_pieces,
-    StaticExpansionError,
-};
-use stdin_payload::EffectiveStdin;
+use static_words::{static_source_word_variants, static_word_pieces};
+
+#[cfg(test)]
+pub(super) use shell_state::bound_possible_positional_arguments;
 
 const DYNAMIC_SHELL_WORD: &str = "__remem_dynamic_shell_word__";
-const MAX_STATIC_WORD_VARIANTS: usize = 256;
+pub(super) const MAX_STATIC_WORD_VARIANTS: usize = 256;
 
 pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String> {
     let mut collector = CommandCollector {
@@ -39,6 +37,7 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         segments: Vec::new(),
         functions: HashMap::new(),
         exported_functions: HashSet::new(),
+        readonly_variables: HashSet::new(),
         active_functions: HashSet::new(),
         aliases: HashMap::new(),
         pending_aliases: HashMap::new(),
@@ -52,7 +51,13 @@ pub(super) fn command_segments(source: &str) -> Result<Vec<Vec<String>>, String>
         exit_traps: Vec::new(),
         execution_terminated: false,
         execution_is_definite: true,
+        positional_execution_is_definite: true,
+        positional_set_generation: 0,
+        last_positional_status: None,
+        last_positional_success: None,
+        last_positional_failure: None,
         inherited_stdin: None,
+        positional_context: None,
     };
     collector.collect_source(source)?;
     collector.collect_exit_traps()?;
@@ -64,6 +69,7 @@ struct CommandCollector {
     segments: Vec<Vec<String>>,
     functions: HashMap<String, Vec<FunctionDefinition>>,
     exported_functions: HashSet<String>,
+    readonly_variables: HashSet<String>,
     active_functions: HashSet<String>,
     aliases: HashMap<String, Vec<AliasDefinition>>,
     pending_aliases: HashMap<String, Option<Vec<AliasDefinition>>>,
@@ -77,7 +83,20 @@ struct CommandCollector {
     exit_traps: Vec<ExitTrapDefinition>,
     execution_terminated: bool,
     execution_is_definite: bool,
+    positional_execution_is_definite: bool,
+    positional_set_generation: u64,
+    last_positional_status: Option<bool>,
+    last_positional_success: Option<PositionalContext>,
+    last_positional_failure: Option<PositionalContext>,
     inherited_stdin: Option<String>,
+    positional_context: Option<PositionalContext>,
+}
+
+#[derive(Clone)]
+struct PositionalContext {
+    zero_argument: Option<String>,
+    arguments: Vec<String>,
+    possible_arguments: Vec<Vec<String>>,
 }
 
 #[derive(Clone)]
@@ -90,6 +109,8 @@ struct FunctionDefinition {
 struct AliasDefinition {
     payload: String,
     is_definite: bool,
+    is_expandable: bool,
+    is_definitely_expandable: bool,
 }
 
 #[derive(Clone)]
@@ -119,50 +140,14 @@ impl CommandCollector {
         Ok(())
     }
 
-    fn collect_list(&mut self, list: &CompoundList) -> Result<(), String> {
-        for item in &list.0 {
-            if self.execution_terminated {
-                break;
-            }
-            self.collect_pipeline(&item.0.first)?;
-            if self.execution_terminated {
-                break;
-            }
-            let mut static_success = self.static_pipeline_success(&item.0.first)?;
-            for additional in &item.0.additional {
-                if self.execution_terminated {
-                    break;
-                }
-                match additional {
-                    AndOr::And(_) if static_success == Some(false) => {}
-                    AndOr::Or(_) if static_success == Some(true) => {}
-                    AndOr::And(pipeline) => {
-                        let definitely_executes = static_success == Some(true);
-                        self.with_execution_certainty(definitely_executes, |collector| {
-                            collector.collect_pipeline(pipeline)
-                        })?;
-                        static_success =
-                            and_status(static_success, self.static_pipeline_success(pipeline)?);
-                    }
-                    AndOr::Or(pipeline) => {
-                        let definitely_executes = static_success == Some(false);
-                        self.with_execution_certainty(definitely_executes, |collector| {
-                            collector.collect_pipeline(pipeline)
-                        })?;
-                        static_success =
-                            or_status(static_success, self.static_pipeline_success(pipeline)?);
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     fn static_pipeline_success(&self, pipeline: &Pipeline) -> Result<Option<bool>, String> {
         let [Command::Simple(command)] = pipeline.seq.as_slice() else {
             return Ok(None);
         };
-        if command.prefix.is_some() || command.suffix.is_some() {
+        if let Some(success) = self.last_positional_status {
+            return Ok(Some(if pipeline.bang { !success } else { success }));
+        }
+        if self.command_has_fallible_setup(command) {
             return Ok(None);
         }
         let Some(name) = &command.word_or_name else {
@@ -181,6 +166,9 @@ impl CommandCollector {
     }
 
     fn collect_pipeline(&mut self, pipeline: &Pipeline) -> Result<(), String> {
+        self.last_positional_status = None;
+        self.last_positional_success = None;
+        self.last_positional_failure = None;
         if pipeline.seq.len() == 1 {
             return self.collect_command(&pipeline.seq[0]);
         }
@@ -208,7 +196,7 @@ impl CommandCollector {
                 Ok(())
             }
             Command::Function(function) => {
-                let name = self.command_word(&function.fname)?;
+                let name = self.command_word_without_positional(&function.fname)?;
                 if name != DYNAMIC_SHELL_WORD {
                     if self.execution_is_definite {
                         self.functions.insert(
@@ -220,8 +208,10 @@ impl CommandCollector {
                         );
                     } else {
                         let definitions = self.functions.entry(name).or_default();
-                        for definition in definitions.iter_mut() {
-                            definition.is_definite = false;
+                        if !definitions.iter().any(|definition| definition.is_definite) {
+                            for definition in definitions.iter_mut() {
+                                definition.is_definite = false;
+                            }
                         }
                         definitions.push(FunctionDefinition {
                             body: function.body.clone(),
@@ -295,10 +285,17 @@ impl CommandCollector {
             return self.collect_command_items(command.prefix.as_ref().map(|prefix| &prefix.0));
         };
         let mut segments = vec![Vec::new()];
+        let mut expanded_command_start = None;
         if let Some(prefix) = &command.prefix {
             for item in &prefix.0 {
                 match item {
-                    CommandPrefixOrSuffixItem::AssignmentWord(_, word) => {
+                    CommandPrefixOrSuffixItem::AssignmentWord(assignment, word) => {
+                        if expanded_command_start.is_none()
+                            && self.positional_context.is_some()
+                            && has_shell_positional_reference(&assignment.name.to_string())
+                        {
+                            expanded_command_start = Some(segments.first().map_or(0, Vec::len));
+                        }
                         self.collect_word_commands(word)?;
                         let token = self.command_word(word)?;
                         for segment in &mut segments {
@@ -309,130 +306,48 @@ impl CommandCollector {
                 }
             }
         }
+        let command_start = segments.first().map_or(0, Vec::len);
+        if expanded_command_start.is_none()
+            && self.positional_context.is_some()
+            && has_shell_positional_reference(&name.value)
+        {
+            expanded_command_start = Some(command_start);
+        }
         self.collect_word_commands(name)?;
-        append_word_variants(&mut segments, self.command_word_variants(name)?);
+        self.append_command_name_variants(&mut segments, name)?;
         if let Some(suffix) = &command.suffix {
             for item in &suffix.0 {
                 match item {
                     CommandPrefixOrSuffixItem::Word(word)
                     | CommandPrefixOrSuffixItem::AssignmentWord(_, word) => {
                         self.collect_word_commands(word)?;
-                        append_word_variants(&mut segments, self.command_word_variants(word)?);
+                        self.append_command_argument_variants(&mut segments, word)?;
                     }
                     _ => self.collect_command_item(item)?,
                 }
             }
         }
+        if let Some(command_start) = expanded_command_start {
+            for segment in &mut segments {
+                if let Some(command_word) = segment.get_mut(command_start) {
+                    unwrap::mark_expanded_command_word(command_word);
+                }
+            }
+        }
+        if !command_resolution::command_has_fallible_setup(command)
+            && self.collect_correlated_positional_tokens(&segments)
+        {
+            return Ok(());
+        }
+        if self.collect_correlated_command_variants(&segments, command)? {
+            return Ok(());
+        }
+        let mut seen = HashSet::new();
+        segments.retain(|tokens| seen.insert(tokens.clone()));
         for tokens in segments {
             self.collect_static_tokens(tokens, command)?;
         }
         Ok(())
-    }
-
-    fn collect_static_tokens(
-        &mut self,
-        mut tokens: Vec<String>,
-        command: &SimpleCommand,
-    ) -> Result<(), String> {
-        while let Some(expanded) = static_env_split_tokens(&tokens) {
-            let before = static_token_measure(&tokens);
-            let after = static_token_measure(&expanded);
-            if after >= before {
-                return Err("env -S static argv expansion did not make progress".to_string());
-            }
-            tokens = expanded;
-        }
-        self.apply_static_shell_state(&tokens);
-        if let Some(names) = static_unset_function_names(&tokens) {
-            for name in names {
-                if self.execution_is_definite {
-                    self.functions.remove(name);
-                    self.exported_functions.remove(name);
-                } else if let Some(definitions) = self.functions.get_mut(name) {
-                    for definition in definitions {
-                        definition.is_definite = false;
-                    }
-                }
-            }
-        }
-        if let Some((exported, names)) = static_export_function_change(&tokens) {
-            for name in names {
-                if exported && self.functions.contains_key(name) {
-                    self.exported_functions.insert(name.to_string());
-                } else if !exported && self.execution_is_definite {
-                    self.exported_functions.remove(name);
-                }
-            }
-        }
-        if self.collect_static_alias_call(&tokens)? || self.collect_static_function_call(&tokens)? {
-            return Ok(());
-        }
-        if let Some(payload) = static_eval_payload(&tokens) {
-            self.collect_source(&payload)?;
-        }
-        if let Some(payload) = static_shell_command_payload(&tokens) {
-            let inherited_stdin = match self.effective_stdin_payload(command)? {
-                EffectiveStdin::Replaced(payload) => payload,
-                EffectiveStdin::Untouched => None,
-            };
-            self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
-                collector.with_inherited_stdin(inherited_stdin, |collector| {
-                    collector.collect_source(payload)
-                })
-            })?;
-        }
-        if static_shell_reads_stdin(&tokens) {
-            let payload = match self.effective_stdin_payload(command)? {
-                EffectiveStdin::Replaced(payload) => payload,
-                EffectiveStdin::Untouched => self.inherited_stdin.clone(),
-            };
-            if let Some(payload) = payload {
-                self.with_child_shell_scope(static_shell_is_bash(&tokens), |collector| {
-                    collector.collect_source(&payload)
-                })?;
-            }
-        } else if static_source_reads_stdin(&tokens) {
-            let payload = match self.effective_stdin_payload(command)? {
-                EffectiveStdin::Replaced(payload) => payload,
-                EffectiveStdin::Untouched => self.inherited_stdin.clone(),
-            };
-            if let Some(payload) = payload {
-                self.collect_source(&payload)?;
-            }
-        }
-        let shell_exits = static_shell_exits(&tokens);
-        self.segments.push(tokens);
-        if self.execution_is_definite && shell_exits {
-            self.execution_terminated = true;
-        }
-        Ok(())
-    }
-
-    fn collect_static_function_call(&mut self, tokens: &[String]) -> Result<bool, String> {
-        let Some(name) = direct_command_name(tokens) else {
-            return Ok(false);
-        };
-        let Some(definitions) = self.functions.get(name).cloned() else {
-            return Ok(false);
-        };
-        let definitely_defined = definitions.iter().any(|definition| definition.is_definite);
-        if !self.active_functions.insert(name.to_string()) {
-            return Ok(definitely_defined);
-        }
-        let result = (|| {
-            let command_index = unwrap::direct_command_index(tokens)
-                .ok_or_else(|| "function call lost its command position".to_string())?;
-            let arguments = &tokens[command_index + 1..];
-            for definition in definitions {
-                let source = expand_function_body(&definition.body, arguments);
-                self.with_execution_certainty(definition.is_definite, |collector| {
-                    collector.collect_source(&source)
-                })?;
-            }
-            Ok(())
-        })();
-        self.active_functions.remove(name);
-        result.map(|()| definitely_defined)
     }
 
     fn collect_command_items(
@@ -513,7 +428,8 @@ impl CommandCollector {
         &mut self,
         expression: &UnexpandedArithmeticExpr,
     ) -> Result<(), String> {
-        let pieces = brush_parser::word::parse(&expression.value, &self.options)
+        let source = self.expand_arithmetic_source(&expression.value)?;
+        let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash arithmetic word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
     }
@@ -621,50 +537,92 @@ impl CommandCollector {
     }
 
     fn collect_parameter_word(&mut self, value: &str) -> Result<(), String> {
-        let pieces = brush_parser::word::parse(value, &self.options)
+        let source = self.expand_positional_source(value)?;
+        let pieces = brush_parser::word::parse(&source, &self.options)
             .map_err(|error| format!("Bash parameter word parse error: {error}"))?;
         self.collect_word_pieces(&pieces)
     }
 
     fn command_word(&self, word: &Word) -> Result<String, String> {
+        let source = self.expand_positional_source(&word.value)?;
+        let pieces = brush_parser::word::parse(&source, &self.options)
+            .map_err(|error| format!("Bash word parse error: {error}"))?;
+        Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
+    }
+
+    fn command_word_without_positional(&self, word: &Word) -> Result<String, String> {
         let pieces = brush_parser::word::parse(&word.value, &self.options)
             .map_err(|error| format!("Bash word parse error: {error}"))?;
         Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
     }
 
     fn command_word_variants(&self, word: &Word) -> Result<Vec<String>, String> {
-        let Some(brace_pieces) =
-            brush_parser::word::parse_brace_expansions(&word.value, &self.options)
-                .map_err(|error| format!("Bash brace expansion parse error: {error}"))?
-        else {
-            return Ok(vec![self.command_word(word)?]);
-        };
-        let expanded = match expand_brace_pieces(&brace_pieces) {
-            Ok(expanded) => expanded,
-            Err(StaticExpansionError::Limit) => {
-                let mut variants = critical_brace_variants(&brace_pieces);
-                variants.truncate(MAX_STATIC_WORD_VARIANTS - 1);
-                variants.push(DYNAMIC_SHELL_WORD.to_string());
-                return Ok(variants);
+        if let Some(context) = &self.positional_context {
+            if let Some(fields) = bare_shell_positional_variant_fields(
+                &word.value,
+                &self.options,
+                context.zero_argument.as_deref(),
+                &context.arguments,
+                &context.possible_arguments,
+            )? {
+                return Ok(fields);
             }
-            Err(StaticExpansionError::Invalid(message)) => return Err(message),
-        };
-        expanded
-            .into_iter()
-            .map(|value| {
-                let pieces = brush_parser::word::parse(&value, &self.options)
-                    .map_err(|error| format!("Bash expanded word parse error: {error}"))?;
-                Ok(static_word_pieces(&pieces).unwrap_or_else(|| DYNAMIC_SHELL_WORD.to_string()))
-            })
-            .collect()
+            let mut variants = Vec::new();
+            for arguments in std::iter::once(context.arguments.as_slice())
+                .chain(context.possible_arguments.iter().map(Vec::as_slice))
+            {
+                let source = expand_shell_command(
+                    &word.value,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    arguments,
+                )?;
+                variants.extend(static_source_word_variants(&source, &self.options)?);
+            }
+            return Ok(variants);
+        }
+        static_source_word_variants(&word.value, &self.options)
     }
-}
+    pub(super) fn expand_positional_source(&self, source: &str) -> Result<String, String> {
+        self.positional_context.as_ref().map_or_else(
+            || Ok(source.to_string()),
+            |context| {
+                expand_shell_command(
+                    source,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    &context.arguments,
+                )
+            },
+        )
+    }
 
-fn static_token_measure(tokens: &[String]) -> usize {
-    tokens
-        .iter()
-        .map(|token| token.len().saturating_add(1))
-        .sum()
+    fn expand_arithmetic_source(&self, source: &str) -> Result<String, String> {
+        self.positional_context.as_ref().map_or_else(
+            || Ok(source.to_string()),
+            |context| {
+                expand_shell_arithmetic(
+                    source,
+                    &self.options,
+                    context.zero_argument.as_deref(),
+                    &context.arguments,
+                )
+            },
+        )
+    }
+
+    fn with_positional_context<T>(
+        &mut self,
+        context: Option<PositionalContext>,
+        collect: impl FnOnce(&mut Self) -> Result<T, String>,
+    ) -> Result<T, String> {
+        let saved = std::mem::replace(&mut self.positional_context, context);
+        let saved_set_generation = self.positional_set_generation;
+        let result = collect(self);
+        self.positional_context = saved;
+        self.positional_set_generation = saved_set_generation;
+        result
+    }
 }
 
 fn and_status(left: Option<bool>, right: Option<bool>) -> Option<bool> {

@@ -6,6 +6,109 @@ use brush_parser::ast::{
 use super::{CommandCollector, DYNAMIC_SHELL_WORD};
 
 impl CommandCollector {
+    pub(super) fn collect_list(&mut self, list: &CompoundList) -> Result<(), String> {
+        for item in &list.0 {
+            if self.execution_terminated {
+                break;
+            }
+            self.collect_pipeline(&item.0.first)?;
+            if self.execution_terminated {
+                break;
+            }
+            let mut static_success = self.static_pipeline_success(&item.0.first)?;
+            if self.positional_context.is_none() {
+                self.collect_unscoped_and_or(&item.0.additional, &mut static_success)?;
+                continue;
+            }
+            let (mut chain_success, mut chain_failure) =
+                self.take_positional_outcomes(item.0.first.bang, static_success);
+            for additional in &item.0.additional {
+                if self.execution_terminated {
+                    break;
+                }
+                let (execute_on_success, pipeline) = match additional {
+                    AndOr::And(pipeline) => (true, pipeline),
+                    AndOr::Or(pipeline) => (false, pipeline),
+                };
+                let (selected, skipped) = if execute_on_success {
+                    (chain_success.take(), chain_failure.take())
+                } else {
+                    (chain_failure.take(), chain_success.take())
+                };
+                let definitely_executes = static_success == Some(execute_on_success);
+                let (next_success, next_failure, pipeline_success) =
+                    if let Some(selected) = selected {
+                        self.positional_context = Some(selected);
+                        self.with_positional_branch_execution(definitely_executes, |collector| {
+                            collector.collect_pipeline(pipeline)
+                        })?;
+                        let pipeline_success = self.static_pipeline_success(pipeline)?;
+                        let (success, failure) =
+                            self.take_positional_outcomes(pipeline.bang, pipeline_success);
+                        (success, failure, pipeline_success)
+                    } else {
+                        (None, None, None)
+                    };
+                if execute_on_success {
+                    chain_success = next_success;
+                    chain_failure =
+                        super::shell_state::merge_positional_contexts(skipped, next_failure);
+                    static_success = super::and_status(static_success, pipeline_success);
+                } else {
+                    chain_success =
+                        super::shell_state::merge_positional_contexts(skipped, next_success);
+                    chain_failure = next_failure;
+                    static_success = super::or_status(static_success, pipeline_success);
+                }
+                self.positional_context = super::shell_state::merge_positional_contexts(
+                    chain_success.clone(),
+                    chain_failure.clone(),
+                );
+            }
+            self.last_positional_status = match (chain_success.is_some(), chain_failure.is_some()) {
+                (true, false) => Some(true),
+                (false, true) => Some(false),
+                _ => None,
+            };
+            self.last_positional_success = chain_success;
+            self.last_positional_failure = chain_failure;
+        }
+        Ok(())
+    }
+
+    fn collect_unscoped_and_or(
+        &mut self,
+        additional: &[AndOr],
+        static_success: &mut Option<bool>,
+    ) -> Result<(), String> {
+        for additional in additional {
+            if self.execution_terminated {
+                break;
+            }
+            match additional {
+                AndOr::And(_) if *static_success == Some(false) => {}
+                AndOr::Or(_) if *static_success == Some(true) => {}
+                AndOr::And(pipeline) => {
+                    let definitely_executes = *static_success == Some(true);
+                    self.with_execution_certainty(definitely_executes, |collector| {
+                        collector.collect_pipeline(pipeline)
+                    })?;
+                    *static_success =
+                        super::and_status(*static_success, self.static_pipeline_success(pipeline)?);
+                }
+                AndOr::Or(pipeline) => {
+                    let definitely_executes = *static_success == Some(false);
+                    self.with_execution_certainty(definitely_executes, |collector| {
+                        collector.collect_pipeline(pipeline)
+                    })?;
+                    *static_success =
+                        super::or_status(*static_success, self.static_pipeline_success(pipeline)?);
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn collect_case_clause(
         &mut self,
         command: &CaseClauseCommand,

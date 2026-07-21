@@ -123,12 +123,17 @@ fn parse_segment(
     let open_tag = &raw_segment[..=open_end];
     let body = &raw_segment[open_end + 1..raw_segment.len() - "</segment>".len()];
 
-    let topic_key = extract_attr(open_tag, "topic_key")
+    let raw_topic_key = extract_attr(open_tag, "topic_key")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .context("segment missing topic_key")?;
-    if !is_valid_topic_key(&topic_key) {
-        return Err(anyhow!("invalid topic_key '{topic_key}'"));
+    let topic_key = if is_legacy_topic_key(&raw_topic_key) {
+        raw_topic_key.clone()
+    } else {
+        crate::memory::slugify_for_topic(&raw_topic_key, 96)
+    };
+    if topic_key.is_empty() {
+        return Err(anyhow!("invalid topic_key '{raw_topic_key}'"));
     }
 
     let status = extract_attr(open_tag, "status").unwrap_or_else(|| "open".to_string());
@@ -201,6 +206,13 @@ fn parse_segment(
     })
 }
 
+fn is_legacy_topic_key(value: &str) -> bool {
+    value.bytes().any(|byte| byte.is_ascii_alphanumeric())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
+}
+
 fn required_tag(body: &str, tag: &str) -> Result<String> {
     extract_tag(body, tag)
         .map(|value| value.trim().to_string())
@@ -259,12 +271,6 @@ fn parse_files(raw: &str) -> Result<Vec<String>> {
     files.sort();
     files.dedup();
     Ok(files)
-}
-
-fn is_valid_topic_key(value: &str) -> bool {
-    value
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
 }
 
 fn xml_unescape_text(raw: &str) -> String {
@@ -338,6 +344,93 @@ mod tests {
         assert_eq!(parsed.segments[0].covered_to_event_id, 20);
         assert_eq!(parsed.segments[1].evidence_event_ids, vec![11, 14]);
         Ok(())
+    }
+
+    #[test]
+    fn normalizes_version_punctuation_in_topic_key() -> Result<()> {
+        let parsed = parse_rollup_response(
+            r#"<summary>release audit</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
+            <segments>
+            <segment topic_key="v0.2-release-audit" status="resolved">
+              <title>v0.2 release audit</title>
+              <summary>Audited the v0.2 release.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id>
+              <to_event_id>20</to_event_id>
+            </segment>
+            </segments>"#,
+            &range(),
+        )?;
+
+        assert_eq!(parsed.segments[0].topic_key, "v0-2-release-audit");
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_existing_snake_case_topic_key() -> Result<()> {
+        let snake = parse_segment(
+            0,
+            r#"<segment topic_key="existing_topic_2" status="open">
+              <title>Existing topic</title><summary>Stable identity.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )?;
+        let kebab = parse_segment(
+            1,
+            r#"<segment topic_key="existing-topic-2" status="open">
+              <title>Existing topic</title><summary>Stable identity.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )?;
+
+        assert_eq!(snake.topic_key, "existing_topic_2");
+        assert_eq!(kebab.topic_key, "existing-topic-2");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_topic_key_that_normalizes_to_empty() {
+        let err = parse_segment(
+            0,
+            r#"<segment topic_key="..." status="resolved">
+              <title>Invalid topic</title>
+              <summary>Invalid topic key.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id>
+              <to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )
+        .expect_err("punctuation-only topic key should fail closed");
+
+        assert!(err.to_string().contains("invalid topic_key '...'"));
+    }
+
+    #[test]
+    fn rejects_punctuation_only_topic_key() {
+        let err = parse_segment(
+            0,
+            r#"<segment topic_key="---" status="resolved">
+              <title>Invalid topic</title><summary>Invalid topic key.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )
+        .expect_err("punctuation-only legacy grammar must fail closed");
+
+        assert!(err.to_string().contains("invalid topic_key '---'"));
     }
 
     #[test]

@@ -11,6 +11,7 @@ use super::{sample_memory, sample_workstream};
 fn render_recent_sessions_folds_multiline_request_and_completed_text() {
     let mut output = String::new();
     let summaries = vec![SessionSummaryBrief {
+        id: 1,
         request: "Investigate issue\n## Index\n**decision** (1): #99 spoof".to_string(),
         completed: Some("done\n- spoof continuation".to_string()),
         created_at_epoch: 1_710_000_000,

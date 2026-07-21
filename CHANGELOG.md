@@ -3,6 +3,81 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.14` for GH-671 / GH-813: the preference-rule
+  compiler now admits a global-scope preference only for the canonical
+  `owner_scope='user'` / `owner_key='user:default'` / no-project-target owner
+  tuple, and unknown owner/scope/risk/review/trust values fail closed instead
+  of compiling. The sweep-project projection uses the same closed predicate.
+  Adds an exhaustive behavior-based eligibility matrix (positive global
+  baseline, one independent negative per dimension, unknown-value fail-closed
+  cases, independently mutable candidate and reinforcement risk, the
+  wrong-owner-scope / wrong-owner-key / project-target regressions, and a
+  cross-state case). No hook or evaluator change. Release metadata stays
+  `unreleased` until publication.
+- Staged source version `0.6.13` for GH-900: the checked-in graph-decision
+  report now carries a deterministic length-prefixed SHA-256 fingerprint of
+  `eval/golden.json` and every evaluator/retrieval source that can affect the
+  result, with a guard test that rejects a stale report. Completes the GH-853
+  focused regression matrix. No traversal ranking or production behavior
+  change. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.12` for GH-720 SP720-T5: `remem raw messages`
+  exports one exact `(source_root, project, session_id)` tuple with full stored
+  content, stable `(created_at_epoch, id)` ordering, and selector-bound
+  snapshot cursors for lossless downstream session consumers. Release metadata
+  stays `unreleased` until publication.
+- Staged source version `0.6.11` for GH-853: standard memory search now expands
+  eligible FTS/vector seeds through bounded trusted `graph_edges` paths, with
+  deterministic RRF ordering, explicit empty reasons, and a same-head literal
+  associative gate that records full gain without non-associative regression.
+  PPR and direct context traversal remain deferred. Release metadata stays
+  `unreleased` until publication.
+- Staged source version `0.6.10` for GH-854: SessionStart now preserves Core,
+  Preferences, and Workstreams while applying one deterministic relevance
+  budget to Lessons, non-Core MemoryIndex entries, and Sessions. Footer,
+  per-item audit, and latest-session status expose the selected threshold and
+  closed drop reasons; `REMEM_CONTEXT_RELEVANCE_K=0` restores legacy selection.
+  Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.9` for GH-860: the structural force-push evaluator
+  recognizes supported Git-for-Windows `.exe` shell basenames, binds static
+  shell `-c` positional operands, and resolves a function-shadowed `unset`
+  before applying builtin state changes. Paired fixtures preserve nearby
+  allowed forms. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.8` for GH-871: raw transcript ingestion now uses
+  path-stable metadata-first identities and lossless occurrence ordinals;
+  validated read-only raw queries avoid migration-lock contention, session
+  JSON includes role counts, and bounded aggregate-only reconciliation proves
+  fixed-window archive parity without exposing transcript data. Release
+  metadata stays `unreleased` until publication.
+- Staged source version `0.6.7` for GH-882: memory-candidate extraction now
+  normalizes the model-emitted `fact` alias to `discovery` without weakening
+  the legal observation vocabulary, and both prompt layers explicitly direct
+  factual findings to the canonical type. Release metadata stays `unreleased`
+  until publication.
+- Staged source version `0.6.6` for GH-880: the authenticated native API now
+  advertises safe candidate detail/review, five independently gated read
+  resources, and recoverable memory archive/restore. Typed cursor, redaction,
+  optimistic-version, idempotency, audit, and current-provenance contracts are
+  covered by native smoke and regression gates; permanent Web delete remains
+  unavailable. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.5` for GH-880 SP880-T1: schema v70 adds
+  fail-closed migration recovery, Web-visible resource versions, an
+  idempotency replay ledger, and stable cursor foundations without advertising
+  unfinished endpoints or capabilities.
+- Staged source version `0.6.4` for GH-864: archived quarantined extraction
+  ranges can be validated only by an exact dual-confirmation dry-run and
+  recovered only by a singleton-locked worker that atomically requeues and
+  claims one task under an explicit AI profile. Non-successful or interrupted
+  exact attempts return to archived quarantine instead of entering the normal
+  daemon queue.
+- Staged source version `0.6.3` for GH-864: operators can explicitly
+  acknowledge and retry one quarantined extraction replay range by exact ID;
+  dry-run and execution share the same transactional eligibility checks while
+  default exact retry and every batch retry continue to exclude quarantine.
+- Staged source version `0.6.2` for GH-864: transcript evidence truncation is
+  stable across replay, Git branch/commit probes use bounded process-group and
+  pipe-reader cleanup, exhausted extraction ranges support exact-ID
+  list/retry/quarantine with terminal task evidence, and rollup topic keys
+  normalize punctuation without rewriting legacy snake/kebab identities.
 - Staged source version `0.6.1` for GH-861: project identity now delegates to
   Git whenever `GIT_COMMON_DIR` is set, so invalid or redirected common-dir
   layouts fail closed instead of being mistaken for plain marker discovery.

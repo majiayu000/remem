@@ -1,5 +1,9 @@
 # Tech Spec
 
+<!-- specrail-planned-changes
+{"version":1,"issue":813,"complete":true,"paths":[".github/pull_request_template.md",".github/workflows/ci.yml",".github/workflows/closure-audit.yml","CONTRIBUTING.md","checks/check_workflow.py","checks/closure_audit.py","checks/duplicate_work_gate.py","checks/github_approved_spec_evidence.py","checks/github_duplicate_evidence.py","checks/github_evidence_common.py","checks/github_issue_evidence.py","checks/github_issue_reference.py","checks/github_pr_evidence.py","checks/github_pr_snapshot.py","checks/github_review_evidence.py","checks/pr_gate.py","checks/pr_review_contract.py","checks/rejection_items.py","checks/review_json_gate.py","checks/review_result_semantics.py","checks/route_gate.py","checks/runtime_budget_dimensions.py","checks/runtime_gate_rules.py","checks/runtime_ledger_gate.py","checks/schema_contract.py","checks/schema_validation.py","checks/sensitive_enforcement.py","checks/session_telemetry.py","checks/specrail-sync.lock.json","checks/specrail_lib.py","schemas/closure_audit_result.schema.json","schemas/duplicate_work_evidence.schema.json","schemas/pr_review_gate.schema.json","schemas/review_result.schema.json","schemas/runtime_checkpoint.schema.json","schemas/sensitive_implement_gate_result.schema.json","scripts/ci/check_pr_tier.py","scripts/ci/closure_follow_up.py","scripts/ci/run_sensitive_implement_gate.py","scripts/ci/test_closure_follow_up.py","scripts/ci/test_run_sensitive_implement_gate.py","scripts/ci/test_schema_contract.py","scripts/ci/test_specrail_gate_wiring.py","scripts/sync-specrail-checks.sh","specs/GH813/product.md","specs/GH813/tasks.md","specs/GH813/tech.md","src/rules/compiler.rs","src/rules/compiler/eligibility_tests.rs","src/rules/compiler/sweep_tests.rs","src/rules/compiler/tests.rs","workflow.yaml"],"spec_refs":["specs/GH813/product.md","specs/GH813/tech.md"]}
+-->
+
 ## Linked Issue
 
 GH-813
@@ -12,12 +16,13 @@ Product: `product.md`
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
-| Preference eligibility | `src/rules/compiler.rs`, `src/rules/compiler/tests.rs` | SQL 已检查 lifecycle、expiry、scope、source trust、machine-checkable、reinforcement threshold/risk、candidate risk/review status 和 suppression policy；但 global scope 只要求 `owner_scope IS NOT NULL`，且测试 fixture 让两个 risk 共用字段。 | 需要修正现存 global-owner 过宽问题，把 eligibility 变成封闭、可枚举、fail-closed 的契约，并证明每个条件不可遗漏。 |
+| Preference eligibility | `src/rules/compiler.rs`, `src/rules/compiler/tests.rs`, `src/rules/compiler/eligibility_tests.rs`, `src/rules/compiler/sweep_tests.rs` | SQL 已检查 lifecycle、expiry、scope、source trust、machine-checkable、reinforcement threshold/risk、candidate risk/review status 和 suppression policy；但 global scope 只要求 `owner_scope IS NOT NULL`，且测试 fixture 让两个 risk 共用字段。 | 需要修正现存 global-owner 过宽问题，把 eligibility 变成封闭、可枚举、fail-closed 的契约，并证明每个条件不可遗漏；#906 的完整 changed-path replay 必须覆盖这四个 compiler 文件。 |
 | GH-671 contracts | `specs/GH671/product.md`, `specs/GH671/tech.md`, `docs/specs/preference-rule-compilation/PRODUCT.md`, `docs/specs/preference-rule-compilation/TECH.md` | 现有契约概括了 low-risk、trusted source、scope 和 machine-checkable，但没有枚举全部 review/trust/risk 允许值与交叉状态。 | `B-001` 至 `B-005` 要求 authoritative contract 与第一轮实现测试一致。 |
 | Review artifact | `schemas/review_result.schema.json`, `checks/review_json_gate.py` | artifact 可带 `head_sha`、`review_round` 和 `mode`，但 schema/gate 不要求独立 reviewer 身份、开始/完成时间或终态。 | 仅有 PASS 文本不足以证明独立审查在合并前完成。 |
 | PR evidence and gate | `checks/github_pr_evidence.py`, `checks/pr_gate.py` | evidence 接受调用方传入的 `review_source`；gate 检查 exact head、threads 与 merge ordering，但没有加载并验证对应的独立审查 artifact。 | 必须从可验证产物建立 review completion → gate → merge 的时序链。 |
 | Runtime ledger | `schemas/runtime_checkpoint.schema.json`, `checks/runtime_ledger_gate.py` | queue ledger 已记录 reviewer lane 和 review source，并可阻止 agent 自主推进。 | 可复用 lane/失败状态语义，但不能把本地 ledger 误称为 GitHub 服务端保护。 |
 | Synced SpecRail checks | `scripts/sync-specrail-checks.sh`, `checks/specrail-sync.lock.json` | review schema、GitHub evidence 和 PR gate 从上游 `majiayu000/specrail` 固定版本同步。 | remem 不得直接修改这些 vendored 文件；需要上游变更后再同步。 |
+| Prospective implementation readiness | `scripts/ci/run_sensitive_implement_gate.py`, `schemas/sensitive_implement_gate_result.schema.json`, `.github/workflows/ci.yml`, repo-local workflow adapter | 上游 issue evidence 不包含 readiness label event 的 actor/time，duplicate-work evidence 也不绑定 repository/local remote；当前 implementation PR 及其 remote head branch 还会作为自身 duplicate 命中。 | remem-local wrapper 必须 live 绑定 repository、local remote、current PR/exact head，自行查询 readiness label event，验证 5 分钟 freshness，并仅对精确当前 PR/head 及其 live-verified 唯一 remote head branch 做可审计自引用 exemption；不能手改 vendored gate。 |
 | Repository governance | `workflow.yaml`, `CONTRIBUTING.md` | workflow 禁止 agent 最终批准、合并和权限变更；CONTRIBUTING 尚未说明 enforcement-sensitive 无 fast path。GitHub `main` 在 2026-07-13 无 branch protection/ruleset。 | 仓库内门禁只能约束 agent 流程；不可绕过的 merge enforcement 需要人类管理员配置服务端规则。 |
 
 ## 设计方案
@@ -47,8 +52,10 @@ Product: `product.md`
 
 ### 2. 上游 SpecRail review completion evidence
 
-以下文件由 `checks/specrail-sync.lock.json` 管理，必须先在上游 SpecRail 实现和发布，
-remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
+以下文件由 `checks/specrail-sync.lock.json` 管理，必须先在上游 SpecRail 实现。remem
+通常同步正式 release；当 release 明显落后且维护者明确授权时，也可以固定经过验证的
+exact commit SHA。两种路径都必须由 `scripts/sync-specrail-checks.sh` 从 clean upstream
+checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
 
 - 扩展 review artifact，至少要求 `reviewer_lane`（或等价独立身份）、`head_sha`、
   `review_started_at`、`review_completed_at`、终态、verdict 和结构化 findings。只有显式
@@ -93,8 +100,25 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 
 ### 3. remem 同步与仓库流程说明
 
-- 上游变更发布后更新 `checks/specrail-sync.lock.json` 并通过同步脚本更新 vendored 文件；
-  禁止在 remem 内对 synced 文件做永久性手改。
+- 上游变更发布后，或维护者明确批准 exact-SHA pin 后，更新
+  `checks/specrail-sync.lock.json` 并通过同步脚本更新 vendored 文件；禁止在 remem 内对
+  synced 文件做永久性手改。exact-SHA 例外必须由同仓库 durable maintainer comment
+  记录 actor、完整 SHA、授权范围与时间；实现 PR 必须引用该 URL。当前 sync/route gate
+  不解析 GitHub comment，也不自动证明授权；human final review 必须 live read-back URL，
+  人工核对 actor/scope/time/full-SHA 与 lock 完全一致，sync gate 只负责验证 lock SHA、
+  tracked-file closure 和 content hashes。2026-07-21 维护者在
+  `https://github.com/majiayu000/remem/issues/813#issuecomment-5030044760`
+  批准固定 `0f903abe1794899071a9f19a4c46af1ce81129d3`。以下是维护者声明、必须在 human final
+  review 重新 live 验证的外部证据：同日
+  `gh api repos/majiayu000/specrail/compare/v0.2.1...main` 返回 `ahead_by=168`；上游
+  PR #103/#115/#116 均为 merged 且各自 `workflow-check` SUCCESS；clean checkout 在该
+  exact SHA 执行 T3 指定的五个 pytest 文件，结果为 `254 passed in 7.12s`。
+- 该 pin 已有必须保留的失败历史：PR #892 首次同步后因 remem 本地 schema-contract
+  断言与 upstream `SchemaDefinitionError` 合同不一致而使 main CI 失败，PR #893 紧急
+  revert。GH-894 的 spec PR #895 明确修复边界，PR #897 exact head
+  `5ca704454e618473e74ebb6c8c15ecbf77158797` 适配本地 schema-contract、重新同步同一 SHA，
+  maintainer-asserted CI run `29683610679` 的 `check` SUCCESS 后合并。当前授权确认的是 #897 已修复并验证的
+  re-land 状态，不追溯性把 #892 描述为合规。
 - 在 `CONTRIBUTING.md` 增加 `enforcement_sensitive` 分类、无 fast path、exact-head review
   顺序和 agent 权限边界。避免修改 `AGENTS.md`，除非维护者另行要求高上下文规则变更。
 - 同步并接入上游可执行 closure audit；`SP813-T5` 的 remem workflow integration controller
@@ -112,6 +136,52 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
   required review 或 ruleset，并验证实际拒绝缺少 gate check 的 merge。
 - agent 不修改权限、不批准、不合并。服务端保护未启用时，工具必须把能力描述为
   advisory detection，而不是 prevention。
+- 2026-07-21 live API 返回 `main` 未受 branch protection/ruleset 保护；维护者已选择
+  required-check ruleset：要求 `check` 成功、解决 review conversations、禁止 force push
+  与 deletion，且不要求第二位 approver 以避免单维护者仓库自锁。该决策不等于设置已生效；
+  仍需管理员完成 GitHub 配置并回读验证。
+
+### 5. prospective implement gate wrapper
+
+- `SP813-T5` 在 remem 本地新增 `scripts/ci/run_sensitive_implement_gate.py` 及其
+  focused test；它不是 synced SpecRail 文件，不修改 lock 管理的 gate。wrapper 必须接收
+  `--github-repo <owner/name> --issue <number> --pr <number> --head-sha <full-sha>`，验证 local
+  `origin` remote 与 repository 一致，并通过 live GitHub API 验证该 open PR 属于同一仓库、
+  head 精确匹配且引用该 issue。它自行查询 issue label timeline，要求 maintainer readiness
+  label event 的 actor/time 非空，并通过 live GitHub repository permission/role API 证明 actor
+  类型是 `User`（拒绝 Bot/App/agent），且为 repository owner 或拥有 `admin|maintain` 权限；
+  durable result 保存 actor type、permission/role 与 authority query source，并与
+  `state_source=label`、`state_trusted=true` 一致；不得声称
+  `github_issue_evidence.py` 提供其 schema 中不存在的 actor/time。wrapper 调用并校验
+  `github_issue_evidence.py` 与 `github_duplicate_evidence.py` 的 live 产物，记录 repository、
+  remote URL，并拒绝未来时间、不可解析时间或 gate 开始时已超过 300 秒的 `collected_at`。
+- duplicate collector 的原始 artifact 必须完整保留。wrapper 只可复制并过滤出经上述 live
+  校验的当前 PR number + exact head 自引用，以及该 PR API payload 的 head ref + exact head
+  唯一确定的 remote head branch 自引用；把 exemption 的 repository/PR/head/head-ref、原始和
+  过滤后 PR/branch artifact hashes 写入 durable result。其他引用该 issue 的 PR 或匹配
+  remote branch 仍阻断。
+  synced route gate 只消费过滤后副本，wrong repository/remote/head 或无法证明唯一自引用时
+  fail closed。
+- wrapper 对 issue evidence 与 duplicate-work evidence 分别计算 pre-gate SHA-256，再用
+  数组参数固定调用 `route_gate.py --route implement --issue <issue> --mode required
+  --evidence <issue-evidence> --duplicate-evidence <duplicate-evidence> --json`；wrapper API 不接受
+  `--state` 或 `--label`，也不得把它们加入子进程。这里的 duplicate path 必须是上段定义的
+  过滤后副本；gate 完成后立即重算 route 输入的两份文件 hash，任一
+  前后不一致即 fail closed。durable result 必须保存两份 pre/post hash、完整固定 argv、
+  nested gate JSON，并验证 wrapper result 中 `state_trusted=true`、nested gate 的
+  `current_state=ready_to_implement` 与 `satisfied` 明示 state 来自 evidence、
+  `decision=allowed`、`missing=[]`、
+  `sensitive_classification.enforcement_sensitive=true`；任一步骤 error/blocked 都不得降级。
+- `schemas/sensitive_implement_gate_result.schema.json` 要求 wrapper identity、current head、
+  started/completed timestamps、固定 argv、两份 evidence 的 pre/post hashes、wrapper trust/
+  freshness verdict 和 nested route-gate JSON。CI 与 repo-local PR evidence adapter 只接受该
+  schema 的 current-head artifact；裸 `route_gate.py` 输出缺少 wrapper identity/hash chain，
+  即使 `decision=allowed` 也必须拒绝。`.github/workflows/ci.yml` 只能调用 wrapper，
+  `CONTRIBUTING.md` 与 PR template 明确禁止把直接 gate 调用作为 sensitive readiness 证明。
+- duplicate evidence 除已验证 current PR/exact-head 及其唯一 remote head branch 自引用外
+  命中实现 PR，或命中其他匹配远端分支时，保存原始 conflict artifact。
+  解除 blocker 必须引用 human decision 的 actor/time/rationale；如决定清理分支，还必须
+  同时保存 cleanup 前后 evidence 和 decision URL。agent 无权删除冲突分支来获得绿灯。
 
 ## Product-to-Test Mapping
 
@@ -130,6 +200,7 @@ remem 只通过 `scripts/sync-specrail-checks.sh` 同步：
 | `B-011` | protection status evidence、CONTRIBUTING | 无 protection 时仅报告 advisory；管理员设置由 live API/拒绝 merge 证据验证 |
 | `B-012` | review artifact lifecycle/runtime ledger | cancelled、superseded 与并发 current-head 终态 fixtures |
 | `B-013` | runtime ledger/PR evidence self-review recovery | 无 lane failure、无同 head 人类授权或缺 human final review 的 fixtures 失败 |
+| `B-014` | remem-local sensitive implement wrapper/result schema + live GitHub repository/PR/label timeline + issue/duplicate evidence + synced route gate | 裸 route JSON、wrong repository/remote/PR/head/head-ref、未来/不可解析/超过 300 秒的 `collected_at`、非 trusted label、缺 label-event actor/time、Bot/App/agent labeler、无 maintain/admin 权限的 labeler、不完整 PR 列表、非当前 PR 冲突、其他匹配 branch、过宽 self-exemption、state/label override、gate 期间任一 evidence hash 改变和无 durable human decision 的 cleanup fixtures 失败；schema-valid current-head wrapper result、固定 argv、repository binding、live human-maintainer label event 与 authority source、仅当前 PR/head 及其 live-verified 唯一 remote head branch exemption、原始/过滤后 PR/branch artifact hashes 与 trusted evidence state 的正例通过 |
 
 ## 数据流
 

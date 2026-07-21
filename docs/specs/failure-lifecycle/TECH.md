@@ -213,9 +213,49 @@ storms.
 
 ## Compatibility
 
-- `remem pending list-failed` / `retry-extraction-ranges` keep working and
-  can target archived rows explicitly (`--include-archived`), preserving the
-  manual escape hatch for observations and extraction ranges.
+- Extraction replay ranges have a precise manual recovery path:
+  `remem pending list-extraction-ranges --id <positive-id> [--json]`,
+  `retry-extraction-ranges --id <positive-id> [--dry-run]`, and
+  `quarantine-extraction-ranges --id <positive-id> [--dry-run]`. Explicit
+  `--id` conflicts with explicit batch `--project`/`--limit`; implicit batch
+  defaults do not make an ID-only command invalid. The list query has no active
+  status filter, so `replayed` terminal evidence remains queryable and includes
+  the linked replay task id/status/attempt/error without captured payloads or
+  provider secrets. Exact dry-run and mutation share the retryable predicate;
+  mutation revalidates inside one SQLite transaction and cannot select or
+  update a sibling range. Missing, non-positive, active-task, and non-retryable
+  IDs fail instead of falling back to the batch path; archived IDs also fail
+  unless the exact archived-recovery opt-in below is present.
+  `retry-extraction-ranges --id <positive-id> --acknowledge-quarantine
+  [--dry-run]` is the only exception for a quarantined target: the flag
+  requires exact ID, reuses the unarchived/no-active-task predicate in dry-run
+  and mutation, and never changes the default exact or batch candidate set.
+  If that same target has since archived, `--include-archived` is also required;
+  it is exact-ID-only and reuses the same no-active-task predicate. The pending
+  command permits this archived combination only with `--dry-run`; a mutating
+  invocation fails with guidance to use the locked exact worker. No batch path
+  receives either opt-in, and no unlocked command clears an archived range.
+- `remem worker --once --replay-range-id <positive-id>
+  --acknowledge-quarantine --include-archived --profile <name>` validates the
+  profile and acquires the worker singleton before changing the range. While
+  holding the lock, one SQLite transaction revalidates the exact range,
+  requeues it, and claims the returned replay task with the ordinary
+  pending/retry-due predicate; the pending row is never committed without the
+  exact lease. A held daemon lock, future retry time, or identity race fails
+  before fallback. The exact processor uses the validated in-memory profile
+  for its single attempt. Full-range done follows the normal success
+  transition; partial coverage, defer, wait, timeout, provider error, or
+  another non-success atomically leaves the
+  replay task failed/archived and the range quarantined/archived. Expired lease
+  recovery recognizes exact-replay owners and applies the same archived
+  quarantine outcome, so interruption never creates daemon-claimable work with
+  a default profile. This mode does not run lifecycle maintenance, priority
+  fallback, jobs, embedding backfill, or a second extraction task; ordinary
+  worker modes keep their existing drain behavior.
+- `remem pending list-failed` / `retry-extraction-ranges` keep working; the
+  latter can validate an archived extraction range only by exact ID with
+  `--include-archived --dry-run`; the locked exact worker is the sole mutating
+  archived-range escape hatch.
 - Add an explicit legacy observation replay path:
   `remem pending retry-failed-observations --include-archived --id <id>
   [--host claude-code|codex-cli]` (or `--project <p> --limit <n>
