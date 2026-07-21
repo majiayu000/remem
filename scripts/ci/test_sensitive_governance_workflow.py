@@ -1,14 +1,32 @@
 #!/usr/bin/env python3
-"""Static safety contract for the repo-local sensitive governance advisory."""
+"""Safety contract for the repo-local sensitive governance advisory."""
 
+import sys
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW = ROOT / ".github" / "workflows" / "sensitive-governance.yml"
+sys.path.insert(0, str(ROOT / "checks"))
+
+from sensitive_enforcement import classify_sensitive_changes  # noqa: E402
+from specrail_lib import load_pack  # noqa: E402
+
+
+def test_trusted_base_classifier_uses_supported_source() -> None:
+    result = classify_sensitive_changes(
+        load_pack(ROOT),
+        ROOT,
+        ["workflow.yaml"],
+        ["workflow.yaml"],
+        source="github_changed_files",
+    )
+    assert result["source"] == "github_changed_files"
+    assert result["enforcement_sensitive"] is True
 
 
 def main() -> int:
+    test_trusted_base_classifier_uses_supported_source()
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     required = [
@@ -22,7 +40,7 @@ def main() -> int:
         'sys.path.insert(0, "checks")',
         "from sensitive_enforcement import classify_sensitive_changes",
         'load_pack(Path("."))',
-        'source="github_changed_files_trusted_base"',
+        'source="github_changed_files"',
         '"authorization": "advisory_only"',
         '"final_trust_root": "external_github_app_or_org_required_workflow_t6"',
         '"ordinary_pr_ci_is_final_authorization": False',

@@ -29,6 +29,8 @@ jobs:
         run: python3 scripts/ci/test_sensitive_governance_workflow.py
       - name: Test sensitive implementation wrapper
         run: python3 scripts/ci/test_run_sensitive_implement_gate.py
+      - name: Test non-closing issue relation adapter
+        run: python3 scripts/ci/test_extract_nonclosing_issue.py
       - name: Verify synced SpecRail checks
         run: scripts/sync-specrail-checks.sh --verify
       - name: Check plugin version sync
@@ -56,6 +58,20 @@ jobs:
         env:
           GITHUB_PR_BODY: ${{ github.event.pull_request.body }}
         run: python3 scripts/ci/check_pr_tier.py "${{ github.event.pull_request.base.sha }}" HEAD
+      - name: Resolve non-closing linked issue
+        if: github.event_name == 'pull_request'
+        id: linked_issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p .specrail/runtime
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json body,closingIssuesReferences \
+            > .specrail/runtime/pr-issue-reference.json
+          issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
+            .specrail/runtime/pr-issue-reference.json)
+          echo "number=$issue_number" >> "$GITHUB_OUTPUT"
       - name: Run sensitive implementation gate
         if: >-
           github.event_name == 'pull_request' &&
@@ -64,21 +80,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
         run: |
-          issue_number=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-            --json closingIssuesReferences \
-            --jq '.closingIssuesReferences | map(.number) | if length == 1 then .[0] else error("sensitive implementation PR must close exactly one issue") end')
           python3 scripts/ci/run_sensitive_implement_gate.py \
             --repo . \
             --github-repo "$GITHUB_REPOSITORY" \
-            --issue "$issue_number" \
+            --issue "$ISSUE_NUMBER" \
             --pr "$PR_NUMBER" \
             --head-sha "$HEAD_SHA" \
             --output .specrail/runtime/sensitive-implement-gate.json
       - name: Build GH813 historical compiler replay evidence
         if: >-
           github.event_name == 'pull_request' &&
-          contains(github.event.pull_request.body, 'Closes #813')
+          steps.linked_issue.outputs.number == '813'
         run: |
           PYTHONPATH=checks python3 - <<'PY'
           import json

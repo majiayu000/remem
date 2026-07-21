@@ -335,6 +335,9 @@ class SensitiveImplementGateTests(unittest.TestCase):
         workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         self.assertIn("scripts/ci/test_run_sensitive_implement_gate.py", workflow)
         self.assertIn("scripts/ci/run_sensitive_implement_gate.py", workflow)
+        self.assertIn("scripts/ci/extract_nonclosing_issue.py", workflow)
+        self.assertIn("steps.linked_issue.outputs.number", workflow)
+        self.assertNotIn("sensitive implementation PR must close exactly one issue", workflow)
         self.assertNotIn("python3 checks/route_gate.py", workflow)
 
     def test_ci_pins_trusted_default_branch_before_wrapper(self) -> None:

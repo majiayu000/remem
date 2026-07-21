@@ -72,7 +72,7 @@ jobs:
               Path("."),
               paths,
               paths,
-              source="github_changed_files_trusted_base",
+              source="github_changed_files",
           )
           result = {
               "schema_version": 1,
