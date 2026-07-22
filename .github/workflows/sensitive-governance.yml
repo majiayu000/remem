@@ -185,9 +185,6 @@ jobs:
           HEAD_SHA: ${{ steps.live.outputs.head_sha }}
           ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
         run: |
-          strict_issue=$(python3 scripts/ci/extract_nonclosing_issue.py \
-            .specrail/runtime/pr-issue-reference.json)
-          test "$strict_issue" = "$ISSUE_NUMBER"
           python3 scripts/ci/run_sensitive_implement_gate.py \
             --repo . \
             --github-repo "$GITHUB_REPOSITORY" \

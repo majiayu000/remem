@@ -443,6 +443,34 @@ def test_trusted_base_selector_rejects_ambiguous_multi_commit_topology() -> None
         raise AssertionError("ambiguous multi-commit topology must fail closed")
 
 
+def test_sensitive_merged_pr_with_invalid_declaration_reaches_follow_up() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "closure-audit.yml").read_text(
+        encoding="utf-8"
+    )
+    scope_for_closure = _workflow_function(workflow, "scope_for_closure")
+    classification = {"enforcement_sensitive": True}
+
+    for failures in (
+        ["PR body must declare enforcement_sensitive exactly once"],
+        ["PR body contains multiple enforcement_sensitive declarations"],
+    ):
+        scope = scope_for_closure(None, failures, classification)
+        assert scope["declaration_valid"] is False
+        assert scope["declaration_failures"] == failures
+        assert scope["computed_sensitive"] is True
+        assert scope["enforcement_sensitive"] is True
+
+        audit = violation_audit()
+        assert audit["status"] == "violation"
+        assert audit["required_follow_up"] is not None
+        github = FakeGitHub()
+        created = ensure_follow_up(audit, repository="example/remem", github=github)
+        reused = ensure_follow_up(audit, repository="example/remem", github=github)
+        assert created["action"] == "created"
+        assert reused["action"] == "reused"
+        assert created["issue"]["state"] == "open"
+
+
 def main() -> int:
     test_create_and_reuse()
     test_closed_issue_is_reopened()
@@ -457,6 +485,7 @@ def main() -> int:
     test_workflow_classification_cannot_be_shrunk_by_the_merged_pr()
     test_gh911_trusted_premerge_base_compatibility()
     test_trusted_base_selector_rejects_ambiguous_multi_commit_topology()
+    test_sensitive_merged_pr_with_invalid_declaration_reaches_follow_up()
     print("closure follow-up controller tests passed")
     return 0
 

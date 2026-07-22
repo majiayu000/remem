@@ -179,6 +179,27 @@ jobs:
                   )
               return declaration or computed
 
+          def scope_for_closure(declaration, declaration_failures, classification):
+              computed = classification.get("enforcement_sensitive")
+              if not isinstance(computed, bool):
+                  raise SystemExit("trusted sensitive classification must be boolean")
+              if not isinstance(declaration_failures, list):
+                  raise SystemExit("sensitive declaration failures must be a list")
+              declaration_valid = (
+                  isinstance(declaration, bool) and not declaration_failures
+              )
+              return {
+                  "declared_sensitive": (
+                      declaration if isinstance(declaration, bool) else None
+                  ),
+                  "declaration_valid": declaration_valid,
+                  "declaration_failures": declaration_failures,
+                  "computed_sensitive": computed,
+                  "enforcement_sensitive": (
+                      declaration or computed if declaration_valid else computed
+                  ),
+              }
+
           pr = json.loads(Path("/tmp/closure-pr.json").read_text())
           pages = json.loads(Path(".specrail/runtime/closure-changed-files-pages.json").read_text())
           files = normalize_github_changed_file_pages(pages, pr.get("changed_files"))
@@ -189,8 +210,6 @@ jobs:
           declaration, declaration_failures = declared_sensitive(
               pr_reference.get("body")
           )
-          if declaration_failures or declaration is None:
-              raise SystemExit("merged PR sensitive declaration is invalid")
           spec_refs = classification_spec_refs_compat(
               files["classification_paths"], issue
           )
@@ -201,10 +220,8 @@ jobs:
           result = {
               "changed_files": files,
               "spec_refs": spec_refs,
-              "declared_sensitive": declaration,
-              "computed_sensitive": classification["enforcement_sensitive"],
-              "enforcement_sensitive": effective_sensitive_compat(
-                  declaration, classification
+              **scope_for_closure(
+                  declaration, declaration_failures, classification
               ),
               "classification": classification,
           }

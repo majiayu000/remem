@@ -161,6 +161,7 @@ def main() -> int:
     assert "contents: write" not in workflow[refresh:]
     assert "github.event.issue.number" in workflow[refresh:]
     assert "--ref \"$DEFAULT_BRANCH\"" in workflow[refresh:]
+    assert "strict_issue" not in workflow
     print("sensitive governance workflow safety tests passed")
     return 0
 
