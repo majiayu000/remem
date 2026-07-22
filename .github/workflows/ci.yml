@@ -113,7 +113,7 @@ jobs:
           repo = Path(".")
           base = "2e23eb64e2cf710d36e48e77e2ed414de7fe741e"
           head = "f89c5c96d1c6a01d819625b2c6bae51f573d1cf9"
-          approved = "e4867a0517df0d0e8487ac20d702d7a5444c321a"
+          approved = "1f67531098f8a3fb96a34153593f427280a7e5be"
           paths = subprocess.run(
               ["git", "diff", "--name-only", f"{base}..{head}"],
               check=True,
