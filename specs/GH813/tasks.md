@@ -20,9 +20,11 @@ GH-813
   - `SP813-T5` authoritative Files addendum: `.github/workflows/sensitive-governance.yml`
     由 T5 owner 负责实现和验证，不能因 planned-change manifest 已列出该路径就省略任务所有权。
   - `SP813-T5` authoritative Verify addendum: 完成 version staging 前先执行
-    `git fetch --prune origin`，将 `<base-sha>` 固定为
-    `git merge-base origin/main HEAD` 返回的完整 SHA 并持久化到验证证据，然后运行
-    `python3 scripts/ci/check_version_bump.py <base-sha> HEAD`；该 gate 与
+    `git fetch --prune origin`，将 `<live-base-sha>` 固定为当次
+    `git rev-parse origin/main` 返回的完整 SHA 并持久化到验证证据；必须先以
+    `git merge-base --is-ancestor <live-base-sha> HEAD` 证明 implementation head 已包含该 live
+    merge target，再运行 `python3 scripts/ci/check_version_bump.py <live-base-sha> HEAD`。若
+    `origin/main` 在 final gate 前变化，必须重新合入 live base、重新采集 SHA 并重跑；该 gate 与
     `python3 scripts/ci/check_plugin_version_sync.py` 均通过后才能勾选 T5。
 - [ ] `SP813-T6` Owner: human repository administrator; Dependencies: spec approval and protection policy decision; Files: GitHub repository settings plus an external trust root; Done when: 明确记录是否需要不可绕过保护；普通 GitHub Actions required status check 只算 advisory/accidental-bypass mitigation。若需要不可绕过保护，个人仓库安装仓库外独立 GitHub App 并将 ruleset expected source 固定到该 App，或迁入组织后启用受保护治理仓库的 organization required workflow；留下 live API、来源绑定、外部 closure audit 与拒绝缺少可信 gate 的 merge 证据。agent 不执行权限变更、批准或合并；Verify: live GitHub branch-protection/ruleset/source API 与一次缺少可信来源 check/workflow 时被拒绝的 merge 证据，或明确记录保持 advisory-only 的管理员决定。
 - [ ] `SP813-T7` Owner: agent; Dependencies: `SP813-T1` `SP813-T2` `SP813-T3` `SP813-T4` `SP813-T5` and recorded `SP813-T6` decision; Files: GH-813 closure evidence only; Done when: Product acceptance criteria 全部有 exact-head 证据，CI、review、thread、protection capability 和 closure audit 结果被记录；若存在 `B-010` violation，closure evidence 还必须含由 GitHub API 回读且与稳定幂等键匹配的 open follow-up issue number/URL/state，只有本地 artifact 时 #813 不得关闭；Verify: `cargo fmt --check`, `cargo check`, focused tests, `cargo test`, workflow checks, SpecRail sync verify、live PR evidence gate，以及对 follow-up issue 的 live GitHub API read-back。
@@ -38,7 +40,9 @@ GH-813
 - repo-local `pull_request_target` prospective workflow 每次运行必须通过 GitHub API fresh 查询
   live default/base-ref snapshot，并 checkout 该 trusted-base exact SHA；PR payload 的
   `base.sha` 只用于一致性比较，不能作为长生命周期 PR 的可信代码 checkout。closure workflow
-  则固定被审计 merge 的 pre-merge parent。两者只提供 advisory 与补偿审计，不能替代
+  则从受信 merge event/API 的 default-branch merge commit 推导并验证实际 first parent；无法证明
+  单一 pre-merge parent 时，只接受 merge dispatch 前已持久化且绑定 PR/head 的 live base snapshot，
+  不接受 PR payload `base.sha`。两者只提供 advisory 与补偿审计，不能替代
   `SP813-T6` 的外部 App/org required workflow。
 - 同一 lane 内禁止两个 agent 同时写 `src/rules/compiler.rs`、`CONTRIBUTING.md` 或 synced
   SpecRail 文件；需要并行时必须先声明不重叠的文件所有权。
