@@ -285,6 +285,31 @@ def check_pr(
     )
 
 
+def classification_spec_refs(
+    changed_paths: list[str], issue: int | None = None
+) -> list[str]:
+    """Return complete classifier inputs for sensitive spec patterns."""
+    refs = set(changed_paths)
+    if issue is not None:
+        if issue <= 0:
+            raise SpecRailError("classification issue must be positive")
+        refs.update(
+            [
+                f"specs/GH{issue}/product.md",
+                f"specs/GH{issue}/tech.md",
+            ]
+        )
+    return sorted(refs)
+
+
+def effective_sensitive(declaration: bool, classification: dict[str, Any]) -> bool:
+    """Combine the explicit declaration with trusted registry classification."""
+    computed = classification.get("enforcement_sensitive")
+    if not isinstance(declaration, bool) or not isinstance(computed, bool):
+        raise SpecRailError("sensitive declaration and classification must be boolean")
+    return declaration or computed
+
+
 def self_test() -> int:
     cases = [
         (
@@ -419,6 +444,21 @@ def self_test() -> int:
         print("self-test failed: linked sensitive spec did not fail closed", file=sys.stderr)
         return 1
 
+    changed_spec_refs = classification_spec_refs(
+        ["specs/GH813/product.md"], issue=910
+    )
+    changed_spec_failures = check_sensitive(
+        "enforcement_sensitive: false",
+        ["specs/GH813/product.md"],
+        changed_spec_refs,
+    )
+    if not any("Sensitive registry matched" in item for item in changed_spec_failures):
+        print("self-test failed: changed sensitive spec was omitted", file=sys.stderr)
+        return 1
+    if not effective_sensitive(True, {"enforcement_sensitive": False}):
+        print("self-test failed: explicit sensitive declaration was ignored", file=sys.stderr)
+        return 1
+
     rename_paths = parse_name_status(
         b"R100\0src/rules/compiler.rs\0src/rules/compiler_v2.rs\0"
         b"M\0workflow.yaml\0"
@@ -457,18 +497,15 @@ def main() -> int:
         return 1
     body = pr_body_from_env()
     declaration, declaration_failures = declared_sensitive(body)
-    spec_refs = []
+    changed_paths = diff_changed_paths(args.base, args.head)
+    spec_refs = classification_spec_refs(changed_paths, args.issue)
     if args.issue is not None:
         if args.issue <= 0:
             parser.error("--issue must be positive")
-        spec_refs = [
-            f"specs/GH{args.issue}/product.md",
-            f"specs/GH{args.issue}/tech.md",
-        ]
     failures = check_pr(
         body,
         diff_numstat(args.base, args.head),
-        diff_changed_paths(args.base, args.head),
+        changed_paths,
         spec_refs,
         head_config=head_config,
         base_config=base_config,

@@ -121,7 +121,12 @@ jobs:
 
           sys.path.insert(0, "checks")
           sys.path.insert(0, "scripts/ci")
-          from check_pr_tier import normalize_github_changed_file_pages
+          from check_pr_tier import (
+              classification_spec_refs,
+              declared_sensitive,
+              effective_sensitive,
+              normalize_github_changed_file_pages,
+          )
           from sensitive_enforcement import classify_sensitive_changes
           from specrail_lib import load_pack
 
@@ -133,7 +138,17 @@ jobs:
               pages, int(os.environ["EXPECTED_CHANGED_FILES"])
           )
           issue = int(os.environ["ISSUE_NUMBER"])
-          spec_refs = [f"specs/GH{issue}/product.md", f"specs/GH{issue}/tech.md"]
+          pr_reference = json.loads(
+              Path(".specrail/runtime/pr-issue-reference.json").read_text()
+          )
+          declaration, declaration_failures = declared_sensitive(
+              pr_reference.get("body")
+          )
+          if declaration_failures or declaration is None:
+              raise SystemExit("live PR sensitive declaration is invalid")
+          spec_refs = classification_spec_refs(
+              files["classification_paths"], issue
+          )
           classification = classify_sensitive_changes(
               load_pack(repo),
               repo,
@@ -144,6 +159,11 @@ jobs:
           result = {
               "changed_files": files,
               "spec_refs": spec_refs,
+              "declared_sensitive": declaration,
+              "computed_sensitive": classification["enforcement_sensitive"],
+              "enforcement_sensitive": effective_sensitive(
+                  declaration, classification
+              ),
               "classification": classification,
           }
           Path(".specrail/runtime/sensitive-governance-classification.json").write_text(
@@ -152,7 +172,7 @@ jobs:
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(
                   "enforcement_sensitive="
-                  + ("true" if classification["enforcement_sensitive"] else "false")
+                  + ("true" if result["enforcement_sensitive"] else "false")
                   + "\n"
               )
           PY

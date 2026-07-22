@@ -46,9 +46,10 @@ def extract_issue(payload: Any, *, allow_closing: bool = False) -> int:
         )
     if verified:
         issue = verified[0]
-        if issue in closing:
+        if closing:
             raise EvidenceError(
-                "implementation issue relation must be non-closing `Refs #<issue>`"
+                "PR body must not mix a standalone `Refs #<issue>` directive "
+                "with closing issue relations"
             )
         return issue
     if allow_closing and len(closing) == 1:
