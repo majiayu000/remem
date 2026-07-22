@@ -73,19 +73,29 @@ jobs:
           parents = [item.get("sha") for item in merge.get("parents", []) if isinstance(item, dict)]
           if any(not isinstance(sha, str) or full_sha.fullmatch(sha) is None for sha in parents):
               raise SystemExit("merge parent evidence is invalid")
+          def select_trusted_base(parents, commits, merge_sha, total):
+              commit_set = set(commits)
+              if len(parents) == 2:
+                  pr_parents = [sha for sha in parents if sha in commit_set]
+                  base_parents = [sha for sha in parents if sha not in commit_set]
+                  if len(pr_parents) != 1 or len(base_parents) != 1:
+                      raise SystemExit("merge topology does not prove one non-PR base parent")
+                  return base_parents[0], "merge_commit"
+              if len(parents) == 1 and total == 1:
+                  method = (
+                      "single_commit_rebase_or_ff"
+                      if merge_sha in commit_set
+                      else "single_commit_squash"
+                  )
+                  return parents[0], method
+              raise SystemExit(
+                  "multi-commit rebase or ambiguous merge lacks a trusted pre-merge snapshot"
+              )
+
           commit_set = set(commits)
-          if len(parents) == 2:
-              pr_parents = [sha for sha in parents if sha in commit_set]
-              base_parents = [sha for sha in parents if sha not in commit_set]
-              if len(pr_parents) != 1 or len(base_parents) != 1:
-                  raise SystemExit("merge topology does not prove one non-PR base parent")
-              trusted_base, merge_method = base_parents[0], "merge_commit"
-          elif len(parents) == 1 and merge_sha not in commit_set:
-              trusted_base, merge_method = parents[0], "squash"
-          elif len(parents) == 1 and total == 1 and merge_sha in commit_set:
-              trusted_base, merge_method = parents[0], "single_commit_rebase_or_ff"
-          else:
-              raise SystemExit("multi-commit rebase or ambiguous merge lacks a trusted pre-merge snapshot")
+          trusted_base, merge_method = select_trusted_base(
+              parents, commits, merge_sha, total
+          )
           if trusted_base in commit_set:
               raise SystemExit("selected trusted base is PR-controlled")
           proof = {
@@ -129,7 +139,7 @@ jobs:
             --json body,closingIssuesReferences \
             > .specrail/runtime/closure-pr-issue-reference.json
           issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
-            .specrail/runtime/closure-pr-issue-reference.json)
+            .specrail/runtime/closure-pr-issue-reference.json --allow-closing)
           ISSUE_NUMBER="$issue_number" python3 - <<'PY'
           import json
           import os

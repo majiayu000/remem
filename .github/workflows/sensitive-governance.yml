@@ -3,38 +3,51 @@ name: Sensitive Governance Advisory
 on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open pull request to classify from live GitHub data
+        required: true
+        type: number
+  issues:
+    types: [labeled, unlabeled]
 
-# The workflow and every executable are loaded from a fresh live default-branch
+# The classifier and every executable are loaded from a fresh live default-branch
 # commit. PR identity, head, files, and refs are treated only as data. This is
 # still advisory: T6 requires an external GitHub App or organization workflow.
-permissions:
-  contents: read
-  pull-requests: read
+permissions: {}
 
 jobs:
   classify:
+    if: github.event_name != 'issues'
+    permissions:
+      contents: read
+      pull-requests: read
     runs-on: ubuntu-latest
     concurrency:
-      group: sensitive-governance-advisory-${{ github.event.pull_request.number }}
+      group: sensitive-governance-advisory-${{ github.event.pull_request.number || inputs.pr_number }}
       cancel-in-progress: true
     steps:
       - name: Resolve fresh live repository and PR identity
         id: live
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
         run: |
           set -euo pipefail
-          repo_json=$(gh api "repos/$GITHUB_REPOSITORY")
-          pr_json=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
-          default_branch=$(jq -er '.default_branch | select(length > 0)' <<<"$repo_json")
-          base_ref=$(jq -er '.base.ref | select(length > 0)' <<<"$pr_json")
-          head_ref=$(jq -er '.head.ref | select(length > 0)' <<<"$pr_json")
-          head_sha=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' <<<"$pr_json")
-          head_repo=$(jq -er '.head.repo.full_name | select(length > 0)' <<<"$pr_json")
-          base_repo=$(jq -er '.base.repo.full_name | select(length > 0)' <<<"$pr_json")
-          state=$(jq -er '.state' <<<"$pr_json")
-          fork=$(jq -er '.head.repo.fork' <<<"$pr_json")
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          gh api "repos/$GITHUB_REPOSITORY" > /tmp/sensitive-repository.json
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > /tmp/sensitive-pr.json
+          default_branch=$(jq -er '.default_branch | select(length > 0)' /tmp/sensitive-repository.json)
+          base_ref=$(jq -er '.base.ref | select(length > 0)' /tmp/sensitive-pr.json)
+          head_ref=$(jq -er '.head.ref | select(length > 0)' /tmp/sensitive-pr.json)
+          head_sha=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' /tmp/sensitive-pr.json)
+          head_repo=$(jq -er '.head.repo.full_name | select(length > 0)' /tmp/sensitive-pr.json)
+          base_repo=$(jq -er '.base.repo.full_name | select(length > 0)' /tmp/sensitive-pr.json)
+          state=$(jq -er '.state' /tmp/sensitive-pr.json)
+          jq -e '.head.repo.fork | type == "boolean"' /tmp/sensitive-pr.json > /dev/null
+          fork=$(jq -r '.head.repo.fork' /tmp/sensitive-pr.json)
+          changed_files=$(jq -er '.changed_files | select(type == "number" and . >= 0)' /tmp/sensitive-pr.json)
           test "$base_ref" = "$default_branch"
           test "$head_repo" = "$GITHUB_REPOSITORY"
           test "$base_repo" = "$GITHUB_REPOSITORY"
@@ -43,10 +56,12 @@ jobs:
           base_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$default_branch" \
             --jq '.sha | select(test("^[0-9a-f]{40}$"))')
           {
+            echo "pr_number=$PR_NUMBER"
             echo "default_branch=$default_branch"
             echo "base_sha=$base_sha"
             echo "head_ref=$head_ref"
             echo "head_sha=$head_sha"
+            echo "changed_files=$changed_files"
           } >> "$GITHUB_OUTPUT"
 
       - name: Check out fresh trusted default-branch commit
@@ -73,27 +88,86 @@ jobs:
           test "$(git rev-parse "refs/remotes/origin/$HEAD_REF^{commit}")" = "$HEAD_SHA"
           git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$DEFAULT_BRANCH"
 
-      - name: Resolve linked issue from trusted adapter
+      - name: Resolve linked issue for trusted classification
         id: linked_issue
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.live.outputs.pr_number }}
         run: |
           mkdir -p .specrail/runtime
           gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --json body,closingIssuesReferences \
             > .specrail/runtime/pr-issue-reference.json
           issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
-            .specrail/runtime/pr-issue-reference.json)
+            .specrail/runtime/pr-issue-reference.json --allow-closing)
           echo "number=$issue_number" >> "$GITHUB_OUTPUT"
 
-      - name: Run trusted-base sensitive implementation advisory
+      - name: Classify complete changed paths from trusted base
+        id: scope
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ steps.live.outputs.pr_number }}
+          ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
+          EXPECTED_CHANGED_FILES: ${{ steps.live.outputs.changed_files }}
+        run: |
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            > .specrail/runtime/sensitive-changed-files-pages.json
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "checks")
+          sys.path.insert(0, "scripts/ci")
+          from check_pr_tier import normalize_github_changed_file_pages
+          from sensitive_enforcement import classify_sensitive_changes
+          from specrail_lib import load_pack
+
+          repo = Path(".")
+          pages = json.loads(
+              Path(".specrail/runtime/sensitive-changed-files-pages.json").read_text()
+          )
+          files = normalize_github_changed_file_pages(
+              pages, int(os.environ["EXPECTED_CHANGED_FILES"])
+          )
+          issue = int(os.environ["ISSUE_NUMBER"])
+          spec_refs = [f"specs/GH{issue}/product.md", f"specs/GH{issue}/tech.md"]
+          classification = classify_sensitive_changes(
+              load_pack(repo),
+              repo,
+              files["classification_paths"],
+              spec_refs,
+              source="github_changed_files",
+          )
+          result = {
+              "changed_files": files,
+              "spec_refs": spec_refs,
+              "classification": classification,
+          }
+          Path(".specrail/runtime/sensitive-governance-classification.json").write_text(
+              json.dumps(result, indent=2) + "\n"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(
+                  "enforcement_sensitive="
+                  + ("true" if classification["enforcement_sensitive"] else "false")
+                  + "\n"
+              )
+          PY
+
+      - name: Run trusted-base sensitive implementation advisory
+        if: steps.scope.outputs.enforcement_sensitive == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.live.outputs.pr_number }}
           HEAD_SHA: ${{ steps.live.outputs.head_sha }}
           ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
         run: |
+          strict_issue=$(python3 scripts/ci/extract_nonclosing_issue.py \
+            .specrail/runtime/pr-issue-reference.json)
+          test "$strict_issue" = "$ISSUE_NUMBER"
           python3 scripts/ci/run_sensitive_implement_gate.py \
             --repo . \
             --github-repo "$GITHUB_REPOSITORY" \
@@ -105,19 +179,93 @@ jobs:
             --arg repository "$GITHUB_REPOSITORY" \
             --argjson pr_number "$PR_NUMBER" \
             --arg trusted_base_sha "${{ steps.live.outputs.base_sha }}" \
+            --slurpfile classification .specrail/runtime/sensitive-governance-classification.json \
             --slurpfile gate .specrail/runtime/sensitive-implement-gate.json \
             '{schema_version: 2, repository: $repository, pr_number: $pr_number,
-              trusted_base_sha: $trusted_base_sha, gate: $gate[0],
+              trusted_base_sha: $trusted_base_sha,
+              classification: $classification[0], gate: $gate[0],
               authorization: "advisory_only",
               final_trust_root: "external_github_app_or_org_required_workflow_t6",
               ordinary_pr_ci_is_final_authorization: false}' \
             > .specrail/runtime/sensitive-governance-advisory.json
 
-      - name: Upload advisory evidence
+      - name: Upload sensitive advisory evidence
+        if: always() && steps.scope.outputs.enforcement_sensitive == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: sensitive-governance-advisory-pr-${{ github.event.pull_request.number }}
+          name: sensitive-governance-advisory-pr-${{ steps.live.outputs.pr_number }}
           path: |
+            .specrail/runtime/sensitive-governance-classification.json
             .specrail/runtime/sensitive-implement-gate.json
             .specrail/runtime/sensitive-governance-advisory.json
           if-no-files-found: error
+
+  refresh_after_readiness_change:
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.label.name == 'ready_to_implement'
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    runs-on: ubuntu-latest
+    concurrency:
+      group: sensitive-governance-readiness-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Resolve fresh live default branch
+        id: live_default
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY" > /tmp/readiness-repository.json
+          default_branch=$(jq -er '.default_branch | select(length > 0)' /tmp/readiness-repository.json)
+          base_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$default_branch" \
+            --jq '.sha | select(test("^[0-9a-f]{40}$"))')
+          {
+            echo "default_branch=$default_branch"
+            echo "base_sha=$base_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out fresh trusted default-branch controller
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ steps.live_default.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Refresh advisories for PRs linked to the changed issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ steps.live_default.outputs.default_branch }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          [[ "$ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]]
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls?state=open&per_page=100" \
+            > /tmp/readiness-open-pr-pages.json
+          mapfile -t pr_numbers < <(
+            jq -r '.[][] | .number | select(type == "number" and . > 0)' \
+              /tmp/readiness-open-pr-pages.json
+          )
+          matched=0
+          for pr_number in "${pr_numbers[@]}"; do
+            snapshot="/tmp/readiness-pr-$pr_number.json"
+            gh pr view "$pr_number" --repo "$GITHUB_REPOSITORY" \
+              --json body,closingIssuesReferences > "$snapshot"
+            if linked_issue=$(python3 scripts/ci/extract_nonclosing_issue.py \
+              "$snapshot" --allow-closing 2>/tmp/readiness-adapter-error.log); then
+              if [ "$linked_issue" = "$ISSUE_NUMBER" ]; then
+                gh workflow run sensitive-governance.yml \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --ref "$DEFAULT_BRANCH" \
+                  -f pr_number="$pr_number"
+                matched=$((matched + 1))
+              fi
+            else
+              echo "PR #$pr_number has no unique issue relation; advisory refresh skipped"
+              sed -n '1,5p' /tmp/readiness-adapter-error.log
+            fi
+          done
+          echo "dispatched_advisory_refreshes=$matched"

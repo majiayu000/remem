@@ -3,8 +3,10 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -272,6 +274,37 @@ def test_workflow_classification_cannot_be_shrunk_by_the_merged_pr() -> None:
     assert "previous_filename" not in workflow  # no ad-hoc filename-only collector
 
 
+def test_trusted_base_selector_rejects_ambiguous_multi_commit_topology() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "closure-audit.yml").read_text(
+        encoding="utf-8"
+    )
+    start = workflow.index("          def select_trusted_base")
+    end = workflow.index("\n\n          commit_set =", start)
+    tree = ast.parse(textwrap.dedent(workflow[start:end]))
+    function = next(node for node in tree.body if isinstance(node, ast.FunctionDef))
+    namespace: dict[str, Any] = {}
+    code = compile(
+        ast.Module(body=[function], type_ignores=[]),
+        "<trusted-base-selector>",
+        "exec",
+    )
+    exec(code, namespace)
+    select = namespace["select_trusted_base"]
+
+    base = "b" * 40
+    commit = "c" * 40
+    assert select([base], [commit], "d" * 40, 1) == (
+        base,
+        "single_commit_squash",
+    )
+    try:
+        select([commit], ["1" * 40, "2" * 40], "3" * 40, 2)
+    except SystemExit as exc:
+        assert "trusted pre-merge snapshot" in str(exc)
+    else:
+        raise AssertionError("ambiguous multi-commit topology must fail closed")
+
+
 def main() -> int:
     test_create_and_reuse()
     test_closed_issue_is_reopened()
@@ -284,6 +317,7 @@ def main() -> int:
     test_repository_mismatch_blocks_before_write()
     test_workflow_uses_trusted_checkout_and_least_privilege()
     test_workflow_classification_cannot_be_shrunk_by_the_merged_pr()
+    test_trusted_base_selector_rejects_ambiguous_multi_commit_topology()
     print("closure follow-up controller tests passed")
     return 0
 

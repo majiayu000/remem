@@ -53,7 +53,7 @@ jobs:
         run: python3 scripts/ci/check_spec_lifecycle.py "${{ github.event.pull_request.base.sha }}" HEAD
       - name: Check PR tier self-test
         run: python3 scripts/ci/check_pr_tier.py --self-test
-      - name: Resolve non-closing linked issue
+      - name: Resolve linked issue for classification
         if: github.event_name == 'pull_request'
         id: linked_issue
         env:
@@ -65,7 +65,7 @@ jobs:
             --json body,closingIssuesReferences \
             > .specrail/runtime/pr-issue-reference.json
           issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
-            .specrail/runtime/pr-issue-reference.json)
+            .specrail/runtime/pr-issue-reference.json --allow-closing)
           echo "number=$issue_number" >> "$GITHUB_OUTPUT"
       - name: Check PR tier
         if: github.event_name == 'pull_request'
@@ -87,6 +87,9 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
         run: |
+          strict_issue=$(python3 scripts/ci/extract_nonclosing_issue.py \
+            .specrail/runtime/pr-issue-reference.json)
+          test "$strict_issue" = "$ISSUE_NUMBER"
           python3 scripts/ci/run_sensitive_implement_gate.py \
             --repo . \
             --github-repo "$GITHUB_REPOSITORY" \

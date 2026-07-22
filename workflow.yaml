@@ -45,6 +45,7 @@ enforcement:
       - src/rules/compiler/*
       - checks/*
       - scripts/sync-specrail-checks.sh
+      - scripts/ci/specrail_sync_lock.py
       - scripts/ci/check_pr_tier.py
       - scripts/ci/closure_follow_up.py
       - scripts/ci/extract_nonclosing_issue.py

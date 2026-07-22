@@ -44,6 +44,29 @@ class NonClosingIssueTests(unittest.TestCase):
         with self.assertRaisesRegex(MODULE.EvidenceError, "non-closing"):
             MODULE.extract_issue(snapshot("Refs #813", [{"number": 813}]))
 
+    def test_allow_closing_accepts_one_ordinary_closing_relation(self) -> None:
+        self.assertEqual(
+            MODULE.extract_issue(
+                snapshot("Closes #910", [{"number": 910}]), allow_closing=True
+            ),
+            910,
+        )
+
+    def test_unrelated_closing_follow_up_does_not_hide_spec_relation(self) -> None:
+        payload = snapshot("Closes #910\nRefs #813", [{"number": 910}])
+        self.assertEqual(MODULE.extract_issue(payload), 813)
+        self.assertEqual(MODULE.extract_issue(payload, allow_closing=True), 813)
+
+    def test_allow_closing_rejects_ambiguous_closing_relations(self) -> None:
+        with self.assertRaisesRegex(MODULE.EvidenceError, "exactly one"):
+            MODULE.extract_issue(
+                snapshot(
+                    "Closes #910 and #911",
+                    [{"number": 910}, {"number": 911}],
+                ),
+                allow_closing=True,
+            )
+
     def test_missing_or_duplicate_visible_refs_fail(self) -> None:
         for body in ("No issue", "Refs #813\nRefs #814"):
             with self.subTest(body=body):
