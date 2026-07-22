@@ -38,6 +38,34 @@ required_human_gates:
   - merge
   - release
 
+enforcement:
+  sensitive_registry:
+    paths:
+      - src/rules/compiler.rs
+      - src/rules/compiler/*
+      - checks/*
+      - scripts/sync-specrail-checks.sh
+      - scripts/ci/check_pr_tier.py
+      - scripts/ci/closure_follow_up.py
+      - scripts/ci/extract_nonclosing_issue.py
+      - scripts/ci/test_closure_follow_up.py
+      - scripts/ci/test_extract_nonclosing_issue.py
+      - scripts/ci/run_sensitive_implement_gate.py
+      - scripts/ci/test_run_sensitive_implement_gate.py
+      - schemas/closure_audit_result.schema.json
+      - schemas/sensitive_implement_gate_result.schema.json
+      - schemas/review_result.schema.json
+      - schemas/pr_review_gate.schema.json
+      - schemas/duplicate_work_evidence.schema.json
+      - schemas/runtime_checkpoint.schema.json
+      - .github/pull_request_template.md
+      - CONTRIBUTING.md
+      - .github/workflows/*
+      - workflow.yaml
+    specs:
+      - specs/GH813/*
+      - docs/specs/preference-rule-compilation/*
+
 artifacts:
   spec_packet: specs/GH{issue_number}/
   product_spec: specs/GH{issue_number}/product.md

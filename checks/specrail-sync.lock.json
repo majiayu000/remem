@@ -95,8 +95,16 @@
       "sha256": "8fca9ee07bdae2822579de46c09baeebb935bae9cb438191e2cb7199f6a8fc61"
     },
     {
+      "path": "checks/closure_audit.py",
+      "sha256": "0f6f718ab2b8dbc584a516c93b4186dd2cb5e74b006edfe78da13b6004122a8d"
+    },
+    {
       "path": "schemas/duplicate_work_evidence.schema.json",
       "sha256": "bd0db8ecc204d15afe88e85707575ddd418c6937d4dc7fa91eb4060e2f1df627"
+    },
+    {
+      "path": "schemas/closure_audit_result.schema.json",
+      "sha256": "646199508a6920a832e3ff3c0e772bc11b76fd01e0c15dc7119d54a8d21fd172"
     },
     {
       "path": "schemas/pr_review_gate.schema.json",

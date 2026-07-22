@@ -1,0 +1,219 @@
+name: Closure Audit
+
+# Repo-local compensation is not the T6 trust root. A merged PR can remove this
+# workflow before dispatch; final enforcement requires an external GitHub App or
+# organization required workflow. When dispatch occurs, controller code is
+# checked out only from a uniquely proven pre-merge default-base commit.
+on:
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  audit:
+    if: github.event.pull_request.merged == true
+    concurrency:
+      group: closure-audit-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Prove complete PR commits and trusted pre-merge base
+        id: trusted
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY" > /tmp/closure-repository.json
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > /tmp/closure-pr.json
+          merge_sha=$(jq -er '.merge_commit_sha | select(test("^[0-9a-f]{40}$"))' /tmp/closure-pr.json)
+          gh api "repos/$GITHUB_REPOSITORY/commits/$merge_sha" > /tmp/closure-merge-commit.json
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/commits?per_page=100" \
+            > /tmp/closure-pr-commit-pages.json
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          full_sha = re.compile(r"^[0-9a-f]{40}$")
+          repo = json.loads(Path("/tmp/closure-repository.json").read_text())
+          pr = json.loads(Path("/tmp/closure-pr.json").read_text())
+          merge = json.loads(Path("/tmp/closure-merge-commit.json").read_text())
+          pages = json.loads(Path("/tmp/closure-pr-commit-pages.json").read_text())
+          default_branch = repo.get("default_branch")
+          if not isinstance(default_branch, str) or not default_branch:
+              raise SystemExit("default branch is unavailable")
+          if pr.get("merged") is not True or pr.get("state") != "closed":
+              raise SystemExit("closure PR is not a confirmed merged PR")
+          if (pr.get("base") or {}).get("ref") != default_branch:
+              raise SystemExit("closure PR did not target the default branch")
+          total = pr.get("commits")
+          if not isinstance(total, int) or isinstance(total, bool) or total <= 0 or total > 250:
+              raise SystemExit("live PR commit total is outside the provable API limit")
+          if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
+              raise SystemExit("PR commit pagination has an unexpected shape")
+          commits = []
+          for page in pages:
+              for item in page:
+                  sha = item.get("sha") if isinstance(item, dict) else None
+                  if not isinstance(sha, str) or full_sha.fullmatch(sha) is None:
+                      raise SystemExit("PR commit evidence contains an invalid SHA")
+                  commits.append(sha)
+          if len(commits) != total or len(set(commits)) != total:
+              raise SystemExit("PR commit pagination is partial, duplicated, or count-drifted")
+          merge_sha = pr.get("merge_commit_sha")
+          if merge.get("sha") != merge_sha or not isinstance(merge_sha, str):
+              raise SystemExit("merge commit identity mismatch")
+          parents = [item.get("sha") for item in merge.get("parents", []) if isinstance(item, dict)]
+          if any(not isinstance(sha, str) or full_sha.fullmatch(sha) is None for sha in parents):
+              raise SystemExit("merge parent evidence is invalid")
+          commit_set = set(commits)
+          if len(parents) == 2:
+              pr_parents = [sha for sha in parents if sha in commit_set]
+              base_parents = [sha for sha in parents if sha not in commit_set]
+              if len(pr_parents) != 1 or len(base_parents) != 1:
+                  raise SystemExit("merge topology does not prove one non-PR base parent")
+              trusted_base, merge_method = base_parents[0], "merge_commit"
+          elif len(parents) == 1 and merge_sha not in commit_set:
+              trusted_base, merge_method = parents[0], "squash"
+          elif len(parents) == 1 and total == 1 and merge_sha in commit_set:
+              trusted_base, merge_method = parents[0], "single_commit_rebase_or_ff"
+          else:
+              raise SystemExit("multi-commit rebase or ambiguous merge lacks a trusted pre-merge snapshot")
+          if trusted_base in commit_set:
+              raise SystemExit("selected trusted base is PR-controlled")
+          proof = {
+              "schema_version": 1,
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "pr_number": int(os.environ["PR_NUMBER"]),
+              "final_head_sha": (pr.get("head") or {}).get("sha"),
+              "merge_commit_sha": merge_sha,
+              "merge_method_evidence": merge_method,
+              "trusted_premerge_base_sha": trusted_base,
+              "pr_commit_api_limit": 250,
+              "expected_pr_commit_count": total,
+              "collected_pr_commit_count": len(commits),
+              "pr_commits_complete": True,
+              "pr_commit_shas": commits,
+              "merge_parent_shas": parents,
+          }
+          Path("/tmp/closure-trusted-base.json").write_text(json.dumps(proof, indent=2) + "\n")
+          PY
+          echo "base_sha=$(jq -r .trusted_premerge_base_sha /tmp/closure-trusted-base.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Check out proven trusted pre-merge base
+        uses: actions/checkout@v6.0.2
+        with:
+          ref: ${{ steps.trusted.outputs.base_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify complete changed paths with trusted pre-merge registry
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p .specrail/runtime
+          cp /tmp/closure-trusted-base.json .specrail/runtime/closure-trusted-base.json
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            > .specrail/runtime/closure-changed-files-pages.json
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json body,closingIssuesReferences \
+            > .specrail/runtime/closure-pr-issue-reference.json
+          issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
+            .specrail/runtime/closure-pr-issue-reference.json)
+          ISSUE_NUMBER="$issue_number" python3 - <<'PY'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          sys.path.insert(0, "checks")
+          sys.path.insert(0, "scripts/ci")
+          from check_pr_tier import normalize_github_changed_file_pages
+          from sensitive_enforcement import classify_sensitive_changes
+          from specrail_lib import load_pack
+
+          pr = json.loads(Path("/tmp/closure-pr.json").read_text())
+          pages = json.loads(Path(".specrail/runtime/closure-changed-files-pages.json").read_text())
+          files = normalize_github_changed_file_pages(pages, pr.get("changed_files"))
+          issue = int(os.environ["ISSUE_NUMBER"])
+          spec_refs = [f"specs/GH{issue}/product.md", f"specs/GH{issue}/tech.md"]
+          classification = classify_sensitive_changes(
+              load_pack(Path(".")), Path("."), files["classification_paths"], spec_refs,
+              source="github_changed_files",
+          )
+          result = {"changed_files": files, "spec_refs": spec_refs, "classification": classification}
+          Path(".specrail/runtime/closure-classification.json").write_text(
+              json.dumps(result, indent=2) + "\n"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write("sensitive=" + ("true" if classification["enforcement_sensitive"] else "false") + "\n")
+          PY
+
+      - name: Build external-merge closure evidence
+        if: steps.classify.outputs.sensitive == 'true'
+        run: |
+          jq '{
+            repository: .repository.full_name,
+            pr_number: .pull_request.number,
+            final_head_sha: .pull_request.head.sha,
+            gate: null,
+            merge: {
+              merge_path: "merged_by_other",
+              remote_confirmed: .pull_request.merged,
+              merged_at: .pull_request.merged_at,
+              merged_head_sha: .pull_request.head.sha
+            }
+          }' "$GITHUB_EVENT_PATH" > .specrail/runtime/closure-evidence.json
+
+      - name: Audit closure chain and persist violations
+        if: steps.classify.outputs.sensitive == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          python3 checks/closure_audit.py \
+            --repo . \
+            --evidence .specrail/runtime/closure-evidence.json \
+            --json > .specrail/runtime/closure-audit.json
+          audit_status=$?
+          set -e
+          if [ "$audit_status" -eq 2 ]; then
+            echo "closure audit input or schema validation failed" >&2
+            exit 2
+          fi
+          if [ "$audit_status" -eq 1 ]; then
+            python3 scripts/ci/closure_follow_up.py \
+              --repo . \
+              --audit-result .specrail/runtime/closure-audit.json \
+              --github-repo "$GITHUB_REPOSITORY" \
+              --json > .specrail/runtime/closure-follow-up.json
+            jq -n \
+              --slurpfile audit .specrail/runtime/closure-audit.json \
+              --slurpfile follow_up .specrail/runtime/closure-follow-up.json \
+              '{audit: $audit[0], persisted_follow_up: $follow_up[0]}' \
+              > .specrail/runtime/closure-persistence-evidence.json
+          fi
+
+      - name: Upload closure evidence
+        if: always() && steps.classify.outputs.sensitive == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: closure-audit-pr-${{ github.event.pull_request.number }}
+          path: |
+            .specrail/runtime/closure-trusted-base.json
+            .specrail/runtime/closure-evidence.json
+            .specrail/runtime/closure-classification.json
+            .specrail/runtime/closure-audit.json
+            .specrail/runtime/closure-follow-up.json
+            .specrail/runtime/closure-persistence-evidence.json
+          if-no-files-found: error

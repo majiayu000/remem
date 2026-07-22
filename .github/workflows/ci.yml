@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, edited]
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -10,8 +11,26 @@ jobs:
       - uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0
+      - name: Pin trusted default branch
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          git check-ref-format --branch "$DEFAULT_BRANCH"
+          git fetch origin \
+            "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH"
+          git symbolic-ref \
+            refs/remotes/origin/HEAD \
+            "refs/remotes/origin/$DEFAULT_BRANCH"
       - name: Test SpecRail gate wiring
         run: python3 scripts/ci/test_specrail_gate_wiring.py
+      - name: Test closure audit and durable follow-up wiring
+        run: python3 scripts/ci/test_closure_follow_up.py
+      - name: Test trusted sensitive governance advisory wiring
+        run: python3 scripts/ci/test_sensitive_governance_workflow.py
+      - name: Test sensitive implementation wrapper
+        run: python3 scripts/ci/test_run_sensitive_implement_gate.py
+      - name: Test non-closing issue relation adapter
+        run: python3 scripts/ci/test_extract_nonclosing_issue.py
       - name: Verify synced SpecRail checks
         run: scripts/sync-specrail-checks.sh --verify
       - name: Check plugin version sync
@@ -34,11 +53,136 @@ jobs:
         run: python3 scripts/ci/check_spec_lifecycle.py "${{ github.event.pull_request.base.sha }}" HEAD
       - name: Check PR tier self-test
         run: python3 scripts/ci/check_pr_tier.py --self-test
+      - name: Resolve non-closing linked issue
+        if: github.event_name == 'pull_request'
+        id: linked_issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          mkdir -p .specrail/runtime
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json body,closingIssuesReferences \
+            > .specrail/runtime/pr-issue-reference.json
+          issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
+            .specrail/runtime/pr-issue-reference.json)
+          echo "number=$issue_number" >> "$GITHUB_OUTPUT"
       - name: Check PR tier
         if: github.event_name == 'pull_request'
+        id: pr_tier
         env:
           GITHUB_PR_BODY: ${{ github.event.pull_request.body }}
-        run: python3 scripts/ci/check_pr_tier.py "${{ github.event.pull_request.base.sha }}" HEAD
+        run: |
+          python3 scripts/ci/check_pr_tier.py \
+            "${{ github.event.pull_request.base.sha }}" HEAD \
+            --issue "${{ steps.linked_issue.outputs.number }}" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Run advisory sensitive implementation gate
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.pr_tier.outputs.enforcement_sensitive == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
+        run: |
+          python3 scripts/ci/run_sensitive_implement_gate.py \
+            --repo . \
+            --github-repo "$GITHUB_REPOSITORY" \
+            --issue "$ISSUE_NUMBER" \
+            --pr "$PR_NUMBER" \
+            --head-sha "$HEAD_SHA" \
+            --output .specrail/runtime/sensitive-implement-gate.json
+      - name: Build GH813 historical compiler replay evidence
+        if: >-
+          github.event_name == 'pull_request' &&
+          steps.linked_issue.outputs.number == '813'
+        run: |
+          PYTHONPATH=checks python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          from sensitive_enforcement import (
+              classification_from_approved_tech,
+              classify_sensitive_changes,
+          )
+          from specrail_lib import load_pack
+
+          repo = Path(".")
+          base = "2e23eb64e2cf710d36e48e77e2ed414de7fe741e"
+          head = "f89c5c96d1c6a01d819625b2c6bae51f573d1cf9"
+          approved = "1f67531098f8a3fb96a34153593f427280a7e5be"
+          paths = subprocess.run(
+              ["git", "diff", "--name-only", f"{base}..{head}"],
+              check=True,
+              capture_output=True,
+              text=True,
+          ).stdout.splitlines()
+          expected = [
+              "CHANGELOG.md", "Cargo.lock", "Cargo.toml",
+              "docs/specs/preference-rule-compilation/PRODUCT.md",
+              "docs/specs/preference-rule-compilation/TECH.md",
+              "npm/remem/package.json",
+              "plugins/remem/.codex-plugin/plugin.json",
+              "plugins/remem/runtimes/remem-releases.json", "server.json",
+              "specs/GH671/tasks.md", "src/rules/compiler.rs",
+              "src/rules/compiler/eligibility_tests.rs",
+              "src/rules/compiler/sweep_tests.rs", "src/rules/compiler/tests.rs",
+          ]
+          config = load_pack(repo)
+          result = {
+              "version": 1,
+              "issue": 813,
+              "historical_pr": 906,
+              "historical_noncompliance_preserved": True,
+              "purpose": "compensating_classification_only",
+              "exact_changed_path_range": {
+                  "base_sha": base, "head_sha": head, "mode": "first_parent"
+              },
+              "approved_spec_merge_sha": approved,
+              "replay_time_origin_main_sha": subprocess.run(
+                  ["git", "rev-parse", "origin/main"],
+                  check=True,
+                  capture_output=True,
+                  text=True,
+              ).stdout.strip(),
+              "changed_paths": paths,
+              "expected_changed_paths": expected,
+              "path_set_equal": set(paths) == set(expected) and len(paths) == len(expected),
+              "github_changed_files_classification": classify_sensitive_changes(
+                  config,
+                  repo,
+                  paths,
+                  ["specs/GH813/product.md", "specs/GH813/tech.md"],
+                  source="github_changed_files",
+              ),
+              "approved_tech_classification": classification_from_approved_tech(
+                  config, repo, issue=813, base_sha=approved
+              ),
+          }
+          if not result["path_set_equal"]:
+              raise SystemExit("historical changed-path set is incomplete")
+          if not result["github_changed_files_classification"]["enforcement_sensitive"]:
+              raise SystemExit("historical GitHub path classification is not sensitive")
+          if not result["approved_tech_classification"]["enforcement_sensitive"]:
+              raise SystemExit("approved tech classification is not sensitive")
+          output = Path(".specrail/runtime/gh813-t2-replay.json")
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text(json.dumps(result, indent=2) + "\n")
+          PY
+      - name: Upload sensitive implementation gate
+        if: >-
+          always() && github.event_name == 'pull_request' &&
+          steps.pr_tier.outputs.enforcement_sensitive == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sensitive-implement-gate-pr-${{ github.event.pull_request.number }}
+          path: |
+            .specrail/runtime/sensitive-implement-gate.json
+            .specrail/runtime/gh813-t2-replay.json
+          if-no-files-found: warn
       - name: Check version bump
         if: github.event_name == 'pull_request'
         run: python3 scripts/ci/check_version_bump.py "${{ github.event.pull_request.base.sha }}" HEAD

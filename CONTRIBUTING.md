@@ -60,3 +60,39 @@ such as plugin version synchronization and first-run smoke validation.
 1. Fork the repo and create your branch from `main`
 2. Ensure tests pass
 3. Submit a PR with a clear description
+
+### Enforcement-sensitive changes
+
+Every PR must include exactly one machine-readable declaration:
+
+```text
+enforcement_sensitive: false
+```
+
+Set it to `true` when the changed paths or linked specs match
+`workflow.yaml`'s `enforcement.sensitive_registry`. Sensitive work has no
+fast path: it requires an approved Product/Tech contract, a terminal
+independent review artifact bound to the final head, complete prior-finding
+carry-forward, authorized resolution of actionable threads, green CI, and an
+`allowed` exact-head PR gate result. Author-entered prose or a bare
+`review_source` value is not review evidence.
+
+The repository-local gates fail closed for agent workflows, but they are only
+advisory. The maintainer-selected `main` ruleset may require the `check` status,
+review-conversation resolution, and block force pushes and deletion without a
+second approver. GitHub required status checks do not bind a check name to one
+workflow or event, however, so a GitHub Actions-sourced `check` is an
+accidental-bypass mitigation, not an unforgeable authorization. Non-bypass
+enforcement requires a separately operated GitHub App whose expected source is
+pinned by the ruleset, or an organization-level required workflow from a
+protected governance repository. Repository permission and external trust-root
+changes remain human-admin work.
+
+After an enforcement-sensitive PR is merged, the repo-local closure workflow
+uses the PR's pre-merge base registry/controller to audit the same-head
+gate/dispatch/merge chain. A missing chain creates or reopens one durable issue
+keyed by repository, PR number, final head, and violation code. GitHub write or
+read-back failures block closure; a local artifact alone does not count as a
+persisted follow-up. Because a merged PR can delete a repository-owned workflow
+before its closed event is dispatched, this audit is compensating evidence, not
+the external T6 trust root.
