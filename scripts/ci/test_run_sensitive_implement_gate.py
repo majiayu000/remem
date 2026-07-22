@@ -484,7 +484,8 @@ class SensitiveImplementGateTests(unittest.TestCase):
         self.assertIn("steps.linked_issue.outputs.number", workflow)
         self.assertNotIn("sensitive implementation PR must close exactly one issue", workflow)
         self.assertNotIn("python3 checks/route_gate.py", workflow)
-        self.assertIn("e4867a0517df0d0e8487ac20d702d7a5444c321a", workflow)
+        self.assertIn("1f67531098f8a3fb96a34153593f427280a7e5be", workflow)
+        self.assertNotIn("e4867a0517df0d0e8487ac20d702d7a5444c321a", workflow)
         self.assertNotIn("bbc762b6cf6c323e8ea1996e8c7ca44bc41ca9e5", workflow)
 
     def test_ci_pins_trusted_default_branch_before_wrapper(self) -> None:
