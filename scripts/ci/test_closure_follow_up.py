@@ -216,7 +216,12 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
         "github.event.pull_request.merged == true",
         "concurrency:",
         "closure-audit-pr-${{ github.event.pull_request.number }}",
-        "ref: ${{ github.event.pull_request.base.sha }}",
+        "Prove complete PR commits and trusted pre-merge base",
+        "pulls/$PR_NUMBER/commits?per_page=100",
+        "PR commit pagination is partial, duplicated, or count-drifted",
+        "multi-commit rebase or ambiguous merge lacks a trusted pre-merge snapshot",
+        '"pr_commits_complete": True',
+        "ref: ${{ steps.trusted.outputs.base_sha }}",
         "persist-credentials: false",
         'jq \'{',
         '"$GITHUB_EVENT_PATH"',
@@ -224,17 +229,20 @@ def test_workflow_uses_trusted_checkout_and_least_privilege() -> None:
         "scripts/ci/closure_follow_up.py",
         "closure-persistence-evidence.json",
         "persisted_follow_up",
-        "Classify changed paths with trusted pre-merge registry",
+        "Classify complete changed paths with trusted pre-merge registry",
         "classify_sensitive_changes",
+        "normalize_github_changed_file_pages",
+        'files["classification_paths"]',
         "gh api --paginate --slurp",
-        "repo-local compensating audit is not the T6 trust root",
-        "Final enforcement requires an external GitHub App",
+        "Repo-local compensation is not the T6 trust root",
+        "final enforcement requires an external GitHub App",
     ]
     for token in required:
         assert token in workflow, f"closure workflow is missing {token!r}"
     forbidden = [
         "ref: main",
         "ref: ${{ github.event.repository.default_branch }}",
+        "ref: ${{ github.event.pull_request.base.sha }}",
         "github.event.pull_request.head.ref",
         "github.event.pull_request.head.repo",
         "ref: ${{ github.event.pull_request.head.sha }}",
@@ -249,16 +257,19 @@ def test_workflow_classification_cannot_be_shrunk_by_the_merged_pr() -> None:
     workflow = (ROOT / ".github" / "workflows" / "closure-audit.yml").read_text(
         encoding="utf-8"
     )
-    checkout = workflow.index("ref: ${{ github.event.pull_request.base.sha }}")
-    changed_files = workflow.index("pulls/$PR_NUMBER/files")
+    commit_collection = workflow.index("pulls/$PR_NUMBER/commits?per_page=100")
+    checkout = workflow.index("ref: ${{ steps.trusted.outputs.base_sha }}")
+    changed_files = workflow.index("pulls/$PR_NUMBER/files?per_page=100")
     classification = workflow.index("from sensitive_enforcement import")
     controller = workflow.index("checks/closure_audit.py")
 
-    assert checkout < changed_files < classification < controller
+    assert commit_collection < checkout < changed_files < classification < controller
     assert 'sys.path.insert(0, "checks")' in workflow
     assert 'load_pack(Path("."))' in workflow
     assert "github.event.pull_request.head.sha }}" not in workflow
     assert "checkout" not in workflow[classification:controller].lower()
+    assert 'status == "renamed"' not in workflow  # shared validator owns rename handling
+    assert "previous_filename" not in workflow  # no ad-hoc filename-only collector
 
 
 def main() -> int:

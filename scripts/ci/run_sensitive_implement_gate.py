@@ -20,8 +20,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from check_pr_tier import (  # noqa: E402
+    MAX_GITHUB_CHANGED_FILES,
+    normalize_github_changed_file_pages,
+)
 
-WRAPPER_ID = "remem-sensitive-implement-gate/v1"
+
+WRAPPER_ID = "remem-sensitive-implement-gate/v2"
 READY_LABEL = "ready_to_implement"
 MAX_EVIDENCE_AGE_SECONDS = 300
 FULL_SHA = re.compile(r"^[0-9a-fA-F]{40}$")
@@ -31,6 +37,9 @@ COMMENT_URL = re.compile(
     r"issues/(?P<issue>[1-9][0-9]*)#issuecomment-(?P<comment>[1-9][0-9]*)"
 )
 FIELD_LINE = re.compile(r"^\s*([A-Za-z][A-Za-z -]*):\s*(.*?)\s*$")
+SENSITIVE_LINE = re.compile(
+    r"^\s*enforcement_sensitive\s*:\s*(true|false)\s*$", re.IGNORECASE | re.MULTILINE
+)
 
 
 class GateError(RuntimeError):
@@ -155,10 +164,7 @@ def query_current_pr(runner: Runner, config: Config) -> dict[str, Any]:
     return object_value(
         run_json(
             runner,
-            [
-                "gh", "pr", "view", str(config.pr), "--repo", config.github_repo,
-                "--json", "number,state,headRefName,headRefOid,headRepository,isCrossRepository,body,url",
-            ],
+            ["gh", "api", f"repos/{config.github_repo}/pulls/{config.pr}"],
             "current PR query",
         ),
         "current PR query",
@@ -167,23 +173,128 @@ def query_current_pr(runner: Runner, config: Config) -> dict[str, Any]:
 
 def validate_current_pr(
     payload: dict[str, Any], config: Config, expected_body: str | None = None
-) -> tuple[str, str]:
+) -> dict[str, Any]:
     if positive_int(payload, "number", "PR") != config.pr or text_field(payload, "state", "PR").upper() != "OPEN":
         raise GateError("current implementation PR is not the requested open PR")
-    if payload.get("isCrossRepository") is not False:
-        raise GateError("current implementation PR must not be a fork/cross-repository PR")
-    head_repository = object_value(payload.get("headRepository"), "PR headRepository")
-    if text_field(head_repository, "nameWithOwner", "PR headRepository").casefold() != config.github_repo.casefold():
+    head = object_value(payload.get("head"), "PR head")
+    base = object_value(payload.get("base"), "PR base")
+    head_repository = object_value(head.get("repo"), "PR head repository")
+    base_repository = object_value(base.get("repo"), "PR base repository")
+    head_repo_name = text_field(head_repository, "full_name", "PR head repository")
+    base_repo_name = text_field(base_repository, "full_name", "PR base repository")
+    if head_repo_name.casefold() != config.github_repo.casefold():
         raise GateError("current implementation PR headRepository does not match --github-repo")
-    head_ref = text_field(payload, "headRefName", "PR")
-    if text_field(payload, "headRefOid", "PR").casefold() != config.head_sha.casefold():
+    if base_repo_name.casefold() != config.github_repo.casefold():
+        raise GateError("current implementation PR base repository does not match --github-repo")
+    if head_repository.get("fork") is not False:
+        raise GateError("current implementation PR must not be a fork/cross-repository PR")
+    head_ref = text_field(head, "ref", "PR head")
+    if text_field(head, "sha", "PR head").casefold() != config.head_sha.casefold():
         raise GateError("current implementation PR head does not match --head-sha")
     body = text_field(payload, "body", "PR")
     if not references_issue(body, config.issue):
         raise GateError("current implementation PR body does not reference the linked issue")
+    sensitive_values = [value.casefold() for value in SENSITIVE_LINE.findall(body)]
+    if sensitive_values != ["true"]:
+        raise GateError("current implementation PR body must declare enforcement_sensitive: true exactly once")
     if expected_body is not None and body != expected_body:
         raise GateError("current implementation PR body changed during gate execution")
-    return head_ref, body
+    changed_files = positive_int(payload, "changed_files", "PR")
+    if changed_files > MAX_GITHUB_CHANGED_FILES:
+        raise GateError("current implementation PR exceeds the GitHub changed-files API limit")
+    return {
+        "number": config.pr,
+        "url": text_field(payload, "html_url", "PR"),
+        "state": "OPEN",
+        "draft": payload.get("draft") is True,
+        "body": body,
+        "head_ref": head_ref,
+        "head_sha": config.head_sha,
+        "head_repository": head_repo_name,
+        "head_repository_fork": False,
+        "base_ref": text_field(base, "ref", "PR base"),
+        "base_sha": text_field(base, "sha", "PR base").lower(),
+        "base_repository": base_repo_name,
+        "changed_files": changed_files,
+    }
+
+
+def collect_changed_files(
+    runner: Runner, config: Config, expected_count: int
+) -> dict[str, Any]:
+    pages = run_json(
+        runner,
+        [
+            "gh",
+            "api",
+            "--paginate",
+            "--slurp",
+            f"repos/{config.github_repo}/pulls/{config.pr}/files?per_page=100",
+        ],
+        "PR changed-files query",
+    )
+    try:
+        return normalize_github_changed_file_pages(pages, expected_count)
+    except Exception as exc:
+        raise GateError(f"invalid PR changed-files evidence: {exc}") from exc
+
+
+def validate_planned_scope(
+    runner: Runner,
+    repo: Path,
+    issue: int,
+    trusted_base_sha: str,
+    changed_files: dict[str, Any],
+) -> dict[str, Any]:
+    sys.path.insert(0, str(repo / "checks"))
+    try:
+        from sensitive_enforcement import (
+            classify_sensitive_changes,
+            parse_planned_changes_manifest,
+        )
+        from specrail_lib import load_pack, spec_packet_artifact_paths
+    except ImportError as exc:
+        raise GateError(f"cannot load sensitive scope checks: {exc}") from exc
+    config = load_pack(repo)
+    tech_path = spec_packet_artifact_paths(config, issue, repo=repo)["tech_spec"]
+    content = run(
+        runner,
+        ["git", "-C", str(repo), "show", f"{trusted_base_sha}:{tech_path}"],
+    ).encode()
+    try:
+        manifest = parse_planned_changes_manifest(content, label="approved tech.md")
+        planned_paths = set(manifest["paths"])
+        actual_paths = set(changed_files["classification_paths"])
+        unplanned = sorted(actual_paths - planned_paths)
+        if unplanned:
+            raise GateError(
+                "live PR changed files exceed the approved planned-change manifest: "
+                + ", ".join(unplanned)
+            )
+        classification = classify_sensitive_changes(
+            config,
+            repo,
+            sorted(actual_paths),
+            manifest["spec_refs"],
+            source="github_changed_files",
+        )
+    except Exception as exc:
+        if isinstance(exc, GateError):
+            raise
+        raise GateError(f"approved planned-change scope validation failed: {exc}") from exc
+    if classification.get("enforcement_sensitive") is not True:
+        raise GateError("complete live PR changed-file set is not enforcement-sensitive")
+    return {
+        "manifest_source": tech_path,
+        "manifest_complete": manifest["complete"],
+        "planned_paths": sorted(planned_paths),
+        "changed_paths": sorted(actual_paths),
+        "planned_paths_without_diff": sorted(planned_paths - actual_paths),
+        "unplanned_paths": [],
+        "spec_refs": manifest["spec_refs"],
+        "classification": classification,
+        "allowed_scope": True,
+    }
 
 
 def verify_remote_head(runner: Runner, repo: Path, head_ref: str, head_sha: str) -> str:
@@ -507,8 +618,10 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
         raise GateError("local origin does not match --github-repo")
 
     pr_payload = query_current_pr(runner, config)
-    head_ref, pr_body = validate_current_pr(pr_payload, config)
+    initial_pr = validate_current_pr(pr_payload, config)
+    head_ref, pr_body = initial_pr["head_ref"], initial_pr["body"]
     remote_head_ref = verify_remote_head(runner, repo, head_ref, config.head_sha)
+    changed_files = collect_changed_files(runner, config, initial_pr["changed_files"])
 
     label_event, label_authority = latest_ready_event(runner, config.github_repo, config.issue)
     with tempfile.TemporaryDirectory(prefix="remem-sensitive-gate-") as temp_name:
@@ -524,6 +637,10 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
             raise GateError("issue evidence repository/issue binding failed")
         if issue_evidence.get("state") != READY_LABEL or issue_evidence.get("state_source") != "label" or issue_evidence.get("state_trusted") is not True:
             raise GateError("issue evidence is not trusted label-derived ready_to_implement state")
+        trusted_base_sha = issue_evidence.get("default_base_sha")
+        if not isinstance(trusted_base_sha, str) or not FULL_SHA.fullmatch(trusted_base_sha):
+            raise GateError("issue evidence lacks a trusted default base SHA")
+        planned_scope = validate_planned_scope(runner, repo, config.issue, trusted_base_sha, changed_files)
         duplicate = validate_duplicate(
             run_json(runner, [sys.executable, str(repo / "checks/github_duplicate_evidence.py"), "--github-repo", config.github_repo, "--issue", str(config.issue), "--remote", "origin", "--pr-limit", str(config.pr_limit), "--json"], "duplicate evidence collector"),
             config.issue,
@@ -532,7 +649,16 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
         age = check_freshness(duplicate, freshness_checked_at)
         conflicts = [branch for branch in matching_branches(repo, config.issue, duplicate["remote_branches"]) if branch != head_ref]
         decision, decided_branches = ownership_decision(runner, config, pr_body, conflicts)
-        filtered, exemptions = filter_duplicates(duplicate, config, head_ref, decided_branches)
+        effective_duplicate = duplicate
+        if decision is not None and decision["decision"] == "cleanup_completed":
+            effective_duplicate = validate_duplicate(run_json(
+                runner, [sys.executable, str(repo / "checks/github_duplicate_evidence.py"), "--github-repo", config.github_repo, "--issue", str(config.issue), "--remote", "origin", "--pr-limit", str(config.pr_limit), "--json"], "post-cleanup duplicate evidence collector"), config.issue)
+            check_freshness(effective_duplicate, now().astimezone(timezone.utc))
+            still_live = sorted(decided_branches.intersection(effective_duplicate["remote_branches"]))
+            if still_live:
+                raise GateError("cleanup_completed decision still names live remote branches: " + ", ".join(still_live))
+            decided_branches = set()
+        filtered, exemptions = filter_duplicates(effective_duplicate, config, head_ref, decided_branches)
         issue_path.write_bytes(canonical_bytes(issue_evidence))
         original_duplicate_path.write_bytes(canonical_bytes(duplicate))
         filtered_duplicate_path.write_bytes(canonical_bytes(filtered))
@@ -548,33 +674,49 @@ def execute(config: Config, runner: Runner = default_runner, now: Callable[[], d
             raise GateError("route input evidence changed during gate execution")
 
     final_pr_payload = query_current_pr(runner, config)
-    final_head_ref, _final_body = validate_current_pr(final_pr_payload, config, pr_body)
-    if final_head_ref != head_ref:
-        raise GateError("current implementation PR head ref changed during gate execution")
+    final_pr = validate_current_pr(final_pr_payload, config, pr_body)
+    if final_pr != initial_pr:
+        raise GateError("current implementation PR identity/body/state changed during gate execution")
+    final_changed_files = collect_changed_files(runner, config, final_pr["changed_files"])
+    if value_hash(final_changed_files) != value_hash(changed_files):
+        raise GateError("current implementation PR changed-file evidence drifted during gate execution")
     verify_current_ready_label(runner, config)
+    final_label_event, final_label_authority = latest_ready_event(runner, config.github_repo, config.issue)
+    if final_label_event != label_event or final_label_authority != label_authority:
+        raise GateError("active readiness label event or authority changed during gate execution")
 
     completed = now().astimezone(timezone.utc)
     result = {
-        "schema_version": 1,
+        "schema_version": 2,
         "wrapper": WRAPPER_ID,
+        "authorization": "advisory_only",
+        "final_trust_root": "external_github_app_or_org_required_workflow_t6",
+        "ordinary_pr_ci_is_final_authorization": False,
         "started_at": iso8601(started),
         "completed_at": iso8601(completed),
         "repository": config.github_repo,
         "remote_url": origin_url,
         "issue": config.issue,
-        "pr": {"number": config.pr, "url": text_field(final_pr_payload, "url", "PR"), "state": "OPEN", "head_ref": head_ref, "head_sha": config.head_sha, "remote_head_ref": remote_head_ref},
+        "pr": {**final_pr, "remote_head_ref": remote_head_ref},
         "label_event": label_event,
         "label_authority": label_authority,
+        "final_label_event": final_label_event,
+        "final_label_authority": final_label_authority,
         "evidence_trust": {"state": READY_LABEL, "state_source": "label", "state_trusted": True, "duplicate_age_seconds": age, "max_age_seconds": MAX_EVIDENCE_AGE_SECONDS, "fresh": True},
         "branch_ownership_decision": decision,
         "self_exemptions": exemptions,
-        "artifacts": {"issue_evidence": issue_evidence, "duplicate_original": duplicate, "duplicate_filtered": filtered},
+        "changed_files": changed_files,
+        "planned_scope": planned_scope,
+        "artifacts": {"issue_evidence": issue_evidence, "duplicate_original": duplicate, "duplicate_after_decision": effective_duplicate, "duplicate_filtered": filtered},
         "artifact_hashes": {
             "issue_evidence_pre": issue_pre,
             "issue_evidence_post": issue_post,
             "duplicate_filtered_pre": duplicate_pre,
             "duplicate_filtered_post": duplicate_post,
             "duplicate_original": value_hash(duplicate),
+            "duplicate_after_decision": value_hash(effective_duplicate),
+            "changed_files_initial": value_hash(changed_files),
+            "changed_files_final": value_hash(final_changed_files),
             "original_open_prs": value_hash(duplicate["open_prs"]),
             "filtered_open_prs": value_hash(filtered["open_prs"]),
             "original_remote_branches": value_hash(duplicate["remote_branches"]),

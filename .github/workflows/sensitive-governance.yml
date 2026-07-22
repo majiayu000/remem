@@ -4,9 +4,9 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, edited, ready_for_review]
 
-# This repository-local workflow is intentionally read-only and advisory. A
-# GitHub App or organization required workflow is the T6 trust root for final
-# governance authorization; in-repository workflow files remain PR-changeable.
+# The workflow and every executable are loaded from a fresh live default-branch
+# commit. PR identity, head, files, and refs are treated only as data. This is
+# still advisory: T6 requires an external GitHub App or organization workflow.
 permissions:
   contents: read
   pull-requests: read
@@ -18,86 +18,106 @@ jobs:
       group: sensitive-governance-advisory-${{ github.event.pull_request.number }}
       cancel-in-progress: true
     steps:
-      - name: Check out trusted pull request base
+      - name: Resolve fresh live repository and PR identity
+        id: live
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          repo_json=$(gh api "repos/$GITHUB_REPOSITORY")
+          pr_json=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER")
+          default_branch=$(jq -er '.default_branch | select(length > 0)' <<<"$repo_json")
+          base_ref=$(jq -er '.base.ref | select(length > 0)' <<<"$pr_json")
+          head_ref=$(jq -er '.head.ref | select(length > 0)' <<<"$pr_json")
+          head_sha=$(jq -er '.head.sha | select(test("^[0-9a-f]{40}$"))' <<<"$pr_json")
+          head_repo=$(jq -er '.head.repo.full_name | select(length > 0)' <<<"$pr_json")
+          base_repo=$(jq -er '.base.repo.full_name | select(length > 0)' <<<"$pr_json")
+          state=$(jq -er '.state' <<<"$pr_json")
+          fork=$(jq -er '.head.repo.fork' <<<"$pr_json")
+          test "$base_ref" = "$default_branch"
+          test "$head_repo" = "$GITHUB_REPOSITORY"
+          test "$base_repo" = "$GITHUB_REPOSITORY"
+          test "$state" = "open"
+          test "$fork" = "false"
+          base_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$default_branch" \
+            --jq '.sha | select(test("^[0-9a-f]{40}$"))')
+          {
+            echo "default_branch=$default_branch"
+            echo "base_sha=$base_sha"
+            echo "head_ref=$head_ref"
+            echo "head_sha=$head_sha"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out fresh trusted default-branch commit
         uses: actions/checkout@v6.0.2
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.live.outputs.base_sha }}
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Fetch changed paths through GitHub API
+      - name: Bind remote-tracking PR head without executing it
+        env:
+          DEFAULT_BRANCH: ${{ steps.live.outputs.default_branch }}
+          TRUSTED_BASE_SHA: ${{ steps.live.outputs.base_sha }}
+          HEAD_REF: ${{ steps.live.outputs.head_ref }}
+          HEAD_SHA: ${{ steps.live.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          git check-ref-format --branch "$DEFAULT_BRANCH"
+          git check-ref-format --branch "$HEAD_REF"
+          git fetch origin \
+            "+refs/heads/$DEFAULT_BRANCH:refs/remotes/origin/$DEFAULT_BRANCH" \
+            "+refs/heads/$HEAD_REF:refs/remotes/origin/$HEAD_REF"
+          test "$(git rev-parse "refs/remotes/origin/$DEFAULT_BRANCH^{commit}")" = "$TRUSTED_BASE_SHA"
+          test "$(git rev-parse "refs/remotes/origin/$HEAD_REF^{commit}")" = "$HEAD_SHA"
+          git symbolic-ref refs/remotes/origin/HEAD "refs/remotes/origin/$DEFAULT_BRANCH"
+
+      - name: Resolve linked issue from trusted adapter
+        id: linked_issue
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           mkdir -p .specrail/runtime
-          gh api --paginate --slurp \
-            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" \
-            > .specrail/runtime/sensitive-governance-files.json
+          gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --json body,closingIssuesReferences \
+            > .specrail/runtime/pr-issue-reference.json
+          issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
+            .specrail/runtime/pr-issue-reference.json)
+          echo "number=$issue_number" >> "$GITHUB_OUTPUT"
 
-      - name: Run trusted-base sensitive classification advisory
+      - name: Run trusted-base sensitive implementation advisory
         env:
-          TRUSTED_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ steps.live.outputs.head_sha }}
+          ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}
         run: |
-          python3 - <<'PY'
-          import json
-          import os
-          import re
-          import sys
-          from pathlib import Path
-
-          sys.path.insert(0, "checks")
-          from sensitive_enforcement import classify_sensitive_changes
-          from specrail_lib import load_pack
-
-          base_sha = os.environ["TRUSTED_BASE_SHA"]
-          if re.fullmatch(r"[0-9a-f]{40}", base_sha) is None:
-              raise SystemExit("pull request base SHA is not a full trusted commit SHA")
-
-          pages = json.loads(
-              Path(".specrail/runtime/sensitive-governance-files.json").read_text()
-          )
-          if not isinstance(pages, list) or any(not isinstance(page, list) for page in pages):
-              raise SystemExit("GitHub changed-files response has an unexpected shape")
-          paths = []
-          for page in pages:
-              for item in page:
-                  filename = item.get("filename") if isinstance(item, dict) else None
-                  if not isinstance(filename, str) or not filename:
-                      raise SystemExit("GitHub changed-files entry is missing filename")
-                  paths.append(filename)
-
-          classification = classify_sensitive_changes(
-              load_pack(Path(".")),
-              Path("."),
-              paths,
-              paths,
-              source="github_changed_files",
-          )
-          result = {
-              "schema_version": 1,
-              "repository": os.environ["GITHUB_REPOSITORY"],
-              "pr_number": int(os.environ["PR_NUMBER"]),
-              "trusted_base_sha": base_sha,
-              "classification": classification,
-              "authorization": "advisory_only",
-              "final_trust_root": "external_github_app_or_org_required_workflow_t6",
-              "ordinary_pr_ci_is_final_authorization": False,
-          }
-          output = Path(".specrail/runtime/sensitive-governance-advisory.json")
-          output.write_text(json.dumps(result, indent=2) + "\n")
-          with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a", encoding="utf-8") as summary:
-              summary.write("## Sensitive governance advisory\n\n")
-              summary.write(f"- enforcement-sensitive: `{classification['enforcement_sensitive']}`\n")
-              summary.write(f"- trusted base: `{base_sha}`\n")
-              summary.write("- authorization: `advisory_only`\n")
-              summary.write("- final trust root: external GitHub App or organization required workflow (T6)\n")
-              summary.write("- ordinary PR CI is not final governance authorization\n")
-          PY
+          python3 scripts/ci/run_sensitive_implement_gate.py \
+            --repo . \
+            --github-repo "$GITHUB_REPOSITORY" \
+            --issue "$ISSUE_NUMBER" \
+            --pr "$PR_NUMBER" \
+            --head-sha "$HEAD_SHA" \
+            --output .specrail/runtime/sensitive-implement-gate.json
+          jq -n \
+            --arg repository "$GITHUB_REPOSITORY" \
+            --argjson pr_number "$PR_NUMBER" \
+            --arg trusted_base_sha "${{ steps.live.outputs.base_sha }}" \
+            --slurpfile gate .specrail/runtime/sensitive-implement-gate.json \
+            '{schema_version: 2, repository: $repository, pr_number: $pr_number,
+              trusted_base_sha: $trusted_base_sha, gate: $gate[0],
+              authorization: "advisory_only",
+              final_trust_root: "external_github_app_or_org_required_workflow_t6",
+              ordinary_pr_ci_is_final_authorization: false}' \
+            > .specrail/runtime/sensitive-governance-advisory.json
 
       - name: Upload advisory evidence
         uses: actions/upload-artifact@v4
         with:
           name: sensitive-governance-advisory-pr-${{ github.event.pull_request.number }}
-          path: .specrail/runtime/sensitive-governance-advisory.json
+          path: |
+            .specrail/runtime/sensitive-implement-gate.json
+            .specrail/runtime/sensitive-governance-advisory.json
           if-no-files-found: error

@@ -397,7 +397,8 @@ fn closed_enum_contract_lists_every_known_value() {
             "local_tool_output",
             "repo_file",
             "user_prompt",
-            "external_content"
+            "external_content",
+            "pack"
         ]
     );
     assert_eq!(KNOWN_RISK, ["low", "medium", "high", "unknown"]);
@@ -414,6 +415,21 @@ fn closed_enum_contract_lists_every_known_value() {
             "deferred",
         ]
     );
+}
+
+#[test]
+fn known_pack_trust_is_explicitly_ineligible() -> Result<()> {
+    let _dir = ScopedTestDataDir::new("compile-known-denied-pack-trust");
+    let conn = db::open_db()?;
+    insert_pref(
+        &conn,
+        &PrefSpec {
+            source_trust_class: "pack",
+            ..Default::default()
+        },
+    )?;
+    assert!(compile(&conn)?.is_empty());
+    Ok(())
 }
 
 #[test]

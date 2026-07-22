@@ -355,6 +355,7 @@ const KNOWN_TRUST: &[&str] = &[
     "repo_file",
     "user_prompt",
     "external_content",
+    "pack",
 ];
 const KNOWN_RISK: &[&str] = &["low", "medium", "high", "unknown"];
 const KNOWN_REVIEW: &[&str] = &[

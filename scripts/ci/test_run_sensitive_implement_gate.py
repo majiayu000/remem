@@ -24,6 +24,7 @@ SPEC.loader.exec_module(gate)
 
 NOW = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
 HEAD = "a" * 40
+BASE = "b" * 40
 REPO_NAME = "majiayu000/remem"
 HEAD_REF = "codex/gh813-implementation"
 
@@ -39,12 +40,20 @@ class FakeRunner:
         self.pr = {
             "number": 908,
             "state": "OPEN",
-            "headRefName": HEAD_REF,
-            "headRefOid": HEAD,
-            "headRepository": {"nameWithOwner": REPO_NAME},
-            "isCrossRepository": False,
-            "body": "Implements GH-813",
-            "url": "https://github.com/majiayu000/remem/pull/908",
+            "draft": True,
+            "body": "Refs #813\nenforcement_sensitive: true",
+            "html_url": "https://github.com/majiayu000/remem/pull/908",
+            "changed_files": 1,
+            "head": {
+                "ref": HEAD_REF,
+                "sha": HEAD,
+                "repo": {"full_name": REPO_NAME, "fork": False},
+            },
+            "base": {
+                "ref": "main",
+                "sha": BASE,
+                "repo": {"full_name": REPO_NAME, "fork": False},
+            },
         }
         self.final_pr: dict[str, Any] | None = None
         self.pr_query_count = 0
@@ -61,12 +70,20 @@ class FakeRunner:
             "label": {"name": "ready_to_implement"},
             "actor": {"login": "majiayu000", "type": "User"},
         }]]
+        self.final_events: Any | None = None
+        self.event_query_count = 0
+        self.changed_files_pages: Any = [[
+            {"filename": "workflow.yaml", "status": "modified"}
+        ]]
+        self.final_changed_files_pages: Any | None = None
+        self.changed_files_query_count = 0
         self.issue = {
             "issue": 813,
             "repository": REPO_NAME,
             "state": "ready_to_implement",
             "state_source": "label",
             "state_trusted": True,
+            "default_base_sha": BASE,
         }
         self.duplicate = {
             "issue": 813,
@@ -76,6 +93,8 @@ class FakeRunner:
             "open_prs": [{"number": 908, "head_ref": HEAD_REF, "references_issue": True}],
             "remote_branches": [HEAD_REF, "main"],
         }
+        self.final_duplicate: dict[str, Any] | None = None
+        self.duplicate_query_count = 0
         self.permission = {"permission": "maintain", "user": {"type": "User"}}
         self.comment: dict[str, Any] | None = None
         self.mutate_route_input = False
@@ -89,13 +108,23 @@ class FakeRunner:
             return completed(argv, stdout="")
         if argv[:4] == ["git", "-C", str(REPO), "rev-parse"]:
             return completed(argv, stdout=self.remote_head_sha + "\n")
-        if argv[:3] == ["gh", "pr", "view"]:
+        if argv[:2] == ["gh", "api"] and argv[2] == f"repos/{REPO_NAME}/pulls/908":
             self.pr_query_count += 1
             return completed(argv, self.final_pr if self.pr_query_count > 1 and self.final_pr is not None else self.pr)
         if argv[:3] == ["gh", "issue", "view"]:
             return completed(argv, self.current_issue)
+        if argv[:4] == ["gh", "api", "--paginate", "--slurp"] and "/files?" in argv[4]:
+            self.changed_files_query_count += 1
+            payload = self.changed_files_pages
+            if self.changed_files_query_count > 1 and self.final_changed_files_pages is not None:
+                payload = self.final_changed_files_pages
+            return completed(argv, payload)
         if argv[:4] == ["gh", "api", "--paginate", "--slurp"]:
-            return completed(argv, self.events)
+            self.event_query_count += 1
+            payload = self.events
+            if self.event_query_count > 1 and self.final_events is not None:
+                payload = self.final_events
+            return completed(argv, payload)
         if argv[:2] == ["gh", "api"] and "/collaborators/" in argv[2]:
             return completed(argv, self.permission)
         if argv[:2] == ["gh", "api"] and "/issues/comments/" in argv[2]:
@@ -103,7 +132,11 @@ class FakeRunner:
         if argv[0] == sys.executable and argv[1].endswith("github_issue_evidence.py"):
             return completed(argv, self.issue)
         if argv[0] == sys.executable and argv[1].endswith("github_duplicate_evidence.py"):
-            return completed(argv, self.duplicate)
+            self.duplicate_query_count += 1
+            payload = self.duplicate
+            if self.duplicate_query_count > 1 and self.final_duplicate is not None:
+                payload = self.final_duplicate
+            return completed(argv, payload)
         if argv[0] == sys.executable and argv[1].endswith("route_gate.py"):
             evidence_path = Path(argv[argv.index("--evidence") + 1])
             duplicate_path = Path(argv[argv.index("--duplicate-evidence") + 1])
@@ -120,6 +153,11 @@ class FakeRunner:
                 "sensitive_classification": {"enforcement_sensitive": True},
             }
             return completed(argv, result)
+        if argv[:4] == ["git", "-C", str(REPO), "show"]:
+            return completed(
+                argv,
+                stdout=(REPO / "specs/GH813/tech.md").read_text(encoding="utf-8"),
+            )
         raise AssertionError(f"unexpected command: {argv}")
 
 
@@ -139,6 +177,8 @@ class SensitiveImplementGateTests(unittest.TestCase):
         runner = FakeRunner()
         result = self.execute(runner)
         self.assertEqual(result["decision"], "allowed")
+        self.assertEqual(result["authorization"], "advisory_only")
+        self.assertFalse(result["ordinary_pr_ci_is_final_authorization"])
         self.assertEqual(result["pr"]["head_sha"], HEAD)
         self.assertEqual(result["label_authority"]["role"], "owner")
         self.assertEqual(result["artifact_hashes"]["issue_evidence_pre"], result["artifact_hashes"]["issue_evidence_post"])
@@ -156,13 +196,15 @@ class SensitiveImplementGateTests(unittest.TestCase):
 
     def test_wrong_pr_head_fails(self) -> None:
         runner = FakeRunner()
-        runner.pr["headRefOid"] = "b" * 40
+        runner.pr["head"]["sha"] = "c" * 40
         self.assert_blocked(runner, "head does not match")
 
     def test_fork_pr_fails_even_with_matching_head_sha(self) -> None:
         runner = FakeRunner()
-        runner.pr["isCrossRepository"] = True
-        runner.pr["headRepository"] = {"nameWithOwner": "contributor/remem"}
+        runner.pr["head"]["repo"] = {
+            "full_name": REPO_NAME,
+            "fork": True,
+        }
         self.assert_blocked(runner, "must not be a fork")
 
     def test_same_named_remote_branch_at_different_sha_fails(self) -> None:
@@ -175,9 +217,19 @@ class SensitiveImplementGateTests(unittest.TestCase):
         runner.pr["state"] = "MERGED"
         self.assert_blocked(runner, "not the requested open PR")
 
+    def test_missing_head_repository_fails(self) -> None:
+        runner = FakeRunner()
+        runner.pr["head"]["repo"] = None
+        self.assert_blocked(runner, "head repository")
+
+    def test_base_repository_mismatch_fails(self) -> None:
+        runner = FakeRunner()
+        runner.pr["base"]["repo"]["full_name"] = "other/remem"
+        self.assert_blocked(runner, "base repository")
+
     def test_unlinked_issue_fails(self) -> None:
         runner = FakeRunner()
-        runner.pr["body"] = "No linked work"
+        runner.pr["body"] = "No linked work\nenforcement_sensitive: true"
         self.assert_blocked(runner, "does not reference")
 
     def test_bot_label_actor_fails(self) -> None:
@@ -214,7 +266,7 @@ class SensitiveImplementGateTests(unittest.TestCase):
     def test_final_pr_head_drift_fails(self) -> None:
         runner = FakeRunner()
         runner.final_pr = deepcopy(runner.pr)
-        runner.final_pr["headRefOid"] = "b" * 40
+        runner.final_pr["head"]["sha"] = "c" * 40
         self.assert_blocked(runner, "head does not match")
 
     def test_final_pr_state_drift_fails(self) -> None:
@@ -222,6 +274,58 @@ class SensitiveImplementGateTests(unittest.TestCase):
         runner.final_pr = deepcopy(runner.pr)
         runner.final_pr["state"] = "MERGED"
         self.assert_blocked(runner, "not the requested open PR")
+
+    def test_final_pr_body_drift_fails(self) -> None:
+        runner = FakeRunner()
+        runner.final_pr = deepcopy(runner.pr)
+        runner.final_pr["body"] += "\nchanged"
+        self.assert_blocked(runner, "body changed")
+
+    def test_final_readiness_event_drift_fails(self) -> None:
+        runner = FakeRunner()
+        runner.final_events = deepcopy(runner.events)
+        runner.final_events[0][0]["id"] = 18
+        self.assert_blocked(runner, "readiness label event or authority changed")
+
+    def test_changed_file_count_mismatch_fails(self) -> None:
+        runner = FakeRunner()
+        runner.pr["changed_files"] = 2
+        self.assert_blocked(runner, "count does not match")
+
+    def test_complete_multi_page_changed_files_pass(self) -> None:
+        runner = FakeRunner()
+        runner.pr["changed_files"] = 2
+        runner.changed_files_pages = [
+            [{"filename": "workflow.yaml", "status": "modified"}],
+            [{"filename": "scripts/ci/check_pr_tier.py", "status": "modified"}],
+        ]
+        result = self.execute(runner)
+        self.assertEqual(result["changed_files"]["collected_count"], 2)
+
+    def test_rename_preserves_old_and_new_paths(self) -> None:
+        runner = FakeRunner()
+        runner.changed_files_pages = [[{
+            "filename": "scripts/ci/check_pr_tier.py",
+            "previous_filename": "workflow.yaml",
+            "status": "renamed",
+        }]]
+        result = self.execute(runner)
+        self.assertEqual(
+            result["changed_files"]["classification_paths"],
+            ["scripts/ci/check_pr_tier.py", "workflow.yaml"],
+        )
+
+    def test_unplanned_changed_file_fails(self) -> None:
+        runner = FakeRunner()
+        runner.changed_files_pages = [[{"filename": "unplanned.txt", "status": "added"}]]
+        self.assert_blocked(runner, "exceed the approved planned-change manifest")
+
+    def test_changed_file_drift_before_output_fails(self) -> None:
+        runner = FakeRunner()
+        runner.final_changed_files_pages = [[
+            {"filename": "scripts/ci/check_pr_tier.py", "status": "modified"}
+        ]]
+        self.assert_blocked(runner, "changed-file evidence drifted")
 
     def test_stale_duplicate_evidence_fails(self) -> None:
         runner = FakeRunner()
@@ -278,6 +382,47 @@ class SensitiveImplementGateTests(unittest.TestCase):
         self.assertEqual(result["branch_ownership_decision"]["branches"], ["human/gh813-existing"])
         self.assertNotIn("human/gh813-existing", result["artifacts"]["duplicate_filtered"]["remote_branches"])
         self.assertIn("main", result["artifacts"]["duplicate_filtered"]["remote_branches"])
+
+    def test_cleanup_completed_cannot_hide_live_branch(self) -> None:
+        runner = FakeRunner()
+        runner.duplicate["remote_branches"].append("human/gh813-existing")
+        runner.pr["body"] += "\nhttps://github.com/majiayu000/remem/issues/813#issuecomment-12345"
+        runner.comment = {
+            "body": "\n".join([
+                "SpecRail branch ownership decision",
+                "Repository: majiayu000/remem", "Issue: 813", "PR: 908",
+                f"Head-SHA: {HEAD}", "Decision: cleanup_completed",
+                "Rationale: cleanup was requested", "Branches: human/gh813-existing",
+            ]),
+            "created_at": "2026-07-21T11:58:00Z",
+            "html_url": "https://github.com/majiayu000/remem/issues/813#issuecomment-12345",
+            "user": {"login": "majiayu000", "type": "User"},
+        }
+        self.assert_blocked(runner, "still names live remote branches")
+
+    def test_cleanup_completed_requires_fresh_absence(self) -> None:
+        runner = FakeRunner()
+        runner.duplicate["remote_branches"].append("human/gh813-existing")
+        runner.final_duplicate = deepcopy(runner.duplicate)
+        runner.final_duplicate["remote_branches"].remove("human/gh813-existing")
+        runner.pr["body"] += "\nhttps://github.com/majiayu000/remem/issues/813#issuecomment-12345"
+        runner.comment = {
+            "body": "\n".join([
+                "SpecRail branch ownership decision",
+                "Repository: majiayu000/remem", "Issue: 813", "PR: 908",
+                f"Head-SHA: {HEAD}", "Decision: cleanup_completed",
+                "Rationale: branch was removed by a maintainer",
+                "Branches: human/gh813-existing",
+            ]),
+            "created_at": "2026-07-21T11:58:00Z",
+            "html_url": "https://github.com/majiayu000/remem/issues/813#issuecomment-12345",
+            "user": {"login": "majiayu000", "type": "User"},
+        }
+        result = self.execute(runner)
+        self.assertNotIn(
+            "human/gh813-existing",
+            result["artifacts"]["duplicate_after_decision"]["remote_branches"],
+        )
 
     def test_decision_must_cover_every_conflicting_branch(self) -> None:
         runner = FakeRunner()
@@ -339,11 +484,13 @@ class SensitiveImplementGateTests(unittest.TestCase):
         self.assertIn("steps.linked_issue.outputs.number", workflow)
         self.assertNotIn("sensitive implementation PR must close exactly one issue", workflow)
         self.assertNotIn("python3 checks/route_gate.py", workflow)
+        self.assertIn("e4867a0517df0d0e8487ac20d702d7a5444c321a", workflow)
+        self.assertNotIn("bbc762b6cf6c323e8ea1996e8c7ca44bc41ca9e5", workflow)
 
     def test_ci_pins_trusted_default_branch_before_wrapper(self) -> None:
         workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         pin = workflow.index("- name: Pin trusted default branch")
-        gate = workflow.index("- name: Run sensitive implementation gate")
+        gate = workflow.index("- name: Run advisory sensitive implementation gate")
         self.assertLess(pin, gate)
         trusted_block = workflow[pin:gate]
         self.assertIn(
@@ -353,6 +500,8 @@ class SensitiveImplementGateTests(unittest.TestCase):
         self.assertIn("git check-ref-format --branch", trusted_block)
         self.assertIn("refs/remotes/origin/HEAD", trusted_block)
         self.assertIn("refs/remotes/origin/$DEFAULT_BRANCH", trusted_block)
+        self.assertNotIn("contains(github.event.pull_request.body", workflow)
+        self.assertIn("steps.pr_tier.outputs.enforcement_sensitive == 'true'", workflow)
 
     def test_gate_input_hash_drift_fails(self) -> None:
         runner = FakeRunner()
