@@ -147,7 +147,7 @@ pub fn run_ingest_sessions(
                 }
             };
             let mtime_epoch = plan.observed_mtime_ns / 1_000_000_000;
-            let phase_b_eligible = options.since_epoch.is_none_or(|since| mtime_epoch >= since);
+            let phase_b_eligible = !options.since_epoch.is_some_and(|since| mtime_epoch < since);
             discovered.push((root.clone(), plan, phase_b_eligible));
         }
     }
