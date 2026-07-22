@@ -25,6 +25,18 @@ GH-813
     `.github/workflows/closure-audit.yml`、`scripts/ci/test_sensitive_governance_workflow.py` 和
     closure workflow/controller focused tests 由 T5 owner 负责实现和验证，不能因
     planned-change manifest 已列出这些路径就省略任务所有权。
+  - `SP813-T5` authoritative prospective-evidence addendum: wrapper 必须证明 implementation PR
+    属于同一 repository 且非 fork，并要求 head repository/ref 对应的 remote-tracking ref 存在且
+    解析为 exact head；exemption artifact 保存 ref 与解析后的 commit SHA，missing/stale/mismatched
+    remote-tracking commit 一律 fail closed。输出 `allowed` 前必须再次 live 读取 PR open/state、
+    repository/head repository、head ref、exact head、linked issue 与 body sensitive evidence，逐字段
+    对比首次保存值，任何 identity/body/state drift 都阻断；focused tests 必须覆盖上述负例和首末
+    PR evidence 完全一致的正例，不能只复核 readiness label event。
+  - `SP813-T5` authoritative changed-file addendum: prospective PR file collector 必须遍历全部可用
+    GitHub API pages，把 collected count 与 live PR `changed_files` total 绑定；超过 API 可证明上限、
+    count mismatch、截断、分页/API error 或无法证明 completeness 时必须 fail closed，部分 file
+    list 不得进入 classifier。`scripts/ci/test_sensitive_governance_workflow.py` 与 workflow focused
+    tests 由 T5 owner 覆盖这些负例。
   - `SP813-T5` authoritative closure-evidence addendum: PR commit collector 必须遍历全部 API
     pages，把 collected count 与 live PR total count 绑定，并在分页截断、超限、count 漂移、API
     error 或无法证明 completeness 时 fail closed。trusted-base selector 必须使用完整 commit set、

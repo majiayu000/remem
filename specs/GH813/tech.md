@@ -133,8 +133,11 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   都通过 GitHub API fresh 查询 live `defaultBranchRef.target.oid`/base-ref snapshot，并 checkout
   该 exact SHA。PR payload 的 `base.sha` 只作为被比较的快照，不得作为 trusted-code checkout；
   如果 live default branch、base ref 或 PR snapshot 无法一致解释，workflow fail closed。changed
-  paths 只从 GitHub API 读取，分类器、registry 与依赖全部来自 live trusted base，绝不 checkout、
-  import 或执行 PR head。它只生成 `advisory_only` artifact，
+  paths 只从 GitHub API 读取；PR file collector 必须遍历所有可用 pages，并把 collected count 与
+  live PR `changed_files` total 绑定。`changed_files` 超出 API 可证明上限、count mismatch、分页
+  截断、API error 或任何无法证明 completeness 的情况都必须 fail closed，部分 file list 不得进入
+  classifier。分类器、registry 与依赖全部来自 live trusted base，绝不 checkout、import 或执行
+  PR head。它只生成 `advisory_only` artifact，
   普通 PR CI 不能作为最终治理授权。`.github/workflows/closure-audit.yml` 从受信 GitHub merge
   event/API 取得 default-branch merge commit，但不得仅凭 first-parent ancestry 就信任其 parent。
   只有在 merge 结构、完整分页的 PR commit 集合和可用的 merge-method evidence 能共同证明所选
