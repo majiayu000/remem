@@ -137,15 +137,23 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   import 或执行 PR head。它只生成 `advisory_only` artifact，
   普通 PR CI 不能作为最终治理授权。`.github/workflows/closure-audit.yml` 从受信 GitHub merge
   event/API 取得 default-branch merge commit，但不得仅凭 first-parent ancestry 就信任其 parent。
-  只有在 merge 结构、PR commit 集合和可用的 merge-method evidence 能共同证明所选 parent 是
-  merge 前的 default-base，而不是任一 PR-controlled commit 时，才可从该 exact parent 运行
+  只有在 merge 结构、完整分页的 PR commit 集合和可用的 merge-method evidence 能共同证明所选
+  parent 是 merge 前的 default-base，而不是任一 PR-controlled commit 时，才可从该 exact parent 运行
   classifier/controller。多 commit rebase merge 的末 commit first parent 属于 PR commit chain，
   明确不得作为 trusted base；这类情况以及任何无法证明单一真实 pre-merge parent 的 merge，只能
   使用 merge dispatch 前已持久化并绑定 PR/head 的 live default-base snapshot，否则 fail closed。
+  PR commit collector 必须遍历全部 API pages，并将 collected count 与 live PR total count 绑定；分页
+  截断、超限、count 漂移、API 错误或无法证明 completeness 时一律阻断，不能把部分集合当成
+  “parent 不属于 PR”的证据。
   它不得使用可能陈旧的 PR payload `base.sha`，
   也不得执行 merged head，从而避免目标 PR 缩减 registry 或替换 controller；但目标 PR 仍可能
   删除 repo-local workflow、阻止 closed event dispatch，因此
   两个 workflow 都不是 T6 外部信任根。
+- trusted-base acquisition、GitHub pagination、merge-structure binding 和 checkout selection 属于
+  remem-local `SP813-T5` workflow/controller adapter；同步自上游的 `SP813-T3` closure audit 只消费并
+  校验已标准化、已绑定的 merge/gate evidence，不负责查询 GitHub 或选择要执行的 repository tree。
+  因此 T3 的既有 upstream SHA 不被追溯性扩展；T5 在 complete-commit evidence、trusted checkout
+  和对应负例未通过前保持未完成，T4 sync 也不得被描述为已经交付这些 remem-local 能力。
 
 ### 4. GitHub 服务端保护的人类边界
 
