@@ -40,9 +40,11 @@ GH-813
 - repo-local `pull_request_target` prospective workflow 每次运行必须通过 GitHub API fresh 查询
   live default/base-ref snapshot，并 checkout 该 trusted-base exact SHA；PR payload 的
   `base.sha` 只用于一致性比较，不能作为长生命周期 PR 的可信代码 checkout。closure workflow
-  则从受信 merge event/API 的 default-branch merge commit 推导并验证实际 first parent；无法证明
-  单一 pre-merge parent 时，只接受 merge dispatch 前已持久化且绑定 PR/head 的 live base snapshot，
-  不接受 PR payload `base.sha`。两者只提供 advisory 与补偿审计，不能替代
+  则从受信 merge event/API 的 default-branch merge commit、PR commit 集合和 merge-method evidence
+  共同证明实际 pre-merge default-base；first-parent ancestry 本身不构成证明，多 commit rebase 的
+  末 commit first parent 明确视为 PR-controlled。无法证明单一真实 pre-merge parent 时，只接受
+  merge dispatch 前已持久化且绑定 PR/head 的 live base snapshot，否则 fail closed；不接受 PR
+  payload `base.sha`。两者只提供 advisory 与补偿审计，不能替代
   `SP813-T6` 的外部 App/org required workflow。
 - 同一 lane 内禁止两个 agent 同时写 `src/rules/compiler.rs`、`CONTRIBUTING.md` 或 synced
   SpecRail 文件；需要并行时必须先声明不重叠的文件所有权。

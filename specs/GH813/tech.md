@@ -136,10 +136,13 @@ checkout 复制并验证内容哈希，禁止手工修改 vendored 文件：
   paths 只从 GitHub API 读取，分类器、registry 与依赖全部来自 live trusted base，绝不 checkout、
   import 或执行 PR head。它只生成 `advisory_only` artifact，
   普通 PR CI 不能作为最终治理授权。`.github/workflows/closure-audit.yml` 从受信 GitHub merge
-  event/API 取得 default-branch merge commit，并把经 first-parent ancestry 验证的 merge first
-  parent 作为实际 pre-merge trusted base，再从该 exact parent 运行 classifier/controller；若 merge
-  method 没有可证明的单一 pre-merge parent，则只能使用 merge dispatch 前已持久化并绑定 PR/head
-  的 live default-base snapshot，否则 fail closed。它不得使用可能陈旧的 PR payload `base.sha`，
+  event/API 取得 default-branch merge commit，但不得仅凭 first-parent ancestry 就信任其 parent。
+  只有在 merge 结构、PR commit 集合和可用的 merge-method evidence 能共同证明所选 parent 是
+  merge 前的 default-base，而不是任一 PR-controlled commit 时，才可从该 exact parent 运行
+  classifier/controller。多 commit rebase merge 的末 commit first parent 属于 PR commit chain，
+  明确不得作为 trusted base；这类情况以及任何无法证明单一真实 pre-merge parent 的 merge，只能
+  使用 merge dispatch 前已持久化并绑定 PR/head 的 live default-base snapshot，否则 fail closed。
+  它不得使用可能陈旧的 PR payload `base.sha`，
   也不得执行 merged head，从而避免目标 PR 缩减 registry 或替换 controller；但目标 PR 仍可能
   删除 repo-local workflow、阻止 closed event dispatch，因此
   两个 workflow 都不是 T6 外部信任根。
