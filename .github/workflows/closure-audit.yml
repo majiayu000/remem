@@ -138,8 +138,13 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --json body,closingIssuesReferences \
             > .specrail/runtime/closure-pr-issue-reference.json
+          issue_adapter_args=(.specrail/runtime/closure-pr-issue-reference.json)
+          if python3 scripts/ci/extract_nonclosing_issue.py --help 2>&1 \
+            | grep -Fq -- "--allow-closing"; then
+            issue_adapter_args+=(--allow-closing)
+          fi
           issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
-            .specrail/runtime/closure-pr-issue-reference.json --allow-closing)
+            "${issue_adapter_args[@]}")
           ISSUE_NUMBER="$issue_number" python3 - <<'PY'
           import json
           import os
@@ -149,13 +154,30 @@ jobs:
           sys.path.insert(0, "checks")
           sys.path.insert(0, "scripts/ci")
           from check_pr_tier import (
-              classification_spec_refs,
               declared_sensitive,
-              effective_sensitive,
               normalize_github_changed_file_pages,
           )
           from sensitive_enforcement import classify_sensitive_changes
           from specrail_lib import load_pack
+
+          def classification_spec_refs_compat(changed_paths, issue):
+              if issue <= 0:
+                  raise SystemExit("classification issue must be positive")
+              return sorted(
+                  set(changed_paths)
+                  | {
+                      f"specs/GH{issue}/product.md",
+                      f"specs/GH{issue}/tech.md",
+                  }
+              )
+
+          def effective_sensitive_compat(declaration, classification):
+              computed = classification.get("enforcement_sensitive")
+              if not isinstance(declaration, bool) or not isinstance(computed, bool):
+                  raise SystemExit(
+                      "sensitive declaration and classification must be boolean"
+                  )
+              return declaration or computed
 
           pr = json.loads(Path("/tmp/closure-pr.json").read_text())
           pages = json.loads(Path(".specrail/runtime/closure-changed-files-pages.json").read_text())
@@ -169,7 +191,9 @@ jobs:
           )
           if declaration_failures or declaration is None:
               raise SystemExit("merged PR sensitive declaration is invalid")
-          spec_refs = classification_spec_refs(files["classification_paths"], issue)
+          spec_refs = classification_spec_refs_compat(
+              files["classification_paths"], issue
+          )
           classification = classify_sensitive_changes(
               load_pack(Path(".")), Path("."), files["classification_paths"], spec_refs,
               source="github_changed_files",
@@ -179,7 +203,9 @@ jobs:
               "spec_refs": spec_refs,
               "declared_sensitive": declaration,
               "computed_sensitive": classification["enforcement_sensitive"],
-              "enforcement_sensitive": effective_sensitive(declaration, classification),
+              "enforcement_sensitive": effective_sensitive_compat(
+                  declaration, classification
+              ),
               "classification": classification,
           }
           Path(".specrail/runtime/closure-classification.json").write_text(

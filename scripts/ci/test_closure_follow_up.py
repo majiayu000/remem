@@ -5,7 +5,13 @@ from __future__ import annotations
 
 import ast
 import copy
+import io
+import json
+import os
+import subprocess
 import sys
+import tarfile
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -20,6 +26,7 @@ from closure_follow_up import FollowUpError, ensure_follow_up  # noqa: E402
 
 
 HEAD = "a" * 40
+GH911_TRUSTED_PREMERGE_BASE = "56494ab2b171c5a5e9ade661b1a2047919353004"
 
 
 class FakeGitHub:
@@ -277,6 +284,134 @@ def test_workflow_classification_cannot_be_shrunk_by_the_merged_pr() -> None:
     assert "previous_filename" not in workflow  # no ad-hoc filename-only collector
 
 
+def _workflow_function(workflow: str, name: str) -> Any:
+    lines = workflow.splitlines()
+    start = next(
+        index
+        for index, line in enumerate(lines)
+        if line.startswith(f"          def {name}")
+    )
+    block = [lines[start]]
+    for line in lines[start + 1 :]:
+        indentation = len(line) - len(line.lstrip())
+        if line.strip() and indentation <= 10:
+            break
+        block.append(line)
+    tree = ast.parse(textwrap.dedent("\n".join(block)))
+    function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    )
+    namespace: dict[str, Any] = {}
+    code = compile(
+        ast.Module(body=[function], type_ignores=[]),
+        f"<closure-{name}>",
+        "exec",
+    )
+    exec(code, namespace)
+    return namespace[name]
+
+
+def test_gh911_trusted_premerge_base_compatibility() -> None:
+    """Execute the closure adapter/import surface from #911's exact old base."""
+    workflow = (ROOT / ".github" / "workflows" / "closure-audit.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'grep -Fq -- "--allow-closing"' in workflow
+    assert "issue_adapter_args+=(--allow-closing)" in workflow
+    assert "classification_spec_refs," not in workflow
+    assert "effective_sensitive," not in workflow
+
+    archive = subprocess.run(
+        [
+            "git",
+            "archive",
+            "--format=tar",
+            GH911_TRUSTED_PREMERGE_BASE,
+            "checks",
+            "scripts/ci",
+        ],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+    ).stdout
+    with tempfile.TemporaryDirectory(prefix="remem-gh911-trusted-base-") as raw_tmp:
+        trusted = Path(raw_tmp)
+        with tarfile.open(fileobj=io.BytesIO(archive), mode="r:") as bundle:
+            for member in bundle.getmembers():
+                target = (trusted / member.name).resolve()
+                if not target.is_relative_to(trusted.resolve()):
+                    raise AssertionError("trusted-base archive contains an unsafe path")
+            bundle.extractall(trusted)
+
+        payload = trusted / "pr-reference.json"
+        payload.write_text(
+            json.dumps(
+                {
+                    "body": "Refs #813\nenforcement_sensitive: true",
+                    "closingIssuesReferences": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        adapter = trusted / "scripts" / "ci" / "extract_nonclosing_issue.py"
+        strict = subprocess.run(
+            [sys.executable, str(adapter), str(payload)],
+            cwd=trusted,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        assert strict.stdout.strip() == "813"
+        unsupported = subprocess.run(
+            [sys.executable, str(adapter), str(payload), "--allow-closing"],
+            cwd=trusted,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert unsupported.returncode != 0
+        assert "unrecognized arguments: --allow-closing" in unsupported.stderr
+
+        import_check = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import check_pr_tier as tier; "
+                    "assert callable(tier.declared_sensitive); "
+                    "assert callable(tier.normalize_github_changed_file_pages); "
+                    "assert not hasattr(tier, 'classification_spec_refs'); "
+                    "assert not hasattr(tier, 'effective_sensitive')"
+                ),
+            ],
+            cwd=trusted,
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(
+                    [str(trusted / "checks"), str(trusted / "scripts" / "ci")]
+                ),
+            },
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert import_check.returncode == 0, import_check.stderr
+        assert import_check.stdout == ""
+
+    spec_refs = _workflow_function(workflow, "classification_spec_refs_compat")
+    effective = _workflow_function(workflow, "effective_sensitive_compat")
+    assert spec_refs(["specs/GH813/tasks.md", "workflow.yaml"], 813) == [
+        "specs/GH813/product.md",
+        "specs/GH813/tasks.md",
+        "specs/GH813/tech.md",
+        "workflow.yaml",
+    ]
+    assert effective(True, {"enforcement_sensitive": False}) is True
+    assert effective(False, {"enforcement_sensitive": True}) is True
+
+
 def test_trusted_base_selector_rejects_ambiguous_multi_commit_topology() -> None:
     workflow = (ROOT / ".github" / "workflows" / "closure-audit.yml").read_text(
         encoding="utf-8"
@@ -320,6 +455,7 @@ def main() -> int:
     test_repository_mismatch_blocks_before_write()
     test_workflow_uses_trusted_checkout_and_least_privilege()
     test_workflow_classification_cannot_be_shrunk_by_the_merged_pr()
+    test_gh911_trusted_premerge_base_compatibility()
     test_trusted_base_selector_rejects_ambiguous_multi_commit_topology()
     print("closure follow-up controller tests passed")
     return 0
