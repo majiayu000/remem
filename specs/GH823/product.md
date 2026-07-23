@@ -105,7 +105,10 @@ hook JSON output, reusing the existing host-profile mechanism
    injection path remains blocked for that version. In contrast, a short
    `postToolUse.additional_context` marker was model-visible; any use of that
    capability requires a separate human-approved output/ownership contract and
-   cannot inherit the session-start limit. For any capability enabled after its
+   cannot inherit the session-start limit. GH-823 v1 does not add a
+   `postToolUse` context command/renderer or install entry; enabling that proven
+   host capability requires a later packet amendment that owns its command,
+   output, renderer, install component, and tests. For any capability enabled after its
    smallest bounded marker works, #822 and human approval must freeze a numeric
    `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES` and exact UTF-8 measurement point.
    A body exactly at that limit succeeds. For a body one byte over, the
@@ -142,7 +145,10 @@ hook JSON output, reusing the existing host-profile mechanism
    `preToolUse` names `Read`, `Shell`, `Task`, and `MCP:browser_tabs`, but
    successful `postToolUse` only for `Read`, `Shell`, and `MCP:browser_tabs`.
    `Task` completion used the separate subagent lifecycle and must not be
-   treated as a proven post-tool success variant. Generic `tool_input` was an
+   treated as a proven post-tool success variant. Every accepted generic
+   success requires the observed non-empty string `tool_use_id`; after human
+   adoption it is the sole per-call event/upsert identity, and missing, blank,
+   or wrong-typed values fail before capture. Generic `tool_input` was an
    object and successful `tool_output` was a string. These fields must not be
    decoded as the old draft's guessed pair of JSON strings. Variant-specific
    fields are validated under the #822-approved byte limit before any tool
@@ -163,10 +169,11 @@ hook JSON output, reusing the existing host-profile mechanism
    review must either
    freeze a canonical event/upsert key and failure-precedence rule that safely
    correlates dual-event delivery and map the verified failure event into the
-   observe model with
-   an explicit canonical failure outcome/discriminator preserved through
-   capture, spill, and database persistence (and consumed downstream where
-   relevant), or keep Cursor observe explicitly incomplete and prevent #824
+   observe model with an explicit canonical failure outcome/discriminator
+   preserved through capture and spill, mapped at persistence to the existing
+   `captured_events.event_type = "cursor_tool_failure"` text discriminator
+   without a schema change, and consumed downstream wherever success and
+   failure differ; or keep Cursor observe explicitly incomplete and prevent #824
    from installing or advertising capture. If the real payloads expose no safe
    shared call identity, correlation or content-derived deduplication must not
    be guessed and the disabled/incomplete branch is mandatory. A success-only
@@ -340,9 +347,11 @@ hook JSON output, reusing the existing host-profile mechanism
   hook behavior and canonical single-capture path in B-016. The remaining gates are
   answered or explicitly parked behind a human-approved fail-closed downgrade
   before implementation starts.
-- A-4. Capability evidence stays split: Cursor 3.12.17 post-tool injection may
-  be approved from the visible marker, while session-start injection remains
-  blocked from the absent marker. No implementation or installation path
+- A-4. Capability evidence stays split: Cursor 3.12.17 post-tool injection is
+  recorded as proven from the visible marker, while session-start injection
+  remains blocked from the absent marker. GH-823 v1 implements neither path as
+  a model-visible capability; post-tool enablement requires its own amended
+  command/renderer/install contract. No implementation or installation path
   merges those states or claims an unproved size/version/mode.
 - A-5. A unique `user_email` sentinel is absent from capture, database, spill,
   log/error, adapter, LLM-request, and model-output fixtures, and Cursor `stop`

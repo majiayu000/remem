@@ -88,7 +88,10 @@ command entrypoints retain only dispatch and adaptation. The two current
 context contract pairs remain authoritative: implementation must document the
 Cursor capability-specific context audit in `current-memory-contracts` and
 state how the disabled Cursor 3.12.17 session-start path plus any approved
-post-tool context preserve the cache-stable renderer/layering contract. If implementation
+future post-tool context preserve the cache-stable renderer/layering contract.
+GH-823 v1 adds no post-tool context command/renderer/install entry. The approved
+failure discriminator uses the existing `captured_events.event_type` text
+column and does not add a migration, table, column, or index. If implementation
 requires a path outside this complete manifest, the packet must be amended and
 receive fresh exact-head human approval before that path is changed.
 
@@ -161,7 +164,9 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   `CursorContextProfile`; `resolve_profile()` dispatches it. Profile policy
   (gating, budget) must not inherit `ClaudeCodeContextProfile`: PR #914 proves
   the session-start capability is blocked on 3.12.17 while post-tool context is
-  separately proven. A version/capability matrix is required.
+  separately proven. The GH-823 v1 matrix keeps both emission paths disabled;
+  the proven post-tool row records evidence only until a later packet owns its
+  command/renderer/install contract.
 
 ### 2. Stdin parsing (B-002, B-007, B-008, B-009)
 
@@ -189,7 +194,10 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
 - The Cursor input model requires `hook_event_name` and validates it before
   dispatch: `context` structurally accepts only exact `sessionStart`,
   `observe` accepts human-approved exact `postToolUse` and
-  `postToolUseFailure`; when B-016 selects MCP-specific ownership, `observe`
+  `postToolUseFailure`; every accepted generic `postToolUse` additionally
+  requires the observed non-empty string `tool_use_id`, which becomes the
+  human-approved canonical per-call event/upsert identity. When B-016 selects
+  MCP-specific ownership, `observe`
   additionally accepts exact `afterMCPExecution` with its observed field
   schema. `beforeMCPExecution` remains unregistered and unsupported because it
   has no terminal result. When B-016 selects generic ownership, both specific
@@ -231,7 +239,8 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   for `sessionStart`; the verified normalized root becomes cwd/project. Missing
   or wrong-typed identity, `[]`, `[""]`, mixed-empty, multi-root, or unverified
   platform shapes return non-zero with zero writes. In the observed generic
-  event, `tool_input` is an object and successful `tool_output` is a string;
+  event, `tool_use_id` is a required non-empty string, `tool_input` is an
+  object, and successful `tool_output` is a string;
   MCP-specific `tool_input`/`result_json` are strings. Validate the exact
   variant before any classification or filter; decode string-encoded MCP fields
   once, measure raw generic strings (including successful `tool_output`) as
@@ -262,15 +271,15 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   `failure_type:"error"`, `is_interrupt:false`, and the same `tool_use_id` as
   its pre-tool event. Write/Edit/Delete and failed Shell remain unobserved.
   Human approval must freeze `tool_use_id` as the canonical `event_id`/upsert
-  key for approved variants and the failure-
-  precedence semantics, then either add the verified failure discriminator to
-  the Cursor parser and map it
-  into a new explicit canonical failure outcome/discriminator carried through
-  canonical capture, spill/replay, and database persistence, then consume that
-  outcome in downstream classification/extraction wherever success and failure
-  differ. Current `ParsedHookEvent`/capture persistence has no general failure
-  field, so the implementation must not infer this capability from `exit_code`
-  or the event name. Otherwise mark Cursor observe incomplete and keep its #824
+  key for approved variants and the failure-precedence semantics, then either
+  add `CursorToolOutcome::Failure` to the Cursor parser/canonical spill record,
+  preserve it through replay, and map it to the existing
+  `captured_events.event_type = "cursor_tool_failure"` text discriminator at
+  database persistence. Downstream classification/extraction must consume that
+  exact value wherever success and failure differ. No migration or new capture
+  column is allowed, and the implementation must not infer failure from
+  `exit_code`, content, or an arbitrary event name. Otherwise mark Cursor
+  observe incomplete and keep its #824
   installation entries disabled. The implementation cannot ship a success-only
   observe hook as complete capture. If #822 cannot prove a safe shared call
   identity for dual-event delivery, do not synthesize correlation from mutable
@@ -350,8 +359,10 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
 - PR #914 proves the smallest session-start marker is not model-visible on
   Cursor 3.12.17, so this renderer is structurally testable but the capability
   is disabled/uninstalled for that version. It separately proves a short
-  post-tool marker is model-visible; a later human-approved post-tool output
-  contract may enable it without promoting session-start. Once a chosen
+  post-tool marker is model-visible, but GH-823 v1 adds no post-tool context
+  command, renderer, or install component. A later amended and human-approved
+  post-tool output/ownership contract may enable it without promoting
+  session-start. Once a chosen
   capability works at the smallest bounded size, evidence and human approval freeze a
   numeric `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES`, the exact point at which UTF-8
   bytes are measured, and one over-limit behavior. Exactly-at-limit output must
@@ -383,11 +394,11 @@ not silent.
 |---|---|---|
 | B-001 canonical host recognition plus per-command support | shared hook-host parser + `src/cli/dispatch.rs` + hook entrypoints | exact three host values parse; aliases/unknown/empty fail at all commands and persistence boundaries; `session-init --host cursor` returns explicit unsupported/non-zero before prompt write, stdout, or any side effect |
 | B-002 sessionStart maps one normalized workspace root; parent events retain one cross-event identity while child events retain distinct event-local identity; null transcript_path valid | `src/context/invocation.rs` + shared Cursor identity validator + platform path normalizer | PR #914 event-local equal session_id/conversation_id fixtures succeed; mismatch fails before side effects; a distinct subagent identity is accepted without parent coercion or invented linkage; null start/early/child paths stay null and never inherit parent; `len == 1` plus trimmed non-empty root normalizes before cwd/git/project derivation; unknown platform shapes and invalid/multi-root arrays fail without raw identity persistence or cwd/env fallback |
-| B-003 exact event discriminator drives bounded additional_context JSON | Cursor parser + `src/context/render/helpers.rs` | exact sessionStart serialization is testable but 3.12.17 capability remains disabled from PR #914 absent marker; postToolUse capability is separately proven and needs its own approved contract; missing/unknown/mismatched events exit non-zero; any later-approved numeric limit has exact/one-byte-over tests; other hosts remain green |
+| B-003 exact event discriminator drives bounded additional_context JSON | Cursor parser + `src/context/render/helpers.rs` | exact sessionStart serialization is testable but 3.12.17 capability remains disabled from PR #914 absent marker; postToolUse capability is separately proven but GH-823 v1 has no command/renderer/install entry and requires a later amended packet; missing/unknown/mismatched events exit non-zero; both model-visible paths remain unwired; other hosts remain green |
 | B-004 no control instructions in payload | `src/context/render/helpers.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render/helpers.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
-| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; raw generic input/output exact-byte max and one-byte-over fixtures run before classification; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
+| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/existing DB `event_type` + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; generic success requires non-empty string `tool_use_id` and missing/blank/wrong-type fixtures fail before capture; raw generic input/output exact-byte max and one-byte-over fixtures run before classification; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores exact `cursor_tool_failure` event_type once without migration; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
 | B-008 stop maps identity, status, loop, and #825 reader gate | Cursor parser + `src/summarize` + #822 + #825 | before #825, path never reaches Claude/Codex reader/enqueue/spill/LLM; after prerequisites, PR #914 completed/aborted + numeric loop 0 fixtures and proposed `(session_id,generation_id,loop_count)` replay/conflict matrix pass; missing/blank/wrong-typed generation_id and error/nonzero/missing/null loop shapes remain rejected until approved |
 | B-009 malformed, oversized, or mismatched stdin fails closed | shared bounded Cursor stdin reader + context/observe/summarize command entrypoints | subprocess tests prove exact 1,048,576-byte input reaches normal UTF-8/JSON validation while one-byte-over is rejected before String/serde with a size-only error, empty stdout, and zero writes/enqueues/spills/adapter/LLM calls; invalid JSON, missing fields (including stop generation_id/status), blank/wrong-typed generation_id, wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert the same fail-closed boundary |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
@@ -443,10 +454,11 @@ not silent.
     subagent events;
   - assert equal `session_id`/`conversation_id`, null start/early/subagent
     transcript paths, stable later parent path, and no parent-path substitution;
-  - replay exact generic tool types/names and failed-Read `tool_use_id`;
+  - replay exact generic tool types/names, require successful and failed-Read
+    `tool_use_id`, and reject missing/blank/wrong-typed values;
   - replay the real MCP generic plus before/after-specific delivery and prove
-    MCP-specific ownership registers/writes only the terminal after event while
-    generic ownership keeps both specific events unregistered;
+    the PR #914 baseline generic owner writes once while both specific events
+    remain unregistered/unsupported;
   - replay the capability split: short post-tool marker proven, short
     session-start marker blocked;
   - replay completed/aborted, numeric `loop_count:0`, conditional token fields,
@@ -456,6 +468,9 @@ not silent.
     shortcuts;
   - compare foreground with true background/cloud and multi-root sessions;
   - measure context/tool field limits only on an enabled capability;
+  - before enabling MCP-specific ownership, capture a stable opaque specific
+    per-call ID, then prove after-only registration/write, generic zero-write,
+    two same-tool calls in one generation, and per-call replay;
   - exercise zero, one, and multiple `workspace_roots`, including `[""]`,
     `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots; keep every
     shape other than `len == 1` plus a trimmed non-empty sole element blocked;
