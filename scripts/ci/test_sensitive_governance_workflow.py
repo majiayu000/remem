@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Safety contract for the repo-local sensitive governance advisory."""
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +27,16 @@ def test_trusted_base_classifier_uses_supported_source() -> None:
     assert result["source"] == "github_changed_files"
     assert result["enforcement_sensitive"] is True
 
+    helper = classify_sensitive_changes(
+        load_pack(ROOT),
+        ROOT,
+        ["scripts/ci/specrail_sync_lock.py"],
+        [],
+        source="github_changed_files",
+    )
+    assert helper["enforcement_sensitive"] is True
+    assert helper["matched_paths"] == ["scripts/ci/specrail_sync_lock.py"]
+
 
 def test_changed_file_pages_are_complete_and_rename_aware() -> None:
     result = normalize_github_changed_file_pages(
@@ -41,6 +52,27 @@ def test_changed_file_pages_are_complete_and_rename_aware() -> None:
         assert "count does not match" in str(exc)
     else:
         raise AssertionError("partial changed-file pagination must fail closed")
+
+
+def test_false_fork_boolean_is_valid_identity_evidence() -> None:
+    payload = '{"head":{"repo":{"fork":false}}}'
+    typed = subprocess.run(
+        ["jq", "-e", '.head.repo.fork | type == "boolean"'],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    value = subprocess.run(
+        ["jq", "-r", ".head.repo.fork"],
+        input=payload,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert typed.returncode == 0
+    assert value.returncode == 0
+    assert value.stdout.strip() == "false"
 
 
 def test_every_gate_schema_is_enforcement_sensitive() -> None:
@@ -60,23 +92,41 @@ def test_every_gate_schema_is_enforcement_sensitive() -> None:
 def main() -> int:
     test_trusted_base_classifier_uses_supported_source()
     test_changed_file_pages_are_complete_and_rename_aware()
+    test_false_fork_boolean_is_valid_identity_evidence()
     test_every_gate_schema_is_enforcement_sensitive()
     workflow = WORKFLOW.read_text(encoding="utf-8")
 
     required = [
         "pull_request_target:",
+        "workflow_dispatch:",
+        "issues:",
+        "types: [labeled, unlabeled]",
         "contents: read",
         "pull-requests: read",
         "Resolve fresh live repository and PR identity",
         'gh api "repos/$GITHUB_REPOSITORY/commits/$default_branch"',
+        "jq -e '.head.repo.fork | type == \"boolean\"'",
         "ref: ${{ steps.live.outputs.base_sha }}",
         "persist-credentials: false",
         "Bind remote-tracking PR head without executing it",
         "scripts/ci/extract_nonclosing_issue.py",
+        "--allow-closing",
+        "Classify complete changed paths from trusted base",
+        "normalize_github_changed_file_pages",
+        "classification_spec_refs",
+        "declared_sensitive",
+        "effective_sensitive",
+        "classify_sensitive_changes",
+        '"declared_sensitive": declaration',
+        '"computed_sensitive": classification["enforcement_sensitive"]',
+        "steps.scope.outputs.enforcement_sensitive == 'true'",
         "scripts/ci/run_sensitive_implement_gate.py",
         'authorization: "advisory_only"',
         'final_trust_root: "external_github_app_or_org_required_workflow_t6"',
         "ordinary_pr_ci_is_final_authorization: false",
+        "refresh_after_readiness_change:",
+        "actions: write",
+        "gh workflow run sensitive-governance.yml",
     ]
     for token in required:
         assert token in workflow, f"sensitive governance workflow is missing {token!r}"
@@ -85,7 +135,6 @@ def main() -> int:
         "contents: write",
         "issues: write",
         "pull-requests: write",
-        "actions: write",
         "checks: write",
         "statuses: write",
         "github.event.pull_request.base.sha",
@@ -103,8 +152,16 @@ def main() -> int:
     live = workflow.index("Resolve fresh live repository and PR identity")
     checkout = workflow.index("ref: ${{ steps.live.outputs.base_sha }}")
     bind = workflow.index("Bind remote-tracking PR head without executing it")
+    classification = workflow.index("Classify complete changed paths from trusted base")
     gate = workflow.index("scripts/ci/run_sensitive_implement_gate.py")
-    assert live < checkout < bind < gate
+    refresh = workflow.index("refresh_after_readiness_change:")
+    assert live < checkout < bind < classification < gate < refresh
+    assert "actions: write" not in workflow[:refresh]
+    assert "pull-requests: write" not in workflow[refresh:]
+    assert "contents: write" not in workflow[refresh:]
+    assert "github.event.issue.number" in workflow[refresh:]
+    assert "--ref \"$DEFAULT_BRANCH\"" in workflow[refresh:]
+    assert "strict_issue" not in workflow
     print("sensitive governance workflow safety tests passed")
     return 0
 

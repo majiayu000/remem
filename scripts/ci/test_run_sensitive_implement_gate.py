@@ -488,6 +488,16 @@ class SensitiveImplementGateTests(unittest.TestCase):
         self.assertNotIn("e4867a0517df0d0e8487ac20d702d7a5444c321a", workflow)
         self.assertNotIn("bbc762b6cf6c323e8ea1996e8c7ca44bc41ca9e5", workflow)
 
+    def test_ci_reuses_the_closing_aware_issue_for_sensitive_wrapper(self) -> None:
+        workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        resolve = workflow.index("- name: Resolve linked issue for classification")
+        gate = workflow.index("- name: Run advisory sensitive implementation gate")
+        resolve_block = workflow[resolve:gate]
+        gate_block = workflow[gate:]
+        self.assertIn("--allow-closing", resolve_block)
+        self.assertIn('ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}', gate_block)
+        self.assertNotIn("strict_issue", gate_block)
+
     def test_ci_pins_trusted_default_branch_before_wrapper(self) -> None:
         workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         pin = workflow.index("- name: Pin trusted default branch")

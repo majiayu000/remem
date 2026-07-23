@@ -41,8 +41,38 @@ class NonClosingIssueTests(unittest.TestCase):
         self.assertEqual(MODULE.extract_issue(snapshot("## Issue Links\n\nRefs #813")), 813)
 
     def test_closing_relation_fails(self) -> None:
-        with self.assertRaisesRegex(MODULE.EvidenceError, "non-closing"):
+        with self.assertRaisesRegex(MODULE.EvidenceError, "must not mix"):
             MODULE.extract_issue(snapshot("Refs #813", [{"number": 813}]))
+
+    def test_allow_closing_accepts_one_ordinary_closing_relation(self) -> None:
+        self.assertEqual(
+            MODULE.extract_issue(
+                snapshot("Closes #910", [{"number": 910}]), allow_closing=True
+            ),
+            910,
+        )
+
+    def test_mixed_closing_and_refs_relations_fail_closed(self) -> None:
+        for body, closing in (
+            ("Closes #910\nRefs #813", [{"number": 910}]),
+            ("Closes #813\nRefs #910", [{"number": 813}]),
+        ):
+            with self.subTest(body=body):
+                for allow_closing in (False, True):
+                    with self.assertRaisesRegex(MODULE.EvidenceError, "must not mix"):
+                        MODULE.extract_issue(
+                            snapshot(body, closing), allow_closing=allow_closing
+                        )
+
+    def test_allow_closing_rejects_ambiguous_closing_relations(self) -> None:
+        with self.assertRaisesRegex(MODULE.EvidenceError, "exactly one"):
+            MODULE.extract_issue(
+                snapshot(
+                    "Closes #910 and #911",
+                    [{"number": 910}, {"number": 911}],
+                ),
+                allow_closing=True,
+            )
 
     def test_missing_or_duplicate_visible_refs_fail(self) -> None:
         for body in ("No issue", "Refs #813\nRefs #814"):

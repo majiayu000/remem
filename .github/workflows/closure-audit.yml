@@ -73,19 +73,29 @@ jobs:
           parents = [item.get("sha") for item in merge.get("parents", []) if isinstance(item, dict)]
           if any(not isinstance(sha, str) or full_sha.fullmatch(sha) is None for sha in parents):
               raise SystemExit("merge parent evidence is invalid")
+          def select_trusted_base(parents, commits, merge_sha, total):
+              commit_set = set(commits)
+              if len(parents) == 2:
+                  pr_parents = [sha for sha in parents if sha in commit_set]
+                  base_parents = [sha for sha in parents if sha not in commit_set]
+                  if len(pr_parents) != 1 or len(base_parents) != 1:
+                      raise SystemExit("merge topology does not prove one non-PR base parent")
+                  return base_parents[0], "merge_commit"
+              if len(parents) == 1 and total == 1:
+                  method = (
+                      "single_commit_rebase_or_ff"
+                      if merge_sha in commit_set
+                      else "single_commit_squash"
+                  )
+                  return parents[0], method
+              raise SystemExit(
+                  "multi-commit rebase or ambiguous merge lacks a trusted pre-merge snapshot"
+              )
+
           commit_set = set(commits)
-          if len(parents) == 2:
-              pr_parents = [sha for sha in parents if sha in commit_set]
-              base_parents = [sha for sha in parents if sha not in commit_set]
-              if len(pr_parents) != 1 or len(base_parents) != 1:
-                  raise SystemExit("merge topology does not prove one non-PR base parent")
-              trusted_base, merge_method = base_parents[0], "merge_commit"
-          elif len(parents) == 1 and merge_sha not in commit_set:
-              trusted_base, merge_method = parents[0], "squash"
-          elif len(parents) == 1 and total == 1 and merge_sha in commit_set:
-              trusted_base, merge_method = parents[0], "single_commit_rebase_or_ff"
-          else:
-              raise SystemExit("multi-commit rebase or ambiguous merge lacks a trusted pre-merge snapshot")
+          trusted_base, merge_method = select_trusted_base(
+              parents, commits, merge_sha, total
+          )
           if trusted_base in commit_set:
               raise SystemExit("selected trusted base is PR-controlled")
           proof = {
@@ -128,8 +138,13 @@ jobs:
           gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --json body,closingIssuesReferences \
             > .specrail/runtime/closure-pr-issue-reference.json
+          issue_adapter_args=(.specrail/runtime/closure-pr-issue-reference.json)
+          if python3 scripts/ci/extract_nonclosing_issue.py --help 2>&1 \
+            | grep -Fq -- "--allow-closing"; then
+            issue_adapter_args+=(--allow-closing)
+          fi
           issue_number=$(python3 scripts/ci/extract_nonclosing_issue.py \
-            .specrail/runtime/closure-pr-issue-reference.json)
+            "${issue_adapter_args[@]}")
           ISSUE_NUMBER="$issue_number" python3 - <<'PY'
           import json
           import os
@@ -138,25 +153,83 @@ jobs:
 
           sys.path.insert(0, "checks")
           sys.path.insert(0, "scripts/ci")
-          from check_pr_tier import normalize_github_changed_file_pages
+          from check_pr_tier import (
+              declared_sensitive,
+              normalize_github_changed_file_pages,
+          )
           from sensitive_enforcement import classify_sensitive_changes
           from specrail_lib import load_pack
+
+          def classification_spec_refs_compat(changed_paths, issue):
+              if issue <= 0:
+                  raise SystemExit("classification issue must be positive")
+              return sorted(
+                  set(changed_paths)
+                  | {
+                      f"specs/GH{issue}/product.md",
+                      f"specs/GH{issue}/tech.md",
+                  }
+              )
+
+          def effective_sensitive_compat(declaration, classification):
+              computed = classification.get("enforcement_sensitive")
+              if not isinstance(declaration, bool) or not isinstance(computed, bool):
+                  raise SystemExit(
+                      "sensitive declaration and classification must be boolean"
+                  )
+              return declaration or computed
+
+          def scope_for_closure(declaration, declaration_failures, classification):
+              computed = classification.get("enforcement_sensitive")
+              if not isinstance(computed, bool):
+                  raise SystemExit("trusted sensitive classification must be boolean")
+              if not isinstance(declaration_failures, list):
+                  raise SystemExit("sensitive declaration failures must be a list")
+              declaration_valid = (
+                  isinstance(declaration, bool) and not declaration_failures
+              )
+              return {
+                  "declared_sensitive": (
+                      declaration if isinstance(declaration, bool) else None
+                  ),
+                  "declaration_valid": declaration_valid,
+                  "declaration_failures": declaration_failures,
+                  "computed_sensitive": computed,
+                  "enforcement_sensitive": (
+                      declaration or computed if declaration_valid else computed
+                  ),
+              }
 
           pr = json.loads(Path("/tmp/closure-pr.json").read_text())
           pages = json.loads(Path(".specrail/runtime/closure-changed-files-pages.json").read_text())
           files = normalize_github_changed_file_pages(pages, pr.get("changed_files"))
           issue = int(os.environ["ISSUE_NUMBER"])
-          spec_refs = [f"specs/GH{issue}/product.md", f"specs/GH{issue}/tech.md"]
+          pr_reference = json.loads(
+              Path(".specrail/runtime/closure-pr-issue-reference.json").read_text()
+          )
+          declaration, declaration_failures = declared_sensitive(
+              pr_reference.get("body")
+          )
+          spec_refs = classification_spec_refs_compat(
+              files["classification_paths"], issue
+          )
           classification = classify_sensitive_changes(
               load_pack(Path(".")), Path("."), files["classification_paths"], spec_refs,
               source="github_changed_files",
           )
-          result = {"changed_files": files, "spec_refs": spec_refs, "classification": classification}
+          result = {
+              "changed_files": files,
+              "spec_refs": spec_refs,
+              **scope_for_closure(
+                  declaration, declaration_failures, classification
+              ),
+              "classification": classification,
+          }
           Path(".specrail/runtime/closure-classification.json").write_text(
               json.dumps(result, indent=2) + "\n"
           )
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write("sensitive=" + ("true" if classification["enforcement_sensitive"] else "false") + "\n")
+              output.write("sensitive=" + ("true" if result["enforcement_sensitive"] else "false") + "\n")
           PY
 
       - name: Build external-merge closure evidence
