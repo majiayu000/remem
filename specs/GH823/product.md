@@ -269,12 +269,17 @@ hook JSON output, reusing the existing host-profile mechanism
     `afterMCPExecution`; `beforeMCPExecution` is not registered or accepted by
     `remem observe`, and generic MCP `postToolUse` is accepted structurally only
     to return a successful zero-write result. The after event's observed
-    string input/result becomes the single canonical capture. Human approval
-    must freeze this ownership and its canonical event/upsert key. If approval
-    instead selects generic ownership, #824 registers neither MCP-specific
-    event and the generic post-tool event is the sole writer. Documentation
-    names or guessed mappings are not evidence; no MCP mapping may ship before
-    that decision.
+    string input/result can become the single canonical capture only if #822
+    first observes a stable opaque per-call ID on the specific delivery. PR
+    #914 did not observe `tool_use_id` or another per-call identity there;
+    server/tool/generation or input/result/duration-derived keys are forbidden
+    because repeated same-tool calls can collide. Until follow-up real-host
+    evidence and exact-head human approval freeze that field/type/replay
+    stability, MCP-specific ownership is not selectable and generic ownership
+    is mandatory. Under generic ownership, #824 registers neither
+    MCP-specific event and the proven generic post-tool event—with its approved
+    call identity—is the sole writer. Documentation names or guessed mappings
+    are not evidence; no MCP mapping may ship before that decision.
 
 ## Boundary Checklist
 

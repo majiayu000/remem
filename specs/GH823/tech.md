@@ -249,9 +249,15 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   dedup flag. MCP-specific ownership adds exact `afterMCPExecution` parsing
   with string `tool_input`/`result_json`, leaves `beforeMCPExecution`
   unregistered, and makes generic MCP `postToolUse` a successful zero-write
-  event. Generic ownership accepts the proven generic post-tool path and keeps
-  both specific events unregistered. Either route maps to one canonical
-  call/upsert key and dual delivery never writes twice.
+  event, but that branch is eligible only after #822 observes and a human
+  freezes a stable opaque per-call ID on the specific payload. PR #914's
+  specific payload has no `tool_use_id`; server/tool/generation and
+  input/result/duration-derived hashes are not call identity. Without that
+  evidence the branch stays blocked and generic ownership accepts the proven
+  generic post-tool path while keeping both specific events unregistered.
+  Any eligible route maps two same-tool calls in one generation to distinct
+  canonical upsert keys, maps replay of each call to itself, and never writes
+  dual delivery twice.
 - PR #914 proves one failed Read emits `postToolUseFailure` with
   `failure_type:"error"`, `is_interrupt:false`, and the same `tool_use_id` as
   its pre-tool event. Write/Edit/Delete and failed Shell remain unobserved.
@@ -390,7 +396,7 @@ not silent.
 | B-013 invalid and multi-root arrays remain fail-closed | context/observe/summarize parsing + #822/human gate | each event fixture covers `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots and returns non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
 | B-014 user_email/PII removed before every sink | Cursor sanitization boundary + capture/spill/adapter/summarize paths | unique email sentinel is absent from DB, decoded spill fixture, logs/errors, adapter request, LLM prompt, and generated summary across success and forced-failure paths |
 | B-015 bounded variant validation/decode precedes classification | Cursor parser + generic/known-tool dispatch | generic object input/string output and MCP string input/result fixtures validate exact types; raw generic UTF-8, encoded, and canonical lengths at approved limit succeed; every one-byte-over/malformed case fails with zero writes/calls |
-| B-016 real MCP event gate | #822/PR #914 evidence + conditional Cursor observe variants | browser_tabs fixture proves generic and before/after MCP delivery with string input/result; approved MCP-specific ownership registers and parses only afterMCPExecution, keeps beforeMCPExecution unregistered, and makes generic MCP postToolUse zero-write; generic ownership keeps both specific events unregistered; either mode has exactly one canonical capture/upsert |
+| B-016 real MCP event gate | #822/PR #914 evidence + conditional Cursor observe variants | browser_tabs fixture proves generic and before/after MCP delivery with string input/result but no specific per-call ID；generic ownership keeps both specific events unregistered and remains the only selectable branch until follow-up evidence freezes a stable opaque specific-event call ID；an approved specific branch registers only afterMCPExecution, keeps beforeMCPExecution unregistered, makes generic MCP postToolUse zero-write, and proves two same-tool calls in one generation remain distinct while replay is idempotent |
 
 ## Risks
 
@@ -421,9 +427,10 @@ not silent.
   classification during decode. B-015 bounds raw, encoded, and decoded forms
   before dispatch.
 - R9. PR #914 proves generic plus before/after MCP-specific delivery for one
-  call. B-016 selects the terminal after event as the only MCP-specific writer,
-  leaves the before event unregistered, and makes the generic copy zero-write
-  so the evidence cannot be persisted twice.
+  call but no stable ID on the specific payload. B-016 therefore defaults to
+  generic ownership; the terminal after event cannot become the sole writer
+  until follow-up evidence proves an opaque per-call ID, including two
+  same-tool calls in one generation and replay stability.
 
 ## Verification Plan
 
