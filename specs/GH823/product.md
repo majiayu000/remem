@@ -206,7 +206,14 @@ hook JSON output, reusing the existing host-profile mechanism
    required by the Cursor event contract, or whose `hook_event_name` is unknown
    or mismatched with the invoked command, fails closed: error-level log with
    the event name and a redacted parse failure, non-zero exit, no stdout, no
-   fallback to CLI/current cwd, and no partial persistence.
+   fallback to CLI/current cwd, and no partial persistence. Independently of
+   the per-field B-015 limit, every Cursor hook entrypoint applies the proposed
+   human-frozen `CURSOR_HOOK_STDIN_MAX_BYTES = 1_048_576` byte limit while
+   reading stdin, before allocating a `String`, parsing JSON, or retaining a
+   payload preview. Exactly 1,048,576 bytes may proceed to UTF-8/JSON
+   validation. A stream containing one byte more fails non-zero with empty
+   stdout, zero writes/enqueues/spills/adapter or LLM calls, and a redacted
+   size-only error.
 10. B-010 Claude Code and Codex protocol behavior is byte-identical before and
     after this change for valid canonical-host inputs (zero regression).
     B-001's rejection of aliases and arbitrary explicit host values is the only
@@ -256,13 +263,18 @@ hook JSON output, reusing the existing host-profile mechanism
     `preToolUse`/`postToolUse` under `MCP:browser_tabs` plus specific
     `beforeMCPExecution`/`afterMCPExecution`. The specific payload used string
     `tool_input`/`result_json`, `mcp_server_name: "cursor-ide-browser"`, and
-    `tool_name: "browser_tabs"`. Human approval must select one canonical
-    capture/upsert path and prevent double capture across generic and
-    MCP-specific delivery. If it selects the MCP-specific path, `observe` must
-    accept the exact `beforeMCPExecution`/`afterMCPExecution` variants and their
-    observed string fields; if it selects the generic path, #824 must not
-    register the MCP-specific pair. Documentation names or guessed mappings are
-    not evidence; no MCP mapping may ship before that decision.
+    `tool_name: "browser_tabs"`. This packet proposes the only complete
+    post-result event, `afterMCPExecution`, as the canonical MCP-specific
+    capture owner. Under that ownership, #824 registers only
+    `afterMCPExecution`; `beforeMCPExecution` is not registered or accepted by
+    `remem observe`, and generic MCP `postToolUse` is accepted structurally only
+    to return a successful zero-write result. The after event's observed
+    string input/result becomes the single canonical capture. Human approval
+    must freeze this ownership and its canonical event/upsert key. If approval
+    instead selects generic ownership, #824 registers neither MCP-specific
+    event and the generic post-tool event is the sole writer. Documentation
+    names or guessed mappings are not evidence; no MCP mapping may ship before
+    that decision.
 
 ## Boundary Checklist
 
@@ -278,7 +290,7 @@ hook JSON output, reusing the existing host-profile mechanism
 | Degradation / fallback | covered: B-005, B-006, B-007 (no silent rewrite), B-008 |
 | Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully), B-014 (PII sentinel absent), B-016 (real MCP probe) |
 | Cancellation / interruption / partial completion | covered: B-008 (observed aborted and any later-approved error Stop payloads) |
-| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-015 (raw generic string plus encoded and decoded tool-field limits) |
+| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-009 (whole-stdin limit before String/serde), B-015 (raw generic string plus encoded and decoded tool-field limits) |
 | Failed tool execution | covered: B-007 (real failure-event probe; preserve failure evidence or keep observe uninstalled/incomplete) |
 
 ## PR #914 Evidence Resolution and Remaining Gates

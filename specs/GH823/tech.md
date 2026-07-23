@@ -92,13 +92,29 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   or wrong field types return an error to CLI dispatch. Context generation is
   not called, the process exits non-zero, stdout remains empty, and no current
   cwd/CLI fallback is permitted.
+- Before any Cursor hook entrypoint allocates a `String`, calls serde, or
+  retains a payload preview, read stdin through a bounded byte reader with the
+  proposed human-frozen
+  `CURSOR_HOOK_STDIN_MAX_BYTES: usize = 1_048_576`. The implementation reads at
+  most `CURSOR_HOOK_STDIN_MAX_BYTES + 1` bytes (for example through
+  `Read::take` into a byte buffer), rejects the one-byte-over sentinel before
+  UTF-8 conversion, and only then converts/parses the exact-limit-or-smaller
+  buffer. This whole-payload limit is distinct from
+  `CURSOR_TOOL_FIELD_MAX_BYTES`. The error records only the configured bound
+  and a generated correlation id; it never contains raw bytes or a payload
+  preview. The shared bounded reader is used by Cursor `context`, `observe`,
+  and `summarize`; unsupported `session-init --host cursor` exits at dispatch
+  before reading stdin. Tests prove exact-limit success reaches normal
+  validation and one-byte-over returns non-zero, empty stdout, and zero
+  persistence, enqueue, spill, adapter, or LLM calls for every entrypoint.
 - The Cursor input model requires `hook_event_name` and validates it before
   dispatch: `context` structurally accepts only exact `sessionStart`,
   `observe` accepts human-approved exact `postToolUse` and
   `postToolUseFailure`; when B-016 selects MCP-specific ownership, `observe`
-  additionally accepts exact `beforeMCPExecution`/`afterMCPExecution` with
-  their own observed field schema. When B-016 selects generic ownership, those
-  specific events remain unregistered and unsupported. `summarize` accepts only exact `stop`. PR #914
+  additionally accepts exact `afterMCPExecution` with its observed field
+  schema. `beforeMCPExecution` remains unregistered and unsupported because it
+  has no terminal result. When B-016 selects generic ownership, both specific
+  events remain unregistered and unsupported. `summarize` accepts only exact `stop`. PR #914
   provides the Read failure shape and matching `tool_use_id`; no other failure
   event is accepted by analogy. Unknown values and event/command mismatches return non-zero before
   adapter or renderer selection; they never fall through to plain-text or
@@ -151,11 +167,12 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   original `tool_name` and decoded input/output. They are never remapped or
   discarded after diagnosis (B-007, B-015).
 - The B-016 ownership decision controls a closed event-variant set, not only a
-  dedup flag. MCP-specific ownership adds exact
-  `beforeMCPExecution`/`afterMCPExecution` parsing with string
-  `tool_input`/`result_json`; generic ownership accepts the proven generic
-  post-tool path and keeps the specific pair unregistered. Either route maps to
-  one canonical call/upsert key and dual delivery never writes twice.
+  dedup flag. MCP-specific ownership adds exact `afterMCPExecution` parsing
+  with string `tool_input`/`result_json`, leaves `beforeMCPExecution`
+  unregistered, and makes generic MCP `postToolUse` a successful zero-write
+  event. Generic ownership accepts the proven generic post-tool path and keeps
+  both specific events unregistered. Either route maps to one canonical
+  call/upsert key and dual delivery never writes twice.
 - PR #914 proves one failed Read emits `postToolUseFailure` with
   `failure_type:"error"`, `is_interrupt:false`, and the same `tool_use_id` as
   its pre-tool event. Write/Edit/Delete and failed Shell remain unobserved.
@@ -287,14 +304,14 @@ not silent.
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
 | B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; raw generic input/output exact-byte max and one-byte-over fixtures run before classification; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
 | B-008 stop maps identity, status, loop, and #825 reader gate | Cursor parser + `src/summarize` + #822 + #825 | before #825, path never reaches Claude/Codex reader/enqueue/spill/LLM; after prerequisites, PR #914 completed/aborted + numeric loop 0 fixtures and proposed `(session_id,generation_id,loop_count)` replay/conflict matrix pass; missing/blank/wrong-typed generation_id and error/nonzero/missing/null loop shapes remain rejected until approved |
-| B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields (including stop generation_id/status), blank/wrong-typed generation_id, wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills/LLM calls |
+| B-009 malformed, oversized, or mismatched stdin fails closed | shared bounded Cursor stdin reader + context/observe/summarize command entrypoints | subprocess tests prove exact 1,048,576-byte input reaches normal UTF-8/JSON validation while one-byte-over is rejected before String/serde with a size-only error, empty stdout, and zero writes/enqueues/spills/adapter/LLM calls; invalid JSON, missing fields (including stop generation_id/status), blank/wrong-typed generation_id, wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert the same fail-closed boundary |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
 | B-011 DB host value is `cursor` | shared host parser + capture/enqueue/persistence boundaries | `as_db_value()` unit test plus DB integration tests proving only canonical `cursor` reaches each hook-origin host column |
 | B-012 capability-specific real-agent marker gate | #822/PR #914 evidence | Cursor 3.12.17 postToolUse is proven and sessionStart is blocked; version/mode/size mismatch cannot promote either state |
 | B-013 invalid and multi-root arrays remain fail-closed | context/observe/summarize parsing + #822/human gate | each event fixture covers `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots and returns non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
 | B-014 user_email/PII removed before every sink | Cursor sanitization boundary + capture/spill/adapter/summarize paths | unique email sentinel is absent from DB, decoded spill fixture, logs/errors, adapter request, LLM prompt, and generated summary across success and forced-failure paths |
 | B-015 bounded variant validation/decode precedes classification | Cursor parser + generic/known-tool dispatch | generic object input/string output and MCP string input/result fixtures validate exact types; raw generic UTF-8, encoded, and canonical lengths at approved limit succeed; every one-byte-over/malformed case fails with zero writes/calls |
-| B-016 real MCP event gate | #822/PR #914 evidence + conditional Cursor observe variants | browser_tabs fixture proves generic and before/after MCP delivery with string input/result; approved ownership selects the corresponding accepted/registered event set and one canonical capture/upsert path; specific ownership has parser tests for both MCP events, generic ownership keeps them unregistered, and dual delivery never duplicates |
+| B-016 real MCP event gate | #822/PR #914 evidence + conditional Cursor observe variants | browser_tabs fixture proves generic and before/after MCP delivery with string input/result; approved MCP-specific ownership registers and parses only afterMCPExecution, keeps beforeMCPExecution unregistered, and makes generic MCP postToolUse zero-write; generic ownership keeps both specific events unregistered; either mode has exactly one canonical capture/upsert |
 
 ## Risks
 
@@ -324,9 +341,10 @@ not silent.
 - R8. Raw strings or nested JSON strings can exceed the bound or alter
   classification during decode. B-015 bounds raw, encoded, and decoded forms
   before dispatch.
-- R9. PR #914 proves both generic and MCP-specific delivery for one call;
-  without B-016 single-capture ownership, the same evidence could be persisted
-  twice.
+- R9. PR #914 proves generic plus before/after MCP-specific delivery for one
+  call. B-016 selects the terminal after event as the only MCP-specific writer,
+  leaves the before event unregistered, and makes the generic copy zero-write
+  so the evidence cannot be persisted twice.
 
 ## Verification Plan
 
@@ -341,7 +359,8 @@ not silent.
     transcript paths, stable later parent path, and no parent-path substitution;
   - replay exact generic tool types/names and failed-Read `tool_use_id`;
   - replay the real MCP generic plus before/after-specific delivery and prove
-    the approved canonical path writes once;
+    MCP-specific ownership registers/writes only the terminal after event while
+    generic ownership keeps both specific events unregistered;
   - replay the capability split: short post-tool marker proven, short
     session-start marker blocked;
   - replay completed/aborted, numeric `loop_count:0`, conditional token fields,
