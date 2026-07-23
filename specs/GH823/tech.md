@@ -139,10 +139,13 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   event, `tool_input` is an object and successful `tool_output` is a string;
   MCP-specific `tool_input`/`result_json` are strings. Validate the exact
   variant before any classification or filter; decode string-encoded MCP fields
-  once, serialize object/decoded JSON canonically, and validate byte length against one
-  numeric `CURSOR_TOOL_FIELD_MAX_BYTES` frozen by the #822 evidence and human
-  approval. Invalid nested JSON or either over-limit representation returns
-  non-zero before capture, spill, adapter dispatch, or raw-data diagnostics.
+  once, measure raw generic strings (including successful `tool_output`) as
+  their exact UTF-8 bytes, serialize object/decoded JSON canonically, and
+  validate every applicable representation against one numeric
+  `CURSOR_TOOL_FIELD_MAX_BYTES` frozen by the #822 evidence and human approval.
+  Invalid nested JSON or any over-limit raw/encoded/canonical representation
+  returns non-zero before capture, spill, adapter dispatch, or raw-data
+  diagnostics.
   Tool-name mapping lives in one place; unknown names bypass known-tool
   classification but still use the existing generic capture path with the
   original `tool_name` and decoded input/output. They are never remapped or
@@ -196,10 +199,13 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   to be a string in the human-approved observed set. PR #914 proves
   `completed` and `aborted`; `error` remains unobserved. Require numeric
   `loop_count` (observed `0`) and build the proposed canonical Stop key from
-  `(session_id, generation_id, loop_count)` only after identity equality.
-  Validate it before transcript-reader selection, enqueue, spill, persistence,
-  or LLM dispatch; missing, blank, wrong-typed, unapproved status/loop values return
-  non-zero with zero downstream calls. After #825 lands, decision (B-008):
+  `(session_id, generation_id, loop_count)` only after identity equality and
+  after validating `generation_id` as a required non-empty string. Validate
+  every key component before transcript-reader selection, enqueue, spill,
+  persistence, or LLM dispatch; missing, blank, or wrong-typed
+  `generation_id`, plus missing/blank/wrong-typed/unapproved status or loop
+  values, returns non-zero with zero downstream calls. After #825 lands,
+  decision (B-008):
   `aborted`/any later-approved `error` still preserve already captured events;
   the LLM summary call
   runs for `completed` and `aborted`, and is skipped with an error-level log for
@@ -279,15 +285,15 @@ not silent.
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
-| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
-| B-008 stop maps identity, status, loop, and #825 reader gate | Cursor parser + `src/summarize` + #822 + #825 | before #825, path never reaches Claude/Codex reader/enqueue/spill/LLM; after prerequisites, PR #914 completed/aborted + numeric loop 0 fixtures and proposed `(session_id,generation_id,loop_count)` replay/conflict matrix pass; error/nonzero/missing/null remain rejected until approved |
-| B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields (including stop status), wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills/LLM calls |
+| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; raw generic input/output exact-byte max and one-byte-over fixtures run before classification; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
+| B-008 stop maps identity, status, loop, and #825 reader gate | Cursor parser + `src/summarize` + #822 + #825 | before #825, path never reaches Claude/Codex reader/enqueue/spill/LLM; after prerequisites, PR #914 completed/aborted + numeric loop 0 fixtures and proposed `(session_id,generation_id,loop_count)` replay/conflict matrix pass; missing/blank/wrong-typed generation_id and error/nonzero/missing/null loop shapes remain rejected until approved |
+| B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields (including stop generation_id/status), blank/wrong-typed generation_id, wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills/LLM calls |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
 | B-011 DB host value is `cursor` | shared host parser + capture/enqueue/persistence boundaries | `as_db_value()` unit test plus DB integration tests proving only canonical `cursor` reaches each hook-origin host column |
 | B-012 capability-specific real-agent marker gate | #822/PR #914 evidence | Cursor 3.12.17 postToolUse is proven and sessionStart is blocked; version/mode/size mismatch cannot promote either state |
 | B-013 invalid and multi-root arrays remain fail-closed | context/observe/summarize parsing + #822/human gate | each event fixture covers `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots and returns non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
 | B-014 user_email/PII removed before every sink | Cursor sanitization boundary + capture/spill/adapter/summarize paths | unique email sentinel is absent from DB, decoded spill fixture, logs/errors, adapter request, LLM prompt, and generated summary across success and forced-failure paths |
-| B-015 bounded variant validation/decode precedes classification | Cursor parser + generic/known-tool dispatch | generic object input/string output and MCP string input/result fixtures validate exact types; encoded and canonical lengths at approved limit succeed; over-limit/malformed fail with zero writes/calls |
+| B-015 bounded variant validation/decode precedes classification | Cursor parser + generic/known-tool dispatch | generic object input/string output and MCP string input/result fixtures validate exact types; raw generic UTF-8, encoded, and canonical lengths at approved limit succeed; every one-byte-over/malformed case fails with zero writes/calls |
 | B-016 real MCP event gate | #822/PR #914 evidence + conditional Cursor observe variants | browser_tabs fixture proves generic and before/after MCP delivery with string input/result; approved ownership selects the corresponding accepted/registered event set and one canonical capture/upsert path; specific ownership has parser tests for both MCP events, generic ownership keeps them unregistered, and dual delivery never duplicates |
 
 ## Risks
@@ -315,8 +321,9 @@ not silent.
 - R7. Cursor account PII such as `user_email` can leak through generic capture,
   spill, error previews, or LLM prompts unless removed before canonicalization;
   B-014 makes the sanitized event the only downstream representation.
-- R8. Nested JSON strings can expand during decode or alter classification.
-  B-015 bounds encoded and decoded forms and requires decode before dispatch.
+- R8. Raw strings or nested JSON strings can exceed the bound or alter
+  classification during decode. B-015 bounds raw, encoded, and decoded forms
+  before dispatch.
 - R9. PR #914 proves both generic and MCP-specific delivery for one call;
   without B-016 single-capture ownership, the same evidence could be persisted
   twice.
@@ -367,7 +374,7 @@ not silent.
   persistence outcomes.
 - Run the B-014 sentinel suite through capture success, forced database-open
   spill, replay, parse error, adapter request, and LLM fake-provider paths.
-- Run B-015 malformed, exact-limit, encoded-over-limit, and
+- Run B-015 malformed, raw-generic exact/one-byte-over, encoded-over-limit, and
   decoded-expansion-over-limit cases before classifier invocation.
 - For an approved failed-tool mapping, run the observed failed-Read fixture
   through canonical capture/spill/replay/database and downstream consumers;

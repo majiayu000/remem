@@ -146,8 +146,11 @@ hook JSON output, reusing the existing host-profile mechanism
    object and successful `tool_output` was a string. These fields must not be
    decoded as the old draft's guessed pair of JSON strings. Variant-specific
    fields are validated under the #822-approved byte limit before any tool
-   classification, filtering, capture, or adapter dispatch; malformed or
-   over-limit fields fail closed with zero writes. An
+   classification, filtering, capture, or adapter dispatch: raw generic string
+   fields, including successful `tool_output`, are measured as their exact
+   UTF-8 bytes, while object or decoded representations are measured in their
+   canonical form. Malformed or over-limit fields fail closed with zero
+   writes. An
    unrecognized `tool_name` follows the existing generic-capture contract: it
    is recorded verbatim with the decoded generic input/output and is never
    skipped, silently rewritten, or forced through a known-tool classifier (the
@@ -188,10 +191,13 @@ hook JSON output, reusing the existing host-profile mechanism
    analogy. Both observed statuses carried numeric `loop_count: 0`; completed
    included token-count fields while aborted omitted them. The canonical Stop
    key is proposed as `(session_id, generation_id, loop_count)` after B-002
-   equality validation; replay/conflict behavior and nonzero/missing/null loop
-   handling require exact-head human approval. A missing, blank, wrong-typed,
-   unapproved status, or unapproved loop shape fails non-zero before transcript
-   reading, enqueue, spill, persistence, or an LLM call. After #825, `aborted`
+   equality validation. `generation_id` is a required non-empty string and
+   must be validated before constructing or looking up that key;
+   replay/conflict behavior and nonzero/missing/null loop handling require
+   exact-head human approval. A missing, blank, or wrong-typed
+   `generation_id`, missing/blank/wrong-typed/unapproved status, or unapproved
+   loop shape fails non-zero before transcript reading, enqueue, spill,
+   persistence, or an LLM call. After #825, `aborted`
    and any later-approved `error` must not
    discard capture that was already persisted; whether they suppress the LLM
    summary call is an explicit decision recorded in the tech spec, not an
@@ -237,11 +243,14 @@ hook JSON output, reusing the existing host-profile mechanism
     `result_json` are strings. Each event variant validates its observed field
     types before tool-name mapping, known-tool classification, generic capture,
     or filtering. String-encoded MCP fields are decoded exactly once. Human
-    approval freezes a numeric `CURSOR_TOOL_FIELD_MAX_BYTES` applying to
-    encoded strings and canonical decoded/object representations. Invalid nested JSON, encoded input
-    above the limit, or decoded expansion above the limit fails non-zero with
-    no capture, enqueue, spill, adapter call, or diagnostic containing raw
-    payload data. Boundary tests cover exactly-at-limit and one-byte-over data.
+    approval freezes a numeric `CURSOR_TOOL_FIELD_MAX_BYTES` applying to raw
+    generic strings, encoded strings, and canonical decoded/object
+    representations. Raw generic strings are measured as exact UTF-8 bytes
+    before classification or dispatch. Invalid nested JSON, any raw or encoded
+    string above the limit, or decoded expansion above the limit fails
+    non-zero with no capture, enqueue, spill, adapter call, or diagnostic
+    containing raw payload data. Boundary tests cover exactly-at-limit and
+    one-byte-over data for every representation.
 16. B-016 PR #914 invoked the read-only
     `cursor-ide-browser.browser_tabs` MCP tool and observed generic
     `preToolUse`/`postToolUse` under `MCP:browser_tabs` plus specific
@@ -269,7 +278,7 @@ hook JSON output, reusing the existing host-profile mechanism
 | Degradation / fallback | covered: B-005, B-006, B-007 (no silent rewrite), B-008 |
 | Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully), B-014 (PII sentinel absent), B-016 (real MCP probe) |
 | Cancellation / interruption / partial completion | covered: B-008 (observed aborted and any later-approved error Stop payloads) |
-| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-015 (encoded and decoded tool-field limits) |
+| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-015 (raw generic string plus encoded and decoded tool-field limits) |
 | Failed tool execution | covered: B-007 (real failure-event probe; preserve failure evidence or keep observe uninstalled/incomplete) |
 
 ## PR #914 Evidence Resolution and Remaining Gates
@@ -294,7 +303,9 @@ hook JSON output, reusing the existing host-profile mechanism
   read-only browser call. Canonical single-capture ownership remains a human
   decision.
 - Stop evidence: `completed` and `aborted` plus numeric `loop_count: 0` were
-  observed; `error`, nonzero, missing, null, and replay stability remain
+  observed; `error`, nonzero/missing/null loop shapes, and replay stability
+  remain unobserved and blocked pending #822 evidence plus exact-head human
+  approval.
 
 ## Acceptance Criteria
 
