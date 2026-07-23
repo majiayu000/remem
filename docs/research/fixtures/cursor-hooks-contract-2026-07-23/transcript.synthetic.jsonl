@@ -1,0 +1,7 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<synthetic-user-message>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"<synthetic-tool-preamble>"},{"type":"tool_use","name":"Read","input":{"file_path":"<synthetic-path>"}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"<synthetic-final-response>"}]}}
+{"type":"turn_ended","status":"success"}
+{"role":"user","message":{"content":[{"type":"text","text":"<synthetic-cancelled-request>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"<synthetic-partial-response>"}]}}
+{"type":"turn_ended","status":"error","error":"User aborted request"}

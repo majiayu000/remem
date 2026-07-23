@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "<probe-script> sessionStart <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "sessionEnd": [
+      {
+        "command": "<probe-script> sessionEnd <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "beforeSubmitPrompt": [
+      {
+        "command": "<probe-script> beforeSubmitPrompt <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "<probe-script> preToolUse <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "<probe-script> postToolUse <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "postToolUseFailure": [
+      {
+        "command": "<probe-script> postToolUseFailure <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "beforeReadFile": [
+      {
+        "command": "<probe-script> beforeReadFile <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "<probe-script> beforeShellExecution <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "<probe-script> afterShellExecution <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "<probe-script> beforeMCPExecution <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "afterMCPExecution": [
+      {
+        "command": "<probe-script> afterMCPExecution <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "subagentStart": [
+      {
+        "command": "<probe-script> subagentStart <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "subagentStop": [
+      {
+        "command": "<probe-script> subagentStop <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "preCompact": [
+      {
+        "command": "<probe-script> preCompact <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "afterAgentThought": [
+      {
+        "command": "<probe-script> afterAgentThought <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "afterAgentResponse": [
+      {
+        "command": "<probe-script> afterAgentResponse <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ],
+    "stop": [
+      {
+        "command": "<probe-script> stop <private-run-dir> <context-mode-file>",
+        "timeout": 10
+      }
+    ]
+  }
+}
