@@ -8,8 +8,8 @@ Tracking:
 - Product spec: specs/GH823/product.md
 - Epic: #821 · Prerequisite PoC: #822
 - Evidence: PR #914 exact head
-  `c4ab9b84788bc349b9674525b4c2bf5400f6606f` (Cursor 3.12.17), awaiting
-  human adoption
+  `c0802c42c3fc22770aecb0b7b2eec88f117f795c` (Cursor 3.12.17), merged and
+  human-adopted
 - Readiness: blocked on human evidence/spec approval and remaining bounded gates; Cursor
   summarize is additionally blocked on #825's verified transcript reader.
 
@@ -115,11 +115,15 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   null-tolerant. PR #914 additionally requires null tolerance on the first
   prompt/tool events and inner subagent tool events; never substitute the
   parent transcript path.
-- Treat `sessionStart.session_id`, `postToolUse.conversation_id`, and
-  `stop.conversation_id` as one canonical-session contract, not three unrelated
-  strings. PR #914 observed both fields on every captured event and exact
-  equality within each identity. Require exact equality.
-  Missing, blank, wrong-typed, or mismatched identity returns non-zero before
+- Treat parent-session `sessionStart.session_id`, parent tool-event identity,
+  and `stop.conversation_id` as one canonical-session contract, not unrelated
+  strings. Separately require exact `session_id == conversation_id` equality
+  within every event that carries both fields. PR #914 also observed inner
+  subagent tool events with a distinct internally equal identity and a null
+  transcript path. Preserve that child identity as its own canonical event
+  identity; do not compare or coerce it to the parent, and do not manufacture a
+  parent-child link without a verified producer field. Missing, blank,
+  wrong-typed, or event-local mismatched identity returns non-zero before
   rendering, adapter dispatch, transcript access, enqueue, spill, or database
   writes. No event-local alias or fallback may manufacture continuity.
 - `src/observe/hook.rs`: accept the Cursor `postToolUse` shape only after #822
@@ -158,10 +162,12 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   identity for dual-event delivery, do not synthesize correlation from mutable
   payload content: the disabled/incomplete branch is required. Tests for an
   approved mapping must assert
-  the stored failure outcome for both Bash and edit/write failures, prove
-  both-event delivery persists exactly once with failure precedence, cover
-  spill/replay and downstream consumption, and prove malformed failure payloads
-  produce zero writes.
+  the stored failure outcome for the observed failed Read, prove both-event
+  delivery persists exactly once with failure precedence, cover spill/replay
+  and downstream consumption, and prove malformed failure payloads produce zero
+  writes. Unobserved Bash and edit/write failures may only have disabled-path
+  or generic-capture assertions; they must not be assigned a stored failure
+  outcome until real-host evidence and human approval freeze their variants.
 - `src/summarize`: accept the Cursor `stop` shape only after #822 verifies its
   exact fields. Map required non-empty `conversation_id` to
   `SummarizeInput.session_id` before the existing missing-session early return,
@@ -259,7 +265,7 @@ not silent.
 | Behavior invariant | Implementation area | Verification |
 |---|---|---|
 | B-001 canonical host recognition plus per-command support | shared hook-host parser + `src/cli/dispatch.rs` + hook entrypoints | exact three host values parse; aliases/unknown/empty fail at all commands and persistence boundaries; `session-init --host cursor` returns explicit unsupported/non-zero before prompt write, stdout, or any side effect |
-| B-002 sessionStart maps one normalized workspace root and one cross-event canonical identity; null transcript_path valid | `src/context/invocation.rs` + shared Cursor identity validator + platform path normalizer | PR #914 equal session_id/conversation_id fixtures succeed; mismatch fails before side effects; null start/early/child paths stay null and never inherit parent; `len == 1` plus trimmed non-empty root normalizes before cwd/git/project derivation; unknown platform shapes and invalid/multi-root arrays fail without raw identity persistence or cwd/env fallback |
+| B-002 sessionStart maps one normalized workspace root; parent events retain one cross-event identity while child events retain distinct event-local identity; null transcript_path valid | `src/context/invocation.rs` + shared Cursor identity validator + platform path normalizer | PR #914 event-local equal session_id/conversation_id fixtures succeed; mismatch fails before side effects; a distinct subagent identity is accepted without parent coercion or invented linkage; null start/early/child paths stay null and never inherit parent; `len == 1` plus trimmed non-empty root normalizes before cwd/git/project derivation; unknown platform shapes and invalid/multi-root arrays fail without raw identity persistence or cwd/env fallback |
 | B-003 exact event discriminator drives bounded additional_context JSON | Cursor parser + `src/context/render.rs` | exact sessionStart serialization is testable but 3.12.17 capability remains disabled from PR #914 absent marker; postToolUse capability is separately proven and needs its own approved contract; missing/unknown/mismatched events exit non-zero; any later-approved numeric limit has exact/one-byte-over tests; other hosts remain green |
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
@@ -354,11 +360,13 @@ not silent.
   spill, replay, parse error, adapter request, and LLM fake-provider paths.
 - Run B-015 malformed, exact-limit, encoded-over-limit, and
   decoded-expansion-over-limit cases before classifier invocation.
-- For an approved failed-tool mapping, run failure fixtures through canonical
-  capture/spill/replay/database and downstream consumers; assert the explicit
-  stored failure outcome for Bash and edit/write, exactly-once persistence when
-  both events fire, and failure precedence. Otherwise, verify #824 installs no
-  Cursor observe hook and doctor reports capture as explicitly incomplete.
+- For an approved failed-tool mapping, run the observed failed-Read fixture
+  through canonical capture/spill/replay/database and downstream consumers;
+  assert its explicit stored failure outcome, exactly-once persistence when
+  both events fire, and failure precedence. For unobserved Bash and edit/write
+  failure variants, assert only the approved generic/disabled behavior and no
+  invented outcome. Otherwise, verify #824 installs no Cursor observe hook and
+  doctor reports capture as explicitly incomplete.
 
 ## Rollback
 

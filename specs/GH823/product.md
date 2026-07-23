@@ -7,7 +7,7 @@ Tracking:
 - Spec/tracking issue: #823
 - Epic: #821
 - Blocking prerequisite: #822 evidence PR #914 exact head
-  `c4ab9b84788bc349b9674525b4c2bf5400f6606f`, still awaiting human adoption
+  `c0802c42c3fc22770aecb0b7b2eec88f117f795c`, merged and human-adopted
 - Related runtime surfaces: `remem context`, `remem observe`, `remem summarize`, host identity
 - This packet incorporates the observed Cursor 3.12.17 contract from PR #914,
   but remains blocked on human evidence/spec approval and the explicitly
@@ -77,12 +77,16 @@ hook JSON output, reusing the existing host-profile mechanism
    valid input. Every other array shape fails closed, including `[]`, `[""]`,
    mixed blank/non-blank arrays, and multiple non-empty roots. The hook process
    cwd and an undeclared `CURSOR_PROJECT_DIR` fallback must not select a project.
-   `sessionStart`, `postToolUse`, and `stop` must share one human-approved
-   canonical session identity. PR #914 observed both `session_id` and
-   `conversation_id` on every captured event and found them equal. The parser
-   therefore requires exact equality whenever both fields are present; a
-   missing, blank, wrong-typed, or mismatched
-   identity fails closed before output, capture, enqueue, spill, or persistence.
+   Parent-session `sessionStart`, parent tool events, and `stop` must share one
+   human-approved canonical session identity. Independently, every captured
+   event requires exact equality between its own `session_id` and
+   `conversation_id` whenever both fields are present. PR #914 observed inner
+   subagent tool events with a distinct, internally equal identity. That child
+   identity is valid and must remain distinct: it is not compared with or
+   coerced into the parent identity, and no parent-child relationship is
+   manufactured without a verified producer field. A missing, blank,
+   wrong-typed, or event-local mismatched identity fails closed before output,
+   capture, enqueue, spill, or persistence.
    `sessionStart.transcript_path` is valid `null`; the first prompt/tool events
    and inner subagent tool events may also carry `null`. Later parent events
    and Stop used one stable string path. A null child path must never be
