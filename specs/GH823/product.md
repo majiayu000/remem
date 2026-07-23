@@ -7,7 +7,8 @@ Tracking:
 - Spec/tracking issue: #823
 - Epic: #821
 - Blocking prerequisite: #822 evidence PR #914 exact head
-  `c0802c42c3fc22770aecb0b7b2eec88f117f795c`, merged and human-adopted
+  `c0802c42c3fc22770aecb0b7b2eec88f117f795c`, merged; adoption by this
+  packet remains pending fresh exact-head human approval
 - Related runtime surfaces: `remem context`, `remem observe`, `remem summarize`, host identity
 - This packet incorporates the observed Cursor 3.12.17 contract from PR #914,
   but remains blocked on human evidence/spec approval and the explicitly
@@ -137,8 +138,11 @@ hook JSON output, reusing the existing host-profile mechanism
    arrays fail non-zero with no adapter dispatch or write. #822 must confirm the
    real field types and a sanitized Windows fixture before implementation. A
    valid payload also parses `tool_name`, `tool_input`, and `tool_output` into
-   the existing observe event model. PR #914 observed exact generic names
-   `Read`, `Shell`, `Task`, and `MCP:browser_tabs`; generic `tool_input` was an
+   the existing observe event model. Across generic events, PR #914 observed
+   `preToolUse` names `Read`, `Shell`, `Task`, and `MCP:browser_tabs`, but
+   successful `postToolUse` only for `Read`, `Shell`, and `MCP:browser_tabs`.
+   `Task` completion used the separate subagent lifecycle and must not be
+   treated as a proven post-tool success variant. Generic `tool_input` was an
    object and successful `tool_output` was a string. These fields must not be
    decoded as the old draft's guessed pair of JSON strings. Variant-specific
    fields are validated under the #822-approved byte limit before any tool
@@ -245,8 +249,11 @@ hook JSON output, reusing the existing host-profile mechanism
     `tool_input`/`result_json`, `mcp_server_name: "cursor-ide-browser"`, and
     `tool_name: "browser_tabs"`. Human approval must select one canonical
     capture/upsert path and prevent double capture across generic and
-    MCP-specific delivery. Documentation names or guessed mappings are not
-    evidence; no MCP mapping may ship before that decision.
+    MCP-specific delivery. If it selects the MCP-specific path, `observe` must
+    accept the exact `beforeMCPExecution`/`afterMCPExecution` variants and their
+    observed string fields; if it selects the generic path, #824 must not
+    register the MCP-specific pair. Documentation names or guessed mappings are
+    not evidence; no MCP mapping may ship before that decision.
 
 ## Boundary Checklist
 
@@ -272,10 +279,11 @@ hook JSON output, reusing the existing host-profile mechanism
   context-dependent string/null `transcript_path`; foreground
   `sessionStart.is_background_agent` was `false`. Windows/UNC, multi-root,
   true background/cloud, and `sessionEnd` remain unobserved.
-- Q2 partially resolved: observed generic names are `Read`, `Shell`, `Task`,
-  and `MCP:browser_tabs`; one failed Read used `postToolUseFailure` and a shared
-  `tool_use_id`. Write/Edit/Delete, failed Shell, and dual-event precedence
-  remain unobserved.
+- Q2 partially resolved: generic `preToolUse` observed `Read`, `Shell`, `Task`,
+  and `MCP:browser_tabs`; successful generic `postToolUse` observed only Read,
+  Shell, and MCP. One failed Read used `postToolUseFailure` and a shared
+  `tool_use_id`. Task post-tool success, Write/Edit/Delete, failed Shell, and
+  dual-event precedence remain unobserved.
 - Q3 resolved for manual compaction: `/summarize` emitted `preCompact` with
   `trigger: "manual"` and numeric context/window/message fields. Its remem
   mid-session action remains a separate human product decision.
@@ -287,7 +295,6 @@ hook JSON output, reusing the existing host-profile mechanism
   decision.
 - Stop evidence: `completed` and `aborted` plus numeric `loop_count: 0` were
   observed; `error`, nonzero, missing, null, and replay stability remain
-  unobserved.
 
 ## Acceptance Criteria
 

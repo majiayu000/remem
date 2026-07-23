@@ -8,8 +8,8 @@ Tracking:
 - Product spec: specs/GH823/product.md
 - Epic: #821 · Prerequisite PoC: #822
 - Evidence: PR #914 exact head
-  `c0802c42c3fc22770aecb0b7b2eec88f117f795c` (Cursor 3.12.17), merged and
-  human-adopted
+  `c0802c42c3fc22770aecb0b7b2eec88f117f795c` (Cursor 3.12.17), merged;
+  adoption by this packet remains pending fresh exact-head human approval
 - Readiness: blocked on human evidence/spec approval and remaining bounded gates; Cursor
   summarize is additionally blocked on #825's verified transcript reader.
 
@@ -95,7 +95,10 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
 - The Cursor input model requires `hook_event_name` and validates it before
   dispatch: `context` structurally accepts only exact `sessionStart`,
   `observe` accepts human-approved exact `postToolUse` and
-  `postToolUseFailure`, and `summarize` accepts only exact `stop`. PR #914
+  `postToolUseFailure`; when B-016 selects MCP-specific ownership, `observe`
+  additionally accepts exact `beforeMCPExecution`/`afterMCPExecution` with
+  their own observed field schema. When B-016 selects generic ownership, those
+  specific events remain unregistered and unsupported. `summarize` accepts only exact `stop`. PR #914
   provides the Read failure shape and matching `tool_use_id`; no other failure
   event is accepted by analogy. Unknown values and event/command mismatches return non-zero before
   adapter or renderer selection; they never fall through to plain-text or
@@ -144,6 +147,12 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
   classification but still use the existing generic capture path with the
   original `tool_name` and decoded input/output. They are never remapped or
   discarded after diagnosis (B-007, B-015).
+- The B-016 ownership decision controls a closed event-variant set, not only a
+  dedup flag. MCP-specific ownership adds exact
+  `beforeMCPExecution`/`afterMCPExecution` parsing with string
+  `tool_input`/`result_json`; generic ownership accepts the proven generic
+  post-tool path and keeps the specific pair unregistered. Either route maps to
+  one canonical call/upsert key and dual delivery never writes twice.
 - PR #914 proves one failed Read emits `postToolUseFailure` with
   `failure_type:"error"`, `is_interrupt:false`, and the same `tool_use_id` as
   its pre-tool event. Write/Edit/Delete and failed Shell remain unobserved.
@@ -270,7 +279,7 @@ not silent.
 | B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
 | B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
-| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 Read/Shell/Task/MCP generic types and failed-Read tool_use_id fixture validate before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Write/Edit/Delete/failed-Shell paths remain disabled rather than guessed |
+| B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
 | B-008 stop maps identity, status, loop, and #825 reader gate | Cursor parser + `src/summarize` + #822 + #825 | before #825, path never reaches Claude/Codex reader/enqueue/spill/LLM; after prerequisites, PR #914 completed/aborted + numeric loop 0 fixtures and proposed `(session_id,generation_id,loop_count)` replay/conflict matrix pass; error/nonzero/missing/null remain rejected until approved |
 | B-009 malformed or mismatched stdin fails closed | context/observe/summarize command entrypoints | subprocess tests for invalid JSON, missing fields (including stop status), wrong-typed/unknown stop status, identity mismatch, unknown event, and every event/command mismatch assert non-zero exit, empty stdout, error log, and zero writes/enqueues/spills/LLM calls |
 | B-010 Claude/Codex zero regression | whole crate | `cargo test` full suite; no existing test modified |
@@ -279,7 +288,7 @@ not silent.
 | B-013 invalid and multi-root arrays remain fail-closed | context/observe/summarize parsing + #822/human gate | each event fixture covers `[""]`, `["", "/repo"]`, `["/repo", ""]`, and two non-empty roots and returns non-zero with no stdout/write/enqueue/spill; implementation cannot enable multi-root until a recorded human decision |
 | B-014 user_email/PII removed before every sink | Cursor sanitization boundary + capture/spill/adapter/summarize paths | unique email sentinel is absent from DB, decoded spill fixture, logs/errors, adapter request, LLM prompt, and generated summary across success and forced-failure paths |
 | B-015 bounded variant validation/decode precedes classification | Cursor parser + generic/known-tool dispatch | generic object input/string output and MCP string input/result fixtures validate exact types; encoded and canonical lengths at approved limit succeed; over-limit/malformed fail with zero writes/calls |
-| B-016 real MCP event gate | #822/PR #914 evidence | browser_tabs fixture proves generic and before/after MCP delivery with string input/result; approved ownership selects one canonical capture/upsert path and dual delivery never duplicates |
+| B-016 real MCP event gate | #822/PR #914 evidence + conditional Cursor observe variants | browser_tabs fixture proves generic and before/after MCP delivery with string input/result; approved ownership selects the corresponding accepted/registered event set and one canonical capture/upsert path; specific ownership has parser tests for both MCP events, generic ownership keeps them unregistered, and dual delivery never duplicates |
 
 ## Risks
 
