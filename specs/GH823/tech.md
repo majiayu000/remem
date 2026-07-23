@@ -24,6 +24,10 @@ Tracking:
     "README.md",
     "docs/ARCHITECTURE.md",
     "docs/specs/README.md",
+    "docs/specs/cache-stable-injection/PRODUCT.md",
+    "docs/specs/cache-stable-injection/TECH.md",
+    "docs/specs/current-memory-contracts/PRODUCT.md",
+    "docs/specs/current-memory-contracts/TECH.md",
     "specs/GH823/product.md",
     "specs/GH823/tech.md",
     "specs/GH823/tasks.md",
@@ -36,6 +40,7 @@ Tracking:
     "src/context/host.rs",
     "src/context/invocation.rs",
     "src/context/render.rs",
+    "src/context/render/helpers.rs",
     "src/context/tests/cursor_hook.rs",
     "src/context/tests/mod.rs",
     "src/cursor_hook.rs",
@@ -68,14 +73,22 @@ Tracking:
   ],
   "spec_refs": [
     "specs/GH823/product.md",
-    "specs/GH823/tech.md"
+    "specs/GH823/tech.md",
+    "docs/specs/cache-stable-injection/PRODUCT.md",
+    "docs/specs/cache-stable-injection/TECH.md",
+    "docs/specs/current-memory-contracts/PRODUCT.md",
+    "docs/specs/current-memory-contracts/TECH.md"
   ]
 }
 -->
 
 The shared Cursor boundary is deliberately split into `src/cursor_hook/`
 modules instead of extending the already broad command-specific parsers. The
-command entrypoints retain only dispatch and adaptation. If implementation
+command entrypoints retain only dispatch and adaptation. The two current
+context contract pairs remain authoritative: implementation must document the
+Cursor capability-specific context audit in `current-memory-contracts` and
+state how the disabled Cursor 3.12.17 session-start path plus any approved
+post-tool context preserve the cache-stable renderer/layering contract. If implementation
 requires a path outside this complete manifest, the packet must be amended and
 receive fresh exact-head human approval before that path is changed.
 
@@ -96,10 +109,10 @@ Verified against `origin/main` (`f612b4a1`), 2026-07-15:
   `parse_hook_input()` (`src/context/invocation.rs:154`) parses hook stdin,
   with an existing Codex-shaped test fixture at
   `src/context/invocation.rs:198-212`.
-- `src/context/render.rs:765` `context_stdout_for_invocation()` wraps context
+- `src/context/render/helpers.rs:99` `context_stdout_for_invocation()` wraps context
   output as `{"hookSpecificOutput": {"hookEventName": "SessionStart",
   "additionalContext": ...}}` only when `is_codex_session_start_hook()`
-  matches (`src/context/render.rs:783`); all other hosts get plain stdout.
+  matches (`src/context/render/helpers.rs:117`); all other hosts get plain stdout.
 - `src/observe/hook.rs` consumes observe events with `tool_name`; file-edit
   extraction is gated on `matches!(event.tool_name.as_str(), "Write" | "Edit")`
   (`src/observe/hook.rs:190`).
@@ -317,7 +330,7 @@ Write/Edit/Delete failures, and `status:error` remain unproved.
 
 ### 3. Stdout rendering (B-003, B-004, B-005)
 
-- `src/context/render.rs`: alongside `is_codex_session_start_hook()`, add the
+- `src/context/render/helpers.rs`: alongside `is_codex_session_start_hook()`, add the
   Cursor branch in `context_stdout_for_invocation()`: only when the strict
   parser has validated `HostKind::Cursor` plus exact
   `hook_event_name: "sessionStart"`, emit
@@ -364,9 +377,9 @@ not silent.
 |---|---|---|
 | B-001 canonical host recognition plus per-command support | shared hook-host parser + `src/cli/dispatch.rs` + hook entrypoints | exact three host values parse; aliases/unknown/empty fail at all commands and persistence boundaries; `session-init --host cursor` returns explicit unsupported/non-zero before prompt write, stdout, or any side effect |
 | B-002 sessionStart maps one normalized workspace root; parent events retain one cross-event identity while child events retain distinct event-local identity; null transcript_path valid | `src/context/invocation.rs` + shared Cursor identity validator + platform path normalizer | PR #914 event-local equal session_id/conversation_id fixtures succeed; mismatch fails before side effects; a distinct subagent identity is accepted without parent coercion or invented linkage; null start/early/child paths stay null and never inherit parent; `len == 1` plus trimmed non-empty root normalizes before cwd/git/project derivation; unknown platform shapes and invalid/multi-root arrays fail without raw identity persistence or cwd/env fallback |
-| B-003 exact event discriminator drives bounded additional_context JSON | Cursor parser + `src/context/render.rs` | exact sessionStart serialization is testable but 3.12.17 capability remains disabled from PR #914 absent marker; postToolUse capability is separately proven and needs its own approved contract; missing/unknown/mismatched events exit non-zero; any later-approved numeric limit has exact/one-byte-over tests; other hosts remain green |
-| B-004 no control instructions in payload | `src/context/render.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
-| B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
+| B-003 exact event discriminator drives bounded additional_context JSON | Cursor parser + `src/context/render/helpers.rs` | exact sessionStart serialization is testable but 3.12.17 capability remains disabled from PR #914 absent marker; postToolUse capability is separately proven and needs its own approved contract; missing/unknown/mismatched events exit non-zero; any later-approved numeric limit has exact/one-byte-over tests; other hosts remain green |
+| B-004 no control instructions in payload | `src/context/render/helpers.rs` | regression test asserting absence of GH668 marker strings in Cursor output |
+| B-005 failure → empty stdout + error log, never broken JSON | context entrypoint + `src/context/render/helpers.rs` | tests: empty body and generation failure emit no stdout; serialization is atomic |
 | B-006 Cursor session-init is rejected, doctor-visible | CLI dispatch + #824 doctor surface | subprocess asserts explicit unsupported non-zero plus empty stdout and zero prompt writes/enqueues/spills; no UserPromptSubmit-equivalent in #824 hooks fixture; doctor line test in #824 |
 | B-007 observe maps verified identity before success/failure capture; unknown tool_name uses verbatim generic capture | Cursor parser + canonical event/capture/spill/DB schema + adapter boundary + #822 failure probe | PR #914 pre-tool Read/Shell/Task/MCP and successful post-tool Read/Shell/MCP fixtures validate without inventing Task success; raw generic input/output exact-byte max and one-byte-over fixtures run before classification; failed-Read tool_use_id validates before capture; `SomethingNew` remains verbatim; approved failure stores explicit outcome exactly once; unobserved Task-success/Write/Edit/Delete/failed-Shell paths remain disabled or generic rather than guessed |
 | B-008 stop maps identity, status, loop, and #825 reader gate | Cursor parser + `src/summarize` + #822 + #825 | before #825, path never reaches Claude/Codex reader/enqueue/spill/LLM; after prerequisites, PR #914 completed/aborted + numeric loop 0 fixtures and proposed `(session_id,generation_id,loop_count)` replay/conflict matrix pass; missing/blank/wrong-typed generation_id and error/nonzero/missing/null loop shapes remain rejected until approved |
