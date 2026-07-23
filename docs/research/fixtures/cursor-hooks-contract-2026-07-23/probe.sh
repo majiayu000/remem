@@ -31,12 +31,12 @@ mode = sys.argv[1]
 counts = {"small": 0, "medium": 16384, "large": 65536}
 if mode not in counts:
     raise SystemExit(f"unsupported context mode: {mode}")
-marker = f"GH822_{mode.upper()}_MULTIBYTE_SUFFIX_20260723"
+marker = f"GH822_{mode.upper()}_MULTIBYTE_SUFFIX_20260716"
 body = ("界" * counts[mode]) + marker
 print(json.dumps({"additional_context": body}, ensure_ascii=False, separators=(",", ":")))
 PY
     ;;
   postToolUse)
-    printf '%s\n' '{"additional_context":"GH822_POSTTOOLUSE_CONTEXT_20260723"}'
+    printf '%s\n' '{"additional_context":"GH822_POSTTOOLUSE_CONTEXT_20260716"}'
     ;;
 esac
