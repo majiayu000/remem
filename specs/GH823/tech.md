@@ -13,6 +13,72 @@ Tracking:
 - Readiness: blocked on human evidence/spec approval and remaining bounded gates; Cursor
   summarize is additionally blocked on #825's verified transcript reader.
 
+## Planned Changes Manifest
+
+<!-- specrail-planned-changes
+{
+  "version": 1,
+  "issue": 823,
+  "complete": true,
+  "paths": [
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/specs/README.md",
+    "specs/GH823/product.md",
+    "specs/GH823/tech.md",
+    "specs/GH823/tasks.md",
+    "src/adapter/common.rs",
+    "src/adapter/mod.rs",
+    "src/adapter/redaction.rs",
+    "src/cli/dispatch.rs",
+    "src/cli/types.rs",
+    "src/context.rs",
+    "src/context/host.rs",
+    "src/context/invocation.rs",
+    "src/context/render.rs",
+    "src/context/tests/cursor_hook.rs",
+    "src/context/tests/mod.rs",
+    "src/cursor_hook.rs",
+    "src/cursor_hook/identity.rs",
+    "src/cursor_hook/input.rs",
+    "src/cursor_hook/tests.rs",
+    "src/db/capture.rs",
+    "src/db/capture/tests.rs",
+    "src/db/capture_drop.rs",
+    "src/hook_stdin.rs",
+    "src/identity.rs",
+    "src/lib.rs",
+    "src/observe.rs",
+    "src/observe/cursor.rs",
+    "src/observe/hook.rs",
+    "src/observe/session_init.rs",
+    "src/observe/spill.rs",
+    "src/observe/spill/tests.rs",
+    "src/observe/tests.rs",
+    "src/runtime_config.rs",
+    "src/summarize.rs",
+    "src/summarize/input.rs",
+    "src/summarize/summary_job/hook.rs",
+    "src/summarize/summary_job/hook/tests.rs",
+    "src/summarize/summary_job/host.rs",
+    "src/summarize/summary_job/replay.rs",
+    "src/summarize/summary_job/spill.rs",
+    "src/summarize/summary_job/spill/tests.rs",
+    "tests/cursor_hooks.rs"
+  ],
+  "spec_refs": [
+    "specs/GH823/product.md",
+    "specs/GH823/tech.md"
+  ]
+}
+-->
+
+The shared Cursor boundary is deliberately split into `src/cursor_hook/`
+modules instead of extending the already broad command-specific parsers. The
+command entrypoints retain only dispatch and adaptation. If implementation
+requires a path outside this complete manifest, the packet must be amended and
+receive fresh exact-head human approval before that path is changed.
+
 ## Existing Implementation Facts
 
 Verified against `origin/main` (`f612b4a1`), 2026-07-15:
