@@ -20,6 +20,9 @@ pub struct SearchExplain {
     pub min_evidence_confidence: f64,
     pub filtered_result_count: usize,
     pub timings: Vec<crate::perf::PhaseTiming>,
+    /// Rerank is a dedicated post-fusion stage, not a recall channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
     pub channels: Vec<SearchExplainChannel>,
     pub results: Vec<SearchExplainResult>,
     pub has_more: bool,

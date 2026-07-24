@@ -82,6 +82,11 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: EmbeddingAction,
     },
+    /// Manage the local second-stage reranker model (GH-851).
+    Reranker {
+        #[command(subcommand)]
+        action: super::reranker_types::RerankerAction,
+    },
     /// Hook entrypoint for starting a memory capture session.
     SessionInit {
         /// Hook host, exact closed set: claude-code, codex-cli, or cursor (cursor is rejected as unsupported for session-init).

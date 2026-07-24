@@ -8,17 +8,22 @@ use crate::memory::{self, Memory};
 use crate::perf::{push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::common::{
-    paginate_memories, rank_normalized_score, sanitize_fts_query, weighted_rank_score,
-    weighted_ranked_fuse, WeightedRankedChannel, WeightedRankedHit,
+    paginate_memories, rank_normalized_score, sanitize_fts_query, weighted_ranked_fuse,
+    WeightedRankedHit,
 };
 use super::{
-    suppression_filter, ChannelContribution, ChannelHit, SearchExplain, SearchExplainChannel,
-    SearchExplainResult, SearchWeights,
+    suppression_filter, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
+    SearchWeights,
 };
 
 mod format;
 mod graph;
+mod support;
 use format::fts_normalized_hits;
+use support::{
+    apply_confidence_gate, candidate_confidence, contributions_for, log_search_timing,
+    retrieved_candidate_ids, vector_similarity_score, visibility_label, weighted_channel_inputs,
+};
 
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
@@ -211,6 +216,8 @@ pub(super) fn search_with_query_weights(
         "confidence_and_fact_labels",
         annotate_start,
     );
+    let (ordered, _rerank_outcome) =
+        apply_rerank_stage(conn, query_text, ordered, &mut plan.timings)?;
     let paged = time_value(&mut plan.timings, "paginate", || {
         paginate_memories(ordered, limit, offset)
     });
@@ -264,6 +271,7 @@ pub(super) fn search_with_query_explain(
                 min_evidence_confidence: plan.weights.min_evidence_confidence,
                 filtered_result_count: 0,
                 timings: plan.timings,
+                rerank: None,
                 channels: vec![],
                 results: vec![],
                 has_more: false,
@@ -293,11 +301,13 @@ pub(super) fn search_with_query_explain(
         "confidence_and_fact_labels",
         annotate_start,
     );
+    let (ordered, rerank_outcome) =
+        apply_rerank_stage(conn, query_text, ordered, &mut plan.timings)?;
     let paged = time_value(&mut plan.timings, "paginate", || {
         paginate_memories(ordered, limit, offset)
     });
     let explain_start = Instant::now();
-    let explain = build_explain(
+    let mut explain = build_explain(
         conn,
         query_text,
         project,
@@ -311,6 +321,7 @@ pub(super) fn search_with_query_explain(
         fused.len().saturating_sub(gated_fused.len()),
         &paged,
     )?;
+    explain.rerank = Some(rerank_explain(&rerank_outcome));
     push_elapsed(&mut plan.timings, "build_explain", explain_start);
     log_search_timing(query_text, project, limit, offset, &plan);
     Ok(QuerySearchWithExplain {
@@ -667,6 +678,7 @@ fn build_explain(
         min_evidence_confidence: plan.weights.min_evidence_confidence,
         filtered_result_count,
         timings: plan.timings.clone(),
+        rerank: None,
         channels,
         results,
         has_more: false,
@@ -674,127 +686,25 @@ fn build_explain(
     })
 }
 
-fn log_search_timing(
+/// Shared post-eligibility rerank hook (GH-851): runs after the confidence
+/// gate and source-anchor demotion, before pagination. On `Applied` the
+/// returned order is the fixed top-k result set; on any other status the
+/// complete baseline order passes through unchanged.
+fn apply_rerank_stage(
+    conn: &Connection,
     query_text: &str,
-    project: Option<&str>,
-    limit: i64,
-    offset: i64,
-    plan: &QuerySearchPlan,
-) {
-    crate::log::info(
-        "search-perf",
-        &format!(
-            "query={} project={} limit={} offset={} fetch_limit={} {}",
-            crate::db::truncate_str(query_text, 80),
-            project.unwrap_or("-"),
-            limit,
-            offset,
-            plan.fetch_limit,
-            crate::perf::format_phase_timings(&plan.timings)
-        ),
-    );
+    ordered: Vec<Memory>,
+    timings: &mut Vec<PhaseTiming>,
+) -> Result<(Vec<Memory>, crate::retrieval::rerank::types::RerankOutcome)> {
+    let (ordered, outcome) = crate::retrieval::rerank::apply_to_search(conn, query_text, ordered)?;
+    timings.extend(outcome.timings.iter().cloned());
+    Ok((ordered, outcome))
 }
 
-fn contributions_for(memory_id: i64, plan: &QuerySearchPlan) -> Vec<ChannelContribution> {
-    plan.channels
-        .iter()
-        .filter_map(|channel| {
-            channel
-                .hits
-                .iter()
-                .position(|hit| hit.id == memory_id)
-                .map(|index| ChannelContribution {
-                    channel: channel.name.to_string(),
-                    rank: index + 1,
-                    score: weighted_rank_score(
-                        channel.weight,
-                        plan.weights.rrf_k,
-                        index,
-                        channel.hits[index].normalized_score,
-                    ),
-                })
-        })
-        .collect()
-}
-
-fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChannel<'_>> {
-    channels
-        .iter()
-        .filter(|channel| channel.has_hits())
-        .map(|channel| WeightedRankedChannel {
-            weight: channel.weight,
-            hits: &channel.hits,
-        })
-        .collect()
-}
-
-fn retrieved_candidate_ids(channels: &[NamedChannel]) -> Vec<i64> {
-    let mut ids = channels
-        .iter()
-        .filter(|channel| channel.has_hits())
-        .flat_map(|channel| channel.hits.iter().map(|hit| hit.id))
-        .collect::<Vec<_>>();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
-}
-
-fn apply_confidence_gate(
-    fused: &[(i64, f64)],
-    plan: &QuerySearchPlan,
-    memories: &[Memory],
-) -> Vec<(i64, f64)> {
-    let min_confidence = plan.weights.min_evidence_confidence.clamp(0.0, 1.0);
-    if min_confidence <= 0.0 || plan.claim_terms.is_empty() {
-        return fused.to_vec();
-    }
-    let memory_by_id: HashMap<i64, &Memory> =
-        memories.iter().map(|memory| (memory.id, memory)).collect();
-    fused
-        .iter()
-        .copied()
-        .filter(|(memory_id, _score)| {
-            memory_by_id
-                .get(memory_id)
-                .is_some_and(|memory| candidate_confidence(memory, plan) >= min_confidence)
-        })
-        .collect()
-}
-
-fn candidate_confidence(memory: &Memory, plan: &QuerySearchPlan) -> f64 {
-    if plan.claim_terms.is_empty() || has_trusted_non_text_evidence(memory.id, plan) {
-        return 1.0;
-    }
-    super::claim::claim_term_coverage(memory, &plan.claim_terms)
-}
-
-fn has_trusted_non_text_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool {
-    let contributing: Vec<&str> = plan
-        .channels
-        .iter()
-        .filter(|channel| channel.hits.iter().any(|hit| hit.id == memory_id))
-        .map(|channel| channel.name)
-        .filter(|name| *name != "usage")
-        .collect();
-    contributing.contains(&"fact")
-        || contributing.contains(&"graph_traversal")
-        || (!contributing.is_empty() && contributing.iter().all(|channel| *channel == "vector"))
-}
-
-fn vector_similarity_score(distance: f32, weights: SearchWeights) -> f64 {
-    let threshold = f64::from(weights.max_vector_distance);
-    ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
-}
-
-fn visibility_label(memory: &Memory, requested_project: Option<&str>) -> &'static str {
-    if memory.scope == "global" {
-        "global-overlay"
-    } else if requested_project
-        .map(|project| crate::project_id::project_matches(Some(&memory.project), project))
-        .unwrap_or(false)
-    {
-        "project-local"
-    } else {
-        "unscoped"
-    }
+fn rerank_explain(
+    outcome: &crate::retrieval::rerank::types::RerankOutcome,
+) -> crate::retrieval::rerank::RerankExplain {
+    let requested =
+        outcome.disabled_reason() != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
+    outcome.to_explain(requested)
 }

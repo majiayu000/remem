@@ -84,6 +84,7 @@ fn sample_explain() -> SearchExplain {
         rrf_k: 60.0,
         min_evidence_confidence: 0.62,
         filtered_result_count: 0,
+        rerank: None,
         channels: vec![crate::retrieval::search::SearchExplainChannel {
             name: "fts".to_string(),
             enabled: true,

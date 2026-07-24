@@ -21,6 +21,7 @@ use super::memory_poisoning::check_memory_poisoning_defense;
 use super::native_memory::check_native_memory_sync;
 use super::pack_imports::check_pack_imports;
 use super::procedure_exports::check_procedure_exports;
+use super::reranker::check_reranker;
 use super::review_queue::check_review_queue;
 use super::rule_enforcement::{check_compiled_rules, check_rule_enforcement_capabilities};
 use super::runtime_config_check::check_runtime_config;
@@ -103,6 +104,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_checks(&mut checks, &mut on_check, || {
         check_embedding_provider(shared_db.conn())
     })?;
+    push_checks(&mut checks, &mut on_check, check_reranker)?;
     push_checks(&mut checks, &mut on_check, check_hooks)?;
     push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;

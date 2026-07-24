@@ -113,6 +113,32 @@ pub(super) fn load_context_data_with_policy(
         &mut errors,
     );
 
+    // Shared final rerank stage (GH-851): runs after the complete baseline
+    // assembly (union, dedupe, eligibility, branch policy) so no later sort
+    // can override its order. Off/failure keeps the exact baseline order.
+    let verify_before_trust_ids: HashSet<i64> = staleness_labels
+        .iter()
+        .filter(|(_, label)| label.source_anchor == "verify-before-trust")
+        .map(|(id, _)| *id)
+        .collect();
+    let rerank = match crate::retrieval::rerank::apply_with_vbt(
+        relevance_query.as_deref(),
+        &mut memories,
+        &verify_before_trust_ids,
+    ) {
+        Ok(outcome) => {
+            let requested = outcome.disabled_reason()
+                != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
+            Some(outcome.to_explain(requested))
+        }
+        Err(error) => {
+            let message = format!("rerank stage failed for {project}: {error}");
+            crate::log::error("context", &message);
+            errors.push(ContextLoadError::new("rerank", message));
+            None
+        }
+    };
+
     LoadedContext {
         render_reference_epoch,
         memories,
@@ -126,6 +152,7 @@ pub(super) fn load_context_data_with_policy(
         owner_traces: memory_selection.owner_traces,
         owner_counts: memory_selection.owner_counts,
         diagnostics: memory_selection.diagnostics,
+        rerank,
     }
 }
 

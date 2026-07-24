@@ -516,6 +516,7 @@ mod tests {
             owner_traces: Vec::new(),
             owner_counts: OwnerCounts::default(),
             diagnostics: ContextDiagnostics::default(),
+            rerank: None,
         };
         let candidates = candidates_for_loaded(&loaded, &HashSet::new());
         let plan =
