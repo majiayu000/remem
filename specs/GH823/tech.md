@@ -21,6 +21,9 @@ Tracking:
   "issue": 823,
   "complete": true,
   "paths": [
+    "CHANGELOG.md",
+    "Cargo.lock",
+    "Cargo.toml",
     "README.md",
     "docs/ARCHITECTURE.md",
     "docs/specs/README.md",
@@ -67,6 +70,10 @@ Tracking:
     "src/summarize/summary_job/hook/tests.rs",
     "src/summarize/summary_job/host.rs",
     "src/summarize/summary_job/replay.rs",
+    "npm/remem/package.json",
+    "plugins/remem/.codex-plugin/plugin.json",
+    "plugins/remem/runtimes/remem-releases.json",
+    "server.json",
     "src/summarize/summary_job/spill.rs",
     "src/summarize/summary_job/spill/tests.rs",
     "tests/cursor_hooks.rs"
