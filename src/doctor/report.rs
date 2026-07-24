@@ -106,6 +106,11 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     push_checks(&mut checks, &mut on_check, check_hooks)?;
     push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;
+    push_check(
+        &mut checks,
+        &mut on_check,
+        super::cursor_install::check_cursor_install,
+    )?;
     push_check(&mut checks, &mut on_check, check_mcp_processes)?;
     let started = Instant::now();
     let check = check_capture_liveness(shared_db.conn(), &checks)

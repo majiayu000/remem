@@ -57,7 +57,9 @@ fn hook_command(bin: &str, strategy: HookStrategy, subcommand: &str) -> String {
     )
 }
 
-fn shell_quote(value: &str) -> String {
+/// Shared POSIX shell quoting, reused verbatim by the Cursor managed hook
+/// command renderer (GH-824 B-005).
+pub(in crate::install) fn shell_quote(value: &str) -> String {
     if !value.is_empty()
         && value
             .chars()

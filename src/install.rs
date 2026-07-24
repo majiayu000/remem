@@ -1,4 +1,5 @@
 mod config;
+pub(crate) mod cursor_config;
 pub(crate) mod duplicates;
 mod host;
 mod hosts;

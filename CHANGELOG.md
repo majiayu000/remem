@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.20` for GH-824: Cursor install host surface.
+  `remem install/uninstall --target cursor` (plus `auto`/`all` selection on
+  macOS/Linux) manages exactly the user-level `~/.cursor/hooks.json` and
+  `~/.cursor/mcp.json` through a strict whole-document Cursor v1
+  hooks/MCP schema validator, an exact managed `mcpServers.remem` stdio
+  entry, a versioned non-sensitive install receipt under
+  `[memory_ai.hosts.cursor]`, and a secure staged writer (owner-only temp
+  before the first byte) with per-target final comparison, read-back, and
+  compensating rollback — not a cross-file atomic transaction; foreign JSON
+  is preserved semantically for the validated plan snapshot and observable
+  concurrent edits abort, while the compare-to-rename window remains a
+  documented residual risk. Because the merged GH-823 runtime has no total
+  delivered-failure policy, froze generic MCP ownership, and Cursor
+  summarize stays blocked on GH-825, contract v1 installs no Cursor hook
+  entries yet: install output says so explicitly and never claims automatic
+  Cursor memory is enabled. `remem doctor` gains a Cursor check reporting
+  detected/configured/configured_mode/malformed/partial_state/drift/
+  collision, per-capability effective status from the PR #914 evidence,
+  `hook_failure_policy: host_continues`, and the fixed line
+  `session-init: not supported on cursor`. Windows/UNC stays fail-closed
+  (explicit cursor/all) or non-fatally skipped (auto). Claude Code and
+  Codex install/uninstall/dry-run/doctor behavior is unchanged.
 - Staged source version `0.6.19` for GH-825 (with GH-823 SP823-T5): lossless
   Cursor transcript capture. `remem summarize --host cursor` now performs the
   full Cursor Stop validation (approved status set `completed|aborted`,

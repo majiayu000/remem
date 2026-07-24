@@ -46,6 +46,23 @@ pub(in crate::install) fn codex_hooks_path() -> PathBuf {
         .join("hooks.json")
 }
 
+pub(in crate::install) fn cursor_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cursor")
+}
+
+/// User-level Cursor hooks config (`~/.cursor/hooks.json`). GH-824 never
+/// touches project-level `<project>/.cursor/hooks.json`.
+pub(in crate::install) fn cursor_hooks_path() -> PathBuf {
+    cursor_dir().join("hooks.json")
+}
+
+/// User-level Cursor MCP config (`~/.cursor/mcp.json`).
+pub(in crate::install) fn cursor_mcp_path() -> PathBuf {
+    cursor_dir().join("mcp.json")
+}
+
 pub(in crate::install) fn remem_data_dir() -> PathBuf {
     crate::db::data_dir()
 }
