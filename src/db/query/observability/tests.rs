@@ -35,7 +35,18 @@ fn setup_schema(conn: &Connection) -> Result<()> {
             status TEXT NOT NULL,
             created_at_epoch INTEGER NOT NULL
         );
-        CREATE TABLE session_summaries (id INTEGER PRIMARY KEY);
+        CREATE TABLE session_summaries (
+            id INTEGER PRIMARY KEY,
+            poisoning_status TEXT NOT NULL DEFAULT 'safe',
+            poisoning_block_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE memory_poisoning_injection_drops (
+            id INTEGER PRIMARY KEY,
+            memory_id INTEGER NOT NULL,
+            pattern_id TEXT NOT NULL,
+            pattern_version INTEGER NOT NULL,
+            created_at_epoch INTEGER NOT NULL
+        );
         CREATE TABLE raw_messages (
             id INTEGER PRIMARY KEY,
             created_at_epoch INTEGER NOT NULL

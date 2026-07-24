@@ -250,7 +250,8 @@ pub(super) fn collect_recent_sessions(
                 COALESCE(next_steps, ''), COALESCE(preferences, ''),
                 created_at_epoch
          FROM session_summaries
-         WHERE (session_row_id IS NULL
+         WHERE COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined'
+           AND (session_row_id IS NULL
                 OR request NOT LIKE 'Captured event range %..%'
                 OR COALESCE(decisions, '') != ''
                 OR COALESCE(learned, '') != ''
@@ -274,7 +275,22 @@ pub(super) fn collect_recent_sessions(
             created_at_epoch: row.get(7)?,
         })
     })?;
-    let sessions = crate::db::query::collect_rows(rows)?;
+    let mut sessions = crate::db::query::collect_rows(rows)?;
+    sessions.retain(|session| {
+        crate::db::summary_poisoning::summary_injectable(
+            conn,
+            session.id,
+            &[
+                ("request", Some(session.request.as_str())),
+                ("completed", Some(session.completed.as_str())),
+                ("decisions", Some(session.decisions.as_str())),
+                ("learned", Some(session.learned.as_str())),
+                ("next_steps", Some(session.next_steps.as_str())),
+                ("preferences", Some(session.preferences.as_str())),
+            ],
+            "user_context_recall",
+        )
+    });
     state.counts.sessions += sessions.len();
     let mut seen_session_text = HashSet::new();
     for session in sessions {

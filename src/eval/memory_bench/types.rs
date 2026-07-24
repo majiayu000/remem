@@ -147,6 +147,10 @@ pub struct MemoryBenchPolicyExpectation {
     pub suppression_expected: bool,
     #[serde(default)]
     pub expected_policy_abstention: bool,
+    /// GH-855: this task's evidence carries an instruction-injection payload
+    /// that the production pattern scanner must flag for quarantine.
+    #[serde(default)]
+    pub poisoning_quarantine_expected: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -179,6 +183,8 @@ pub struct MemoryBenchPolicyOutcome {
     pub sensitive_restricted_default_excluded: bool,
     pub policy_abstention_applicable: bool,
     pub policy_abstention_correct: bool,
+    pub poisoning_applicable: bool,
+    pub poisoning_scanner_matched: bool,
     pub policy_failure_count: usize,
 }
 

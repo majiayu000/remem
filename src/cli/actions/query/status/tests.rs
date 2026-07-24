@@ -161,6 +161,10 @@ fn status_report_fixture() -> StatusReport {
             stuck: 0,
         },
         failure_lifecycle: crate::db::FailureLifecycleStats::default(),
+        poisoning_defense: crate::db::PoisoningDefenseStats {
+            pattern_set_version: 1,
+            ..crate::db::PoisoningDefenseStats::default()
+        },
         worker_daemon: WorkerDaemonStatus {
             health: "healthy".to_string(),
             heartbeat_age_secs: Some(23),

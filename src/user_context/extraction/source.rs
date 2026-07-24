@@ -410,30 +410,52 @@ fn load_session_summary(
     from_event_id: i64,
     to_event_id: i64,
 ) -> Result<Option<SessionSummarySource>> {
-    conn.query_row(
-        "SELECT id, summary_text, request, completed, decisions, learned, next_steps, preferences
-         FROM session_summaries
-         WHERE session_row_id = ?1
-           AND covered_from_event_id = ?2
-           AND covered_to_event_id = ?3
-         ORDER BY created_at_epoch DESC, id DESC
-         LIMIT 1",
-        params![session_row_id, from_event_id, to_event_id],
-        |row| {
-            Ok(SessionSummarySource {
-                id: row.get(0)?,
-                summary_text: row.get(1)?,
-                request: row.get(2)?,
-                completed: row.get(3)?,
-                decisions: row.get(4)?,
-                learned: row.get(5)?,
-                next_steps: row.get(6)?,
-                preferences: row.get(7)?,
-            })
-        },
-    )
-    .optional()
-    .context("load session summary for user-context candidate extraction")
+    let summary = conn
+        .query_row(
+            "SELECT id, summary_text, request, completed, decisions, learned, next_steps, preferences
+             FROM session_summaries
+             WHERE session_row_id = ?1
+               AND covered_from_event_id = ?2
+               AND covered_to_event_id = ?3
+               AND COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined'
+             ORDER BY created_at_epoch DESC, id DESC
+             LIMIT 1",
+            params![session_row_id, from_event_id, to_event_id],
+            |row| {
+                Ok(SessionSummarySource {
+                    id: row.get(0)?,
+                    summary_text: row.get(1)?,
+                    request: row.get(2)?,
+                    completed: row.get(3)?,
+                    decisions: row.get(4)?,
+                    learned: row.get(5)?,
+                    next_steps: row.get(6)?,
+                    preferences: row.get(7)?,
+                })
+            },
+        )
+        .optional()
+        .context("load session summary for user-context candidate extraction")?;
+    let Some(summary) = summary else {
+        return Ok(None);
+    };
+    if !crate::db::summary_poisoning::summary_injectable(
+        conn,
+        summary.id,
+        &[
+            ("summary_text", summary.summary_text.as_deref()),
+            ("request", summary.request.as_deref()),
+            ("completed", summary.completed.as_deref()),
+            ("decisions", summary.decisions.as_deref()),
+            ("learned", summary.learned.as_deref()),
+            ("next_steps", summary.next_steps.as_deref()),
+            ("preferences", summary.preferences.as_deref()),
+        ],
+        "user_context_extraction",
+    ) {
+        return Ok(None);
+    }
+    Ok(Some(summary))
 }
 
 fn is_user_authored_event(event: &SourceEvent) -> bool {

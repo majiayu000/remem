@@ -35,6 +35,10 @@ pub(crate) enum SessionRollupResult {
     EmptyRange,
     AlreadyExists,
     Written,
+    /// The rollup was persisted as a durable quarantined summary because the
+    /// source range or generated output matched an instruction pattern; all
+    /// model-visible side effects were withheld (GH-855).
+    Quarantined,
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +105,19 @@ where
             &range,
             persisted.raw_archive_completed,
         );
+        if persisted.poisoning_quarantined {
+            // Keep the raw capture evidence flowing, but never replay
+            // model-visible side effects for a quarantined rollup.
+            crate::log::error(
+                "session-rollup",
+                &format!(
+                    "skipping side effects for quarantined session rollup range {}..{}",
+                    range.from_event_id, range.to_event_id
+                ),
+            );
+            raw_archive_result?;
+            return Ok(SessionRollupResult::Quarantined);
+        }
         let side_effect_result = run_rollup_side_effects(
             conn,
             task,
@@ -117,7 +134,7 @@ where
     let prompt = prompt::build_rollup_prompt(task, &range, &transcript_evidence);
     let response = summarize(prompt).await?;
     let output = parse::parse_rollup_response(&response, &range)?;
-    persist::persist_session_rollup(
+    let quarantined = persist::persist_session_rollup(
         conn,
         task,
         &range,
@@ -126,6 +143,9 @@ where
         raw_archive_result.is_ok(),
     )?;
     raw_archive_result?;
+    if quarantined {
+        return Ok(SessionRollupResult::Quarantined);
+    }
     run_rollup_side_effects(conn, task, &range, &transcript_evidence, false)?;
     Ok(SessionRollupResult::Written)
 }

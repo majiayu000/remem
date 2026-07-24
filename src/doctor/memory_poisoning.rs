@@ -33,11 +33,38 @@ pub(super) fn check_memory_poisoning_defense(conn: Option<&Connection>) -> Check
         }
     };
 
+    let summary_stats = match summary_poisoning_stats(conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check::new(
+                "Memory poisoning defense",
+                Status::Warn,
+                format!("cannot load summary poisoning stats: {err}"),
+            );
+        }
+    };
+    let quarantined_observations = match quarantined_observation_count(conn) {
+        Ok(count) => count,
+        Err(err) => {
+            return Check::new(
+                "Memory poisoning defense",
+                Status::Warn,
+                format!("cannot load observation poisoning stats: {err}"),
+            );
+        }
+    };
+
     let mut detail = format!(
-        "pattern_set_version={}, quarantined={}, injection_drops={}",
+        "pattern_set_version={}, quarantined={}, injection_drops={}, \
+         summary_quarantined={}, summary_legacy_unscanned={}, summary_blocks={}, \
+         observation_quarantined={}",
         crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION,
         quarantined,
-        drop_count
+        drop_count,
+        summary_stats.quarantined,
+        summary_stats.legacy_unscanned,
+        summary_stats.block_count,
+        quarantined_observations
     );
     match top_quarantine_patterns(conn) {
         Ok(patterns) if !patterns.is_empty() => {
@@ -66,11 +93,48 @@ pub(super) fn check_memory_poisoning_defense(conn: Option<&Connection>) -> Check
         }
     }
 
-    if quarantined > 0 || drop_count > 0 {
+    if quarantined > 0
+        || drop_count > 0
+        || summary_stats.quarantined > 0
+        || summary_stats.block_count > 0
+        || quarantined_observations > 0
+    {
         Check::new("Memory poisoning defense", Status::Warn, detail)
     } else {
         Check::new("Memory poisoning defense", Status::Ok, detail)
     }
+}
+
+pub(super) struct SummaryPoisoningStats {
+    pub(super) quarantined: i64,
+    pub(super) legacy_unscanned: i64,
+    pub(super) block_count: i64,
+}
+
+fn summary_poisoning_stats(conn: &Connection) -> Result<SummaryPoisoningStats, rusqlite::Error> {
+    conn.query_row(
+        "SELECT
+            COALESCE(SUM(CASE WHEN poisoning_status = 'quarantined' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN poisoning_status = 'legacy_unscanned' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(poisoning_block_count), 0)
+         FROM session_summaries",
+        [],
+        |row| {
+            Ok(SummaryPoisoningStats {
+                quarantined: row.get(0)?,
+                legacy_unscanned: row.get(1)?,
+                block_count: row.get(2)?,
+            })
+        },
+    )
+}
+
+fn quarantined_observation_count(conn: &Connection) -> Result<i64, rusqlite::Error> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM observations WHERE status = 'poisoning_quarantined'",
+        [],
+        |row| row.get(0),
+    )
 }
 
 fn quarantined_candidate_count(conn: &Connection) -> Result<i64, rusqlite::Error> {

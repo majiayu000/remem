@@ -34,7 +34,10 @@ pub fn search_observations_fts(
         param_values.push(Box::new(obs_type_name.to_string()));
         idx += 1;
     }
-    if !include_stale {
+    if include_stale {
+        // GH-855: quarantined observations never surface, even in stale mode.
+        conditions.push("o.status != 'poisoning_quarantined'".to_string());
+    } else {
         conditions.push("o.status = 'active'".to_string());
     }
 
@@ -110,7 +113,10 @@ pub fn search_observations_like(
         param_values.push(Box::new(obs_type_name.to_string()));
         idx += 1;
     }
-    if !include_stale {
+    if include_stale {
+        // GH-855: quarantined observations never surface, even in stale mode.
+        conditions.push("o.status != 'poisoning_quarantined'".to_string());
+    } else {
         conditions.push("o.status = 'active'".to_string());
     }
 

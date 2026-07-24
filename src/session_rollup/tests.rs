@@ -8,6 +8,7 @@ use super::*;
 mod citation_evidence;
 mod followup_scheduling;
 mod native_memory;
+mod poisoning;
 mod range_side_effects;
 mod side_effects;
 

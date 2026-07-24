@@ -105,6 +105,15 @@ fn compute_status_payload() -> StatusComputeResult {
         "pending_extraction_tasks": stats.pending_extraction_tasks,
         "pending_memory_candidates": stats.pending_memory_candidates,
         "pending_graph_candidates": stats.pending_graph_candidates,
+        "poisoning_defense": {
+            "pattern_set_version": stats.poisoning_defense.pattern_set_version,
+            "quarantined_candidates": stats.poisoning_defense.quarantined_candidates,
+            "quarantined_summaries": stats.poisoning_defense.quarantined_summaries,
+            "legacy_unscanned_summaries": stats.poisoning_defense.legacy_unscanned_summaries,
+            "summary_block_count": stats.poisoning_defense.summary_block_count,
+            "quarantined_observations": stats.poisoning_defense.quarantined_observations,
+            "memory_injection_drops": stats.poisoning_defense.memory_injection_drops,
+        },
         "promotion_funnel": {
             "captured_events": stats.captured_events,
             "observations": stats.total_observations,

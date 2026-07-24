@@ -59,12 +59,34 @@ pub fn insert_observation_with_branch(
     commit_sha: Option<&str>,
 ) -> Result<i64> {
     let now = chrono::Utc::now();
+    // GH-855: model-generated observation fields go through the shared
+    // instruction-pattern verdict before persistence. A match keeps the row
+    // as quarantined evidence that never reaches the active pipeline.
+    let verdict = crate::memory::poisoning::scan_generated_surfaces(&[
+        ("title", title),
+        ("subtitle", subtitle),
+        ("narrative", narrative),
+        ("facts", facts),
+        ("concepts", concepts),
+    ]);
+    if let Some(surface_match) = &verdict {
+        crate::log::error(
+            "observation-poisoning",
+            &format!(
+                "quarantining observation for session {memory_session_id}: field={} pattern={}@v{}",
+                surface_match.field,
+                surface_match.pattern.pattern_id,
+                surface_match.pattern.pattern_set_version,
+            ),
+        );
+    }
     conn.execute(
         "INSERT INTO observations \
          (memory_session_id, project, type, title, subtitle, narrative, \
           facts, concepts, files_read, files_modified, prompt_number, \
-          created_at, created_at_epoch, discovery_tokens, branch, commit_sha) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+          created_at, created_at_epoch, discovery_tokens, branch, commit_sha, \
+          status) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             memory_session_id,
             project,
@@ -81,7 +103,12 @@ pub fn insert_observation_with_branch(
             now.timestamp(),
             discovery_tokens,
             branch,
-            commit_sha
+            commit_sha,
+            if verdict.is_some() {
+                "poisoning_quarantined"
+            } else {
+                "active"
+            },
         ],
     )?;
     Ok(conn.last_insert_rowid())

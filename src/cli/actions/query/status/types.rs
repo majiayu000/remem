@@ -19,6 +19,7 @@ pub(super) struct StatusReport {
     pub user_context: UserContextStatus,
     pub jobs: JobStatus,
     pub failure_lifecycle: db::FailureLifecycleStats,
+    pub poisoning_defense: db::PoisoningDefenseStats,
     pub worker_daemon: WorkerDaemonStatus,
     pub latest_session_memory_spend: Option<LatestSessionMemorySpendStatus>,
     pub today: DailyStatus,

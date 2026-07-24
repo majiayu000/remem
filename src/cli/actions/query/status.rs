@@ -190,6 +190,7 @@ fn load_status_report() -> Result<StatusReport> {
             stuck: stats.stuck_jobs,
         },
         failure_lifecycle: stats.failure_lifecycle,
+        poisoning_defense: stats.poisoning_defense,
         worker_daemon: WorkerDaemonStatus {
             health: worker_health_tag(stats.worker_daemon_healthy, stats.worker_heartbeat_age_secs)
                 .to_string(),
@@ -469,6 +470,35 @@ fn print_status_report(report: &StatusReport) {
     if let Some(age_secs) = report.capture_pipeline.oldest_task_age_secs {
         println!("  Oldest task:  {:>6}s", age_secs);
     }
+    println!();
+    println!(
+        "Poisoning defense (pattern set v{}):",
+        report.poisoning_defense.pattern_set_version
+    );
+    println!(
+        "  Cand quar:    {:>6}",
+        report.poisoning_defense.quarantined_candidates
+    );
+    println!(
+        "  Summ quar:    {:>6}",
+        report.poisoning_defense.quarantined_summaries
+    );
+    println!(
+        "  Summ legacy:  {:>6}",
+        report.poisoning_defense.legacy_unscanned_summaries
+    );
+    println!(
+        "  Summ blocks:  {:>6}",
+        report.poisoning_defense.summary_block_count
+    );
+    println!(
+        "  Obs quar:     {:>6}",
+        report.poisoning_defense.quarantined_observations
+    );
+    println!(
+        "  Inject drops: {:>6}",
+        report.poisoning_defense.memory_injection_drops
+    );
     println!();
     println!("Promotion funnel:");
     println!(

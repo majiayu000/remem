@@ -61,6 +61,20 @@ pub struct SystemStats {
     pub worker_heartbeat_owner: Option<String>,
     pub worker_heartbeat_age_secs: Option<i64>,
     pub legacy_surfaces: Vec<LegacySurfaceStats>,
+    pub poisoning_defense: PoisoningDefenseStats,
+}
+
+/// Aggregated poisoning-defense counters (GH-855). Metadata only; never
+/// carries matched text or payloads.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize)]
+pub struct PoisoningDefenseStats {
+    pub pattern_set_version: i64,
+    pub quarantined_candidates: i64,
+    pub quarantined_summaries: i64,
+    pub legacy_unscanned_summaries: i64,
+    pub summary_block_count: i64,
+    pub quarantined_observations: i64,
+    pub memory_injection_drops: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +143,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         .map(|heartbeat| now.saturating_sub(heartbeat.updated_at_epoch));
     let worker_daemon_healthy = healthy_worker_heartbeat.is_some();
     let legacy_surfaces = super::legacy_surfaces::query_legacy_surface_stats(conn)?;
+    let poisoning_defense = super::poisoning_stats::query_poisoning_defense_stats(conn)?;
     Ok(SystemStats {
         active_memories: query_current_active_memory_count(conn)?,
         active_observations: conn.query_row(
@@ -270,6 +285,7 @@ pub fn query_system_stats(conn: &Connection) -> Result<SystemStats> {
         worker_heartbeat_age_secs,
         failure_lifecycle,
         legacy_surfaces,
+        poisoning_defense,
     })
 }
 

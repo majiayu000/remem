@@ -231,7 +231,18 @@ pub(super) fn create_session_summary_schema(conn: &Connection) {
             valid_to_epoch INTEGER,
             session_row_id INTEGER,
             covered_from_event_id INTEGER,
-            covered_to_event_id INTEGER
+            covered_to_event_id INTEGER,
+            poisoning_status TEXT NOT NULL DEFAULT 'safe',
+            quarantine_stage TEXT,
+            quarantine_field TEXT,
+            quarantine_event_id INTEGER,
+            quarantine_pattern_id TEXT,
+            quarantine_pattern_version INTEGER,
+            acknowledged_pattern_id TEXT,
+            acknowledged_pattern_version INTEGER,
+            acknowledged_at_epoch INTEGER,
+            poisoning_block_count INTEGER NOT NULL DEFAULT 0,
+            poisoning_last_blocked_at_epoch INTEGER
         );
         CREATE TABLE IF NOT EXISTS sessions (
             id INTEGER PRIMARY KEY,
