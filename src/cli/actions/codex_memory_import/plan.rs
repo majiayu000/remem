@@ -208,13 +208,13 @@ fn digest_entries(entries: &[PlanEntry]) -> String {
     let mut hasher = Sha256::new();
     for entry in entries {
         hasher.update(entry.record.rel_id.as_bytes());
-        hasher.update([b'\t']);
+        hasher.update(b"\t");
         hasher.update(entry.identity.as_bytes());
-        hasher.update([b'\t']);
+        hasher.update(b"\t");
         hasher.update(entry.classification.as_str().as_bytes());
-        hasher.update([b'\t']);
+        hasher.update(b"\t");
         hasher.update(entry.route.key().as_bytes());
-        hasher.update([b'\n']);
+        hasher.update(b"\n");
     }
     format!("{:x}", hasher.finalize())
 }
