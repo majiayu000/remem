@@ -617,6 +617,10 @@ additive GH-850 schema 与单调 floor 保留，不得为 rollback 降低。
 停止 worker 属于运维动作，必须由授权人执行。任何删除 AI usage/audit、prune 其他 model vectors、
 改写 canonical memory 或 down migration 都不属于允许的 rollback。
 
-本文件不构成 `spec_approval`。在 `B-001` 证据补齐、human security review 完成、maintainer
-批准 product+tech 且 GH-850 被人工置为 `ready_to_implement` 前，不得生成 `tasks.md` 或开始
-implementation。
+本文件不构成 `spec_approval`。`tasks.md` 仅作为 SpecRail packet 完整性所需的 gate-first task
+plan 存在：其人工门禁任务（`SP850-T1`/`SP850-T2`）完成前，任何 implementation task 均不得
+开始。撰写本草案时 issue 引用的研究报告缺失于当时基线；该报告现已存在于
+`docs/research/agent-memory-optimization-research-2026-07.md`（immutable commit `5492dc96`，
+PR #905 merge），但 `B-001` 仍要求 human review 明确采纳该 revision 并完成独立 security
+review。在 `B-001` 证据采纳、human security review 完成、maintainer 批准 product+tech 且
+GH-850 被人工置为 `ready_to_implement` 前，不得开始 implementation。
