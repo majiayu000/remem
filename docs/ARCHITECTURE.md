@@ -136,8 +136,54 @@ fail-closed payload validation against the Cursor 3.12.17 evidence,
 `user_email` PII removal, `tool_use_id` as the canonical per-call event key,
 and the existing `captured_events.event_type = "cursor_tool_failure"` text
 discriminator for the observed failed-Read path. MCP-specific Cursor events
-stay unregistered (generic ownership); `session-init` and summarize are
-explicitly unsupported/fail-closed on Cursor until GH-824/GH-825 land.
+stay unregistered (generic ownership), and `session-init` remains
+unsupported/fail-closed on Cursor. Stop-time transcript capture (GH-825) and
+the install surface (GH-824) are described below.
+
+#### Cursor host data flow (GH-823/824/825)
+
+```
+Cursor hook payload (stdin, bounded 1 MiB)
+       │
+       ├─ observe: strict fail-closed parse of the verified generic
+       │  tool event (tool_use_id = per-call identity, user_email
+       │  removed pre-capture) ──→ captured_events / event_blobs,
+       │  with spill-and-replay when the DB is unavailable
+       │
+       └─ stop: full Stop validation (status ∈ {completed, aborted},
+          canonical key = session_id:generation_id:loop_count)
+               │
+               ├─ Stop-time transcript snapshot (bounded read); every
+               │  failure maps to an explicit degraded/<reason> marker
+               │  in the durable session_stop payload — payload-only
+               │  fallback, never a silent drop
+               └─ enqueue the same SessionRollup path as Claude/Codex
+```
+
+`remem summarize --host cursor` wires the GH-825 snapshot into the shared
+rollup worker; the worker never reopens the original transcript path, and
+capture fidelity (`full` vs `degraded/<reason>`) stays auditable from the
+ledger.
+
+The install surface (GH-824, `src/install/cursor_config/` +
+`src/install/hosts/cursor.rs`) owns the user-level `~/.cursor/hooks.json`
+and `~/.cursor/mcp.json` through a strict whole-document parser, a
+read-only preflight, and a staged-apply coordinator with compensating
+rollback plus an install receipt for exact structural ownership. Contract
+v1 registers exactly one MCP component and no hook entries: the observe and
+summarize capability gates are closed until the corresponding runtime
+policies are approved, so installing does not enable automatic Cursor
+capture. `sessionStart` injection is blocked on the evidenced Cursor
+version and never installs. The platform gate approves the hook command
+renderer only on macOS/Linux; Windows fails closed (explicit error for
+`--target cursor`/`all`, skip diagnostic for `--target auto`).
+
+`remem doctor` reports Cursor as separate dimensions instead of one
+"installed" boolean — `detected`, `configured`, `configured_mode`,
+`malformed`, `partial_state`, `drift`, `collision`, per-capability
+`effective` lines — plus the fixed
+`hook_failure_policy: host_continues` and
+`session-init: not supported on cursor` lines.
 
 ### 3. Background Distillation (Stop → summarize + worker)
 
