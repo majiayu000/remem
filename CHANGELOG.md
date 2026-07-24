@@ -3,6 +3,22 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.27` for GH-934: Retrieval Router v1
+  deterministic plan compilation. New `src/retrieval_router/` module with
+  a versioned `RetrievalPlan` (per-channel enabled/limit/weight/max
+  contribution/degradation, scope filters, rerank/trust/freshness/
+  abstention policy placeholders, token budget, policy version, stable
+  SHA-256 plan hash), six routable `ContextIntent` variants (resume_work,
+  explain_decision, debug_failure, apply_preference, review_change,
+  explore_history) with test-locked per-intent channel mappings, and
+  deterministic intent resolution (explicit caller intent wins, keyword
+  rules are the only fallback, unclassified tasks conservatively fall
+  back to explore_history). New `remem context-plan --task ... --json`
+  debug command prints the resolved intent, enabled/disabled channels,
+  filters, budgets, policy version, and reason codes — never memory
+  contents; no LLM or network call on any router path. Wiring the plan
+  into retrieval execution, rerank mechanics (GH-851), and per-intent
+  golden-fixture ablation remain follow-up work on GH-934.
 - Staged source version `0.6.25` for GH-932: Context Bundle v1 internal
   contract. New `src/context_bundle/` module with versioned
   `ContextRequest` / `ContextPlan` / `ContextBundle` / `ContextAudit`

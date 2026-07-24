@@ -46,6 +46,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
                 }
             }
         }
+        Commands::ContextPlan(args) => super::actions::run_context_plan(args)?,
         Commands::ContextGate { action } => match action {
             ContextGateAction::Status {
                 project,

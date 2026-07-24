@@ -32,4 +32,5 @@ pub use domain::{
 };
 pub use executor::{execute, ExecutorInputs};
 pub use planner::plan;
+pub(crate) use policy::validate_request;
 pub use policy::CONTEXT_BUNDLE_POLICY_VERSION;
