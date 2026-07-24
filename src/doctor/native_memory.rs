@@ -7,11 +7,21 @@ const MAX_REPORTED_FILES: usize = 3;
 pub(super) fn check_native_memory_sync() -> Check {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let projects_dir = home.join(".claude").join("projects");
-    check_native_memory_sync_for(
+    let mut check = check_native_memory_sync_for(
         &projects_dir,
         crate::context::claude_memory::native_memory_max_bytes(),
         crate::context::claude_memory::native_memory_sync_disabled(),
-    )
+    );
+    // GH-852: report the native delivery bridge state (no-go / hook_only
+    // pending real-host PoC) and any user-owned autoMemoryDirectory value.
+    let bridge = crate::context::claude_memory::ownership::native_bridge_status();
+    check.detail.push_str(&format!("; bridge={}", bridge.state));
+    if bridge.user_auto_memory_directory.is_some() {
+        check
+            .detail
+            .push_str("; user autoMemoryDirectory is set (user-owned; remem will not take over)");
+    }
+    check
 }
 
 fn check_native_memory_sync_for(projects_dir: &Path, max_bytes: usize, disabled: bool) -> Check {

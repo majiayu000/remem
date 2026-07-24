@@ -28,6 +28,15 @@ pub(in crate::cli) fn run_import(
             source,
             best_effort,
         } => run_import_backup(source, best_effort),
+        ImportAction::CodexMemories {
+            source,
+            dry_run,
+            expect_plan_digest,
+        } => super::codex_memory_import::run_import_codex_memories(
+            source.as_deref(),
+            dry_run,
+            expect_plan_digest.as_deref(),
+        ),
         ImportAction::Markdown {
             source,
             best_effort,

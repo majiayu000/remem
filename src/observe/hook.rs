@@ -199,11 +199,14 @@ fn record_observed_event(
             .as_ref()
             .and_then(|value| value["file_path"].as_str())
         {
-            if let Err(error) =
-                sync_native_memory(conn, &event.session_id, file_path, branch.as_deref())
-            {
-                crate::log::warn("observe", &format!("native memory sync failed: {}", error));
-            }
+            // GH-852 B-019: ingestion failures are error-level and propagate
+            // to the hook exit status instead of degrading silently.
+            sync_native_memory(conn, &event.session_id, file_path, branch.as_deref()).map_err(
+                |error| {
+                    crate::log::error("observe", &format!("native ingest failed: {error:#}"));
+                    error.context("native memory candidate ingestion failed")
+                },
+            )?;
         }
     }
 

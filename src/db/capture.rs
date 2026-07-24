@@ -250,6 +250,15 @@ fn record_captured_event_inner(
     })
 }
 
+/// Ensure workspace + project rows exist for a project path and return the
+/// project id. Used by external-content import paths (GH-852) that create
+/// review candidates outside a live capture session.
+pub(crate) fn ensure_project_row(conn: &Connection, project_path: &str) -> Result<i64> {
+    let now = chrono::Utc::now().timestamp();
+    let workspace_id = upsert_workspace(conn, project_path, None, now)?;
+    upsert_project(conn, workspace_id, project_path, now)
+}
+
 fn upsert_identity(
     conn: &Connection,
     input: &CaptureEventInput<'_>,

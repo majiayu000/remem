@@ -37,6 +37,23 @@ pub(in crate::cli) enum ImportAction {
         #[arg(long)]
         best_effort: bool,
     },
+    /// One-way, read-only import of Codex CLI native rollout-summary memories
+    /// into the candidate review queue. Records are untrusted external
+    /// content: they only land in pending_review or quarantined, never
+    /// directly in active memories, and the source tree is never modified.
+    CodexMemories {
+        /// Override the source directory (defaults to
+        /// `~/.codex/memories/rollout_summaries`). Intended for tests/PoC.
+        #[arg(long)]
+        source: Option<PathBuf>,
+        /// Plan the import without writing to the remem database.
+        #[arg(long)]
+        dry_run: bool,
+        /// Plan digest from a prior --dry-run. Required for apply; the apply
+        /// is rejected if current planning no longer matches this digest.
+        #[arg(long)]
+        expect_plan_digest: Option<String>,
+    },
     /// Rebuild curated memories from a markdown mirror produced by `remem export --markdown`.
     #[command(visible_alias = "reindex-markdown")]
     Markdown {

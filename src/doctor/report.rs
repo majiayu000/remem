@@ -8,6 +8,7 @@ use rusqlite::Connection;
 
 use super::capture_capability::check_capture_capabilities;
 use super::capture_liveness::check_capture_liveness;
+use super::codex_native_memory::check_codex_native_memories;
 use super::database::{
     check_capture_drops, check_database, check_declared_empty_surfaces, check_disk_space,
     check_legacy_surfaces, check_memory_usage_feedback, check_pending_queue,
@@ -158,6 +159,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
         check_pending_queue(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, check_native_memory_sync)?;
+    push_check(&mut checks, &mut on_check, check_codex_native_memories)?;
     push_check(&mut checks, &mut on_check, check_log_health)?;
     push_check(&mut checks, &mut on_check, check_disk_space)?;
     Ok(checks)
