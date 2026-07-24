@@ -11,6 +11,8 @@ pub enum InstallTarget {
     Claude,
     /// Install only to Codex (~/.codex/config.toml).
     Codex,
+    /// Install only to Cursor (~/.cursor/hooks.json + ~/.cursor/mcp.json).
+    Cursor,
     /// Install to every known host, creating config files if missing.
     All,
 }

@@ -1,5 +1,6 @@
 mod capture_capability;
 mod capture_liveness;
+mod cursor_install;
 mod database;
 mod embedding;
 mod environment;

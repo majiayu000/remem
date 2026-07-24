@@ -23,6 +23,9 @@ pub use user_auto_promote::{
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
+/// Canonical Cursor host name (GH-823). The install-side `hosts.cursor`
+/// defaults/normalization and receipt are owned by GH-824.
+pub const CURSOR_HOST: &str = "cursor";
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.2";
 pub const MEMORY_AI_PROFILE_FIELD: &str = "remem_ai_profile";
 
@@ -171,6 +174,7 @@ pub fn normalize_host(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "claude" | "claude-code" | "claudecode" => CLAUDE_HOST.to_string(),
         "codex" | "codex-cli" | "codexcli" => CODEX_HOST.to_string(),
+        "cursor" => CURSOR_HOST.to_string(),
         "unknown" => "unknown".to_string(),
         _ => raw.trim().to_string(),
     }
@@ -326,6 +330,15 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
             set_str_if_missing(table, "context_gate", "auto");
             set_bool_if_missing(table, "context_color", true);
             set_str_if_missing(table, "capture_adapter", CLAUDE_HOST);
+        }
+        CURSOR_HOST => {
+            // GH-824 contract v1 defaults (B-002): never the generic
+            // `context_gate = "off"` fallback, and the capture adapter is
+            // the canonical host identity.
+            set_str_if_missing(table, "memory_profile", "codex");
+            set_str_if_missing(table, "context_gate", "strict");
+            set_bool_if_missing(table, "context_color", true);
+            set_str_if_missing(table, "capture_adapter", CURSOR_HOST);
         }
         "unknown" => {
             set_str_if_missing(table, "memory_profile", "codex");

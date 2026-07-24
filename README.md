@@ -61,9 +61,21 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 # or: ~/.local/bin/remem install --target all
 ```
 
-`remem install` can auto-detect existing Claude Code and Codex CLI config
-directories. On first-time setups, use `--target codex`, `--target claude`, or
-`--target all` so remem can create the selected config files.
+`remem install` can auto-detect existing Claude Code, Codex CLI, and Cursor
+config directories. On first-time setups, use `--target codex`,
+`--target claude`, or `--target all` so remem can create the selected config
+files.
+
+`--target cursor` (macOS/Linux) manages only the user-level
+`~/.cursor/hooks.json` and `~/.cursor/mcp.json`: it registers the remem MCP
+server, strictly validates both files, and preserves foreign entries
+semantically for the validated snapshot (coordinated updates use staged
+apply with compensating rollback, not a cross-file atomic transaction, and
+edits landing between the final comparison and the rename can still be
+lost). Cursor hook capture entries are not installed yet — automatic Cursor
+memory is not enabled — and `session-init` is not supported on Cursor.
+Before downgrading remem, run `remem uninstall --target cursor` with the
+current version first.
 
 Run `remem doctor` when you want to verify or troubleshoot the integration.
 If Claude Code reports a Hook Integrity Warning or doctor shows incomplete
