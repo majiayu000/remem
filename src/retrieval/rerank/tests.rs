@@ -239,7 +239,7 @@ fn rerank_shared_stage_top_n_membership() {
     let empty = order_scored_candidates(&candidates, &[], 5);
     assert!(empty.is_empty());
 
-    let all = vec![
+    let all = [
         candidate(10, 0, false),
         candidate(20, 1, false),
         candidate(30, 2, false),
@@ -254,7 +254,7 @@ fn rerank_shared_stage_top_n_membership() {
 #[test]
 fn rerank_empty_short_and_tie_break() {
     // Ties break by baseline rank ascending, then stable id ascending.
-    let all = vec![
+    let all = [
         candidate(30, 0, false),
         candidate(10, 1, false),
         candidate(20, 2, false),
@@ -271,7 +271,7 @@ fn rerank_preserves_eligibility_and_source_anchor() {
     // Hard partition: verify-before-trust candidates rank behind every
     // normal candidate even with a higher model score, while each partition
     // keeps its internal rerank order.
-    let all = vec![
+    let all = [
         candidate(1, 0, true),
         candidate(2, 1, false),
         candidate(3, 2, false),
@@ -287,7 +287,7 @@ fn rerank_preserves_eligibility_and_source_anchor() {
 fn rerank_fixed_result_pagination_contract() {
     // The applied outcome is one fixed top-k ordered set; a smaller candidate
     // pool is scored as-is (no disabled fallback for count < top_k).
-    let all = vec![candidate(1, 0, false), candidate(2, 1, false)];
+    let all = [candidate(1, 0, false), candidate(2, 1, false)];
     let refs: Vec<&RerankCandidate> = all.iter().collect();
 
     let ordered = order_scored_candidates(&refs, &[0.3, 0.7], 10);
