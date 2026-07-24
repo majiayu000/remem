@@ -12,6 +12,21 @@ const WEB_CONSOLE_GOVERNANCE_VERSION: i64 = 70;
 
 pub fn run_migrations(conn: &Connection) -> Result<()> {
     set_foreign_keys(conn, true).context("enable foreign keys before migration")?;
+
+    // Fast path: when the database is already at the binary's latest schema and
+    // no drift invariant is violated, the migration transaction below would be a
+    // pure no-op (every migration skipped, drift repairs idempotent). Skip it so
+    // read-heavy callers (API/MCP open a fresh connection per request) do not
+    // take the database write lock on every connection open. Every statement on
+    // this path is a read (no `CREATE TABLE`, no `BEGIN IMMEDIATE`), so it is
+    // WAL-concurrent and never contends with an active writer.
+    if has_migration_table(conn) {
+        let applied = applied_versions(conn)?;
+        if schema_is_fully_current(conn, &applied)? {
+            return Ok(());
+        }
+    }
+
     ensure_migration_table(conn)?;
 
     let applied = applied_versions(conn)?;
@@ -25,6 +40,27 @@ pub fn run_migrations(conn: &Connection) -> Result<()> {
         MigrationOutcome::Completed(result) => restore_foreign_keys(conn, result),
         MigrationOutcome::DiscardConnection(error) => Err(error),
     }
+}
+
+/// Read-only predicate: every known migration is applied, the database schema
+/// level matches this binary exactly, and no drift invariant is violated.
+///
+/// Returns `false` (so the caller runs the full migration transaction) when the
+/// database is newer than this binary, so that the existing
+/// upgrade-required error in `run_migrations_locked` is preserved.
+fn schema_is_fully_current(conn: &Connection, applied: &[i64]) -> Result<bool> {
+    let binary_latest = super::latest_schema_version();
+    let db_latest = applied.iter().copied().max().unwrap_or(0);
+    if db_latest != binary_latest {
+        return Ok(false);
+    }
+    if MIGRATIONS
+        .iter()
+        .any(|migration| !applied.contains(&migration.version))
+    {
+        return Ok(false);
+    }
+    Ok(super::validate_schema_invariants(conn)?.is_empty())
 }
 
 enum MigrationOutcome {
