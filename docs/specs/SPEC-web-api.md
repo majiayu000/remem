@@ -30,7 +30,7 @@ release is published.
 | Method | Path | Purpose |
 |---|---|---|
 | GET | `/api/v1/health` | Cheap authenticated liveness and API readiness. |
-| GET | `/api/v1/status` | Cached operational queue state and counters. |
+| GET | `/api/v1/status` | Cached operational queue state and counters. Since 0.6.24 the payload additionally carries a read-only `poisoning_defense` object (pattern set version, candidate/summary/observation quarantine counts, legacy-unscanned summaries, summary block count, injection drops; metadata only, never payload text). |
 | GET | `/api/v1/capabilities` | Native feature and endpoint discovery. |
 | GET | `/api/v1/search?query=&project=&type=&limit=&offset=&branch=&include_stale=&include_suppressed=&multi_hop=&explain=` | Search memories with optional explain. |
 | GET | `/api/v1/memory?id=&include_suppressed=` | Legacy compact single-memory endpoint. |
