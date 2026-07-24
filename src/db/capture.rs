@@ -278,8 +278,10 @@ fn upsert_identity(
 
 fn normalize_host(host: &str) -> Result<&str> {
     match host {
-        "claude-code" | "codex-cli" => Ok(host),
-        other => bail!("invalid capture host '{other}'; expected claude-code or codex-cli"),
+        "claude-code" | "codex-cli" | "cursor" => Ok(host),
+        other => {
+            bail!("invalid capture host '{other}'; expected claude-code, codex-cli, or cursor")
+        }
     }
 }
 

@@ -100,7 +100,24 @@ pub(in crate::context) fn context_stdout_for_invocation(
     output: &str,
     invocation: &ContextInvocation,
 ) -> Result<String> {
-    if output.is_empty() || !is_codex_session_start_hook(invocation) {
+    if output.is_empty() {
+        return Ok(output.to_string());
+    }
+
+    if is_cursor_session_start_hook(invocation) {
+        // GH-823 B-003: single JSON object with only `additional_context`
+        // carrying the ANSI-stripped host-independent context body (B-004: no
+        // instruction text is added). Serialization is atomic: any serde
+        // failure propagates and nothing partial is emitted (B-005). Note the
+        // sessionStart injection capability itself stays disabled/uninstalled
+        // for Cursor 3.12.17 (PR #914 absent marker); this renderer only
+        // defines the serialization contract.
+        let additional_context = super::super::style::strip_ansi(output);
+        let hook_output = serde_json::json!({ "additional_context": additional_context });
+        return Ok(format!("{}\n", serde_json::to_string(&hook_output)?));
+    }
+
+    if !is_codex_session_start_hook(invocation) {
         return Ok(output.to_string());
     }
 
@@ -112,6 +129,15 @@ pub(in crate::context) fn context_stdout_for_invocation(
         }
     });
     Ok(format!("{}\n", serde_json::to_string(&hook_output)?))
+}
+
+/// True only for invocations built by the strict Cursor parser:
+/// `HostKind::Cursor` is constructed exclusively from a validated exact
+/// `sessionStart` payload, so unknown or command-mismatched events can never
+/// reach this renderer (B-003).
+fn is_cursor_session_start_hook(invocation: &ContextInvocation) -> bool {
+    invocation.host == super::super::host::HostKind::Cursor
+        && invocation.source.as_deref() == Some("sessionStart")
 }
 
 fn is_codex_session_start_hook(invocation: &ContextInvocation) -> bool {

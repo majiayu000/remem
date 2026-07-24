@@ -35,7 +35,16 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            context::generate_context_from_cli(cwd, session_id, color, host, debug, force, gate)?;
+            match parse_explicit_hook_host(host.as_deref())? {
+                Some(crate::identity::InstallHost::Cursor) => {
+                    context::generate_cursor_context_from_stdin()?;
+                }
+                _ => {
+                    context::generate_context_from_cli(
+                        cwd, session_id, color, host, debug, force, gate,
+                    )?;
+                }
+            }
         }
         Commands::ContextGate { action } => match action {
             ContextGateAction::Status {
@@ -52,19 +61,44 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             if remem_hooks_disabled() {
                 return Ok(());
             }
+            // GH-823 B-006: `cursor` is a recognized host value but an
+            // explicitly unsupported command combination. The rejection
+            // happens at dispatch, before stdin is read and before any
+            // prompt write, context stdout, enqueue, spill, or database
+            // side effect. Cursor's `beforeSubmitPrompt` is permit/block
+            // only and has no proven injection capability.
+            if matches!(
+                parse_explicit_hook_host(host.as_deref())?,
+                Some(crate::identity::InstallHost::Cursor)
+            ) {
+                anyhow::bail!(
+                    "session-init is not supported on --host cursor; \
+                     Cursor beforeSubmitPrompt is permit/block-only (GH-823 B-006)"
+                );
+            }
             observe::session_init(host.as_deref()).await?;
         }
         Commands::Observe { host } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            observe::observe(host.as_deref()).await?;
+            match parse_explicit_hook_host(host.as_deref())? {
+                Some(crate::identity::InstallHost::Cursor) => {
+                    observe::observe_cursor().await?;
+                }
+                _ => observe::observe(host.as_deref()).await?,
+            }
         }
         Commands::Summarize { host, profile } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            summarize::summarize(host.as_deref(), profile.as_deref()).await?;
+            match parse_explicit_hook_host(host.as_deref())? {
+                Some(crate::identity::InstallHost::Cursor) => {
+                    summarize::summarize_cursor().await?;
+                }
+                _ => summarize::summarize(host.as_deref(), profile.as_deref()).await?,
+            }
         }
         Commands::Worker(args) => {
             if let Some(range_id) = args.replay_range_id {
@@ -338,6 +372,15 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Shared exact hook-host validation at the CLI boundary (GH-823 B-001).
+/// `None` (auto-detection) keeps its existing behavior; every explicit value
+/// must be in the closed set `claude-code`, `codex-cli`, `cursor`. Aliases,
+/// `unknown`, empty strings, and arbitrary values fail here, before any
+/// rendering, adapter dispatch, enqueue, or database write.
+fn parse_explicit_hook_host(host: Option<&str>) -> Result<Option<crate::identity::InstallHost>> {
+    host.map(crate::identity::InstallHost::parse).transpose()
 }
 
 fn remem_hooks_disabled() -> bool {

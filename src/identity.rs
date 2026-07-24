@@ -18,6 +18,7 @@ use crate::git_util::resolve_toplevel;
 pub enum InstallHost {
     ClaudeCode,
     CodexCli,
+    Cursor,
 }
 
 impl InstallHost {
@@ -28,18 +29,22 @@ impl InstallHost {
         match self {
             InstallHost::ClaudeCode => "claude-code",
             InstallHost::CodexCli => "codex-cli",
+            InstallHost::Cursor => "cursor",
         }
     }
 
-    /// Parse from the `--host` CLI argument. Any other value is an
-    /// install error and must be refused at the boundary. `unknown` is
-    /// explicitly rejected here, in contrast to `context::host::HostKind`.
+    /// Parse from the `--host` CLI argument. This is the shared exact
+    /// hook-host parser (GH-823 B-001): the recognized closed set is exactly
+    /// `claude-code`, `codex-cli`, and `cursor`. Aliases, misspellings, empty
+    /// strings, `unknown`, and arbitrary values are refused at the boundary,
+    /// in contrast to `context::host::HostKind` detection.
     pub fn parse(s: &str) -> Result<Self> {
         match s {
             "claude-code" => Ok(InstallHost::ClaudeCode),
             "codex-cli" => Ok(InstallHost::CodexCli),
+            "cursor" => Ok(InstallHost::Cursor),
             other => Err(anyhow!(
-                "invalid host '{other}'; schema writes require --host claude-code or --host codex-cli"
+                "invalid host '{other}'; hook host must be one of claude-code, codex-cli, cursor"
             )),
         }
     }
@@ -152,15 +157,38 @@ mod tests {
             InstallHost::parse("codex-cli").unwrap(),
             InstallHost::CodexCli
         );
+        assert_eq!(InstallHost::parse("cursor").unwrap(), InstallHost::Cursor);
         assert_eq!(InstallHost::ClaudeCode.as_db_value(), "claude-code");
         assert_eq!(InstallHost::CodexCli.as_db_value(), "codex-cli");
+        assert_eq!(InstallHost::Cursor.as_db_value(), "cursor");
     }
 
     #[test]
     fn install_host_rejects_unknown() {
         let err = InstallHost::parse("unknown").unwrap_err().to_string();
         assert!(err.contains("invalid host"));
+        assert!(err.contains("claude-code, codex-cli, cursor"));
         assert!(InstallHost::parse("").is_err());
+    }
+
+    #[test]
+    fn install_host_rejects_aliases_and_arbitrary_values() {
+        for value in [
+            "claude",
+            "codex",
+            "Cursor",
+            "cursor-ide",
+            "CURSOR",
+            " cursor",
+            "cursor ",
+            "claudecode",
+            "codexcli",
+        ] {
+            assert!(
+                InstallHost::parse(value).is_err(),
+                "alias '{value}' must fail the closed-set hook-host parser"
+            );
+        }
     }
 
     #[test]

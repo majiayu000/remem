@@ -315,3 +315,298 @@ fn replayed_observe_spill_without_snapshot_does_not_adopt_later_head() -> Result
     assert_eq!(evidence_count, 0);
     Ok(())
 }
+
+// ---- GH-823 Cursor observe capture (B-007, B-011, B-014, B-016) ----
+
+mod cursor_observe {
+    use crate::db::{self, test_support::ScopedTestDataDir};
+    use serde_json::json;
+
+    const EMAIL_SENTINEL: &str = "gh823.sentinel+cursor@example.invalid";
+
+    fn success_payload(tool_name: &str, tool_use_id: &str) -> Vec<u8> {
+        json!({
+            "conversation_id": "sess-cursor-obs",
+            "generation_id": "gen-1",
+            "model": "auto",
+            "tool_name": tool_name,
+            "tool_input": {"file_path": "README.md"},
+            "tool_output": "file contents",
+            "duration": 12,
+            "tool_use_id": tool_use_id,
+            "session_id": "sess-cursor-obs",
+            "hook_event_name": "postToolUse",
+            "cursor_version": "3.12.17",
+            "workspace_roots": ["/tmp/remem-cursor"],
+            "user_email": EMAIL_SENTINEL,
+            "transcript_path": "/tmp/transcript.jsonl"
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    fn failure_payload(tool_use_id: &str) -> Vec<u8> {
+        json!({
+            "conversation_id": "sess-cursor-obs",
+            "generation_id": "gen-1",
+            "model": "auto",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "missing.md"},
+            "error_message": "file not found",
+            "failure_type": "error",
+            "duration": 8,
+            "tool_use_id": tool_use_id,
+            "is_interrupt": false,
+            "session_id": "sess-cursor-obs",
+            "hook_event_name": "postToolUseFailure",
+            "cursor_version": "3.12.17",
+            "workspace_roots": ["/tmp/remem-cursor"],
+            "user_email": EMAIL_SENTINEL,
+            "transcript_path": "/tmp/transcript.jsonl"
+        })
+        .to_string()
+        .into_bytes()
+    }
+
+    fn captured_events(conn: &rusqlite::Connection) -> Vec<(String, String, String)> {
+        let mut statement = conn
+            .prepare(
+                "SELECT h.name, ce.event_id, ce.event_type
+                 FROM captured_events ce JOIN hosts h ON h.id = ce.host_id
+                 WHERE ce.session_id = 'sess-cursor-obs'
+                 ORDER BY ce.id",
+            )
+            .expect("prepare");
+        let rows = statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .expect("query");
+        rows.collect::<Result<Vec<_>, _>>().expect("collect")
+    }
+
+    fn assert_sentinel_absent(conn: &rusqlite::Connection) {
+        let leaked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM captured_events WHERE content_text LIKE ?1",
+                [format!("%{EMAIL_SENTINEL}%")],
+                |row| row.get(0),
+            )
+            .expect("sentinel scan");
+        assert_eq!(leaked, 0, "user_email sentinel reached captured_events");
+    }
+
+    #[tokio::test]
+    async fn cursor_generic_success_captures_once_with_canonical_key() -> anyhow::Result<()> {
+        let _dir = ScopedTestDataDir::new("cursor-observe-success");
+        drop(db::open_db()?);
+
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-1")).await?;
+        // Replay of the same call maps to itself (idempotent).
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-1")).await?;
+
+        let conn = db::open_db()?;
+        let events = captured_events(&conn);
+        assert_eq!(
+            events.len(),
+            1,
+            "canonical per-call capture is exactly once"
+        );
+        assert_eq!(events[0].0, "cursor", "B-011 canonical host value");
+        assert_eq!(events[0].1, "cursor-tool:tu-1");
+        assert_eq!(events[0].2, "tool_result");
+        let legacy: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-cursor-obs'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(legacy, 1, "idempotent replay writes one legacy event");
+        assert_sentinel_absent(&conn);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_same_tool_calls_keep_distinct_canonical_keys() -> anyhow::Result<()> {
+        let _dir = ScopedTestDataDir::new("cursor-observe-distinct");
+        drop(db::open_db()?);
+
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-a")).await?;
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-b")).await?;
+
+        let conn = db::open_db()?;
+        let events = captured_events(&conn);
+        assert_eq!(events.len(), 2, "two same-tool calls stay distinct");
+        assert_eq!(events[0].1, "cursor-tool:tu-a");
+        assert_eq!(events[1].1, "cursor-tool:tu-b");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_failed_read_stores_existing_schema_failure_discriminator() -> anyhow::Result<()>
+    {
+        let _dir = ScopedTestDataDir::new("cursor-observe-failure");
+        drop(db::open_db()?);
+
+        crate::observe::observe_cursor_bytes(&failure_payload("tu-fail")).await?;
+
+        let conn = db::open_db()?;
+        let events = captured_events(&conn);
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].2, "cursor_tool_failure");
+        assert_eq!(events[0].1, "cursor-tool:tu-fail");
+        assert_sentinel_absent(&conn);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_dual_delivery_keeps_failure_precedence_both_orders() -> anyhow::Result<()> {
+        let _dir = ScopedTestDataDir::new("cursor-observe-precedence");
+        drop(db::open_db()?);
+
+        // success then failure: promoted to the failure discriminator.
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-x")).await?;
+        crate::observe::observe_cursor_bytes(&failure_payload("tu-x")).await?;
+        // failure then success: never downgraded.
+        crate::observe::observe_cursor_bytes(&failure_payload("tu-y")).await?;
+        {
+            let mut payload = success_payload("Read", "tu-y");
+            crate::observe::observe_cursor_bytes(&std::mem::take(&mut payload)).await?;
+        }
+
+        let conn = db::open_db()?;
+        let events = captured_events(&conn);
+        assert_eq!(events.len(), 2, "each call persists exactly once");
+        for (_, event_id, event_type) in &events {
+            assert_eq!(
+                event_type, "cursor_tool_failure",
+                "failure precedence lost for {event_id}"
+            );
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_unknown_tool_name_uses_verbatim_generic_capture() -> anyhow::Result<()> {
+        let _dir = ScopedTestDataDir::new("cursor-observe-unknown-tool");
+        drop(db::open_db()?);
+
+        crate::observe::observe_cursor_bytes(&success_payload("SomethingNew", "tu-new")).await?;
+        crate::observe::observe_cursor_bytes(&success_payload("MCP:browser_tabs", "tu-mcp"))
+            .await?;
+
+        let conn = db::open_db()?;
+        let tools: Vec<String> = conn
+            .prepare(
+                "SELECT tool_name FROM captured_events WHERE session_id = 'sess-cursor-obs' ORDER BY id",
+            )?
+            .query_map([], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            tools,
+            vec!["SomethingNew".to_string(), "MCP:browser_tabs".to_string()]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_invalid_payloads_produce_zero_writes() -> anyhow::Result<()> {
+        let _dir = ScopedTestDataDir::new("cursor-observe-zero-writes");
+        drop(db::open_db()?);
+
+        let mut cases: Vec<Vec<u8>> = vec![
+            b"not-json".to_vec(),
+            success_payload("Task", "tu-task"),
+            success_payload("Write", "tu-write"),
+        ];
+        // MCP-specific events stay unregistered under generic ownership.
+        let mut mcp_specific = json!({
+            "conversation_id": "sess-cursor-obs",
+            "generation_id": "gen-1",
+            "tool_name": "browser_tabs",
+            "tool_input": "{}",
+            "result_json": "{}",
+            "duration": 5,
+            "mcp_server_name": "cursor-ide-browser",
+            "session_id": "sess-cursor-obs",
+            "hook_event_name": "afterMCPExecution",
+            "cursor_version": "3.12.17",
+            "workspace_roots": ["/tmp/remem-cursor"],
+            "user_email": EMAIL_SENTINEL,
+            "transcript_path": "/tmp/transcript.jsonl"
+        });
+        cases.push(mcp_specific.to_string().into_bytes());
+        mcp_specific["hook_event_name"] = json!("beforeMCPExecution");
+        cases.push(mcp_specific.to_string().into_bytes());
+        // Identity mismatch, blank tool_use_id, multi-root.
+        for (field, value) in [
+            ("conversation_id", json!("other-session")),
+            ("tool_use_id", json!("")),
+            ("workspace_roots", json!(["/a", "/b"])),
+        ] {
+            let mut payload: serde_json::Value =
+                serde_json::from_slice(&success_payload("Read", "tu-z"))?;
+            payload[field] = value;
+            cases.push(payload.to_string().into_bytes());
+        }
+
+        for case in &cases {
+            let error = crate::observe::observe_cursor_bytes(case).await;
+            assert!(error.is_err(), "case must fail closed");
+        }
+
+        let conn = db::open_db()?;
+        let captured: i64 =
+            conn.query_row("SELECT COUNT(*) FROM captured_events", [], |row| row.get(0))?;
+        let legacy: i64 = conn.query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))?;
+        assert_eq!(
+            (captured, legacy),
+            (0, 0),
+            "fail-closed paths must not write"
+        );
+        assert!(
+            !crate::db::data_dir().join("capture-spill.jsonl").exists(),
+            "fail-closed paths must not spill"
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_db_open_failure_spills_sanitized_event_and_replays_failure_type(
+    ) -> anyhow::Result<()> {
+        let dir = ScopedTestDataDir::new("cursor-observe-spill-replay");
+        std::fs::create_dir_all(&dir.path)?;
+        // A stale schema makes hook DB open fail closed.
+        let stale = rusqlite::Connection::open(dir.db_path())?;
+        stale.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
+        drop(stale);
+
+        let error = crate::observe::observe_cursor_bytes(&failure_payload("tu-spill"))
+            .await
+            .expect_err("stale hook database should fail closed");
+        assert!(error.to_string().contains("hook database open requires"));
+        let spill_path = crate::db::data_dir().join("capture-spill.jsonl");
+        assert!(spill_path.exists(), "failure event must spill");
+        let spill = std::fs::read_to_string(&spill_path)?;
+        assert!(
+            !spill.contains(EMAIL_SENTINEL),
+            "spill record must be built from the sanitized event"
+        );
+        assert!(spill.contains("cursor_tool_failure"));
+
+        // Migrate the database, then replay through the normal path.
+        std::fs::remove_file(dir.db_path())?;
+        drop(db::open_db()?);
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-after")).await?;
+
+        let conn = db::open_db()?;
+        let replayed: String = conn.query_row(
+            "SELECT event_type FROM captured_events WHERE event_id = 'cursor-tool:tu-spill'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(
+            replayed, "cursor_tool_failure",
+            "failure discriminator must survive spill replay"
+        );
+        assert_sentinel_absent(&conn);
+        Ok(())
+    }
+}

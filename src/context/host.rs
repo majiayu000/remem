@@ -4,6 +4,10 @@ use super::policy::ContextPolicy;
 pub enum HostKind {
     ClaudeCode,
     CodexCli,
+    /// Constructed only by the strict Cursor hook parser
+    /// (`crate::cursor_hook`); deliberately absent from `parse()` so legacy
+    /// env/default detection can never produce a Cursor invocation.
+    Cursor,
     Unknown,
 }
 
@@ -12,6 +16,7 @@ impl HostKind {
         match self {
             Self::ClaudeCode => "claude-code",
             Self::CodexCli => "codex-cli",
+            Self::Cursor => "cursor",
             Self::Unknown => "unknown",
         }
     }
@@ -46,6 +51,7 @@ pub(super) trait ContextHostProfile {
 
 pub(super) struct ClaudeCodeContextProfile;
 pub(super) struct CodexCliContextProfile;
+pub(super) struct CursorContextProfile;
 pub(super) struct UnknownContextProfile;
 
 impl ContextHostProfile for ClaudeCodeContextProfile {
@@ -88,6 +94,32 @@ impl ContextHostProfile for CodexCliContextProfile {
     fn retrieval_hints(&self) -> RetrievalHints {
         RetrievalHints {
             line: "Use `search`/`get_observations` for details. Codex automatic capture is Stop/context-focused, so save explicit decisions/bugfixes when they matter.",
+        }
+    }
+}
+
+impl ContextHostProfile for CursorContextProfile {
+    /// GH-823 v1 capability matrix (PR #914, Cursor 3.12.17): session-start
+    /// injection is disabled (marker not model-visible) and no post-tool
+    /// context command/renderer/install entry exists. Both model-visible
+    /// context paths therefore stay unwired; observe capture is generic-only.
+    fn capabilities(&self) -> HostCapabilities {
+        HostCapabilities {
+            has_mcp_tools: false,
+            has_session_start_hook: false,
+            has_user_prompt_submit_hook: false,
+            observes_native_file_edits: false,
+            observes_bash: false,
+        }
+    }
+
+    fn default_policy(&self) -> ContextPolicy {
+        ContextPolicy::from_env()
+    }
+
+    fn retrieval_hints(&self) -> RetrievalHints {
+        RetrievalHints {
+            line: "Use `search`/`get_observations` for details. `save_memory` after decisions/bugfixes.",
         }
     }
 }
@@ -136,6 +168,7 @@ pub(super) fn resolve_profile(host: HostKind) -> Box<dyn ContextHostProfile> {
     match host {
         HostKind::ClaudeCode => Box::new(ClaudeCodeContextProfile),
         HostKind::CodexCli => Box::new(CodexCliContextProfile),
+        HostKind::Cursor => Box::new(CursorContextProfile),
         HostKind::Unknown => Box::new(UnknownContextProfile),
     }
 }
@@ -163,6 +196,35 @@ mod tests {
             .retrieval_hints()
             .line
             .contains("Stop/context-focused"));
+    }
+
+    #[test]
+    fn cursor_profile_keeps_both_model_visible_context_paths_disabled() {
+        // GH-823 v1 capability matrix: Cursor 3.12.17 sessionStart injection
+        // is disabled (PR #914 absent marker) and no postToolUse context
+        // command/renderer/install entry exists, so no injection-capable
+        // hook capability may be advertised.
+        let capabilities = CursorContextProfile.capabilities();
+        assert!(!capabilities.has_session_start_hook);
+        assert!(!capabilities.has_user_prompt_submit_hook);
+        assert!(!capabilities.has_mcp_tools);
+        assert!(!capabilities.observes_native_file_edits);
+        assert!(!capabilities.observes_bash);
+    }
+
+    #[test]
+    fn cursor_is_not_parseable_by_legacy_host_detection() {
+        // `HostKind::Cursor` may only be constructed by the strict Cursor
+        // hook parser; env/default detection must never produce it.
+        assert_eq!(HostKind::parse("cursor"), None);
+        // Legacy detection cannot resolve "cursor"; it falls through to the
+        // configured default instead of ever constructing HostKind::Cursor.
+        // (The CLI boundary intercepts `--host cursor` before this path.)
+        assert_eq!(
+            resolve_host_kind_from_sources(Some("cursor"), None, Some("codex-cli")),
+            HostKind::CodexCli
+        );
+        assert_eq!(HostKind::Cursor.as_env_value(), "cursor");
     }
 
     #[test]
