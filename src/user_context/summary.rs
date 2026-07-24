@@ -510,7 +510,8 @@ fn load_activity_refs(conn: &Connection, project: &str) -> Result<Vec<ActivityRe
                   ELSE COALESCE(request, completed, learned, decisions, next_steps, preferences, memory_session_id)
                 END
          FROM session_summaries
-         WHERE (request IS NULL
+         WHERE COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined'
+           AND (request IS NULL
                 OR request NOT LIKE 'Captured event range %..%'
                 OR COALESCE(decisions, '') != ''
                 OR COALESCE(learned, '') != ''
@@ -530,7 +531,16 @@ fn load_activity_refs(conn: &Connection, project: &str) -> Result<Vec<ActivityRe
             label: compact_line(&label, 120),
         })
     })?;
-    refs.extend(crate::db::query::collect_rows(rows)?);
+    let mut summary_refs = crate::db::query::collect_rows(rows)?;
+    summary_refs.retain(|activity| {
+        crate::db::summary_poisoning::summary_injectable(
+            conn,
+            activity.id,
+            &[("label", Some(activity.label.as_str()))],
+            "user_context_activity",
+        )
+    });
+    refs.extend(summary_refs);
     Ok(refs)
 }
 

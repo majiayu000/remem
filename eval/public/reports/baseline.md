@@ -7,16 +7,17 @@ This report separates memory-system capability evidence from coding-agent outcom
 ## Artifact Verification
 
 - Passed: `true`
-- Manifests checked: `4`
-- Reports checked: `4`
-- Run artifacts checked: `25`
-- Artifact files checked: `125`
+- Manifests checked: `5`
+- Reports checked: `5`
+- Run artifacts checked: `45`
+- Artifact files checked: `225`
 
 ## Memory-System Capability
 
 | Report | Runs | Claim level | Answer score | Support coverage | Citation recall | Non-retention leak rate |
 |---|---:|---|---:|---:|---:|---:|
 | `adversarial-policy` | 15 | `directional_memory_suite_no_public_claim` | 1.000 | 0.067 | 0.067 | 0.000 |
+| `adversarial-policy` | 20 | `directional_memory_suite_no_public_claim` | 1.000 | 0.100 | 0.100 | 0.000 |
 | `remem-code-memory-smoke` | 1 | `smoke_only_no_public_claim` | n/a | n/a | n/a | n/a |
 | `remem-code-memory` | 8 | `directional_memory_suite_no_public_claim` | 1.000 | 1.000 | 1.000 | n/a |
 
@@ -44,8 +45,9 @@ Coding memory-specific failure counts:
 
 Memory gap counts:
 
-- `policy_abstention`: 14
+- `policy_abstention`: 32
 - `retrieval_side_gap`: 14
+- `write_side_gap`: 18
 
 ## Reproducibility
 

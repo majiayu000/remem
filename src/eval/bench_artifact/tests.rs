@@ -13,10 +13,10 @@ fn committed_public_fixture_passes() -> Result<()> {
     })?;
 
     assert!(report.passed, "{:#?}", report.failures);
-    assert_eq!(report.manifests_checked, 4);
-    assert_eq!(report.reports_checked, 4);
-    assert_eq!(report.run_artifacts_checked, 25);
-    assert_eq!(report.artifact_files_checked, 125);
+    assert_eq!(report.manifests_checked, 5);
+    assert_eq!(report.reports_checked, 5);
+    assert_eq!(report.run_artifacts_checked, 45);
+    assert_eq!(report.artifact_files_checked, 225);
     Ok(())
 }
 
@@ -25,10 +25,10 @@ fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
     let report = super::generate_public_baseline_report(Path::new("eval/public"))?;
 
     assert!(report.artifact_verifier.passed);
-    assert_eq!(report.summary.manifest_count, 4);
-    assert_eq!(report.summary.report_count, 4);
-    assert_eq!(report.summary.run_artifact_count, 25);
-    assert_eq!(report.summary.memory_system.run_artifact_count, 24);
+    assert_eq!(report.summary.manifest_count, 5);
+    assert_eq!(report.summary.report_count, 5);
+    assert_eq!(report.summary.run_artifact_count, 45);
+    assert_eq!(report.summary.memory_system.run_artifact_count, 44);
     assert_eq!(report.summary.coding_agent.run_artifact_count, 1);
     assert_eq!(
         report.claim_gate.coding_outcome_stop_loss_status,

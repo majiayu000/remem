@@ -38,6 +38,44 @@ pub(super) fn drop_unacknowledged_poisoned_context(conn: &Connection, loaded: &m
             false
         })
     });
+    loaded.summaries.retain(|summary| {
+        crate::db::summary_poisoning::summary_injectable(
+            conn,
+            summary.id,
+            &[
+                ("request", Some(summary.request.as_str())),
+                ("completed", summary.completed.as_deref()),
+            ],
+            "context_sessions_section",
+        )
+    });
+    loaded.workstreams.retain(|workstream| {
+        let Some(pattern_match) = scan_instruction_pattern(&workstream_haystack(workstream)) else {
+            return true;
+        };
+        crate::log::error(
+            "context-poisoning",
+            &format!(
+                "dropping poisoned workstream id={} pattern={}@v{}",
+                workstream.id, pattern_match.pattern_id, pattern_match.pattern_set_version
+            ),
+        );
+        false
+    });
+}
+
+fn workstream_haystack(workstream: &crate::workstream::WorkStream) -> String {
+    [
+        Some(workstream.title.as_str()),
+        workstream.description.as_deref(),
+        workstream.progress.as_deref(),
+        workstream.next_action.as_deref(),
+        workstream.blockers.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 fn should_inject_memory(conn: &Connection, memory: &Memory, channel: &str) -> Result<bool> {

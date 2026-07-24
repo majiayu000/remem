@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::git_util::{short_sha_for, GitCommitMetadata};
 
+mod poisoning;
+use poisoning::gate_link_summary;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GitCommitRecord {
     pub id: i64,
@@ -593,7 +596,7 @@ where
                 c.authored_at_epoch, c.changed_files, c.created_at_epoch, c.updated_at_epoch,
                 l.session_id, l.memory_session_id, l.source, l.linked_at_epoch,
                 ss.request, ss.completed, ss.decisions, ss.learned, ss.next_steps,
-                ss.preferences, ss.created_at_epoch
+                ss.preferences, ss.created_at_epoch, ss.id
          FROM git_commit_sessions l
          JOIN git_commits c ON c.id = l.commit_id
          LEFT JOIN session_summaries ss ON ss.id = (
@@ -601,6 +604,7 @@ where
            FROM session_summaries latest
            WHERE latest.memory_session_id = l.memory_session_id
              AND latest.project = c.project
+             AND COALESCE(latest.poisoning_status, 'legacy_unscanned') != 'quarantined'
            ORDER BY COALESCE(latest.covered_to_event_id, 0) DESC,
                     latest.created_at_epoch DESC,
                     latest.id DESC
@@ -617,12 +621,22 @@ where
     );
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params, |row| {
-        Ok(SessionCommit {
-            git: commit_from_row(row)?,
-            link: link_from_row(row, 11)?,
-        })
+        let (link, summary_id) = link_from_row(row, 11)?;
+        Ok((
+            SessionCommit {
+                git: commit_from_row(row)?,
+                link,
+            },
+            summary_id,
+        ))
     })?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut commits = Vec::new();
+    for row in rows {
+        let (mut commit, summary_id) = row?;
+        gate_link_summary(conn, &mut commit.link, summary_id);
+        commits.push(commit);
+    }
+    Ok(commits)
 }
 
 fn linked_sessions_for_commit(
@@ -633,13 +647,14 @@ fn linked_sessions_for_commit(
     let mut stmt = conn.prepare(
         "SELECT l.session_id, l.memory_session_id, l.source, l.linked_at_epoch,
                 ss.request, ss.completed, ss.decisions, ss.learned, ss.next_steps,
-                ss.preferences, ss.created_at_epoch
+                ss.preferences, ss.created_at_epoch, ss.id
          FROM git_commit_sessions l
          LEFT JOIN session_summaries ss ON ss.id = (
            SELECT latest.id
            FROM session_summaries latest
            WHERE latest.memory_session_id = l.memory_session_id
              AND latest.project = ?2
+             AND COALESCE(latest.poisoning_status, 'legacy_unscanned') != 'quarantined'
            ORDER BY COALESCE(latest.covered_to_event_id, 0) DESC,
                     latest.created_at_epoch DESC,
                     latest.id DESC
@@ -649,7 +664,13 @@ fn linked_sessions_for_commit(
          ORDER BY l.linked_at_epoch DESC",
     )?;
     let rows = stmt.query_map(params![commit_id, project], |row| link_from_row(row, 0))?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    let mut links = Vec::new();
+    for row in rows {
+        let (mut link, summary_id) = row?;
+        gate_link_summary(conn, &mut link, summary_id);
+        links.push(link);
+    }
+    Ok(links)
 }
 
 fn normalize_sha(raw: &str) -> Result<String> {
@@ -711,15 +732,22 @@ fn commit_from_row(row: &Row<'_>) -> rusqlite::Result<GitCommitRecord> {
     })
 }
 
-fn link_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<CommitSessionLink> {
+fn link_from_row(
+    row: &Row<'_>,
+    offset: usize,
+) -> rusqlite::Result<(CommitSessionLink, Option<i64>)> {
     let summary = summary_from_row(row, offset + 4)?;
-    Ok(CommitSessionLink {
-        session_id: row.get(offset)?,
-        memory_session_id: row.get(offset + 1)?,
-        source: row.get(offset + 2)?,
-        linked_at_epoch: row.get(offset + 3)?,
-        summary,
-    })
+    let summary_id: Option<i64> = row.get(offset + 11)?;
+    Ok((
+        CommitSessionLink {
+            session_id: row.get(offset)?,
+            memory_session_id: row.get(offset + 1)?,
+            source: row.get(offset + 2)?,
+            linked_at_epoch: row.get(offset + 3)?,
+            summary,
+        },
+        summary_id,
+    ))
 }
 
 fn summary_from_row(row: &Row<'_>, offset: usize) -> rusqlite::Result<Option<SessionSummaryTrace>> {

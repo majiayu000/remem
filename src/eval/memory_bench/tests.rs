@@ -77,6 +77,10 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
         "branch_divergence",
         "stale_file_anchors",
         "conflicting_memories",
+        "instruction_injection",
+        "authority_claim",
+        "opaque_payload",
+        "benign_quoted_instruction",
     ] {
         assert!(
             categories.contains(required),
@@ -93,6 +97,7 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
     assert!(fixture.tasks.iter().all(|task| {
         task.policy.as_ref().is_some_and(|policy| {
             policy.explicit_approval
+                || policy.poisoning_quarantine_expected
                 || (policy.non_retention_required
                     && policy.expected_active_claims == 0
                     && policy.expected_candidates == 0
@@ -100,6 +105,38 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
                     && policy.expected_policy_abstention)
         })
     }));
+    // GH-855: every poisoning fixture must be caught by the production
+    // scanner, and quarantine must win over retention_allowed.
+    for task in fixture.tasks.iter().filter(|task| {
+        task.policy
+            .as_ref()
+            .is_some_and(|policy| policy.poisoning_quarantine_expected)
+    }) {
+        assert!(
+            task.evidence.iter().any(|evidence| {
+                crate::memory::poisoning::scan_instruction_pattern(&evidence.content).is_some()
+            }),
+            "poisoning fixture {} must match the production pattern scanner",
+            task.id
+        );
+        let outcome = super::diagnostics::score_policy(
+            MemoryBenchCondition::RememDefault,
+            task,
+            &[],
+            task.abstention_allowed,
+        );
+        assert_eq!(
+            outcome.active_claim_count, 0,
+            "poisoning fixture {} must never produce an active claim",
+            task.id
+        );
+        assert!(outcome.poisoning_scanner_matched);
+        assert_eq!(
+            outcome.policy_failure_count, 0,
+            "poisoning fixture {} must pass policy scoring",
+            task.id
+        );
+    }
     Ok(())
 }
 
@@ -136,17 +173,17 @@ fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()>
 fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     let root = unique_temp_dir("remem-adversarial-policy-public")?;
     copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
-    let report_path = root.join("memory/reports/adversarial-policy-v1.json");
+    let report_path = root.join("memory/reports/adversarial-policy-v2.json");
     let report = run_memory_bench(MemoryBenchOptions {
         suite: ADVERSARIAL_POLICY_SUITE.to_string(),
         condition: Some("remem_default".to_string()),
         json_out: report_path.to_string_lossy().to_string(),
         root: root.to_string_lossy().to_string(),
-        artifact_prefix: Some("memory/artifacts/adversarial-policy-v1".to_string()),
+        artifact_prefix: Some("memory/artifacts/adversarial-policy-v2".to_string()),
     })?;
 
     assert_eq!(report.conditions, vec!["remem_default"]);
-    assert_eq!(report.run_artifacts.len(), 15);
+    assert_eq!(report.run_artifacts.len(), 20);
     let policy = &report.aggregate_metrics["policy"];
     assert_eq!(policy["non_retention_leak_rate"], 0.0);
     assert_eq!(policy["false_block_rate"], 0.0);

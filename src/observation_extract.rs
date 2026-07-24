@@ -284,27 +284,50 @@ fn load_summary_context(
     };
     let summary = conn
         .query_row(
-            "SELECT summary_text, request, completed, decisions, learned, next_steps, preferences
+            "SELECT id, summary_text, request, completed, decisions, learned, next_steps, preferences
              FROM session_summaries
              WHERE session_row_id = ?1
                AND COALESCE(covered_to_event_id, 0) < ?2
+               AND COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined'
              ORDER BY COALESCE(covered_to_event_id, 0) DESC, created_at_epoch DESC
              LIMIT 1",
             params![session_row_id, from_event_id],
             |row| {
-                Ok(SessionSummaryContext {
-                    summary_text: row.get(0)?,
-                    request: row.get(1)?,
-                    completed: row.get(2)?,
-                    decisions: row.get(3)?,
-                    learned: row.get(4)?,
-                    next_steps: row.get(5)?,
-                    preferences: row.get(6)?,
-                })
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    SessionSummaryContext {
+                        summary_text: row.get(1)?,
+                        request: row.get(2)?,
+                        completed: row.get(3)?,
+                        decisions: row.get(4)?,
+                        learned: row.get(5)?,
+                        next_steps: row.get(6)?,
+                        preferences: row.get(7)?,
+                    },
+                ))
             },
         )
         .optional()?;
-    Ok(summary.filter(|summary| summary.has_content()))
+    let Some((summary_id, summary)) = summary else {
+        return Ok(None);
+    };
+    if !crate::db::summary_poisoning::summary_injectable(
+        conn,
+        summary_id,
+        &[
+            ("summary_text", summary.summary_text.as_deref()),
+            ("request", summary.request.as_deref()),
+            ("completed", summary.completed.as_deref()),
+            ("decisions", summary.decisions.as_deref()),
+            ("learned", summary.learned.as_deref()),
+            ("next_steps", summary.next_steps.as_deref()),
+            ("preferences", summary.preferences.as_deref()),
+        ],
+        "observation_prompt_context",
+    ) {
+        return Ok(None);
+    }
+    Ok(Some(summary).filter(|summary| summary.has_content()))
 }
 
 impl SessionSummaryContext {

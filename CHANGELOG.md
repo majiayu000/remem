@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.24` for GH-855: capture/extraction-path poisoning
+  defense. Session rollups now compute a deterministic combined verdict over
+  the captured source events and every model-generated summary field before
+  persistence; a hit stores a durable `quarantined` summary row (schema v072:
+  `poisoning_status`, quarantine stage/field/event/pattern metadata, block
+  counters) and withholds all model-visible side effects (topic segments,
+  candidates, native memory) — source hits cannot be laundered by a clean
+  summary. All model-visible summary sinks (SessionStart recent sessions,
+  MEMORY.md native sync, observation/summarize prompt context, user-context
+  extraction/recall/activity, git/MCP commit trace, summary queries) exclude
+  quarantined rows in SQL and re-scan the fields they expose right before
+  use, quarantining legacy rows on first hit (fail closed on errors).
+  Observation persistence and legacy `finalize_summarize` run the same
+  scanner; poisoned observations land as `poisoning_quarantined` and never
+  enter active queries. `remem doctor`, `remem status`, and HTTP `/status`
+  gain a `poisoning_defense` section (pattern set version, candidate/summary/
+  observation quarantine counts, legacy-unscanned summaries, block counts,
+  injection drops). The public `adversarial-policy` suite is revised to v2
+  with `instruction_injection` (EN/ZH), `authority_claim`, `opaque_payload`,
+  and `benign_quoted_instruction` categories scored through the production
+  pattern scanner instead of hardcoded zeros; quarantine wins over
+  `retention_allowed`.
 - Staged source version `0.6.23` for GH-850: write-side contextual enrichment
   (`retrieval_text` equivalent) on the single index-only `search_context`
   surface. Migration v072 adds enrichment identity/claim/lease/failure columns

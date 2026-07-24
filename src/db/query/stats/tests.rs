@@ -30,7 +30,22 @@ fn setup_stats_schema(conn: &Connection) {
             created_at_epoch INTEGER NOT NULL
         );
         CREATE TABLE observations_fts (rowid INTEGER PRIMARY KEY, title TEXT);
-        CREATE TABLE session_summaries (id INTEGER PRIMARY KEY, created_at_epoch INTEGER NOT NULL);
+        CREATE TABLE session_summaries (
+            id INTEGER PRIMARY KEY,
+            created_at_epoch INTEGER NOT NULL,
+            poisoning_status TEXT NOT NULL DEFAULT 'safe',
+            poisoning_block_count INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE memory_poisoning_injection_drops (
+            id INTEGER PRIMARY KEY,
+            memory_id INTEGER NOT NULL,
+            pattern_id TEXT NOT NULL,
+            pattern_version INTEGER NOT NULL,
+            source_trust_class TEXT,
+            source_project TEXT,
+            title TEXT,
+            created_at_epoch INTEGER NOT NULL
+        );
         CREATE TABLE raw_messages (
             id INTEGER PRIMARY KEY,
             created_at_epoch INTEGER NOT NULL
@@ -382,6 +397,10 @@ fn query_system_stats_and_related_views_share_one_definition() {
             worker_heartbeat_owner: Some("worker-a".to_string()),
             worker_heartbeat_age_secs: system.worker_heartbeat_age_secs,
             legacy_surfaces: legacy_surfaces::expected_fixture(),
+            poisoning_defense: crate::db::PoisoningDefenseStats {
+                pattern_set_version: crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION,
+                ..crate::db::PoisoningDefenseStats::default()
+            },
         }
     );
     assert!(

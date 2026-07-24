@@ -48,6 +48,21 @@ pub(crate) struct InstructionPatternMatch {
 }
 
 pub(crate) fn scan_instruction_pattern(text: &str) -> Option<InstructionPatternMatch> {
+    scan_instruction_pattern_with(text, true)
+}
+
+/// Source-event variant: raw captured events legitimately carry long encoded
+/// runs (compacted blobs, hashes, minified assets), so `opaque_payload` only
+/// applies to model-generated artifact fields. The four instruction-pattern
+/// classes still apply to source content.
+pub(crate) fn scan_source_instruction_pattern(text: &str) -> Option<InstructionPatternMatch> {
+    scan_instruction_pattern_with(text, false)
+}
+
+fn scan_instruction_pattern_with(
+    text: &str,
+    include_opaque_payload: bool,
+) -> Option<InstructionPatternMatch> {
     let normalized = normalize_for_pattern_match(text);
     let checks: &[(&str, &[&str])] = &[
         (
@@ -100,10 +115,77 @@ pub(crate) fn scan_instruction_pattern(text: &str) -> Option<InstructionPatternM
         }
     }
 
-    has_opaque_payload(text).then_some(InstructionPatternMatch {
+    (include_opaque_payload && has_opaque_payload(text)).then_some(InstructionPatternMatch {
         pattern_id: "opaque_payload",
         pattern_set_version: INSTRUCTION_PATTERN_SET_VERSION,
     })
+}
+
+/// Where a poisoning match was found relative to the LLM boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PoisoningStage {
+    /// Matched inside captured source evidence (tool output, transcript).
+    Source,
+    /// Matched inside model-generated artifact text (summary, observation).
+    Generated,
+}
+
+impl PoisoningStage {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Source => "source",
+            Self::Generated => "generated",
+        }
+    }
+}
+
+/// A deterministic instruction-pattern match on a named scan surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SurfacePatternMatch {
+    pub(crate) stage: PoisoningStage,
+    pub(crate) field: String,
+    pub(crate) event_id: Option<i64>,
+    pub(crate) pattern: InstructionPatternMatch,
+}
+
+/// Scan model-generated fields in a fixed, caller-declared order. The first
+/// matching field wins so the same input always produces the same verdict.
+pub(crate) fn scan_generated_surfaces(
+    fields: &[(&'static str, Option<&str>)],
+) -> Option<SurfacePatternMatch> {
+    for (field, text) in fields {
+        let Some(text) = text else {
+            continue;
+        };
+        if let Some(pattern) = scan_instruction_pattern(text) {
+            return Some(SurfacePatternMatch {
+                stage: PoisoningStage::Generated,
+                field: (*field).to_string(),
+                event_id: None,
+                pattern,
+            });
+        }
+    }
+    None
+}
+
+/// Scan captured source events in ascending event-id order so the verdict is
+/// stable and a model cannot launder a source hit by omitting the phrase from
+/// its generated output.
+pub(crate) fn scan_source_events<'a>(
+    events: impl IntoIterator<Item = (i64, &'a str)>,
+) -> Option<SurfacePatternMatch> {
+    for (event_id, content) in events {
+        if let Some(pattern) = scan_source_instruction_pattern(content) {
+            return Some(SurfacePatternMatch {
+                stage: PoisoningStage::Source,
+                field: "source_event".to_string(),
+                event_id: Some(event_id),
+                pattern,
+            });
+        }
+    }
+    None
 }
 
 pub(crate) fn derive_source_trust_class(

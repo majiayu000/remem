@@ -1,6 +1,9 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+use crate::memory::poisoning::scan_generated_surfaces;
+
+#[allow(clippy::too_many_arguments)]
 pub fn finalize_summarize(
     conn: &mut Connection,
     memory_session_id: &str,
@@ -18,6 +21,25 @@ pub fn finalize_summarize(
     let now = chrono::Utc::now();
     let created_at = now.to_rfc3339();
     let created_at_epoch = now.timestamp();
+    let verdict = scan_generated_surfaces(&[
+        ("request", request),
+        ("completed", completed),
+        ("decisions", decisions),
+        ("learned", learned),
+        ("next_steps", next_steps),
+        ("preferences", preferences),
+    ]);
+    if let Some(surface_match) = &verdict {
+        crate::log::error(
+            "summarize",
+            &format!(
+                "quarantining finalized summary for session {memory_session_id}: field={} pattern={}@v{}",
+                surface_match.field,
+                surface_match.pattern.pattern_id,
+                surface_match.pattern.pattern_set_version,
+            ),
+        );
+    }
 
     let tx = conn.transaction()?;
     let deleted = tx.execute(
@@ -27,8 +49,10 @@ pub fn finalize_summarize(
     tx.execute(
         "INSERT INTO session_summaries \
          (memory_session_id, project, request, completed, decisions, learned, \
-          next_steps, preferences, prompt_number, created_at, created_at_epoch, discovery_tokens) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+          next_steps, preferences, prompt_number, created_at, created_at_epoch, \
+          discovery_tokens, poisoning_status, quarantine_stage, quarantine_field, \
+          quarantine_pattern_id, quarantine_pattern_version) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
         params![
             memory_session_id,
             project,
@@ -41,7 +65,18 @@ pub fn finalize_summarize(
             prompt_number,
             created_at,
             created_at_epoch,
-            discovery_tokens
+            discovery_tokens,
+            if verdict.is_some() {
+                "quarantined"
+            } else {
+                "safe"
+            },
+            verdict.as_ref().map(|matched| matched.stage.as_str()),
+            verdict.as_ref().map(|matched| matched.field.as_str()),
+            verdict.as_ref().map(|matched| matched.pattern.pattern_id),
+            verdict
+                .as_ref()
+                .map(|matched| matched.pattern.pattern_set_version),
         ],
     )?;
     tx.execute(

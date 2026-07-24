@@ -1,5 +1,6 @@
 mod legacy_surfaces;
 mod observability;
+mod poisoning_stats;
 mod queries;
 mod search;
 mod shared;
@@ -11,6 +12,7 @@ mod user_context_stats;
 
 pub use legacy_surfaces::*;
 pub use observability::*;
+pub use poisoning_stats::*;
 pub use queries::*;
 pub use search::*;
 pub use shared::{collect_rows, push_project_filter};

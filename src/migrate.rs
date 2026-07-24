@@ -34,6 +34,8 @@ mod tests_schema;
 #[cfg(test)]
 mod tests_schema_drift;
 #[cfg(test)]
+mod tests_session_summary_poisoning;
+#[cfg(test)]
 mod tests_user_context;
 #[cfg(test)]
 mod tests_workstream_identity;

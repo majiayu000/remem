@@ -642,6 +642,7 @@ fn query_summary_batch(
          FROM session_summaries ss \
          LEFT JOIN sessions s ON s.id = ss.session_row_id \
          WHERE ss.request IS NOT NULL AND ss.request != '' \
+           AND COALESCE(ss.poisoning_status, 'legacy_unscanned') != 'quarantined' \
            AND (ss.session_row_id IS NULL \
                 OR ss.request NOT LIKE 'Captured event range %..%' \
                 OR COALESCE(ss.decisions, '') != '' \
@@ -667,7 +668,21 @@ fn query_summary_batch(
             })
         },
     )?;
-    crate::db::query::collect_rows(rows)
+    let mut rows = crate::db::query::collect_rows(rows)?;
+    // Poisoning eligibility runs before any dedup/cluster/selection step so a
+    // poisoned row cannot steer which other summaries are chosen (GH-855).
+    rows.retain(|row| {
+        crate::db::summary_poisoning::summary_injectable(
+            conn,
+            row.summary.id,
+            &[
+                ("request", Some(row.summary.request.as_str())),
+                ("completed", row.summary.completed.as_deref()),
+            ],
+            "context_recent_sessions",
+        )
+    });
+    Ok(rows)
 }
 
 fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
