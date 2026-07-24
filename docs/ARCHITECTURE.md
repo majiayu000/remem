@@ -130,6 +130,15 @@ redacted tool evidence in `captured_events`; large payloads spill to
 `event_blobs`. The write also coalesces one `observation_extract`
 `extraction_tasks` row per host/project/session/task kind.
 
+Cursor (GH-823) enters this same ledger through a separate strict boundary
+(`src/cursor_hook/` + `src/observe/cursor.rs`): a bounded 1 MiB stdin reader,
+fail-closed payload validation against the Cursor 3.12.17 evidence,
+`user_email` PII removal, `tool_use_id` as the canonical per-call event key,
+and the existing `captured_events.event_type = "cursor_tool_failure"` text
+discriminator for the observed failed-Read path. MCP-specific Cursor events
+stay unregistered (generic ownership); `session-init` and summarize are
+explicitly unsupported/fail-closed on Cursor until GH-824/GH-825 land.
+
 ### 3. Background Distillation (Stop → summarize + worker)
 
 ```

@@ -3,6 +3,7 @@ use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
 mod codex_hook_stdout;
+mod cursor_hook;
 mod diagnostics;
 mod gate_pipeline;
 mod load;

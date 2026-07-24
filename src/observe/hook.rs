@@ -187,7 +187,9 @@ fn record_observed_event(
         ),
     );
 
-    if matches!(event.tool_name.as_str(), "Write" | "Edit") {
+    if capture_host != crate::cursor_hook::CURSOR_HOST
+        && matches!(event.tool_name.as_str(), "Write" | "Edit")
+    {
         let branch = git_evidence
             .first()
             .and_then(|evidence| evidence.metadata.branch.clone())
@@ -252,7 +254,7 @@ fn record_capture_event_with_git_evidence(
             session_id: &event.session_id,
             project: &event.project,
             cwd: event.cwd.as_deref(),
-            event_type: "tool_result",
+            event_type: crate::cursor_hook::captured_event_type_for_summary(&summary.event_type),
             role: None,
             tool_name: Some(&event.tool_name),
             content: &content,

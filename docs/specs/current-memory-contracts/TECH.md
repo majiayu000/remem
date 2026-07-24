@@ -254,6 +254,15 @@ Required boundaries:
   app/connector id exists.
 - JavaScript app code must not reimplement staleness, temporal, retrieval,
   ranking, promotion, or conflict semantics.
+- The Cursor hook boundary (`src/cursor_hook/`, GH-823) owns strict Cursor
+  payload parsing and the canonical `cursor` host identity. Its context
+  capability is version-audited and capability-specific: on Cursor 3.12.17
+  session-start injection is disabled (PR #914 absent marker) and GH-823 v1
+  ships no post-tool context command/renderer/install entry, so neither
+  model-visible Cursor context path is wired. Cursor observe uses the shared
+  capture ledger with `tool_use_id` as the per-call event key and the existing
+  `captured_events.event_type = "cursor_tool_failure"` text discriminator for
+  the observed failed-tool path; no Cursor-specific storage model exists.
 
 ## Evaluation Contract
 

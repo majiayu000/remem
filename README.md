@@ -23,6 +23,10 @@ external database.
 ## What You Get
 
 - Claude Code, OpenAI Codex, and Codex CLI remember project decisions across sessions.
+- Cursor is a recognized hook host at the runtime protocol level (GH-823):
+  `remem observe --host cursor` captures the verified generic tool events,
+  while Cursor install support (GH-824) and transcript summarization (GH-825)
+  are tracked separately.
 - Bug-fix rationale, preferences, and project patterns are searchable.
 - Memory stays local by default with SQLite and SQLCipher.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.

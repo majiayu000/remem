@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Added
+- Staged source version `0.6.18` for GH-823 (SP823-T3/T4): first-class Cursor
+  hook I/O protocol. `cursor` joins the exact closed hook-host set
+  (`claude-code`, `codex-cli`, `cursor`); every Cursor entrypoint reads stdin
+  through a bounded 1,048,576-byte reader and validates payloads fail-closed
+  against the Cursor 3.12.17 evidence (PR #914). `remem observe --host cursor`
+  captures generic `postToolUse`/`postToolUseFailure` events with
+  `tool_use_id` as the canonical per-call key, stores the observed failed-Read
+  path under the existing `captured_events.event_type = "cursor_tool_failure"`
+  discriminator (no schema change), and keeps MCP-specific events unregistered
+  (B-016 generic ownership). `session-init --host cursor` is explicitly
+  unsupported, Cursor summarize stays fail-closed until GH-825's transcript
+  reader, and Cursor 3.12.17 session-start injection remains disabled with no
+  post-tool context command added. Cursor `user_email` and other
+  non-canonical PII are dropped at the payload boundary. Claude Code and
+  Codex protocol behavior is unchanged; the only tightening is that explicit
+  hook `--host` aliases and arbitrary values now fail closed.
+
 ### Fixed
 - Staged source version `0.6.17`: AI HTTP calls now reuse one process-wide
   `reqwest::Client` (connection pool + TLS config) via a `OnceLock` instead of

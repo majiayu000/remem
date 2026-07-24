@@ -93,6 +93,29 @@ pub(super) fn direct_context_invocation(
     }
 }
 
+/// Builds the context invocation for a strictly validated Cursor
+/// `sessionStart` event (GH-823 B-002/B-003). This is the only constructor of
+/// `HostKind::Cursor` invocations: the cwd/project come exclusively from the
+/// validated normalized workspace root (never the hook process cwd, CLI
+/// fallback, or an environment variable), and the null-tolerant transcript
+/// path is carried through unchanged.
+pub(super) fn resolve_cursor_context_invocation(
+    event: &crate::cursor_hook::input::CursorSessionStart,
+) -> ContextInvocation {
+    ContextInvocation {
+        cwd: event.workspace_root.clone(),
+        project: db::project_from_cwd(&event.workspace_root),
+        session_id: Some(event.session_id.clone()),
+        transcript_path: event.transcript_path.clone(),
+        source: Some("sessionStart".to_string()),
+        host: HostKind::Cursor,
+        use_colors: false,
+        debug: false,
+        force: false,
+        gate_mode: None,
+    }
+}
+
 pub(super) fn resolve_context_invocation_from_parts(
     options: ContextCliOptions,
     stdin: Option<&str>,

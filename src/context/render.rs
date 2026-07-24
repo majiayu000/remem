@@ -17,7 +17,8 @@ use super::injection_gate::{
     ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
-    direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
+    direct_context_invocation, resolve_context_invocation, resolve_cursor_context_invocation,
+    ContextCliOptions, ContextInvocation,
 };
 use super::policy::{ContextPolicy, SectionKind};
 use super::relevance::{build_sessionstart_relevance_plan, candidates_for_loaded, selected_inputs};
@@ -93,6 +94,21 @@ pub fn generate_context_from_cli(
     generate_context_for_invocation(invocation, true)
 }
 
+/// Cursor `remem context` entrypoint (GH-823): bounded stdin read, strict
+/// exact `sessionStart` validation, then the shared render pipeline. Any
+/// parse/limit failure returns before context generation with empty stdout
+/// and no side effects (B-009); no CLI/current-cwd fallback exists.
+pub fn generate_cursor_context_from_stdin() -> Result<()> {
+    let bytes = crate::cursor_hook::input::read_bounded_hook_stdin(&mut std::io::stdin().lock())?;
+    generate_cursor_context_from_bytes(&bytes)
+}
+
+pub fn generate_cursor_context_from_bytes(bytes: &[u8]) -> Result<()> {
+    let event = crate::cursor_hook::input::parse_session_start(bytes)?;
+    let invocation = resolve_cursor_context_invocation(&event);
+    generate_context_for_invocation(invocation, true)
+}
+
 fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
     let stdout = generate_context_output_for_invocation(invocation, use_gate)?;
     print!("{stdout}");
@@ -120,6 +136,15 @@ fn generate_context_output_for_invocation(
     let conn = match open_context_connection_or_error(&request, &policy) {
         Ok(conn) => conn,
         Err(rendered) => {
+            // GH-823 B-005: Cursor never receives a fallback/half-rendered
+            // context body; failure means empty stdout plus an error log.
+            if invocation.host == super::host::HostKind::Cursor {
+                crate::log::error(
+                    "context",
+                    "cursor context generation failed (database open); emitting no stdout",
+                );
+                anyhow::bail!("cursor context generation failed (database open)");
+            }
             let rendered = *rendered;
             let mut decision = if use_gate {
                 ContextGateDecision {
@@ -190,6 +215,13 @@ fn generate_context_output_for_invocation(
             let data_version = rendered.data_version;
             let has_load_errors = rendered.has_load_errors;
             let audit_items = rendered.audit_items;
+            if has_load_errors && invocation.host == super::host::HostKind::Cursor {
+                crate::log::error(
+                    "context",
+                    "cursor context load errors; emitting no stdout (B-005)",
+                );
+                anyhow::bail!("cursor context generation failed (context load errors)");
+            }
             let decision = if has_load_errors {
                 ContextGateDecision {
                     output,
