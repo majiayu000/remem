@@ -1,6 +1,6 @@
 # SPEC: remem-web local REST API
 
-Status: current contract. Refs #568.
+Status: current contract. Refs #568, #825.
 
 The native web API is the localhost, bearer-token boundary used by remem-web
 and Apps SDK clients. Clients must not read the SQLCipher database directly or
@@ -375,6 +375,46 @@ resources are bounded safe references and are not recursively expanded. These
 routes intentionally have no `include_suppressed` override. Legacy
 `/api/v1/search.raw_hits[].preview` retains its pre-GH-880 compatibility
 contract and is not a safe-resource projection.
+
+### GH-825 Cursor session capture health
+
+When GH-825 ships, `GET /api/v1/capabilities.features` adds
+`session_capture_health: true`; clients must gate the field below on that
+capability and on a source/release version containing GH-825. The existing
+`sessions` flag alone does not prove capture-health support.
+
+`GET /api/v1/sessions/{id}` then adds one nullable safe field:
+
+```json
+{
+  "data": {
+    "capture_health": {
+      "fidelity": "full",
+      "status": "completed",
+      "reason_code": null,
+      "stop_key": "<redacted-bounded-key>"
+    }
+  }
+}
+```
+
+`capture_health` is `null` for non-Cursor sessions or when no authoritative
+Cursor outcome exists. For Cursor outcomes, `fidelity` is exactly
+`full|degraded|blank`; `status` is drawn only from the GH-823-approved Stop
+set; `reason_code` is null for full and a stable non-content code for degraded
+or blank; `stop_key` is a bounded redacted locator, never the raw transcript
+path or payload. The handler first selects the current source Stop by its
+immutable capture order
+`(captured_events.created_at_epoch, captured_events.id)`, then resolves
+`full > degraded > blank` only within that Stop, matching CLI and context.
+Outcome insertion time or replay cannot advance the selected Stop, and an
+earlier full cannot mask a later degraded/blank result. It follows a summary
+reference only for full/degraded outcomes that actually carry one. A blank outcome returns the
+visible `capture_health` object with `reason_code: "no_usable_evidence"` and
+does not dereference or synthesize a summary. Old blank/degraded outcomes
+remain auditable but are never returned beside a higher-priority result.
+Malformed outcome JSON or DB read failure returns the existing structured 5xx
+error rather than `capture_health: null`.
 
 ### GH-880 recoverable memory governance
 
