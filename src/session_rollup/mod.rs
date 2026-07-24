@@ -1,3 +1,5 @@
+pub(crate) mod cursor_snapshot;
+pub(crate) mod cursor_transcript;
 mod parse;
 mod persist;
 mod prompt;

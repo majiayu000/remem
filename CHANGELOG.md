@@ -3,6 +3,28 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.19` for GH-825 (with GH-823 SP823-T5): lossless
+  Cursor transcript capture. `remem summarize --host cursor` now performs the
+  full Cursor Stop validation (approved status set `completed|aborted`,
+  non-empty string `generation_id`, `loop_count` normalized from an exact
+  non-negative integer, canonical Stop key
+  `(session_id, generation_id, loop_count)`), takes a Stop-time snapshot of
+  the Cursor JSONL transcript, and fully validates it against the observed
+  PR #874/PR #914 grammar: `{role,message}` records with `text` and assistant
+  `tool_use` content blocks plus standalone `turn_ended` boundary records
+  (including the aborted-turn error form). Every record gets a zero-based
+  physical ordinal before any filtering; `turn_ended` records never enter the
+  raw/prompt projections. The validated, redacted IR rides the durable
+  `session_stop` capture payload (`cursor_capture` marker) and drives bounded
+  SessionRollup prompt evidence; `transcript_path` never leaves the hook, so
+  the Claude/Codex transcript reader and path-based drain are unreachable
+  from Cursor and the worker never reopens the path. Missing/null/blank/
+  untrusted/unreadable/oversized/changed/corrupt/empty transcripts degrade
+  explicitly to payload-only with machine-readable
+  `degraded/<reason>` markers and `capture_drop_events`
+  (`cursor_transcript_<reason>`) diagnostics — the Stop and previously
+  captured tool evidence are never lost. No schema change; Claude Code and
+  Codex behavior is unchanged.
 - Staged source version `0.6.18` for GH-823 (SP823-T3/T4): first-class Cursor
   hook I/O protocol. `cursor` joins the exact closed hook-host set
   (`claude-code`, `codex-cli`, `cursor`); every Cursor entrypoint reads stdin

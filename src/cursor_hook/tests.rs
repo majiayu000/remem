@@ -430,6 +430,87 @@ fn observe_rejects_mcp_specific_events_under_generic_ownership() {
     }
 }
 
+// ---- full stop validation (SP823-T5) ----
+
+#[test]
+fn stop_validation_accepts_only_the_observed_status_set() {
+    for status in ["completed", "aborted"] {
+        let stop = crate::cursor_hook::stop::parse_stop_event(&bytes(&stop_fixture(status)))
+            .expect("approved status validates");
+        assert_eq!(stop.status.as_str(), status);
+        assert_eq!(stop.session_id, "sess-cursor-1");
+        assert_eq!(stop.workspace_root, "/tmp/remem-cursor");
+        assert_eq!(stop.generation_id, "gen-1");
+        assert_eq!(stop.loop_count, 0);
+        assert_eq!(stop.canonical_stop_key(), "sess-cursor-1:gen-1:0");
+    }
+    for status in ["error", "cancelled", "Completed", ""] {
+        let error = crate::cursor_hook::stop::parse_stop_event(&bytes(&stop_fixture(status)))
+            .expect_err("unobserved status must fail closed");
+        assert_no_sentinel(&error);
+    }
+}
+
+#[test]
+fn stop_validation_requires_generation_id_and_normalized_loop_count() {
+    let mut fixture = stop_fixture("completed");
+    fixture["generation_id"] = json!("");
+    assert!(crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture)).is_err());
+    let mut fixture = stop_fixture("completed");
+    fixture.as_object_mut().unwrap().remove("generation_id");
+    assert!(crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture)).is_err());
+
+    for loop_count in [json!(null), json!(-1), json!(1.5), json!("0")] {
+        let mut fixture = stop_fixture("completed");
+        fixture["loop_count"] = loop_count.clone();
+        assert!(
+            crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture)).is_err(),
+            "loop_count {loop_count} must fail closed instead of being guessed"
+        );
+    }
+    let mut fixture = stop_fixture("completed");
+    fixture.as_object_mut().unwrap().remove("loop_count");
+    assert!(crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture)).is_err());
+
+    let mut fixture = stop_fixture("completed");
+    fixture["loop_count"] = json!(3);
+    let stop = crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture))
+        .expect("non-negative integer loop_count validates");
+    assert_eq!(stop.loop_count, 3);
+    assert_eq!(stop.canonical_stop_key(), "sess-cursor-1:gen-1:3");
+}
+
+#[test]
+fn stop_validation_keeps_null_and_blank_transcript_paths_for_degradation() {
+    let mut fixture = stop_fixture("completed");
+    fixture["transcript_path"] = json!(null);
+    let stop = crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture))
+        .expect("null transcript_path keeps the Stop");
+    assert!(stop.transcript_path.is_none());
+
+    let mut fixture = stop_fixture("completed");
+    fixture["transcript_path"] = json!("   ");
+    let stop = crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture))
+        .expect("blank transcript_path keeps the Stop for explicit degradation");
+    assert_eq!(stop.transcript_path.as_deref(), Some("   "));
+
+    let mut fixture = stop_fixture("completed");
+    fixture["transcript_path"] = json!(42);
+    assert!(crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture)).is_err());
+}
+
+#[test]
+fn stop_validation_drops_pii_and_requires_identity_equality() {
+    let mut fixture = stop_fixture("completed");
+    fixture["conversation_id"] = json!("some-other-session");
+    let error = crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture))
+        .expect_err("identity inequality must fail closed");
+    assert_no_sentinel(&error);
+    let mut fixture = stop_fixture("completed");
+    fixture.as_object_mut().unwrap().remove("conversation_id");
+    assert!(crate::cursor_hook::stop::parse_stop_event(&bytes(&fixture)).is_err());
+}
+
 // ---- stop gate (B-008 pre-T5 slice) ----
 
 #[test]

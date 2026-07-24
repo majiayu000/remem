@@ -160,7 +160,7 @@ pub fn require_stop_event(bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn parse_outer_object(bytes: &[u8]) -> Result<serde_json::Map<String, Value>> {
+pub(super) fn parse_outer_object(bytes: &[u8]) -> Result<serde_json::Map<String, Value>> {
     let text = std::str::from_utf8(bytes).map_err(|_| {
         anyhow!(
             "cursor hook payload is not valid UTF-8 [correlation_id={}]",
@@ -184,7 +184,10 @@ fn parse_outer_object(bytes: &[u8]) -> Result<serde_json::Map<String, Value>> {
     }
 }
 
-fn require_event_name(object: &serde_json::Map<String, Value>, expected: &str) -> Result<()> {
+pub(super) fn require_event_name(
+    object: &serde_json::Map<String, Value>,
+    expected: &str,
+) -> Result<()> {
     let event_name = required_non_empty_string(object, "hook_event_name")?;
     if event_name != expected {
         return Err(anyhow!(
