@@ -28,6 +28,10 @@ pub(super) struct StopHookPayload {
     pub(super) transcript_path: Option<String>,
     pub(super) transcript_byte_len: Option<u64>,
     pub(super) last_assistant_message: Option<String>,
+    /// Machine-readable Cursor capture fidelity marker (GH-825). Cursor Stop
+    /// payloads never carry `transcript_path`, so the Claude/Codex transcript
+    /// reader can never be reached from a Cursor Stop.
+    pub(super) cursor_capture: Option<super::cursor_snapshot::CursorCaptureMarker>,
 }
 
 pub(super) fn drain_raw_archive_from_range(
@@ -762,6 +766,7 @@ mod stop_payload_selection_tests {
             transcript_path: Some(path.to_string()),
             transcript_byte_len,
             last_assistant_message: None,
+            cursor_capture: None,
         }
     }
 

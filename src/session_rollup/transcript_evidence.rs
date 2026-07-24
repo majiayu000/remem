@@ -220,6 +220,13 @@ pub(super) fn load_prompt_transcript_evidence(
     let mut budget = EvidenceBudget::default();
 
     for (payload_index, payload) in payloads.iter().enumerate() {
+        if let Some(marker) = payload.cursor_capture.as_ref() {
+            // Cursor Stop payloads carry their validated snapshot IR inline
+            // (GH-825) and never a transcript_path, so the Claude/Codex
+            // transcript reader is unreachable from this branch.
+            push_cursor_capture_evidence(&mut budget, payload.source_event_id, marker)?;
+            continue;
+        }
         let selected_for_prompt = selected_transcripts.contains(&payload_index);
         let Some(transcript_path) = stop_transcript_path(payload) else {
             continue;
@@ -300,6 +307,39 @@ pub(super) fn load_prompt_transcript_evidence(
         }
     }
     Ok(budget.finish())
+}
+
+/// Projects the embedded, already-validated Cursor snapshot IR (GH-825) into
+/// bounded prompt evidence. Messages keep their physical record order; the
+/// per-message/total/count budgets are enforced by the shared
+/// [`EvidenceBudget`], and the text was redacted at snapshot time.
+fn push_cursor_capture_evidence(
+    budget: &mut EvidenceBudget,
+    source_event_id: i64,
+    marker: &super::cursor_snapshot::CursorCaptureMarker,
+) -> Result<()> {
+    let Some(snapshot) = marker.snapshot.as_ref() else {
+        return Ok(());
+    };
+    let mut last_assistant_message = None;
+    for message in &snapshot.messages {
+        let text = message.text.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if message.role == crate::memory::raw_archive::ROLE_ASSISTANT {
+            last_assistant_message = Some(text.to_string());
+        }
+        budget.push(PromptTranscriptMessage {
+            source_event_id,
+            role: message.role.clone(),
+            content: text.to_string(),
+        });
+    }
+    if let Some(assistant_message) = last_assistant_message {
+        budget.push_stop_citation(source_event_id, &assistant_message)?;
+    }
+    Ok(())
 }
 
 fn has_captured_conversation(range: &RollupRange, payloads: &[StopHookPayload]) -> bool {
@@ -383,6 +423,98 @@ mod tests {
                 },
             ],
         }
+    }
+
+    #[test]
+    fn cursor_capture_marker_drives_prompt_evidence_without_any_path_read() -> Result<()> {
+        let marker = serde_json::json!({
+            "fidelity": "full",
+            "reason_code": null,
+            "status": "completed",
+            "generation_id": "gen-1",
+            "loop_count": 0,
+            "stop_key": "sess-cursor-1:gen-1:0",
+            "snapshot": {
+                "snapshot_hash": "ab".repeat(32),
+                "snapshot_byte_len": 128,
+                "record_count": 3,
+                "messages": [
+                    {"ordinal": 0, "role": "user", "text": "cursor question"},
+                    {"ordinal": 1, "role": "assistant", "text": "cursor answer"},
+                ],
+            },
+        });
+        let payload = serde_json::json!({
+            "session_id": "sess-cursor-1",
+            "cwd": "/tmp/remem-cursor",
+            "last_assistant_message": "cursor answer",
+            "cursor_capture": marker,
+        });
+        let range = RollupRange {
+            from_event_id: 2,
+            to_event_id: 2,
+            events: vec![RollupEvent {
+                id: 2,
+                event_type: "session_stop".to_string(),
+                role: None,
+                tool_name: None,
+                content: payload.to_string(),
+                token_estimate: 1,
+                created_at_epoch: 2,
+                turn_id: None,
+            }],
+        };
+
+        let evidence = load_prompt_transcript_evidence(&range)?;
+
+        assert_eq!(evidence.messages.len(), 2);
+        assert!(evidence
+            .messages
+            .iter()
+            .all(|message| message.source_event_id == 2));
+        assert_eq!(evidence.messages[0].role, "user");
+        assert_eq!(evidence.messages[0].content, "cursor question");
+        assert_eq!(evidence.messages[1].content, "cursor answer");
+        assert_eq!(evidence.stop_citations.len(), 1);
+        assert!(evidence.citation_evidence_complete);
+        evidence.validate_for_range(&range)
+    }
+
+    #[test]
+    fn degraded_cursor_marker_yields_payload_only_evidence() -> Result<()> {
+        let payload = serde_json::json!({
+            "session_id": "sess-cursor-1",
+            "cwd": "/tmp/remem-cursor",
+            "cursor_capture": {
+                "fidelity": "degraded",
+                "reason_code": "path_absent",
+                "status": "aborted",
+                "generation_id": "gen-1",
+                "loop_count": 0,
+                "stop_key": "sess-cursor-1:gen-1:0",
+                "snapshot": null,
+            },
+        });
+        let range = RollupRange {
+            from_event_id: 2,
+            to_event_id: 2,
+            events: vec![RollupEvent {
+                id: 2,
+                event_type: "session_stop".to_string(),
+                role: None,
+                tool_name: None,
+                content: payload.to_string(),
+                token_estimate: 1,
+                created_at_epoch: 2,
+                turn_id: None,
+            }],
+        };
+
+        let evidence = load_prompt_transcript_evidence(&range)?;
+
+        assert!(evidence.messages.is_empty());
+        assert!(evidence.stop_citations.is_empty());
+        Ok(())
     }
 
     #[test]

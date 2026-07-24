@@ -23,6 +23,7 @@
 
 pub mod identity;
 pub mod input;
+pub mod stop;
 
 #[cfg(test)]
 #[path = "cursor_hook/tests.rs"]

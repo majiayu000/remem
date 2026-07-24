@@ -24,6 +24,15 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
     summarize_input(&input, host, profile).await
 }
 
+/// Enqueues an already-prepared Cursor Stop payload (GH-825). The payload is
+/// built by `summarize_cursor_bytes` after full Stop validation and
+/// snapshot/degradation handling; it never carries a `transcript_path`, so
+/// `summary_payload_with_cwd` cannot stat or read any transcript and the
+/// Claude/Codex reader stays unreachable.
+pub(in crate::summarize) async fn summarize_cursor_prepared_input(input: &str) -> Result<()> {
+    summarize_input(input, Some(crate::cursor_hook::CURSOR_HOST), None).await
+}
+
 pub(super) async fn summarize_input(
     input: &str,
     host: Option<&str>,
