@@ -31,7 +31,7 @@ fn query_search_10k_corpus_reports_phase_timings() -> Result<()> {
              VALUES (?1, '/repo', ?2, ?3, 'decision', ?1, ?1, 'active')",
             params![id, title, content],
         )?;
-        vector::upsert_memory_embedding(&conn, id, &title, content, "decision", None)?;
+        vector::upsert_memory_embedding(&conn, id, &title, content, "decision", None, "")?;
     }
     conn.execute("COMMIT", [])?;
 

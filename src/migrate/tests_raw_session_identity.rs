@@ -18,9 +18,11 @@ fn pre_v071() -> Result<Connection> {
 }
 
 #[test]
-fn v071_is_latest_and_named_stably() -> Result<()> {
-    let migration = MIGRATIONS.last().context("v071 migration is missing")?;
-    assert_eq!(migration.version, V071);
+fn v071_is_registered_and_named_stably() -> Result<()> {
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V071)
+        .context("v071 migration is missing")?;
     assert_eq!(migration.name, "raw_session_identity");
     Ok(())
 }
@@ -37,7 +39,10 @@ fn v071_preserves_raw_rows_and_fts() -> Result<()> {
         [],
     )?;
 
-    let migration = MIGRATIONS.last().context("v071 migration is missing")?;
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V071)
+        .context("v071 migration is missing")?;
     conn.execute_batch(migration.sql)?;
 
     let row: (String, String, Option<i64>, Option<i64>) = conn.query_row(
@@ -71,7 +76,10 @@ fn v071_preserves_raw_rows_and_fts() -> Result<()> {
 #[test]
 fn v071_occurrence_key_preserves_repeated_turns_and_replay_idempotency() -> Result<()> {
     let conn = pre_v071()?;
-    let migration = MIGRATIONS.last().context("v071 migration is missing")?;
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V071)
+        .context("v071 migration is missing")?;
     conn.execute_batch(migration.sql)?;
     conn.execute(
         "INSERT INTO raw_session_identities (
@@ -111,7 +119,10 @@ fn v071_occurrence_key_preserves_repeated_turns_and_replay_idempotency() -> Resu
 #[test]
 fn v071_enforces_identity_foreign_keys_and_closed_values() -> Result<()> {
     let conn = pre_v071()?;
-    let migration = MIGRATIONS.last().context("v071 migration is missing")?;
+    let migration = MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == V071)
+        .context("v071 migration is missing")?;
     conn.execute_batch(migration.sql)?;
 
     let claim_fk_count: i64 = conn.query_row(

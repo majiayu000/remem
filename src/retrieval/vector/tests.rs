@@ -8,6 +8,8 @@ use std::sync::{
 
 use super::*;
 
+mod filters;
+mod index_snapshot;
 mod pruning;
 
 struct ScopedEmbeddingProvider {
@@ -228,6 +230,7 @@ fn assert_vector_write_and_backfill_error(conn: &Connection, expected: &[&str]) 
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )
     .expect_err("fallback=off provider failures must not skip vector write errors");
     let upsert_error = format!("{upsert_error:#}");
@@ -259,6 +262,7 @@ fn off_provider_skips_vector_writes_backfill_and_search() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
     assert_eq!(embedding_count(&conn)?, 0);
     assert_eq!(pending_memory_embedding_reindex_count(&conn)?, 0);
@@ -327,6 +331,7 @@ fn vector_search_returns_nearest_memory_embedding() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
     upsert_memory_embedding(
         &conn,
@@ -335,6 +340,7 @@ fn vector_search_returns_nearest_memory_embedding() -> Result<()> {
         "Publish social media drafts after review.",
         "procedure",
         None,
+        "",
     )?;
 
     let query = embed_query_text("How do we protect private persisted data?");
@@ -354,50 +360,6 @@ fn vector_search_returns_nearest_memory_embedding() -> Result<()> {
 }
 
 #[test]
-fn vector_search_respects_filters() -> Result<()> {
-    let conn = setup_vector_conn()?;
-    for (id, project, branch, memory_type, status) in [
-        (1, "/repo", Some("main"), "architecture", "active"),
-        (2, "/other", Some("main"), "architecture", "active"),
-        (3, "/repo", Some("feature"), "architecture", "active"),
-        (4, "/repo", Some("main"), "decision", "active"),
-        (5, "/repo", Some("main"), "architecture", "stale"),
-    ] {
-        conn.execute(
-            "INSERT INTO memories
-             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status, branch)
-             VALUES (?1, ?2, 'Credential store', 'SQLCipher encrypts secrets at rest.', ?3, 1, 1, ?4, ?5)",
-            params![id, project, memory_type, status, branch],
-        )?;
-        upsert_memory_embedding(
-            &conn,
-            id,
-            "Credential store",
-            "SQLCipher encrypts secrets at rest.",
-            memory_type,
-            None,
-        )?;
-    }
-
-    let query = embed_query_text("protect private persisted data");
-    let outcome = vector_search_filtered(
-        &conn,
-        &query,
-        VectorSearchFilters {
-            project: Some("/repo"),
-            branch: Some("main"),
-            memory_type: Some("architecture"),
-            include_stale: false,
-        },
-        10,
-    )?;
-    let ids: Vec<i64> = outcome.hits.iter().map(|hit| hit.memory_id).collect();
-
-    assert_eq!(ids, vec![1]);
-    Ok(())
-}
-
-#[test]
 fn vector_search_uses_profile_memory_id_index_for_embedding_fetch() -> Result<()> {
     let conn = setup_vector_conn()?;
     insert_test_memory(&conn, 1)?;
@@ -408,6 +370,7 @@ fn vector_search_uses_profile_memory_id_index_for_embedding_fetch() -> Result<()
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
 
     let plan = conn
@@ -616,6 +579,7 @@ fn vector_search_ignores_embeddings_from_other_models() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
 
     let query = TextEmbedding::new("remote-test-model", vec![0.1, 0.2, 0.3])?;
@@ -657,6 +621,7 @@ fn upsert_embedding_preserves_other_model_profiles() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
 
     let rows: i64 = conn.query_row(
@@ -727,6 +692,7 @@ fn reindex_rebuilds_embeddings_when_memory_is_newer_than_embedding() -> Result<(
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
     let before_hash: String = conn.query_row(
         "SELECT content_hash FROM memory_embeddings WHERE memory_id = 1",

@@ -475,6 +475,7 @@ fn noise_memory(
         created_at_epoch: Some(1_800_000_000 + noise_index as i64),
         access_count: Some(0),
         last_accessed_epoch: None,
+        search_context: None,
     })
 }
 
@@ -698,6 +699,7 @@ mod tests {
                     created_at_epoch: Some(1_700_000_000),
                     access_count: Some(0),
                     last_accessed_epoch: None,
+                    search_context: None,
                 },
                 GoldenMemory {
                     project: "synthetic/capacity".to_string(),
@@ -712,6 +714,7 @@ mod tests {
                     created_at_epoch: Some(1_700_000_010),
                     access_count: Some(0),
                     last_accessed_epoch: None,
+                    search_context: None,
                 },
             ],
             queries: vec![

@@ -41,6 +41,18 @@ pub struct GoldenMemory {
     pub access_count: Option<i64>,
     #[serde(default)]
     pub last_accessed_epoch: Option<i64>,
+    /// Eval-fixture-only enrichment installed through the production
+    /// security/composition path. Proves FTS/vector channel wiring only; it
+    /// never marks the row ready and never enters the paraphrase quality gate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_context: Option<GoldenSearchContext>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+pub struct GoldenSearchContext {
+    pub context: String,
+    #[serde(default)]
+    pub keywords: Vec<String>,
 }
 
 fn default_scope() -> String {

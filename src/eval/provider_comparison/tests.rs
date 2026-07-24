@@ -288,6 +288,7 @@ fn small_provider_dataset() -> GoldenDataset {
                 created_at_epoch: None,
                 access_count: None,
                 last_accessed_epoch: None,
+                search_context: None,
             },
             GoldenMemory {
                 project: "synthetic/provider-test".to_string(),
@@ -302,6 +303,7 @@ fn small_provider_dataset() -> GoldenDataset {
                 created_at_epoch: None,
                 access_count: None,
                 last_accessed_epoch: None,
+                search_context: None,
             },
         ],
         queries: vec![GoldenQuery {

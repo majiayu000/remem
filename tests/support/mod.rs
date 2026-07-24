@@ -175,5 +175,10 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
     conn.execute_batch(include_str!(
         "../../src/migrations/v020_memory_fts_all_status.sql"
     ))?;
+    // v072 owns the enrichment identity columns, compatibility singleton, and
+    // the canonical memories_au trigger used by production writers.
+    conn.execute_batch(include_str!(
+        "../../src/migrations/v072_memory_retrieval_enrichment.sql"
+    ))?;
     Ok(())
 }

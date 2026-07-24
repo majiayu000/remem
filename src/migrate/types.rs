@@ -360,6 +360,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "raw_session_identity",
         sql: include_str!("../migrations/v071_raw_session_identity.sql"),
     },
+    Migration {
+        version: 72,
+        name: "memory_retrieval_enrichment",
+        sql: include_str!("../migrations/v072_memory_retrieval_enrichment.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

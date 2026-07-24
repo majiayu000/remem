@@ -609,6 +609,7 @@ fn golden_eval_rejects_fixture_corpus_missing_expected_ref() -> Result<()> {
             created_at_epoch: None,
             access_count: None,
             last_accessed_epoch: None,
+            search_context: None,
         }],
         queries: vec![GoldenQuery {
             id: "missing-fixture-ref".to_string(),
@@ -656,6 +657,7 @@ fn fixture_corpus_seeds_usage_columns_for_replay() -> Result<()> {
             created_at_epoch: Some(10),
             access_count: Some(7),
             last_accessed_epoch: Some(20),
+            search_context: None,
         }],
         queries: vec![query(
             "usage-fixture",

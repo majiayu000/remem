@@ -126,6 +126,7 @@ pub fn open_db() -> Result<Connection> {
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::run_migrations(&conn)?;
     crate::retrieval::vector::ensure_vec_table(&conn)?;
+    crate::memory::retrieval_enrichment::enforce_binary_policy_floor(&conn)?;
     Ok(conn)
 }
 
@@ -139,6 +140,7 @@ pub fn open_db_no_migrate() -> Result<Connection> {
     let conn = open_configured_existing_read_write_connection(&path, key.as_ref())?;
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::ensure_schema_current(&conn)?;
+    crate::memory::retrieval_enrichment::enforce_binary_policy_floor(&conn)?;
     Ok(conn)
 }
 

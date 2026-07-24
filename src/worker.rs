@@ -365,6 +365,10 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             continue;
         }
 
+        if crate::memory::retrieval_enrichment::run_idle_retrieval_enrichment(&lease_owner).await? {
+            continue;
+        }
+
         if run_idle_embedding_backfill(&conn)? {
             continue;
         }

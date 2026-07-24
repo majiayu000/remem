@@ -425,6 +425,20 @@ pub(in crate::eval) fn seed_fixture_corpus(
                 )
             })?;
         }
+        if let Some(search_context) = &memory.search_context {
+            crate::memory::retrieval_enrichment::install_fixture_search_context(
+                conn,
+                id,
+                &search_context.context,
+                &search_context.keywords,
+            )
+            .with_context(|| {
+                format!(
+                    "install golden eval corpus memory {} fixture search context",
+                    corpus_memory_label(index, memory)
+                )
+            })?;
+        }
         if memory.access_count.is_some() || memory.last_accessed_epoch.is_some() {
             conn.execute(
                 "UPDATE memories

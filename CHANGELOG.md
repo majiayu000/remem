@@ -3,6 +3,24 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.23` for GH-850: write-side contextual enrichment
+  (`retrieval_text` equivalent) on the single index-only `search_context`
+  surface. Migration v072 adds enrichment identity/claim/lease/failure columns
+  plus the `retrieval_enrichment_compatibility` singleton with a monotonic
+  security-policy floor; the rebuilt `memories_au` trigger persists an empty
+  deterministic fallback (and drops stale vectors) whenever a raw canonical
+  update bypasses the production writers, and every FTS rebuild reads the
+  final persisted row. The idle worker lane generates one bounded
+  context-sentence + synonym-keyword block per memory through the existing
+  memory AI profile (strict closed-JSON parser, secret redaction, poison
+  re-scan, durable claim/lease/attempt CAS, exponential backoff capped at 15
+  minutes); FTS and the vector channel consume the same snapshot via the
+  versioned `memory-index-v2` passage hash. `remem doctor` gains a
+  `Retrieval enrichment coverage` check (floor/epoch/state, ready/pending/
+  failed counts, source-identity drift, vector consistency), and eval gate
+  thresholds support strictly-positive `min_value` floors for the paraphrase
+  slice. Canonical `title`/`content` bytes and injection/API/export payloads
+  are unchanged; hooks and foreground writes never wait on generation.
 - Staged source version `0.6.22` for GH-852: host-native memory data sources.
   New `remem import codex-memories` performs a one-way, read-only import of
   Codex CLI rollout-summary memories (`codex-rollout-summary/v1`, fingerprint

@@ -67,6 +67,7 @@ pub fn search_memories_fts_hits_filtered(
     include_inactive: bool,
     branch: Option<&str>,
 ) -> Result<Vec<FtsMemoryHit>> {
+    crate::memory::retrieval_enrichment::ensure_retrieval_open(conn)?;
     let mut conditions = vec!["memories_fts MATCH ?1".to_string()];
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(query.to_string())];
 

@@ -108,7 +108,13 @@ non-off provider is selected.
 - Default preset: `multilingual-e5-small`, model id
   `fastembed-intfloat-multilingual-e5-small-v1`, upstream
   `intfloat/multilingual-e5-small`, 384 dimensions. Query inputs are prefixed
-  with `query:` and memory/passages with `passage:`.
+  with `query:` and memory/passages with `passage:`. Since GH-850, memory
+  passages for enrichment-ready rows append the row's index-only
+  `search_context` snapshot (`memory-index-v2` passage schema);
+  `memory_embeddings.content_hash` is the versioned SHA-256 of that passage,
+  so FTS and the vector channel provably consume the same enrichment
+  snapshot. Pending rows keep the canonical-only passage, which preserves the
+  pre-existing paraphrase recall and curated semantic-dedup comparisons.
 - Quality preset: `bge-m3`, model id `fastembed-bge-m3-v1`, upstream
   `BAAI/bge-m3`, 1024 dimensions.
 - `remem embedding download [--model <preset>] [--json]` materializes the
