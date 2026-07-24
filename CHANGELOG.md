@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.17`: AI HTTP calls now reuse one process-wide
+  `reqwest::Client` (connection pool + TLS config) via a `OnceLock` instead of
+  rebuilding a client on every call. The timeout is a compile-time constant, so
+  a single client serves every call.
 - Staged source version `0.6.16`: `run_migrations` now skips the
   `BEGIN IMMEDIATE` write-lock transaction when the database schema is already
   current, so read-heavy callers that open a fresh connection per request (the
