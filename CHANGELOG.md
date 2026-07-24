@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Fixed
+- Staged source version `0.6.16`: `run_migrations` now skips the
+  `BEGIN IMMEDIATE` write-lock transaction when the database schema is already
+  current, so read-heavy callers that open a fresh connection per request (the
+  REST API and MCP server) no longer take the database write lock on every
+  connection open. The check is read-only and WAL-concurrent; the full
+  migration path is unchanged when any migration is pending or a schema
+  invariant is violated.
 - Staged source version `0.6.15` for GH-813: the preference-rule compiler now
   applies one typed, centralized eligibility policy and admits a global-scope
   preference only for the canonical
