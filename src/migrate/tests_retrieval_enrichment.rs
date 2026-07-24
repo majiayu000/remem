@@ -213,8 +213,10 @@ fn production_writer_same_statement_reset_keeps_deterministic_fallback() {
 }
 
 #[test]
-fn v072_is_latest_and_named_stably() {
-    let migration = super::types::MIGRATIONS.last().unwrap();
-    assert_eq!(migration.version, 72);
+fn v072_is_named_stably() {
+    let migration = super::types::MIGRATIONS
+        .iter()
+        .find(|migration| migration.version == 72)
+        .expect("v072 migration is missing");
     assert_eq!(migration.name, "memory_retrieval_enrichment");
 }
