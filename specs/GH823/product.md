@@ -1,25 +1,30 @@
 # Cursor Hook I/O Protocol Product Spec
 
 Status: Draft, needs human approval before implementation
-Date: 2026-07-15
+Date: 2026-07-23
 
 Tracking:
 - Spec/tracking issue: #823
 - Epic: #821
-- Blocking prerequisite: #822 (Cursor hooks contract PoC; open questions below are gated on it)
+- Blocking prerequisite: #822 evidence PR #914 exact head
+  `c0802c42c3fc22770aecb0b7b2eec88f117f795c`, merged; adoption by this
+  packet remains pending fresh exact-head human approval
 - Related runtime surfaces: `remem context`, `remem observe`, `remem summarize`, host identity
-- This packet remains blocked on the real-host evidence and human approval in
-  #822. No implementation task may start from this draft alone.
+- This packet incorporates the observed Cursor 3.12.17 contract from PR #914,
+  but remains blocked on human evidence/spec approval and the explicitly
+  unresolved limits/platform cases. No implementation task may start from this
+  draft alone.
 
 ## Problem
 
 remem's hook subcommands currently speak two host protocols: Claude Code and
-Codex. Cursor documents a similar hook system (`hooks.json`, JSON on stdin,
-JSON on stdout) with different field and event names. The exact payloads,
-model-visible context behavior, background-agent behavior, and size limits are
-not treated as implementation facts until the real-host PoC in #822 records
-them. In particular, a hook printing `additional_context` successfully does
-not by itself prove that a real Cursor agent receives that context.
+Codex. Cursor provides a similar hook system (`hooks.json`, JSON on stdin,
+JSON on stdout) with different field and event names. PR #914 recorded the
+actual Cursor 3.12.17 payload shapes and demonstrated that context behavior is
+event- and version-specific: short `postToolUse.additional_context` was
+model-visible, while short `sessionStart.additional_context` was ignored even
+though the hook fired successfully. Background/cloud behavior, platform path
+forms, and numeric size limits remain unproved.
 
 Without a Cursor protocol, remem cannot inject memory context or capture
 sessions in Cursor at all.
@@ -73,13 +78,20 @@ hook JSON output, reusing the existing host-profile mechanism
    valid input. Every other array shape fails closed, including `[]`, `[""]`,
    mixed blank/non-blank arrays, and multiple non-empty roots. The hook process
    cwd and an undeclared `CURSOR_PROJECT_DIR` fallback must not select a project.
-   `sessionStart`, `postToolUse`, and `stop` must share one human-approved
-   canonical session identity. #822 must prove that the `session_id` emitted at
-   session start identifies the same session as the `conversation_id` emitted
-   by later events, or human review must freeze a different verified canonical
-   field before implementation. When a payload exposes both approved identity
-   fields, they must be equal; a missing, blank, wrong-typed, or mismatched
-   identity fails closed before output, capture, enqueue, spill, or persistence.
+   Parent-session `sessionStart`, parent tool events, and `stop` must share one
+   human-approved canonical session identity. Independently, every captured
+   event requires exact equality between its own `session_id` and
+   `conversation_id` whenever both fields are present. PR #914 observed inner
+   subagent tool events with a distinct, internally equal identity. That child
+   identity is valid and must remain distinct: it is not compared with or
+   coerced into the parent identity, and no parent-child relationship is
+   manufactured without a verified producer field. A missing, blank,
+   wrong-typed, or event-local mismatched identity fails closed before output,
+   capture, enqueue, spill, or persistence.
+   `sessionStart.transcript_path` is valid `null`; the first prompt/tool events
+   and inner subagent tool events may also carry `null`. Later parent events
+   and Stop used one stable string path. A null child path must never be
+   replaced with the parent path.
 3. B-003 The Cursor parser requires and strictly validates the common
    `hook_event_name` discriminator. Only exact
    `hook_event_name: "sessionStart"` on the `context` command can select the
@@ -87,9 +99,19 @@ hook JSON output, reusing the existing host-profile mechanism
    fail non-zero with no plain-text or Claude-shaped fallback. When that exact
    event succeeds under `--host cursor`, stdout is a single JSON object whose
    `additional_context` field carries the ANSI-stripped context body. No other
-   host's output shape changes. #822 and human approval must freeze a numeric
-   `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES` and the exact UTF-8 byte measurement
-   point. A body exactly at that limit succeeds. For a body one byte over, the
+   host's output shape changes. This serialization contract does not imply
+   capability support: PR #914 proved the short marker was not model-visible
+   on `sessionStart` in Cursor 3.12.17, so installation/advertising of this
+   injection path remains blocked for that version. In contrast, a short
+   `postToolUse.additional_context` marker was model-visible; any use of that
+   capability requires a separate human-approved output/ownership contract and
+   cannot inherit the session-start limit. GH-823 v1 does not add a
+   `postToolUse` context command/renderer or install entry; enabling that proven
+   host capability requires a later packet amendment that owns its command,
+   output, renderer, install component, and tests. For any capability enabled after its
+   smallest bounded marker works, #822 and human approval must freeze a numeric
+   `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES` and exact UTF-8 measurement point.
+   A body exactly at that limit succeeds. For a body one byte over, the
    approved policy must be either fail-closed with empty stdout or deterministic
    UTF-8-safe truncation with a model-visible truncation marker; implementation
    remains blocked until the numeric limit, measurement point, and one-byte-over
@@ -104,7 +126,8 @@ hook JSON output, reusing the existing host-profile mechanism
    emitted.
 6. B-006 No injection-capable Cursor equivalent for `session-init` is assumed.
    Cursor documentation describes `beforeSubmitPrompt` as permit/block only;
-   #822 must verify the real host behavior. Unless a later human-approved spec
+   PR #914 observed default fail-open behavior for non-zero/timeout hooks but no
+   injection capability. Unless a later human-approved spec
    changes this decision, `session-init --host cursor` fails explicitly at the
    dispatch entry with a non-zero exit before any prompt-event write, context
    stdout, enqueue, spill, or database side effect. `remem doctor` reports the
@@ -117,25 +140,40 @@ hook JSON output, reusing the existing host-profile mechanism
    Missing or wrong-typed identity fields and zero-, multi-, or mixed-empty-root
    arrays fail non-zero with no adapter dispatch or write. #822 must confirm the
    real field types and a sanitized Windows fixture before implementation. A
-   valid payload also parses `tool_name`, `tool_input`, and `tool_output`
-   (JSON-stringified per Cursor docs) into the existing observe event model.
-   Both stringified fields are decoded exactly once under the #822-approved
-   byte limit before any tool classification, filtering, capture, or adapter
-   dispatch; malformed or over-limit fields fail closed with zero writes. An
+   valid payload also parses `tool_name`, `tool_input`, and `tool_output` into
+   the existing observe event model. Across generic events, PR #914 observed
+   `preToolUse` names `Read`, `Shell`, `Task`, and `MCP:browser_tabs`, but
+   successful `postToolUse` only for `Read`, `Shell`, and `MCP:browser_tabs`.
+   `Task` completion used the separate subagent lifecycle and must not be
+   treated as a proven post-tool success variant. Every accepted generic
+   success requires the observed non-empty string `tool_use_id`; after human
+   adoption it is the sole per-call event/upsert identity, and missing, blank,
+   or wrong-typed values fail before capture. Generic `tool_input` was an
+   object and successful `tool_output` was a string. These fields must not be
+   decoded as the old draft's guessed pair of JSON strings. Variant-specific
+   fields are validated under the #822-approved byte limit before any tool
+   classification, filtering, capture, or adapter dispatch: raw generic string
+   fields, including successful `tool_output`, are measured as their exact
+   UTF-8 bytes, while object or decoded representations are measured in their
+   canonical form. Malformed or over-limit fields fail closed with zero
+   writes. An
    unrecognized `tool_name` follows the existing generic-capture contract: it
    is recorded verbatim with the decoded generic input/output and is never
    skipped, silently rewritten, or forced through a known-tool classifier (the
-   #817 failure class). #822 must also execute one failing Bash-equivalent and
-   one failing edit/write-equivalent and record whether Cursor emits
-   `postToolUseFailure`, `postToolUse`, both, or another exact event, including
-   sanitized payloads, ordering, and any stable invocation identity shared by
-   the success/failure events for one tool call. Human review must then either
+   #817 failure class). PR #914 observed one failed `Read` as
+   `postToolUseFailure` with string `error_message`,
+   `failure_type: "error"`, numeric `duration`,
+   `is_interrupt: false`, and the same `tool_use_id` as the matching pre-tool
+   event. Human review may approve `tool_use_id` as the per-call key for this
+   observed path. Write/Edit/Delete and a failed Shell remain unobserved; human
+   review must either
    freeze a canonical event/upsert key and failure-precedence rule that safely
    correlates dual-event delivery and map the verified failure event into the
-   observe model with
-   an explicit canonical failure outcome/discriminator preserved through
-   capture, spill, and database persistence (and consumed downstream where
-   relevant), or keep Cursor observe explicitly incomplete and prevent #824
+   observe model with an explicit canonical failure outcome/discriminator
+   preserved through capture and spill, mapped at persistence to the existing
+   `captured_events.event_type = "cursor_tool_failure"` text discriminator
+   without a schema change, and consumed downstream wherever success and
+   failure differ; or keep Cursor observe explicitly incomplete and prevent #824
    from installing or advertising capture. If the real payloads expose no safe
    shared call identity, correlation or content-derived deduplication must not
    be guessed and the disabled/incomplete branch is mandatory. A success-only
@@ -143,8 +181,9 @@ hook JSON output, reusing the existing host-profile mechanism
 8. B-008 When invoked with a Cursor `stop` payload, `remem summarize` maps the
    required non-empty Cursor `conversation_id` to remem's canonical
    `session_id` before enqueueing or persistence. #822 must also identify the
-   exact project-root field and type emitted by a real Cursor `stop`. Until
-   that evidence exists, or when that verified field is missing, blank,
+   exact project-root field and type emitted by a real Cursor `stop`. PR #914
+   observed `workspace_roots`, equal `session_id`/`conversation_id`, and a
+   string transcript path on Stop. When the verified root is missing, blank,
    multi-root, or otherwise ambiguous, summarize fails with a non-zero exit and
    performs no write, enqueue, or spill. After verification, only one validated
    root/cwd is mapped to the remem project; the hook process cwd and
@@ -153,10 +192,20 @@ hook JSON output, reusing the existing host-profile mechanism
    verified Cursor transcript reader. Before that prerequisite, the
    `transcript_path` field is stripped/deferred at the Cursor boundary and must
    never reach the existing Claude/Codex raw transcript parser, enqueue, spill,
-   or LLM summarization path. `status` is a required string with the exact
-   closed set `completed | aborted | error`. A missing, blank, wrong-typed, or
-   unknown status fails non-zero before transcript reading, enqueue, spill,
-   persistence, or an LLM call. After #825, `aborted` and `error` must not
+   or LLM summarization path. `status` is a required string in the
+   human-approved observed set. PR #914 observed exact `completed` and
+   `aborted`; `error` was not observed and cannot enter the accepted set by
+   analogy. Both observed statuses carried numeric `loop_count: 0`; completed
+   included token-count fields while aborted omitted them. The canonical Stop
+   key is proposed as `(session_id, generation_id, loop_count)` after B-002
+   equality validation. `generation_id` is a required non-empty string and
+   must be validated before constructing or looking up that key;
+   replay/conflict behavior and nonzero/missing/null loop handling require
+   exact-head human approval. A missing, blank, or wrong-typed
+   `generation_id`, missing/blank/wrong-typed/unapproved status, or unapproved
+   loop shape fails non-zero before transcript reading, enqueue, spill,
+   persistence, or an LLM call. After #825, `aborted`
+   and any later-approved `error` must not
    discard capture that was already persisted; whether they suppress the LLM
    summary call is an explicit decision recorded in the tech spec, not an
    accident.
@@ -164,7 +213,14 @@ hook JSON output, reusing the existing host-profile mechanism
    required by the Cursor event contract, or whose `hook_event_name` is unknown
    or mismatched with the invoked command, fails closed: error-level log with
    the event name and a redacted parse failure, non-zero exit, no stdout, no
-   fallback to CLI/current cwd, and no partial persistence.
+   fallback to CLI/current cwd, and no partial persistence. Independently of
+   the per-field B-015 limit, every Cursor hook entrypoint applies the proposed
+   human-frozen `CURSOR_HOOK_STDIN_MAX_BYTES = 1_048_576` byte limit while
+   reading stdin, before allocating a `String`, parsing JSON, or retaining a
+   payload preview. Exactly 1,048,576 bytes may proceed to UTF-8/JSON
+   validation. A stream containing one byte more fails non-zero with empty
+   stdout, zero writes/enqueues/spills/adapter or LLM calls, and a redacted
+   size-only error.
 10. B-010 Claude Code and Codex protocol behavior is byte-identical before and
     after this change for valid canonical-host inputs (zero regression).
     B-001's rejection of aliases and arbitrary explicit host values is the only
@@ -174,11 +230,13 @@ hook JSON output, reusing the existing host-profile mechanism
     `claude-code`, `codex-cli`, `unknown`, an alias, an arbitrary value, or an
     empty string. All hook-origin tables receive host identity only after the
     B-001 closed-set validation succeeds.
-12. B-012 Cursor context injection remains blocked until #822 proves, with a
-    unique synthetic marker, that a real Cursor agent receives hook-provided
-    context. Inspecting hook stdout, logs, or a payload fixture alone is not
-    sufficient. If the marker is absent, the injection capability is parked as
-    blocked and #823/#824 must not advertise or install it.
+12. B-012 Cursor context injection is capability-specific. PR #914's
+    real-agent marker makes short `postToolUse.additional_context` proven for
+    Cursor 3.12.17, but makes `sessionStart.additional_context` blocked for that
+    same version. Inspecting hook stdout, logs, or a payload fixture alone is
+    never sufficient. #823/#824 must report and gate these capabilities
+    separately; a proven post-tool path must not promote session-start
+    injection, another Cursor version, background mode, or an unmeasured size.
 13. B-013 Multi-root Cursor workspaces remain unresolved until #822 and human
     review select an identity policy. Across `sessionStart`, `postToolUse`, and
     `stop`, workspace-root arrays are valid only when their total length is
@@ -194,21 +252,41 @@ hook JSON output, reusing the existing host-profile mechanism
     events, database rows, spill files, logs/error previews, adapter requests,
     LLM prompts, or model output. Tests use a unique email sentinel and inspect
     every one of those sinks, including the database-open-failure spill path.
-15. B-015 Cursor's JSON-stringified `tool_input` and `tool_output` are decoded
-    exactly once before tool-name mapping, known-tool classification, generic
-    capture, or filtering. #822 records and human approval freezes a numeric
-    `CURSOR_TOOL_FIELD_MAX_BYTES` applying to both the encoded string and its
-    decoded canonical JSON representation. Invalid nested JSON, encoded input
-    above the limit, or decoded expansion above the limit fails non-zero with
-    no capture, enqueue, spill, adapter call, or diagnostic containing raw
-    payload data. Boundary tests cover exactly-at-limit and one-byte-over data.
-16. B-016 #822 must invoke at least one real MCP tool through the tested Cursor
-    build and record whether `postToolUse` arrives for that invocation. It must
-    separately instrument and exercise real `beforeMCPExecution` and
-    `afterMCPExecution` hooks, recording their emitted payloads, ordering, and
-    whether each hook actually fires. Documentation names or guessed mappings
-    are not evidence. Until this probe is complete and human-approved, no MCP
-    event is mapped to a remem capture event and #823/#824 stay blocked.
+15. B-015 Cursor generic `postToolUse.tool_input` is a JSON object and
+    `tool_output` is a string in PR #914; MCP-specific `tool_input` and
+    `result_json` are strings. Each event variant validates its observed field
+    types before tool-name mapping, known-tool classification, generic capture,
+    or filtering. String-encoded MCP fields are decoded exactly once. Human
+    approval freezes a numeric `CURSOR_TOOL_FIELD_MAX_BYTES` applying to raw
+    generic strings, encoded strings, and canonical decoded/object
+    representations. Raw generic strings are measured as exact UTF-8 bytes
+    before classification or dispatch. Invalid nested JSON, any raw or encoded
+    string above the limit, or decoded expansion above the limit fails
+    non-zero with no capture, enqueue, spill, adapter call, or diagnostic
+    containing raw payload data. Boundary tests cover exactly-at-limit and
+    one-byte-over data for every representation.
+16. B-016 PR #914 invoked the read-only
+    `cursor-ide-browser.browser_tabs` MCP tool and observed generic
+    `preToolUse`/`postToolUse` under `MCP:browser_tabs` plus specific
+    `beforeMCPExecution`/`afterMCPExecution`. The specific payload used string
+    `tool_input`/`result_json`, `mcp_server_name: "cursor-ide-browser"`, and
+    `tool_name: "browser_tabs"`. This packet proposes the only complete
+    post-result event, `afterMCPExecution`, as the canonical MCP-specific
+    capture owner. Under that ownership, #824 registers only
+    `afterMCPExecution`; `beforeMCPExecution` is not registered or accepted by
+    `remem observe`, and generic MCP `postToolUse` is accepted structurally only
+    to return a successful zero-write result. The after event's observed
+    string input/result can become the single canonical capture only if #822
+    first observes a stable opaque per-call ID on the specific delivery. PR
+    #914 did not observe `tool_use_id` or another per-call identity there;
+    server/tool/generation or input/result/duration-derived keys are forbidden
+    because repeated same-tool calls can collide. Until follow-up real-host
+    evidence and exact-head human approval freeze that field/type/replay
+    stability, MCP-specific ownership is not selectable and generic ownership
+    is mandatory. Under generic ownership, #824 registers neither
+    MCP-specific event and the proven generic post-tool event—with its approved
+    call identity—is the sole writer. Documentation names or guessed mappings
+    are not evidence; no MCP mapping may ship before that decision.
 
 ## Boundary Checklist
 
@@ -223,61 +301,58 @@ hook JSON output, reusing the existing host-profile mechanism
 | Compatibility / migration | covered: B-001 (closed-set host values), B-011 (DB host value), B-013 (multi-root blocked) |
 | Degradation / fallback | covered: B-005, B-006, B-007 (no silent rewrite), B-008 |
 | Evidence and audit integrity | covered: B-011 (host provenance recorded truthfully), B-014 (PII sentinel absent), B-016 (real MCP probe) |
-| Cancellation / interruption / partial completion | covered: B-008 (aborted/error stop payloads) |
-| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-015 (encoded and decoded tool-field limits) |
+| Cancellation / interruption / partial completion | covered: B-008 (observed aborted and any later-approved error Stop payloads) |
+| Resource exhaustion / payload expansion | covered: B-003 (additional_context limit and exact/one-byte-over behavior), B-009 (whole-stdin limit before String/serde), B-015 (raw generic string plus encoded and decoded tool-field limits) |
 | Failed tool execution | covered: B-007 (real failure-event probe; preserve failure evidence or keep observe uninstalled/incomplete) |
 
-## Open Questions (gated on #822)
+## PR #914 Evidence Resolution and Remaining Gates
 
-- Q1. Exact `sessionStart` payload field names and types, including
-  `composer_mode`, `is_background_agent`, and `workspace_roots`; whether
-  background-agent sessions should receive injection; and the human-approved
-   policy for payloads containing multiple workspace roots. Also identify the
-   exact conversation/project-root fields and types on real `postToolUse` and
-   `stop` payloads, proof that later `conversation_id` values identify the same
-   session as the initial `session_id` (including equality behavior when both
-   appear), plus sanitized Windows root forms.
-- Q2. The observed closed set of Cursor `tool_name` values and their mapping
-  onto the observe matcher (`Write` / `Edit` / `Bash` equivalents), using real
-  tool invocations rather than documentation alone. Also, for both a failing
-  Bash-equivalent and a failing edit/write-equivalent, whether Cursor emits
-  `postToolUseFailure`, `postToolUse`, both, or another event; its exact
-  payload/ordering; whether dual events share a stable per-call identity; the
-  human-approved canonical event/upsert key and precedence semantics; and the
-  choice to preserve the failure in observe or leave Cursor capture uninstalled
-  and explicitly incomplete when safe correlation is unavailable.
-- Q3. Whether `preCompact` is emitted in the tested Cursor version, its exact
-  payload and ordering, and whether it has usable mid-session summarize
-  semantics.
-- Q4. The model-visible behavior and practical size/truncation limit of
-  `additional_context`; the numeric `CURSOR_ADDITIONAL_CONTEXT_MAX_BYTES`, exact
-  UTF-8 byte measurement point, and human-approved one-byte-over policy; and
-  boundary tests proving exact-limit success plus either fail-closed rejection
-  or deterministic UTF-8-safe truncation with a model-visible marker.
-- Q5. For a real MCP invocation, whether `postToolUse` fires at all; whether
-  `beforeMCPExecution` and `afterMCPExecution` fire; their exact payloads and
-  ordering; and whether any of them contains the canonical identity and tool
-  fields required for capture. The answer must come from instrumentation of the
-  tested Cursor build, not from event-name analogy.
+- Q1 partially resolved: every observed event carried equal string
+  `session_id`/`conversation_id`, a `workspace_roots` array, and a
+  context-dependent string/null `transcript_path`; foreground
+  `sessionStart.is_background_agent` was `false`. Windows/UNC, multi-root,
+  true background/cloud, and `sessionEnd` remain unobserved.
+- Q2 partially resolved: generic `preToolUse` observed `Read`, `Shell`, `Task`,
+  and `MCP:browser_tabs`; successful generic `postToolUse` observed only Read,
+  Shell, and MCP. One failed Read used `postToolUseFailure` and a shared
+  `tool_use_id`. Task post-tool success, Write/Edit/Delete, failed Shell, and
+  dual-event precedence remain unobserved.
+- Q3 resolved for manual compaction: `/summarize` emitted `preCompact` with
+  `trigger: "manual"` and numeric context/window/message fields. Its remem
+  mid-session action remains a separate human product decision.
+- Q4 resolved only for small markers: session-start injection failed while
+  post-tool injection succeeded on 3.12.17. No numeric limit can be selected
+  until the chosen capability works at the smallest bounded size.
+- Q5 delivery resolved: generic and MCP-specific hooks both fired for the
+  read-only browser call. Canonical single-capture ownership remains a human
+  decision.
+- Stop evidence: `completed` and `aborted` plus numeric `loop_count: 0` were
+  observed; `error`, nonzero/missing/null loop shapes, and replay stability
+  remain unobserved and blocked pending #822 evidence plus exact-head human
+  approval.
 
 ## Acceptance Criteria
 
 - A-1. All B-001..B-016 have automated verification per the tech spec mapping.
 - A-2. `cargo test` passes with zero changes to existing Claude/Codex
   protocol tests.
-- A-3. #822 records the real Cursor version, exact event payloads, the
-  `postToolUse` and `stop` conversation/project-root fields and types, sanitized
-  Windows root fixtures, observed tool names, background-agent behavior,
-  `preCompact` behavior, cross-event canonical session identity, the numeric
+- A-3. PR #914 exact-head evidence is human-adopted for the observed Cursor
+  3.12.17 payloads, identity equality, null-path behavior, tool names, failed
+  Read, MCP delivery, manual `preCompact`, completed/aborted and `loop_count:0`.
+  Follow-up evidence or an explicit fail-closed human decision covers sanitized
+  Windows root fixtures, background-agent behavior, the numeric
   additional-context limit/measurement/one-byte-over policy, the bounded
   nested-tool-field limit, failed-tool hook behavior, shared invocation identity,
   canonical deduplication/precedence and preservation policy, and the real MCP
-  hook behavior in B-016/Q5. The five open questions are
+  hook behavior and canonical single-capture path in B-016. The remaining gates are
   answered or explicitly parked behind a human-approved fail-closed downgrade
   before implementation starts.
-- A-4. #822 proves a unique synthetic marker is visible to a real Cursor agent.
-  If it does not, Cursor injection is recorded as blocked and no implementation
-  or installation path claims injection support.
+- A-4. Capability evidence stays split: Cursor 3.12.17 post-tool injection is
+  recorded as proven from the visible marker, while session-start injection
+  remains blocked from the absent marker. GH-823 v1 implements neither path as
+  a model-visible capability; post-tool enablement requires its own amended
+  command/renderer/install contract. No implementation or installation path
+  merges those states or claims an unproved size/version/mode.
 - A-5. A unique `user_email` sentinel is absent from capture, database, spill,
   log/error, adapter, LLM-request, and model-output fixtures, and Cursor `stop`
   cannot call any Claude/Codex transcript parser before #825 is merged.
