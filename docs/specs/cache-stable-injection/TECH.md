@@ -60,6 +60,13 @@ Tracking:
 - UserPromptSubmit retrieval injection (additionalContext) renders as a
   separate additive block with its own deterministic contract, appended after
   the prefix; it never causes a re-render of the prefix.
+- Cursor (GH-823) does not change this layering contract. The Cursor
+  `sessionStart` renderer wraps the same host-independent deterministic body
+  in a `{"additional_context": ...}` envelope but the capability is disabled
+  on Cursor 3.12.17, and no Cursor post-tool context renderer exists in v1;
+  if a later packet enables either path, it must consume this renderer
+  contract unchanged (stable prefix plus additive blocks, no host-specific
+  body rewrites).
 
 ### Churn eval
 
