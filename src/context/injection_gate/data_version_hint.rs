@@ -443,6 +443,7 @@ fn push_session_signal(
         "SELECT id, created_at_epoch, request, completed
          FROM session_summaries
          WHERE request IS NOT NULL AND request != ''
+           AND COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined'
            AND (session_row_id IS NULL
                 OR request NOT LIKE 'Captured event range %..%'
                 OR COALESCE(decisions, '') != ''
