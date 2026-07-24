@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "condition": "curated_file_budgeted",
+  "task_id": "slug-normalizer-contract",
+  "target_blind": true,
+  "budget": {
+    "minutes_per_session": 3,
+    "max_chars": 4000
+  },
+  "sessions": [
+    {
+      "episode_id": "slug-history-1",
+      "minutes_spent": 2.5,
+      "edit_count": 2,
+      "deletion_count": 0,
+      "conflict_resolution_count": 0,
+      "chars_after": 310
+    },
+    {
+      "episode_id": "slug-history-2",
+      "minutes_spent": 1.5,
+      "edit_count": 1,
+      "deletion_count": 1,
+      "conflict_resolution_count": 1,
+      "chars_after": 402
+    }
+  ],
+  "totals": {
+    "maintenance_minutes": 4.0,
+    "update_count": 3,
+    "deletion_count": 1,
+    "conflict_resolution_count": 1
+  },
+  "final_char_count": 402,
+  "final_file_sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+}
