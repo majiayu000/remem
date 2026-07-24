@@ -618,19 +618,12 @@ pub mod tests_helper {
         .unwrap();
         conn.execute_batch(include_str!("../migrations/v020_memory_fts_all_status.sql"))
             .unwrap();
-        conn.execute_batch(
-            concat!(
-                "DROP TRIGGER memories_au;\n",
-                "CREATE TRIGGER memories_au\n",
-                "AFTER UPDATE OF title, content, search_context ON memories\n",
-                "BEGIN\n",
-                "    INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)\n",
-                "    VALUES ('delete', old.id, old.title, old.content, COALESCE(old.search_context, ''));\n",
-                "    INSERT INTO memories_fts(rowid, title, content, search_context)\n",
-                "    VALUES (new.id, new.title, new.content, COALESCE(new.search_context, ''));\n",
-                "END;",
-            ),
-        )
+        // v072 owns the enrichment columns, the compatibility singleton, and
+        // the canonical memories_au trigger; running the real migration keeps
+        // this fixture byte-identical to the migrated schema for those objects.
+        conn.execute_batch(include_str!(
+            "../migrations/v072_memory_retrieval_enrichment.sql"
+        ))
         .unwrap();
     }
 }

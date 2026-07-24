@@ -27,7 +27,7 @@ introduce a replacement storage model or a second retrieval stack.
 
 | Contract | Existing owner | Notes |
 |---|---|---|
-| Durable curated memory | `memories` plus `src/memory/` | `content` remains canonical body; `search_context` is rebuildable metadata. |
+| Durable curated memory | `memories` plus `src/memory/` | `content` remains canonical body; `search_context` is rebuildable index-only metadata. Since v072 (GH-850) it is the single authoritative enrichment surface: deterministic hints plus optional generated `context:`/`keywords:` lines, tracked by generator/security-policy versions and a source hash, never rendered, exported, or exposed in DTOs. |
 | Current slot | `memory_state_keys`, `current_state` | Returns active/unexpired rows and conflict states. |
 | Operation audit | `memory_operation_log` | Records add/update/noop/defer/conflict decisions. |
 | Memory lifecycle relations | `memory_edges` | Handles supersedes, duplicate, merge, split, conflict links. |

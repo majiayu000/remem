@@ -23,6 +23,7 @@ pub(crate) mod raw_query;
 pub(crate) mod raw_reconcile;
 pub(crate) mod raw_transcript;
 pub(crate) mod reference_time;
+pub(crate) mod retrieval_enrichment;
 pub mod scope_cleanup;
 pub mod search_context;
 pub(crate) mod semantic_dedup;

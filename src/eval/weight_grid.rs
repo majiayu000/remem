@@ -489,6 +489,7 @@ mod tests {
                 created_at_epoch: Some(1),
                 access_count: None,
                 last_accessed_epoch: None,
+                search_context: None,
             }],
             queries: vec![GoldenQuery {
                 id: "q1".to_string(),

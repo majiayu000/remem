@@ -22,6 +22,7 @@ fn local_model_unavailable_defers_memory_embedding_write() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
 
     assert_eq!(embedding_count(&conn)?, 0);
@@ -56,6 +57,7 @@ fn prune_inactive_profiles_requires_complete_active_coverage() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
     let error = prune_inactive_memory_embeddings(&conn, &target).unwrap_err();
     assert!(
@@ -72,6 +74,7 @@ fn prune_inactive_profiles_requires_complete_active_coverage() -> Result<()> {
         "SQLCipher encrypts secrets at rest.",
         "architecture",
         None,
+        "",
     )?;
     let report = prune_inactive_memory_embeddings(&conn, &target)?;
 

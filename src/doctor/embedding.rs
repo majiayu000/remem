@@ -329,7 +329,7 @@ mod tests {
                 )?;
             }
             crate::retrieval::vector::upsert_memory_embedding(
-                &conn, 1, "Memory", "Content", "decision", None,
+                &conn, 1, "Memory", "Content", "decision", None, "",
             )?;
 
             let checks = check_embedding_provider(Some(&conn));

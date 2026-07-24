@@ -308,6 +308,7 @@ mod tests {
             created_at_epoch: None,
             access_count: None,
             last_accessed_epoch: None,
+            search_context: None,
         }
     }
 

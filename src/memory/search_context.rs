@@ -1,7 +1,7 @@
 use rusqlite::Connection;
 
 const MAX_HINT_CHARS: usize = 180;
-const MAX_CONTEXT_CHARS: usize = 4000;
+pub(crate) const MAX_CONTEXT_CHARS: usize = 4000;
 const REBUILD_BATCH_SIZE: i64 = 500;
 
 pub fn build_search_context(

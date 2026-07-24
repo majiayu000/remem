@@ -113,6 +113,16 @@ pub fn insert_memory_full_with_reference_time(
     let (expires_at_epoch, valid_from_epoch) =
         crate::memory::lifecycle::ttl_metadata(memory_type, topic_key, content, now);
     let search_context = build_search_context(memory_type, topic_key, content, files);
+    // Same-statement enrichment identity: binding the fallback source hash to
+    // the exact canonical bytes keeps the convergence trigger from treating
+    // this write as a raw (bypass) canonical update.
+    let fallback_source_hash = crate::memory::retrieval_enrichment::enrichment_source_hash(
+        title,
+        content,
+        memory_type,
+        topic_key,
+        files,
+    );
     let ownership = default_ownership(project, scope);
     let state_key = state_key::derive_state_key(memory_type, topic_key, title, content);
 
@@ -202,6 +212,7 @@ pub fn insert_memory_full_with_reference_time(
                 branch,
                 scope,
                 &search_context,
+                &fallback_source_hash,
                 expires_at_epoch,
                 valid_from_epoch,
                 &ownership,
@@ -219,11 +230,12 @@ pub fn insert_memory_full_with_reference_time(
         conn.execute(
             "INSERT INTO memories \
              (session_id, project, topic_key, title, content, memory_type, files, search_context, \
+              search_context_fallback_source_hash, \
               created_at_epoch, updated_at_epoch, reference_time_epoch, status, branch, scope, \
               source_project, target_project, owner_scope, owner_key, context_class, \
               expires_at_epoch, valid_from_epoch) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, 'active', ?12, ?13, \
-                     ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'active', ?13, ?14, \
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
             params![
                 session_id,
                 project,
@@ -233,6 +245,7 @@ pub fn insert_memory_full_with_reference_time(
                 memory_type,
                 files,
                 search_context,
+                fallback_source_hash,
                 created_at,
                 now,
                 reference_time,
@@ -359,6 +372,7 @@ fn update_existing_memory(
     branch: Option<&str>,
     scope: &str,
     search_context: &str,
+    fallback_source_hash: &str,
     expires_at_epoch: Option<i64>,
     valid_from_epoch: Option<i64>,
     ownership: &DefaultOwnership<'_>,
@@ -368,6 +382,9 @@ fn update_existing_memory(
 ) -> Result<()> {
     let state_key_id = attach_state_key(conn, id, memory_type, ownership, state_key, now)?;
     clear_obsolete_state_key_links(conn, id, state_key_id, now)?;
+    // Same statement as the canonical write: reset the enrichment identity to
+    // pending, bind the deterministic fallback to the new source hash, and
+    // clear any stale claim/lease/failure state (GH-850 B-009).
     conn.execute(
         "UPDATE memories SET session_id = ?1, topic_key = ?2, title = ?3, content = ?4, \
          memory_type = ?5, files = ?6, updated_at_epoch = ?7, branch = ?8, \
@@ -379,7 +396,20 @@ fn update_existing_memory(
          target_project = COALESCE(target_project, ?16), \
          owner_scope = COALESCE(owner_scope, ?17), \
          owner_key = COALESCE(owner_key, ?18), \
-         context_class = COALESCE(context_class, ?19) \
+         context_class = COALESCE(context_class, ?19), \
+         search_context_fallback_source_hash = ?21, \
+         search_context_enrichment_version = 0, \
+         search_context_security_policy_version = 0, \
+         search_context_source_hash = NULL, \
+         search_context_index_hash = NULL, \
+         search_context_lease_owner = NULL, \
+         search_context_lease_expires_at_epoch = NULL, \
+         search_context_claimed_source_hash = NULL, \
+         search_context_claimed_enrichment_version = NULL, \
+         search_context_claimed_security_policy_version = NULL, \
+         search_context_failure_count = 0, \
+         search_context_next_retry_at_epoch = NULL, \
+         search_context_last_error_code = NULL \
          WHERE id = ?20",
         params![
             session_id,
@@ -401,7 +431,8 @@ fn update_existing_memory(
             ownership.owner_scope,
             ownership.owner_key,
             ownership.context_class,
-            id
+            id,
+            fallback_source_hash
         ],
     )?;
     Ok(())
@@ -496,6 +527,9 @@ fn refresh_memory_embedding(
     memory_type: &str,
     topic_key: Option<&str>,
 ) -> Result<()> {
+    // Foreground writes always reset enrichment to pending in the same
+    // statement, so the passage is canonical-only here; the idle enrichment
+    // CAS later replaces the vector with the enriched-snapshot passage.
     crate::retrieval::vector::upsert_memory_embedding(
         conn,
         id,
@@ -503,6 +537,7 @@ fn refresh_memory_embedding(
         content,
         memory_type,
         topic_key,
+        "",
     )
 }
 

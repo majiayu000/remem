@@ -298,6 +298,7 @@ mod tests {
                     created_at_epoch: Some(100),
                     access_count: Some(1),
                     last_accessed_epoch: Some(100),
+                    search_context: None,
                 },
                 GoldenMemory {
                     project: "/repo".to_string(),
@@ -312,6 +313,7 @@ mod tests {
                     created_at_epoch: Some(101),
                     access_count: Some(50),
                     last_accessed_epoch: Some(chrono::Utc::now().timestamp()),
+                    search_context: None,
                 },
             ],
             queries: vec![GoldenQuery {
@@ -372,6 +374,7 @@ mod tests {
                 created_at_epoch: Some(100 + index as i64),
                 access_count: Some((index + 1) as i64),
                 last_accessed_epoch: Some(now),
+                search_context: None,
             })
             .collect();
         let dataset = GoldenDataset {

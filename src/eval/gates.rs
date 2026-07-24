@@ -1,5 +1,5 @@
-//! Eval gate baseline/threshold checks (moved verbatim out of eval.rs
-//! to respect the repository file-size ceiling).
+//! Eval gate comparison: baseline vs current metrics with max-drop,
+//! max-increase, and strictly-positive minimum thresholds.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::{self, Display};
@@ -55,6 +55,10 @@ pub struct EvalGateThreshold {
     pub max_drop: f64,
     #[serde(default)]
     pub max_increase: Option<f64>,
+    /// Strictly-positive machine minimum: the current value must be greater
+    /// than this floor regardless of the baseline (GH-850 paraphrase gate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_value: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -551,6 +555,19 @@ pub(crate) fn compare_metrics(
                 } else {
                     EvalGateStatus::Pass
                 };
+                let min_value = threshold.and_then(|threshold| threshold.min_value);
+                let status = if let Some(min_value) = min_value {
+                    if *actual <= min_value {
+                        failures.push(format!(
+                            "{key} below strict minimum: current={actual:.4} min_value={min_value:.4}"
+                        ));
+                        EvalGateStatus::Fail
+                    } else {
+                        status
+                    }
+                } else {
+                    status
+                };
                 deltas.push(EvalGateDelta {
                     metric: key,
                     baseline: *expected,
@@ -640,146 +657,4 @@ impl EvalGateStatus {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn gate_blocks_constructed_retrieval_regression() {
-        let baseline = EvalGateBaseline {
-            version: "test".to_string(),
-            metrics: BTreeMap::from([("golden.slice.temporal.hit_at_k".to_string(), 1.0)]),
-        };
-        let thresholds = EvalGateThresholds {
-            version: "test".to_string(),
-            default_max_drop: 0.05,
-            metrics: BTreeMap::new(),
-        };
-        let current = BTreeMap::from([("golden.slice.temporal.hit_at_k".to_string(), 0.80)]);
-
-        let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current);
-
-        assert_eq!(deltas[0].status, EvalGateStatus::Fail);
-        assert_eq!(failures.len(), 1);
-        assert!(failures[0].contains("golden.slice.temporal.hit_at_k regressed"));
-    }
-
-    #[test]
-    fn gate_blocks_constructed_capacity_loss_increase() {
-        let baseline = EvalGateBaseline {
-            version: "test".to_string(),
-            metrics: BTreeMap::from([(
-                "capacity.degradation.fused.recall_at_k_loss".to_string(),
-                0.0,
-            )]),
-        };
-        let thresholds = EvalGateThresholds {
-            version: "test".to_string(),
-            default_max_drop: 0.0,
-            metrics: BTreeMap::from([(
-                "capacity.degradation.fused.recall_at_k_loss".to_string(),
-                EvalGateThreshold {
-                    max_drop: 0.0,
-                    max_increase: Some(0.05),
-                },
-            )]),
-        };
-        let current = BTreeMap::from([(
-            "capacity.degradation.fused.recall_at_k_loss".to_string(),
-            0.10,
-        )]);
-
-        let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current);
-
-        assert_eq!(deltas[0].status, EvalGateStatus::Fail);
-        assert_eq!(failures.len(), 1);
-        assert!(failures[0].contains("capacity.degradation.fused.recall_at_k_loss increased"));
-    }
-
-    #[test]
-    fn gate_allows_constructed_capacity_loss_improvement() {
-        let baseline = EvalGateBaseline {
-            version: "test".to_string(),
-            metrics: BTreeMap::from([(
-                "capacity.degradation.fused.recall_at_k_loss".to_string(),
-                0.10,
-            )]),
-        };
-        let thresholds = EvalGateThresholds {
-            version: "test".to_string(),
-            default_max_drop: 0.0,
-            metrics: BTreeMap::from([(
-                "capacity.degradation.fused.recall_at_k_loss".to_string(),
-                EvalGateThreshold {
-                    max_drop: 0.0,
-                    max_increase: Some(0.05),
-                },
-            )]),
-        };
-        let current = BTreeMap::from([(
-            "capacity.degradation.fused.recall_at_k_loss".to_string(),
-            0.05,
-        )]);
-
-        let (deltas, failures) = compare_metrics(&baseline, &thresholds, &current);
-
-        assert_eq!(deltas[0].status, EvalGateStatus::Pass);
-        assert!(failures.is_empty());
-    }
-
-    #[test]
-    fn skipped_capacity_gate_removes_capacity_metrics() {
-        let mut baseline = EvalGateBaseline {
-            version: "test".to_string(),
-            metrics: BTreeMap::from([
-                (
-                    "capacity.degradation.fused.recall_at_k_loss".to_string(),
-                    0.0,
-                ),
-                ("golden.slice.temporal.hit_at_k".to_string(), 1.0),
-            ]),
-        };
-        let mut thresholds = EvalGateThresholds {
-            version: "test".to_string(),
-            default_max_drop: 0.0,
-            metrics: BTreeMap::from([
-                (
-                    "capacity.degradation.fused.recall_at_k_loss".to_string(),
-                    EvalGateThreshold {
-                        max_drop: 0.0,
-                        max_increase: Some(0.05),
-                    },
-                ),
-                (
-                    "golden.slice.temporal.hit_at_k".to_string(),
-                    EvalGateThreshold {
-                        max_drop: 0.05,
-                        max_increase: None,
-                    },
-                ),
-            ]),
-        };
-
-        remove_capacity_gate_metrics(&mut baseline, &mut thresholds);
-
-        assert!(!baseline
-            .metrics
-            .contains_key("capacity.degradation.fused.recall_at_k_loss"));
-        assert!(!thresholds
-            .metrics
-            .contains_key("capacity.degradation.fused.recall_at_k_loss"));
-        assert!(baseline
-            .metrics
-            .contains_key("golden.slice.temporal.hit_at_k"));
-        assert!(thresholds
-            .metrics
-            .contains_key("golden.slice.temporal.hit_at_k"));
-    }
-
-    #[test]
-    fn gate_report_table_status_labels_are_stable() {
-        assert_eq!(EvalGateStatus::Pass.label(), "PASS");
-        assert_eq!(EvalGateStatus::Fail.label(), "FAIL");
-        assert_eq!(EvalGateStatus::MissingCurrent.label(), "MISSING_CURRENT");
-        assert_eq!(EvalGateStatus::MissingBaseline.label(), "MISSING_BASELINE");
-    }
-}
+mod tests;
