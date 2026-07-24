@@ -124,13 +124,13 @@ esac
 if [ "${REMEM_NO_CONFIG}" = "1" ]; then
   echo ""
   echo "Skipped hook/MCP configuration because REMEM_NO_CONFIG=1."
-  echo "Run 'remem install' later to configure Claude Code/Codex."
+  echo "Run 'remem install' later to configure Claude Code/Codex (and Cursor MCP when detected)."
   exit 0
 fi
 
 # Run install to configure hooks + MCP
 echo ""
-echo "Configuring Claude Code/Codex hooks and MCP..."
+echo "Configuring Claude Code/Codex hooks and MCP (Cursor gets MCP-only when detected)..."
 REMEM_INSTALL_BINARY="${INSTALL_DIR}/remem" "${INSTALL_DIR}/remem" install
 
 echo ""

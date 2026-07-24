@@ -23,10 +23,13 @@ external database.
 ## What You Get
 
 - Claude Code, OpenAI Codex, and Codex CLI remember project decisions across sessions.
-- Cursor is a recognized hook host at the runtime protocol level (GH-823):
-  `remem observe --host cursor` captures the verified generic tool events,
-  while Cursor install support (GH-824) and transcript summarization (GH-825)
-  are tracked separately.
+- Cursor has a v1 integration: `remem install --target cursor` registers the
+  remem MCP server (macOS/Linux), and the runtime commands for tool-event
+  capture (`remem observe --host cursor`, GH-823) and Stop transcript
+  summarization (`remem summarize --host cursor`, GH-825) are merged. The v1
+  install surface does not register Cursor hook entries yet, so automatic
+  Cursor memory capture is not enabled, and session-init injection is not
+  supported on Cursor. See the [Cursor capability matrix](#cursor-capability-matrix).
 - Bug-fix rationale, preferences, and project patterns are searchable.
 - Memory stays local by default with SQLite and SQLCipher.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
@@ -72,10 +75,27 @@ server, strictly validates both files, and preserves foreign entries
 semantically for the validated snapshot (coordinated updates use staged
 apply with compensating rollback, not a cross-file atomic transaction, and
 edits landing between the final comparison and the rename can still be
-lost). Cursor hook capture entries are not installed yet — automatic Cursor
-memory is not enabled — and `session-init` is not supported on Cursor.
-Before downgrading remem, run `remem uninstall --target cursor` with the
-current version first.
+lost). Install contract v1 registers no Cursor hook entries — automatic
+Cursor memory is not enabled — and `session-init` is not supported on Cursor.
+`--target auto` includes Cursor only when a Cursor config is detected on
+macOS/Linux; Windows is skipped with a diagnostic because no hook command
+renderer is approved there, and `--repair` does not cover Cursor. Before
+downgrading remem, run `remem uninstall --target cursor` with the current
+version first.
+
+### Cursor capability matrix
+
+Capabilities below reflect the merged runtime, not planned work:
+
+| Capability | Claude Code / Codex CLI | Cursor (v1) |
+|---|---|---|
+| MCP memory tools (search, `save_memory`, ...) | Registered by `remem install` | Registered by `remem install --target cursor` (macOS/Linux only) |
+| Session-start memory injection | Installed hook | Not supported; doctor and install always print `session-init: not supported on cursor` |
+| Automatic tool-event capture | Installed hook | Runtime command exists (`remem observe --host cursor`, strict fail-closed parsing of the verified generic tool events); install v1 registers no hook entry, so it is not automatic |
+| Stop transcript summarization | Installed hook | Runtime command exists (`remem summarize --host cursor`, Stop-keyed transcript snapshot with explicit `degraded/<reason>` fallback); install v1 registers no hook entry, so it is not automatic |
+| `remem doctor` | Hooks/MCP rows | Dedicated Cursor row reporting detected/configured/drift/collision plus fixed capability lines |
+| `remem install --repair` | Claude hooks only | Not supported |
+| Windows | Supported | Not supported (no approved hook command renderer) |
 
 Run `remem doctor` when you want to verify or troubleshoot the integration.
 If Claude Code reports a Hook Integrity Warning or doctor shows incomplete
