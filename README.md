@@ -399,6 +399,15 @@ Remem is meant for the parts that should not depend on manual upkeep:
   dedups local rows, skips suppressed or invalidated local decisions, routes
   conflicts/quarantines to review, and marks imported memories with pack
   provenance visible in `remem why` and `remem doctor`.
+- **Codex native memories import**: `remem import codex-memories --dry-run`
+  plans a one-way, read-only import of Codex CLI rollout-summary memories
+  (`~/.codex/memories/rollout_summaries`) and prints a plan digest; apply with
+  `remem import codex-memories --expect-plan-digest <sha256>`. Records are
+  treated as untrusted external content: they only land in the candidate
+  review queue (`pending_review`/`quarantined`, secret-containing batches are
+  blocked entirely), never directly in active memories, and the Codex source
+  tree is never modified. Re-running the import is idempotent even if Codex
+  renames its generated files.
 - **Failure-loop learning**: raw transcripts that contain both concrete
   build/test failure evidence and an explicit "stop and challenge the
   hypothesis" style lesson feed an idempotent `failure` lesson before summary

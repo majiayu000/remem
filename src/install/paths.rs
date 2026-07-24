@@ -63,6 +63,53 @@ pub(in crate::install) fn cursor_mcp_path() -> PathBuf {
     cursor_dir().join("mcp.json")
 }
 
+/// Official Codex CLI user-level rollout-summary memory location, verified on
+/// codex-cli 0.145.0 (docs/research/gh852-host-native-memory-poc.md).
+pub(crate) fn codex_memories_dir() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".codex")
+        .join("memories")
+        .join("rollout_summaries")
+}
+
+/// Filename fingerprint of codex-rollout-summary/v1, verified against a real
+/// codex-cli 0.145.0 installation (95/95 files matched):
+/// `YYYY-MM-DDTHH-MM-SS-<4 alnum>-<slug>.md`. Shared by the import discovery
+/// walk and the doctor source-state check (GH-852).
+pub(crate) fn is_codex_rollout_summary_filename(name: &str) -> bool {
+    let Some(stem) = name.strip_suffix(".md") else {
+        return false;
+    };
+    let bytes = stem.as_bytes();
+    // 2026-05-27T09-52-53-bZ3O- prefix = 25 bytes, then a non-empty slug.
+    if bytes.len() < 26 {
+        return false;
+    }
+    let digits = [0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18];
+    if !digits.iter().all(|&idx| bytes[idx].is_ascii_digit()) {
+        return false;
+    }
+    let separators = [
+        (4, b'-'),
+        (7, b'-'),
+        (10, b'T'),
+        (13, b'-'),
+        (16, b'-'),
+        (19, b'-'),
+        (24, b'-'),
+    ];
+    if !separators.iter().all(|&(idx, ch)| bytes[idx] == ch) {
+        return false;
+    }
+    if !bytes[20..24].iter().all(u8::is_ascii_alphanumeric) {
+        return false;
+    }
+    bytes[25..]
+        .iter()
+        .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-')
+}
+
 pub(in crate::install) fn remem_data_dir() -> PathBuf {
     crate::db::data_dir()
 }

@@ -16,7 +16,7 @@ mod auto_promote;
 mod parse;
 pub(crate) mod review;
 pub(crate) mod review_stats;
-mod route;
+pub(crate) mod route;
 pub(crate) mod support;
 
 use crate::runtime_config::SummaryGateMode;

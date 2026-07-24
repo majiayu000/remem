@@ -3,6 +3,26 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.22` for GH-852: host-native memory data sources.
+  New `remem import codex-memories` performs a one-way, read-only import of
+  Codex CLI rollout-summary memories (`codex-rollout-summary/v1`, fingerprint
+  frozen against codex-cli 0.145.0) into the candidate review queue: two-phase
+  dry-run/apply bound by `--expect-plan-digest`, pre-persistence secret
+  boundary that blocks the whole batch, instruction-pattern quarantine,
+  content+route idempotent identity (rename-safe re-runs), verified-cwd
+  project routing with a Codex tool-owned `search_only` fallback, and a single
+  all-or-nothing transaction that only ever lands `pending_review` /
+  `quarantined` candidates — never active memories. `remem doctor` gains a
+  Codex native memories check (not_configured / ready / unreadable /
+  unsupported_format, no body output) and reports the Claude native-bridge
+  state. Claude native topic-file ingestion is closure-audited: remem's own
+  `remem_sessions.md` is no longer self-ingested, topic files route into
+  `memory_candidates` as `external_content` (pending review, never
+  direct-active), and ingestion failures propagate to the hook exit status
+  instead of warning-only. The Claude `autoMemoryDirectory` delivery bridge
+  stays `hook_only`/no-go pending SP852-T1 real-host PoC evidence; no user
+  `~/.claude` or `~/.codex` surface is written by default
+  (docs/research/gh852-host-native-memory-poc.md).
 - Staged source version `0.6.21` for GH-851: opt-in second-stage local
   cross-encoder rerank. After RRF fusion, eligibility filtering, and
   source-anchor demotion, standard `remem search` (including API/MCP service

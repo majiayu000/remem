@@ -1,5 +1,6 @@
 mod capture_capability;
 mod capture_liveness;
+mod codex_native_memory;
 mod cursor_install;
 mod database;
 mod embedding;

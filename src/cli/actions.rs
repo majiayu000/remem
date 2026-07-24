@@ -1,4 +1,5 @@
 mod admin;
+mod codex_memory_import;
 mod config_command;
 mod embedding;
 mod encrypt_state;

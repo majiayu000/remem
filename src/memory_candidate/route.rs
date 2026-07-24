@@ -1,3 +1,8 @@
+use anyhow::Result;
+use rusqlite::{params, Connection, OptionalExtension};
+
+use crate::memory::poisoning::scan_instruction_pattern;
+
 use super::ParsedMemoryCandidate;
 
 const ROUTE_CONFIDENCE_HIGH: f64 = 0.95;
@@ -181,6 +186,115 @@ pub(crate) fn route_candidate<'a>(
             context_class: "startup_core".to_string(),
         },
     }
+}
+
+/// External (host-generated, untrusted) content that must enter the candidate
+/// review queue. GH-852 B-009/B-019: external sources are always
+/// `source_trust_class=external_content`, never auto-promoted, and land only in
+/// `pending_review` or `quarantined`.
+#[derive(Debug, Clone)]
+pub(crate) struct ExternalCandidateInsert<'a> {
+    pub project_id: i64,
+    pub source_project: &'a str,
+    pub scope: &'a str,
+    pub memory_type: &'a str,
+    pub topic_key: &'a str,
+    pub text: &'a str,
+    pub confidence: f64,
+    pub risk_class: &'a str,
+    pub source_kind: &'a str,
+    pub owner_scope: &'a str,
+    pub owner_key: &'a str,
+    pub target_project: Option<&'a str>,
+    pub context_class: &'a str,
+    pub routing_reason: &'a str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExternalCandidateOutcome {
+    Inserted {
+        quarantined: bool,
+    },
+    /// A candidate with the same source_kind/topic_key/text already exists.
+    Duplicate,
+}
+
+/// Returns true when an identical external candidate already exists for this
+/// source kind (idempotent re-import support, GH-852 B-008).
+pub(crate) fn external_candidate_exists(
+    conn: &Connection,
+    source_kind: &str,
+    topic_key: &str,
+    text: &str,
+) -> Result<bool> {
+    let existing: Option<i64> = conn
+        .query_row(
+            "SELECT id FROM memory_candidates
+             WHERE source_kind = ?1 AND topic_key = ?2 AND text = ?3
+             LIMIT 1",
+            params![source_kind, topic_key, text],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(existing.is_some())
+}
+
+pub(crate) fn insert_external_candidate(
+    conn: &Connection,
+    insert: &ExternalCandidateInsert<'_>,
+) -> Result<ExternalCandidateOutcome> {
+    if external_candidate_exists(conn, insert.source_kind, insert.topic_key, insert.text)? {
+        return Ok(ExternalCandidateOutcome::Duplicate);
+    }
+
+    let quarantine_match = scan_instruction_pattern(insert.text);
+    let review_status = if quarantine_match.is_some() {
+        "quarantined"
+    } else {
+        "pending_review"
+    };
+    let block_reason = if quarantine_match.is_some() {
+        "quarantined_instruction_pattern"
+    } else {
+        "external_source_requires_review"
+    };
+    let now = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch,
+          source_project, target_project, owner_scope, owner_key, topic_domain,
+          routing_confidence, routing_reason, context_class,
+          source_kind, source_trust_class, auto_promote_block_reason,
+          quarantine_pattern_id, quarantine_pattern_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, '[]', ?6, ?7, ?8, ?9, ?9,
+                 ?10, ?11, ?12, ?13, NULL, 0.5, ?14, ?15, ?16,
+                 'external_content', ?17, ?18, ?19)",
+        params![
+            insert.project_id,
+            insert.scope,
+            insert.memory_type,
+            insert.topic_key,
+            insert.text,
+            insert.confidence,
+            insert.risk_class,
+            review_status,
+            now,
+            insert.source_project,
+            insert.target_project,
+            insert.owner_scope,
+            insert.owner_key,
+            insert.routing_reason,
+            insert.context_class,
+            insert.source_kind,
+            block_reason,
+            quarantine_match.map(|matched| matched.pattern_id),
+            quarantine_match.map(|matched| matched.pattern_set_version),
+        ],
+    )?;
+    Ok(ExternalCandidateOutcome::Inserted {
+        quarantined: quarantine_match.is_some(),
+    })
 }
 
 fn has_any(haystack: &str, needles: &[&str]) -> bool {
