@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.26` for GH-933 Phase A: read-only CurrentTruth
+  projection module (`remem_ai::truth`). Versioned Evidence/Claim/Relation/
+  CurrentTruth read DTOs, a three-dimension lifecycle mapping (publication /
+  validity / retention plus policy visibility) covering every stored status
+  value of memories, observations, user-context claims, and memory
+  candidates, and a deterministic resolution policy: scope and branch
+  isolation, `as_of` filtering, explicit supersedes over recency, verified
+  evidence over model-generated, `Contradicted` for unresolved conflicts, and
+  abstention instead of guessing. No writer, schema, or context-path changes;
+  Context Bundle wiring is Phase B. Contract: `docs/specs/GH933/`.
 - Staged source version `0.6.24` for GH-855: capture/extraction-path poisoning
   defense. Session rollups now compute a deterministic combined verdict over
   the captured source events and every model-generated summary field before

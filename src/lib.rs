@@ -43,6 +43,7 @@ mod session_rollup;
 mod spill_queue;
 pub mod summarize;
 pub mod timeline;
+pub mod truth;
 pub mod user_context;
 pub mod worker;
 pub mod workstream;
