@@ -46,7 +46,6 @@ pub(in crate::install) fn codex_hooks_path() -> PathBuf {
         .join("hooks.json")
 }
 
-<<<<<<< HEAD
 pub(in crate::install) fn cursor_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
@@ -62,7 +61,8 @@ pub(in crate::install) fn cursor_hooks_path() -> PathBuf {
 /// User-level Cursor MCP config (`~/.cursor/mcp.json`).
 pub(in crate::install) fn cursor_mcp_path() -> PathBuf {
     cursor_dir().join("mcp.json")
-=======
+}
+
 /// Official Codex CLI user-level rollout-summary memory location, verified on
 /// codex-cli 0.145.0 (docs/research/gh852-host-native-memory-poc.md).
 pub(crate) fn codex_memories_dir() -> PathBuf {
@@ -108,7 +108,6 @@ pub(crate) fn is_codex_rollout_summary_filename(name: &str) -> bool {
     bytes[25..]
         .iter()
         .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'_' || *byte == b'-')
->>>>>>> a92d185c (feat(memory): host-native memory data source (GH852))
 }
 
 pub(in crate::install) fn remem_data_dir() -> PathBuf {

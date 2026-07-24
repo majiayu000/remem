@@ -1,10 +1,7 @@
 mod capture_capability;
 mod capture_liveness;
-<<<<<<< HEAD
-mod cursor_install;
-=======
 mod codex_native_memory;
->>>>>>> a92d185c (feat(memory): host-native memory data source (GH852))
+mod cursor_install;
 mod database;
 mod embedding;
 mod environment;
