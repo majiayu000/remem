@@ -3,6 +3,30 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.21` for GH-851: opt-in second-stage local
+  cross-encoder rerank. After RRF fusion, eligibility filtering, and
+  source-anchor demotion, standard `remem search` (including API/MCP service
+  callers) and the SessionStart implicit query share one rerank stage that
+  re-scores the fixed top-N baseline candidates with a locally installed
+  fastembed/ONNX cross-encoder and returns a fixed top-k order
+  (score desc, baseline rank asc, id asc; `verify-before-trust` candidates
+  hard-partitioned last after a successful rerank only). Rerank is
+  default-off (`[rerank] enabled = true` or `REMEM_RERANK_ENABLED=1`);
+  models install only via the explicit `remem reranker download` command
+  into a dedicated reranker inventory with a byte/SHA-256-verified manifest
+  — search, hooks, API/MCP, and doctor never download. Missing, corrupt,
+  load-failed, inference-failed, deadline-exceeded, or cancelled states
+  fall back atomically to the complete RRF baseline with a stable closed
+  `disabled_reason` (error-level logged), surfaced in search explain
+  (`rerank` stage with `rerank_model_load`/`rerank_inference`/`rerank_total`
+  phase timings), SessionStart render stats, `remem reranker status`, and a
+  new doctor check that fails for enabled-but-broken models and passes for
+  explicit off. A rerank A/B promote gate (`src/eval/rerank.rs`) enforces
+  paraphrase/associative and combined MRR@10 / Hit@5 non-regression plus a
+  preregistered `>= 0.05` primary-metric improvement before any default-on
+  decision; the paired artifact must carry commit, dataset hash, and model
+  manifest hash. Default-on remains gated on maintainer-approved runtime
+  evidence (local A/B artifact and cold/warm SessionStart p95 budgets).
 - Staged source version `0.6.20` for GH-824: Cursor install host surface.
   `remem install/uninstall --target cursor` (plus `auto`/`all` selection on
   macOS/Linux) manages exactly the user-level `~/.cursor/hooks.json` and

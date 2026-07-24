@@ -57,6 +57,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Config { action } => run_config(action)?,
         Commands::Model { action } => run_model(action).await?,
         Commands::Embedding { action } => run_embedding(action)?,
+        Commands::Reranker { action } => super::actions::run_reranker(action)?,
         Commands::SessionInit { host } => {
             if remem_hooks_disabled() {
                 return Ok(());

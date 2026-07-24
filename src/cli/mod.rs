@@ -8,6 +8,7 @@ mod eval_types;
 mod memory_types;
 mod procedure_types;
 mod query_types;
+mod reranker_types;
 mod review_types;
 mod rule_types;
 #[cfg(test)]

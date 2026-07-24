@@ -419,7 +419,7 @@ fn render_context_output_from_inputs(
     {
         return Ok(RenderedContext {
             output: empty_context_output(request),
-            stats: empty_stats(request),
+            stats: stats::empty_stats(request),
             audit_items: Vec::new(),
             data_version,
             has_load_errors,
@@ -469,8 +469,12 @@ fn render_context_output_from_inputs(
         },
         ..ContextRenderStats::default()
     };
-    stats.timings.push(load_timing);
-    stats.timings.push(preference_timing);
+    stats::absorb_evidence(
+        &mut stats,
+        load_timing,
+        preference_timing,
+        loaded.rerank.as_ref(),
+    );
 
     let section_start = Instant::now();
     let before = char_len(&output);
@@ -729,7 +733,7 @@ fn render_context_open_error(
             format!("failed to open remem database: {error}"),
         )],
     );
-    let mut stats = empty_stats(request);
+    let mut stats = stats::empty_stats(request);
     stats.total_char_limit = policy.limits.total_char_limit;
     stats.output_chars = char_len(&output);
     enforce_total_char_limit_preserving_footer(&mut output, policy.limits.total_char_limit, "");
@@ -788,13 +792,4 @@ pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> Stri
         request.use_colors,
     );
     empty_state_output(&header, context_source_note(request.hook_source.as_deref()))
-}
-
-fn empty_stats(request: &ContextRequest) -> ContextRenderStats {
-    ContextRenderStats {
-        host: request.host.as_env_value().to_string(),
-        branch: request.current_branch.clone(),
-        hook_source: request.hook_source.clone(),
-        ..ContextRenderStats::default()
-    }
 }

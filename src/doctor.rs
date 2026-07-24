@@ -13,6 +13,7 @@ mod pack_imports;
 mod procedure_exports;
 mod promotion_funnel;
 mod report;
+mod reranker;
 mod review_queue;
 mod rule_enforcement;
 mod runtime_config_check;
