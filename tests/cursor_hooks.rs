@@ -292,25 +292,135 @@ fn session_init_cursor_rejected_before_stdin_and_side_effects() {
     assert_dir_has_no_files(&dir);
 }
 
-// ---- B-008 (pre-T5 slice): cursor summarize stays fail-closed ----
+// ---- SP823-T5 + GH-825: cursor summarize Stop wiring ----
 
 #[test]
-fn summarize_cursor_stop_fails_closed_with_zero_side_effects() {
-    let dir = temp_data_dir("summarize-cursor");
+fn summarize_cursor_unapproved_status_fails_closed_with_zero_side_effects() {
+    let dir = temp_data_dir("summarize-cursor-status");
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&stop_payload()).expect("stop payload parses");
+    payload["status"] = serde_json::json!("error");
     let run = run_hook(
         &dir,
         &["summarize", "--host", "cursor"],
-        stop_payload().as_bytes(),
+        payload.to_string().as_bytes(),
     );
-    assert!(!run.status.success(), "cursor summarize must fail closed");
-    assert!(run.stdout.is_empty());
     assert!(
-        run.stderr.contains("GH-825"),
-        "error must name the blocking prerequisite: {}",
+        !run.status.success(),
+        "unobserved status must fail closed: {}",
         run.stderr
     );
+    assert!(run.stdout.is_empty());
+    assert!(run.stderr.contains("approved set"), "{}", run.stderr);
     assert!(!run.stderr.contains(EMAIL_SENTINEL));
     assert_dir_has_no_files(&dir);
+}
+
+#[test]
+fn summarize_cursor_valid_stop_records_durable_marked_capture() {
+    let dir = temp_data_dir("summarize-cursor-full");
+    migrate_db_at(&dir);
+    let transcript = dir.join("cursor-transcript.jsonl");
+    std::fs::write(
+        &transcript,
+        concat!(
+            "{\"role\":\"user\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"ask\"}]}}\n",
+            "{\"role\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"answer\"}]}}\n",
+            "{\"type\":\"turn_ended\",\"status\":\"success\"}\n",
+        ),
+    )
+    .expect("write transcript fixture");
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&stop_payload()).expect("stop payload parses");
+    payload["transcript_path"] = serde_json::json!(transcript.to_string_lossy());
+
+    let run = run_hook(
+        &dir,
+        &["summarize", "--host", "cursor"],
+        payload.to_string().as_bytes(),
+    );
+    assert!(run.status.success(), "valid stop failed: {}", run.stderr);
+    assert!(run.stdout.is_empty(), "summarize emits no stdout");
+
+    let conn = rusqlite::Connection::open(dir.join("remem.db")).expect("open db");
+    let (host, content): (String, String) = conn
+        .query_row(
+            "SELECT h.name, ce.content_text FROM captured_events ce
+             JOIN hosts h ON h.id = ce.host_id
+             WHERE ce.event_type = 'session_stop'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("durable session_stop row exists");
+    assert_eq!(host, "cursor");
+    let stored: serde_json::Value = serde_json::from_str(&content).expect("stored payload JSON");
+    assert!(
+        stored.get("transcript_path").is_none(),
+        "cursor Stop payload must never persist a transcript path"
+    );
+    let capture = stored["cursor_capture"].as_object().expect("marker");
+    assert_eq!(capture["fidelity"], "full");
+    assert_eq!(capture["stop_key"], "sess-sub-1:gen-1:0");
+    assert_eq!(
+        capture["snapshot"]["messages"]
+            .as_array()
+            .expect("ir")
+            .len(),
+        2
+    );
+    let leaked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE content_text LIKE ?1",
+            [format!("%{EMAIL_SENTINEL}%")],
+            |row| row.get(0),
+        )
+        .expect("sentinel scan");
+    assert_eq!(leaked, 0, "user_email sentinel must not reach the database");
+}
+
+#[test]
+fn summarize_cursor_missing_transcript_degrades_without_losing_the_stop() {
+    let dir = temp_data_dir("summarize-cursor-degraded");
+    migrate_db_at(&dir);
+    let mut payload: serde_json::Value =
+        serde_json::from_str(&stop_payload()).expect("stop payload parses");
+    payload["transcript_path"] =
+        serde_json::json!(dir.join("missing-transcript.jsonl").to_string_lossy());
+
+    let run = run_hook(
+        &dir,
+        &["summarize", "--host", "cursor"],
+        payload.to_string().as_bytes(),
+    );
+    assert!(run.status.success(), "degraded stop failed: {}", run.stderr);
+
+    let conn = rusqlite::Connection::open(dir.join("remem.db")).expect("open db");
+    let content: String = conn
+        .query_row(
+            "SELECT content_text FROM captured_events WHERE event_type = 'session_stop'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("durable session_stop row exists");
+    let stored: serde_json::Value = serde_json::from_str(&content).expect("stored payload JSON");
+    assert_eq!(stored["cursor_capture"]["fidelity"], "degraded");
+    assert_eq!(stored["cursor_capture"]["reason_code"], "read_failed");
+    let drop_reason: String = conn
+        .query_row(
+            "SELECT reason FROM capture_drop_events ORDER BY id DESC LIMIT 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("degradation diagnostic exists");
+    assert_eq!(drop_reason, "cursor_transcript_read_failed");
+    let raw_path_leak: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM capture_drop_events WHERE detail LIKE '%missing-transcript%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("locator scan");
+    assert_eq!(raw_path_leak, 0, "drop detail must not echo the raw path");
 }
 
 #[test]
