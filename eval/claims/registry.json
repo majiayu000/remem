@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "issue": "#931",
+  "locked": false,
+  "claims": [
+    {
+      "id": "remem-e2e-vs-no-memory-v1",
+      "comparison": { "treatment": "remem_e2e", "control": "no_memory" },
+      "metric": "resolved_rate",
+      "gate": {
+        "min_effect_pp": 10,
+        "ci_lower_bound_pp_gt": 0,
+        "ci_level": 0.95,
+        "statistical_unit": "task",
+        "method": "task-cluster paired bootstrap"
+      },
+      "status": "INSUFFICIENT",
+      "allowed_wording": [
+        "Directional evidence: on the internal 16-task fixture, remem_e2e is being evaluated against no_memory; no publishable resolved-rate claim exists yet."
+      ],
+      "forbidden_wording": [
+        "proves",
+        "guarantees",
+        "state of the art",
+        "best memory system",
+        "always improves"
+      ],
+      "supporting_report": null
+    },
+    {
+      "id": "remem-e2e-vs-curated-file-budgeted-v1",
+      "comparison": { "treatment": "remem_e2e", "control": "curated_file_budgeted" },
+      "metric": "resolved_rate",
+      "gate": {
+        "non_inferiority_margin_pp": 3,
+        "human_maintenance_reduction_min_pct": 70,
+        "ci_level": 0.95,
+        "statistical_unit": "task",
+        "method": "task-cluster paired bootstrap"
+      },
+      "status": "INSUFFICIENT",
+      "allowed_wording": [
+        "Directional evidence: the budgeted curator protocol is defined but no paired remem_e2e vs curated_file_budgeted run has been executed."
+      ],
+      "forbidden_wording": [
+        "proves",
+        "beats human curation",
+        "replaces human memory maintenance",
+        "zero maintenance"
+      ],
+      "supporting_report": null
+    },
+    {
+      "id": "remem-e2e-stop-loss-v1",
+      "comparison": { "treatment": "remem_e2e", "control": "no_memory" },
+      "metric": "memory_harm",
+      "gate": {
+        "memory_hurt_max_pct": 2,
+        "stale_memory_followed_max_pct": 1
+      },
+      "status": "INSUFFICIENT",
+      "allowed_wording": [
+        "Directional evidence: stop-loss thresholds are pre-registered; no measured memory_hurt or stale_memory_followed rates exist yet."
+      ],
+      "forbidden_wording": [
+        "never hurts",
+        "cannot inject stale memory",
+        "zero risk"
+      ],
+      "supporting_report": null
+    }
+  ]
+}

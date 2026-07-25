@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "issue": "#931",
+  "primary_conditions": [
+    {
+      "id": "no_memory",
+      "summary": "No remem hooks, MCP, SessionStart injection, MEMORY.md, or host-native memory. Only current code and the target task.",
+      "memory_path": "none",
+      "runner_status": "implemented",
+      "isolation": [
+        "temporary HOME/CODEX_HOME",
+        "host config, rules, hooks, and session persistence disabled",
+        "host-native memory disabled"
+      ],
+      "requires_llm_provider_key": false,
+      "offline_dry_run": true
+    },
+    {
+      "id": "curated_file_budgeted",
+      "summary": "Target-blind, time-budgeted human-curated MEMORY.md. Curator sees history episodes in chronological order only, finishes before the target task is revealed, under a fixed per-session time budget and file character cap. Every run must attach a curator log artifact.",
+      "memory_path": "repo-local MEMORY.md only",
+      "runner_status": "artifact_schema_only",
+      "protocol": "eval/coding-bench/curated-file-budgeted-protocol.md",
+      "artifact_schema": "eval/coding-bench/schemas/curator-log.schema.json",
+      "isolation": [
+        "curator never sees the target task before the file is frozen",
+        "final MEMORY.md is the only memory surface at run time"
+      ],
+      "requires_llm_provider_key": false,
+      "offline_dry_run": true
+    },
+    {
+      "id": "remem_e2e",
+      "summary": "Real product path: raw session/tool evidence -> captured_events -> extraction_tasks -> observations/candidates -> review/promotion policy -> memories/projections -> SessionStart/MCP retrieval -> coding agent. Direct gold-memory seeding and full-evidence REMEM_CONTEXT.md preloading are forbidden.",
+      "memory_path": "capture -> extraction -> promotion -> retrieval",
+      "runner_status": "pending_src_support",
+      "forbidden_shortcuts": [
+        "seeding fixture evidence directly into the remem database as memories",
+        "appending full gold evidence details to REMEM_CONTEXT.md or any preload file"
+      ],
+      "isolation": [
+        "independent HOME/DB/host state per condition",
+        "temporary REMEM_DATA_DIR per run",
+        "host config, rules, hooks, and session persistence disabled"
+      ],
+      "requires_llm_provider_key": true,
+      "offline_dry_run": true
+    }
+  ],
+  "diagnostic_conditions": [
+    {
+      "id": "remem_preloaded",
+      "summary": "Former 'remem' condition: fixture evidence seeded into a temporary remem database, rendered through the production SessionStart path, with full seeded details preloaded into REMEM_CONTEXT.md. Diagnostic upper bound for retrieval-independent memory use; not a primary claim condition.",
+      "memory_path": "seeded database + SessionStart render + preload",
+      "runner_status": "implemented_as_legacy_id",
+      "current_runner_id": "remem",
+      "requires_llm_provider_key": false,
+      "offline_dry_run": true
+    },
+    {
+      "id": "curated_file_expert",
+      "summary": "Former 'curated_file' condition: unbudgeted, target-aware hand-curated MEMORY.md built from gold evidence. Near-oracle human upper bound.",
+      "memory_path": "repo-local MEMORY.md only",
+      "runner_status": "implemented_as_legacy_id",
+      "current_runner_id": "curated_file",
+      "requires_llm_provider_key": false,
+      "offline_dry_run": true
+    },
+    {
+      "id": "oracle_evidence",
+      "summary": "Gold evidence handed to the agent directly, bypassing memory entirely. Ceiling for reader/use failures.",
+      "memory_path": "direct evidence injection",
+      "runner_status": "pending_src_support",
+      "requires_llm_provider_key": false,
+      "offline_dry_run": true
+    },
+    {
+      "id": "remem_oracle_retrieval",
+      "summary": "remem pipeline through promotion, but retrieval replaced by gold memory selection. Isolates retrieval-stage failures.",
+      "memory_path": "capture -> extraction -> promotion -> oracle retrieval",
+      "runner_status": "pending_src_support",
+      "requires_llm_provider_key": true,
+      "offline_dry_run": true
+    },
+    {
+      "id": "full_history",
+      "summary": "All raw history episodes concatenated into context with no memory system. Tests whether long context alone solves the tasks.",
+      "memory_path": "raw history dump",
+      "runner_status": "pending_src_support",
+      "requires_llm_provider_key": false,
+      "offline_dry_run": true
+    },
+    {
+      "id": "remem_no_enrichment",
+      "summary": "remem_e2e with retrieval enrichment disabled. Ablation for #928.",
+      "memory_path": "capture -> extraction -> promotion -> retrieval (no enrichment)",
+      "runner_status": "pending_src_support",
+      "requires_llm_provider_key": true,
+      "offline_dry_run": true
+    },
+    {
+      "id": "remem_fts_only",
+      "summary": "remem_e2e with retrieval restricted to the FTS channel. Ablation for retrieval channel attribution.",
+      "memory_path": "capture -> extraction -> promotion -> fts retrieval",
+      "runner_status": "pending_src_support",
+      "requires_llm_provider_key": true,
+      "offline_dry_run": true
+    }
+  ],
+  "failure_stages": {
+    "capture": ["evidence_not_captured"],
+    "extraction": ["durable_fact_missed", "unsupported_claim_saved", "wrong_scope"],
+    "consolidation": [
+      "update_not_applied",
+      "conflict_not_detected",
+      "stale_memory_not_invalidated"
+    ],
+    "retrieval": ["relevant_memory_missing", "irrelevant_memory_selected"],
+    "context_compilation": ["context_budget_dropped"],
+    "reader_use": ["retrieved_but_ignored", "memory_misapplied"]
+  },
+  "claim_gate": {
+    "registry": "eval/claims/registry.json",
+    "gate_script": "eval/claims/claim_gate.py"
+  }
+}
