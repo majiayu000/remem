@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "remem coding-bench condition registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "issue",
+    "primary_conditions",
+    "diagnostic_conditions",
+    "failure_stages",
+    "claim_gate"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "issue": { "type": "string", "pattern": "^#[0-9]+$" },
+    "primary_conditions": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "$ref": "#/$defs/condition" }
+    },
+    "diagnostic_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/condition" }
+    },
+    "failure_stages": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture",
+        "extraction",
+        "consolidation",
+        "retrieval",
+        "context_compilation",
+        "reader_use"
+      ],
+      "properties": {
+        "capture": { "$ref": "#/$defs/enum_list" },
+        "extraction": { "$ref": "#/$defs/enum_list" },
+        "consolidation": { "$ref": "#/$defs/enum_list" },
+        "retrieval": { "$ref": "#/$defs/enum_list" },
+        "context_compilation": { "$ref": "#/$defs/enum_list" },
+        "reader_use": { "$ref": "#/$defs/enum_list" }
+      }
+    },
+    "claim_gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["registry", "gate_script"],
+      "properties": {
+        "registry": { "type": "string", "minLength": 1 },
+        "gate_script": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "enum_list": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }
+    },
+    "condition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "summary",
+        "memory_path",
+        "runner_status",
+        "requires_llm_provider_key",
+        "offline_dry_run"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "summary": { "type": "string", "minLength": 1 },
+        "memory_path": { "type": "string", "minLength": 1 },
+        "runner_status": {
+          "enum": [
+            "implemented",
+            "implemented_as_legacy_id",
+            "artifact_schema_only",
+            "pending_src_support"
+          ]
+        },
+        "current_runner_id": { "type": "string", "minLength": 1 },
+        "protocol": { "type": "string", "minLength": 1 },
+        "artifact_schema": { "type": "string", "minLength": 1 },
+        "isolation": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "forbidden_shortcuts": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "requires_llm_provider_key": { "type": "boolean" },
+        "offline_dry_run": { "const": true }
+      }
+    }
+  }
+}
