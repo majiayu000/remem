@@ -1,25 +1,56 @@
 # Coding-Agent A/B Benchmark
 
-Manual benchmark for issue #385. It compares the same coding tasks under:
+Manual benchmark for issues #385 and #931. Issue #931 promotes this harness to
+the flagship public proof: end-to-end remem versus a budgeted human baseline
+versus no memory.
 
-- `no_memory`: no remem hooks or injected memory.
-- `remem`: fixture evidence is saved into a temporary remem database, rendered
-  through the SessionStart context path, and preloaded into `REMEM_CONTEXT.md`.
-- `curated_file`: the same evidence is provided as a hand-curated `MEMORY.md`.
+## Conditions
 
-The v1 fixture is deterministic and public. It borrows the scoring shape of
-SWE-bench style patch tasks, but uses an inline repository so the harness can
-run from a clean checkout without Docker or external issue data. The pack has
-16 memory-dependent tasks across eight categories, with a three-task smoke
-subset for fast validation. Later versions should add pinned real-repo tasks.
+Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
+`eval/coding-bench/validate_schemas.py` against
+`eval/coding-bench/schemas/conditions.schema.json`.
 
-## Isolated Baseline
+### Primary conditions (claim-bearing)
+
+- `no_memory`: no remem hooks, MCP, SessionStart injection, `MEMORY.md`, or
+  host-native memory. Only current code and the target task.
+- `curated_file_budgeted`: target-blind, time-budgeted human-curated
+  `MEMORY.md`. Protocol: `eval/coding-bench/curated-file-budgeted-protocol.md`.
+  Every run attaches a curator log matching
+  `eval/coding-bench/schemas/curator-log.schema.json`.
+- `remem_e2e`: the real product path — raw session/tool evidence →
+  captured_events → extraction_tasks → observations/candidates →
+  review/promotion policy → memories/projections → SessionStart/MCP retrieval
+  → coding agent. Direct gold-memory seeding and full-evidence
+  `REMEM_CONTEXT.md` preloading are forbidden. Full execution requires a
+  configured remem LLM provider key; dry-run and schema validation must pass
+  offline.
+
+### Diagnostic conditions (localization only, never claim-bearing)
+
+- `remem_preloaded`: the former `remem` condition — fixture evidence saved into
+  a temporary remem database, rendered through the SessionStart context path,
+  and preloaded into `REMEM_CONTEXT.md`.
+- `curated_file_expert`: the former `curated_file` condition — unbudgeted,
+  gold-evidence-derived `MEMORY.md`; near-oracle human upper bound.
+- `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
+  `remem_no_enrichment`, `remem_fts_only`: see `conditions.json`.
+
+Runner status: the Rust runner (`src/eval/coding_bench`) currently implements
+`no_memory` plus the two diagnostic conditions under their legacy CLI ids
+`remem` and `curated_file`. The id rename and `remem_e2e` /
+`curated_file_budgeted` execution support are tracked as the src-side follow-up
+of #931; `conditions.json` records per-condition `runner_status` so drift is
+visible.
+
+## Isolated Baseline (predates #931 renames)
 
 Generated: 2026-06-25 19:16 CST
 
 Runner: `codex-cli 0.142.1`, model `gpt-5.5`, `runs_per_condition=3`, 5 tasks,
-45 total agent runs. This baseline predates the 16-task v1 fixture pack and
-must be regenerated before publication.
+45 total agent runs. This baseline predates the 16-task v1 fixture pack and the
+#931 condition renames (its reports record the legacy `remem` and
+`curated_file` ids) and must be regenerated before publication.
 
 This run was generated from clean source at remem revision
 `c6a46aec3fe44c8a256138d839ebeea396b6cdb7` with `source_dirty=false`. The
@@ -32,15 +63,15 @@ shows host home or benchmark-private Codex home access.
 | Condition | Resolved | Resolution | Mean tokens | Mean wall time |
 |---|---:|---:|---:|---:|
 | `no_memory` | 2/15 | 13.3% | 115,373 | 75.7s |
-| `remem` | 15/15 | 100.0% | 104,749 | 58.7s |
-| `curated_file` | 15/15 | 100.0% | 94,017 | 62.8s |
+| `remem_preloaded` (as `remem`) | 15/15 | 100.0% | 104,749 | 58.7s |
+| `curated_file_expert` (as `curated_file`) | 15/15 | 100.0% | 94,017 | 62.8s |
 
-Interpretation: remem matches curated-file resolution and strongly beats
-no-memory on this first small memory-dependent fixture. Curated-file remains a
-carefully maintained file baseline, so this does not prove remem beats a
-manually curated `MEMORY.md`. The stop-loss control remains active: the next
-benchmark slice should add broader real-repo tasks before making stronger
-product claims.
+Interpretation: preloaded remem matches expert curated-file resolution and
+strongly beats no-memory on this first small memory-dependent fixture. Both
+non-control conditions are upper bounds: neither exercises the real capture →
+extraction → promotion → retrieval path, and the curated file was neither
+target-blind nor budgeted. The #931 primary matrix exists to close exactly
+this gap before making stronger product claims.
 
 Reports:
 
@@ -54,11 +85,62 @@ audit and are intentionally ignored. Those files can include local runner paths
 or host-specific tool output, so rerun the benchmark to regenerate them instead
 of committing them.
 
+## Primary Metrics
+
+The only primary outcome is `resolved_rate`. Also reported:
+
+- FAIL_TO_PASS / PASS_TO_PASS, compile success, wrong file modified, timeout;
+- tokens per resolved task, wall time per resolved task;
+- human maintenance minutes / 100 sessions (from curator logs);
+- memory_helped / memory_hurt, stale_memory_followed,
+  irrelevant_memory_distracted, missing_relevant_memory;
+- citation precision / recall, time_to_first_relevant_file,
+  repeated_failed_action_count.
+
+## Memory Failure Decomposition
+
+Every memory failure must be attributed to exactly one stage. The
+stage-to-enum mapping is machine-readable in `conditions.json`
+(`failure_stages`) and validated by `validate_schemas.py`:
+
+| Stage | Failure enums |
+|---|---|
+| Capture | `evidence_not_captured` |
+| Extraction | `durable_fact_missed`, `unsupported_claim_saved`, `wrong_scope` |
+| Consolidation | `update_not_applied`, `conflict_not_detected`, `stale_memory_not_invalidated` |
+| Retrieval | `relevant_memory_missing`, `irrelevant_memory_selected` |
+| Context compilation | `context_budget_dropped` |
+| Reader/use | `retrieved_but_ignored`, `memory_misapplied` |
+
+## Claim Gate
+
+Public wording is governed by `eval/claims/registry.json` and enforced by
+`python3 eval/claims/claim_gate.py check`. Pre-registered v1 thresholds:
+
+```text
+remem_e2e vs no_memory:
+  resolved_rate improvement >= 10pp, 95% CI lower bound > 0
+
+remem_e2e vs curated_file_budgeted:
+  non-inferiority margin <= 3pp
+  human maintenance time reduction >= 70%
+
+stop-loss:
+  memory_hurt <= 2%
+  stale_memory_followed <= 1%
+```
+
+Every claim is `PASS`, `FAIL`, or `INSUFFICIENT` with allowed/forbidden
+wording and a supporting report hash. `INSUFFICIENT` wording must be prefixed
+`Directional evidence:` — that is the mechanical line between directional and
+publishable evidence. Thresholds may be adjusted before the first official run
+and never retroactively.
+
 ## Artifact Contract
 
-The current public benchmark contract requires every `remem` run artifact to
-carry current-memory evidence. The contract helper in `src/eval/coding_bench`
-defines the canonical fields:
+The current public benchmark contract requires every remem-backed run artifact
+to carry current-memory evidence. The contract helper in
+`src/eval/coding_bench` defines the canonical fields:
 
 - `remem_contract_snapshot`, built from the current-memory-contracts
   deterministic report;
@@ -69,9 +151,10 @@ defines the canonical fields:
   relevant memory count, `memory_helped`, and `memory_hurt`;
 - score command evidence, patch evidence, token metrics, turns, and wall time.
 
-`no_memory` and `curated_file` runs must set `memory_contract_status` to
+`no_memory` and curated-file runs must set `memory_contract_status` to
 `not_applicable` and must not include remem contract evidence or memory
-attribution.
+attribution. `curated_file_budgeted` runs must additionally attach the curator
+log artifact and a `MEMORY.md` hash matching `final_file_sha256`.
 
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must
@@ -96,6 +179,14 @@ Reports aggregate `memory_failure_counts` separately from the full
 coding failures.
 
 ## Commands
+
+Offline harness validation (no LLM key, no network):
+
+```bash
+python3 eval/coding-bench/validate_schemas.py
+python3 eval/claims/claim_gate.py check
+python3 eval/claims/claim_gate.py --self-test
+```
 
 Full v1 dry run:
 
@@ -139,7 +230,7 @@ cargo run -- eval-coding-bench \
   --json-out eval/coding-bench/reports/baseline.json
 ```
 
-Focused smoke:
+Focused smoke (legacy runner id until the src-side rename lands):
 
 ```bash
 cargo run -- eval-coding-bench \
@@ -157,12 +248,13 @@ cargo run -- eval-coding-bench \
 
 ## Current Caveat
 
-Codex non-interactive MCP calls can be cancelled by the host. To keep the
-`remem` condition faithful but runnable, the harness still seeds a temporary
-remem database and uses the production SessionStart render path, then appends
-full seeded memory details to `REMEM_CONTEXT.md` as preloaded `get_observations`
-details. This avoids undercounting remem because of host MCP approval behavior
-rather than memory quality.
+Codex non-interactive MCP calls can be cancelled by the host. The
+`remem_preloaded` diagnostic condition therefore seeds a temporary remem
+database, uses the production SessionStart render path, then appends full
+seeded memory details to `REMEM_CONTEXT.md` as preloaded `get_observations`
+details. That shortcut is exactly why `remem_preloaded` is diagnostic-only
+under #931: `remem_e2e` must not preload gold evidence, and MCP availability
+issues in `remem_e2e` count as real failures with a stage attribution.
 
 The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,
 and `--disable hooks` so benchmark agents do not inherit the host's MCP servers,
@@ -172,10 +264,10 @@ variables. On macOS the harness wraps Codex in a host-read sandbox that denies
 reads under the real HOME except the Codex install path plus temporary benchmark
 run roots.
 
-The `curated_file` condition intentionally includes a repo-local `MEMORY.md` in
+The curated-file conditions intentionally include a repo-local `MEMORY.md` in
 each fixture checkout. Raw artifact scans may therefore contain `MEMORY.md`
-references for that condition; host home, host `.codex`, auth files, virtualenvs,
-and benchmark-private Codex homes must not appear.
+references for those conditions; host home, host `.codex`, auth files,
+virtualenvs, and benchmark-private Codex homes must not appear.
 
 ## Fixture Pack
 
@@ -196,7 +288,10 @@ conflict/ambiguity handling.
 
 ## Expansion Targets
 
-Good next task sources:
+Issue #931 phase two: at least 12 pinned real repositories, at least 96 target
+tasks across Rust / Python / TypeScript / Go, 10-30 history episodes per
+target, hidden tests or deterministic oracles as the outcome judge. Good task
+sources:
 
 - SWE-bench style real GitHub issue patch tasks, especially smaller or verified
   subsets: https://www.swebench.com/

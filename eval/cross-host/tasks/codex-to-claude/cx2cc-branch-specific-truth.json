@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cx2cc-branch-specific-truth",
+  "direction": "codex_to_claude",
+  "category": "branch_specific_truth",
+  "status": "skeleton_todo",
+  "source_host": "codex",
+  "target_host": "claude_code",
+  "history_episodes": [
+    {
+      "episode_id": "cx2cc-branch-specific-truth-episode-1",
+      "host": "codex",
+      "summary": "A fact holds only on one branch; the source-host history covers both branches.",
+      "expected_memory_facts": [
+        "fact:branch_specific_truth"
+      ],
+      "memories": [
+        {
+          "title": "Branch-specific truth",
+          "text": "TODO: record the fact together with the branch it applies to, and the conflicting state on the other branch.",
+          "memory_type": "discovery",
+          "topic_key": "cx2cc-branch-specific-truth"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Work on the stated branch and use only that branch's truth. Applying the other branch's state must fail. TODO: bind to a fixture with divergent branches.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:branch_specific_truth"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cx2cc-branch-specific-truth-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}

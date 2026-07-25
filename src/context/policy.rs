@@ -21,7 +21,7 @@ pub(super) struct SectionPolicy {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct ContextLimits {
+pub(crate) struct ContextLimits {
     pub total_char_limit: usize,
     pub candidate_fetch_limit: usize,
     pub memory_index_limit: usize,

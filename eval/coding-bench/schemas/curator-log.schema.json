@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "curated_file_budgeted curator log artifact",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "condition",
+    "task_id",
+    "target_blind",
+    "budget",
+    "sessions",
+    "totals",
+    "final_char_count",
+    "final_file_sha256"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "condition": { "const": "curated_file_budgeted" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "target_blind": { "const": true },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["minutes_per_session", "max_chars"],
+      "properties": {
+        "minutes_per_session": { "type": "number", "exclusiveMinimum": 0 },
+        "max_chars": { "type": "integer", "exclusiveMinimum": 0 }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "episode_id",
+          "minutes_spent",
+          "edit_count",
+          "deletion_count",
+          "conflict_resolution_count",
+          "chars_after"
+        ],
+        "properties": {
+          "episode_id": { "type": "string", "minLength": 1 },
+          "minutes_spent": { "type": "number", "minimum": 0 },
+          "edit_count": { "type": "integer", "minimum": 0 },
+          "deletion_count": { "type": "integer", "minimum": 0 },
+          "conflict_resolution_count": { "type": "integer", "minimum": 0 },
+          "chars_after": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "maintenance_minutes",
+        "update_count",
+        "deletion_count",
+        "conflict_resolution_count"
+      ],
+      "properties": {
+        "maintenance_minutes": { "type": "number", "minimum": 0 },
+        "update_count": { "type": "integer", "minimum": 0 },
+        "deletion_count": { "type": "integer", "minimum": 0 },
+        "conflict_resolution_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "final_char_count": { "type": "integer", "minimum": 0 },
+    "final_file_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+  }
+}

@@ -13,6 +13,18 @@
   evidence over model-generated, `Contradicted` for unresolved conflicts, and
   abstention instead of guessing. No writer, schema, or context-path changes;
   Context Bundle wiring is Phase B. Contract: `docs/specs/GH933/`.
+- Staged source version `0.6.25` for GH-932: Context Bundle v1 internal
+  contract. New `src/context_bundle/` module with versioned
+  `ContextRequest` / `ContextPlan` / `ContextBundle` / `ContextAudit`
+  serde-JSON DTOs, a deterministic `plan(request)` / `execute(plan, inputs)`
+  split that reuses the SessionStart relevance policy
+  (`sessionstart_significant_token_v1`) and section limits, a stable
+  SHA-256 plan hash with no time or randomness inputs, machine-readable
+  selected/dropped audit reasons with token estimates, and
+  `full` / `canonical_only` / `blocked` degraded modes. Experimental
+  internal Rust API only; MCP/REST endpoints, DB-backed executor wiring,
+  doctor plan summaries, and benchmark artifact hashes are follow-up work
+  on GH-932. Existing SessionStart rendered output is unchanged.
 - Staged source version `0.6.24` for GH-855: capture/extraction-path poisoning
   defense. Session rollups now compute a deterministic combined verdict over
   the captured source events and every model-generated summary field before
