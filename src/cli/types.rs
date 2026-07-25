@@ -7,6 +7,7 @@ pub(in crate::cli) use super::embedding_types::EmbeddingAction;
 pub(in crate::cli) use super::memory_types::{
     MemoryAction, MemoryCleanupType, MemorySuppressionsAction,
 };
+pub(in crate::cli) use super::procedure_types::ProcedureAction;
 pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
     WorkstreamStatusArg,
@@ -14,6 +15,8 @@ pub(in crate::cli) use super::query_types::{
 pub(in crate::cli) use super::review_types::{
     GraphReviewAction, ReviewAction, ReviewBatchFilterArgs,
 };
+pub(in crate::cli) use super::rule_types::{RuleActionArg, RuleHostArg, RulesAction};
+pub(in crate::cli) use super::worker_types::WorkerArgs;
 pub(super) use crate::install::InstallTarget;
 
 #[derive(Parser)]
@@ -40,7 +43,7 @@ pub(super) enum Commands {
         /// Host session ID used by duplicate-injection gating.
         #[arg(long)]
         session_id: Option<String>,
-        /// Host profile: claude-code, codex-cli, or unknown. Overrides REMEM_CONTEXT_HOST.
+        /// Host profile: claude-code, codex-cli, or cursor (exact closed set when explicit). Overrides REMEM_CONTEXT_HOST.
         #[arg(long)]
         host: Option<String>,
         /// Preserve ANSI colors in rendered context.
@@ -79,33 +82,34 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: EmbeddingAction,
     },
+    /// Manage the local second-stage reranker model (GH-851).
+    Reranker {
+        #[command(subcommand)]
+        action: super::reranker_types::RerankerAction,
+    },
     /// Hook entrypoint for starting a memory capture session.
     SessionInit {
-        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        /// Hook host, exact closed set: claude-code, codex-cli, or cursor (cursor is rejected as unsupported for session-init).
         #[arg(long)]
         host: Option<String>,
     },
     /// Hook entrypoint for recording a tool or prompt observation.
     Observe {
-        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        /// Hook host, exact closed set: claude-code, codex-cli, or cursor.
         #[arg(long)]
         host: Option<String>,
     },
     /// Hook entrypoint for summarizing captured session activity.
     Summarize {
-        /// Host profile for this hook: claude-code, codex-cli, or unknown.
+        /// Hook host, exact closed set: claude-code, codex-cli, or cursor (cursor summarize stays fail-closed until GH-825).
         #[arg(long)]
         host: Option<String>,
         /// Memory AI profile name from [memory_ai.profiles].
         #[arg(long)]
         profile: Option<String>,
     },
-    /// Run the background worker loop or one drain pass.
-    Worker {
-        /// Process ready work once and exit.
-        #[arg(long)]
-        once: bool,
-    },
+    /// Run the background worker loop, one drain pass, or one exact replay.
+    Worker(WorkerArgs),
     /// Run the MCP server over stdio.
     Mcp,
     /// Install remem MCP and hooks into supported hosts.
@@ -116,6 +120,9 @@ pub(super) enum Commands {
         /// Install automatic capture hooks without registering MCP servers.
         #[arg(long)]
         hooks_only: bool,
+        /// Repair host hooks without touching MCP, runtime store, or API token.
+        #[arg(long)]
+        repair: bool,
         /// Print what would be written without touching disk.
         #[arg(long)]
         dry_run: bool,
@@ -152,6 +159,11 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: PreferenceAction,
     },
+    /// Inspect and manage compiled preference rules.
+    Rules {
+        #[command(subcommand)]
+        action: RulesAction,
+    },
     /// Store and inspect explicit user-context claims.
     User {
         #[command(subcommand)]
@@ -177,7 +189,12 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: GraphReviewAction,
     },
-    /// Auditably delete, reject, or stale curated memories by ID.
+    /// Inspect promoted procedure memories.
+    Procedures {
+        #[command(subcommand)]
+        action: ProcedureAction,
+    },
+    /// Auditably delete, reject, stale, or acknowledge curated memories by ID.
     Govern {
         /// Restrict governance to one project path.
         #[arg(long, short)]
@@ -185,6 +202,9 @@ pub(super) enum Commands {
         /// Governance action to apply.
         #[arg(long, value_enum)]
         action: MemoryGovernanceCliAction,
+        /// Pattern id required when action is acknowledge-pattern.
+        #[arg(long)]
+        acknowledge_pattern: Option<String>,
         /// Required human-readable reason for non-dry-run mutations.
         #[arg(long)]
         reason: Option<String>,
@@ -332,6 +352,10 @@ pub(super) enum Commands {
         /// Emit a single JSON object with stable fields for scripts.
         #[arg(long)]
         json: bool,
+        /// Print a compact, screenshot-friendly summary card instead of the
+        /// full report. Omits paths and project names.
+        #[arg(long, conflicts_with = "json")]
+        share: bool,
     },
     /// Check install, hook, MCP, database, and queue health.
     Doctor {
@@ -534,10 +558,16 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: AdminAction,
     },
-    /// Import commands for moving older backup rows into the runtime database.
+    /// Import older backup rows, markdown mirrors, or project memory packs.
     Import {
+        /// Project memory pack directory to validate and plan.
+        #[arg(long)]
+        pack: Option<PathBuf>,
+        /// Plan a pack import without mutating the runtime store.
+        #[arg(long)]
+        dry_run: bool,
         #[command(subcommand)]
-        action: ImportAction,
+        action: Option<ImportAction>,
     },
     /// Batch-ingest Claude Code / Codex session transcripts into the raw archive.
     IngestSessions {
@@ -659,7 +689,7 @@ pub(in crate::cli) enum PendingAction {
         #[arg(long)]
         json: bool,
     },
-    /// Move failed pending observation rows back to pending.
+    /// Move failed legacy pending rows back to pending so migrate-legacy can replay them.
     #[command(alias = "retry")]
     RetryFailed {
         /// Restrict rows to one project path.
@@ -704,28 +734,58 @@ pub(in crate::cli) enum PendingAction {
     },
     /// List exhausted extraction event ranges.
     ListExtractionRanges {
+        /// List exactly one range by ID, including terminal replay evidence.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         json: bool,
     },
     /// Requeue exhausted extraction event ranges.
     RetryExtractionRanges {
+        /// Requeue exactly one range by ID.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "100")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
+        /// Explicitly allow retrying one quarantined range.
+        #[arg(long, requires = "id")]
+        acknowledge_quarantine: bool,
+        /// Validate an archived quarantined exact range without mutating it.
+        #[arg(
+            long,
+            requires_all = ["id", "acknowledge_quarantine", "dry_run"]
+        )]
+        include_archived: bool,
         #[arg(long)]
         dry_run: bool,
     },
     /// Quarantine exhausted extraction event ranges.
     QuarantineExtractionRanges {
+        /// Quarantine exactly one range by ID.
+        #[arg(
+            long,
+            value_parser = clap::value_parser!(i64).range(1..),
+            conflicts_with_all = ["project", "limit"]
+        )]
+        id: Option<i64>,
         #[arg(long, short)]
         project: Option<String>,
-        #[arg(long, short = 'n', default_value = "100")]
-        limit: i64,
+        #[arg(long, short = 'n')]
+        limit: Option<i64>,
         #[arg(long)]
         dry_run: bool,
     },
@@ -736,4 +796,5 @@ pub(in crate::cli) enum MemoryGovernanceCliAction {
     Delete,
     Reject,
     Stale,
+    AcknowledgePattern,
 }

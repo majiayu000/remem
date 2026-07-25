@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "issue": 854,
+  "source_revision": "cbcdf5246de1ce50d00d70603cec79320b7c7ef3",
+  "dataset": {
+    "path": "eval/golden.json",
+    "sha256": "f12d99859ff9ac77e16e15554467fe54c7b7b7229c36e9625fd2cd107d9a6f4c"
+  },
+  "commands": {
+    "golden": "cargo run --quiet -- eval --dataset eval/golden.json --json -k <1|3|5|10>",
+    "gates": "REMEM_CONTEXT_RELEVANCE_K=<1|3|5|10> cargo run --quiet -- eval-gates --json-out <artifact>"
+  },
+  "selection_rule": {
+    "primary_metric": "golden.slice.*.hit_at_k",
+    "tolerance": 0.01,
+    "eligibility": "Every populated slice must be within 0.01 of that slice's best arm.",
+    "choice": "Choose the smallest eligible k."
+  },
+  "populated_slice_best_hit_at_k": {
+    "associative": 0.0,
+    "failure_lesson": 1.0,
+    "knowledge_update": 1.0,
+    "multi_hop": 1.0,
+    "paraphrase": 0.0,
+    "provider_comparison": 0.0,
+    "temporal": 1.0
+  },
+  "capacity_degradation_shared": {
+    "largest_scale": 10,
+    "fused_evidence_recall_at_k_loss": 0.0,
+    "fused_ndcg_at_10_loss": 0.0,
+    "fused_recall_at_k_loss": 0.0,
+    "channels": {
+      "entity": {
+        "evidence_recall_at_k_loss": 0.0,
+        "ndcg_at_10_loss": 0.0,
+        "recall_at_k_loss": 0.0
+      },
+      "fact": {
+        "evidence_recall_at_k_loss": 0.0,
+        "ndcg_at_10_loss": 0.0,
+        "recall_at_k_loss": 0.0
+      },
+      "fts": {
+        "evidence_recall_at_k_loss": 0.0,
+        "ndcg_at_10_loss": 0.0,
+        "recall_at_k_loss": 0.0
+      },
+      "like_fallback": {
+        "evidence_recall_at_k_loss": 0.0,
+        "ndcg_at_10_loss": 0.0,
+        "recall_at_k_loss": 0.0
+      },
+      "temporal": {
+        "evidence_recall_at_k_loss": 0.0,
+        "ndcg_at_10_loss": 0.0,
+        "recall_at_k_loss": 0.0
+      },
+      "vector": {
+        "evidence_recall_at_k_loss": 0.0,
+        "ndcg_at_10_loss": 0.0,
+        "recall_at_k_loss": 0.0
+      }
+    }
+  },
+  "arms": [
+    {
+      "k": 1,
+      "eligible": true,
+      "overall": {
+        "hit_at_k": 0.5166666666666667,
+        "precision_at_k": 0.5166666666666667,
+        "recall_at_k": 0.43333333333333335,
+        "evidence_recall_at_k": 0.43333333333333335
+      },
+      "slice_hit_at_k": {
+        "associative": 0.0,
+        "failure_lesson": 1.0,
+        "knowledge_update": 1.0,
+        "multi_hop": 1.0,
+        "paraphrase": 0.0,
+        "provider_comparison": 0.0,
+        "temporal": 1.0
+      },
+      "eval_sha256": "69ed9b3702df2d2863b9c50b9daaf1a604f32d481d34178a59987190bec45e9f",
+      "gate": {
+        "passed": true,
+        "sessionstart_output_chars": 2010,
+        "render_contract_version": 3,
+        "capacity_degradation_ref": "capacity_degradation_shared",
+        "artifact_sha256": "4726a021a5a6d9c4391811e24023bfb5cba68d29135da22b291661132bd5f3df"
+      }
+    },
+    {
+      "k": 3,
+      "eligible": true,
+      "overall": {
+        "hit_at_k": 0.5166666666666667,
+        "precision_at_k": 0.4777777777777778,
+        "recall_at_k": 0.5166666666666667,
+        "evidence_recall_at_k": 0.5166666666666667
+      },
+      "slice_hit_at_k": {
+        "associative": 0.0,
+        "failure_lesson": 1.0,
+        "knowledge_update": 1.0,
+        "multi_hop": 1.0,
+        "paraphrase": 0.0,
+        "provider_comparison": 0.0,
+        "temporal": 1.0
+      },
+      "eval_sha256": "012ce499566894ef79f6cc32deacaca846015959e80324635d4f456f2b8e311b",
+      "gate": {
+        "passed": true,
+        "sessionstart_output_chars": 2010,
+        "render_contract_version": 3,
+        "capacity_degradation_ref": "capacity_degradation_shared",
+        "artifact_sha256": "24e1247a2a745f650e2d076f61f54732a5714612681737282a1269c3bbbfcd54"
+      }
+    },
+    {
+      "k": 5,
+      "eligible": true,
+      "overall": {
+        "hit_at_k": 0.5166666666666667,
+        "precision_at_k": 0.4777777777777778,
+        "recall_at_k": 0.5166666666666667,
+        "evidence_recall_at_k": 0.5166666666666667
+      },
+      "slice_hit_at_k": {
+        "associative": 0.0,
+        "failure_lesson": 1.0,
+        "knowledge_update": 1.0,
+        "multi_hop": 1.0,
+        "paraphrase": 0.0,
+        "provider_comparison": 0.0,
+        "temporal": 1.0
+      },
+      "eval_sha256": "88ba3bad6db5b8ae4b1f4b90885d86fcaa5ad003c948e31ce98c87ec2d12ea56",
+      "gate": {
+        "passed": true,
+        "sessionstart_output_chars": 2010,
+        "render_contract_version": 3,
+        "capacity_degradation_ref": "capacity_degradation_shared",
+        "artifact_sha256": "7922f7e2f199949eb8c2108da05459d420b34a44eaf6efcf0af06f5684c0dc20"
+      }
+    },
+    {
+      "k": 10,
+      "eligible": true,
+      "overall": {
+        "hit_at_k": 0.5166666666666667,
+        "precision_at_k": 0.4777777777777778,
+        "recall_at_k": 0.5166666666666667,
+        "evidence_recall_at_k": 0.5166666666666667
+      },
+      "slice_hit_at_k": {
+        "associative": 0.0,
+        "failure_lesson": 1.0,
+        "knowledge_update": 1.0,
+        "multi_hop": 1.0,
+        "paraphrase": 0.0,
+        "provider_comparison": 0.0,
+        "temporal": 1.0
+      },
+      "eval_sha256": "aca0d68081b7dee0094a07e74ebf18da1521bad5cdab1fe3ee53c7500c3e5a79",
+      "gate": {
+        "passed": true,
+        "sessionstart_output_chars": 2010,
+        "render_contract_version": 3,
+        "capacity_degradation_ref": "capacity_degradation_shared",
+        "artifact_sha256": "d403cbd9619dec8d19cc39cf16146e739887cbdb986529581d5a9c97a235b0ca"
+      }
+    }
+  ],
+  "decision": {
+    "default_k": 1,
+    "reason": "All four arms tie on every populated slice hit_at_k and pass eval-gates, so the approved smallest-eligible rule selects k=1.",
+    "secondary_tradeoff": "Compared with k=3/5/10, k=1 raises overall precision_at_k by 0.03888888888888886 while lowering overall recall_at_k and evidence_recall_at_k by 0.08333333333333331.",
+    "rollback": "Set REMEM_CONTEXT_RELEVANCE_K=0 to restore legacy governed-section selection."
+  },
+  "notes": [
+    "The built-in injection fixture freezes all four fixture memories in Core, which is intentionally outside the governed k. Its SessionStart output is therefore 2010 chars in every arm while still exercising the production render and gate path.",
+    "Retrieval latency is intentionally excluded from the selection rule; wall-clock values remain in the hashed source artifacts."
+  ]
+}

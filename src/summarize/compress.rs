@@ -165,7 +165,14 @@ fn apply_compression_response(
     source_observations: &[db::models::Observation],
     response: &str,
 ) -> Result<CompressionOutcome> {
-    let compressed = format::parse_observations(response);
+    let parsed = format::parse_observations_with_outcome(response);
+    if parsed.had_invalid_type() {
+        return Ok(CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: source_observations.len(),
+        });
+    }
+    let compressed = parsed.observations;
     if compressed.is_empty() {
         return Ok(CompressionOutcome::Skipped {
             reason: NO_REPLACEMENTS_REASON,

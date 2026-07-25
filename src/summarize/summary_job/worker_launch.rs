@@ -9,14 +9,14 @@ use crate::db;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum WorkerSpawnDecision {
     Spawned,
-    SkippedHealthyDaemon,
+    SkippedHealthyWorker,
     SkippedLaunchInProgress,
 }
 
 pub(super) fn spawn_worker_once_if_idle(
     conn: &rusqlite::Connection,
 ) -> Result<WorkerSpawnDecision> {
-    spawn_worker_once_if_idle_with(conn, spawn_worker_once)
+    spawn_worker_once_if_idle_with(conn, || spawn_worker_once(conn))
 }
 
 fn spawn_worker_once_if_idle_with(
@@ -24,23 +24,50 @@ fn spawn_worker_once_if_idle_with(
     spawn: impl FnOnce() -> Result<()>,
 ) -> Result<WorkerSpawnDecision> {
     if !should_spawn_worker_once(conn)? {
-        return Ok(WorkerSpawnDecision::SkippedHealthyDaemon);
+        return Ok(WorkerSpawnDecision::SkippedHealthyWorker);
     }
     let Some(_guard) = acquire_worker_launch_lock()? else {
         return Ok(WorkerSpawnDecision::SkippedLaunchInProgress);
     };
     if !should_spawn_worker_once(conn)? {
-        return Ok(WorkerSpawnDecision::SkippedHealthyDaemon);
+        return Ok(WorkerSpawnDecision::SkippedHealthyWorker);
     }
     spawn()?;
     Ok(WorkerSpawnDecision::Spawned)
 }
 
 fn should_spawn_worker_once(conn: &rusqlite::Connection) -> Result<bool> {
-    Ok(db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?.is_none())
+    if let Some(heartbeat) =
+        db::healthy_current_once_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?
+    {
+        crate::log::info(
+            "summarize",
+            &format!(
+                "current worker --once heartbeat owner={} is healthy; skip overlapping fallback",
+                heartbeat.owner
+            ),
+        );
+        return Ok(false);
+    }
+    let Some(heartbeat) =
+        db::healthy_daemon_worker_heartbeat(conn, db::WORKER_HEARTBEAT_HEALTH_SECS)?
+    else {
+        return Ok(true);
+    };
+    if db::is_current_daemon_worker_owner(&heartbeat.owner) {
+        return Ok(false);
+    }
+    crate::log::info(
+        "summarize",
+        &format!(
+            "worker daemon heartbeat owner={} is from another binary version; spawning worker --once fallback",
+            heartbeat.owner
+        ),
+    );
+    Ok(true)
 }
 
-fn spawn_worker_once() -> Result<()> {
+fn spawn_worker_once(conn: &rusqlite::Connection) -> Result<()> {
     let exe = std::env::current_exe()?;
     let worker_dir = stable_worker_dir();
     let stderr_file = crate::log::open_log_append();
@@ -58,7 +85,16 @@ fn spawn_worker_once() -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(stderr_cfg);
-    let _child = command.spawn()?;
+    let child = command.spawn()?;
+    let now = chrono::Utc::now();
+    db::upsert_worker_heartbeat(
+        conn,
+        &db::current_worker_owner("once", child.id(), now.timestamp_millis()),
+        i64::from(child.id()),
+        now.timestamp(),
+        now.timestamp(),
+    )
+    .context("record worker --once launch heartbeat")?;
     Ok(())
 }
 
@@ -157,8 +193,28 @@ mod tests {
     }
 
     #[test]
-    fn healthy_daemon_skips_stop_spawn() {
+    fn current_healthy_daemon_skips_stop_spawn() {
         let _test_dir = ScopedTestDataDir::new("summary-healthy-daemon");
+        let conn = db::open_db().expect("db should open");
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            &db::current_worker_owner("daemon", std::process::id(), now * 1000),
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )
+        .expect("heartbeat should insert");
+
+        assert!(
+            !should_spawn_worker_once(&conn).expect("worker check should run"),
+            "healthy daemon heartbeat should skip worker --once fallback"
+        );
+    }
+
+    #[test]
+    fn old_version_healthy_daemon_uses_stop_fallback_spawn() {
+        let _test_dir = ScopedTestDataDir::new("summary-old-daemon-version");
         let conn = db::open_db().expect("db should open");
         let now = chrono::Utc::now().timestamp();
         db::upsert_worker_heartbeat(
@@ -171,8 +227,8 @@ mod tests {
         .expect("heartbeat should insert");
 
         assert!(
-            !should_spawn_worker_once(&conn).expect("worker check should run"),
-            "healthy daemon heartbeat should skip worker --once fallback"
+            should_spawn_worker_once(&conn).expect("worker check should run"),
+            "old-version daemon heartbeat should not suppress Stop fallback"
         );
     }
 
@@ -192,6 +248,53 @@ mod tests {
         assert!(
             should_spawn_worker_once(&conn)?,
             "healthy worker --once heartbeat should not suppress Stop fallback"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn current_healthy_once_worker_skips_stop_spawn() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-current-healthy-once-worker");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            &db::current_worker_owner("once", std::process::id(), now * 1000),
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )?;
+
+        assert!(
+            !should_spawn_worker_once(&conn)?,
+            "a healthy current worker --once must suppress overlapping fallback workers"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn current_once_suppresses_spawn_with_newer_old_daemon_heartbeat() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("summary-current-once-with-old-daemon");
+        let conn = db::open_db()?;
+        let now = chrono::Utc::now().timestamp();
+        db::upsert_worker_heartbeat(
+            &conn,
+            &db::current_worker_owner("once", std::process::id(), now * 1000),
+            i64::from(std::process::id()),
+            now - 10,
+            now - 10,
+        )?;
+        db::upsert_worker_heartbeat(
+            &conn,
+            "worker-daemon-old-version",
+            i64::from(std::process::id()),
+            now - 5,
+            now - 5,
+        )?;
+
+        assert!(
+            !should_spawn_worker_once(&conn)?,
+            "the old daemon's newer heartbeat must not hide an active current once worker"
         );
         Ok(())
     }
@@ -242,7 +345,7 @@ mod tests {
                         WorkerSpawnDecision::SkippedLaunchInProgress => {
                             skipped_launch.fetch_add(1, Ordering::SeqCst);
                         }
-                        WorkerSpawnDecision::SkippedHealthyDaemon => {
+                        WorkerSpawnDecision::SkippedHealthyWorker => {
                             skipped_healthy.fetch_add(1, Ordering::SeqCst);
                         }
                     }

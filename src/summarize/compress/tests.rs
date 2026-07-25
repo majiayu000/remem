@@ -1,5 +1,5 @@
 use super::{
-    apply_compression_response, CompressionOutcome, INVALID_REPLACEMENTS_REASON,
+    apply_compression_response, CompressionOutcome, COMPRESS_PROMPT, INVALID_REPLACEMENTS_REASON,
     NO_REPLACEMENTS_REASON,
 };
 use crate::db;
@@ -133,6 +133,25 @@ fn valid_response(title: &str) -> String {
 }
 
 #[test]
+fn compression_prompt_observation_types_match_runtime_vocabulary() {
+    const MARKER_PREFIX: &str = "ALLOWED_OBSERVATION_TYPES=[";
+    let marker = COMPRESS_PROMPT
+        .lines()
+        .find(|line| line.starts_with(MARKER_PREFIX))
+        .expect("compression prompt should declare the stable allowed-type marker");
+    let declared = marker
+        .strip_prefix(MARKER_PREFIX)
+        .and_then(|value| value.strip_suffix(']'))
+        .expect("allowed-type marker should have an exact bracketed value")
+        .split(',')
+        .collect::<Vec<_>>();
+
+    assert_eq!(declared, crate::memory::format::OBSERVATION_TYPES);
+    assert!(!declared.contains(&"preference"));
+    assert!(COMPRESS_PROMPT.contains("Never output `<type>preference</type>`"));
+}
+
+#[test]
 fn empty_compression_response_leaves_sources_active() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_observation_schema(&conn)?;
@@ -189,22 +208,76 @@ fn contentless_replacements_do_not_retire_sources() -> Result<()> {
     let ids = vec![insert_source_observation(&conn, "active")?];
 
     let sources = source_observations(&conn, &ids)?;
-    for response in [
-        "<observation></observation>",
+    let missing_type =
+        apply_compression_response(&conn, "proj", &sources, "<observation></observation>")?;
+    assert_eq!(
+        missing_type,
+        CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: 1,
+        }
+    );
+
+    let contentless = apply_compression_response(
+        &conn,
+        "proj",
+        &sources,
         "<observation><type>decision</type></observation>",
-    ] {
-        let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
-        assert_eq!(
-            outcome,
-            CompressionOutcome::Skipped {
-                reason: INVALID_REPLACEMENTS_REASON,
-                source_count: 1,
-            }
-        );
-        assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
-        assert!(compressed_titles(&conn)?.is_empty());
-    }
+    )?;
+    assert_eq!(
+        contentless,
+        CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: 1,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
+    assert!(compressed_titles(&conn)?.is_empty());
     Ok(())
+}
+
+fn assert_mixed_invalid_type_response_is_atomic(response: &str) -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![
+        insert_source_observation(&conn, "active")?,
+        insert_source_observation(&conn, "stale")?,
+    ];
+    let sources = source_observations(&conn, &ids)?;
+
+    let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
+
+    assert_eq!(
+        outcome,
+        CompressionOutcome::Skipped {
+            reason: INVALID_REPLACEMENTS_REASON,
+            source_count: 2,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["active", "stale"]);
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn valid_and_missing_type_replacements_reject_the_whole_batch() -> Result<()> {
+    let response = format!(
+        "{}\n<observation><title>Missing type</title></observation>",
+        valid_response("Valid replacement")
+    );
+
+    assert_mixed_invalid_type_response_is_atomic(&response)
+}
+
+#[test]
+fn valid_and_unknown_type_replacements_reject_the_whole_batch() -> Result<()> {
+    let response = format!(
+        "{}\n<observation><type>unknown</type><title>Unknown type</title></observation>",
+        valid_response("Valid replacement")
+    );
+
+    assert_mixed_invalid_type_response_is_atomic(&response)
 }
 
 #[test]
@@ -238,6 +311,37 @@ fn valid_compression_inserts_replacement_then_marks_sources() -> Result<()> {
         };
         assert_eq!(source_hash, db::observation_source_hash(source));
     }
+    Ok(())
+}
+
+#[test]
+fn case_normalized_type_compression_inserts_replacement_and_marks_source() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![insert_source_observation(&conn, "active")?];
+    let sources = source_observations(&conn, &ids)?;
+    let response = "<observation>
+        <type>Decision</type>
+        <title>Case-normalized replacement</title>
+        <narrative>Compressed narrative</narrative>
+      </observation>";
+
+    let outcome = apply_compression_response(&conn, "proj", &sources, response)?;
+
+    assert_eq!(
+        outcome,
+        CompressionOutcome::Compressed {
+            source_count: 1,
+            replacement_count: 1,
+            marked_count: 1,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["compressed"]);
+    assert_eq!(
+        compressed_titles(&conn)?,
+        vec!["Case-normalized replacement"]
+    );
+    assert_eq!(compressed_source_links(&conn)?.len(), 1);
     Ok(())
 }
 

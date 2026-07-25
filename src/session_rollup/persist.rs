@@ -1,36 +1,117 @@
-use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use anyhow::{ensure, Context, Result};
+use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
+use crate::memory::poisoning::{scan_generated_surfaces, scan_source_events, SurfacePatternMatch};
 
 use super::parse::RollupOutput;
+use super::transcript_evidence::PromptTranscriptEvidence;
 use super::RollupRange;
+
+pub(super) struct PersistedRollupState {
+    pub(super) transcript_evidence: PromptTranscriptEvidence,
+    pub(super) has_transcript_evidence_snapshot: bool,
+    pub(super) raw_archive_completed: bool,
+    pub(super) poisoning_quarantined: bool,
+}
+
+/// Deterministic combined source + generated verdict for a rollup range.
+///
+/// Source events are scanned in ascending id order before the generated
+/// output so a model cannot launder a poisoned source by omitting the
+/// matched phrase from its summary.
+pub(super) fn rollup_poisoning_verdict(
+    range: &RollupRange,
+    output: &RollupOutput,
+) -> Option<SurfacePatternMatch> {
+    if let Some(source_match) = scan_source_events(
+        range
+            .events
+            .iter()
+            .map(|event| (event.id, event.content.as_str())),
+    ) {
+        return Some(source_match);
+    }
+    let mut fields: Vec<(&'static str, Option<&str>)> = vec![
+        ("summary_text", Some(output.summary_text.as_str())),
+        ("request", output.structured_fields.request.as_deref()),
+        ("decisions", output.structured_fields.decisions.as_deref()),
+        ("learned", output.structured_fields.learned.as_deref()),
+        ("next_steps", output.structured_fields.next_steps.as_deref()),
+        (
+            "preferences",
+            output.structured_fields.preferences.as_deref(),
+        ),
+    ];
+    for segment in &output.segments {
+        fields.push(("segment_title", Some(segment.title.as_str())));
+        fields.push(("segment_summary", Some(segment.summary.as_str())));
+    }
+    scan_generated_surfaces(&fields)
+}
 
 pub(super) fn persist_session_rollup(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     range: &RollupRange,
     output: &RollupOutput,
-) -> Result<()> {
+    transcript_evidence: &PromptTranscriptEvidence,
+    raw_archive_completed: bool,
+) -> Result<bool> {
     let session_row_id = task
         .session_row_id
         .context("session_rollup task missing session_row_id")?;
     let now = chrono::Utc::now();
     let created_at = now.to_rfc3339();
     let created_at_epoch = now.timestamp();
-    let memory_session_id = format!("capture-rollup-{session_row_id}");
-    let request = format!(
+    let memory_session_id = rollup_memory_session_id(session_row_id);
+    let fallback_request = format!(
         "Captured event range {}..{}",
         range.from_event_id, range.to_event_id
     );
-    let discovery_tokens = ((output.summary_text.len() as i64) + 3) / 4;
+    let request = output
+        .structured_fields
+        .request
+        .as_deref()
+        .unwrap_or(&fallback_request);
+    let discovery_tokens = estimate_discovery_tokens(output);
+    ensure!(
+        transcript_evidence.citation_evidence_complete,
+        "invalid payload: new session rollup is missing complete Stop citation evidence"
+    );
+    transcript_evidence.validate_for_range(range)?;
+    let transcript_evidence_json = serde_json::to_string(transcript_evidence)
+        .context("serialize bounded transcript evidence for session rollup")?;
+    let raw_archive_completed_at_epoch = raw_archive_completed.then_some(created_at_epoch);
+    let verdict = rollup_poisoning_verdict(range, output);
+    if let Some(surface_match) = &verdict {
+        crate::log::error(
+            "session-rollup",
+            &format!(
+                "quarantining session rollup for range {}..{}: stage={} field={} pattern={}@v{}",
+                range.from_event_id,
+                range.to_event_id,
+                surface_match.stage.as_str(),
+                surface_match.field,
+                surface_match.pattern.pattern_id,
+                surface_match.pattern.pattern_set_version,
+            ),
+        );
+    }
     let tx = conn.transaction()?;
     tx.execute(
         "INSERT INTO session_summaries
          (memory_session_id, project, request, completed, created_at, created_at_epoch,
-          discovery_tokens, host_id, project_id, session_row_id, summary_text,
-          covered_from_event_id, covered_to_event_id, model)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL)",
+          decisions, learned, next_steps, preferences, discovery_tokens,
+          host_id, project_id, session_row_id, summary_text,
+          covered_from_event_id, covered_to_event_id, model,
+          transcript_evidence_json, raw_archive_completed_at_epoch,
+          followup_scheduling_state, followup_scheduling_completed_at_epoch,
+          followup_compress_job_id, followup_dream_disposition,
+          followup_dream_job_id, poisoning_status, quarantine_stage,
+          quarantine_field, quarantine_event_id, quarantine_pattern_id,
+          quarantine_pattern_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, NULL, ?18, ?19, NULL, NULL, NULL, NULL, NULL, ?20, ?21, ?22, ?23, ?24, ?25)",
         params![
             memory_session_id,
             task.project,
@@ -38,15 +119,36 @@ pub(super) fn persist_session_rollup(
             output.summary_text,
             created_at,
             created_at_epoch,
+            output.structured_fields.decisions.as_deref(),
+            output.structured_fields.learned.as_deref(),
+            output.structured_fields.next_steps.as_deref(),
+            output.structured_fields.preferences.as_deref(),
             discovery_tokens,
             task.host_id,
             task.project_id,
             session_row_id,
             output.summary_text,
             range.from_event_id,
-            range.to_event_id
+            range.to_event_id,
+            transcript_evidence_json,
+            raw_archive_completed_at_epoch,
+            if verdict.is_some() { "quarantined" } else { "safe" },
+            verdict.as_ref().map(|matched| matched.stage.as_str()),
+            verdict.as_ref().map(|matched| matched.field.as_str()),
+            verdict.as_ref().and_then(|matched| matched.event_id),
+            verdict.as_ref().map(|matched| matched.pattern.pattern_id),
+            verdict
+                .as_ref()
+                .map(|matched| matched.pattern.pattern_set_version),
         ],
     )?;
+
+    if verdict.is_some() {
+        // Quarantined rollups keep the durable summary row as evidence but
+        // must not publish model-visible topic segments.
+        tx.commit()?;
+        return Ok(true);
+    }
 
     for segment in &output.segments {
         let evidence_json = serde_json::to_string(&segment.evidence_event_ids)?;
@@ -77,5 +179,107 @@ pub(super) fn persist_session_rollup(
     }
 
     tx.commit()?;
+    Ok(false)
+}
+
+pub(super) fn load_persisted_rollup_state(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+) -> Result<Option<PersistedRollupState>> {
+    let Some(session_row_id) = task.session_row_id else {
+        return Ok(None);
+    };
+    let row = conn
+        .query_row(
+            "SELECT transcript_evidence_json, raw_archive_completed_at_epoch,
+                    COALESCE(poisoning_status, 'legacy_unscanned')
+             FROM session_summaries
+             WHERE session_row_id = ?1
+               AND covered_from_event_id = ?2
+               AND covered_to_event_id = ?3
+             LIMIT 1",
+            params![session_row_id, range.from_event_id, range.to_event_id],
+            |row| {
+                Ok((
+                    row.get::<_, Option<String>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let Some((evidence_json, raw_archive_completed_at_epoch, poisoning_status)) = row else {
+        return Ok(None);
+    };
+    let (transcript_evidence, has_transcript_evidence_snapshot) = match evidence_json {
+        Some(json) => (
+            serde_json::from_str::<PromptTranscriptEvidence>(&json)
+                .context("parse persisted bounded transcript evidence for session rollup")?,
+            true,
+        ),
+        None => {
+            crate::log::info(
+                "session-rollup",
+                "legacy persisted rollup has no transcript evidence snapshot; retrying with bounded source fallback enabled",
+            );
+            (PromptTranscriptEvidence::default(), false)
+        }
+    };
+    transcript_evidence.validate_for_range(range)?;
+    Ok(Some(PersistedRollupState {
+        transcript_evidence,
+        has_transcript_evidence_snapshot,
+        raw_archive_completed: raw_archive_completed_at_epoch.is_some(),
+        poisoning_quarantined: poisoning_status == "quarantined",
+    }))
+}
+
+pub(super) fn mark_raw_archive_completed(
+    conn: &Connection,
+    task: &db::ExtractionTask,
+    range: &RollupRange,
+) -> Result<()> {
+    let session_row_id = task
+        .session_row_id
+        .context("session_rollup task missing session_row_id")?;
+    let updated = conn.execute(
+        "UPDATE session_summaries
+         SET raw_archive_completed_at_epoch = COALESCE(raw_archive_completed_at_epoch, ?1)
+         WHERE session_row_id = ?2
+           AND covered_from_event_id = ?3
+           AND covered_to_event_id = ?4",
+        params![
+            chrono::Utc::now().timestamp(),
+            session_row_id,
+            range.from_event_id,
+            range.to_event_id
+        ],
+    )?;
+    if updated != 1 {
+        anyhow::bail!(
+            "persisted session rollup raw archive checkpoint update matched {updated} rows"
+        );
+    }
     Ok(())
+}
+
+pub(crate) fn rollup_memory_session_id(session_row_id: i64) -> String {
+    format!("capture-rollup-{session_row_id}")
+}
+
+fn estimate_discovery_tokens(output: &RollupOutput) -> i64 {
+    let structured_len = [
+        Some(output.summary_text.as_str()),
+        output.structured_fields.request.as_deref(),
+        output.structured_fields.decisions.as_deref(),
+        output.structured_fields.learned.as_deref(),
+        output.structured_fields.next_steps.as_deref(),
+        output.structured_fields.preferences.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::len)
+    .sum::<usize>() as i64;
+    (structured_len + 3) / 4
 }

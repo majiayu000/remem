@@ -92,10 +92,10 @@ Merge algorithm per pack row, inside one transaction:
    row is recorded as a `pending_review` candidate with
    `source_kind='pack'` so the user can adopt it explicitly. No silent
    overwrite in either direction.
-6. Otherwise, after #672 lands, insert as an active memory with source trust
-   class `pack` and an origin string (`pack:<manifest digest prefix>`),
-   running the #672 instruction-pattern scan first; quarantined content goes
-   to the review inbox, not the store.
+6. Otherwise, insert as an active memory with source trust class `pack` and an
+   origin string (`pack:<manifest digest prefix>`), running the #672
+   instruction-pattern scan first; quarantined content goes to the review
+   inbox, not the store.
 
 `--dry-run` executes the same pipeline against a savepoint and rolls back,
 printing the add/dedup/skip/conflict/quarantine report.
@@ -125,15 +125,15 @@ ergonomics, the pack for determinism and re-import.
 ## Phases and Verification
 
 Phase 1: pack format + export + determinism/redaction tests
-(`cargo test export`).
-Phase 2: import dry-run + merge planner + round-trip simulation and
-resurrection-safety tests, without writing active imported memories until the
-#672 quarantine/trust-class schema is available (`cargo test import`).
-Phase 3: active import + trust-class wiring (#672 dependency), doctor probe,
-README
-walkthrough; `remem doctor` smoke on a store with an imported pack.
+(`cargo test pack_export`) is implemented for `remem export --project <p>
+[--pack <dir>]`; import paths remain disabled.
+Phase 2A: import dry-run + merge planner validates `pack.json`/`memories.jsonl`
+integrity and reports add/dedup/skip/conflict/quarantine categories without
+writing active imported memories (`cargo test pack_import`). Phase 2B adds
+active import for safe rows, suppression/invalidation no-resurrection tests,
+`pack` trust-class writes, and conflict/quarantine review routing.
+Phase 3: round-trip identity fixture, doctor probe, README walkthrough, and
+`remem doctor` smoke on a store with an imported pack are implemented.
 
-Active import depends on the #672 trust-class schema and instruction-pattern
-scan landing first. Export and dry-run import planning can ship earlier, but
-no pack row may enter active startup memory without the #672 scan and `pack`
+No pack row may enter active startup memory without the #672 scan and `pack`
 trust class in place.

@@ -71,6 +71,10 @@ pub fn reroute_objects(conn: &Connection, req: &RerouteRequest<'_>) -> Result<Sc
     let dry_run = req.dry_run || !req.confirm;
     let tx = conn.unchecked_transaction()?;
     let targets = load_targets(&tx, req.refs)?;
+    let preference_ids = preference_memory_ids(&targets);
+    if !dry_run {
+        crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &preference_ids)?;
+    }
     let now = chrono::Utc::now().timestamp();
     let mut affected = Vec::with_capacity(targets.len());
 
@@ -112,7 +116,19 @@ pub fn reroute_objects(conn: &Connection, req: &RerouteRequest<'_>) -> Result<Sc
         if dry_run {
             continue;
         }
+        let previous_authority_project = target.preference_authority_project(&target.owner);
         update_owner(&tx, target.object_ref, &new_owner, now)?;
+        let new_authority_project = target.preference_authority_project(&new_owner);
+        if let (Some(previous_project), Some(new_project)) =
+            (previous_authority_project, new_authority_project)
+        {
+            crate::memory::preference::reinforcement::reconcile_preference_project_change(
+                &tx,
+                target.object_ref.id,
+                &previous_project,
+                &new_project,
+            )?;
+        }
         insert_scope_cleanup_event(
             &tx,
             "reroute",
@@ -122,6 +138,9 @@ pub fn reroute_objects(conn: &Connection, req: &RerouteRequest<'_>) -> Result<Sc
             reason.as_deref(),
             now,
         )?;
+    }
+    if !dry_run {
+        crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &preference_ids)?;
     }
     tx.commit()?;
     Ok(ScopeMutationResult {
@@ -137,6 +156,10 @@ pub fn archive_objects(conn: &Connection, req: &ArchiveRequest<'_>) -> Result<Sc
     let dry_run = req.dry_run || !req.confirm;
     let tx = conn.unchecked_transaction()?;
     let targets = load_targets(&tx, req.refs)?;
+    let preference_ids = preference_memory_ids(&targets);
+    if !dry_run {
+        crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &preference_ids)?;
+    }
     let now = chrono::Utc::now().timestamp();
     let mut affected = Vec::with_capacity(targets.len());
 
@@ -163,6 +186,9 @@ pub fn archive_objects(conn: &Connection, req: &ArchiveRequest<'_>) -> Result<Sc
             reason.as_deref(),
             now,
         )?;
+    }
+    if !dry_run {
+        crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &preference_ids)?;
     }
     tx.commit()?;
     Ok(ScopeMutationResult {
@@ -241,9 +267,41 @@ fn target_project_after(
 pub(super) struct MutationTarget {
     pub object_ref: ObjectRef,
     pub project: Option<String>,
+    pub memory_type: Option<String>,
+    pub scope: Option<String>,
     pub title: String,
     pub status: String,
     pub owner: OwnerSnapshot,
+}
+
+impl MutationTarget {
+    fn preference_authority_project(&self, owner: &OwnerSnapshot) -> Option<String> {
+        if self.memory_type.as_deref() != Some("preference")
+            || self.scope.as_deref().unwrap_or("project") == "global"
+        {
+            return None;
+        }
+        owner
+            .target_project
+            .as_deref()
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                (owner.owner_scope.as_deref() == Some("repo"))
+                    .then(|| owner.owner_key.clone())
+                    .flatten()
+            })
+            .or_else(|| self.project.clone())
+    }
+}
+
+fn preference_memory_ids(targets: &[MutationTarget]) -> Vec<i64> {
+    targets
+        .iter()
+        .filter(|target| target.memory_type.as_deref() == Some("preference"))
+        .map(|target| target.object_ref.id)
+        .collect()
 }
 
 fn load_targets(conn: &Connection, refs: &[ObjectRef]) -> Result<Vec<MutationTarget>> {
@@ -259,13 +317,15 @@ pub(super) fn load_target(conn: &Connection, object_ref: ObjectRef) -> Result<Mu
             .query_row(
                 "SELECT project, title, status, source_project, target_project,
                         owner_scope, owner_key, topic_domain, routing_confidence,
-                        routing_reason, context_class
+                        routing_reason, context_class, memory_type, scope
                  FROM memories WHERE id = ?1",
                 params![object_ref.id],
                 |row| {
                     Ok(MutationTarget {
                         object_ref,
                         project: row.get(0)?,
+                        memory_type: row.get(11)?,
+                        scope: row.get(12)?,
                         title: row.get(1)?,
                         status: row.get(2)?,
                         owner: owner_snapshot_from_row(row, 3)?,
@@ -284,6 +344,8 @@ pub(super) fn load_target(conn: &Connection, object_ref: ObjectRef) -> Result<Mu
                     Ok(MutationTarget {
                         object_ref,
                         project: row.get(0)?,
+                        memory_type: None,
+                        scope: None,
                         title: row.get(1)?,
                         status: row.get(2)?,
                         owner: owner_snapshot_from_row(row, 3)?,
@@ -304,6 +366,8 @@ pub(super) fn load_target(conn: &Connection, object_ref: ObjectRef) -> Result<Mu
                     Ok(MutationTarget {
                         object_ref,
                         project: row.get(0)?,
+                        memory_type: None,
+                        scope: None,
                         title: row.get(1)?,
                         status: row.get(2)?,
                         owner: owner_snapshot_from_row(row, 3)?,
@@ -323,6 +387,8 @@ pub(super) fn load_target(conn: &Connection, object_ref: ObjectRef) -> Result<Mu
                     Ok(MutationTarget {
                         object_ref,
                         project: row.get(0)?,
+                        memory_type: None,
+                        scope: None,
                         title: row.get(1)?,
                         status: row.get(2)?,
                         owner: owner_snapshot_from_row(row, 3)?,

@@ -37,15 +37,17 @@ GH-720
 
 ### Phase 1b — 时间窗口查询
 
-1. `RawSearchRequest` 增加 `since_epoch: Option<i64>` / `until_epoch: Option<i64>`，SQL 走 `idx_raw_messages_project_created`；缺省行为不变（invariant 7）。
+1. `RawSearchRequest` 增加 `since_epoch: Option<i64>` / `until_epoch: Option<i64>`，SQL 走 `idx_raw_messages_project_created`；缺省行为不变（invariant 7）。epoch 与 ISO8601 保持精确边界；date-only `since` 解析为 UTC `00:00:00`，date-only `until` 解析为 UTC `23:59:59`，避免遗漏上界当日的消息。
 2. 新查询 `list_sessions(window, project, sample_n)`：对 `raw_messages` 按 `(source_root, project, session_id)` 分组，返回窗口内 min/max epoch、消息计数，及每会话按 epoch 升序前 N 条 role=user 的消息文本截断。一次 SQL（窗口聚合）+ 每会话一次采样查询，会话数有限（窗口内典型 <100）可接受。
-3. CLI：`remem raw --since --until`；`remem raw sessions --since --until --project --sample N --json`。MCP：`raw_tools` 增加对应工具，输出字段与 CLI JSON 一致（invariant 10）。HTTP 面本阶段不加（无消费方），tech 债记录在案。
+3. CLI：`remem raw --since --until`；`remem raw sessions --since --until --project --sample N --json`。MCP：`raw_tools` 增加对应工具，raw search 通过 transport-neutral `memory::raw_query` DTO 与 CLI 共用完整结果、窗口和分页 envelope（invariant 10）。HTTP 面本阶段不加（无消费方），tech 债记录在案。
+4. Phase 2 的完整会话读取不得复用 FTS raw search：它要求非空查询，且不能精确锁定 `(source_root, project, session_id)`。新增 `remem raw messages --source-root <LABEL> --project <EXACT> --session-id <EXACT> [--limit N] [--cursor OPAQUE] --json` 作为消费方契约。默认页大小 500、上限 2000；返回 raw archive 中未截断的完整 `content`，按 `(created_at_epoch ASC, id ASC)` 排序。第一页冻结该精确 tuple 的 `snapshot_max_id`，后续游标绑定 selector、snapshot 与最后 `(epoch, id)`，因此并发新增消息不会造成跨页重复、遗漏或混入；非法或 selector 不匹配的游标必须显式失败。空 tuple 返回成功的空 envelope。
 
 ### Phase 2 — refine 切换输入源
 
 refine 侧改动（在 refine 仓库执行，本 spec 只定接口契约）：
 
-- 输入源从自扫目录改为 `remem raw sessions --json` + `remem raw --json` 子进程调用（选 CLI JSON 而非 HTTP：无守护进程依赖、无端口管理；HTTP 留作后续可选）。
+- 输入源从自扫目录改为 `remem raw sessions --json`（枚举精确 tuple）+ `remem raw messages --source-root ... --project ... --session-id ... --json`（按快照游标读取完整消息）的子进程调用。选 CLI JSON 而非 HTTP：无守护进程依赖、无端口管理；HTTP 留作后续可选。refine 不再读取 transcript 文件作为正常输入源。
+- `raw messages` JSON envelope 的稳定字段为 `source_type/source_root/project/session_id/order/limit/count/has_more/next_cursor/messages`；每个 message 包含 `id/role/content/source/branch/cwd/created_at_epoch`。字段缺失、非零退出、非法 JSON、游标无进展或 selector 漂移都必须让 refine 显式失败，不得静默回退成空会话。
 - 对账：切换前后各跑一次相同窗口的 facet 提取，diff 数量与维度分布，差异归因写入 GH-720 评论（invariant 12）。
 - refine 的 discovery/ingest 代码路径以 feature flag 停用，保留一个 release 周期后删除。
 
@@ -67,7 +69,7 @@ refine 侧改动（在 refine 仓库执行，本 spec 只定接口契约）：
 | P5 与 hook 并发去重 | UNIQUE 约束 | 集成测试：同一 transcript 先 hook drain 再批量，无重复行 |
 | P7 窗口过滤向后兼容 | `RawSearchRequest` | 单测：无窗口参数时结果与现版本快照一致 |
 | P8/P9 会话列表 + 采样 | `list_sessions` | 单测 + 人工：与 recap 脚本同窗口对账（会话数一致） |
-| P11/P12 refine 切换 | refine 仓库 | 对账报告归档于 GH-720 |
+| P11/P12 refine 切换 | remem `raw messages` provider + refine 仓库 consumer | provider 测试覆盖 tuple 隔离、完整内容、同时间戳稳定排序、快照分页与错误游标；refine 测试覆盖子进程失败/非法 JSON/分页；对账报告归档于 GH-720 |
 | P13 facets 独立表 | Phase 3 迁移 | migration 测试 + schema review |
 | P14 回填成本上限 | `facet_backfill_days` | 单测：超窗会话不产生 extraction task |
 
@@ -78,7 +80,8 @@ refine 侧改动（在 refine 仓库执行，本 spec 只定接口契约）：
 ~/.codex/sessions/**.jsonl  ─┼─ discovery ─ ingest_cursors(增量) ─ drain_transcript ─ raw_messages(+source_root)
 remote-sessions/<host>/**   ─┘                                          │
 Stop hook（现有，不变）──────────────────────────────────────────────────┘
-raw_messages ─ RawSearchRequest(+since/until) ─ CLI / MCP ─→ recap、refine(Phase 2)、其他消费方
+raw_messages ─ RawSearchRequest(+since/until) ─ CLI / MCP ─→ recap、其他搜索消费方
+raw_messages ─ exact tuple + snapshot cursor ─ `remem raw messages --json` ─→ refine(Phase 2)
 raw_messages ─ extraction job(Phase 3) ─ facets ─→ cognitive-portrait 类消费方
 ```
 
@@ -102,7 +105,7 @@ raw_messages ─ extraction job(Phase 3) ─ facets ─→ cognitive-portrait �
 ## Test Plan
 
 - [ ] Unit tests: discovery 根解析/排除规则、游标跳过与失效、窗口参数 SQL、半行截断判定
-- [ ] Integration tests: fixture 目录幂等双跑、坏文件隔离、hook+批量并发去重、`list_sessions` 采样正确性
+- [ ] Integration tests: fixture 目录幂等双跑、坏文件隔离、hook+批量并发去重、`list_sessions` 采样正确性；`raw messages` 的精确 tuple、完整 content、同时间戳排序、跨页无重复/遗漏、分页后新插入隔离、非法/错配游标
 - [ ] Manual verification: 真实数据全量回填后，`remem raw sessions --since <7d>` 与 recap 脚本同窗口输出对账（会话数、每会话消息数一致）
 
 ## Rollback Plan

@@ -282,6 +282,79 @@ async fn preference_candidate_approval_consolidates_generic_paraphrase() -> Resu
 }
 
 #[tokio::test]
+async fn identical_preference_approval_increments_real_reinforcement_state() -> Result<()> {
+    let mut conn = setup_conn();
+    let text = "Use bun, not npm, for installing packages.";
+
+    let first_task = setup_task(&mut conn, "sess-preference-reinforcement-1")?;
+    insert_source_observation(&conn, &first_task, text)?;
+    process_with_generator(&mut conn, &first_task, |_prompt| async move {
+        Ok(format!(
+            "<memory_candidate>\
+                <scope>project</scope>\
+                <type>preference</type>\
+                <topic_key>package-manager-first</topic_key>\
+                <risk_class>low</risk_class>\
+                <confidence>0.91</confidence>\
+                <text>{text}</text>\
+             </memory_candidate>"
+        ))
+    })
+    .await?;
+    let first_candidate_id: i64 = conn.query_row(
+        "SELECT id FROM memory_candidates WHERE topic_key = 'package-manager-first'",
+        [],
+        |row| row.get(0),
+    )?;
+    let memory_id =
+        approve_candidate(&mut conn, first_candidate_id)?.expect("first preference should approve");
+
+    // Keep the second claim focused on the memory-candidate task created below.
+    conn.execute(
+        "UPDATE extraction_tasks SET status = 'done' WHERE task_kind = 'graph_candidate'",
+        [],
+    )?;
+    let second_task = setup_task(&mut conn, "sess-preference-reinforcement-2")?;
+    insert_source_observation(&conn, &second_task, text)?;
+    process_with_generator(&mut conn, &second_task, |_prompt| async move {
+        Ok(format!(
+            "<memory_candidate>\
+                <scope>project</scope>\
+                <type>preference</type>\
+                <topic_key>package-manager-repeat</topic_key>\
+                <risk_class>low</risk_class>\
+                <confidence>0.91</confidence>\
+                <text>{text}</text>\
+             </memory_candidate>"
+        ))
+    })
+    .await?;
+    let second_candidate_id: i64 = conn.query_row(
+        "SELECT id FROM memory_candidates WHERE topic_key = 'package-manager-repeat'",
+        [],
+        |row| row.get(0),
+    )?;
+    let repeated_memory_id = approve_candidate(&mut conn, second_candidate_id)?
+        .expect("repeated preference should resolve to the active memory");
+
+    assert_eq!(repeated_memory_id, memory_id);
+    let reinforcement: i64 = conn.query_row(
+        "SELECT reinforcement_count
+         FROM memory_preference_reinforcements WHERE memory_id = ?1",
+        params![memory_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(reinforcement, 2);
+    let second_status: String = conn.query_row(
+        "SELECT review_status FROM memory_candidates WHERE id = ?1",
+        params![second_candidate_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(second_status, "noop");
+    Ok(())
+}
+
+#[tokio::test]
 async fn preference_candidate_approval_records_generic_conflict() -> Result<()> {
     let mut conn = setup_conn();
     let task = setup_task(&mut conn, "sess-preference-generic-conflict")?;

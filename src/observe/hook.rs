@@ -1,19 +1,19 @@
-use anyhow::Result;
-
+use super::filter::{event_skip_reason, skip_detail};
 use super::native::sync_native_memory;
 use super::spill::{
-    record_capture_drop_lossy, replay_spilled_capture_events, spill_capture_event,
-    SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+    record_capture_drop_lossy, replay_spilled_capture_events,
+    spill_capture_event_with_git_evidence, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
+    SPILL_REASON_DB_OPEN_FAILED,
 };
-
-use crate::db;
+use crate::{db, git_evidence};
+use anyhow::Result;
 
 pub async fn observe(host: Option<&str>) -> Result<()> {
     let input = std::io::read_to_string(std::io::stdin())?;
     observe_input(&input, host).await
 }
 
-async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
+pub(super) async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
     let Some((adapter, event)) = detect_adapter_for_host(input, host) else {
         record_capture_drop_lossy(
             host.map(crate::runtime_config::normalize_host).as_deref(),
@@ -26,12 +26,6 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
     let capture_host = host
         .map(crate::runtime_config::normalize_host)
         .unwrap_or_else(|| adapter.name().to_string());
-    if let Some(reason) = event_skip_reason(adapter, &event) {
-        let detail = skip_detail(&event);
-        record_capture_drop_lossy(Some(&capture_host), Some(&event), reason, detail.as_deref());
-        return Ok(());
-    }
-
     let Some(summary) = adapter.classify_event(&event) else {
         record_capture_drop_lossy(
             Some(&capture_host),
@@ -41,17 +35,36 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
         );
         return Ok(());
     };
+    let git_evidence = match git_evidence::from_hook(&event, &summary, input, &capture_host) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            crate::log::error(
+                "observe",
+                &format!(
+                    "commit evidence extraction failed; capturing event without commit evidence host={} session={} project={}: {error:#}",
+                    capture_host, event.session_id, event.project
+                ),
+            );
+            Vec::new()
+        }
+    };
+    if let Some(reason) = event_skip_reason(adapter, &event, !git_evidence.is_empty()) {
+        let detail = skip_detail(&event);
+        record_capture_drop_lossy(Some(&capture_host), Some(&event), reason, detail.as_deref());
+        return Ok(());
+    }
 
-    let content = capture_event_content(&event, &summary);
+    let content = capture_event_content_with_git_evidence(&event, &summary, &git_evidence);
     let event_id = db::unique_capture_event_id("tool_result", &content);
     let conn = match db::open_db_for_hook() {
         Ok(conn) => conn,
         Err(error) => {
-            let path = spill_capture_event(
+            let path = spill_capture_event_with_git_evidence(
                 &capture_host,
                 &event_id,
                 &event,
                 &summary,
+                &git_evidence,
                 SPILL_REASON_DB_OPEN_FAILED,
                 &error,
             )?;
@@ -67,14 +80,20 @@ async fn observe_input(input: &str, host: Option<&str>) -> Result<()> {
         }
     };
     replay_spilled_capture_events(&conn)?;
-    if let Err(error) =
-        record_live_observed_event_with_id(&conn, &capture_host, &event_id, &event, &summary)
-    {
-        let path = spill_capture_event(
+    if let Err(error) = record_live_observed_event_with_id(
+        &conn,
+        &capture_host,
+        &event_id,
+        &event,
+        &summary,
+        &git_evidence,
+    ) {
+        let path = spill_capture_event_with_git_evidence(
             &capture_host,
             &event_id,
             &event,
             &summary,
+            &git_evidence,
             SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
             &error,
         )?;
@@ -117,8 +136,9 @@ pub(super) fn record_observed_event_with_id(
     event_id: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
 ) -> Result<i64> {
-    record_observed_event(conn, capture_host, event_id, event, summary)
+    record_observed_event(conn, capture_host, event_id, event, summary, git_evidence)
 }
 
 fn record_live_observed_event_with_id(
@@ -127,8 +147,9 @@ fn record_live_observed_event_with_id(
     event_id: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
 ) -> Result<i64> {
-    record_observed_event(conn, capture_host, event_id, event, summary)
+    record_observed_event(conn, capture_host, event_id, event, summary, git_evidence)
 }
 
 fn record_observed_event(
@@ -137,9 +158,16 @@ fn record_observed_event(
     event_id: &str,
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
 ) -> Result<i64> {
-    let capture_event_id =
-        record_capture_event_with_id(conn, capture_host, event_id, event, summary)?;
+    let capture_event_id = record_capture_event_with_git_evidence(
+        conn,
+        capture_host,
+        event_id,
+        event,
+        summary,
+        git_evidence,
+    )?;
     crate::memory::insert_event(
         conn,
         &event.session_id,
@@ -159,18 +187,26 @@ fn record_observed_event(
         ),
     );
 
-    if matches!(event.tool_name.as_str(), "Write" | "Edit") {
-        let branch = event.cwd.as_deref().and_then(db::detect_git_branch);
+    if capture_host != crate::cursor_hook::CURSOR_HOST
+        && matches!(event.tool_name.as_str(), "Write" | "Edit")
+    {
+        let branch = git_evidence
+            .first()
+            .and_then(|evidence| evidence.metadata.branch.clone())
+            .or_else(|| event.cwd.as_deref().and_then(db::detect_git_branch));
         if let Some(file_path) = event
             .tool_input
             .as_ref()
             .and_then(|value| value["file_path"].as_str())
         {
-            if let Err(error) =
-                sync_native_memory(conn, &event.session_id, file_path, branch.as_deref())
-            {
-                crate::log::warn("observe", &format!("native memory sync failed: {}", error));
-            }
+            // GH-852 B-019: ingestion failures are error-level and propagate
+            // to the hook exit status instead of degrading silently.
+            sync_native_memory(conn, &event.session_id, file_path, branch.as_deref()).map_err(
+                |error| {
+                    crate::log::error("observe", &format!("native ingest failed: {error:#}"));
+                    error.context("native memory candidate ingestion failed")
+                },
+            )?;
         }
     }
 
@@ -194,6 +230,7 @@ pub(super) fn detect_adapter_for_host(
         .or_else(|| crate::adapter::detect_adapter(input))
 }
 
+#[cfg(test)]
 fn record_capture_event_with_id(
     conn: &rusqlite::Connection,
     host: &str,
@@ -201,15 +238,26 @@ fn record_capture_event_with_id(
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> Result<i64> {
-    let content = capture_event_content(event, summary);
-    let outcome = db::record_captured_event_with_id_and_reference_time(
+    record_capture_event_with_git_evidence(conn, host, event_id, event, summary, &[])
+}
+
+fn record_capture_event_with_git_evidence(
+    conn: &rusqlite::Connection,
+    host: &str,
+    event_id: &str,
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
+) -> Result<i64> {
+    let content = capture_event_content_with_git_evidence(event, summary, git_evidence);
+    let outcome = db::record_captured_event_with_id_and_reference_time_and_git_evidence(
         conn,
         &db::CaptureEventInput {
             host,
             session_id: &event.session_id,
             project: &event.project,
             cwd: event.cwd.as_deref(),
-            event_type: "tool_result",
+            event_type: crate::cursor_hook::captured_event_type_for_summary(&summary.event_type),
             role: None,
             tool_name: Some(&event.tool_name),
             content: &content,
@@ -217,15 +265,32 @@ fn record_capture_event_with_id(
         },
         Some(event_id),
         event.reference_time_epoch,
+        git_evidence,
     )?;
     Ok(outcome.event_row_id)
 }
 
+#[cfg(test)]
 fn capture_event_content(
     event: &crate::adapter::ParsedHookEvent,
     summary: &crate::adapter::EventSummary,
 ) -> String {
-    let git_branch = event.cwd.as_deref().and_then(db::detect_git_branch);
+    capture_event_content_with_git_evidence(event, summary, &[])
+}
+
+fn capture_event_content_with_git_evidence(
+    event: &crate::adapter::ParsedHookEvent,
+    summary: &crate::adapter::EventSummary,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
+) -> String {
+    let detected_branch = git_evidence
+        .is_empty()
+        .then(|| event.cwd.as_deref().and_then(db::detect_git_branch))
+        .flatten();
+    let git_branch = git_evidence
+        .first()
+        .and_then(|evidence| evidence.metadata.branch.as_deref())
+        .or(detected_branch.as_deref());
     serde_json::json!({
         "summary": &summary.summary,
         "event_type": &summary.event_type,
@@ -241,66 +306,25 @@ fn capture_event_content(
             .tool_response
             .as_ref()
             .map(crate::adapter::common::redact_sensitive_value),
-        "git_branch": git_branch.as_deref(),
+        "git_branch": git_branch,
     })
     .to_string()
 }
 
-fn event_skip_reason(
-    adapter: &dyn crate::adapter::ToolAdapter,
-    event: &crate::adapter::ParsedHookEvent,
-) -> Option<&'static str> {
-    if adapter.should_skip(event) {
-        return Some("adapter_skip");
-    }
-    if event.tool_name != "Bash" {
-        return None;
-    }
-
-    if adapter.name() == "codex-cli" && !codex_bash_observe_enabled() {
-        return Some("codex_bash_disabled");
-    }
-
-    if event
-        .tool_input
-        .as_ref()
-        .and_then(|value| value["command"].as_str())
-        .is_some_and(|command| adapter.should_skip_bash(command))
-    {
-        return Some("bash_read_only");
-    }
-
-    None
-}
-
-fn skip_detail(event: &crate::adapter::ParsedHookEvent) -> Option<String> {
-    event
-        .tool_input
-        .as_ref()
-        .and_then(|value| value["command"].as_str())
-        .map(|command| crate::adapter::common::redact_hook_payload_preview(command, 240))
-}
-
-fn codex_bash_observe_enabled() -> bool {
-    std::env::var("REMEM_ENABLE_CODEX_BASH_OBSERVE")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
+    use tokio::sync::Mutex;
 
+    use super::super::filter::{event_skip_reason, skip_detail};
     use super::super::spill::spill_capture_event;
     use super::{
-        capture_event_content, event_skip_reason, observe_input, record_capture_event_with_id,
-        skip_detail, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+        capture_event_content, observe_input, record_capture_event_with_id,
+        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
     };
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
 
     fn codex_bash_event() -> ParsedHookEvent {
         ParsedHookEvent {
@@ -314,20 +338,20 @@ mod tests {
         }
     }
 
-    #[test]
-    fn codex_bash_observe_skips_by_default() {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+    #[tokio::test]
+    async fn codex_bash_observe_skips_by_default() {
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
         assert_eq!(
-            event_skip_reason(&CodexAdapter, &codex_bash_event()),
+            event_skip_reason(&CodexAdapter, &codex_bash_event(), false),
             Some("codex_bash_disabled")
         );
     }
 
     #[tokio::test]
     async fn observe_records_codex_bash_skip_in_drop_ledger() -> anyhow::Result<()> {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
         let _test_dir = ScopedTestDataDir::new("observe-codex-bash-drop");
         let setup = db::open_db()?;
@@ -393,9 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn observe_skip_drop_does_not_migrate_stale_database() -> anyhow::Result<()> {
-        let _guard = ENV_LOCK
-            .lock()
-            .map_err(|_| anyhow::anyhow!("env lock poisoned"))?;
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
         let test_dir = ScopedTestDataDir::new("observe-skip-stale-schema");
         std::fs::create_dir_all(&test_dir.path)?;
@@ -424,12 +446,12 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn codex_bash_observe_can_be_enabled_explicitly() {
-        let _guard = ENV_LOCK.lock().expect("env lock should acquire");
+    #[tokio::test]
+    async fn codex_bash_observe_can_be_enabled_explicitly() {
+        let _guard = ENV_LOCK.lock().await;
         unsafe { std::env::set_var("REMEM_ENABLE_CODEX_BASH_OBSERVE", "1") };
         let event = codex_bash_event();
-        let skipped = event_skip_reason(&CodexAdapter, &event);
+        let skipped = event_skip_reason(&CodexAdapter, &event, false);
         unsafe { std::env::remove_var("REMEM_ENABLE_CODEX_BASH_OBSERVE") };
 
         assert_eq!(skipped, None);

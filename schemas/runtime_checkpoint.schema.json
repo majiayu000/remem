@@ -15,13 +15,57 @@
     "resume_prompt"
   ],
   "additionalProperties": true,
+  "if": {
+    "properties": {
+      "checkpoint_version": {
+        "const": 3
+      }
+    },
+    "required": ["checkpoint_version"]
+  },
+  "then": {
+    "required": ["tranche_started_at", "tranche_session_offset"],
+    "properties": {
+      "tranche_started_at": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}"
+      },
+      "tranche_session_offset": {
+        "type": "integer",
+        "minimum": 0
+      }
+    }
+  },
+  "else": {
+    "properties": {
+      "budget": {
+        "properties": {
+          "basis": {
+            "enum": ["compaction", "item_cap", "both"]
+          }
+        }
+      }
+    }
+  },
   "properties": {
     "checkpoint_version": {
-      "enum": [1, 2]
+      "enum": [1, 2, 3]
     },
     "tranche_id": {
       "type": "string",
       "minLength": 1
+    },
+    "goal_id": {
+      "type": ["string", "null"]
+    },
+    "tranche_session_offset": {
+      "type": ["integer", "null"],
+      "description": "Session jsonl line count at tranche start; 0 for a session's first tranche. Telemetry counting is scoped to this window (checkpoint_version 3)."
+    },
+    "tranche_started_at": {
+      "type": ["string", "null"],
+      "description": "ISO8601 tranche start time; the gate independently recomputes wall clock from it (checkpoint_version 3)."
     },
     "repo": {
       "type": "string",
@@ -95,8 +139,8 @@
       "additionalProperties": true,
       "properties": {
         "basis": {
-          "enum": ["compaction", "item_cap", "both"],
-          "description": "What the session budget is measured in. compaction_budget defaults to 1: stop before the second compaction."
+          "enum": ["compaction", "item_cap", "both", "runtime_dims"],
+          "description": "What the session budget is measured in. compaction_budget defaults to 1: stop before the second compaction. runtime_dims (checkpoint_version 3 only) judges solely by the four hard budget dimensions."
         },
         "compaction_budget": {
           "type": ["integer", "null"],
@@ -109,6 +153,86 @@
         "compaction_count": {
           "type": ["integer", "null"],
           "minimum": 0
+        },
+        "observed_compaction_count": {
+          "type": ["integer", "null"]
+        },
+        "observed_wall_clock_minutes": {
+          "type": ["integer", "null"]
+        },
+        "observed_tool_calls": {
+          "type": ["integer", "null"]
+        },
+        "observed_review_correction_rounds": {
+          "type": ["integer", "null"]
+        },
+        "observed_full_test_runs_current_head": {
+          "type": ["integer", "null"]
+        },
+        "telemetry_source": {
+          "enum": ["runtime", "session_log", "unavailable", null],
+          "description": "Where observed_compaction_count comes from. unavailable forbids basis compaction/both; downgrade to item_cap or runtime_dims."
+        },
+        "last_compaction_window_id": {
+          "type": ["string", "null"]
+        },
+        "max_wall_clock_minutes": {
+          "type": ["integer", "null"]
+        },
+        "max_tool_calls": {
+          "type": ["integer", "null"]
+        },
+        "max_review_correction_rounds": {
+          "type": ["integer", "null"]
+        },
+        "max_full_test_runs_per_head": {
+          "type": ["integer", "null"]
+        },
+        "full_test_head_sha": {
+          "type": ["string", "null"],
+          "description": "PR head the full-test counter is bound to. Required when the count is above 0 or the tranche has a PR head; omitted with count 0 for tranches without a PR head."
+        },
+        "review_correction_history": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "full_test_history": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        },
+        "budget_overrides": {
+          "type": ["array", "null"],
+          "items": {
+            "type": "object",
+            "required": ["dimension", "scope", "conversation_marker"],
+            "additionalProperties": true,
+            "properties": {
+              "dimension": {
+                "enum": [
+                  "compaction",
+                  "wall_clock",
+                  "tool_calls",
+                  "review_rounds",
+                  "full_test_runs",
+                  "item_cap"
+                ]
+              },
+              "scope": {
+                "type": "string",
+                "minLength": 1
+              },
+              "conversation_marker": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
         },
         "stop_reason": {
           "enum": ["budget_exhausted", "queue_empty", "user_interrupt", "blocked", null]
@@ -408,6 +532,12 @@
           "review_source": {
             "enum": ["independent_lane", "self_review", null]
           },
+          "enforcement_sensitive": {
+            "type": ["boolean", "null"]
+          },
+          "approved_spec_evidence": {
+            "type": ["string", "null"]
+          },
           "ci": {
             "type": ["object", "null"],
             "additionalProperties": true,
@@ -467,7 +597,20 @@
               },
               "evidence": {
                 "type": ["string", "null"]
-              }
+              },
+              "manifest": {"type": ["string", "null"]},
+              "artifact_id": {"type": ["string", "null"]},
+              "head_sha": {"type": ["string", "null"]},
+              "review_completed_at": {"type": ["string", "null"]},
+              "terminal_status": {
+                "enum": ["completed", "pending", "failed", "cancelled", "superseded", null]
+              },
+              "verdict": {
+                "enum": ["clean", "non_blocking", "changes_requested", "blocking", null]
+              },
+              "human_final_review_required": {"type": ["boolean", "null"]},
+              "findings": {"type": ["array", "null"]},
+              "prior_findings": {"type": ["array", "null"]}
             }
           },
           "lane_failures": {

@@ -84,3 +84,9 @@ Pure renderer contract change plus eval additions; no schema migration. Ship
 behind no flag — determinism is not user-visible behavior change — but call
 out in the changelog that the block layout was normalized (screenshots and
 downstream parsers of the old layout may notice cosmetic diffs).
+
+Cursor (GH-823) adds no model-visible injection surface in v1: session-start
+injection is disabled on Cursor 3.12.17 and no post-tool context command
+ships, so this determinism contract currently reaches Cursor only through the
+structurally-testable `additional_context` serialization. Enabling a Cursor
+path later must not fork the renderer or weaken these invariants.

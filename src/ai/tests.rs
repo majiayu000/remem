@@ -225,3 +225,56 @@ printf 'ok\n'
         .with_context(|| format!("failed to remove {}", temp_dir.display()))?;
     Ok(())
 }
+
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn resolved_profile_scope_does_not_reread_removed_config_profile() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system time should be after unix epoch")?
+        .as_nanos();
+    let temp_dir = std::env::temp_dir().join(format!(
+        "remem-frozen-profile-{}-{unique}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&temp_dir)?;
+    let script_path = temp_dir.join("claude");
+    std::fs::write(
+        &script_path,
+        "#!/bin/sh\ncat >/dev/null\nprintf 'frozen-profile\\n'\n",
+    )?;
+    let mut permissions = std::fs::metadata(&script_path)?.permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&script_path, permissions)?;
+
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("ai-frozen-profile");
+    let profile = crate::runtime_config::ResolvedMemoryAiProfile {
+        profile_name: "removed-after-validation".to_string(),
+        executor: crate::runtime_config::MemoryAiExecutor::ClaudeCli,
+        model: Some("haiku".to_string()),
+        cli_path: Some(script_path.to_string_lossy().into_owned()),
+        base_url: None,
+        reasoning_effort: None,
+    };
+    let response = super::with_resolved_profile(
+        profile,
+        super::call_ai(
+            "system",
+            "user",
+            super::UsageContext {
+                project: Some("/tmp/remem"),
+                session_id: Some("frozen-profile-session"),
+                operation: "frozen_profile_test",
+                host: None,
+                profile: Some("removed-after-validation"),
+            },
+        ),
+    )
+    .await?;
+
+    assert_eq!(response, "frozen-profile");
+    std::fs::remove_dir_all(&temp_dir)?;
+    Ok(())
+}

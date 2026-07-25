@@ -6,8 +6,11 @@ mod dispatch;
 mod embedding_types;
 mod eval_types;
 mod memory_types;
+mod procedure_types;
 mod query_types;
+mod reranker_types;
 mod review_types;
+mod rule_types;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -15,12 +18,21 @@ mod tests_config;
 #[cfg(test)]
 mod tests_eval;
 #[cfg(test)]
+mod tests_governance;
+#[cfg(test)]
 mod tests_maintenance;
+#[cfg(test)]
+mod tests_procedures;
 #[cfg(test)]
 mod tests_raw;
 #[cfg(test)]
+mod tests_rules;
+#[cfg(test)]
 mod tests_trace;
+#[cfg(test)]
+mod tests_worker;
 mod types;
+mod worker_types;
 
 use anyhow::Result;
 use clap::{Command, CommandFactory, FromArgMatches};

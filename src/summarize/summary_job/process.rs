@@ -9,9 +9,10 @@ use crate::perf::{format_phase_timings, push_elapsed, time_result, time_value, P
 use super::super::constants::{
     SUMMARIZE_COOLDOWN_SECS, SUMMARIZE_LOCK_TIMEOUT_SECS, SUMMARY_PROMPT,
 };
-use super::super::input::{extract_last_assistant_message, hash_message, SummarizeInput};
+use super::super::input::{hash_message, SummarizeInput};
 use super::super::parse::parse_summary;
 use super::persist::{build_existing_summary_context, finalize_summary, sync_native_memory};
+use super::side_effects::run_stop_hook_side_effects;
 
 pub async fn process_summary_job_input(
     host: &str,
@@ -31,80 +32,19 @@ pub async fn process_summary_job_input(
 
     let mut conn = time_result(&mut timings, "db_open", db::open_db)?;
 
-    // Raw archive ingest happens BEFORE every summarize short-circuit so that
-    // "what was said is searchable" is independent of curation outcome.
     let current_branch = time_value(&mut timings, "detect_branch", || db::detect_git_branch(cwd));
-    time_value(&mut timings, "raw_archive", || {
-        capture_raw_archive(
+    let assistant_msg = time_result(&mut timings, "stop_hook_side_effects", || {
+        run_stop_hook_side_effects(
             &conn,
+            host,
             &hook,
             &session_id,
             &project,
             cwd,
             current_branch.as_deref(),
+            true,
         )
-    });
-    time_value(&mut timings, "failure_lessons", || {
-        match crate::memory::failure_lesson::distill_session_failure_lessons(
-            &conn,
-            &session_id,
-            &project,
-            current_branch.as_deref(),
-        ) {
-            Ok(report) if report.inserted > 0 || report.duplicates > 0 => crate::log::info(
-                "summary-job",
-                &format!(
-                    "failure lesson feed inserted={} duplicates={} project={}",
-                    report.inserted, report.duplicates, project
-                ),
-            ),
-            Ok(_) => {}
-            Err(error) => crate::log::error(
-                "summary-job",
-                &format!(
-                    "failure lesson feed failed for project={} session={}: {}",
-                    project, session_id, error
-                ),
-            ),
-        }
-    });
-
-    let assistant_msg = time_value(&mut timings, "extract_assistant_message", || {
-        hook.last_assistant_message
-            .clone()
-            .or_else(|| {
-                hook.transcript_path
-                    .as_deref()
-                    .and_then(extract_last_assistant_message)
-            })
-            .unwrap_or_default()
-    });
-    if !assistant_msg.is_empty() {
-        let usage_msg_hash = hash_message(&assistant_msg);
-        let usage_report = time_result(&mut timings, "memory_citations", || {
-            crate::memory::usage::record_stop_memory_citations(
-                &conn,
-                host,
-                &project,
-                &session_id,
-                &usage_msg_hash,
-                &assistant_msg,
-            )
-        })?;
-        if usage_report.parsed_count > 0 || usage_report.duplicate_event {
-            crate::log::info(
-                "summary-job",
-                &format!(
-                    "memory citations parsed={} matched={} inserted={} duplicate={} project={}",
-                    usage_report.parsed_count,
-                    usage_report.matched_count,
-                    usage_report.inserted_count,
-                    usage_report.duplicate_event,
-                    project
-                ),
-            );
-        }
-    }
+    })?;
 
     let msg = time_value(&mut timings, "prepare_message", || {
         prepare_assistant_message(assistant_msg)
@@ -233,122 +173,6 @@ fn prepare_assistant_message(message: String) -> Option<String> {
     }
 }
 
-fn capture_raw_archive(
-    conn: &rusqlite::Connection,
-    hook: &SummarizeInput,
-    session_id: &str,
-    project: &str,
-    cwd: &str,
-    branch: Option<&str>,
-) {
-    let cwd_opt = Some(cwd);
-
-    if let Some(transcript_path) = hook.transcript_path.as_deref() {
-        match crate::memory::raw_archive::drain_transcript(
-            conn,
-            transcript_path,
-            session_id,
-            project,
-            branch,
-            cwd_opt,
-        ) {
-            Ok(report) => {
-                crate::log::info(
-                    "summary-job",
-                    &format!(
-                        "raw archive drained transcript status={} inserted={} duplicates={} parse_errors={} insert_errors={} read_error={} project={}",
-                        raw_archive_status(&report),
-                        report.inserted,
-                        report.duplicates,
-                        report.parse_errors,
-                        report.insert_errors,
-                        report.read_error.is_some(),
-                        project
-                    ),
-                );
-                if report.read_error.is_some() {
-                    if let Some(last) = hook.last_assistant_message.as_deref() {
-                        insert_raw_hook_fallback(conn, session_id, project, last, branch, cwd_opt);
-                    }
-                }
-            }
-            Err(error) => crate::log::warn(
-                "summary-job",
-                &format!("raw archive drain failed: {}", error),
-            ),
-        }
-    } else if let Some(last) = hook.last_assistant_message.as_deref() {
-        insert_raw_hook_fallback(conn, session_id, project, last, branch, cwd_opt);
-    }
-}
-
-fn raw_archive_status(report: &crate::memory::raw_archive::RawIngestReport) -> &'static str {
-    if report.read_error.is_some() {
-        "read_failed"
-    } else if report.parse_errors > 0 || report.insert_errors > 0 {
-        "partial"
-    } else if report.inserted == 0 && report.duplicates > 0 {
-        "duplicate_only"
-    } else {
-        "ok"
-    }
-}
-
-fn insert_raw_hook_fallback(
-    conn: &rusqlite::Connection,
-    session_id: &str,
-    project: &str,
-    last: &str,
-    branch: Option<&str>,
-    cwd: Option<&str>,
-) {
-    match crate::memory::raw_archive::insert_raw_message(
-        conn,
-        session_id,
-        project,
-        crate::memory::raw_archive::ROLE_ASSISTANT,
-        last,
-        crate::memory::raw_archive::SOURCE_HOOK,
-        branch,
-        cwd,
-    ) {
-        Ok(Some(outcome)) => crate::log::info(
-            "summary-job",
-            &format!(
-                "raw archive hook fallback inserted={} duplicate={} project={}",
-                outcome.inserted, !outcome.inserted, project
-            ),
-        ),
-        Ok(None) => crate::log::info(
-            "summary-job",
-            &format!("raw archive hook fallback empty project={}", project),
-        ),
-        Err(error) => {
-            let report = crate::memory::raw_archive::RawIngestReport {
-                insert_errors: 1,
-                ..crate::memory::raw_archive::RawIngestReport::default()
-            };
-            if let Err(record_error) = crate::memory::raw_archive::record_raw_ingest_failure(
-                conn,
-                session_id,
-                project,
-                crate::memory::raw_archive::SOURCE_HOOK,
-                None,
-                &report,
-            ) {
-                crate::log::warn(
-                    "summary-job",
-                    &format!("raw archive failure record failed: {}", record_error),
-                );
-            }
-            crate::log::warn(
-                "summary-job",
-                &format!("raw archive insert failed: {}", error),
-            );
-        }
-    }
-}
-
 async fn call_summary_ai(
     host: &str,
     profile: Option<&str>,
@@ -410,6 +234,36 @@ mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
     use rusqlite::params;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<std::ffi::OsString>,
+    }
+
+    impl EnvVarGuard {
+        fn set_path(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::set_var(key, value) };
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var_os(key);
+            unsafe { std::env::remove_var(key) };
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(value) => unsafe { std::env::set_var(self.key, value) },
+                None => unsafe { std::env::remove_var(self.key) },
+            }
+        }
+    }
 
     #[tokio::test]
     async fn bad_transcript_path_uses_last_assistant_message_hook_fallback() -> Result<()> {
@@ -441,6 +295,75 @@ mod tests {
         )?;
         assert_eq!(path, missing_transcript.to_string_lossy());
         assert_eq!(kind, "read_error");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_finalized_summary_syncs_native_memory_side_effect() -> Result<()> {
+        let data_dir = ScopedTestDataDir::new("summary-native-memory-side-effect");
+        std::fs::create_dir_all(&data_dir.path)?;
+        let home = data_dir.path.join("home");
+        std::fs::create_dir_all(&home)?;
+        let _home = EnvVarGuard::set_path("HOME", &home);
+        let _native_sync =
+            EnvVarGuard::remove(crate::context::claude_memory::DISABLE_NATIVE_MEMORY_SYNC_ENV);
+
+        let cwd_path = data_dir.path.join("project");
+        std::fs::create_dir_all(&cwd_path)?;
+        let cwd = std::fs::canonicalize(&cwd_path)?
+            .to_string_lossy()
+            .to_string();
+        let project = db::project_from_cwd(&cwd);
+        let memory_dir = home
+            .join(".claude")
+            .join("projects")
+            .join(cwd.replace('/', "-"))
+            .join("memory");
+        std::fs::create_dir_all(&memory_dir)?;
+
+        let stub_codex = data_dir.path.join("codex-summary-stub.sh");
+        install_summary_stub(&stub_codex)?;
+        crate::runtime_config::init_config()?;
+        let stub_codex_path = stub_codex.to_string_lossy();
+        crate::runtime_config::set_config_value("memory_ai.profiles.codex.path", &stub_codex_path)?;
+
+        let conn = db::open_db()?;
+        db::record_captured_event(
+            &conn,
+            &db::CaptureEventInput {
+                host: "codex-cli",
+                session_id: "session-native-memory-side-effect",
+                project: &project,
+                cwd: Some(&cwd),
+                event_type: "session_stop",
+                role: None,
+                tool_name: None,
+                content: "summary source payload for native memory side effect",
+                task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+            },
+        )?;
+        drop(conn);
+
+        let payload = serde_json::json!({
+            "session_id": "session-native-memory-side-effect",
+            "cwd": cwd,
+            "last_assistant_message": "This assistant message is deliberately long enough for the legacy Summary job to call the summarization backend and finalize a row."
+        });
+
+        process_summary_job_input("codex-cli", None, &payload.to_string()).await?;
+
+        let native_file = memory_dir.join(crate::context::claude_memory::REMEM_FILE);
+        let content = std::fs::read_to_string(&native_file)?;
+        assert!(content.contains("Summary native sync request"), "{content}");
+        assert!(
+            content.contains("Summary job kept native memory sync before retirement"),
+            "{content}"
+        );
+        assert!(
+            content.contains("Keep native memory sync owned before Summary retirement"),
+            "{content}"
+        );
         Ok(())
     }
 
@@ -605,12 +528,53 @@ mod tests {
             duplicates: 2,
             ..crate::memory::raw_archive::RawIngestReport::default()
         };
-        assert_eq!(raw_archive_status(&duplicate_only), "duplicate_only");
+        assert_eq!(
+            crate::memory::raw_archive::raw_ingest_status(&duplicate_only),
+            "duplicate_only"
+        );
 
         let read_failed = crate::memory::raw_archive::RawIngestReport {
             read_error: Some("missing transcript".to_string()),
             ..crate::memory::raw_archive::RawIngestReport::default()
         };
-        assert_eq!(raw_archive_status(&read_failed), "read_failed");
+        assert_eq!(
+            crate::memory::raw_archive::raw_ingest_status(&read_failed),
+            "read_failed"
+        );
+    }
+
+    #[cfg(unix)]
+    fn install_summary_stub(path: &std::path::Path) -> Result<()> {
+        let script = r#"#!/bin/sh
+prev=""
+output_path=""
+for arg in "$@"; do
+  if [ "$prev" = "--output-last-message" ]; then
+    output_path="$arg"
+    break
+  fi
+  prev="$arg"
+done
+if [ -z "$output_path" ]; then
+  echo "missing output path" >&2
+  exit 1
+fi
+cat > /dev/null
+cat <<'EOF' > "$output_path"
+<summary>
+  <request>Summary native sync request</request>
+  <completed>Summary job kept native memory sync before retirement.</completed>
+  <decisions>Keep native memory sync owned before Summary retirement.</decisions>
+  <learned></learned>
+  <next_steps></next_steps>
+  <preferences></preferences>
+</summary>
+EOF
+"#;
+        std::fs::write(path, script)?;
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(path, perms)?;
+        Ok(())
     }
 }

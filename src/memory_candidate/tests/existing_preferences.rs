@@ -2,7 +2,36 @@ use anyhow::Result;
 use std::sync::{Arc, Mutex};
 
 use super::{insert_source_observation, setup_conn, setup_task};
-use crate::memory_candidate::{process_with_generator, MemoryCandidateResult};
+use crate::memory_candidate::{
+    build_eval_candidate_request, process_with_generator, CandidatePromptObservation,
+    MemoryCandidateResult,
+};
+
+#[test]
+fn memory_candidate_prompt_names_canonical_types_and_maps_fact() {
+    let prompt = build_eval_candidate_request(
+        "/tmp/remem",
+        "codex-cli",
+        Some("sess-candidate-prompt-contract"),
+        &[CandidatePromptObservation {
+            id: 1,
+            observation_type: "discovery",
+            text: "The worker uses one writer connection.",
+            evidence_event_ids: vec![1],
+            confidence: 0.91,
+        }],
+    );
+
+    assert!(prompt.contains(
+        "Valid candidate <type> values: decision, discovery, bugfix, architecture, lesson, preference, procedure."
+    ));
+    assert_eq!(
+        prompt
+            .matches("Factual findings use discovery; never use fact.")
+            .count(),
+        2
+    );
+}
 
 #[tokio::test]
 async fn memory_candidate_prompt_includes_existing_project_preferences() -> Result<()> {
@@ -48,7 +77,9 @@ async fn memory_candidate_prompt_includes_existing_project_preferences() -> Resu
     assert_eq!(result, MemoryCandidateResult::NoCandidates);
     let prompt = captured_prompt.lock().expect("prompt lock").clone();
     assert!(prompt.contains("<existing_active_preferences>"));
-    assert!(prompt.contains("Do not emit a new preference candidate"));
+    assert!(prompt.contains("new evidence of the same correction"));
+    assert!(prompt.contains("count an evidence-backed reinforcement"));
+    assert!(prompt.contains("Do not emit unsupported restatements"));
     assert!(prompt.contains("Prefer concise Chinese progress updates"));
     assert!(!prompt.contains("Prefer other project release notes"));
     Ok(())

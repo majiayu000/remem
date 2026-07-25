@@ -75,6 +75,24 @@ fn status_report_fixture() -> StatusReport {
             pending_review: 1,
             pending_review_rate_percent: 33.333333333333336,
         },
+        legacy_surfaces: vec![
+            LegacySurfaceStatus {
+                surface: "pending_observations".to_string(),
+                disposition: "retire".to_string(),
+                row_count: 2,
+                last_write_epoch: Some(120),
+                last_write_age_secs: Some(30),
+                frozen_write_violations: 2,
+            },
+            LegacySurfaceStatus {
+                surface: "summary_jobs".to_string(),
+                disposition: "retire-summary-only".to_string(),
+                row_count: 1,
+                last_write_epoch: Some(130),
+                last_write_age_secs: Some(20),
+                frozen_write_violations: 1,
+            },
+        ],
         usage_feedback: UsageFeedbackStatus {
             citation_events: 7,
             citation_line_present_events: 5,
@@ -92,6 +110,7 @@ fn status_report_fixture() -> StatusReport {
             processing: 14,
             expired: 0,
             failed: 0,
+            replayable_legacy: 25,
             oldest_ready_epoch: Some(17),
             oldest_ready_age_secs: Some(18),
         },
@@ -122,6 +141,19 @@ fn status_report_fixture() -> StatusReport {
             total: 41,
             last_7_days: 6,
         }],
+        user_context: UserContextStatus {
+            claims_total: 5,
+            claims_active: 3,
+            claims_suppressed: 1,
+            claims_deleted: 1,
+            candidates_total: 7,
+            candidates_pending_review: 4,
+            candidates_auto_promoted: 2,
+            candidate_block_reasons: vec![UserContextBlockReasonStatus {
+                reason: Some("source_not_user_authored".to_string()),
+                pending: 3,
+            }],
+        },
         jobs: JobStatus {
             pending: 19,
             processing: 20,
@@ -129,6 +161,10 @@ fn status_report_fixture() -> StatusReport {
             stuck: 0,
         },
         failure_lifecycle: crate::db::FailureLifecycleStats::default(),
+        poisoning_defense: crate::db::PoisoningDefenseStats {
+            pattern_set_version: 1,
+            ..crate::db::PoisoningDefenseStats::default()
+        },
         worker_daemon: WorkerDaemonStatus {
             health: "healthy".to_string(),
             heartbeat_age_secs: Some(23),
@@ -143,6 +179,17 @@ fn status_report_fixture() -> StatusReport {
             context_estimated_tokens: 801,
             context_emit_count: 3,
             context_suppress_count: 1,
+            relevance_state: "applied".to_string(),
+            relevance_policy_version: Some("sessionstart_significant_token_v1".to_string()),
+            relevance_k: Some(1),
+            relevance_threshold: Some(0.5),
+            relevance_candidate_count: 8,
+            relevance_eligible_count: 2,
+            relevance_final_injected_count: 1,
+            relevance_below_threshold_count: 6,
+            relevance_k_limited_count: 1,
+            relevance_section_budget_count: 0,
+            relevance_total_char_limit_count: 0,
             ai_usage_attribution: "partial".to_string(),
             ai_calls: 2,
             ai_total_tokens: 1_234,
@@ -170,6 +217,7 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     report.raw_archive.latest_failure_path = Some("/bad/raw.jsonl".to_string());
     report.pending_observations.expired = 15;
     report.pending_observations.failed = 16;
+    report.pending_observations.replayable_legacy = 17;
     report.jobs.failed = 21;
     report.jobs.stuck = 22;
 
@@ -207,6 +255,16 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["promotion_funnel"]["candidates"], 3);
     assert_eq!(parsed["promotion_funnel"]["promoted"], 2);
     assert_eq!(parsed["promotion_funnel"]["pending_review"], 1);
+    assert_eq!(
+        parsed["legacy_surfaces"][0]["surface"],
+        "pending_observations"
+    );
+    assert_eq!(parsed["legacy_surfaces"][0]["disposition"], "retire");
+    assert_eq!(parsed["legacy_surfaces"][0]["row_count"], 2);
+    assert_eq!(parsed["legacy_surfaces"][0]["last_write_epoch"], 120);
+    assert_eq!(parsed["legacy_surfaces"][0]["last_write_age_secs"], 30);
+    assert_eq!(parsed["legacy_surfaces"][0]["frozen_write_violations"], 2);
+    assert_eq!(parsed["legacy_surfaces"][1]["surface"], "summary_jobs");
     assert_eq!(parsed["usage_feedback"]["citation_events"], 7);
     assert_eq!(parsed["usage_feedback"]["citation_line_present_events"], 5);
     assert_eq!(parsed["usage_feedback"]["matched_events"], 4);
@@ -214,6 +272,7 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["usage_feedback"]["unmatched_events"], 1);
     assert_eq!(parsed["usage_feedback"]["usage_events"], 6);
     assert_eq!(parsed["pending_observations"]["failed"], 16);
+    assert_eq!(parsed["pending_observations"]["replayable_legacy"], 17);
     assert_eq!(parsed["review_queue"]["pending"], 41);
     assert_eq!(parsed["review_queue"]["median_age_secs"], 86_400);
     assert_eq!(parsed["review_queue"]["max_age_secs"], 172_800);
@@ -239,6 +298,21 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     );
     assert_eq!(parsed["candidate_promotion"][0]["total"], 41);
     assert_eq!(parsed["candidate_promotion"][0]["last_7_days"], 6);
+    assert_eq!(parsed["user_context"]["claims_total"], 5);
+    assert_eq!(parsed["user_context"]["claims_active"], 3);
+    assert_eq!(parsed["user_context"]["claims_suppressed"], 1);
+    assert_eq!(parsed["user_context"]["claims_deleted"], 1);
+    assert_eq!(parsed["user_context"]["candidates_total"], 7);
+    assert_eq!(parsed["user_context"]["candidates_pending_review"], 4);
+    assert_eq!(parsed["user_context"]["candidates_auto_promoted"], 2);
+    assert_eq!(
+        parsed["user_context"]["candidate_block_reasons"][0]["reason"],
+        "source_not_user_authored"
+    );
+    assert_eq!(
+        parsed["user_context"]["candidate_block_reasons"][0]["pending"],
+        3
+    );
     assert_eq!(parsed["worker_daemon"]["health"], "healthy");
     assert_eq!(
         parsed["latest_session_memory_spend"]["session_id"],
@@ -247,6 +321,14 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(
         parsed["latest_session_memory_spend"]["context_estimated_tokens"],
         801
+    );
+    assert_eq!(
+        parsed["latest_session_memory_spend"]["relevance_state"],
+        "applied"
+    );
+    assert_eq!(
+        parsed["latest_session_memory_spend"]["relevance_final_injected_count"],
+        1
     );
     assert_eq!(
         parsed["latest_session_memory_spend"]["ai_usage_attribution"],
@@ -266,7 +348,10 @@ fn cli_status_json_report_is_machine_parseable() -> std::result::Result<(), serd
 
 #[test]
 fn cli_status_has_no_action_block_when_runtime_is_clear() {
-    let report = status_report_fixture();
+    let mut report = status_report_fixture();
+    report.pending_observations.ready = 0;
+    report.pending_observations.delayed = 0;
+    report.pending_observations.replayable_legacy = 0;
     let actions = status_health_actions(&report);
 
     assert!(render_action_block(&actions).is_empty());
@@ -277,6 +362,7 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     let mut report = status_report_fixture();
     report.pending_observations.failed = 43;
     report.pending_observations.expired = 1;
+    report.pending_observations.replayable_legacy = 26;
     report.capture_pipeline.extract_failed = 4;
     report.jobs.failed = 2;
     report.jobs.stuck = 3;
@@ -287,13 +373,71 @@ fn cli_status_renders_action_block_for_runtime_failures() {
     assert!(text.contains("Needs attention:"));
     assert!(text.contains("43 failed pending observations"));
     assert!(text.contains("inspect: remem pending list-failed --limit 20"));
-    assert!(text.contains("preview retry: remem pending retry-failed --dry-run"));
-    assert!(text.contains("1 expired processing pending observation"));
+    assert!(text.contains("preview migration prep: remem pending retry-failed --dry-run"));
+    assert!(text.contains("apply migration prep: remem pending retry-failed"));
+    assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
+    assert!(text.contains("apply replay: remem pending migrate-legacy"));
+    assert!(text
+        .contains("apply replay for Claude host: remem pending migrate-legacy --host claude-code"));
+    assert!(
+        text.contains("apply replay for Codex host: remem pending migrate-legacy --host codex-cli")
+    );
+    assert!(text.contains("26 replayable legacy pending observations"));
     assert!(text.contains("4 failed extraction tasks"));
     assert!(text.contains("2 failed jobs"));
     assert!(text.contains("3 stuck jobs"));
     assert!(text.contains("inspect counts: remem status --json"));
     assert!(text.contains("recover: remem worker --once"));
+}
+
+#[test]
+fn lease_transition_failure_remains_visible_in_status_and_doctor() -> anyhow::Result<()> {
+    let _data_dir = crate::db::test_support::ScopedTestDataDir::new("status-lease-conflict");
+    let mut conn = crate::db::open_db()?;
+    let job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Compress,
+        "/tmp/remem",
+        None,
+        "{}",
+        100,
+    )?;
+    crate::db::claim_next_job(&mut conn, "worker-a", 60)?.expect("job should claim");
+    conn.execute(
+        "UPDATE jobs SET lease_expires_epoch = ?2 WHERE id = ?1",
+        params![job_id, chrono::Utc::now().timestamp() - 1],
+    )?;
+    crate::db::mark_job_done(&conn, job_id, "worker-a")
+        .expect_err("expired lease transition must fail");
+    let shared = crate::db::query_system_stats(&conn)?;
+    assert_eq!((shared.processing_jobs, shared.stuck_jobs), (1, 1));
+    drop(conn);
+
+    let report = load_status_report()?;
+    assert_eq!((report.jobs.processing, report.jobs.stuck), (1, 1));
+    let json = serde_json::to_value(&report)?;
+    assert_eq!(json["jobs"]["processing"], 1);
+    assert_eq!(json["jobs"]["stuck"], 1);
+    Ok(())
+}
+
+#[test]
+fn cli_status_renders_replay_action_for_null_lease_processing_legacy_pending() {
+    let mut report = status_report_fixture();
+    report.pending_observations.ready = 0;
+    report.pending_observations.delayed = 0;
+    report.pending_observations.processing = 1;
+    report.pending_observations.expired = 0;
+    report.pending_observations.failed = 0;
+    report.pending_observations.replayable_legacy = 1;
+
+    let actions = status_health_actions(&report);
+    let text = render_action_block(&actions);
+
+    assert!(text.contains("1 replayable legacy pending observation"));
+    assert!(text.contains("preview replay: remem pending migrate-legacy --dry-run"));
+    assert!(text.contains("apply replay: remem pending migrate-legacy"));
 }
 
 #[test]
@@ -398,6 +542,17 @@ fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<
     conn.execute_batch("PRAGMA user_version = 65")?;
     let now = chrono::Utc::now().timestamp();
     conn.execute(
+        "INSERT INTO workspaces(id, root_path, created_at_epoch, updated_at_epoch)
+         VALUES (1, '/tmp/status-v053-source-kind', ?1, ?1)",
+        params![now],
+    )?;
+    conn.execute(
+        "INSERT INTO projects(id, workspace_id, project_path, project_key,
+                              created_at_epoch, updated_at_epoch)
+         VALUES (1, 1, '/tmp/status-v053-source-kind', 'status-v053-source-kind', ?1, ?1)",
+        params![now],
+    )?;
+    conn.execute(
         "INSERT INTO memory_candidates(project_id, scope, memory_type, topic_key, text,
                                        evidence_event_ids, confidence, risk_class,
                                        review_status, auto_promote_block_reason,
@@ -431,4 +586,80 @@ fn status_report_migrates_v053_candidate_source_kind_schema() -> anyhow::Result<
     assert_eq!(source_kind, "unattributed");
     assert_eq!(v054_applied, 1);
     Ok(())
+}
+
+#[test]
+fn share_card_shows_grouped_totals_without_private_details() {
+    let mut report = status_report_fixture();
+    report.totals.memories = 80553;
+    report.totals.sessions = 16082;
+    report.totals.observations = 1837;
+    report.totals.raw_messages = 91732;
+    report.today.new_memories = 12;
+
+    let card = share::render_share_card(&report);
+
+    assert!(card.contains("80,553"), "card missing memories: {card}");
+    assert!(card.contains("16,082"), "card missing sessions: {card}");
+    assert!(card.contains("+12"), "card missing today delta: {card}");
+    assert!(card.contains("github.com/majiayu000/remem"), "{card}");
+    assert!(
+        !card.contains(&report.database.path),
+        "share card must not leak the database path: {card}"
+    );
+    for line in card.lines() {
+        assert_eq!(
+            line.chars().count(),
+            card.lines().next().unwrap().chars().count(),
+            "card lines must align: {card}"
+        );
+    }
+}
+
+#[test]
+fn share_card_hides_today_line_when_empty() {
+    let mut report = status_report_fixture();
+    report.today.new_memories = 0;
+    let card = share::render_share_card(&report);
+    assert!(!card.contains("Today"), "{card}");
+}
+
+#[test]
+fn format_count_groups_thousands() {
+    assert_eq!(share::format_count(0), "0");
+    assert_eq!(share::format_count(999), "999");
+    assert_eq!(share::format_count(1000), "1,000");
+    assert_eq!(share::format_count(91732), "91,732");
+    assert_eq!(share::format_count(1234567), "1,234,567");
+    assert_eq!(share::format_count(-1234), "-1,234");
+}
+
+#[test]
+fn share_card_expands_width_for_long_version_labels() {
+    let mut report = status_report_fixture();
+    report.version = "0.5.193 (schema v63) extremely-long-build-label".to_string();
+    let card = share::render_share_card(&report);
+    let first_width = card.lines().next().unwrap().chars().count();
+    for line in card.lines() {
+        assert_eq!(line.chars().count(), first_width, "misaligned card: {card}");
+    }
+    assert!(card.contains("extremely-long-build-label"));
+}
+
+#[test]
+fn cli_parses_status_share_flag() {
+    use clap::Parser;
+
+    use crate::cli::types::{Cli, Commands};
+
+    let share = Cli::parse_from(["remem", "status", "--share"]);
+    match share.command {
+        Commands::Status { json, share } => {
+            assert!(!json);
+            assert!(share);
+        }
+        _ => panic!("expected status command"),
+    }
+
+    assert!(Cli::try_parse_from(["remem", "status", "--json", "--share"]).is_err());
 }

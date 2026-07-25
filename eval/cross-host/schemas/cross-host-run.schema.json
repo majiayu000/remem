@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/cross-host-run.schema.json",
+  "title": "remem cross-host continuity run artifact",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "benchmark_version",
+    "suite",
+    "direction",
+    "condition",
+    "task_id",
+    "run_index",
+    "source_host",
+    "target_host",
+    "resolved",
+    "failure_reason",
+    "metrics",
+    "handoff_isolation",
+    "attribution",
+    "artifacts"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark_version": { "type": "string", "minLength": 1 },
+    "suite": { "const": "cross-host-v1" },
+    "direction": { "enum": ["claude_to_codex", "codex_to_claude"] },
+    "condition": {
+      "enum": [
+        "no_memory",
+        "target_host_native",
+        "exported_file",
+        "remem_shared",
+        "source_host_native_imported",
+        "remem_preloaded",
+        "oracle_handoff",
+        "full_transcript",
+        "remem_without_host_native_import",
+        "remem_with_host_native_import"
+      ]
+    },
+    "task_id": { "type": "string", "minLength": 1 },
+    "run_index": { "type": "integer", "minimum": 0 },
+    "source_host": { "enum": ["claude_code", "codex"] },
+    "target_host": { "enum": ["claude_code", "codex"] },
+    "model": { "type": "object" },
+    "environment": { "type": "object" },
+    "resolved": { "type": "boolean" },
+    "failure_reason": {
+      "type": ["string", "null"],
+      "enum": [
+        "test_failure",
+        "timeout",
+        "compile_failure",
+        "wrong_file_modified",
+        "ignored_memory",
+        "missing_memory",
+        "stale_memory_followed",
+        "irrelevant_memory_distracted",
+        "over_context_budget",
+        "agent_hallucinated_memory",
+        "oracle_inconclusive",
+        "handoff_isolation_breach",
+        null
+      ]
+    },
+    "metrics": {
+      "type": "object",
+      "required": ["tokens_total", "wall_time_ms", "turns"],
+      "properties": {
+        "tokens_total": { "type": "integer", "minimum": 0 },
+        "wall_time_ms": { "type": "integer", "minimum": 0 },
+        "turns": { "type": "integer", "minimum": 0 },
+        "handoff_fact_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "turns_to_first_correct_hypothesis": { "type": ["integer", "null"], "minimum": 0 },
+        "time_to_first_relevant_file_ms": { "type": ["integer", "null"], "minimum": 0 },
+        "repeated_failed_action_count": { "type": "integer", "minimum": 0 },
+        "exported_file_generation_cost_tokens": { "type": ["integer", "null"], "minimum": 0 },
+        "exported_file_maintenance_cost_tokens": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "handoff_isolation": {
+      "type": "object",
+      "required": [
+        "source_home_isolated",
+        "target_home_isolated",
+        "source_session_store_readable_by_target",
+        "leak_scan_passed"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_home_isolated": { "type": "boolean" },
+        "target_home_isolated": { "type": "boolean" },
+        "source_session_store_readable_by_target": { "const": false },
+        "leak_scan_passed": { "type": "boolean" }
+      }
+    },
+    "attribution": {
+      "type": "object",
+      "required": [
+        "source_session_refs",
+        "captured_event_refs",
+        "promoted_memory_refs",
+        "selected_context_item_refs",
+        "cited_refs",
+        "used_refs",
+        "origins",
+        "scope_at_target",
+        "validity_at_target"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "source_session_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "captured_event_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "promoted_memory_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "selected_context_item_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "cited_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "used_refs": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "origins": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ref", "origin"],
+            "additionalProperties": false,
+            "properties": {
+              "ref": { "type": "string", "minLength": 1 },
+              "origin": {
+                "enum": [
+                  "remem_canonical_capture",
+                  "host_native_import",
+                  "generated_projection",
+                  "manual_save"
+                ]
+              }
+            }
+          }
+        },
+        "scope_at_target": { "type": "string", "minLength": 1 },
+        "validity_at_target": { "enum": ["active", "stale", "superseded", "unknown"] }
+      }
+    },
+    "artifacts": { "type": "object" }
+  }
+}

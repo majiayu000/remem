@@ -92,6 +92,7 @@ mod tests {
     #[test]
     fn implicit_query_uses_project_branch_workstream_and_summary_signals() {
         let summaries = vec![SessionSummaryBrief {
+            id: 1,
             request: "Investigate SQLCipher context recall".to_string(),
             completed: Some("Verified retrieval injection path".to_string()),
             created_at_epoch: 1,

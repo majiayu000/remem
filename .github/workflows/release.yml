@@ -40,18 +40,26 @@ jobs:
     strategy:
       matrix:
         include:
+          # local-onnx is disabled on Intel macOS: ort/ONNX Runtime ships no
+          # prebuilt binaries for x86_64-apple-darwin, so the build cannot
+          # link it. Embedding falls back to the feature-hash provider there
+          # and the degradation is visible in `remem status` / `remem doctor`.
           - target: x86_64-apple-darwin
             os: macos-latest
             name: remem-darwin-x64
+            cargo_flags: --no-default-features
           - target: aarch64-apple-darwin
             os: macos-latest
             name: remem-darwin-arm64
+            cargo_flags: ""
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
             name: remem-linux-x64
+            cargo_flags: ""
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
             name: remem-linux-arm64
+            cargo_flags: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v6.0.2
@@ -62,12 +70,14 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          # g++-aarch64-linux-gnu provides the aarch64 libstdc++ that the
+          # statically linked ort/ONNX Runtime (C++) needs at link time.
+          sudo apt-get install -y gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> $GITHUB_ENV
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
-      - run: cargo build --release --target ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }} ${{ matrix.cargo_flags }}
       - name: Package binary
         run: |
           cd target/${{ matrix.target }}/release
@@ -271,3 +281,28 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: npm publish --access public
+
+  publish-mcp-registry:
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Check version sync
+        run: python3 scripts/ci/check_plugin_version_sync.py --expected-version "${GITHUB_REF_NAME#v}"
+      - name: Install mcp-publisher
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            x86_64) arch=amd64 ;;
+            aarch64) arch=arm64 ;;
+          esac
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_${arch}.tar.gz" | tar xz mcp-publisher
+      - name: Publish to MCP registry
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish

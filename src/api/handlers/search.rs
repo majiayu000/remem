@@ -138,6 +138,7 @@ mod tests {
     use super::*;
     use crate::db::test_support::ScopedTestDataDir;
     use crate::memory;
+    use crate::memory::raw_archive::{insert_raw_message, ROLE_USER, SOURCE_HOOK};
 
     fn base_search_params(explain: Option<bool>) -> SearchParams {
         SearchParams {
@@ -248,6 +249,35 @@ mod tests {
         assert!(json["raw_hits_error"]
             .as_str()
             .is_some_and(|error| error.contains("raw archive fallback failed")));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handle_search_keeps_legacy_raw_hit_preview_contract() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("api-search-legacy-raw-preview");
+        let conn = crate::db::open_db()?;
+        let legacy_preview = "aurora LEGACY_RAW_PREVIEW_SENTINEL";
+        insert_raw_message(
+            &conn,
+            "legacy-session",
+            "/repo",
+            ROLE_USER,
+            legacy_preview,
+            SOURCE_HOOK,
+            None,
+            None,
+        )?;
+        drop(conn);
+
+        let response = handle_search(State(DbState), Query(base_search_params(None)))
+            .await
+            .into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await?;
+        let json: Value = serde_json::from_slice(&body)?;
+
+        assert_eq!(json["raw_hits"][0]["preview"], legacy_preview);
+        assert_eq!(json["raw_hits"][0]["source"], SOURCE_HOOK);
         Ok(())
     }
 

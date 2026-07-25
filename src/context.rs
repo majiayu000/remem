@@ -7,6 +7,7 @@ mod diagnostics;
 mod fact_labels;
 mod filters;
 mod format;
+mod hook_warning;
 mod host;
 mod hybrid_context;
 mod implicit_query;
@@ -15,9 +16,11 @@ mod invocation;
 mod memory_selection;
 mod memory_traits;
 mod ownership;
+mod poisoning;
 mod policy;
 mod prompt_submit;
 mod query;
+mod relevance;
 mod render;
 mod render_inputs;
 mod sections;
@@ -33,7 +36,10 @@ pub(crate) use prompt_submit::prompt_submit_additional_context;
 pub(crate) use render::governance_eval_snapshot;
 pub(crate) use render::session_start_eval_snapshot;
 pub(crate) use render::RENDER_CONTRACT_VERSION;
-pub use render::{generate_context, generate_context_from_cli};
+pub use render::{
+    generate_context, generate_context_from_cli, generate_cursor_context_from_bytes,
+    generate_cursor_context_from_stdin,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContextOutputGateContractSnapshot {

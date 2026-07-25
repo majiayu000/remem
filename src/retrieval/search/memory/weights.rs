@@ -3,6 +3,7 @@ const MAX_VECTOR_DISTANCE: f32 = 0.51;
 const FTS_WEIGHT: f64 = 2.5;
 const VECTOR_WEIGHT: f64 = 3.0;
 const ENTITY_WEIGHT: f64 = 1.25;
+const GRAPH_WEIGHT: f64 = 0.75;
 const TEMPORAL_WEIGHT: f64 = 1.0;
 const FACT_WEIGHT: f64 = 1.4;
 const LIKE_FALLBACK_WEIGHT: f64 = 0.25;
@@ -15,6 +16,8 @@ pub struct SearchWeights {
     pub fts: f64,
     pub vector: f64,
     pub entity: f64,
+    #[serde(default = "default_graph_weight")]
+    pub graph: f64,
     pub temporal: f64,
     #[serde(default = "default_fact_weight")]
     pub fact: f64,
@@ -34,6 +37,7 @@ impl Default for SearchWeights {
             fts: FTS_WEIGHT,
             vector: VECTOR_WEIGHT,
             entity: ENTITY_WEIGHT,
+            graph: GRAPH_WEIGHT,
             temporal: TEMPORAL_WEIGHT,
             fact: FACT_WEIGHT,
             like_fallback: LIKE_FALLBACK_WEIGHT,
@@ -48,6 +52,10 @@ impl Default for SearchWeights {
 
 fn default_fact_weight() -> f64 {
     FACT_WEIGHT
+}
+
+fn default_graph_weight() -> f64 {
+    GRAPH_WEIGHT
 }
 
 fn default_usage_recency_half_life_days() -> f64 {

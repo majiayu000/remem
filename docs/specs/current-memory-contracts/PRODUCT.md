@@ -164,6 +164,14 @@ contracts.
 The local app must not silently install hooks, write high-context host config,
 or implement a separate memory truth engine.
 
+Cursor (GH-823) is a recognized hook host with an explicitly reduced
+capability matrix: automatic capture covers the observed generic post-tool
+events, `session-init` is unsupported, summarization is fail-closed until the
+verified Cursor transcript reader (GH-825), and context injection is disabled
+on Cursor 3.12.17 in both model-visible forms (session-start proven blocked;
+post-tool intentionally unshipped in v1). The product must report these gaps
+visibly rather than pretending Claude-equivalent behavior exists.
+
 ## User-Facing Outcomes
 
 After this contract is implemented and verified:

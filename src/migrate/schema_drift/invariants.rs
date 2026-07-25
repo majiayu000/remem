@@ -1,5 +1,16 @@
 use super::SchemaInvariant;
 
+mod v068;
+mod v070;
+mod v071;
+mod v072;
+mod v073;
+pub(in crate::migrate) use v068::V068_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v070::V070_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v071::V071_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v072::V072_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v073::V073_SCHEMA_INVARIANTS;
+
 pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::table(20, "memory_fts_all_status", "memories_fts"),
     SchemaInvariant::trigger(20, "memory_fts_all_status", "memories_ai"),
@@ -593,5 +604,184 @@ pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         59,
         "candidate_review_metadata",
         "idx_memory_candidates_review_status_created",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memory_candidates",
+        "source_trust_class",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memory_candidates",
+        "quarantine_pattern_id",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memory_candidates",
+        "quarantine_pattern_version",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memory_candidates",
+        "acknowledged_pattern_id",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memory_candidates",
+        "acknowledged_pattern_version",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memory_candidates",
+        "acknowledged_at_epoch",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memories",
+        "source_trust_class",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memories",
+        "acknowledged_pattern_id",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memories",
+        "acknowledged_pattern_version",
+    ),
+    SchemaInvariant::column(
+        60,
+        "memory_poisoning_defense",
+        "memories",
+        "acknowledged_at_epoch",
+    ),
+    SchemaInvariant::index(
+        60,
+        "memory_poisoning_defense",
+        "idx_memory_candidates_quarantine",
+    ),
+    SchemaInvariant::index(60, "memory_poisoning_defense", "idx_memories_source_trust"),
+    SchemaInvariant::table(
+        61,
+        "memory_poisoning_injection_drops",
+        "memory_poisoning_injection_drops",
+    ),
+    SchemaInvariant::index(
+        61,
+        "memory_poisoning_injection_drops",
+        "idx_memory_poisoning_drops_created",
+    ),
+    SchemaInvariant::index(
+        61,
+        "memory_poisoning_injection_drops",
+        "idx_memory_poisoning_drops_pattern",
+    ),
+    SchemaInvariant::table(
+        62,
+        "preference_rule_state",
+        "memory_preference_reinforcements",
+    ),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_memory_preference_reinforcements_rank",
+    ),
+    SchemaInvariant::table(62, "preference_rule_state", "preference_rule_overrides"),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_overrides_project",
+    ),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_overrides_source",
+    ),
+    SchemaInvariant::table(62, "preference_rule_state", "preference_rule_diagnostics"),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_diagnostics_project_event",
+    ),
+    SchemaInvariant::index(
+        62,
+        "preference_rule_state",
+        "idx_preference_rule_diagnostics_rule",
+    ),
+    SchemaInvariant::table(63, "procedure_exports", "procedure_exports"),
+    SchemaInvariant::index(63, "procedure_exports", "idx_procedure_exports_project"),
+    SchemaInvariant::index(63, "procedure_exports", "idx_procedure_exports_memory"),
+    SchemaInvariant::column(
+        65,
+        "preference_reinforcement",
+        "memory_preference_reinforcements",
+        "machine_checkable",
+    ),
+    SchemaInvariant::column(
+        65,
+        "preference_reinforcement",
+        "memory_preference_reinforcements",
+        "risk_class",
+    ),
+    SchemaInvariant::index(
+        65,
+        "preference_reinforcement",
+        "idx_memory_preference_reinforcements_eligible",
+    ),
+    SchemaInvariant::column(
+        66,
+        "session_rollup_evidence_checkpoint",
+        "session_summaries",
+        "transcript_evidence_json",
+    ),
+    SchemaInvariant::column(
+        66,
+        "session_rollup_evidence_checkpoint",
+        "session_summaries",
+        "raw_archive_completed_at_epoch",
+    ),
+    SchemaInvariant::table(67, "capture_git_evidence", "captured_event_commits"),
+    SchemaInvariant::column(
+        67,
+        "capture_git_evidence",
+        "git_commit_sessions",
+        "session_row_id",
+    ),
+    SchemaInvariant::index(
+        67,
+        "capture_git_evidence",
+        "idx_captured_event_commits_event",
+    ),
+    SchemaInvariant::index(
+        67,
+        "capture_git_evidence",
+        "idx_git_commit_sessions_commit_session_row",
+    ),
+    SchemaInvariant::index(
+        67,
+        "capture_git_evidence",
+        "idx_git_commit_sessions_commit_legacy_session",
+    ),
+    SchemaInvariant::index(
+        67,
+        "capture_git_evidence",
+        "idx_git_commit_sessions_session_row",
+    ),
+    SchemaInvariant::index(69, "job_queue_atomicity", "idx_jobs_active_ordinary_unique"),
+    SchemaInvariant::index(69, "job_queue_atomicity", "idx_jobs_active_dream_unique"),
+    SchemaInvariant::index(
+        69,
+        "job_queue_atomicity",
+        "idx_jobs_active_compile_rules_unique",
     ),
 ];

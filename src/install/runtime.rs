@@ -5,9 +5,10 @@ use std::{
 
 use anyhow::{bail, ensure, Context, Result};
 
+use crate::install::cursor_config::plan::CursorOperation;
 use crate::install::duplicates::{format_warning_lines, inspect_install_paths};
 use crate::install::host::{HookSupport, InstallTarget};
-use crate::install::hosts::resolve_hosts;
+use crate::install::hosts::{cursor, cursor_selected, resolve_hosts};
 use crate::install::paths::{binary_path, old_hooks_path, remem_data_dir};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,14 +20,38 @@ pub(in crate::install) struct RuntimeStoreReady {
     pub(in crate::install) encrypted_existing_db: bool,
 }
 
-pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result<()> {
+pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool, repair: bool) -> Result<()> {
     let bin = binary_path()?;
     let hosts = resolve_hosts(target);
-    if hosts.is_empty() {
+    // Explicit Cursor selection on a platform without an approved renderer
+    // fails closed before any host write (B-001).
+    if matches!(target, InstallTarget::Cursor | InstallTarget::All)
+        && !cursor::cursor_renderer_supported()
+    {
+        bail!(
+            "cursor host is unsupported on this platform (no approved hook command renderer); \
+             no host was modified (code=platform_unsupported)"
+        );
+    }
+    if repair && matches!(target, InstallTarget::Cursor) {
+        bail!("`--repair` 首版只支持 Claude hooks；cursor 不支持 hook repair");
+    }
+    let with_cursor = !repair && cursor_selected(target);
+    if matches!(target, InstallTarget::Auto)
+        && cursor::cursor_detected()
+        && !cursor::cursor_renderer_supported()
+    {
+        eprintln!("{}", cursor::CURSOR_AUTO_SKIP_DIAGNOSTIC);
+    }
+    if hosts.is_empty() && !with_cursor {
         bail!(
             "没检测到可用的 host（target=Auto 时仅安装已检测到的 host）。\n\
              如需强制安装到全部 host，请使用 `--target all`。"
         );
+    }
+
+    if repair {
+        return repair_install(target, dry_run, &bin, hosts);
     }
 
     if dry_run {
@@ -44,6 +69,9 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
             {
                 eprintln!("{line}");
             }
+        }
+        if with_cursor {
+            print_cursor_dry_run(CursorOperation::Install { hooks_only }, &bin);
         }
         eprintln!(
             "  config -> {} (memory_ai host/profile defaults)",
@@ -66,6 +94,12 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
         eprintln!("remem install --hooks-only:");
     } else {
         eprintln!("remem install:");
+    }
+    // Cursor preflight must succeed before the runtime store, host config,
+    // token, or any host write is touched, so a malformed/collision Cursor
+    // state leaves zero side effects on a first run (B-009).
+    if with_cursor {
+        cursor::preflight(CursorOperation::Install { hooks_only }, &bin)?;
     }
     let runtime_store = ensure_runtime_store_ready()?;
     eprintln!(
@@ -108,6 +142,26 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
         }
     }
 
+    if with_cursor {
+        eprintln!("→ cursor");
+        let plan = cursor::apply(CursorOperation::Install { hooks_only }, &bin)?;
+        eprintln!(
+            "  hooks  -> {} [{}]",
+            plan.hooks.snapshot.path.display(),
+            plan.hooks.action.label()
+        );
+        eprintln!(
+            "  MCP    -> {} [{}]",
+            plan.mcp.snapshot.path.display(),
+            plan.mcp.action.label()
+        );
+        eprintln!("  {}", cursor::CURSOR_HOOK_FAILURE_POLICY_LINE);
+        eprintln!("  {}", cursor::CURSOR_SESSION_INIT_LINE);
+        eprintln!(
+            "  note   contract v1 installs no Cursor hook entries yet (observe/summarize capability gates are closed); automatic Cursor memory is NOT enabled"
+        );
+    }
+
     let data_dir = remem_data_dir();
     std::fs::create_dir_all(&data_dir)?;
     eprintln!("  data   -> {}", data_dir.display());
@@ -134,6 +188,74 @@ pub fn install(target: InstallTarget, dry_run: bool, hooks_only: bool) -> Result
     eprintln!("  2. remem will automatically capture your sessions (hosts with hook support)");
     eprintln!("  3. Run 'remem doctor' to check hook/MCP paths and stale MCP processes");
 
+    Ok(())
+}
+
+fn repair_install(
+    target: InstallTarget,
+    dry_run: bool,
+    bin: &str,
+    hosts: Vec<Box<dyn crate::install::host::InstallHost>>,
+) -> Result<()> {
+    let repairable_hosts = hosts.iter().filter(|host| host.name() == "claude").count();
+    if repairable_hosts == 0 {
+        if matches!(target, InstallTarget::Auto) {
+            bail!(
+                "没有检测到 Claude 配置；`--repair` 首版只支持 Claude hooks。请使用 `remem install --target claude --repair` 强制修复 Claude。"
+            );
+        }
+        bail!("`--repair` 首版只支持 Claude hooks；target={target:?} 没有可修复 host");
+    }
+
+    if dry_run {
+        eprintln!("remem install --repair (dry-run) — 以下写入不会被执行:");
+        for host in hosts {
+            eprintln!("→ {}", host.name());
+            if host.name() == "claude" {
+                eprintln!(
+                    "  hooks  -> {} (repair user-level Claude hooks only)",
+                    crate::install::paths::settings_path().display()
+                );
+                eprintln!("  MCP    read-only diagnostic; no writes");
+                eprintln!("  data   skipped");
+                eprintln!("  API    skipped");
+            } else {
+                eprintln!("  repair skipped: unsupported in this release");
+            }
+        }
+        print_install_path_warnings(bin);
+        return Ok(());
+    }
+
+    eprintln!("remem install --repair:");
+    let mut repaired = 0usize;
+    for host in hosts {
+        eprintln!("→ {}", host.name());
+        if host.name() != "claude" {
+            eprintln!("  repair skipped: unsupported in this release");
+            continue;
+        }
+        let report = host.repair_hooks(bin)?;
+        eprintln!(
+            "  hooks  -> {} ({}/{} registered)",
+            report.path.display(),
+            report.registered,
+            report.expected
+        );
+        eprintln!("  MCP    read-only diagnostic; no writes");
+        eprintln!("  data   skipped");
+        eprintln!("  API    skipped");
+        if let Some(warning) = report.mcp_warning {
+            eprintln!("  warn   {warning}");
+        }
+        if let Some(warning) = report.scope_warning {
+            eprintln!("  warn   {warning}");
+        }
+        repaired += 1;
+    }
+    ensure!(repaired > 0, "no repairable hooks were repaired");
+    eprintln!("  binary -> {}", bin);
+    print_install_path_warnings(bin);
     Ok(())
 }
 
@@ -329,6 +451,102 @@ fn print_install_path_warnings(bin: &str) {
     }
 }
 
+fn runtime_host_name(install_host: &str) -> &'static str {
+    match install_host {
+        "claude" => crate::runtime_config::CLAUDE_HOST,
+        "codex" => crate::runtime_config::CODEX_HOST,
+        // GH-824: the canonical cursor identity must never degrade to
+        // `hosts.unknown` (B-002).
+        "cursor" => crate::runtime_config::CURSOR_HOST,
+        _ => "unknown",
+    }
+}
+
+fn print_cursor_dry_run(operation: CursorOperation, bin: &str) {
+    eprintln!("→ cursor");
+    match cursor::preflight(operation, bin) {
+        Ok(plan) => {
+            for line in plan.dry_run_lines() {
+                eprintln!("{line}");
+            }
+        }
+        Err(error) => {
+            // B-016: dry-run reports would-fail with a non-sensitive reason
+            // instead of pretending success; it still exits zero because no
+            // write was attempted.
+            eprintln!("  would-fail: {error:#}");
+        }
+    }
+    eprintln!("  {}", cursor::CURSOR_HOOK_FAILURE_POLICY_LINE);
+    eprintln!("  {}", cursor::CURSOR_SESSION_INIT_LINE);
+}
+
+pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
+    let bin = binary_path()?;
+    // Uninstall defaults to "all known hosts" so a stale config isn't left
+    // behind if the user removed a host before running uninstall.
+    let effective = if matches!(target, InstallTarget::Auto) {
+        InstallTarget::All
+    } else {
+        target
+    };
+    let hosts = resolve_hosts(effective);
+    // Uninstall touches Cursor only when it is explicitly selected or (via
+    // Auto -> All) the platform has an approved renderer and Cursor is
+    // detected; an unsupported platform must not fail unrelated cleanup.
+    let with_cursor = match target {
+        InstallTarget::Cursor => {
+            if !cursor::cursor_renderer_supported() {
+                bail!(
+                    "cursor host is unsupported on this platform (no approved hook command renderer); \
+                     no host was modified (code=platform_unsupported)"
+                );
+            }
+            true
+        }
+        InstallTarget::All | InstallTarget::Auto => {
+            cursor::cursor_detected() && cursor::cursor_renderer_supported()
+        }
+        InstallTarget::Claude | InstallTarget::Codex => false,
+    };
+
+    if dry_run {
+        eprintln!("remem uninstall (dry-run) — 以下删除不会被执行:");
+        for host in &hosts {
+            eprintln!("→ {}: 移除 {}", host.name(), host.config_path().display());
+        }
+        if with_cursor {
+            print_cursor_dry_run(CursorOperation::Uninstall, &bin);
+        }
+        return Ok(());
+    }
+
+    for host in &hosts {
+        host.uninstall_mcp(&bin)?;
+        host.uninstall_hooks(&bin)?;
+        eprintln!(
+            "  {} 已清理 ({})",
+            host.name(),
+            host.config_path().display()
+        );
+    }
+    if with_cursor {
+        let plan = cursor::apply(CursorOperation::Uninstall, &bin)?;
+        eprintln!(
+            "  cursor 已清理 ({} [{}], {} [{}])",
+            plan.hooks.snapshot.path.display(),
+            plan.hooks.action.label(),
+            plan.mcp.snapshot.path.display(),
+            plan.mcp.action.label()
+        );
+    }
+
+    eprintln!("remem uninstall 完成");
+    eprintln!("  数据目录 {} 保留不动", remem_data_dir().display());
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -357,47 +575,4 @@ mod tests {
         );
         Ok(())
     }
-}
-
-fn runtime_host_name(install_host: &str) -> &'static str {
-    match install_host {
-        "claude" => crate::runtime_config::CLAUDE_HOST,
-        "codex" => crate::runtime_config::CODEX_HOST,
-        _ => "unknown",
-    }
-}
-
-pub fn uninstall(target: InstallTarget, dry_run: bool) -> Result<()> {
-    let bin = binary_path()?;
-    // Uninstall defaults to "all known hosts" so a stale config isn't left
-    // behind if the user removed a host before running uninstall.
-    let effective = if matches!(target, InstallTarget::Auto) {
-        InstallTarget::All
-    } else {
-        target
-    };
-    let hosts = resolve_hosts(effective);
-
-    if dry_run {
-        eprintln!("remem uninstall (dry-run) — 以下删除不会被执行:");
-        for host in &hosts {
-            eprintln!("→ {}: 移除 {}", host.name(), host.config_path().display());
-        }
-        return Ok(());
-    }
-
-    for host in &hosts {
-        host.uninstall_mcp(&bin)?;
-        host.uninstall_hooks(&bin)?;
-        eprintln!(
-            "  {} 已清理 ({})",
-            host.name(),
-            host.config_path().display()
-        );
-    }
-
-    eprintln!("remem uninstall 完成");
-    eprintln!("  数据目录 {} 保留不动", remem_data_dir().display());
-
-    Ok(())
 }

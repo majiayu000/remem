@@ -1,10 +1,10 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use serde::Serialize;
 
 use crate::{
     db,
     memory::preference,
-    user_context::{claims, recall},
+    user_context::{claims, preference_backfill, recall},
 };
 
 use super::shared::resolve_cwd_project;
@@ -80,6 +80,7 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
                 println!("User-context claim saved (id={}).", claim.id);
             }
         }
+        UserAction::Backfill { apply, json, limit } => run_user_backfill(apply, json, limit)?,
         UserAction::Claims { action } => {
             let conn = db::open_db()?;
             run_user_claims(&conn, action)?
@@ -118,6 +119,79 @@ pub(in crate::cli) fn run_user(action: UserAction) -> Result<()> {
         })?,
     }
     Ok(())
+}
+
+fn run_user_backfill(apply: bool, json: bool, limit: Option<i64>) -> Result<()> {
+    if let Some(limit) = limit {
+        ensure!(limit > 0, "backfill limit must be positive");
+    }
+
+    let request = preference_backfill::UserBackfillRequest { limit };
+    let report = if apply {
+        let mut conn = db::open_db_no_migrate()?;
+        preference_backfill::apply_backfill(&mut conn, &request)?
+    } else {
+        let conn = db::open_db_read_only()?;
+        preference_backfill::preview_backfill(&conn, &request)?
+    };
+    if json {
+        print_json(&report)?;
+    } else {
+        print_backfill_report(&report);
+    }
+    Ok(())
+}
+
+fn print_backfill_report(report: &preference_backfill::UserBackfillReport) {
+    print!("{}", format_backfill_report(report));
+}
+
+fn format_backfill_report(report: &preference_backfill::UserBackfillReport) -> String {
+    let limit = report
+        .limit
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unlimited".to_string());
+    let action = if report.applied { "applied" } else { "dry-run" };
+    let mut output = String::new();
+    output.push_str(&format!(
+        "User preference backfill {action}: candidates={}, converted={}, skipped={}, limit={}\n",
+        report.candidates.len(),
+        report.converted.len(),
+        report.skipped.len(),
+        limit
+    ));
+    output.push_str(&format!("{}\n\n", report.message));
+    output.push_str("Candidates:\n");
+    if report.candidates.is_empty() {
+        output.push_str("  (none)\n");
+    } else {
+        for candidate in &report.candidates {
+            output.push_str(&format!("  - memory:{}\n", candidate.memory_id));
+        }
+    }
+    output.push_str("Converted:\n");
+    if report.converted.is_empty() {
+        output.push_str("  (none)\n");
+    } else {
+        for converted in &report.converted {
+            output.push_str(&format!(
+                "  - memory:{} -> claim:{}\n",
+                converted.memory_id, converted.claim_id
+            ));
+        }
+    }
+    output.push_str("Skipped:\n");
+    if report.skipped.is_empty() {
+        output.push_str("  (none)\n");
+    } else {
+        for skipped in &report.skipped {
+            output.push_str(&format!(
+                "  - memory:{} reason={}\n",
+                skipped.memory_id, skipped.reason
+            ));
+        }
+    }
+    output
 }
 
 struct UserRecallCliRequest {
@@ -455,6 +529,87 @@ mod tests {
             budget_chars: 1_000,
             json: true,
         })
+    }
+
+    #[test]
+    fn user_backfill_dry_run_requires_existing_db_without_creating_it() {
+        let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-dry-run");
+        assert!(!dir.db_path().exists());
+
+        let err = run_user(UserAction::Backfill {
+            apply: false,
+            json: true,
+            limit: Some(5),
+        })
+        .expect_err("dry-run should require an existing database");
+
+        assert!(err.to_string().contains("database not found"));
+        assert!(!dir.db_path().exists());
+    }
+
+    #[test]
+    fn user_backfill_apply_requires_existing_db_without_creating_it() {
+        let dir = crate::db::test_support::ScopedTestDataDir::new("user-backfill-cli-apply");
+        assert!(!dir.db_path().exists());
+        let err = run_user(UserAction::Backfill {
+            apply: true,
+            json: false,
+            limit: None,
+        })
+        .expect_err("apply should require an existing database");
+        assert!(err.to_string().contains("database not found"));
+        assert!(!dir.db_path().exists());
+    }
+
+    #[test]
+    fn user_backfill_rejects_non_positive_limit() {
+        let err = run_user(UserAction::Backfill {
+            apply: false,
+            json: false,
+            limit: Some(0),
+        })
+        .expect_err("zero limit should be rejected");
+        assert!(err.to_string().contains("limit must be positive"));
+    }
+
+    #[test]
+    fn user_backfill_human_report_includes_row_level_audit() {
+        let dry_run = preference_backfill::UserBackfillReport {
+            applied: false,
+            limit: Some(10),
+            candidates: vec![preference_backfill::UserBackfillCandidate { memory_id: 101 }],
+            converted: Vec::new(),
+            skipped: vec![preference_backfill::UserBackfillSkipped {
+                memory_id: 202,
+                reason: "duplicate".to_string(),
+            }],
+            message: "Dry-run only; rerun with --apply to convert candidates.".to_string(),
+        };
+
+        let dry_run_output = format_backfill_report(&dry_run);
+        assert!(dry_run_output.contains("candidates=1"));
+        assert!(dry_run_output.contains("limit=10"));
+        assert!(dry_run_output.contains("Candidates:\n  - memory:101\n"));
+        assert!(dry_run_output.contains("Converted:\n  (none)\n"));
+        assert!(dry_run_output.contains("Skipped:\n  - memory:202 reason=duplicate\n"));
+
+        let applied = preference_backfill::UserBackfillReport {
+            applied: true,
+            limit: None,
+            candidates: Vec::new(),
+            converted: vec![preference_backfill::UserBackfillConverted {
+                memory_id: 101,
+                claim_id: 303,
+            }],
+            skipped: Vec::new(),
+            message: "User preference backfill applied.".to_string(),
+        };
+
+        let applied_output = format_backfill_report(&applied);
+        assert!(applied_output.contains("limit=unlimited"));
+        assert!(applied_output.contains("Candidates:\n  (none)\n"));
+        assert!(applied_output.contains("Converted:\n  - memory:101 -> claim:303\n"));
+        assert!(applied_output.contains("Skipped:\n  (none)\n"));
     }
 
     #[test]

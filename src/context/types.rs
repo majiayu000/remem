@@ -20,6 +20,7 @@ pub(super) struct ContextRequest {
 
 #[derive(Debug, Clone)]
 pub(super) struct SessionSummaryBrief {
+    pub id: i64,
     pub request: String,
     pub completed: Option<String>,
     pub created_at_epoch: i64,
@@ -33,11 +34,15 @@ pub(super) struct LoadedContext {
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
+    pub relevance_query: Option<String>,
     pub memory_abstained: bool,
     pub errors: Vec<ContextLoadError>,
     pub owner_traces: Vec<OwnerTrace>,
     pub owner_counts: OwnerCounts,
     pub diagnostics: ContextDiagnostics,
+    /// Shared rerank stage outcome for the SessionStart implicit query
+    /// (GH-851); `None` only in fixtures that bypass `load_context_data`.
+    pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
 }
 
 #[derive(Debug, Clone)]

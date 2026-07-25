@@ -10,25 +10,17 @@ import json
 import re
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
+from schema_validation import (
+    InstanceMismatch,
+    SchemaDefinitionError,
+    SpecRailError,
+    validate_instance,
+)
 
-SCHEMA_ANNOTATION_KEYS = {"$id", "$schema", "description", "title"}
-SUPPORTED_SCHEMA_KEYS = SCHEMA_ANNOTATION_KEYS | {
-    "additionalProperties",
-    "const",
-    "enum",
-    "exclusiveMaximum",
-    "exclusiveMinimum",
-    "items",
-    "minItems",
-    "minLength",
-    "minimum",
-    "properties",
-    "required",
-    "type",
-}
+
 DECISIONS = {"allowed", "warn", "needs_human", "blocked"}
 SPEC_STATUSES = frozenset(
     {
@@ -62,15 +54,16 @@ RUNTIME_STATE_MAPPING = {
     "waiting_ci": ("human_review", "ci_green"),
 }
 TERMINAL_BLOCKING_STATES = {
-    "abandoned",
-    "duplicate",
-    "reserved_internal",
-    "security_private",
+    "abandoned", "duplicate", "reserved_internal", "security_private",
 }
-
-
-class SpecRailError(ValueError):
-    """Raised when SpecRail configuration or evidence is malformed."""
+# GH142: legacy declaration parsing. Deliberately mirrors (not imports)
+# tools/spec_depth_audit.py so tools/ keeps zero checks/ dependencies; a third
+# copy is the trigger for extracting a shared module.
+LEGACY_STATUS_RE = re.compile(r"^\s*status:\s*legacy\s*$", re.IGNORECASE | re.MULTILINE)
+_LINKED_ISSUE_SECTION_RE = re.compile(
+    r"^#+\s+Linked Issue.*?$(?P<body>.*?)(?=^#+\s+|\Z)",
+    re.IGNORECASE | re.MULTILINE | re.DOTALL,
+)
 
 
 @dataclass(frozen=True)
@@ -86,6 +79,10 @@ def read_text(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except OSError as exc:
         raise SpecRailError(f"cannot read {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        # GH142 B-007 follow-up: an existing-but-undecodable spec must fail
+        # closed as a SpecRailError (blocked JSON) instead of a traceback.
+        raise SpecRailError(f"cannot decode {path} as UTF-8: {exc}") from exc
 
 
 def parse_scalar(value: str) -> Any:
@@ -194,138 +191,6 @@ def load_yaml_file(path: Path) -> Any:
     return parse_yaml_subset(read_text(path))
 
 
-def _json_type_matches(data: Any, expected_type: str) -> bool:
-    if expected_type == "object":
-        return isinstance(data, dict)
-    if expected_type == "array":
-        return isinstance(data, list)
-    if expected_type == "string":
-        return isinstance(data, str)
-    if expected_type == "integer":
-        return isinstance(data, int) and not isinstance(data, bool)
-    if expected_type == "number":
-        return isinstance(data, (int, float)) and not isinstance(data, bool)
-    if expected_type == "boolean":
-        return isinstance(data, bool)
-    if expected_type == "null":
-        return data is None
-    raise SpecRailError(f"unsupported JSON Schema type {expected_type!r}")
-
-
-def _schema_path(path: str, key: str) -> str:
-    return f"{path}.{key}" if path else key
-
-
-def _data_path(path: str, key: str) -> str:
-    return f"{path}.{key}" if path else key
-
-
-def validate_instance(schema: dict[str, Any], data: Any, path: str = "$") -> None:
-    """Validate data against the JSON Schema subset used by SpecRail.
-
-    This intentionally implements only the local schema subset. If a schema
-    starts using a new keyword, validation fails until this checker is extended.
-    """
-
-    unsupported = sorted(set(schema) - SUPPORTED_SCHEMA_KEYS)
-    if unsupported:
-        raise SpecRailError(
-            f"{path}: unsupported JSON Schema keyword {unsupported[0]!r}"
-        )
-
-    if "type" in schema:
-        expected = schema["type"]
-        expected_types = expected if isinstance(expected, list) else [expected]
-        if not all(isinstance(item, str) for item in expected_types):
-            raise SpecRailError(f"{path}: type must be a string or list of strings")
-        if not any(_json_type_matches(data, item) for item in expected_types):
-            joined = ", ".join(expected_types)
-            raise SpecRailError(f"{path}: expected type {joined}")
-
-    if "const" in schema and data != schema["const"]:
-        raise SpecRailError(f"{path}: expected const {schema['const']!r}")
-
-    if "enum" in schema:
-        enum = schema["enum"]
-        if not isinstance(enum, list):
-            raise SpecRailError(f"{path}: enum must be a list")
-        if data not in enum:
-            raise SpecRailError(f"{path}: value {data!r} is not in enum")
-
-    if "minLength" in schema:
-        if not isinstance(data, str):
-            raise SpecRailError(f"{path}: minLength requires a string instance")
-        if len(data) < int(schema["minLength"]):
-            raise SpecRailError(f"{path}: string is shorter than minLength")
-
-    if "minItems" in schema:
-        if not isinstance(data, list):
-            raise SpecRailError(f"{path}: minItems requires an array instance")
-        if len(data) < int(schema["minItems"]):
-            raise SpecRailError(f"{path}: array is shorter than minItems")
-
-    if "minimum" in schema:
-        if not _json_type_matches(data, "number"):
-            raise SpecRailError(f"{path}: minimum requires a number instance")
-        if data < schema["minimum"]:
-            raise SpecRailError(f"{path}: value is below minimum")
-
-    if "exclusiveMinimum" in schema:
-        if not _json_type_matches(data, "number"):
-            raise SpecRailError(f"{path}: exclusiveMinimum requires a number instance")
-        if data <= schema["exclusiveMinimum"]:
-            raise SpecRailError(f"{path}: value is not above exclusiveMinimum")
-
-    if "exclusiveMaximum" in schema:
-        if not _json_type_matches(data, "number"):
-            raise SpecRailError(f"{path}: exclusiveMaximum requires a number instance")
-        if data >= schema["exclusiveMaximum"]:
-            raise SpecRailError(f"{path}: value is not below exclusiveMaximum")
-
-    if "required" in schema:
-        if not isinstance(data, dict):
-            raise SpecRailError(f"{path}: required fields need an object instance")
-        required = schema["required"]
-        if not isinstance(required, list) or not all(isinstance(item, str) for item in required):
-            raise SpecRailError(f"{path}: required must be a list of strings")
-        for key in required:
-            if key not in data:
-                raise SpecRailError(f"{_data_path(path, key)}: missing required field")
-
-    properties = schema.get("properties", {})
-    if properties is not None and not isinstance(properties, dict):
-        raise SpecRailError(f"{path}: properties must be an object")
-    if isinstance(data, dict) and isinstance(properties, dict):
-        for key, child_schema in properties.items():
-            if key not in data:
-                continue
-            if not isinstance(child_schema, dict):
-                raise SpecRailError(f"{_schema_path(path, key)}: property schema must be an object")
-            validate_instance(child_schema, data[key], _data_path(path, key))
-
-        additional = schema.get("additionalProperties", True)
-        if additional is False:
-            extra_keys = sorted(set(data) - set(properties))
-            if extra_keys:
-                raise SpecRailError(
-                    f"{_data_path(path, extra_keys[0])}: additional property is not allowed"
-                )
-        elif isinstance(additional, dict):
-            for key in sorted(set(data) - set(properties)):
-                validate_instance(additional, data[key], _data_path(path, key))
-        elif additional is not True:
-            raise SpecRailError(f"{path}: additionalProperties must be boolean or object")
-
-    if "items" in schema:
-        if not isinstance(data, list):
-            raise SpecRailError(f"{path}: items requires an array instance")
-        item_schema = schema["items"]
-        if not isinstance(item_schema, dict):
-            raise SpecRailError(f"{path}: items must be an object")
-        for index, item in enumerate(data):
-            validate_instance(item_schema, item, f"{path}[{index}]")
-
-
 def load_pack(repo: Path) -> PackConfig:
     repo = repo.resolve()
     return PackConfig(
@@ -384,6 +249,223 @@ def render_artifact_path(config: PackConfig, artifact: str, issue: int | None) -
         template.replace("{issue_number}", str(issue))
         .replace("{work_id}", work_id_for_issue(issue) or "")
     )
+
+
+def validated_artifact_path(
+    config: PackConfig,
+    artifact: str,
+    issue: int,
+) -> PurePosixPath:
+    rendered = render_artifact_path(config, artifact, issue)
+    label = f"workflow.yaml: artifacts.{artifact}"
+    if not rendered:
+        raise SpecRailError(f"{label} is required")
+    return validated_repo_relative_path(rendered, label=label)
+
+
+def validated_repo_relative_path(raw: str, *, label: str) -> PurePosixPath:
+    if "\\" in raw:
+        raise SpecRailError(f"{label} must use repo-relative POSIX paths")
+    candidate = PurePosixPath(raw.rstrip("/"))
+    windows_candidate = PureWindowsPath(raw.rstrip("/"))
+    has_windows_drive_component = any(":" in part for part in candidate.parts)
+    if (
+        candidate.is_absolute()
+        or windows_candidate.drive
+        or has_windows_drive_component
+        or ".." in candidate.parts
+    ):
+        raise SpecRailError(f"{label} must stay within the repository")
+    if "{" in raw or "}" in raw:
+        raise SpecRailError(f"{label} contains an unsupported placeholder")
+    return candidate
+
+
+def spec_packet_root(config: PackConfig) -> PurePosixPath:
+    template = artifact_templates(config).get("spec_packet")
+    if not template:
+        raise SpecRailError("workflow.yaml: artifacts.spec_packet is required")
+    if "{issue_number}" not in template and "{work_id}" not in template:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet must contain "
+            "{issue_number} or {work_id}"
+        )
+    first = validated_artifact_path(config, "spec_packet", 1)
+    second = validated_artifact_path(config, "spec_packet", 2)
+    if first.name != "GH1" or second.name != "GH2":
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet must render its final directory "
+            "as GH<number>"
+        )
+    if first.parent != second.parent:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet parent directory must not depend "
+            "on the issue number"
+        )
+    return first.parent
+
+
+def _spec_packet_artifact_paths(config: PackConfig, issue: int) -> dict[str, str]:
+    packet = validated_artifact_path(config, "spec_packet", issue)
+    paths = {"spec_packet": packet.as_posix()}
+    expected_files = {
+        "product_spec": "product.md",
+        "tech_spec": "tech.md",
+        "task_plan": "tasks.md",
+    }
+    for artifact, filename in expected_files.items():
+        path = validated_artifact_path(config, artifact, issue)
+        expected = packet / filename
+        if path != expected:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} must render inside "
+                f"artifacts.spec_packet as {filename}"
+            )
+        paths[artifact] = path.as_posix()
+    return paths
+
+
+def spec_packet_artifact_paths(
+    config: PackConfig,
+    issue: int,
+    *,
+    repo: Path | None = None,
+) -> dict[str, str]:
+    configured_root = spec_packet_root(config)
+    probe_paths = {
+        probe_issue: _spec_packet_artifact_paths(config, probe_issue)
+        for probe_issue in (1, 2)
+    }
+    paths = probe_paths.get(issue) or _spec_packet_artifact_paths(config, issue)
+    if repo is not None:
+        _validate_resolved_spec_packet_paths(repo, configured_root, paths)
+    return paths
+
+
+def spec_is_legacy(repo: Path, config: PackConfig, issue: int) -> bool:
+    """Report whether the issue's product.md declares ``status: legacy``.
+
+    The declaration only counts inside the Linked Issue section (GH142 B-002).
+    A missing product.md is not legacy (the missing-artifact gate owns that
+    case). A product.md that exists but cannot be read raises
+    :class:`SpecRailError` so callers fail closed (GH142 B-007).
+    """
+
+    paths = spec_packet_artifact_paths(config, issue, repo=repo)
+    product = resolve_repo_path(
+        repo,
+        paths["product_spec"],
+        label="workflow.yaml: artifacts.product_spec",
+    )
+    if not product.exists():
+        return False
+    text = read_text(product)
+    match = _LINKED_ISSUE_SECTION_RE.search(text)
+    if match is None:
+        return False
+    return bool(LEGACY_STATUS_RE.search(match.group("body")))
+
+
+def resolve_path(path: Path, *, label: str) -> Path:
+    missing_parts: list[str] = []
+    try:
+        candidate = path.absolute()
+        while True:
+            try:
+                candidate.lstat()
+            except FileNotFoundError:
+                parent = candidate.parent
+                if parent == candidate:
+                    raise
+                missing_parts.append(candidate.name)
+                candidate = parent
+                continue
+            break
+        resolved_path = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise SpecRailError(f"{label} could not be resolved: {exc}") from exc
+    return resolved_path.joinpath(*reversed(missing_parts))
+
+
+def resolve_repo_path(repo: Path, raw: str | PurePosixPath, *, label: str) -> Path:
+    relative_path = validated_repo_relative_path(str(raw), label=label)
+    resolved_repo = resolve_path(repo, label="repository")
+    resolved_path = resolve_path(
+        resolved_repo.joinpath(*relative_path.parts),
+        label=label,
+    )
+    try:
+        resolved_path.relative_to(resolved_repo)
+    except ValueError as exc:
+        raise SpecRailError(f"{label} resolves outside the repository") from exc
+    return resolved_path
+
+
+def resolve_spec_packet_root(repo: Path, configured_root: PurePosixPath) -> Path:
+    resolved_repo = resolve_path(repo, label="repository")
+    resolved_root = resolve_repo_path(
+        repo,
+        configured_root,
+        label="workflow.yaml: configured spec packet root",
+    )
+    expected_root = resolved_repo.joinpath(*configured_root.parts)
+    if resolved_root != expected_root:
+        raise SpecRailError(
+            "workflow.yaml: configured spec packet root must preserve its "
+            "configured identity after resolution"
+        )
+    return resolved_root
+
+
+def _validate_resolved_spec_packet_paths(
+    repo: Path,
+    configured_root: PurePosixPath,
+    paths: dict[str, str],
+) -> None:
+    resolved_root = resolve_spec_packet_root(repo, configured_root)
+    resolved_packet = resolve_repo_path(
+        repo,
+        paths["spec_packet"],
+        label="workflow.yaml: artifacts.spec_packet",
+    )
+    try:
+        resolved_packet.relative_to(resolved_root)
+    except ValueError as exc:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet resolves outside the "
+            "configured spec packet root"
+        ) from exc
+
+    expected_packet = resolved_root / PurePosixPath(paths["spec_packet"]).name
+    if resolved_packet != expected_packet:
+        raise SpecRailError(
+            "workflow.yaml: artifacts.spec_packet does not preserve its "
+            "configured packet identity after resolution"
+        )
+
+    expected_files = {
+        "product_spec": "product.md",
+        "tech_spec": "tech.md",
+        "task_plan": "tasks.md",
+    }
+    for artifact, filename in expected_files.items():
+        resolved_artifact = resolve_repo_path(
+            repo,
+            paths[artifact],
+            label=f"workflow.yaml: artifacts.{artifact}",
+        )
+        try:
+            resolved_artifact.relative_to(resolved_packet)
+        except ValueError as exc:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} resolves outside the "
+                "configured spec packet"
+            ) from exc
+        if resolved_artifact != resolved_packet / filename:
+            raise SpecRailError(
+                f"workflow.yaml: artifacts.{artifact} does not preserve its "
+                "configured artifact identity after resolution"
+            )
 
 
 def infer_state(config: PackConfig, state: str | None, labels: list[str]) -> tuple[str | None, list[str]]:
@@ -455,51 +537,6 @@ def validate_action_policy(config: PackConfig) -> list[str]:
         for state in allowed_from:
             if str(state) not in states:
                 errors.append(f"workflow.yaml: action {route} references unknown state {state}")
-    return errors
-
-
-def validate_template_parity(repo: Path) -> list[str]:
-    errors: list[str] = []
-    root = repo / "templates"
-    zh = root / "zh-CN"
-    base_files = sorted(path.name for path in root.glob("*.md"))
-    zh_files = sorted(path.name for path in zh.glob("*.md")) if zh.is_dir() else []
-    for name in base_files:
-        if name not in zh_files:
-            errors.append(f"templates/zh-CN: missing localized template {name}")
-    for name in zh_files:
-        if name not in base_files:
-            errors.append(f"templates/zh-CN/{name}: no matching base template")
-    stable_tokens = ["GH-", "ready_to_spec", "ready_to_implement"]
-    for name in ["issue_feature.md", "product_spec.md", "tech_spec.md", "pull_request.md"]:
-        for rel in [Path("templates") / name, Path("templates/zh-CN") / name]:
-            path = repo / rel
-            if not path.is_file():
-                continue
-            text = read_text(path)
-            for token in stable_tokens:
-                if token in read_text(repo / "templates" / name) and token not in text:
-                    errors.append(f"{rel}: missing stable token {token}")
-    return errors
-
-
-def validate_json_schemas(repo: Path) -> list[str]:
-    errors: list[str] = []
-    schema_dir = repo / "schemas"
-    if not schema_dir.is_dir():
-        return ["missing schemas/ directory"]
-    for path in sorted(schema_dir.glob("*.schema.json")):
-        try:
-            data = json.loads(read_text(path))
-        except json.JSONDecodeError as exc:
-            errors.append(f"{path.relative_to(repo)}: invalid JSON: {exc.msg}")
-            continue
-        if "$schema" not in data:
-            errors.append(f"{path.relative_to(repo)}: missing $schema")
-        if "title" not in data:
-            errors.append(f"{path.relative_to(repo)}: missing title")
-        if data.get("type") != "object":
-            errors.append(f"{path.relative_to(repo)}: top-level type must be object")
     return errors
 
 

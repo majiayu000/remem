@@ -19,6 +19,13 @@ OUTPUT FORMAT
 -------------
 Create 1-2 compressed observations. Each one should capture a coherent theme.
 
+TYPE CONTRACT
+-------------
+ALLOWED_OBSERVATION_TYPES=[bugfix,feature,refactor,discovery,decision,change]
+- `<type>` MUST exactly match one value from ALLOWED_OBSERVATION_TYPES.
+- Preserve user preferences and project conventions by mapping them to the closest allowed type: use `decision` for a durable choice or rule, and `change` for an adopted convention or behavior change.
+- Never output `<type>preference</type>` or any type outside ALLOWED_OBSERVATION_TYPES.
+
 ```xml
 <observation>
   <type>decision</type>

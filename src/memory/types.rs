@@ -377,7 +377,11 @@ pub mod tests_helper {
                 expires_at_epoch INTEGER,
                 valid_from_epoch INTEGER,
                 valid_to_epoch INTEGER,
-                state_key_id INTEGER
+                state_key_id INTEGER,
+                source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
+                acknowledged_pattern_id TEXT,
+                acknowledged_pattern_version INTEGER,
+                acknowledged_at_epoch INTEGER
             );
             CREATE TABLE memory_state_keys (
                 id INTEGER PRIMARY KEY,
@@ -433,6 +437,20 @@ pub mod tests_helper {
                 staleness TEXT,
                 injected_at_epoch INTEGER NOT NULL
             );
+            CREATE TABLE memory_poisoning_injection_drops (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                memory_id INTEGER NOT NULL,
+                pattern_id TEXT NOT NULL,
+                pattern_version INTEGER NOT NULL,
+                source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
+                source_project TEXT,
+                title TEXT,
+                created_at_epoch INTEGER NOT NULL
+            );
+            CREATE INDEX idx_memory_poisoning_drops_created
+                ON memory_poisoning_injection_drops(created_at_epoch DESC, id DESC);
+            CREATE INDEX idx_memory_poisoning_drops_pattern
+                ON memory_poisoning_injection_drops(pattern_id, pattern_version, created_at_epoch DESC);
             CREATE TABLE memory_citation_events (
                 id INTEGER PRIMARY KEY,
                 host TEXT NOT NULL,
@@ -531,30 +549,6 @@ pub mod tests_helper {
                 ON dream_cluster_decisions(project, decision, next_review_epoch);
             CREATE INDEX idx_dream_cluster_decisions_signature
                 ON dream_cluster_decisions(project, memory_type, cluster_signature);
-            CREATE VIRTUAL TABLE memories_fts USING fts5(
-                title, content, search_context,
-                content='memories',
-                content_rowid='id',
-                tokenize='trigram'
-            );
-            CREATE TRIGGER memories_ai AFTER INSERT ON memories BEGIN
-                INSERT INTO memories_fts(rowid, title, content, search_context)
-                SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
-                WHERE new.status = 'active';
-            END;
-            CREATE TRIGGER memories_au AFTER UPDATE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
-                SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
-                WHERE old.status = 'active';
-                INSERT INTO memories_fts(rowid, title, content, search_context)
-                SELECT new.id, new.title, new.content, COALESCE(new.search_context, '')
-                WHERE new.status = 'active';
-            END;
-            CREATE TRIGGER memories_ad AFTER DELETE ON memories BEGIN
-                INSERT INTO memories_fts(memories_fts, rowid, title, content, search_context)
-                SELECT 'delete', old.id, old.title, old.content, COALESCE(old.search_context, '')
-                WHERE old.status = 'active';
-            END;
             CREATE TABLE events (
                 id INTEGER PRIMARY KEY,
                 session_id TEXT NOT NULL,
@@ -621,6 +615,15 @@ pub mod tests_helper {
                 created_at_epoch INTEGER NOT NULL
             );",
         )
+        .unwrap();
+        conn.execute_batch(include_str!("../migrations/v020_memory_fts_all_status.sql"))
+            .unwrap();
+        // v072 owns the enrichment columns, the compatibility singleton, and
+        // the canonical memories_au trigger; running the real migration keeps
+        // this fixture byte-identical to the migrated schema for those objects.
+        conn.execute_batch(include_str!(
+            "../migrations/v072_memory_retrieval_enrichment.sql"
+        ))
         .unwrap();
     }
 }

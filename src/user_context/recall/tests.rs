@@ -6,8 +6,8 @@ use crate::{
     memory,
     memory::suppression::{create_suppression, parse_target, SuppressRequest},
     user_context::claims::{
-        create_manual_claim, suppress_claim, ManualClaimRequest, UserContextClaimType,
-        UserContextSensitivity,
+        create_manual_claim, create_preference_backfill_claim, suppress_claim, ManualClaimRequest,
+        PreferenceBackfillClaimRequest, UserContextClaimType, UserContextSensitivity,
     },
 };
 
@@ -120,6 +120,46 @@ fn recall_combines_user_claim_repo_memory_workstream_and_session() -> Result<()>
 }
 
 #[test]
+fn recall_includes_semantic_rollup_session_but_excludes_synthetic_range_title() -> Result<()> {
+    let conn = migrated_conn()?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, decisions, learned,
+          next_steps, preferences, created_at_epoch, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES
+         ('rollup-1', '/repo', 'Captured event range 1..3', 'synthetic rollup text',
+          '', '', '', '', 10, 1, 1, 3),
+         ('rollup-2', '/repo', 'rollup structured recall', 'semantic rollup text',
+          'SessionRollup owns structured fields.', 'reader migration works',
+          'keep regression coverage', 'preserve preferences', 11, 2, 4, 6),
+         ('rollup-3', '/repo', 'Captured event range 7..9', 'fallback title summary',
+          'SessionRollup fallback request still preserves structured decisions.',
+          'reader keeps synthetic request hidden', '', '', 12, 3, 7, 9)",
+        [],
+    )?;
+
+    let result = recall_user_context(&conn, &request("rollup structured fallback"))?;
+
+    assert!(!result.empty);
+    assert!(result.included.iter().any(|item| {
+        item.source_type == "session_summary"
+            && item.title.as_deref() == Some("rollup structured recall")
+            && item.text.contains("SessionRollup owns structured fields")
+            && item.text.contains("preserve preferences")
+    }));
+    assert!(result.included.iter().any(|item| {
+        item.source_type == "session_summary"
+            && item.title.as_deref()
+                == Some("SessionRollup fallback request still preserves structured decisions.")
+            && item.text.contains("reader keeps synthetic request hidden")
+    }));
+    assert!(!result.context.contains("Captured event range 1..3"));
+    assert!(!result.context.contains("Captured event range 7..9"));
+    Ok(())
+}
+
+#[test]
 fn recall_returns_user_only_claim_context() -> Result<()> {
     let conn = migrated_conn()?;
     let claim_id = claim(
@@ -168,6 +208,41 @@ fn recall_returns_repo_only_memory_context() -> Result<()> {
         .included
         .iter()
         .any(|item| item.source_type == "user_claim"));
+    Ok(())
+}
+
+#[test]
+fn recall_excludes_backfilled_user_preference_memory_duplicate() -> Result<()> {
+    let conn = migrated_conn()?;
+    insert_user_preference_memory(
+        &conn,
+        15,
+        "Backfilled recall preference",
+        "Prefer backfilled recall dedupe",
+    )?;
+    let claim = create_preference_backfill_claim(
+        &conn,
+        &PreferenceBackfillClaimRequest {
+            memory_id: 15,
+            text: "Prefer backfilled recall dedupe",
+        },
+    )?;
+
+    let result = recall_user_context(&conn, &request("backfilled recall dedupe"))?;
+
+    assert!(result
+        .included
+        .iter()
+        .any(|item| item.source_type == "user_claim" && item.source_id == Some(claim.id)));
+    assert!(!result
+        .included
+        .iter()
+        .any(|item| item.source_type == "memory" && item.source_id == Some(15)));
+    assert!(result.dropped.iter().any(|item| {
+        item.source_type == "memory"
+            && item.source_id == Some(15)
+            && item.reason_code == "backfilled_as_user_claim"
+    }));
     Ok(())
 }
 
@@ -374,6 +449,24 @@ fn seed_current_state(conn: &Connection) -> Result<()> {
     conn.execute(
         "UPDATE memory_state_keys SET current_memory_id = 2 WHERE id = 10",
         [],
+    )?;
+    Ok(())
+}
+
+fn insert_user_preference_memory(
+    conn: &Connection,
+    id: i64,
+    title: &str,
+    text: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, NULL, '/repo', NULL, ?2, ?3, 'preference', NULL,
+                 10, 10, 'active', NULL, 'global', '/repo', NULL, 'user', 'user:default')",
+        rusqlite::params![id, title, text],
     )?;
     Ok(())
 }

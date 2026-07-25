@@ -238,7 +238,7 @@ fn query_recent_summaries_excludes_tool_and_domain_owned_rows() {
 }
 
 #[test]
-fn query_recent_summaries_excludes_capture_rollup_rows() {
+fn query_recent_summaries_uses_semantic_rollup_rows_without_synthetic_noise() {
     let conn = Connection::open_in_memory().unwrap();
     create_session_summary_schema(&conn);
     let project = "/tmp/remem";
@@ -252,17 +252,86 @@ fn query_recent_summaries_excludes_capture_rollup_rows() {
     );
     conn.execute(
         "INSERT INTO session_summaries
-         (project, request, completed, created_at_epoch, session_row_id,
+         (memory_session_id, project, request, completed, created_at_epoch, session_row_id,
           covered_from_event_id, covered_to_event_id)
-         VALUES (?1, 'Captured event range 1..3', 'Capture rollup text', 301, 10, 1, 3)",
+         VALUES ('capture-rollup-10', ?1, 'Captured event range 1..3',
+                 'Capture rollup text', 301, 10, 1, 3)",
+        rusqlite::params![project],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, created_at_epoch, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('capture-rollup-11', ?1, 'Retire legacy Summary writer',
+                 'Rollup now carries semantic fields', 302, 11, 4, 6)",
+        rusqlite::params![project],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, decisions, created_at_epoch,
+          session_row_id, covered_from_event_id, covered_to_event_id)
+         VALUES ('capture-rollup-12', ?1, 'Captured event range 7..9',
+                 'Rollup summary without request', 'Rollup structured decision',
+                 303, 12, 7, 9)",
         rusqlite::params![project],
     )
     .unwrap();
 
     let summaries = query_recent_summaries(&conn, project, 10).unwrap();
+    let requests = summaries
+        .iter()
+        .map(|summary| summary.request.as_str())
+        .collect::<Vec<_>>();
 
-    assert_eq!(summaries.len(), 1);
-    assert_eq!(summaries[0].request, "Legacy user-facing summary");
+    assert_eq!(
+        requests,
+        vec![
+            "Rollup structured decision",
+            "Retire legacy Summary writer",
+            "Legacy user-facing summary"
+        ]
+    );
+    assert!(!requests.contains(&"Captured event range 1..3"));
+    assert!(!requests.contains(&"Captured event range 7..9"));
+}
+
+#[test]
+fn query_recent_summaries_dedupes_session_identity_before_limit() {
+    let conn = Connection::open_in_memory().unwrap();
+    create_session_summary_schema(&conn);
+    let project = "/tmp/remem";
+
+    conn.execute(
+        "INSERT INTO sessions (id, session_id) VALUES (20, 'abcdefgh-captured')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, request, completed, created_at_epoch, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES
+         ('capture-rollup-20', ?1, 'Newest rollup range',
+          'First visible rollup', 303, 20, 4, 6),
+         ('capture-rollup-20', ?1, 'Older rollup range',
+          'Same captured session', 302, 20, 1, 3),
+         ('mem-abcdefgh', ?1, 'Legacy Summary phrasing',
+          'Same dual-written session', 301, NULL, NULL, NULL),
+         ('session-other', ?1, 'Separate session',
+          'Must survive the limit', 300, NULL, NULL, NULL)",
+        rusqlite::params![project],
+    )
+    .unwrap();
+
+    let summaries = query_recent_summaries(&conn, project, 2).unwrap();
+    let requests = summaries
+        .iter()
+        .map(|summary| summary.request.as_str())
+        .collect::<Vec<_>>();
+
+    assert_eq!(requests, vec!["Newest rollup range", "Separate session"]);
 }
 
 fn insert_owned_summary(

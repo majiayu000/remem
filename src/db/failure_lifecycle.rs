@@ -16,7 +16,8 @@ use maintenance::{
 };
 use query::{query_surface_stats, SurfaceQuery};
 use sql::{
-    count_archived_rows, count_purgeable_extraction_tasks, cutoff_epoch, failure_columns_available,
+    column_exists, count_archived_rows, count_purgeable_extraction_tasks, cutoff_epoch,
+    failure_columns_available, table_exists,
 };
 
 pub const FAILURE_RETENTION_DAYS: i64 = 14;
@@ -67,6 +68,7 @@ pub struct FailureLifecycleMaintenance {
     pub retried_extraction_replay_ranges: usize,
     pub retried_extraction_tasks: usize,
     pub retried_jobs: usize,
+    pub coalesced_jobs: usize,
     pub archived_pending_observations: usize,
     pub archived_extraction_tasks: usize,
     pub archived_extraction_replay_ranges: usize,
@@ -100,6 +102,7 @@ pub fn classify_failure(error: &str) -> FailureClass {
         "unsupported version",
         "missing evidence",
         "not implemented",
+        "retired",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -114,13 +117,14 @@ pub fn query_failure_lifecycle_stats(
     conn: &Connection,
     now_epoch: i64,
 ) -> Result<FailureLifecycleStats> {
+    let job_failed_predicate = job_failed_predicate(conn)?;
     Ok(FailureLifecycleStats {
         pending_observation: query_surface_stats(
             conn,
             SurfaceQuery {
                 surface: "pending_observation",
                 table: "pending_observations",
-                failed_predicate: "status = 'failed'",
+                failed_predicate: "status = 'failed'".into(),
                 attempt_column: "attempt_count",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -132,7 +136,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "extraction_task",
                 table: "extraction_tasks",
-                failed_predicate: "status = 'failed'",
+                failed_predicate: "status = 'failed'".into(),
                 attempt_column: "attempts",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -144,7 +148,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "extraction_replay_range",
                 table: "extraction_replay_ranges",
-                failed_predicate: "status IN ('pending', 'failed', 'quarantined')",
+                failed_predicate: "status IN ('pending', 'failed', 'quarantined')".into(),
                 attempt_column: "attempts",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -156,7 +160,7 @@ pub fn query_failure_lifecycle_stats(
             SurfaceQuery {
                 surface: "job",
                 table: "jobs",
-                failed_predicate: "state = 'failed'",
+                failed_predicate: job_failed_predicate,
                 attempt_column: "attempt_count",
                 created_column: "created_at_epoch",
                 updated_column: "updated_at_epoch",
@@ -166,15 +170,35 @@ pub fn query_failure_lifecycle_stats(
     })
 }
 
+fn job_failed_predicate(conn: &Connection) -> Result<std::borrow::Cow<'static, str>> {
+    if table_exists(conn, "jobs")?
+        && column_exists(conn, "jobs", "job_type")?
+        && column_exists(conn, "jobs", "failure_class")?
+        && column_exists(conn, "jobs", "last_error")?
+    {
+        Ok("state = 'failed'
+            AND NOT (
+              job_type = 'summary'
+              AND failure_class = 'permanent'
+              AND last_error = 'legacy summary job rejected during GH684 summary retirement upgrade; SessionRollup owns session summary output'
+            )"
+        .into())
+    } else {
+        Ok("state = 'failed'".into())
+    }
+}
+
 pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleMaintenance> {
     if !failure_columns_available(conn)? {
         return Ok(FailureLifecycleMaintenance::default());
     }
     let now = chrono::Utc::now().timestamp();
+    let job_recovery = requeue_due_jobs(conn, now)?;
     let mut result = FailureLifecycleMaintenance {
         retried_extraction_replay_ranges: retry_due_extraction_replay_ranges(conn, now)?,
         retried_extraction_tasks: requeue_due_extraction_tasks(conn, now)?,
-        retried_jobs: requeue_due_jobs(conn, now)?,
+        retried_jobs: job_recovery.requeued,
+        coalesced_jobs: job_recovery.coalesced,
         ..FailureLifecycleMaintenance::default()
     };
     let archived = archive_eligible_failures(conn, now, FAILURE_RETENTION_DAYS)?;
@@ -186,6 +210,7 @@ pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleM
     if result.retried_extraction_replay_ranges > 0
         || result.retried_extraction_tasks > 0
         || result.retried_jobs > 0
+        || result.coalesced_jobs > 0
         || result.archived_pending_observations > 0
         || result.archived_extraction_tasks > 0
         || result.archived_extraction_replay_ranges > 0
@@ -194,10 +219,11 @@ pub fn maintain_failure_lifecycle(conn: &Connection) -> Result<FailureLifecycleM
         crate::log::info(
             "failure_lifecycle",
             &format!(
-                "maintenance retried replay_ranges={} extraction_tasks={} jobs={} archived pending_observations={} extraction_tasks={} replay_ranges={} jobs={}",
+                "maintenance retried replay_ranges={} extraction_tasks={} jobs={} coalesced_jobs={} archived pending_observations={} extraction_tasks={} replay_ranges={} jobs={}",
                 result.retried_extraction_replay_ranges,
                 result.retried_extraction_tasks,
                 result.retried_jobs,
+                result.coalesced_jobs,
                 result.archived_pending_observations,
                 result.archived_extraction_tasks,
                 result.archived_extraction_replay_ranges,

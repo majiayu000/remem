@@ -6,11 +6,13 @@
 ┌───────────────────────────────────────────────────────────┐
 │              Host Hooks (Claude Code / Codex)              │
 │                                                            │
-│  Claude Code: SessionStart/UserPromptSubmit/PostToolUse/Stop│
+│  Claude: SessionStart/UserPromptSubmit/PreToolUse/PostToolUse│
+│          /Stop                                              │
 │  Codex:       SessionStart/Stop                             │
 │                                                            │
 │  SessionStart ──────→ context       (inject memories)      │
 │  UserPromptSubmit ──→ session-init  (Claude Code only)     │
+│  PreToolUse(Bash) ──→ rules eval    (Claude Code only)     │
 │  PostToolUse ───────→ observe       (Claude Code)           │
 │  Stop ──────────────→ summarize     (3-gate + worker)      │
 └──────────────┬──────────────────────┬──────────────────────┘
@@ -23,6 +25,7 @@
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │
+│                      │  │  5. compile preference rules        │
 │  save_memory         │  │                                    │
 │  workstreams         │  │  Timeout: 180s global limit        │
 │  update_workstream   │  │                                    │
@@ -35,7 +38,7 @@
 │  captured_events → extraction_tasks → observations         │
 │  memories (decision/bugfix/preference/discovery/...)       │
 │  session_summaries    workstreams    FTS5 full-text index   │
-│  summarize_cooldown   ai_usage_events                      │
+│  git_commits ↔ git_commit_sessions    ai_usage_events       │
 └───────────────────────────────────────────────────────────┘
 ```
 
@@ -50,6 +53,14 @@ slice: hooks write append-only `captured_events`, large evidence goes to
 host/project/session/task kind. This ledger is evidence and scheduling state;
 durable memory is still created only after extraction, candidate review, and
 promotion.
+
+Only successful explicit `git commit` calls produce linkable Git evidence.
+Claude PostToolUse reads the successful Bash result; Codex Stop reads the
+byte-bounded transcript and pairs shell calls with successful outputs. The
+resolved metadata for each proven SHA is stored in `captured_event_commits`
+before database open/spill. Deterministic worker phases consume only the exact
+claimed event range, key links by `session_row_id`, and never infer a commit
+from an ordinary Stop event or worker-time `HEAD`.
 
 ## Module Overview (~9000 lines Rust)
 
@@ -66,6 +77,7 @@ promotion.
 | `cli/actions.rs` | 385 | CLI command implementations and formatted output |
 | `context.rs` | 368 | Context rendering: preferences + core + index + workstreams + sessions |
 | `preference.rs` | 352 | Preference management: query, render, CLI ops |
+| `rules/` | — | Compiled-rule schema, worker compiler, artifact evaluator, overrides, and diagnostics |
 | `observe.rs` | 287 | Bash filter + capture ledger writes + type checks |
 | `db_pending.rs` | 261 | Legacy pending observations management |
 | `search.rs` | 251 | Search entry: filtered retrieval + pagination |
@@ -118,55 +130,197 @@ redacted tool evidence in `captured_events`; large payloads spill to
 `event_blobs`. The write also coalesces one `observation_extract`
 `extraction_tasks` row per host/project/session/task kind.
 
+Cursor (GH-823) enters this same ledger through a separate strict boundary
+(`src/cursor_hook/` + `src/observe/cursor.rs`): a bounded 1 MiB stdin reader,
+fail-closed payload validation against the Cursor 3.12.17 evidence,
+`user_email` PII removal, `tool_use_id` as the canonical per-call event key,
+and the existing `captured_events.event_type = "cursor_tool_failure"` text
+discriminator for the observed failed-Read path. MCP-specific Cursor events
+stay unregistered (generic ownership), and `session-init` remains
+unsupported/fail-closed on Cursor. Stop-time transcript capture (GH-825) and
+the install surface (GH-824) are described below.
+
+#### Cursor host data flow (GH-823/824/825)
+
+```
+Cursor hook payload (stdin, bounded 1 MiB)
+       │
+       ├─ observe: strict fail-closed parse of the verified generic
+       │  tool event (tool_use_id = per-call identity, user_email
+       │  removed pre-capture) ──→ captured_events / event_blobs,
+       │  with spill-and-replay when the DB is unavailable
+       │
+       └─ stop: full Stop validation (status ∈ {completed, aborted},
+          canonical key = session_id:generation_id:loop_count)
+               │
+               ├─ Stop-time transcript snapshot (bounded read); every
+               │  failure maps to an explicit degraded/<reason> marker
+               │  in the durable session_stop payload — payload-only
+               │  fallback, never a silent drop
+               └─ enqueue the same SessionRollup path as Claude/Codex
+```
+
+`remem summarize --host cursor` wires the GH-825 snapshot into the shared
+rollup worker; the worker never reopens the original transcript path, and
+capture fidelity (`full` vs `degraded/<reason>`) stays auditable from the
+ledger.
+
+The install surface (GH-824, `src/install/cursor_config/` +
+`src/install/hosts/cursor.rs`) owns the user-level `~/.cursor/hooks.json`
+and `~/.cursor/mcp.json` through a strict whole-document parser, a
+read-only preflight, and a staged-apply coordinator with compensating
+rollback plus an install receipt for exact structural ownership. Contract
+v1 registers exactly one MCP component and no hook entries: the observe and
+summarize capability gates are closed until the corresponding runtime
+policies are approved, so installing does not enable automatic Cursor
+capture. `sessionStart` injection is blocked on the evidenced Cursor
+version and never installs. The platform gate approves the hook command
+renderer only on macOS/Linux; Windows fails closed (explicit error for
+`--target cursor`/`all`, skip diagnostic for `--target auto`).
+
+`remem doctor` reports Cursor as separate dimensions instead of one
+"installed" boolean — `detected`, `configured`, `configured_mode`,
+`malformed`, `partial_state`, `drift`, `collision`, per-capability
+`effective` lines — plus the fixed
+`hook_failure_policy: host_continues` and
+`session-init: not supported on cursor` lines.
+
 ### 3. Background Distillation (Stop → summarize + worker)
 
 ```
 Stop hook fires
        │
-       ├─ Enqueue summary/compress/dream jobs
-       └─ Spawn background worker (6ms return)
+       ├─ Capture session_stop → coalesced SessionRollup task
+       ├─ Record immediately available citations + failure lessons
+       └─ Ensure a current background worker is available
        │
        ▼
-  summary worker claims job
+  worker claims extraction_tasks before background jobs
        │
-       ├─ Gate 1: summary evidence too small → skip
-       ├─ Gate 2: project cooldown 300s → skip (prevent duplicates)
-       ├─ Gate 3: message hash match → skip (prevent duplicate content)
-       ├─ Acquire summarize_locks row (prevent parallel AI calls)
+       ├─ SessionRollup
+       │    ├─ Load the captured_events range
+       │    ├─ Idempotently link every proven Git commit in that range
+       │    ├─ Resolve path-stable transcript identity and claim
+       │    ├─ Ingest raw occurrences through the Stop-captured byte boundary
+       │    ├─ Finalize transcript-backed citations + failure lessons
+       │    ├─ AI → semantic summary + topic segments
+       │    ├─ Persist the exact event range
+       │    ├─ Candidates/workstream/native-memory/user-context side effects
+       │    └─ Enqueue Compress/Dream only after required side effects succeed
        │
-       ▼
-  process extraction_tasks
-       │
-       ├─ Load captured_events range
-       ├─ Single AI call → structured observations/candidates
-       ├─ File overlap detection → mark old observations stale
-       ├─ Raw transcript failure lessons → deterministic lesson feed
-       │
-       ▼
-  summarize (session summary)
-       │
-       ├─ Inject same-session old summary (incremental merge)
-       ├─ AI generates → replaces old summary
-       │
-       ▼
-  promote (summary → memories)
-       │
-       ├─ Extract decisions, preferences, discoveries
-       ├─ Upsert by topic_key (dedup across sessions)
+       ├─ ObservationExtract
+       │    ├─ Load captured_events + prior semantic rollup context
+       │    ├─ Idempotently link every proven Git commit in that range
+       │    ├─ AI → structured observations
+       │    ├─ File overlap detection → mark old observations stale
+       │    └─ Enqueue memory/graph/rule candidate follow-ups
        │
        ▼
-  maybe_compress (long-term compression)
+  process Compress/Dream jobs
        │
-       └─ >100 active observations → oldest 30 merged into 1-2 summaries
+       └─ Long-term compression and governed dream consolidation
 ```
 
-The legacy Summary job remains the canonical source for SessionStart recent
-session context because it also drives summary-derived candidates, workstream
-updates, raw archive ingest, and native-memory sync. Capture-ledger
-`SessionRollup` rows are event-range artifacts keyed by `session_row_id` and
-coverage columns; they may coexist in `session_summaries`, but recent-session
-context queries exclude rows with `session_row_id IS NOT NULL` so the two
-pipelines cannot surface duplicate user-facing session summaries.
+GH684-T7 removes the legacy Summary job from the production Stop path. Stop
+captures now enqueue `SessionRollup`; the rollup worker persists semantic
+request, decisions, learned, next_steps, and preferences fields, then owns raw
+archive ingest, summary-derived candidates, workstream updates, native-memory
+sync, user-context follow-up extraction, and Compress/Dream scheduling. A
+failed required side effect leaves the extraction task retryable against the
+already-persisted range instead of silently completing with missing memory.
+Transcript-only citation and failure-lesson side effects run after bounded raw
+archive ingest on the worker; their retry errors do not suppress the other
+persisted rollup side effects. Each bounded Stop with assistant evidence,
+including distinct boundaries of one repeated path, snapshots the final
+message hash and structured citation facts independently of the lossy prompt
+budget. Retries therefore preserve long-tail and earlier-Stop citations after
+the source transcript disappears. When several Stop captures coalesce into one
+range, the worker drains each distinct transcript path at its widest captured
+boundary and preserves pathless hook fallbacks; summary-derived candidates use
+only the covered event IDs and source text from that same range. Stop payloads
+that already include the final assistant message may record those idempotent
+signals immediately. Versioned once-worker launch heartbeats prevent repeated
+Stop hooks from spawning overlapping current workers during an old-daemon
+upgrade window.
+
+Migration v071 separates a transcript's path-stable local identity from its
+filename and metadata claims. Stop and batch ingestion share the same
+metadata-first probe; the batch path persists the complete claim set before it
+mutates raw rows, keeps conflicts sticky, and upgrades legacy rows to stable
+transcript occurrence ordinals without losing repeated identical turns.
+`raw_messages.event_time_source` distinguishes transcript event time,
+ingest-time fallback, and legacy-unknown provenance.
+
+The raw query path is read-only and schema-validated:
+
+```text
+raw search / raw sessions
+  -> open_db_read_only_current
+  -> current-schema and drift validation
+  -> bounded SQL query
+
+raw reconcile
+  -> discover with ingest-sessions root/subagents rules
+  -> validate current identity-ledger mtime/size tuple
+  -> stream only window-intersecting or missing-time transcript snapshots
+  +  query matching raw occurrence identities
+  -> aggregate-only parity report
+```
+
+Reconciliation keeps paths, projects, session IDs, content, and hashes inside
+the process and encrypted local database. Public JSON contains counts and
+fixed policy/window metadata only.
+Migration v068 makes follow-up scheduling an exact-range transaction. New
+ranges persist their Compress job id and one structured Dream outcome with its
+referenced job id. Exact ranges created before v068 are marked
+`legacy_unknown`; retries report manual reconciliation at error level and do
+not infer replacement work from terminal job history. The same default applies
+when an already-running pre-v068 worker inserts its range after migration;
+current writers explicitly initialize new ranges and v068 requeues old
+processing leases so the upgraded worker owns completion.
+Migration v064 permanently rejects queued legacy Summary jobs and requeues any
+SessionRollup lease held across the binary upgrade. Readers continue to hide
+synthetic `Captured event range ...` fallback titles. The unused legacy
+finalize code remains only for the later guarded-removal phase described by
+GH684; it has no production caller after T7.
+
+### Compiled Preference Rules (worker → artifact → Claude PreToolUse)
+
+```text
+eligible preferences + reinforcement + suppressions + rule overrides (SQLite)
+       │
+       ├─ lifecycle jobs and periodic convergence sweep
+       ▼
+background worker compiler
+       │
+       └─ atomic derived artifact: compiled_rules/<project-hash>.json
+                                      │
+                                      ▼
+                         Claude PreToolUse(Bash)
+                                      │
+                         visible warn / explicit block
+```
+
+Rule compilation is disabled by default through
+`rule_compilation.enabled`. SQLite is the source of truth; only the worker
+writes the versioned artifact, while hook evaluation is deterministic,
+read-only, and performs no LLM, network, or database write. `remem rules
+list|disable|enable|set-action` reads provenance or persists an override, then
+the worker rebuild makes the effective action/disabled state visible without a
+host restart.
+
+Claude Code installs a pre-execution Bash evaluator, so `warn` can be visible
+before execution and `block` can be honored only after explicit per-rule user
+opt-in. Claude `PostToolUse` remains capture-only. Codex has no supported
+pre-execution command hook, so command enforcement is reported as unsupported
+and Codex block-mode claims are rejected. Missing, corrupt, or unsupported
+artifacts fail open and emit error-level diagnostics.
+
+Doctor reports enabled state, artifact presence/validity and rule count,
+compile status/time/error, the latest project/global evaluation error, and
+Claude/Codex enforcement capability without exposing rule payloads. GH-671
+remains open: #813 still owns the exact global `user` / `user:default` /
+no-target eligibility correction and exhaustive closed-policy matrix.
 
 ### 4. Context Injection (SessionStart → context)
 
@@ -181,12 +335,14 @@ New session starts
        ├─ Dedup against CLAUDE.md (skip already present)
        │
        ▼
-  Load recent 50 memories + 5 session summaries
+  Load bounded memory, lesson, and session candidates
        │
        ├─ Branch-aware: current branch first, then main, then others
        ├─ Score-based: decision > bugfix > architecture > discovery
-       ├─ Core section: top 6 scored, 200-char preview
-       ├─ Index section: grouped by type
+       ├─ Freeze Core section unchanged: top 6 scored, 200-char preview
+       ├─ Score Lessons + non-Core Index + Sessions against the implicit query
+       ├─ Apply one global relevance k (default 1), then section budgets
+       └─ Keep k=0 as the legacy-selection rollback
        │
        ▼
   Render to stdout → Claude Code injects into CLAUDE.md
@@ -346,6 +502,8 @@ MCP server via stdio transport, providing 7 tools:
 | `update_workstream` | Update workstream status, next action, or blockers |
 
 Recommended workflow: `search(query)` → find relevant IDs → `get_observations(ids)` for full content.
+`get_observations(source='observation')` reads current extracted-observation
+details; only `pending_observations` is the legacy queue surface.
 
 `save_memory` behavior:
 - Dual-write by default: SQLite memory + local Markdown (`~/.remem/manual-notes/<project>/...md`)
@@ -398,6 +556,7 @@ Project key = `last two path segments + canonical absolute path hash`, balancing
 | `REMEM_CONTEXT_CORE_ITEM_LIMIT` | `6` | Core memory item budget |
 | `REMEM_CONTEXT_CORE_CHAR_LIMIT` | `3000` | Core memory character budget |
 | `REMEM_CONTEXT_SESSION_COUNT` | `5` | Session summaries shown |
+| `REMEM_CONTEXT_RELEVANCE_K` | `1` | Global relevant item cap across Lessons, non-Core MemoryIndex, and Sessions; `0` restores legacy selection |
 | `REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT` | `2` | Self-diagnostic memory cap |
 | `REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT` | `20` | Project preference query limit |
 | `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT` | `0` | Global preference query limit; disabled by default |
@@ -494,7 +653,17 @@ Retention matrix:
 -- Raw capture ledger
 captured_events (host_id, workspace_id, project_id, session_row_id, session_id,
                  event_id, event_type, role, tool_name, content_text,
-                 content_blob_id, content_hash, created_at_epoch)
+                 content_blob_id, content_hash, created_at_epoch,
+                 reference_time_epoch)
+
+-- One event can prove multiple explicit commits; snapshots are not linkable
+captured_event_commits (event_row_id, sha, metadata_json, evidence_kind,
+                        evidence_locator)
+
+-- Capture-time Git provenance; session_row_id prevents cross-host raw-ID collisions
+git_commits (project, repo_path, sha, short_sha, branch, message, changed_files)
+git_commit_sessions (commit_id, session_row_id, session_id, memory_session_id,
+                     source, linked_at_epoch)
 
 -- Reliable extraction scheduler
 extraction_tasks (task_kind, host_id, workspace_id, project_id, session_row_id,
@@ -522,7 +691,7 @@ observations (memory_session_id, project, type, title, subtitle, narrative, fact
 memories (session_id, project, topic_key, title, content, memory_type, files, branch,
           created_at_epoch, updated_at_epoch, status, scope[project|global])
 
--- Typed graph contract for future traversal; see docs/graph-contract.md
+-- Typed graph contract with bounded trusted-edge search traversal; see docs/graph-contract.md
 graph_file_nodes (project_id, source_project, path, created_at_epoch, updated_at_epoch)
 graph_edges (edge_type, edge_trust, from_node_kind/from_node_id, to_node_kind/to_node_id,
              source_event_ids, source_candidate_id, source_operation_id, confidence,

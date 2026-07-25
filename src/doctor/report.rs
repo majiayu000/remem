@@ -8,17 +8,24 @@ use rusqlite::Connection;
 
 use super::capture_capability::check_capture_capabilities;
 use super::capture_liveness::check_capture_liveness;
+use super::codex_native_memory::check_codex_native_memories;
 use super::database::{
     check_capture_drops, check_database, check_declared_empty_surfaces, check_disk_space,
-    check_memory_usage_feedback, check_pending_queue, check_promotion_funnel,
-    check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
+    check_legacy_surfaces, check_memory_usage_feedback, check_pending_queue,
+    check_promotion_funnel, check_raw_archive_ingest, check_temporal_facts, check_worker_daemon,
 };
 use super::embedding::check_embedding_provider;
 use super::environment::{check_binary, check_hooks, check_install_paths, check_mcp};
 use super::logging::check_log_health;
 use super::mcp_processes::check_mcp_processes;
+use super::memory_poisoning::check_memory_poisoning_defense;
 use super::native_memory::check_native_memory_sync;
+use super::pack_imports::check_pack_imports;
+use super::procedure_exports::check_procedure_exports;
+use super::reranker::check_reranker;
+use super::retrieval_enrichment::check_retrieval_enrichment;
 use super::review_queue::check_review_queue;
+use super::rule_enforcement::{check_compiled_rules, check_rule_enforcement_capabilities};
 use super::runtime_config_check::check_runtime_config;
 use super::schema::{check_key_format, check_schema_migration};
 use super::types::{Check, CheckJson, DoctorOutcome, ReportJson, Status, REPORT_SCHEMA_VERSION};
@@ -88,12 +95,29 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, check_install_paths)?;
     push_check(&mut checks, &mut on_check, check_runtime_config)?;
+    push_check(&mut checks, &mut on_check, || {
+        check_compiled_rules(shared_db.conn())
+    })?;
+    push_checks(
+        &mut checks,
+        &mut on_check,
+        check_rule_enforcement_capabilities,
+    )?;
     push_checks(&mut checks, &mut on_check, || {
         check_embedding_provider(shared_db.conn())
+    })?;
+    push_checks(&mut checks, &mut on_check, check_reranker)?;
+    push_check(&mut checks, &mut on_check, || {
+        check_retrieval_enrichment(shared_db.conn())
     })?;
     push_checks(&mut checks, &mut on_check, check_hooks)?;
     push_checks(&mut checks, &mut on_check, check_capture_capabilities)?;
     push_checks(&mut checks, &mut on_check, check_mcp)?;
+    push_check(
+        &mut checks,
+        &mut on_check,
+        super::cursor_install::check_cursor_install,
+    )?;
     push_check(&mut checks, &mut on_check, check_mcp_processes)?;
     let started = Instant::now();
     let check = check_capture_liveness(shared_db.conn(), &checks)
@@ -112,7 +136,19 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
         check_declared_empty_surfaces(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
+        check_legacy_surfaces(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
         check_promotion_funnel(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_memory_poisoning_defense(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_pack_imports(shared_db.conn())
+    })?;
+    push_check(&mut checks, &mut on_check, || {
+        check_procedure_exports(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_review_queue(shared_db.conn())
@@ -127,6 +163,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
         check_pending_queue(shared_db.conn())
     })?;
     push_check(&mut checks, &mut on_check, check_native_memory_sync)?;
+    push_check(&mut checks, &mut on_check, check_codex_native_memories)?;
     push_check(&mut checks, &mut on_check, check_log_health)?;
     push_check(&mut checks, &mut on_check, check_disk_space)?;
     Ok(checks)

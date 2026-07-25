@@ -6,19 +6,35 @@ mod state;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
+mod tests_capture_git_evidence;
+#[cfg(test)]
 mod tests_compression_provenance;
 #[cfg(test)]
 mod tests_content_identity;
 #[cfg(test)]
 mod tests_convergence;
 #[cfg(test)]
+mod tests_fast_path;
+#[cfg(test)]
+mod tests_job_queue_atomicity;
+#[cfg(test)]
+mod tests_legacy_summary;
+#[cfg(test)]
 mod tests_memory_embeddings;
 #[cfg(test)]
 mod tests_memory_usage;
 #[cfg(test)]
+mod tests_preference_rules;
+#[cfg(test)]
+mod tests_raw_session_identity;
+#[cfg(test)]
+mod tests_retrieval_enrichment;
+#[cfg(test)]
 mod tests_schema;
 #[cfg(test)]
 mod tests_schema_drift;
+#[cfg(test)]
+mod tests_session_summary_poisoning;
 #[cfg(test)]
 mod tests_user_context;
 #[cfg(test)]

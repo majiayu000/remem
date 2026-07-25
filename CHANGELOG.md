@@ -3,6 +3,510 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.24` for GH-855: capture/extraction-path poisoning
+  defense. Session rollups now compute a deterministic combined verdict over
+  the captured source events and every model-generated summary field before
+  persistence; a hit stores a durable `quarantined` summary row (schema v072:
+  `poisoning_status`, quarantine stage/field/event/pattern metadata, block
+  counters) and withholds all model-visible side effects (topic segments,
+  candidates, native memory) — source hits cannot be laundered by a clean
+  summary. All model-visible summary sinks (SessionStart recent sessions,
+  MEMORY.md native sync, observation/summarize prompt context, user-context
+  extraction/recall/activity, git/MCP commit trace, summary queries) exclude
+  quarantined rows in SQL and re-scan the fields they expose right before
+  use, quarantining legacy rows on first hit (fail closed on errors).
+  Observation persistence and legacy `finalize_summarize` run the same
+  scanner; poisoned observations land as `poisoning_quarantined` and never
+  enter active queries. `remem doctor`, `remem status`, and HTTP `/status`
+  gain a `poisoning_defense` section (pattern set version, candidate/summary/
+  observation quarantine counts, legacy-unscanned summaries, block counts,
+  injection drops). The public `adversarial-policy` suite is revised to v2
+  with `instruction_injection` (EN/ZH), `authority_claim`, `opaque_payload`,
+  and `benign_quoted_instruction` categories scored through the production
+  pattern scanner instead of hardcoded zeros; quarantine wins over
+  `retention_allowed`.
+- Staged source version `0.6.23` for GH-850: write-side contextual enrichment
+  (`retrieval_text` equivalent) on the single index-only `search_context`
+  surface. Migration v072 adds enrichment identity/claim/lease/failure columns
+  plus the `retrieval_enrichment_compatibility` singleton with a monotonic
+  security-policy floor; the rebuilt `memories_au` trigger persists an empty
+  deterministic fallback (and drops stale vectors) whenever a raw canonical
+  update bypasses the production writers, and every FTS rebuild reads the
+  final persisted row. The idle worker lane generates one bounded
+  context-sentence + synonym-keyword block per memory through the existing
+  memory AI profile (strict closed-JSON parser, secret redaction, poison
+  re-scan, durable claim/lease/attempt CAS, exponential backoff capped at 15
+  minutes); FTS and the vector channel consume the same snapshot via the
+  versioned `memory-index-v2` passage hash. `remem doctor` gains a
+  `Retrieval enrichment coverage` check (floor/epoch/state, ready/pending/
+  failed counts, source-identity drift, vector consistency), and eval gate
+  thresholds support strictly-positive `min_value` floors for the paraphrase
+  slice. Canonical `title`/`content` bytes and injection/API/export payloads
+  are unchanged; hooks and foreground writes never wait on generation.
+- Staged source version `0.6.22` for GH-852: host-native memory data sources.
+  New `remem import codex-memories` performs a one-way, read-only import of
+  Codex CLI rollout-summary memories (`codex-rollout-summary/v1`, fingerprint
+  frozen against codex-cli 0.145.0) into the candidate review queue: two-phase
+  dry-run/apply bound by `--expect-plan-digest`, pre-persistence secret
+  boundary that blocks the whole batch, instruction-pattern quarantine,
+  content+route idempotent identity (rename-safe re-runs), verified-cwd
+  project routing with a Codex tool-owned `search_only` fallback, and a single
+  all-or-nothing transaction that only ever lands `pending_review` /
+  `quarantined` candidates — never active memories. `remem doctor` gains a
+  Codex native memories check (not_configured / ready / unreadable /
+  unsupported_format, no body output) and reports the Claude native-bridge
+  state. Claude native topic-file ingestion is closure-audited: remem's own
+  `remem_sessions.md` is no longer self-ingested, topic files route into
+  `memory_candidates` as `external_content` (pending review, never
+  direct-active), and ingestion failures propagate to the hook exit status
+  instead of warning-only. The Claude `autoMemoryDirectory` delivery bridge
+  stays `hook_only`/no-go pending SP852-T1 real-host PoC evidence; no user
+  `~/.claude` or `~/.codex` surface is written by default
+  (docs/research/gh852-host-native-memory-poc.md).
+- Staged source version `0.6.21` for GH-851: opt-in second-stage local
+  cross-encoder rerank. After RRF fusion, eligibility filtering, and
+  source-anchor demotion, standard `remem search` (including API/MCP service
+  callers) and the SessionStart implicit query share one rerank stage that
+  re-scores the fixed top-N baseline candidates with a locally installed
+  fastembed/ONNX cross-encoder and returns a fixed top-k order
+  (score desc, baseline rank asc, id asc; `verify-before-trust` candidates
+  hard-partitioned last after a successful rerank only). Rerank is
+  default-off (`[rerank] enabled = true` or `REMEM_RERANK_ENABLED=1`);
+  models install only via the explicit `remem reranker download` command
+  into a dedicated reranker inventory with a byte/SHA-256-verified manifest
+  — search, hooks, API/MCP, and doctor never download. Missing, corrupt,
+  load-failed, inference-failed, deadline-exceeded, or cancelled states
+  fall back atomically to the complete RRF baseline with a stable closed
+  `disabled_reason` (error-level logged), surfaced in search explain
+  (`rerank` stage with `rerank_model_load`/`rerank_inference`/`rerank_total`
+  phase timings), SessionStart render stats, `remem reranker status`, and a
+  new doctor check that fails for enabled-but-broken models and passes for
+  explicit off. A rerank A/B promote gate (`src/eval/rerank.rs`) enforces
+  paraphrase/associative and combined MRR@10 / Hit@5 non-regression plus a
+  preregistered `>= 0.05` primary-metric improvement before any default-on
+  decision; the paired artifact must carry commit, dataset hash, and model
+  manifest hash. Default-on remains gated on maintainer-approved runtime
+  evidence (local A/B artifact and cold/warm SessionStart p95 budgets).
+- Staged source version `0.6.20` for GH-824: Cursor install host surface.
+  `remem install/uninstall --target cursor` (plus `auto`/`all` selection on
+  macOS/Linux) manages exactly the user-level `~/.cursor/hooks.json` and
+  `~/.cursor/mcp.json` through a strict whole-document Cursor v1
+  hooks/MCP schema validator, an exact managed `mcpServers.remem` stdio
+  entry, a versioned non-sensitive install receipt under
+  `[memory_ai.hosts.cursor]`, and a secure staged writer (owner-only temp
+  before the first byte) with per-target final comparison, read-back, and
+  compensating rollback — not a cross-file atomic transaction; foreign JSON
+  is preserved semantically for the validated plan snapshot and observable
+  concurrent edits abort, while the compare-to-rename window remains a
+  documented residual risk. Because the merged GH-823 runtime has no total
+  delivered-failure policy, froze generic MCP ownership, and Cursor
+  summarize stays blocked on GH-825, contract v1 installs no Cursor hook
+  entries yet: install output says so explicitly and never claims automatic
+  Cursor memory is enabled. `remem doctor` gains a Cursor check reporting
+  detected/configured/configured_mode/malformed/partial_state/drift/
+  collision, per-capability effective status from the PR #914 evidence,
+  `hook_failure_policy: host_continues`, and the fixed line
+  `session-init: not supported on cursor`. Windows/UNC stays fail-closed
+  (explicit cursor/all) or non-fatally skipped (auto). Claude Code and
+  Codex install/uninstall/dry-run/doctor behavior is unchanged.
+- Staged source version `0.6.19` for GH-825 (with GH-823 SP823-T5): lossless
+  Cursor transcript capture. `remem summarize --host cursor` now performs the
+  full Cursor Stop validation (approved status set `completed|aborted`,
+  non-empty string `generation_id`, `loop_count` normalized from an exact
+  non-negative integer, canonical Stop key
+  `(session_id, generation_id, loop_count)`), takes a Stop-time snapshot of
+  the Cursor JSONL transcript, and fully validates it against the observed
+  PR #874/PR #914 grammar: `{role,message}` records with `text` and assistant
+  `tool_use` content blocks plus standalone `turn_ended` boundary records
+  (including the aborted-turn error form). Every record gets a zero-based
+  physical ordinal before any filtering; `turn_ended` records never enter the
+  raw/prompt projections. The validated, redacted IR rides the durable
+  `session_stop` capture payload (`cursor_capture` marker) and drives bounded
+  SessionRollup prompt evidence; `transcript_path` never leaves the hook, so
+  the Claude/Codex transcript reader and path-based drain are unreachable
+  from Cursor and the worker never reopens the path. Missing/null/blank/
+  untrusted/unreadable/oversized/changed/corrupt/empty transcripts degrade
+  explicitly to payload-only with machine-readable
+  `degraded/<reason>` markers and `capture_drop_events`
+  (`cursor_transcript_<reason>`) diagnostics — the Stop and previously
+  captured tool evidence are never lost. No schema change; Claude Code and
+  Codex behavior is unchanged.
+- Staged source version `0.6.18` for GH-823 (SP823-T3/T4): first-class Cursor
+  hook I/O protocol. `cursor` joins the exact closed hook-host set
+  (`claude-code`, `codex-cli`, `cursor`); every Cursor entrypoint reads stdin
+  through a bounded 1,048,576-byte reader and validates payloads fail-closed
+  against the Cursor 3.12.17 evidence (PR #914). `remem observe --host cursor`
+  captures generic `postToolUse`/`postToolUseFailure` events with
+  `tool_use_id` as the canonical per-call key, stores the observed failed-Read
+  path under the existing `captured_events.event_type = "cursor_tool_failure"`
+  discriminator (no schema change), and keeps MCP-specific events unregistered
+  (B-016 generic ownership). `session-init --host cursor` is explicitly
+  unsupported, Cursor summarize stays fail-closed until GH-825's transcript
+  reader, and Cursor 3.12.17 session-start injection remains disabled with no
+  post-tool context command added. Cursor `user_email` and other
+  non-canonical PII are dropped at the payload boundary. Claude Code and
+  Codex protocol behavior is unchanged; the only tightening is that explicit
+  hook `--host` aliases and arbitrary values now fail closed.
+
+### Fixed
+- Staged source version `0.6.17`: AI HTTP calls now reuse one process-wide
+  `reqwest::Client` (connection pool + TLS config) via a `OnceLock` instead of
+  rebuilding a client on every call. The timeout is a compile-time constant, so
+  a single client serves every call.
+- Staged source version `0.6.16`: `run_migrations` now skips the
+  `BEGIN IMMEDIATE` write-lock transaction when the database schema is already
+  current, so read-heavy callers that open a fresh connection per request (the
+  REST API and MCP server) no longer take the database write lock on every
+  connection open. The check is read-only and WAL-concurrent; the full
+  migration path is unchanged when any migration is pending or a schema
+  invariant is violated.
+- Staged source version `0.6.15` for GH-813: the preference-rule compiler now
+  applies one typed, centralized eligibility policy and admits a global-scope
+  preference only for the canonical
+  `owner_scope='user'` / `owner_key='user:default'` / no-project-target owner
+  tuple, and unknown owner/scope/risk/review/trust values fail closed instead
+  of compiling. The sweep-project projection uses the same closed predicate.
+  Adds an exhaustive behavior-based eligibility matrix (positive global
+  baseline, one independent negative per dimension, unknown-value fail-closed
+  cases, independently mutable candidate and reinforcement risk, the
+  wrong-owner-scope / wrong-owner-key / project-target regressions, and a
+  cross-state case). No hook or evaluator change. Release metadata stays
+  `unreleased` until publication. Also keeps the unchanged ingest eligibility
+  predicate warning-free under Rust 1.95 without changing its behavior.
+- Staged source version `0.6.13` for GH-900: the checked-in graph-decision
+  report now carries a deterministic length-prefixed SHA-256 fingerprint of
+  `eval/golden.json` and every evaluator/retrieval source that can affect the
+  result, with a guard test that rejects a stale report. Completes the GH-853
+  focused regression matrix. No traversal ranking or production behavior
+  change. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.12` for GH-720 SP720-T5: `remem raw messages`
+  exports one exact `(source_root, project, session_id)` tuple with full stored
+  content, stable `(created_at_epoch, id)` ordering, and selector-bound
+  snapshot cursors for lossless downstream session consumers. Release metadata
+  stays `unreleased` until publication.
+- Staged source version `0.6.11` for GH-853: standard memory search now expands
+  eligible FTS/vector seeds through bounded trusted `graph_edges` paths, with
+  deterministic RRF ordering, explicit empty reasons, and a same-head literal
+  associative gate that records full gain without non-associative regression.
+  PPR and direct context traversal remain deferred. Release metadata stays
+  `unreleased` until publication.
+- Staged source version `0.6.10` for GH-854: SessionStart now preserves Core,
+  Preferences, and Workstreams while applying one deterministic relevance
+  budget to Lessons, non-Core MemoryIndex entries, and Sessions. Footer,
+  per-item audit, and latest-session status expose the selected threshold and
+  closed drop reasons; `REMEM_CONTEXT_RELEVANCE_K=0` restores legacy selection.
+  Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.9` for GH-860: the structural force-push evaluator
+  recognizes supported Git-for-Windows `.exe` shell basenames, binds static
+  shell `-c` positional operands, and resolves a function-shadowed `unset`
+  before applying builtin state changes. Paired fixtures preserve nearby
+  allowed forms. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.8` for GH-871: raw transcript ingestion now uses
+  path-stable metadata-first identities and lossless occurrence ordinals;
+  validated read-only raw queries avoid migration-lock contention, session
+  JSON includes role counts, and bounded aggregate-only reconciliation proves
+  fixed-window archive parity without exposing transcript data. Release
+  metadata stays `unreleased` until publication.
+- Staged source version `0.6.7` for GH-882: memory-candidate extraction now
+  normalizes the model-emitted `fact` alias to `discovery` without weakening
+  the legal observation vocabulary, and both prompt layers explicitly direct
+  factual findings to the canonical type. Release metadata stays `unreleased`
+  until publication.
+- Staged source version `0.6.6` for GH-880: the authenticated native API now
+  advertises safe candidate detail/review, five independently gated read
+  resources, and recoverable memory archive/restore. Typed cursor, redaction,
+  optimistic-version, idempotency, audit, and current-provenance contracts are
+  covered by native smoke and regression gates; permanent Web delete remains
+  unavailable. Release metadata stays `unreleased` until publication.
+- Staged source version `0.6.5` for GH-880 SP880-T1: schema v70 adds
+  fail-closed migration recovery, Web-visible resource versions, an
+  idempotency replay ledger, and stable cursor foundations without advertising
+  unfinished endpoints or capabilities.
+- Staged source version `0.6.4` for GH-864: archived quarantined extraction
+  ranges can be validated only by an exact dual-confirmation dry-run and
+  recovered only by a singleton-locked worker that atomically requeues and
+  claims one task under an explicit AI profile. Non-successful or interrupted
+  exact attempts return to archived quarantine instead of entering the normal
+  daemon queue.
+- Staged source version `0.6.3` for GH-864: operators can explicitly
+  acknowledge and retry one quarantined extraction replay range by exact ID;
+  dry-run and execution share the same transactional eligibility checks while
+  default exact retry and every batch retry continue to exclude quarantine.
+- Staged source version `0.6.2` for GH-864: transcript evidence truncation is
+  stable across replay, Git branch/commit probes use bounded process-group and
+  pipe-reader cleanup, exhausted extraction ranges support exact-ID
+  list/retry/quarantine with terminal task evidence, and rollup topic keys
+  normalize punctuation without rewriting legacy snake/kebab identities.
+- Staged source version `0.6.1` for GH-861: project identity now delegates to
+  Git whenever `GIT_COMMON_DIR` is set, so invalid or redirected common-dir
+  layouts fail closed instead of being mistaken for plain marker discovery.
+
+### Added
+- Staged source version `0.6.0` for GH-684 SP684-T10: `remem doctor`
+  announces that `pending_observations` is deprecated and cannot be removed
+  before remem 0.7.0. Non-empty stores are directed to preview with
+  `remem pending migrate-legacy --dry-run` and then apply with
+  `remem pending migrate-legacy`. The removal window does not begin until the
+  0.6.0 release is published.
+- Staged source version `0.5.214` for GH-671 T7: repeated-correction fixtures
+  cover package-manager choices, forbidden commit trailers, and forbidden
+  commands; one Brush AST execution model closes wrapper, quoting, function,
+  mirror-push, and arithmetic-substitution bypasses while the release hook
+  remains within the fixed 1 ms delta and 15 ms enabled-p95 budgets.
+- Staged source version `0.5.213` for GH-844: CI and local PR preflight now
+  fail on clippy warnings across all Cargo targets, with the existing 11
+  test-target lints fixed without suppressions or runtime behavior changes.
+- Staged source version `0.5.212` for the GH-720 T1 follow-up: transcript
+  ingestion now streams JSONL records with bounded memory, preserves captured
+  byte boundaries, and rolls back already-inserted rows when a later read or
+  UTF-8 failure makes the file incomplete. GH-720 remains open for its manual
+  and cross-repository phases.
+- Staged source version `0.5.211` for #720 query parity: the MCP `search_raw`
+  tool and CLI `query raw` now share one raw-query assembly path, aligning the
+  JSON envelope and date-only `until` bounds across surfaces.
+- Staged source version `0.5.210` for GH-684: frozen legacy-surface writes now
+  fail doctor instead of remaining warning-only, while the retirement contract
+  fixes the 0.6.0 announcement and no-earlier-than-0.7.0 guarded-drop window.
+- Staged source version `0.5.209` for #818: job enqueue, claim, lease
+  transitions, migration reconciliation, and failure recovery now enforce
+  database-atomic active identities and fail closed on conflicts while
+  preserving actionable diagnostics and deterministic Dream replay semantics.
+- Staged source version `0.5.208` for #819: memory test fixtures now execute
+  the canonical v020 FTS migration instead of copying active-only triggers;
+  regression coverage keeps stale and archived rows indexed while query
+  predicates control visibility, and verifies status transitions, deletion,
+  and trigger-schema parity with the production migration chain.
+- Staged source version `0.5.207` for #817: observation XML parsing now
+  fails closed when the model omits `<type>` or returns an unknown value,
+  drops the invalid observation before it can become candidate support
+  evidence, and records an error-level `missing_type` or `unknown_type` reason;
+  all six declared observation types retain their existing behavior.
+- Staged source version `0.5.206` for GH-671 T6: `remem doctor` reports
+  compiled-rule artifact presence, rule count, compile and evaluation health,
+  and honest per-host enforcement capabilities without exposing rule payloads
+  or diagnostic messages.
+- Staged source version `0.5.205` for GH-671 T5: Claude Code installs a
+  fail-open `PreToolUse` Bash evaluator that emits visible warnings or explicit
+  opt-in denials from local compiled artifacts, while the rollout flag disables
+  evaluation, PostToolUse remains capture-only, and Codex block enforcement is
+  rejected as unsupported.
+- Staged source version `0.5.204` for GH-671 T4: `remem rules` lists compiled
+  rule provenance and persists disable, enable, and warn/block action overrides
+  without writing derived artifacts on the CLI path; independent override
+  columns survive concurrent-style updates, artifact regeneration, and worker
+  enqueue failures without silent state loss.
+- Staged source version `0.5.203` for #796: migration v068 records one
+  exact-range SessionRollup follow-up scheduling decision in the same SQLite
+  transaction as Compress and Dream enqueueing, so retries cannot replace
+  completed, failed, or cooldown-expired jobs, partial enqueue failures roll
+  back cleanly, and a genuinely new event range can still schedule new
+  maintenance work. Historical exact ranges are marked `legacy_unknown` and
+  reported at error level instead of receiving inferred replacement jobs;
+  v067 writers that finish after migration inherit the same safe default and
+  their pre-upgrade processing leases are requeued;
+  newly completed decisions persist the Compress job id plus the exact Dream
+  disposition and referenced job id.
+- Staged source version `0.5.202` for the MCP registry launch fixes: ships the
+  shortened `server.json` description (#808), the real-session recall demo
+  assets (#809), and the README hero swap (#810) in a tagged release so the
+  `publish-mcp-registry` job can complete its first successful publish.
+- Staged source version `0.5.201` for #795: automatic SessionRollup native-memory
+  mirroring now reports filesystem failures at error level with project,
+  session-row, and exact event-range identity without blocking the persisted
+  UserContextCandidate, Compress, or Dream follow-ups; explicit native-memory
+  synchronization remains fallible.
+- Staged source version `0.5.200` for GH-792 observed commit traceability:
+  successful explicit `git commit` results prove SHAs through Claude hook
+  output or a byte-bounded Codex transcript, typed evidence is stored atomically
+  and survives the shared encrypted spill queue, deterministic extraction
+  phases link every commit in the exact claimed range by durable
+  `session_row_id`, cross-host raw session collisions remain distinct, retries
+  stay idempotent, missing or ambiguous proof never drops the surrounding
+  capture, and ordinary Stop events never infer from a later `HEAD`.
+- Staged source version `0.5.199` for the GH-671 T3 post-merge corrective:
+  archive and reroute operations recompile both affected preference authorities,
+  replacement overrides follow normalized predicate identity, global preference
+  mutations immediately fan out to registered projects, and failed success
+  diagnostics restore or remove the unpublished compiled artifact.
+- Staged source version `0.5.198` for #794: SessionRollup now supplies
+  one shared byte-bounded, redacted transcript evidence slice to the summarizer
+  and candidate support path, deduplicates repeated paths and captured-event
+  text, excludes bytes appended after Stop, and persists the exact-range slice
+  plus raw-archive completion checkpoint through migration
+  `v066_session_rollup_evidence_checkpoint`. Persisted-rollup retries no longer
+  depend on a transcript source file after successful raw ingest: per-Stop
+  message hashes and parsed citation facts are snapshotted independently of the
+  lossy 8 KiB/64 KiB prompt budget for every bounded Stop, including repeated
+  path boundaries and Unicode-safe truncation. Early v066 JSON reuses its
+  original bounded message/hash on retry to prevent duplicate usage. Legacy Stop
+  payloads without a byte boundary use captured conversational events only, or
+  fail permanently before AI when no safe fallback exists. Missing, malformed,
+  or unusable required bounded snapshots still fail before metadata-only
+  summaries can persist.
+- Staged source version `0.5.197` for the GH-671 T3 correctness follow-up:
+  unique evidence reinforces only the same safe predicate; opposing direct
+  saves and cleanup rewrites clear stale provenance while same-predicate
+  overrides survive; lifecycle changes enqueue non-lossy compilation and
+  periodic sweeps converge canonical projects; reviewed low-risk trusted
+  preferences compile with project-over-global precedence; conservative
+  classification and config/diagnostic paths fail closed; unchanged artifacts
+  do not churn; generated messages remain static; and v065 schema drift guards
+  its eligibility columns and index.
+- Staged source version `0.5.196` for GH-671 T3 preference rule compiler:
+  canonical preference reinforcement state (migration `v065_preference_reinforcement`
+  wiring the v062 `memory_preference_reinforcements` table via the apply path) and a
+  worker-only rule compiler (`JobType::CompileRules`) with eligibility selection,
+  user-override merge, source lifecycle removal, and newest-source conflict resolution.
+- Staged source version `0.5.195` for GH-684 Summary upgrade handling:
+  migration v064 now rejects non-terminal legacy `JobType::Summary` jobs as
+  permanent failures during upgrade, preserving terminal job history and other
+  job types while SessionRollup owns session summary output; Stop hooks no
+  longer enqueue new Summary jobs, capture-ledger failures spill instead of
+  falling back to the retired writer, same-session stale spills are skipped
+  after the current stop payload succeeds, raw/citation/failure-lesson Stop
+  side effects are owned by the hook path before follow-up enqueue, citation
+  recording errors log at error level without blocking follow-up jobs, retryable
+  failed Summary rows are frozen during upgrade, doctor/status ignore explicit
+  v064 upgrade rejection rows as freeze blockers and actionable failed jobs,
+  post-retirement worker rejections stay visible, spill replay compares the
+  full host/project/session identity before dropping stale rows, replayed Stop
+  captures use stable event IDs so later retry failures stay idempotent,
+  replay capture-ledger failures are preserved once by the replay layer instead
+  of duplicating active spill rows, old-version daemon heartbeats no longer
+  suppress the Stop-hook `worker --once` fallback even when the old daemon
+  still holds the legacy singleton lock, migration v064 requeues SessionRollup
+  leases claimed before the binary upgrade, workers run extraction tasks before
+  Compress/Dream jobs, and worker execution rejects legacy Summary jobs without
+  retry if an already-claimed job reaches the runner. SessionRollup side effects
+  load the exact persisted event range, and required raw-archive, workstream,
+  and native-memory failures keep the extraction task retryable instead of
+  completing with missing memory state. Transcript-only Stop payloads now
+  snapshot their transcript byte boundary, then record memory citations and
+  distill failure lessons after bounded worker-side raw ingest. Coalesced
+  rollups drain every covered Stop payload, deduplicate repeated transcript
+  paths at the widest captured boundary, and bind summary-candidate evidence
+  to the exact persisted event range instead of a later session capture;
+  retries of those signals no longer suppress persisted rollup maintenance. A
+  versioned once-launch heartbeat prevents overlapping fallback workers while
+  an old daemon is still alive during upgrade.
+- Staged source version `0.5.194`: `remem status --share` prints a compact,
+  screenshot-friendly summary card (totals, today delta, repo URL) that omits
+  database paths and project names for safe public sharing.
+- Staged source version `0.5.193` for GH-671 preference rule artifact
+  foundation: compiled-rule artifacts now have a versioned JSON schema, closed
+  v1 predicate enum, deterministic in-memory evaluator, fail-open artifact
+  loading, stable project artifact paths, and atomic artifact writes.
+- Staged source version `0.5.192` for GH-684 pending queue freeze:
+  the dead legacy `pending_observations` enqueue/claim/lease API has been
+  removed from the crate while pending admin migration, failure handling,
+  doctor, and status tests seed historical rows through an explicit test
+  fixture.
+- Staged source version `0.5.191` for GH-680 procedure export final guard:
+  `remem procedures export` now enforces a runtime CLI invocation guard,
+  refuses plugin `skills/` roots before creating missing directories, and
+  documents the export command and review-gated overwrite/path semantics in
+  the README and current procedure export contract.
+- Staged source version `0.5.190` for GH-680 procedure export registry:
+  successful review-gated procedure exports now record content/source
+  snapshots in `procedure_exports`, and `remem doctor` warns when exported
+  drafts drift because the source procedure became inactive, verification
+  freshness lapsed, or the active source changed after export.
+- Staged source version `0.5.189` for GH-680 procedure export reachability:
+  a negative source invariant test now keeps procedure draft export writer and
+  renderer entrypoints reachable only from the explicit CLI procedures export
+  action, failing if worker, dream, hook, context, summarize, or MCP paths wire
+  into the draft writer.
+- Staged source version `0.5.188` for GH-680 procedure export writer guard:
+  `remem procedures export` now writes reviewable drafts only through the CLI,
+  refuses high-context output paths and user-edited targets, and requires
+  `--overwrite-generated` before replacing an unchanged generated draft.
+- Staged source version `0.5.187` for GH-761 Claude hook integrity repair:
+  Claude hook setup now evaluates all five expected hooks, warns during
+  SessionStart when registrations are missing or stale, and provides a
+  hook-only `remem install --target claude --repair` path that preserves
+  third-party hooks and avoids MCP/runtime/token writes.
+- Staged source version `0.5.186` for GH-759 final observability and docs:
+  `remem status` now reports user-context claim/candidate counts and pending
+  block reasons, and the user-facing/runtime specs document the relaxed default,
+  strict rollback, unchanged hard gates, governance path, and verification stats.
+- Staged source version `0.5.185` for GH-759 relaxed auto-promote safety:
+  expanded regression fixtures keep sensitivity, high-risk, third-party,
+  assistant-only and mixed non-user source, non-retention, and claim-key conflict
+  paths fail-closed under the relaxed default policy.
+- Staged source version `0.5.184` for GH-759 auto-promote runtime policy:
+  extraction and candidate apply now share the runtime `AutoPromotePolicy`, so
+  default user-context auto-promote lowers only the confidence threshold while
+  strict mode restores the old 0.9 hard gate and existing safety checks remain
+  review-gated.
+- Staged source version `0.5.183` for GH-759 auto-promote policy config:
+  runtime config now exposes `[user_context.auto_promote]` defaults,
+  validation, and a strict rollback policy without changing promotion behavior.
+- Staged source version `0.5.182` for GH-760 preference backfill storage:
+  dry-run now selects visible user-scope preference memories read-only, and
+  `--apply` writes idempotent `preference_backfill` claims with memory source
+  refs, governed duplicate skips, stable conversion reporting, documented
+  visible-row filters, skip reasons, traceability, and governance rollback.
+- Staged source version `0.5.181` for GH-760 user preference backfill CLI:
+  `remem user backfill [--json] [--limit <n>]` now exposes a dry-run report
+  shape while `--apply` fails closed until the storage conversion slice lands.
+- Staged source version `0.5.180` for GH-680 procedure export templates:
+  render-time field scanning now blocks secret-like or instruction-pattern
+  procedure fields before draft generation, and pinned snapshots cover
+  Claude skill, Codex prompt, and runbook draft formats.
+- Staged source version `0.5.179` for GH-680 procedure export eligibility:
+  the export source loader now reuses fresh procedure verification evidence
+  and rejects non-procedure, inactive, expired, suppressed, superseded, or
+  insufficiently verified procedure memories before render/write paths land.
+- Staged source version `0.5.178` for GH-684 Summary side-effect
+  preservation: regression coverage now locks Compress/Dream enqueueing, raw
+  archive ingest, memory citations, failure lessons, summary-derived
+  candidate finalization, and native-memory sync before Summary writer
+  retirement.
+- Staged source version `0.5.177` for GH-684 summary writer convergence:
+  SessionRollup now persists semantic request, decisions, learned, next steps,
+  and preferences fields, and context/user-context readers can consume
+  semantic rollup rows while excluding synthetic event-range fallback titles.
+- Staged source version `0.5.176` for GH-678 project memory pack completion:
+  round-trip export/import identity fixture, pack-origin doctor and `remem why`
+  attribution, and README onboarding workflow.
+- Staged source version `0.5.175` for GH-678 project memory pack active import:
+  safe rows now write active memories with `pack` source trust after
+  instruction-pattern scanning, conflicts and quarantines route to review
+  candidates, and suppressed/inactive local decisions remain non-resurrected.
+- Staged source version `0.5.174` for GH-678 project memory pack import
+  dry-run planning: `remem import --pack <dir> --dry-run` validates pack
+  manifests/digests and reports add, dedup, skip, conflict, and quarantine
+  outcomes without mutating the runtime store.
+- Staged source version `0.5.173` for the GH-672 memory poisoning defense
+  closure fixture: captured-event instruction payloads now exercise
+  candidate quarantine through render absence, and the SpecRail task plan is
+  synchronized with the completed security tranche.
+- Staged source version `0.5.172` for GH-684 summary writer equivalence:
+  field-comparison fixtures now document legacy Summary structured fields,
+  SessionRollup range metadata, ownership/context defaults, and cooldown
+  side-effect deltas before Summary writer retirement.
+- Staged source version `0.5.171` for GH-684 legacy surface visibility:
+  status and doctor now report tracked legacy surface row counts, last-write
+  epochs, and retire/freeze blockers before later Summary/pending retirement.
+- Staged source version `0.5.170` for GH-672 memory poisoning defense:
+  source trust metadata, deterministic instruction-pattern quarantine, and
+  direct-save trust tagging. The staged line also adds explicit quarantine
+  acknowledgement review, render-time poisoned-memory drops, and doctor
+  reporting for quarantine/drop state.
+- Staged source version `0.5.169` for the GH-671 preference rule
+  compilation foundation: disabled-by-default config defaults, canonical
+  preference reinforcement state, rule override state, diagnostic state, and
+  schema/convergence guardrails without enabling runtime rule behavior.
+- Staged source version `0.5.168` for GH-678 project memory pack export:
+  deterministic `pack.json`/`memories.jsonl`/`INDEX.md` generation for active
+  repo-owned startup memories, fail-loud redaction gating, and focused export
+  fixtures.
+- Staged source version `0.5.167` for GH-680 procedure export Phase 1:
+  `remem procedures list` exposes promoted procedure memories with maturity
+  metadata before any review-gated export writer is introduced.
+- Staged source version `0.5.166` for GH-684 observation wording: MCP and
+  architecture docs now classify `source='observation'` as a current extracted
+  observation source instead of a legacy source.
 - Staged source version `0.5.164` for GH-673 context stability: total context
   budget enforcement now truncates at stable item boundaries while preserving
   the truncation marker and stats footer.

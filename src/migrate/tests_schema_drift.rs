@@ -123,6 +123,428 @@ fn dry_run_pending_reports_v059_review_metadata_schema_drift() -> Result<()> {
 }
 
 #[test]
+fn dry_run_pending_reports_v060_memory_poisoning_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[60])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .expect("memory poisoning schema drift must be reported");
+    assert!(
+        error.contains("v060_memory_poisoning_defense"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_candidates.source_trust_class"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memories.source_trust_class"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_memory_candidates_quarantine"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v061_memory_poisoning_drop_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[61])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .expect("memory poisoning injection drop schema drift must be reported");
+    assert!(
+        error.contains("v061_memory_poisoning_injection_drops"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("table memory_poisoning_injection_drops"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_memory_poisoning_drops_created"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v063_procedure_exports_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[63])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result.error.ok_or_else(|| {
+        anyhow::anyhow!("procedure export registry schema drift must be reported")
+    })?;
+    assert!(error.contains("v063_procedure_exports"), "got: {error}");
+    assert!(error.contains("table procedure_exports"), "got: {error}");
+    assert!(
+        error.contains("index idx_procedure_exports_project"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_procedure_exports_memory"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v065_preference_reinforcement_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[65])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("preference reinforcement drift must be reported"))?;
+    assert!(
+        error.contains("v065_preference_reinforcement"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_preference_reinforcements.machine_checkable"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column memory_preference_reinforcements.risk_class"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("index idx_memory_preference_reinforcements_eligible"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v066_session_rollup_evidence_checkpoint_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[66])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("session rollup evidence drift must be reported"))?;
+    assert!(
+        error.contains("v066_session_rollup_evidence_checkpoint"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.transcript_evidence_json"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.raw_archive_completed_at_epoch"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[68])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("session rollup follow-up drift must be reported"))?;
+    assert!(
+        error.contains("v068_session_rollup_followup_checkpoint"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_scheduling_completed_at_epoch"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_scheduling_state"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_compress_job_id"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_dream_disposition"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column session_summaries.followup_dream_job_id"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn dry_run_pending_reports_v071_identity_schema_drift() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_current_schema_missing_versions(&conn, &[71])?;
+
+    let result = dry_run_pending(&conn)?;
+
+    assert_eq!(result.pending_count, 0);
+    let error = result
+        .error
+        .ok_or_else(|| anyhow::anyhow!("v071 identity schema drift must be reported"))?;
+    assert!(error.contains("v071_raw_session_identity"), "got: {error}");
+    assert!(
+        error.contains("table raw_session_identities"),
+        "got: {error}"
+    );
+    assert!(
+        error.contains("column raw_messages.transcript_identity_id"),
+        "got: {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_schema_with_pending_migrations_from(&conn, 68)?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('historical-rollup', '/tmp/remem', 7, 10, 20)",
+        [],
+    )?;
+    let compress_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Compress,
+        "/tmp/remem",
+        None,
+        "{}",
+        200,
+    )?;
+    let dream_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Dream,
+        "/tmp/remem",
+        None,
+        "{}",
+        300,
+    )?;
+    conn.execute(
+        "UPDATE jobs SET state = 'done' WHERE id = ?1",
+        [compress_job_id],
+    )?;
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'failed', attempt_count = max_attempts,
+             last_error = 'historical terminal dream', failure_class = 'permanent'
+         WHERE id = ?1",
+        [dream_job_id],
+    )?;
+
+    run_migrations(&conn)?;
+
+    let historical: (
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    ) = conn.query_row(
+        "SELECT followup_scheduling_state,
+                followup_scheduling_completed_at_epoch,
+                followup_compress_job_id,
+                followup_dream_disposition,
+                followup_dream_job_id
+         FROM session_summaries
+         WHERE memory_session_id = 'historical-rollup'",
+        [],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
+        },
+    )?;
+    assert_eq!(
+        historical,
+        (
+            Some("legacy_unknown".to_string()),
+            None,
+            None,
+            Some("legacy_unknown".to_string()),
+            None,
+        )
+    );
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id,
+          covered_from_event_id, covered_to_event_id,
+          followup_scheduling_state, followup_dream_disposition)
+         VALUES ('new-rollup', '/tmp/remem', 8, 21, 30, NULL, NULL)",
+        [],
+    )?;
+    let new_state: (Option<String>, Option<String>) = conn.query_row(
+        "SELECT followup_scheduling_state, followup_dream_disposition
+         FROM session_summaries
+         WHERE memory_session_id = 'new-rollup'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(new_state, (None, None));
+    let historical_jobs: (String, String, Option<String>) = conn.query_row(
+        "SELECT compress.state, dream.state, dream.last_error
+         FROM jobs compress, jobs dream
+         WHERE compress.id = ?1 AND dream.id = ?2",
+        params![compress_job_id, dream_job_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        historical_jobs,
+        (
+            "done".to_string(),
+            "failed".to_string(),
+            Some("historical terminal dream".to_string()),
+        )
+    );
+    Ok(())
+}
+
+#[test]
+fn v068_late_v067_rollup_defaults_legacy_unknown_and_requeues_claim() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    create_schema_with_pending_migrations_from(&conn, 68)?;
+    let capture = crate::db::record_captured_event(
+        &conn,
+        &crate::db::CaptureEventInput {
+            host: "codex-cli",
+            session_id: "late-v067-rollup",
+            project: "/tmp/remem",
+            cwd: Some("/tmp/remem"),
+            event_type: "session_stop",
+            role: None,
+            tool_name: None,
+            content: r#"{"session_id":"late-v067-rollup","cwd":"/tmp/remem"}"#,
+            task_kind: Some(crate::db::ExtractionTaskKind::SessionRollup),
+        },
+    )?;
+    let task_id = capture
+        .extraction_task_id
+        .ok_or_else(|| anyhow::anyhow!("capture should enqueue a SessionRollup task"))?;
+    let session_row_id: i64 = conn.query_row(
+        "SELECT session_row_id FROM extraction_tasks WHERE id = ?1",
+        [task_id],
+        |row| row.get(0),
+    )?;
+    conn.execute(
+        "UPDATE extraction_tasks
+         SET status = 'processing', attempts = 4,
+             lease_owner = 'worker-v067', lease_expires_epoch = 1700001000
+         WHERE id = ?1",
+        [task_id],
+    )?;
+
+    run_migrations(&conn)?;
+
+    conn.execute(
+        "INSERT INTO session_summaries
+         (memory_session_id, project, session_row_id,
+          covered_from_event_id, covered_to_event_id)
+         VALUES ('late-v067-rollup', '/tmp/remem', ?1, 1, 1)",
+        [session_row_id],
+    )?;
+    let compress_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Compress,
+        "/tmp/remem",
+        None,
+        "{}",
+        200,
+    )?;
+    let dream_job_id = crate::db::enqueue_job(
+        &conn,
+        "codex-cli",
+        crate::db::JobType::Dream,
+        "/tmp/remem",
+        None,
+        "{}",
+        300,
+    )?;
+    conn.execute(
+        "UPDATE jobs SET state = 'done' WHERE id = ?1",
+        [compress_job_id],
+    )?;
+    conn.execute(
+        "UPDATE jobs
+         SET state = 'failed', attempt_count = max_attempts,
+             last_error = 'late v067 terminal dream', failure_class = 'permanent'
+         WHERE id = ?1",
+        [dream_job_id],
+    )?;
+
+    let late_state: (Option<String>, Option<String>) = conn.query_row(
+        "SELECT followup_scheduling_state, followup_dream_disposition
+         FROM session_summaries
+         WHERE memory_session_id = 'late-v067-rollup'",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(
+        late_state,
+        (
+            Some("legacy_unknown".to_string()),
+            Some("legacy_unknown".to_string()),
+        )
+    );
+    let task_state: (String, i64, Option<String>, Option<i64>) = conn.query_row(
+        "SELECT status, attempts, lease_owner, lease_expires_epoch
+         FROM extraction_tasks WHERE id = ?1",
+        [task_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(task_state, ("pending".to_string(), 0, None, None));
+    let terminal_jobs: (String, String, Option<String>) = conn.query_row(
+        "SELECT compress.state, dream.state, dream.last_error
+         FROM jobs compress, jobs dream
+         WHERE compress.id = ?1 AND dream.id = ?2",
+        params![compress_job_id, dream_job_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(
+        terminal_jobs,
+        (
+            "done".to_string(),
+            "failed".to_string(),
+            Some("late v067 terminal dream".to_string()),
+        )
+    );
+    Ok(())
+}
+
+#[test]
 fn run_migrations_rejects_post_v022_schema_drift_without_repairing() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     create_current_schema_missing_versions(&conn, &[45])?;
@@ -201,11 +623,10 @@ fn create_current_schema_missing_versions(
          PRAGMA foreign_keys=OFF;
          PRAGMA writable_schema=ON;",
     )?;
-    for migration in MIGRATIONS.iter().filter(|migration| {
-        !missing_versions
-            .iter()
-            .any(|missing| *missing == migration.version)
-    }) {
+    for migration in MIGRATIONS
+        .iter()
+        .filter(|migration| !missing_versions.contains(&migration.version))
+    {
         conn.execute_batch(migration.sql)?;
     }
     conn.execute_batch(

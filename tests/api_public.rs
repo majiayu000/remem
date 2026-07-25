@@ -97,6 +97,15 @@ fn public_api_token_helpers_prepare_router_auth() {
     assert_eq!(token.len(), 64);
 }
 
+#[test]
+fn raw_archive_time_bound_remains_public_and_uses_utc_midnight_for_dates() {
+    let parse: fn(&str) -> anyhow::Result<i64> = remem::memory::raw_archive::parse_time_bound;
+
+    assert_eq!(parse("1750000000").unwrap(), 1_750_000_000);
+    assert_eq!(parse("2026-01-02T03:04:05Z").unwrap(), 1_767_323_045);
+    assert_eq!(parse("2026-01-02").unwrap(), 1_767_312_000);
+}
+
 #[tokio::test]
 async fn exported_router_covers_auth_save_list_search_and_detail() -> anyhow::Result<()> {
     let data_dir = TempDataDir::new("public-api-router");

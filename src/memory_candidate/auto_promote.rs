@@ -1,3 +1,4 @@
+use crate::memory::poisoning::SourceTrustClass;
 use crate::memory::MemoryType;
 use crate::runtime_config::SummaryGateMode;
 
@@ -28,10 +29,12 @@ pub(super) fn should_auto_promote(
     batch: &ObservationBatch,
     route: &CandidateRoute,
     evidence_json: &str,
+    source_trust: SourceTrustClass,
 ) -> bool {
     candidate.scope == "project"
         && candidate.risk_class == "low"
         && candidate.confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
+        && source_trust.allows_auto_promote()
         && route.is_repo_owned()
         && route.routing_confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
         && has_evidence_ids(evidence_json)
@@ -54,6 +57,7 @@ pub(super) fn candidate_promotion_decision(
     route: &CandidateRoute,
     evidence_json: &str,
     source_kind: &str,
+    source_trust: SourceTrustClass,
     summary_gate_mode: Option<SummaryGateMode>,
     source_texts: &[&str],
 ) -> CandidatePromotionDecision {
@@ -70,7 +74,13 @@ pub(super) fn candidate_promotion_decision(
                 summary_shadow_promoted: false,
             };
         }
-        return match summary_auto_promote_verdict(candidate, route, evidence_json, source_texts) {
+        return match summary_auto_promote_verdict(
+            candidate,
+            route,
+            evidence_json,
+            source_texts,
+            source_trust,
+        ) {
             SummaryAutoPromoteVerdict::WouldPromote if mode == SummaryGateMode::Enforce => {
                 CandidatePromotionDecision::Promote
             }
@@ -87,9 +97,9 @@ pub(super) fn candidate_promotion_decision(
         };
     }
 
-    if auto_promote_batch
-        .is_some_and(|batch| should_auto_promote(candidate, batch, route, evidence_json))
-    {
+    if auto_promote_batch.is_some_and(|batch| {
+        should_auto_promote(candidate, batch, route, evidence_json, source_trust)
+    }) {
         CandidatePromotionDecision::Promote
     } else {
         CandidatePromotionDecision::PendingReview {
@@ -98,6 +108,7 @@ pub(super) fn candidate_promotion_decision(
                 auto_promote_batch,
                 route,
                 evidence_json,
+                source_trust,
             ),
             summary_shadow_promoted: false,
         }
@@ -112,6 +123,7 @@ pub(super) fn auto_promote_block_reason(
     batch: Option<&ObservationBatch>,
     route: &CandidateRoute,
     evidence_json: &str,
+    source_trust: SourceTrustClass,
 ) -> &'static str {
     if candidate.scope != "project" {
         return "scope_not_project";
@@ -121,6 +133,9 @@ pub(super) fn auto_promote_block_reason(
     }
     if candidate.confidence < AUTO_PROMOTE_MIN_CONFIDENCE {
         return "confidence_below_threshold";
+    }
+    if !source_trust.allows_auto_promote() {
+        return "source_trust_below_floor";
     }
     if !route.is_repo_owned() {
         return "route_not_repo_owned";
@@ -157,6 +172,7 @@ pub(super) fn summary_auto_promote_verdict(
     route: &CandidateRoute,
     evidence_json: &str,
     source_texts: &[&str],
+    source_trust: SourceTrustClass,
 ) -> SummaryAutoPromoteVerdict {
     if candidate.scope != "project" {
         return SummaryAutoPromoteVerdict::Blocked("scope_not_project");
@@ -166,6 +182,9 @@ pub(super) fn summary_auto_promote_verdict(
     }
     if candidate.confidence < SUMMARY_AUTO_PROMOTE_MIN_CONFIDENCE {
         return SummaryAutoPromoteVerdict::Blocked("summary_confidence_below_floor");
+    }
+    if !source_trust.allows_auto_promote() {
+        return SummaryAutoPromoteVerdict::Blocked("source_trust_below_floor");
     }
     if !route.is_repo_owned() {
         return SummaryAutoPromoteVerdict::Blocked("route_not_repo_owned");

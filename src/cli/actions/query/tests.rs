@@ -13,17 +13,15 @@ use serde_json::Value;
 
 use super::{
     current::render_current_state,
-    raw::{
-        build_raw_search_json, build_raw_search_request, render_raw_search_results,
-        search_raw_archive,
-    },
+    raw::{build_raw_search_request, render_raw_search_results, search_raw_archive},
     search::{
         build_search_json, build_search_request, preview_raw_text, preview_text,
         render_search_results,
     },
     show::{format_memory_timestamp, ShowJson},
-    why::{render_why_memory, ContextGateSummary},
+    why::{render_why_memory, ContextGateSummary, PackAttribution},
 };
+use crate::memory::raw_query::build_raw_search_json;
 
 fn sample_memory() -> Memory {
     Memory {
@@ -86,6 +84,7 @@ fn sample_explain() -> SearchExplain {
         rrf_k: 60.0,
         min_evidence_confidence: 0.62,
         filtered_result_count: 0,
+        rerank: None,
         channels: vec![crate::retrieval::search::SearchExplainChannel {
             name: "fts".to_string(),
             enabled: true,
@@ -597,6 +596,7 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
         Some("main"),
         Some(&gate),
         None,
+        None,
         &[],
     );
 
@@ -612,4 +612,27 @@ fn cli_why_render_distinguishes_visibility_from_query_scoring() {
     assert!(output.contains("context gate: latest codex-cli output for proj: mode=suppressed"));
     assert!(output.contains("gate rows are context-output level, not per-memory proof"));
     assert!(output.contains("remem show 1"));
+}
+
+#[test]
+fn cli_why_render_exposes_pack_attribution() {
+    let pack = PackAttribution {
+        origin: "pack:abc123def456".to_string(),
+        source_project: Some("/repo".to_string()),
+        routing_reason: Some("pack import from repo:/source".to_string()),
+    };
+
+    let output = render_why_memory(
+        &sample_memory(),
+        Some("proj"),
+        Some("main"),
+        None,
+        None,
+        Some(&pack),
+        &[],
+    );
+
+    assert!(output.contains(
+        "pack attribution: origin=pack:abc123def456 imported_from=repo:/source trust=pack"
+    ));
 }

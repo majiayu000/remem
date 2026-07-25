@@ -13,7 +13,6 @@ pub fn claim_next_extraction_task(
     lease_secs: i64,
 ) -> Result<Option<ExtractionTask>> {
     let now = chrono::Utc::now().timestamp();
-    let lease_expires = now + lease_secs.max(1);
     let tx = conn.transaction()?;
     let candidate: Option<i64> = tx
         .query_row(
@@ -32,39 +31,164 @@ pub fn claim_next_extraction_task(
         return Ok(None);
     };
 
-    let updated = tx.execute(
+    let task = claim_extraction_task_by_id_in_transaction(&tx, task_id, lease_owner, lease_secs)?;
+    tx.commit()?;
+    Ok(task)
+}
+
+#[cfg(test)]
+pub(crate) fn claim_extraction_task_by_id(
+    conn: &mut Connection,
+    task_id: i64,
+    lease_owner: &str,
+    lease_secs: i64,
+) -> Result<Option<ExtractionTask>> {
+    let tx = conn.transaction()?;
+    let task = claim_extraction_task_by_id_in_transaction(&tx, task_id, lease_owner, lease_secs)?;
+    tx.commit()?;
+    Ok(task)
+}
+
+pub(crate) fn claim_extraction_task_by_id_in_transaction(
+    conn: &Connection,
+    task_id: i64,
+    lease_owner: &str,
+    lease_secs: i64,
+) -> Result<Option<ExtractionTask>> {
+    let now = chrono::Utc::now().timestamp();
+    let lease_expires = now + lease_secs.max(1);
+    let updated = conn.execute(
         "UPDATE extraction_tasks
          SET status = 'processing',
              lease_owner = ?1,
              lease_expires_epoch = ?2,
              updated_at_epoch = ?3
-         WHERE id = ?4 AND status = 'pending'",
+         WHERE id = ?4
+           AND status = 'pending'
+           AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?3)",
         params![lease_owner, lease_expires, now, task_id],
     )?;
     if updated == 0 {
-        tx.commit()?;
         return Ok(None);
     }
 
-    let task = load_claimed_extraction_task(&tx, task_id)?;
-    tx.commit()?;
-    Ok(Some(task))
+    Ok(Some(load_claimed_extraction_task(conn, task_id)?))
 }
 
 pub fn release_expired_extraction_task_leases(conn: &Connection) -> Result<usize> {
     let now = chrono::Utc::now().timestamp();
-    let count = conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let expired = {
+        let mut stmt = tx.prepare(
+            "SELECT id, lease_owner
+             FROM extraction_tasks
+             WHERE status = 'processing'
+               AND lease_expires_epoch IS NOT NULL
+               AND lease_expires_epoch < ?1
+             ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![now], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, Option<String>>(1)?))
+        })?;
+        crate::db::query::collect_rows(rows)?
+    };
+
+    for (task_id, lease_owner) in &expired {
+        if let Some(exact_owner) = lease_owner
+            .as_deref()
+            .filter(|owner| crate::db::is_exact_replay_worker_owner(owner))
+        {
+            archive_claimed_exact_replay_task_in_transaction(
+                &tx,
+                *task_id,
+                exact_owner,
+                "exact replay worker lease expired; rerun the locked exact recovery command",
+                now,
+            )?;
+        } else {
+            let updated = tx.execute(
+                "UPDATE extraction_tasks
+                 SET status = 'pending',
+                     lease_owner = NULL,
+                     lease_expires_epoch = NULL,
+                     updated_at_epoch = ?1
+                 WHERE id = ?2
+                   AND status = 'processing'
+                   AND ((?3 IS NULL AND lease_owner IS NULL) OR lease_owner = ?3)",
+                params![now, task_id, lease_owner],
+            )?;
+            ensure_task_updated(updated, *task_id)?;
+        }
+    }
+    tx.commit()?;
+    Ok(expired.len())
+}
+
+pub(crate) fn archive_claimed_exact_replay_task(
+    conn: &Connection,
+    task_id: i64,
+    lease_owner: &str,
+    error: &str,
+) -> Result<()> {
+    let tx = conn.unchecked_transaction()?;
+    archive_claimed_exact_replay_task_in_transaction(
+        &tx,
+        task_id,
+        lease_owner,
+        error,
+        chrono::Utc::now().timestamp(),
+    )?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn archive_claimed_exact_replay_task_in_transaction(
+    conn: &Connection,
+    task_id: i64,
+    lease_owner: &str,
+    error: &str,
+    now: i64,
+) -> Result<()> {
+    anyhow::ensure!(
+        crate::db::is_exact_replay_worker_owner(lease_owner),
+        "exact replay archive requires an exact replay worker owner"
+    );
+    let replay_range_id: i64 = conn.query_row(
+        "SELECT replay_range_id
+         FROM extraction_tasks
+         WHERE id = ?1 AND status = 'processing' AND lease_owner = ?2",
+        params![task_id, lease_owner],
+        |row| row.get(0),
+    )?;
+    let updated = conn.execute(
         "UPDATE extraction_tasks
-         SET status = 'pending',
+         SET status = 'failed',
+             attempts = attempts + 1,
+             next_retry_epoch = NULL,
              lease_owner = NULL,
              lease_expires_epoch = NULL,
-             updated_at_epoch = ?1
-         WHERE status = 'processing'
-           AND lease_expires_epoch IS NOT NULL
-           AND lease_expires_epoch < ?1",
-        params![now],
+             last_error = ?1,
+             failure_class = ?2,
+             failed_at_epoch = COALESCE(failed_at_epoch, ?3),
+             archived_at_epoch = ?3,
+             updated_at_epoch = ?3
+         WHERE id = ?4 AND status = 'processing' AND lease_owner = ?5",
+        params![
+            crate::db::truncate_str(error, 2000),
+            crate::db::classify_failure(error).as_str(),
+            now,
+            task_id,
+            lease_owner
+        ],
     )?;
-    Ok(count)
+    ensure_task_updated(updated, task_id)?;
+    crate::db::extraction_replay::archive_exact_replay_range_after_task_failure(
+        conn,
+        replay_range_id,
+        task_id,
+        error,
+        now,
+    )
 }
 
 pub fn mark_extraction_task_done(

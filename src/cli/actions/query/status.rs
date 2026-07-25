@@ -5,13 +5,19 @@ use crate::doctor::health_action::{
     queue_actions_with_replay, render_action_block, worker_once_fallback_human,
 };
 
+mod share;
 mod types;
+use share::render_share_card;
 use types::*;
 
-pub(in crate::cli) fn run_status(json: bool) -> Result<()> {
+pub(in crate::cli) fn run_status(json: bool, share: bool) -> Result<()> {
     let report = load_status_report()?;
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+    if share {
+        print!("{}", render_share_card(&report));
         return Ok(());
     }
 
@@ -28,6 +34,8 @@ fn load_status_report() -> Result<StatusReport> {
         .len();
     let version = crate::build_info::version_label();
     let stats = db::query_system_stats(&conn)?;
+    let replayable_legacy_pending =
+        db::pending::admin::count_legacy_migration_candidates(&conn, None, i64::MAX)? as i64;
 
     let today_start = chrono::Local::now()
         .date_naive()
@@ -38,6 +46,7 @@ fn load_status_report() -> Result<StatusReport> {
     let top_projects = db::query_top_projects(&conn, 5)?;
     let now = chrono::Utc::now().timestamp();
     let candidate_promotion = db::query_candidate_promotion_stats(&conn, now)?;
+    let user_context = db::query_user_context_stats(&conn)?;
     let review_queue = crate::memory_candidate::review_stats::query_review_queue_stats(&conn, now)?;
     let latest_session_memory_spend = db::query_latest_session_memory_spend(&conn)?;
     let usage_feedback = crate::memory::usage::query_memory_usage_feedback_stats(&conn)?;
@@ -131,6 +140,20 @@ fn load_status_report() -> Result<StatusReport> {
                 stats.total_memory_candidates,
             ),
         },
+        legacy_surfaces: stats
+            .legacy_surfaces
+            .iter()
+            .map(|surface| LegacySurfaceStatus {
+                surface: surface.surface.clone(),
+                disposition: surface.disposition.clone(),
+                row_count: surface.row_count,
+                last_write_epoch: surface.last_write_epoch,
+                last_write_age_secs: surface
+                    .last_write_epoch
+                    .map(|epoch| now.saturating_sub(epoch)),
+                frozen_write_violations: surface.frozen_write_violations,
+            })
+            .collect(),
         usage_feedback: UsageFeedbackStatus {
             citation_events: usage_feedback.total_events,
             citation_line_present_events: usage_feedback.parsed_events,
@@ -154,6 +177,7 @@ fn load_status_report() -> Result<StatusReport> {
             processing: stats.processing_pending_observations,
             expired: stats.expired_processing_pending_observations,
             failed: stats.failed_pending_observations,
+            replayable_legacy: replayable_legacy_pending,
             oldest_ready_epoch: stats.oldest_ready_pending_epoch,
             oldest_ready_age_secs: stats
                 .oldest_ready_pending_epoch
@@ -166,6 +190,7 @@ fn load_status_report() -> Result<StatusReport> {
             stuck: stats.stuck_jobs,
         },
         failure_lifecycle: stats.failure_lifecycle,
+        poisoning_defense: stats.poisoning_defense,
         worker_daemon: WorkerDaemonStatus {
             health: worker_health_tag(stats.worker_daemon_healthy, stats.worker_heartbeat_age_secs)
                 .to_string(),
@@ -182,6 +207,17 @@ fn load_status_report() -> Result<StatusReport> {
                 context_estimated_tokens: spend.context_estimated_tokens,
                 context_emit_count: spend.context_emit_count,
                 context_suppress_count: spend.context_suppress_count,
+                relevance_state: spend.relevance_state,
+                relevance_policy_version: spend.relevance_policy_version,
+                relevance_k: spend.relevance_k,
+                relevance_threshold: spend.relevance_threshold,
+                relevance_candidate_count: spend.relevance_candidate_count,
+                relevance_eligible_count: spend.relevance_eligible_count,
+                relevance_final_injected_count: spend.relevance_final_injected_count,
+                relevance_below_threshold_count: spend.relevance_below_threshold_count,
+                relevance_k_limited_count: spend.relevance_k_limited_count,
+                relevance_section_budget_count: spend.relevance_section_budget_count,
+                relevance_total_char_limit_count: spend.relevance_total_char_limit_count,
                 ai_usage_attribution: spend.ai_usage_attribution,
                 ai_calls: spend.ai_calls,
                 ai_total_tokens: spend.ai_total_tokens,
@@ -227,6 +263,23 @@ fn load_status_report() -> Result<StatusReport> {
                 last_7_days: stat.last_7_days,
             })
             .collect(),
+        user_context: UserContextStatus {
+            claims_total: user_context.claims_total,
+            claims_active: user_context.claims_active,
+            claims_suppressed: user_context.claims_suppressed,
+            claims_deleted: user_context.claims_deleted,
+            candidates_total: user_context.candidates_total,
+            candidates_pending_review: user_context.candidates_pending_review,
+            candidates_auto_promoted: user_context.candidates_auto_promoted,
+            candidate_block_reasons: user_context
+                .candidate_block_reasons
+                .into_iter()
+                .map(|reason| UserContextBlockReasonStatus {
+                    reason: reason.reason,
+                    pending: reason.pending,
+                })
+                .collect(),
+        },
         today: DailyStatus {
             new_memories: daily_stats.memories,
             new_observations: daily_stats.observations,
@@ -418,6 +471,35 @@ fn print_status_report(report: &StatusReport) {
         println!("  Oldest task:  {:>6}s", age_secs);
     }
     println!();
+    println!(
+        "Poisoning defense (pattern set v{}):",
+        report.poisoning_defense.pattern_set_version
+    );
+    println!(
+        "  Cand quar:    {:>6}",
+        report.poisoning_defense.quarantined_candidates
+    );
+    println!(
+        "  Summ quar:    {:>6}",
+        report.poisoning_defense.quarantined_summaries
+    );
+    println!(
+        "  Summ legacy:  {:>6}",
+        report.poisoning_defense.legacy_unscanned_summaries
+    );
+    println!(
+        "  Summ blocks:  {:>6}",
+        report.poisoning_defense.summary_block_count
+    );
+    println!(
+        "  Obs quar:     {:>6}",
+        report.poisoning_defense.quarantined_observations
+    );
+    println!(
+        "  Inject drops: {:>6}",
+        report.poisoning_defense.memory_injection_drops
+    );
+    println!();
     println!("Promotion funnel:");
     println!(
         "  Events -> obs: {:>6}/{:<6} ({:>5.1}%)",
@@ -443,6 +525,22 @@ fn print_status_report(report: &StatusReport) {
         report.promotion_funnel.candidates,
         report.promotion_funnel.pending_review_rate_percent
     );
+    println!();
+    println!("Legacy surfaces:");
+    for surface in &report.legacy_surfaces {
+        let age = surface
+            .last_write_age_secs
+            .map(|age_secs| format!("{age_secs}s"))
+            .unwrap_or_else(|| "none".to_string());
+        println!(
+            "  {:<20} rows={:>6} disposition={} last_write={} violations={}",
+            surface.surface,
+            surface.row_count,
+            surface.disposition,
+            age,
+            surface.frozen_write_violations
+        );
+    }
     println!();
     println!("Usage feedback:");
     println!(
@@ -476,6 +574,10 @@ fn print_status_report(report: &StatusReport) {
     );
     println!("  Expired:      {:>6}", report.pending_observations.expired);
     println!("  Failed:       {:>6}", report.pending_observations.failed);
+    println!(
+        "  Replayable:   {:>6}",
+        report.pending_observations.replayable_legacy
+    );
     if let Some(age_secs) = report.pending_observations.oldest_ready_age_secs {
         println!("  Oldest ready: {:>6}s", age_secs);
     }
@@ -514,6 +616,31 @@ fn print_status_report(report: &StatusReport) {
                 label, stat.total, stat.last_7_days
             );
         }
+    }
+    println!();
+    println!("User context:");
+    println!(
+        "  Claims active:{:>6}/{:<6}",
+        report.user_context.claims_active, report.user_context.claims_total
+    );
+    println!(
+        "  Claims hidden:{:>6} suppressed, {:>6} deleted",
+        report.user_context.claims_suppressed, report.user_context.claims_deleted
+    );
+    println!(
+        "  Cand pending: {:>6}/{:<6}",
+        report.user_context.candidates_pending_review, report.user_context.candidates_total
+    );
+    println!(
+        "  Cand promoted:{:>6}/{:<6}",
+        report.user_context.candidates_auto_promoted, report.user_context.candidates_total
+    );
+    for reason in report.user_context.candidate_block_reasons.iter().take(5) {
+        println!(
+            "  Blocked:      {:>6}  {}",
+            reason.pending,
+            reason.reason.as_deref().unwrap_or("<none>")
+        );
     }
     println!();
     println!("Jobs:");
@@ -560,6 +687,29 @@ fn print_status_report(report: &StatusReport) {
             "  Context runs: {:>6} emitted, {:>6} suppressed",
             spend.context_emit_count, spend.context_suppress_count
         );
+        if spend.relevance_state == "unavailable" {
+            println!("  Relevance:    unavailable on legacy context rows");
+        } else {
+            let threshold = spend
+                .relevance_threshold
+                .map(|value| format!("{value:.3}"))
+                .unwrap_or_else(|| "-".to_string());
+            println!(
+                "  Relevance:    {} (k={}, threshold={}, {}/{} injected/eligible)",
+                spend.relevance_state,
+                spend.relevance_k.unwrap_or(0),
+                threshold,
+                spend.relevance_final_injected_count,
+                spend.relevance_eligible_count
+            );
+            println!(
+                "  Relevance drops: {} low, {} k-limit, {} section, {} total-limit",
+                spend.relevance_below_threshold_count,
+                spend.relevance_k_limited_count,
+                spend.relevance_section_budget_count,
+                spend.relevance_total_char_limit_count
+            );
+        }
         match spend.ai_usage_attribution.as_str() {
             "attributed" => {
                 println!(
@@ -632,7 +782,7 @@ fn percent(numerator: i64, denominator: i64) -> f64 {
 fn status_health_actions(report: &StatusReport) -> Vec<crate::doctor::health_action::HealthAction> {
     queue_actions_with_replay(
         report.pending_observations.failed,
-        report.pending_observations.expired,
+        report.pending_observations.replayable_legacy,
         report.capture_pipeline.extract_expired,
         report.jobs.failed,
         report.jobs.stuck,

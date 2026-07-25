@@ -5,7 +5,7 @@ use chrono::{SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use super::{
-    claims::DEFAULT_OWNER_KEY,
+    claims::{self, DEFAULT_OWNER_KEY},
     summary::{self, SummaryRequest, UserContextSummary},
 };
 
@@ -380,6 +380,9 @@ fn memory_source_exclusion_reasons(conn: &Connection, memory_id: i64) -> Result<
     }
     if memory_source_is_policy_suppressed(conn, memory_id)? {
         push_reason(&mut reasons, "suppressed");
+    }
+    if claims::active_preference_backfill_covers_user_preference_memory(conn, memory_id)? {
+        push_reason(&mut reasons, "source:backfilled_as_user_claim");
     }
     Ok(reasons)
 }

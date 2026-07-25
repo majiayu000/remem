@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::db;
 use crate::hook_stdin::read_stdin_with_timeout;
@@ -9,7 +9,11 @@ use crate::perf::{format_phase_timings, push_elapsed, time_result, PhaseTiming};
 use super::super::constants::SUMMARIZE_STDIN_TIMEOUT_MS;
 use super::super::input::SummarizeInput;
 use super::host::resolve_hook_host;
-use super::spill::{replay_spilled_summary_hook_payloads, spill_summary_hook_payload};
+use super::replay::{replay_capture_event_id, replay_git_evidence_event_id, SummaryPayloadOrigin};
+use super::spill::{
+    replay_spilled_summary_hook_payloads, spill_summary_hook_payload,
+    spill_summary_hook_payload_with_git_evidence,
+};
 use super::worker_launch::{spawn_worker_once_if_idle, WorkerSpawnDecision};
 
 pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> {
@@ -18,6 +22,15 @@ pub async fn summarize(host: Option<&str>, profile: Option<&str>) -> Result<()> 
     };
 
     summarize_input(&input, host, profile).await
+}
+
+/// Enqueues an already-prepared Cursor Stop payload (GH-825). The payload is
+/// built by `summarize_cursor_bytes` after full Stop validation and
+/// snapshot/degradation handling; it never carries a `transcript_path`, so
+/// `summary_payload_with_cwd` cannot stat or read any transcript and the
+/// Claude/Codex reader stays unreachable.
+pub(in crate::summarize) async fn summarize_cursor_prepared_input(input: &str) -> Result<()> {
+    summarize_input(input, Some(crate::cursor_hook::CURSOR_HOST), None).await
 }
 
 pub(super) async fn summarize_input(
@@ -42,12 +55,28 @@ pub(super) async fn summarize_input(
     }
     let host = time_result(&mut timings, "resolve_host", || resolve_hook_host(host))?;
     let cwd = effective_cwd(&hook)?;
+    let captured_input = match summary_payload_with_cwd(input, &cwd, profile) {
+        Ok(payload) => payload,
+        Err(error) => {
+            spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+            return Err(error);
+        }
+    };
+    let prepared_hook: SummarizeInput = serde_json::from_str(&captured_input)?;
+    let git_evidence = summary_git_evidence_or_empty(&host, &prepared_hook, &cwd);
+    let input = captured_input.as_str();
     let conn = match time_result(&mut timings, "open_db_for_hook", db::open_db_for_hook) {
         Ok(conn) => conn,
         Err(error) => {
             let spill_start = Instant::now();
-            let spill_result =
-                spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error);
+            let spill_result = spill_summary_hook_payload_with_git_evidence(
+                input,
+                Some(&host),
+                profile,
+                Some(&cwd),
+                &git_evidence,
+                &error,
+            );
             push_elapsed(&mut timings, "spill_payload", spill_start);
             let path = spill_result?;
             crate::log::error(
@@ -64,15 +93,38 @@ pub(super) async fn summarize_input(
         }
     };
     time_result(&mut timings, "enqueue_summary_payload", || {
-        enqueue_summary_payload(&conn, input, Some(&host), profile)
+        enqueue_summary_payload_with_git_evidence(
+            &conn,
+            input,
+            Some(&host),
+            profile,
+            SummaryPayloadOrigin::Live,
+            Some(&git_evidence),
+        )
     })?;
+    let current_identity =
+        SummaryPayloadIdentity::from_hook(&host, &hook, &cwd, &db::project_from_cwd(&cwd));
     if let Err(error) = time_result(&mut timings, "spill_replay", || {
         replay_spilled_summary_hook_payloads(&conn, |conn, record| {
-            enqueue_summary_payload(
+            if summary_payload_identity(&record.input, record.host.as_deref())?.as_ref()
+                == Some(&current_identity)
+            {
+                crate::log::info(
+                    "summarize",
+                    &format!(
+                        "skipped spilled summary hook payload for current identity host={} project={} session={}",
+                        current_identity.host, current_identity.project, current_identity.session_id
+                    ),
+                );
+                return record_replayed_git_evidence_only(conn, record);
+            }
+            enqueue_summary_payload_with_git_evidence(
                 conn,
                 &record.input,
                 record.host.as_deref(),
                 record.profile.as_deref(),
+                SummaryPayloadOrigin::Replay,
+                Some(&record.git_evidence),
             )
         })
     }) {
@@ -87,11 +139,8 @@ pub(super) async fn summarize_input(
         Ok(WorkerSpawnDecision::Spawned) => {
             crate::log::info("summarize", "worker --once spawned");
         }
-        Ok(WorkerSpawnDecision::SkippedHealthyDaemon) => {
-            crate::log::info(
-                "summarize",
-                "worker daemon heartbeat healthy; skip worker --once",
-            );
+        Ok(WorkerSpawnDecision::SkippedHealthyWorker) => {
+            crate::log::info("summarize", "worker heartbeat healthy; skip worker --once");
         }
         Ok(WorkerSpawnDecision::SkippedLaunchInProgress) => {
             crate::log::info(
@@ -111,11 +160,24 @@ pub(super) async fn summarize_input(
     Ok(())
 }
 
-fn enqueue_summary_payload(
+#[cfg(test)]
+pub(super) fn enqueue_summary_payload(
     conn: &rusqlite::Connection,
     input: &str,
     host: Option<&str>,
     profile: Option<&str>,
+    origin: SummaryPayloadOrigin,
+) -> Result<()> {
+    enqueue_summary_payload_with_git_evidence(conn, input, host, profile, origin, None)
+}
+
+pub(super) fn enqueue_summary_payload_with_git_evidence(
+    conn: &rusqlite::Connection,
+    input: &str,
+    host: Option<&str>,
+    profile: Option<&str>,
+    origin: SummaryPayloadOrigin,
+    provided_git_evidence: Option<&[crate::git_util::GitCommitEvidence]>,
 ) -> Result<()> {
     let hook: SummarizeInput = serde_json::from_str(input)?;
     let Some(session_id) = &hook.session_id else {
@@ -124,19 +186,127 @@ fn enqueue_summary_payload(
     let cwd = effective_cwd(&hook)?;
     let project = db::project_from_cwd(&cwd);
     let host = resolve_hook_host(host)?;
-    let summary_payload = summary_payload_with_cwd(input, &cwd, profile)?;
-    let compress_payload = compress_payload(profile)?;
-
-    record_summary_capture_event(conn, &host, session_id, &project, &cwd, &summary_payload);
-    enqueue_summary_jobs(
+    let summary_payload = match summary_payload_with_cwd(input, &cwd, profile) {
+        Ok(payload) => payload,
+        Err(error) => {
+            if origin.is_replay() {
+                crate::log::error(
+                    "summarize",
+                    &format!(
+                        "replayed Stop payload preparation failed; replay layer will preserve it: {error}"
+                    ),
+                );
+            } else {
+                let path =
+                    spill_summary_hook_payload(input, Some(&host), profile, Some(&cwd), &error)?;
+                crate::log::error(
+                    "summarize",
+                    &format!(
+                        "Stop payload preparation failed; spilled summary hook payload to {}: {error}",
+                        path.display()
+                    ),
+                );
+            }
+            return Err(error);
+        }
+    };
+    let prepared_hook: SummarizeInput = serde_json::from_str(&summary_payload)?;
+    let discovered_git_evidence;
+    let git_evidence = if let Some(provided) = provided_git_evidence {
+        provided
+    } else {
+        discovered_git_evidence = summary_git_evidence_or_empty(&host, &prepared_hook, &cwd);
+        discovered_git_evidence.as_slice()
+    };
+    let replay_event_id = origin
+        .is_replay()
+        .then(|| replay_capture_event_id(&host, &project, session_id, &summary_payload));
+    if let Err(error) = record_summary_capture_event(
         conn,
         &host,
         session_id,
         &project,
+        &cwd,
         &summary_payload,
-        &compress_payload,
+        replay_event_id.as_deref(),
+        git_evidence,
+    ) {
+        let error_text = error.to_string();
+        if origin.is_replay() {
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "replayed capture ledger record failed; replay layer will preserve summary hook payload and skip follow-up jobs: {error_text}"
+                ),
+            );
+        } else {
+            let path = spill_summary_hook_payload_with_git_evidence(
+                input,
+                Some(&host),
+                profile,
+                Some(&cwd),
+                git_evidence,
+                &error,
+            )?;
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "capture ledger record failed; spilled summary hook payload to {} and skipped follow-up jobs: {}",
+                    path.display(),
+                    error_text
+                ),
+            );
+        }
+        anyhow::bail!(error_text);
+    }
+    let current_branch = db::detect_git_branch(&cwd);
+    super::side_effects::run_stop_hook_side_effects(
+        conn,
+        &host,
+        &prepared_hook,
+        session_id,
+        &project,
+        &cwd,
+        current_branch.as_deref(),
+        false,
     )?;
     Ok(())
+}
+
+fn summary_git_evidence(
+    host: &str,
+    hook: &SummarizeInput,
+    cwd: &str,
+) -> Result<Vec<crate::git_util::GitCommitEvidence>> {
+    if host != "codex-cli" {
+        return Ok(Vec::new());
+    }
+    let (Some(transcript_path), Some(byte_limit)) =
+        (hook.transcript_path.as_deref(), hook.transcript_byte_len)
+    else {
+        return Ok(Vec::new());
+    };
+    crate::git_evidence::from_codex_transcript(transcript_path, byte_limit, cwd)
+}
+
+fn summary_git_evidence_or_empty(
+    host: &str,
+    hook: &SummarizeInput,
+    cwd: &str,
+) -> Vec<crate::git_util::GitCommitEvidence> {
+    match summary_git_evidence(host, hook, cwd) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            crate::log::error(
+                "summarize",
+                &format!(
+                    "commit evidence extraction failed; preserving Stop capture without commit evidence host={host} session={}: {error:#}",
+                    hook.session_id.as_deref().unwrap_or("unknown")
+                ),
+            );
+            Vec::new()
+        }
+    }
 }
 
 fn effective_cwd(hook: &SummarizeInput) -> Result<String> {
@@ -161,6 +331,26 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
             serde_json::Value::String(cwd.to_string()),
         );
     }
+    let transcript_path = obj
+        .get("transcript_path")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned);
+    if obj
+        .get("transcript_byte_len")
+        .and_then(serde_json::Value::as_u64)
+        .is_none()
+    {
+        if let Some(transcript_path) = transcript_path {
+            let metadata = std::fs::metadata(&transcript_path)
+                .with_context(|| format!("snapshot transcript length path={transcript_path}"))?;
+            obj.insert(
+                "transcript_byte_len".to_string(),
+                serde_json::Value::Number(metadata.len().into()),
+            );
+        }
+    }
     if let Some(profile) = clean_optional(profile) {
         obj.insert(
             crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
@@ -170,15 +360,43 @@ fn summary_payload_with_cwd(input: &str, cwd: &str, profile: Option<&str>) -> Re
     Ok(serde_json::to_string(&payload)?)
 }
 
-fn compress_payload(profile: Option<&str>) -> Result<String> {
-    let mut payload = serde_json::Map::new();
-    if let Some(profile) = clean_optional(profile) {
-        payload.insert(
-            crate::runtime_config::MEMORY_AI_PROFILE_FIELD.to_string(),
-            serde_json::Value::String(profile),
-        );
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SummaryPayloadIdentity {
+    host: String,
+    session_id: String,
+    project: String,
+}
+
+impl SummaryPayloadIdentity {
+    fn from_hook(host: &str, hook: &SummarizeInput, cwd: &str, project: &str) -> Self {
+        Self {
+            host: host.to_string(),
+            session_id: hook.session_id.clone().unwrap_or_default(),
+            project: if project.trim().is_empty() {
+                db::project_from_cwd(cwd)
+            } else {
+                project.to_string()
+            },
+        }
     }
-    Ok(serde_json::to_string(&serde_json::Value::Object(payload))?)
+}
+
+fn summary_payload_identity(
+    input: &str,
+    host: Option<&str>,
+) -> Result<Option<SummaryPayloadIdentity>> {
+    let hook: SummarizeInput = serde_json::from_str(input)?;
+    let Some(session_id) = hook.session_id.clone() else {
+        return Ok(None);
+    };
+    let host = resolve_hook_host(host)?;
+    let cwd = effective_cwd(&hook)?;
+    let project = db::project_from_cwd(&cwd);
+    Ok(Some(SummaryPayloadIdentity {
+        host,
+        session_id,
+        project,
+    }))
 }
 
 fn record_summary_capture_event(
@@ -188,8 +406,10 @@ fn record_summary_capture_event(
     project: &str,
     cwd: &str,
     content: &str,
-) -> bool {
-    match db::record_captured_event(
+    event_id: Option<&str>,
+    git_evidence: &[crate::git_util::GitCommitEvidence],
+) -> Result<()> {
+    db::record_captured_event_with_id_and_reference_time_and_git_evidence(
         conn,
         &db::CaptureEventInput {
             host,
@@ -202,71 +422,58 @@ fn record_summary_capture_event(
             content,
             task_kind: Some(db::ExtractionTaskKind::SessionRollup),
         },
-    ) {
-        Ok(_) => true,
-        Err(err) => {
-            crate::log::warn(
-                "summarize",
-                &format!(
-                    "capture ledger record failed; continuing summary enqueue: {}",
-                    err
-                ),
-            );
-            false
-        }
-    }
+        event_id,
+        None,
+        git_evidence,
+    )?;
+    Ok(())
 }
 
-fn enqueue_summary_jobs(
+fn record_replayed_git_evidence_only(
     conn: &rusqlite::Connection,
-    host: &str,
-    session_id: &str,
-    project: &str,
-    input: &str,
-    compress_input: &str,
+    record: &super::spill::SummaryHookSpillRecord,
 ) -> Result<()> {
-    let ready_pending = db::count_pending_for_identity(conn, host, project, session_id)?;
-    if ready_pending > 0 {
-        crate::log::warn(
-            "summarize",
-            &format!(
-                "ignored {ready_pending} legacy pending observation row(s); captures now use extraction_tasks"
-            ),
-        );
+    if record.git_evidence.is_empty() {
+        return Ok(());
     }
-    db::enqueue_job(
+    let hook: SummarizeInput = serde_json::from_str(&record.input)?;
+    let Some(session_id) = hook.session_id.as_deref() else {
+        return Ok(());
+    };
+    let cwd = effective_cwd(&hook)?;
+    let project = db::project_from_cwd(&cwd);
+    let host = resolve_hook_host(record.host.as_deref())?;
+    let mut shas = record
+        .git_evidence
+        .iter()
+        .map(|evidence| evidence.metadata.sha.as_str())
+        .collect::<Vec<_>>();
+    shas.sort_unstable();
+    shas.dedup();
+    let content = serde_json::json!({
+        "source": "replayed_stop_commit_evidence",
+        "commit_shas": shas,
+    })
+    .to_string();
+    let event_id =
+        replay_git_evidence_event_id(&host, &project, session_id, &record.input, &content);
+    db::record_captured_event_with_id_and_reference_time_and_git_evidence(
         conn,
-        host,
-        db::JobType::Summary,
-        project,
-        Some(session_id),
-        input,
-        100,
-    )?;
-    db::enqueue_job(
-        conn,
-        host,
-        db::JobType::Compress,
-        project,
+        &db::CaptureEventInput {
+            host: &host,
+            session_id,
+            project: &project,
+            cwd: Some(&cwd),
+            event_type: "commit_evidence",
+            role: None,
+            tool_name: None,
+            content: &content,
+            task_kind: Some(db::ExtractionTaskKind::CapturedGitLink),
+        },
+        Some(&event_id),
         None,
-        compress_input,
-        200,
+        &record.git_evidence,
     )?;
-    db::maybe_enqueue_dream_job(
-        conn,
-        host,
-        project,
-        compress_input,
-        300,
-        crate::dream::DREAM_COOLDOWN_SECS,
-    )?;
-    crate::log::info(
-        "summarize",
-        &format!(
-            "QUEUED summary session={} project={} legacy_pending_observations={}",
-            session_id, project, ready_pending
-        ),
-    );
     Ok(())
 }
 
@@ -290,356 +497,5 @@ fn log_summary_hook_timing(status: &str, host: &str, timings: &[PhaseTiming]) {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::Mutex;
-
-    use crate::db::{self, test_support::ScopedTestDataDir};
-
-    use super::{
-        compress_payload, enqueue_summary_jobs, record_summary_capture_event, resolve_hook_host,
-        summarize_input, summary_payload_with_cwd,
-    };
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        old_values: Vec<(String, Option<String>)>,
-    }
-
-    impl EnvGuard {
-        fn set(vars: &[(&str, Option<&str>)]) -> Self {
-            let old_values = vars
-                .iter()
-                .map(|(key, _)| ((*key).to_string(), std::env::var(key).ok()))
-                .collect::<Vec<_>>();
-
-            for (key, value) in vars {
-                match value {
-                    Some(value) => unsafe { std::env::set_var(key, value) },
-                    None => unsafe { std::env::remove_var(key) },
-                }
-            }
-
-            Self { old_values }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            for (key, value) in self.old_values.drain(..) {
-                match value {
-                    Some(value) => unsafe { std::env::set_var(&key, value) },
-                    None => unsafe { std::env::remove_var(&key) },
-                }
-            }
-        }
-    }
-
-    fn with_env_vars<T>(vars: &[(&str, Option<&str>)], f: impl FnOnce() -> T) -> T {
-        let Ok(_guard) = ENV_LOCK.lock() else {
-            panic!("env lock should acquire");
-        };
-        let _env = EnvGuard::set(vars);
-        f()
-    }
-
-    #[test]
-    fn hook_host_normalizes_explicit_host() {
-        with_env_vars(
-            &[
-                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
-                ("REMEM_EXECUTOR", Some("claude-cli")),
-            ],
-            || {
-                assert!(matches!(
-                    resolve_hook_host(Some("codex")).as_deref(),
-                    Ok("codex-cli")
-                ));
-            },
-        );
-    }
-
-    #[test]
-    fn hook_host_uses_runtime_config_default() {
-        let _test_dir = ScopedTestDataDir::new("summary-default-host");
-
-        with_env_vars(
-            &[
-                ("REMEM_HOOK_HOST", None),
-                ("REMEM_CONTEXT_HOST", None),
-                ("REMEM_SUMMARY_EXECUTOR", None),
-                ("REMEM_EXECUTOR", None),
-            ],
-            || {
-                assert!(matches!(
-                    resolve_hook_host(None).as_deref(),
-                    Ok("codex-cli")
-                ));
-            },
-        );
-    }
-
-    #[test]
-    fn hook_host_preserves_legacy_summary_executor() {
-        with_env_vars(
-            &[
-                ("REMEM_HOOK_HOST", None),
-                ("REMEM_CONTEXT_HOST", None),
-                ("REMEM_SUMMARY_EXECUTOR", Some("claude-cli")),
-                ("REMEM_EXECUTOR", Some("codex-cli")),
-            ],
-            || {
-                assert!(matches!(
-                    resolve_hook_host(None).as_deref(),
-                    Ok("claude-code")
-                ));
-            },
-        );
-    }
-
-    #[test]
-    fn summary_payload_with_cwd_fills_missing_cwd() {
-        let payload =
-            summary_payload_with_cwd(r#"{"session_id":"sess-cwd"}"#, "/tmp/project", None)
-                .expect("payload should serialize");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&payload).expect("payload should parse");
-
-        assert_eq!(parsed["session_id"].as_str(), Some("sess-cwd"));
-        assert_eq!(parsed["cwd"].as_str(), Some("/tmp/project"));
-    }
-
-    #[test]
-    fn summary_payload_with_cwd_preserves_existing_cwd() {
-        let payload = summary_payload_with_cwd(
-            r#"{"session_id":"sess-cwd","cwd":"/repo"}"#,
-            "/tmp/project",
-            None,
-        )
-        .expect("payload should serialize");
-        let parsed: serde_json::Value =
-            serde_json::from_str(&payload).expect("payload should parse");
-
-        assert_eq!(parsed["cwd"].as_str(), Some("/repo"));
-    }
-
-    #[test]
-    fn summary_and_compress_payloads_preserve_profile() {
-        let summary = summary_payload_with_cwd(
-            r#"{"session_id":"sess-cwd"}"#,
-            "/tmp/project",
-            Some("custom"),
-        )
-        .expect("payload should serialize");
-        let compress = compress_payload(Some("custom")).expect("payload should serialize");
-        let summary: serde_json::Value =
-            serde_json::from_str(&summary).expect("summary payload should parse");
-        let compress: serde_json::Value =
-            serde_json::from_str(&compress).expect("compress payload should parse");
-
-        assert_eq!(summary["remem_ai_profile"].as_str(), Some("custom"));
-        assert_eq!(compress["remem_ai_profile"].as_str(), Some("custom"));
-    }
-
-    #[test]
-    fn hosted_summary_hook_can_preserve_profile_override() -> anyhow::Result<()> {
-        let host = resolve_hook_host(Some("codex"))?;
-        let summary = summary_payload_with_cwd(
-            r#"{"session_id":"sess-hosted-profile"}"#,
-            "/tmp/project",
-            Some("custom"),
-        )?;
-        let parsed: serde_json::Value = serde_json::from_str(&summary)?;
-
-        assert_eq!(host, "codex-cli");
-        assert_eq!(parsed["remem_ai_profile"].as_str(), Some("custom"));
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn summarize_hook_rejects_stale_schema_without_migrating() -> anyhow::Result<()> {
-        let test_dir = ScopedTestDataDir::new("summary-hook-stale-schema");
-        std::fs::create_dir_all(&test_dir.path)?;
-        let setup = rusqlite::Connection::open(test_dir.db_path())?;
-        setup.execute("CREATE TABLE marker (id INTEGER PRIMARY KEY)", [])?;
-        drop(setup);
-        let input = serde_json::json!({
-            "session_id": "sess-summary-stale",
-            "cwd": "/tmp/remem"
-        })
-        .to_string();
-
-        let err = summarize_input(&input, Some("codex-cli"), None)
-            .await
-            .expect_err("stale hook database should fail closed");
-
-        assert!(
-            err.to_string().contains("hook database open requires"),
-            "unexpected error: {err:#}"
-        );
-        let check = rusqlite::Connection::open(test_dir.db_path())?;
-        let (migrations_exists, jobs_exists): (i64, i64) = check.query_row(
-            "SELECT
-                SUM(CASE WHEN name = '_schema_migrations' THEN 1 ELSE 0 END),
-                SUM(CASE WHEN name = 'jobs' THEN 1 ELSE 0 END)
-             FROM sqlite_master
-             WHERE type = 'table'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        assert_eq!(migrations_exists, 0);
-        assert_eq!(jobs_exists, 0);
-        assert!(super::super::spill::summary_spill_path().exists());
-        Ok(())
-    }
-
-    #[test]
-    fn capture_ledger_failure_does_not_block_legacy_summary_hook() {
-        let _test_dir = ScopedTestDataDir::new("summary-legacy-unknown-host");
-        let conn = db::open_db().expect("db should open");
-
-        let captured = record_summary_capture_event(
-            &conn,
-            "unknown",
-            "sess-legacy",
-            "/tmp/remem",
-            "/tmp/remem",
-            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
-        );
-        enqueue_summary_jobs(
-            &conn,
-            "unknown",
-            "sess-legacy",
-            "/tmp/remem",
-            r#"{"session_id":"sess-legacy","cwd":"/tmp/remem"}"#,
-            "{}",
-        )
-        .expect("legacy summary jobs should still enqueue");
-
-        assert!(!captured);
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn enqueue_summary_jobs_skips_observation_job_when_no_pending_events() {
-        let _test_dir = ScopedTestDataDir::new("summary-no-pending-observation");
-        let conn = db::open_db().expect("db should open");
-
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-no-pending",
-            "/tmp/remem",
-            r#"{"session_id":"sess-no-pending"}"#,
-            "{}",
-        )
-        .expect("summary jobs should enqueue");
-
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn enqueue_summary_jobs_ignores_legacy_pending_observations() {
-        let _test_dir = ScopedTestDataDir::new("summary-with-pending-observation");
-        let conn = db::open_db().expect("db should open");
-        db::enqueue_pending(
-            &conn,
-            "claude-code",
-            "sess-with-pending",
-            "/tmp/remem",
-            "Edit",
-            Some(r#"{"file_path":"src/lib.rs"}"#),
-            None,
-            Some("/tmp/remem"),
-        )
-        .expect("pending observation should insert");
-
-        enqueue_summary_jobs(
-            &conn,
-            "claude-code",
-            "sess-with-pending",
-            "/tmp/remem",
-            r#"{"session_id":"sess-with-pending"}"#,
-            "{}",
-        )
-        .expect("summary jobs should enqueue");
-
-        let jobs = job_types(&conn);
-        assert_eq!(
-            jobs,
-            vec![
-                "summary".to_string(),
-                "compress".to_string(),
-                "dream".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn enqueue_summary_jobs_dedups_dream_and_preserves_profile_payload() {
-        let _test_dir = ScopedTestDataDir::new("summary-dream-profile");
-        let conn = db::open_db().expect("db should open");
-        let payload = compress_payload(Some("custom")).expect("compress payload should serialize");
-
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-dream-a",
-            "/tmp/remem",
-            r#"{"session_id":"sess-dream-a"}"#,
-            &payload,
-        )
-        .expect("first summary jobs should enqueue");
-        enqueue_summary_jobs(
-            &conn,
-            "codex-cli",
-            "sess-dream-b",
-            "/tmp/remem",
-            r#"{"session_id":"sess-dream-b"}"#,
-            &payload,
-        )
-        .expect("second summary jobs should enqueue");
-
-        let dream_payloads = job_payloads(&conn, "dream");
-        assert_eq!(dream_payloads.len(), 1);
-        let dream_payload: serde_json::Value =
-            serde_json::from_str(&dream_payloads[0]).expect("dream payload should parse");
-        assert_eq!(dream_payload["remem_ai_profile"].as_str(), Some("custom"));
-    }
-
-    fn job_types(conn: &rusqlite::Connection) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT job_type FROM jobs ORDER BY id ASC")
-            .expect("job query should prepare");
-        stmt.query_map([], |row| row.get(0))
-            .expect("job query should run")
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .expect("job rows should collect")
-    }
-
-    fn job_payloads(conn: &rusqlite::Connection, job_type: &str) -> Vec<String> {
-        let mut stmt = conn
-            .prepare("SELECT payload_json FROM jobs WHERE job_type = ?1 ORDER BY id ASC")
-            .expect("job query should prepare");
-        stmt.query_map([job_type], |row| row.get(0))
-            .expect("job query should run")
-            .collect::<rusqlite::Result<Vec<String>>>()
-            .expect("job rows should collect")
-    }
-}
+#[path = "hook/tests.rs"]
+mod tests;

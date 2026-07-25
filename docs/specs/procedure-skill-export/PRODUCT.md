@@ -1,7 +1,7 @@
 # Procedure Skill Export Product Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-08
 
 Tracking:
 - Spec/tracking issue: #680
@@ -10,13 +10,10 @@ Tracking:
 ## Problem
 
 Procedural memory promotes verified repeatable workflows into
-`memory_type='procedure'` rows, but the value chain stops inside the store.
-`docs/procedural-memory.md` declares exporting mature procedures to docs or
-skills a non-goal that "should remain an explicit review step" — and that
-review step has no surface. A multiply-verified procedure today is only a
-retrieval hit; it cannot become a first-class agent capability (Claude Code
-skill, Codex prompt, repo runbook) that fires deterministically instead of
-depending on retrieval luck.
+`memory_type='procedure'` rows. Before GH680, the value chain stopped inside
+the store: a multiply-verified procedure was only a retrieval hit, not a
+reviewable artifact that could become a first-class agent capability (Claude
+Code skill, Codex prompt, repo runbook) after human review.
 
 This is the #671 thesis applied to the procedure class: memory graduating
 from passively injected text to actively executable capability.
@@ -83,8 +80,7 @@ from passively injected text to actively executable capability.
   (module visibility or runtime guard with an explicit error).
 - Doctor flags an export whose source procedure was invalidated, freshness-
   lapsed, or materially updated after export.
-- `docs/procedural-memory.md` non-goal paragraph is replaced with the
-  review-gated export contract.
+- `docs/procedural-memory.md` describes the review-gated export contract.
 
 ## Risks
 

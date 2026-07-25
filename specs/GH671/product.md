@@ -15,13 +15,31 @@ runtime implementation by itself.
 
 ## User Problem
 
-Injected preference text is advisory. remem can remember a repeated correction
-such as "use bun, not npm", inject it into future sessions, and still watch an
-agent violate it because nothing checks tool input deterministically.
+Historically, injected preference text was advisory: remem could remember a
+repeated correction such as "use bun, not npm", inject it into future sessions,
+and still watch an agent violate it because nothing checked tool input
+deterministically.
 
 remem owns both the memory store and the hook surfaces, so high-confidence,
 machine-checkable corrections can become local runtime checks instead of
-remaining recall-only prose.
+remaining recall-only prose. Current enforcement is conditional: with rule
+compilation enabled and an eligible worker-built artifact present, Claude Code
+PreToolUse(Bash) deterministically evaluates supported command input. Phase 1
+does not evaluate arbitrary prose or prompts, and Codex command enforcement
+remains unsupported because it lacks a pre-execution command hook.
+
+Phase 1 implementation status: `SP671-T1`, `SP671-T2`, and `SP671-T4`
+through `SP671-T7` are implemented. The core T3 compiler is present, including
+disabled-by-default configuration, canonical SQLite state, evidence-backed
+reinforcement, the artifact/evaluator foundation, and deterministic
+worker-side compilation driven by lifecycle jobs and periodic convergence
+sweeps. #837 provides the CLI management and warn-mode evidence; #839 exact
+head `905a55f7219459dd7b33a1805f0d4da27a97622f`, merged as
+`f612b4a1ec4558ed6d2df85699cefb42109bdf7c`, provides Claude Code
+PreToolUse and supported-host block evidence; #840 provides the doctor
+evidence. GH-813 identified that global ownership is still filtered too
+broadly; its exact owner correction and exhaustive eligibility matrix keep T3
+and the final T8 closure incomplete, so #671 must stay open.
 
 ## Goals
 
@@ -49,9 +67,20 @@ remaining recall-only prose.
 
 ## Behavior Invariants
 
-1. P1: A preference is eligible only when it is active, reinforced at or above
-   the configured threshold, low-risk, project-scoped or explicitly
-   global-scoped, and machine-checkable.
+1. P1: Eligibility is conjunctive and closed. A source is eligible only when
+   its memory type is `preference`; it is active and unexpired; scope is
+   `project` with `owner_scope='repo'` and the resolved target
+   `COALESCE(NULLIF(target_project, ''), NULLIF(owner_key, ''), project)` equal
+   to the current project, or scope is
+   `global` with `owner_scope='user'`, `owner_key='user:default'`, and no
+   project target; source trust is `local_tool_output`, `repo_file`, or
+   `user_prompt`; reinforcement is machine-checkable, at or above the threshold,
+   and independently `low` risk; the originating candidate is independently
+   `low` risk with review status `approved`, `edited`, or `auto_promoted`;
+   policy evaluation succeeds; and no matching `active` memory/topic-key/
+   entity/pattern suppression exists. Unknown owner/scope/policy values,
+   malformed suppression state, and all other missing or newly introduced
+   values are ineligible until the contract and tests explicitly classify them.
 2. P2: Every compiled rule records source memory id, reinforcement count at
    compile time, compile timestamp, predicate kind, predicate data, action, and
    user override state.
@@ -73,24 +102,34 @@ remaining recall-only prose.
 
 ## Acceptance Criteria
 
-- [ ] Repeated-correction fixtures cover package-manager choice, forbidden
+- [x] Repeated-correction fixtures cover package-manager choice, forbidden
       commit trailers, and forbidden commands; violations warn with compiled
       rules and do not warn without them.
-- [ ] p95 hook latency with rule evaluation enabled is unchanged within
-      measurement noise on the existing latency benchmark.
-- [ ] `remem rules list` shows provenance, effective action, disabled state,
-      and source memory for each compiled rule.
-- [ ] Disable, enable, and `set-action warn|block` round trips are covered by
-      tests and take effect after the next artifact build without restart.
-- [ ] Superseding, suppressing, expiring, or deleting a source preference
+- [ ] Compiler eligibility has one complete positive fixture, independent
+      negative coverage for every eligibility dimension, and critical
+      cross-state coverage; candidate risk and reinforcement risk are
+      independently mutable and tests do not snapshot SQL text.
+- [x] The existing hook latency benchmark passes both fixed budgets: enabled
+      p95 is at most `15.0 ms`, and enabled-minus-disabled p95 delta is at most
+      `1.0 ms`. MAD remains informational and cannot decide pass/fail.
+- [x] `remem rules list` shows provenance, effective action, disabled state,
+      and source memory for each compiled rule, covered by #837.
+- [x] Disable, enable, `set-action <rule_id> warn` (host optional), and
+      `set-action <rule_id> block --host claude-code` round trips are covered
+      across #837's management/warn tests and #839's supported Claude block
+      test and take effect after the next artifact build without restart; the
+      shared unsupported-pre-execution guard rejects block before persistence.
+- [x] Superseding, suppressing, expiring, or deleting a source preference
       removes the derived rule on the next compile pass.
-- [ ] Doctor reports compiled-rule count, last compile time, host enforcement
-      capability, and the most recent compile or evaluation error.
+- [x] Doctor reports compiled-rule count, last compile time, host enforcement
+      capability, and the most recent compile or evaluation error, covered by
+      #840 human/JSON, capability, corruption, recovery, and privacy tests.
 
 ## Edge Cases
 
-- Contradictory rules: keep the newest authoritative source memory and log the
-  dropped conflict for review.
+- Contradictory rules: project scope wins over global scope; within the same
+  scope, keep the newest authoritative source memory and log the dropped
+  conflict for review.
 - Quoted examples and documentation text: v1 evaluates supported tool command
   input, not arbitrary prose, to avoid false positives.
 - Global preferences: eligible only when global scope is explicit; project
@@ -100,6 +139,7 @@ remaining recall-only prose.
 
 ## Rollout Notes
 
-Spec approval is still a human gate. Implementation should ship behind a
-disabled-by-default config flag, then enable warn mode only after fixture and
-latency evidence. Block mode remains opt-in per rule indefinitely.
+Spec approval is still a human gate. Implementation ships behind a
+disabled-by-default config flag. Fixture and latency evidence now pass the
+fixed acceptance budgets; any future warn-mode default change remains a
+separate human decision. Block mode remains opt-in per rule indefinitely.

@@ -1,8 +1,35 @@
+use std::sync::OnceLock;
+
 use anyhow::{Context, Result};
 
 use crate::ai::config::resolve_model_for_api;
 use crate::ai::types::{AiCallResult, TokenUsage, AI_TIMEOUT_SECS};
 use crate::runtime_config::ResolvedMemoryAiProfile;
+
+/// Process-wide HTTP client shared across AI calls.
+///
+/// `reqwest::Client` owns a connection pool and is designed to be reused; a
+/// fresh client per call threw away keep-alive connections and rebuilt the TLS
+/// configuration every time. The timeout is a compile-time constant, so one
+/// client serves every call. The client is cheap to reuse across base URLs
+/// because the pool is keyed by host.
+fn shared_client() -> Result<&'static reqwest::Client> {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    if let Some(client) = CLIENT.get() {
+        return Ok(client);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(AI_TIMEOUT_SECS))
+        .build()
+        .context("build shared AI HTTP client")?;
+    // A concurrent caller may win the race; `set` fails in that case and we
+    // return whichever client is now stored. Either way the client is built at
+    // most a handful of times, then reused for the process lifetime.
+    let _ = CLIENT.set(client);
+    Ok(CLIENT
+        .get()
+        .expect("shared HTTP client was just initialized"))
+}
 
 pub(super) async fn call_http(
     system: &str,
@@ -26,9 +53,7 @@ pub(super) async fn call_http(
         "messages": [{"role": "user", "content": user_message}]
     });
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(AI_TIMEOUT_SECS))
-        .build()?;
+    let client = shared_client()?;
 
     let resp = client
         .post(format!("{}/v1/messages", base_url.trim_end_matches('/')))
@@ -108,8 +133,18 @@ fn extract_usage(data: &serde_json::Value) -> Option<TokenUsage> {
 
 #[cfg(test)]
 mod http_tests {
-    use super::{extract_text, extract_usage};
+    use super::{extract_text, extract_usage, shared_client};
     use serde_json::json;
+
+    #[test]
+    fn shared_client_is_reused_across_calls() {
+        let first = shared_client().expect("client builds");
+        let second = shared_client().expect("client builds");
+        assert!(
+            std::ptr::eq(first, second),
+            "shared_client must return the same process-wide client instance"
+        );
+    }
 
     #[test]
     fn extracts_text_from_valid_response() {

@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn check_warns_when_processes_are_active() {
-        let processes = vec![McpProcess {
+        let processes = [McpProcess {
             pid: 10,
             command: "remem".to_string(),
             args: "/opt/homebrew/bin/remem mcp".to_string(),

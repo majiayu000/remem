@@ -15,6 +15,9 @@ use super::schema::{check_key_format, check_schema_migration};
 mod health_action_tests;
 mod log_health;
 mod memory_usage_feedback;
+mod pack_imports;
+mod pending_queue;
+mod procedure_exports;
 mod promotion_funnel;
 
 struct ScopedCipherKeyEnv {
@@ -156,7 +159,7 @@ fn check_key_format_reports_effective_env_key() -> anyhow::Result<()> {
 fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let _test_dir = ScopedTestDataDir::new("doctor-pending");
     let conn = db::open_db().expect("db should open");
-    db::enqueue_pending(
+    db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "session-1",
@@ -167,7 +170,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
         None,
     )
     .expect("pending row insert should succeed");
-    let failed_id = db::enqueue_pending(
+    let failed_id = db::test_support::insert_legacy_pending_fixture(
         &conn,
         "codex-cli",
         "session-2",
@@ -202,7 +205,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     let failed_job_id = db::enqueue_job(
         &conn,
         "codex-cli",
-        db::JobType::Summary,
+        db::JobType::Compress,
         "proj-a",
         Some("session-4"),
         "{}",
@@ -246,7 +249,7 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     );
     assert!(check.detail.contains(&expected_counts), "{}", check.detail);
     assert!(
-        check.detail.contains("will auto-recover"),
+        check.detail.contains("requires legacy replay"),
         "{}",
         check.detail
     );
@@ -260,7 +263,42 @@ fn check_pending_queue_reports_shared_counts() -> anyhow::Result<()> {
     assert!(
         check
             .detail
-            .contains("preview retry: `remem pending retry-failed --dry-run`"),
+            .contains("preview migration prep: `remem pending retry-failed --dry-run`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("apply migration prep: `remem pending retry-failed`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("preview replay: `remem pending migrate-legacy --dry-run`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check
+            .detail
+            .contains("apply replay: `remem pending migrate-legacy`"),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains(
+            "apply replay for Claude host: `remem pending migrate-legacy --host claude-code`"
+        ),
+        "{}",
+        check.detail
+    );
+    assert!(
+        check.detail.contains(
+            "apply replay for Codex host: `remem pending migrate-legacy --host codex-cli`"
+        ),
         "{}",
         check.detail
     );
@@ -633,6 +671,9 @@ fn run_doctor_with_writer_returns_outcome_and_emits_human_lines() {
     let text = String::from_utf8(buf).expect("output should be utf-8");
     assert!(text.contains("system check"));
     assert!(text.contains("Database"));
+    assert!(text.contains("Compiled rules"));
+    assert!(text.contains("Rule enforcement (claude-code)"));
+    assert!(text.contains("Rule enforcement (codex-cli)"));
     assert!(text.contains("ms)"), "{text}");
     // Exit code is a function of fails/warns; the absolute counts depend on
     // host config (claude/codex hooks may or may not exist on the test
@@ -700,6 +741,22 @@ fn run_doctor_with_writer_emits_parseable_json() {
     );
     let checks = parsed["checks"].as_array().expect("checks must be array");
     assert!(!checks.is_empty(), "doctor should always emit some checks");
+    let compiled_rules = checks
+        .iter()
+        .find(|check| check["name"] == "Compiled rules")
+        .expect("compiled rule observability check");
+    assert!(compiled_rules["detail"]
+        .as_str()
+        .is_some_and(|detail| detail.contains("artifact_present=")
+            && detail.contains("rule_count=")
+            && detail.contains("last_compile_epoch=")
+            && detail.contains("last_evaluation_error=")));
+    assert!(checks
+        .iter()
+        .any(|check| check["name"] == "Rule enforcement (claude-code)"));
+    assert!(checks
+        .iter()
+        .any(|check| check["name"] == "Rule enforcement (codex-cli)"));
     for check in checks {
         assert!(check["duration_ms"].is_u64(), "{check}");
     }

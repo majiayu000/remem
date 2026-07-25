@@ -366,9 +366,16 @@ Implemented in the first #579 slice:
 5. `reject` and `suppress` close candidates without creating active claims.
 6. Low-risk explicit user statements may auto-promote only when source refs are
    non-empty, a stable `claim_key` is present, sensitivity is `normal`, risk is
-   `low`, confidence is at least `0.9`, and source kind is
-   `explicit_user_statement`; all other candidates keep a block reason and stay
-   pending review.
+   `low`, confidence meets the active `user_context.auto_promote` policy, source
+   kind is allowed by that policy, all cited source events are user-authored, and
+   required text support passes. The default policy uses `min_confidence = 0.7`,
+   `allowed_source_kinds = ["explicit_user_statement"]`,
+   `require_text_support = true`, and `strict = false`. `strict = true` restores
+   the previous `0.9` threshold while preserving the same source/text-support
+   requirements. Sensitivity, risk, third-party framing, missing keys, claim-key
+   conflicts, non-user-authored source refs, and non-retention matches are hard
+   gates in every mode; all other candidates keep a block reason and stay
+   pending review or are dropped before candidate insertion for non-retention.
 
 ## Automatic Extraction
 
@@ -416,6 +423,26 @@ Source version `0.5.118` closes follow-up race gaps:
   bounded range start before retrying extraction.
 - Auto-promotion rechecks active `claim_key` conflicts inside the apply
   transaction before superseding claims.
+
+Source versions `0.5.183` through `0.5.186` make the user-context auto-promote
+policy configuration-driven and observable:
+
+- `[user_context.auto_promote]` supports `min_confidence`,
+  `allowed_source_kinds`, `require_text_support`, and `strict`.
+- The default only lowers confidence to `0.7`; `strict = true` restores the old
+  `0.9` threshold. `require_text_support = false` fails closed until queue
+  support and full cited-source non-retention scanning are policy-aware.
+- Extraction and candidate apply use the same policy instance, while hard gates
+  for sensitivity, risk, third-party framing, user-authored sources, stable keys,
+  claim-key conflicts, and non-retention stay outside user configuration.
+- Governance remains the existing claim/review path: active claims keep source
+  refs and can be audited with `remem user claims why <id>` or rolled back with
+  `suppress` / `delete`; pending candidates remain in `remem user review inbox`.
+- `remem status` / `remem status --json` exposes `user_context` claim totals,
+  active/suppressed/deleted counts, candidate totals, pending-review and
+  auto-promoted counts, and pending block-reason counts. GH-759 verification uses
+  these stats with focused config/extraction/candidate/status tests rather than
+  the legacy `memory_candidates` promotion funnel.
 
 ## Tests
 

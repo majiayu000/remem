@@ -13,6 +13,7 @@ pub mod pending;
 pub mod query;
 pub(crate) mod spill_crypto;
 pub mod summarize;
+pub(crate) mod summary_poisoning;
 #[cfg(test)]
 pub mod test_support;
 pub mod topic_segment;

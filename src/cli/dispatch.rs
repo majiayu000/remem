@@ -8,13 +8,14 @@ use super::actions::{
     run_encrypt, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,
     run_eval_e2e, run_eval_extraction, run_eval_gates, run_eval_governance,
     run_eval_graph_decision, run_eval_local, run_eval_provider_comparison, run_eval_weight_grid,
-    run_export_markdown, run_governance, run_graph_review, run_import, run_ingest_sessions_cli,
-    run_memory_action, run_merge_preferences, run_model, run_pending, run_preferences, run_raw,
-    run_reroute, run_review, run_search, run_show, run_status, run_timeline, run_usage, run_user,
-    run_why, run_workstreams, GovernanceCliRequest, RerouteCliRequest,
+    run_export, run_governance, run_graph_review, run_import, run_ingest_sessions_cli,
+    run_memory_action, run_merge_preferences, run_model, run_pending, run_preferences,
+    run_procedures, run_raw, run_reroute, run_review, run_rules, run_search, run_show, run_status,
+    run_timeline, run_usage, run_user, run_why, run_workstreams, GovernanceCliRequest,
+    RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, ContextGateAction};
+use super::types::{Cli, Commands, ContextGateAction, RulesAction};
 
 #[path = "actions/context_gate.rs"]
 mod context_gate;
@@ -34,7 +35,16 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            context::generate_context_from_cli(cwd, session_id, color, host, debug, force, gate)?;
+            match parse_explicit_hook_host(host.as_deref())? {
+                Some(crate::identity::InstallHost::Cursor) => {
+                    context::generate_cursor_context_from_stdin()?;
+                }
+                _ => {
+                    context::generate_context_from_cli(
+                        cwd, session_id, color, host, debug, force, gate,
+                    )?;
+                }
+            }
         }
         Commands::ContextGate { action } => match action {
             ContextGateAction::Status {
@@ -47,9 +57,25 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Config { action } => run_config(action)?,
         Commands::Model { action } => run_model(action).await?,
         Commands::Embedding { action } => run_embedding(action)?,
+        Commands::Reranker { action } => super::actions::run_reranker(action)?,
         Commands::SessionInit { host } => {
             if remem_hooks_disabled() {
                 return Ok(());
+            }
+            // GH-823 B-006: `cursor` is a recognized host value but an
+            // explicitly unsupported command combination. The rejection
+            // happens at dispatch, before stdin is read and before any
+            // prompt write, context stdout, enqueue, spill, or database
+            // side effect. Cursor's `beforeSubmitPrompt` is permit/block
+            // only and has no proven injection capability.
+            if matches!(
+                parse_explicit_hook_host(host.as_deref())?,
+                Some(crate::identity::InstallHost::Cursor)
+            ) {
+                anyhow::bail!(
+                    "session-init is not supported on --host cursor; \
+                     Cursor beforeSubmitPrompt is permit/block-only (GH-823 B-006)"
+                );
             }
             observe::session_init(host.as_deref()).await?;
         }
@@ -57,21 +83,48 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            observe::observe(host.as_deref()).await?;
+            match parse_explicit_hook_host(host.as_deref())? {
+                Some(crate::identity::InstallHost::Cursor) => {
+                    observe::observe_cursor().await?;
+                }
+                _ => observe::observe(host.as_deref()).await?,
+            }
         }
         Commands::Summarize { host, profile } => {
             if remem_hooks_disabled() {
                 return Ok(());
             }
-            summarize::summarize(host.as_deref(), profile.as_deref()).await?;
+            match parse_explicit_hook_host(host.as_deref())? {
+                Some(crate::identity::InstallHost::Cursor) => {
+                    summarize::summarize_cursor().await?;
+                }
+                _ => summarize::summarize(host.as_deref(), profile.as_deref()).await?,
+            }
         }
-        Commands::Worker { once } => worker::run(once, 2000).await?,
+        Commands::Worker(args) => {
+            if let Some(range_id) = args.replay_range_id {
+                let profile = args
+                    .profile
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("exact replay worker requires --profile"))?;
+                worker::run_exact_replay(
+                    range_id,
+                    args.acknowledge_quarantine,
+                    args.include_archived,
+                    profile,
+                )
+                .await?;
+            } else {
+                worker::run(args.once, 2000).await?;
+            }
+        }
         Commands::Mcp => mcp::run_mcp_server().await?,
         Commands::Install {
             target,
             hooks_only,
+            repair,
             dry_run,
-        } => install::install(target, dry_run, hooks_only)?,
+        } => install::install(target, dry_run, hooks_only, repair)?,
         Commands::Uninstall { target, dry_run } => install::uninstall(target, dry_run)?,
         Commands::Cleanup {
             dry_run,
@@ -85,14 +138,22 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             context::claude_memory::sync_to_claude_memory(&conn, &cwd, &project)?;
         }
         Commands::Preferences { action } => run_preferences(action)?,
+        Commands::Rules { action } => {
+            if should_skip_rules_action(&action, remem_hooks_disabled()) {
+                return Ok(());
+            }
+            run_rules(action)?;
+        }
         Commands::User { action } => run_user(action)?,
         Commands::Memory { action } => run_memory_action(action)?,
         Commands::Pending { action } => run_pending(action)?,
         Commands::Review { action } => run_review(action)?,
         Commands::GraphReview { action } => run_graph_review(action)?,
+        Commands::Procedures { action } => run_procedures(action)?,
         Commands::Govern {
             project,
             action,
+            acknowledge_pattern,
             reason,
             actor,
             query,
@@ -109,6 +170,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         } => run_governance(GovernanceCliRequest {
             project: project.as_deref(),
             action,
+            acknowledge_pattern: acknowledge_pattern.as_deref(),
             reason: reason.as_deref(),
             actor: actor.as_deref(),
             query: query.as_deref(),
@@ -176,7 +238,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             days,
             weeks,
         } => run_usage(project.as_deref(), days, weeks)?,
-        Commands::Status { json } => run_status(json)?,
+        Commands::Status { json, share } => run_status(json, share)?,
         Commands::Doctor { json, quiet } => {
             let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;
             let code = outcome.exit_code();
@@ -283,7 +345,16 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             run_dream(project.as_deref(), profile.as_deref(), dry_run).await?;
         }
         Commands::Admin { action } => run_admin(action)?,
-        Commands::Import { action } => run_import(action)?,
+        Commands::Import {
+            action,
+            pack,
+            dry_run,
+        } => {
+            let project = pack
+                .as_ref()
+                .map(|_| db::project_from_cwd(&resolve_cwd_arg(None)));
+            run_import(action, pack.as_deref(), dry_run, project.as_deref())?;
+        }
         Commands::IngestSessions { roots, since, json } => {
             let summary = run_ingest_sessions_cli(&roots, since.as_deref(), json)?;
             let code = summary.exit_code();
@@ -294,22 +365,46 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
         Commands::Export(args) => {
             let project = args
                 .project
+                .as_deref()
+                .map(str::to_string)
                 .unwrap_or_else(|| db::project_from_cwd(&resolve_cwd_arg(None)));
-            run_export_markdown(
-                args.markdown,
-                &args.output,
-                &project,
-                args.include_inactive,
-                args.limit,
-            )?;
+            run_export(args, &project)?;
         }
     }
 
     Ok(())
 }
 
+/// Shared exact hook-host validation at the CLI boundary (GH-823 B-001).
+/// `None` (auto-detection) keeps its existing behavior; every explicit value
+/// must be in the closed set `claude-code`, `codex-cli`, `cursor`. Aliases,
+/// `unknown`, empty strings, and arbitrary values fail here, before any
+/// rendering, adapter dispatch, enqueue, or database write.
+fn parse_explicit_hook_host(host: Option<&str>) -> Result<Option<crate::identity::InstallHost>> {
+    host.map(crate::identity::InstallHost::parse).transpose()
+}
+
 fn remem_hooks_disabled() -> bool {
     std::env::var("REMEM_DISABLE_HOOKS")
         .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
         .unwrap_or(false)
+}
+
+fn should_skip_rules_action(action: &RulesAction, hooks_disabled: bool) -> bool {
+    hooks_disabled && matches!(action, RulesAction::Eval { .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disabled_hooks_skip_only_internal_rule_evaluation() {
+        let eval = RulesAction::Eval { host: None };
+        let list = RulesAction::List { project: None };
+
+        assert!(should_skip_rules_action(&eval, true));
+        assert!(!should_skip_rules_action(&eval, false));
+        assert!(!should_skip_rules_action(&list, true));
+    }
 }

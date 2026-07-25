@@ -60,6 +60,7 @@ pub struct SaveMemoryRequest {
     pub local_copy_enabled: Option<bool>,
     pub claim_enabled: Option<bool>,
     pub claim_source: Option<String>,
+    pub acknowledge_pattern: Option<String>,
 }
 
 #[derive(Debug, Clone)]

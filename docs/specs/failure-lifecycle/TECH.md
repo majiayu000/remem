@@ -89,8 +89,69 @@ archived source; no pending work may retain an archived marker.
   directly by setting `status='pending'`, clearing lease fields, and setting
   `next_retry_epoch`; no-range transient failures therefore have an explicit
   recovery path instead of staying actionable forever.
-- `jobs`: re-enqueue the failed job by setting `state='pending'`, clearing
-  lease fields, and setting `next_retry_epoch`.
+- `jobs`: exclude retired legacy Summary rows from candidate selection before
+  generic recovery. The transaction-scoped per-row classifier must also check
+  Summary before active-identity lookup and return an explicit retired/skipped
+  result for defensive direct input. In both paths, preserve every persisted
+  field byte/value; do not set permanent, change retry time, append a marker,
+  execute the job, or increment `requeued`/`coalesced` counters. For non-retired
+  job types, re-enqueue the failed job by setting `state='pending'`, clearing
+  lease fields, and setting `next_retry_epoch`. If the same active job identity
+  already exists, keep that canonical work active and leave the source as
+  `failed` with `failure_class='permanent'` and `next_retry_epoch=0`. Preserve
+  the source's real `attempt_count`, error, timestamps, payload, and id; append
+  only a bounded non-secret canonical marker to `last_error`. When source
+  `last_error` is NULL or empty, store the complete marker alone; only a
+  non-empty error uses marker-space reservation, deterministic truncation, and
+  append. The worker logs safe source/canonical ids and identity kind, never
+  the original error text.
+  This collision is a successful convergence result for the candidate, not a
+  fabricated exhausted attempt or a successful completion of the source.
+  Candidate ids are fully collected and the read statement released before
+  per-row writes begin. Each row must acquire `IMMEDIATE` write ownership
+  before re-reading source eligibility or looking up active identity; lookup
+  before write ownership is forbidden. If requeue meets the active-identity
+  UNIQUE constraint, only that declared identity conflict may trigger an exact
+  canonical reread. A readable, still-active canonical row yields a structured
+  coalesced result. A terminal, missing, or unreadable canonical row, a
+  busy/locked failure, or any non-identity constraint error rolls back that
+  source unchanged and propagates the error under `B-014`; recovery must not
+  return a stale/non-persisted id or assume deduplication. File-backed,
+  two-connection WAL barrier tests cover the identity race and unreadable
+  canonical rollback while proving independently committed unrelated rows
+  continue to make progress.
+
+### 2.1 Job queue persisted truth and v069 lifecycle inputs
+
+Lease-owned done, retry, exhausted, and permanent-failure transitions use the
+current processing row, expected owner, and unexpired lease as a single
+transactional authorization boundary. A missing-row result is an error with an
+explicit `current=missing` diagnostic; no row is created, so shared stats gain
+no processing or stuck entry. For an existing wrong-owner, reclaimed,
+expired-lease, or otherwise ineligible row, rejection leaves every persisted
+field unchanged. The worker must propagate either error and emit no done/retry
+success signal. Shared stats reflect the existing row's actual persisted state:
+if it is still `processing`, it remains counted there and becomes `stuck` after
+its unchanged lease expires; an already reclaimed or non-processing row is
+reported according to that state instead. No parallel in-memory success ledger
+may override database truth.
+
+The v069 job-queue migration contributes a separate failure-lifecycle input.
+Each reconciled non-Summary active duplicate becomes `state='failed'`,
+`failure_class='permanent'`, `archived_at_epoch=NULL`, and
+`next_retry_epoch=0`, while retaining its real attempt count and bounded
+existing error evidence plus the non-secret duplicate marker. It is an
+actionable permanent failure in the shared stats/status/doctor source until the
+existing retention step archives it; the migration must not raise its attempt
+count to fabricate exhaustion. Late active Summary retirement is not such a
+duplicate: v069 uses the exact v064 retirement marker so existing failure and
+legacy-surface predicates continue to exclude it.
+
+These v069 rows are not the historical v057 back-classification described in
+section 5. The v057 upgrade deliberately initializes pre-existing failed rows
+as exhausted to avoid a retry storm; v069 creates new conflict evidence and
+must preserve each source row's actual attempt count. Neither rule changes the
+retention, cleanup, or aggregate-history policy below.
 
 ### 3. Retention / archiving
 
@@ -152,9 +213,49 @@ storms.
 
 ## Compatibility
 
-- `remem pending list-failed` / `retry-extraction-ranges` keep working and
-  can target archived rows explicitly (`--include-archived`), preserving the
-  manual escape hatch for observations and extraction ranges.
+- Extraction replay ranges have a precise manual recovery path:
+  `remem pending list-extraction-ranges --id <positive-id> [--json]`,
+  `retry-extraction-ranges --id <positive-id> [--dry-run]`, and
+  `quarantine-extraction-ranges --id <positive-id> [--dry-run]`. Explicit
+  `--id` conflicts with explicit batch `--project`/`--limit`; implicit batch
+  defaults do not make an ID-only command invalid. The list query has no active
+  status filter, so `replayed` terminal evidence remains queryable and includes
+  the linked replay task id/status/attempt/error without captured payloads or
+  provider secrets. Exact dry-run and mutation share the retryable predicate;
+  mutation revalidates inside one SQLite transaction and cannot select or
+  update a sibling range. Missing, non-positive, active-task, and non-retryable
+  IDs fail instead of falling back to the batch path; archived IDs also fail
+  unless the exact archived-recovery opt-in below is present.
+  `retry-extraction-ranges --id <positive-id> --acknowledge-quarantine
+  [--dry-run]` is the only exception for a quarantined target: the flag
+  requires exact ID, reuses the unarchived/no-active-task predicate in dry-run
+  and mutation, and never changes the default exact or batch candidate set.
+  If that same target has since archived, `--include-archived` is also required;
+  it is exact-ID-only and reuses the same no-active-task predicate. The pending
+  command permits this archived combination only with `--dry-run`; a mutating
+  invocation fails with guidance to use the locked exact worker. No batch path
+  receives either opt-in, and no unlocked command clears an archived range.
+- `remem worker --once --replay-range-id <positive-id>
+  --acknowledge-quarantine --include-archived --profile <name>` validates the
+  profile and acquires the worker singleton before changing the range. While
+  holding the lock, one SQLite transaction revalidates the exact range,
+  requeues it, and claims the returned replay task with the ordinary
+  pending/retry-due predicate; the pending row is never committed without the
+  exact lease. A held daemon lock, future retry time, or identity race fails
+  before fallback. The exact processor uses the validated in-memory profile
+  for its single attempt. Full-range done follows the normal success
+  transition; partial coverage, defer, wait, timeout, provider error, or
+  another non-success atomically leaves the
+  replay task failed/archived and the range quarantined/archived. Expired lease
+  recovery recognizes exact-replay owners and applies the same archived
+  quarantine outcome, so interruption never creates daemon-claimable work with
+  a default profile. This mode does not run lifecycle maintenance, priority
+  fallback, jobs, embedding backfill, or a second extraction task; ordinary
+  worker modes keep their existing drain behavior.
+- `remem pending list-failed` / `retry-extraction-ranges` keep working; the
+  latter can validate an archived extraction range only by exact ID with
+  `--include-archived --dry-run`; the locked exact worker is the sole mutating
+  archived-range escape hatch.
 - Add an explicit legacy observation replay path:
   `remem pending retry-failed-observations --include-archived --id <id>
   [--host claude-code|codex-cli]` (or `--project <p> --limit <n>

@@ -15,6 +15,7 @@ fn low_risk_explicit_user_statement_can_auto_promote() -> Result<()> {
     let conn = migrated_conn()?;
     let mut req = candidate_request("Prefer concise review notes", true);
     req.claim_key = Some("preference:review-style");
+    req.confidence = 0.75;
 
     let result = create_candidate(&conn, &req)?;
 
@@ -25,6 +26,29 @@ fn low_risk_explicit_user_statement_can_auto_promote() -> Result<()> {
     assert_eq!(claim.source_kind, "user_context_candidate");
     assert!(claim.source_refs_json.contains("user_context_candidate"));
     assert_eq!(result.candidate.result_claim_id, Some(claim.id));
+    Ok(())
+}
+
+#[test]
+fn strict_policy_blocks_relaxed_default_confidence() -> Result<()> {
+    let conn = migrated_conn()?;
+    let mut req = candidate_request("Prefer concise review notes", true);
+    req.claim_key = Some("preference:review-style");
+    req.confidence = 0.75;
+
+    let result = create_candidate_with_policy(
+        &conn,
+        &req,
+        &crate::runtime_config::AutoPromotePolicy::strict(),
+    )?;
+
+    assert_eq!(result.action, "pending_review");
+    assert!(result.claim.is_none());
+    assert_eq!(result.candidate.review_status, "pending_review");
+    assert_eq!(
+        result.candidate.auto_promote_block_reason.as_deref(),
+        Some("low_confidence")
+    );
     Ok(())
 }
 

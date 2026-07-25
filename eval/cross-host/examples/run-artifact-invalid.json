@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "benchmark_version": "cross-host-v1",
+  "suite": "cross-host-v1",
+  "direction": "sideways",
+  "condition": "vibes",
+  "task_id": "",
+  "run_index": -1,
+  "source_host": "claude_code",
+  "target_host": "codex",
+  "resolved": "yes",
+  "failure_reason": "gremlins",
+  "metrics": { "tokens_total": 0 },
+  "handoff_isolation": {
+    "source_home_isolated": true,
+    "target_home_isolated": true,
+    "source_session_store_readable_by_target": true,
+    "leak_scan_passed": false
+  },
+  "artifacts": {}
+}

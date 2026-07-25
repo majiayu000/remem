@@ -169,7 +169,7 @@ async fn low_risk_user_event_auto_promotes_to_active_claim() -> Result<()> {
             "preference",
             "preference:review-style",
             "User prefers concise code reviews.",
-            0.93,
+            0.75,
             "normal",
             "low",
             "explicit_user_statement",

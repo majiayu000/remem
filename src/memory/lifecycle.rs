@@ -179,13 +179,21 @@ fn insert_replacement_memory(
         content,
         files,
     );
+    let fallback_source_hash = crate::memory::retrieval_enrichment::enrichment_source_hash(
+        title,
+        content,
+        memory_type,
+        Some(topic_key),
+        files,
+    );
     conn.execute(
         "INSERT INTO memories
          (session_id, project, topic_key, title, content, memory_type, files, search_context,
+          search_context_fallback_source_hash,
           created_at_epoch, updated_at_epoch, status, branch, scope,
           source_project, target_project, owner_scope, owner_key, context_class,
           expires_at_epoch, valid_from_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?18,
                  ?9, ?9, 'active', ?10, ?11,
                  ?12, ?13, ?14, ?15, 'startup_core',
                  ?16, ?17)",
@@ -206,7 +214,8 @@ fn insert_replacement_memory(
             ownership.owner_scope,
             ownership.owner_key,
             expires_at_epoch,
-            valid_from_epoch
+            valid_from_epoch,
+            fallback_source_hash
         ],
     )?;
     let memory_id = conn.last_insert_rowid();
@@ -221,6 +230,8 @@ fn insert_replacement_memory(
             now,
         )?;
     }
+    // Fresh insert: enrichment is pending, so the passage is canonical-only
+    // until the idle enrichment CAS installs the enriched snapshot.
     crate::retrieval::vector::upsert_memory_embedding(
         conn,
         memory_id,
@@ -228,6 +239,7 @@ fn insert_replacement_memory(
         content,
         memory_type,
         Some(topic_key),
+        "",
     )?;
     Ok(memory_id)
 }
@@ -391,7 +403,17 @@ pub fn ttl_metadata(
 }
 
 pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
-    Ok(conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    let mut stmt = tx.prepare(
+        "SELECT id FROM memories
+         WHERE status = 'active'
+           AND expires_at_epoch IS NOT NULL
+           AND expires_at_epoch <= ?1",
+    )?;
+    let rows = stmt.query_map(params![now_epoch], |row| row.get::<_, i64>(0))?;
+    let expiring_ids = crate::db::query::collect_rows(rows)?;
+    drop(stmt);
+    let changed = tx.execute(
         "UPDATE memories
          SET status = 'stale',
              valid_to_epoch = COALESCE(valid_to_epoch, ?1),
@@ -400,7 +422,10 @@ pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize
            AND expires_at_epoch IS NOT NULL
            AND expires_at_epoch <= ?1",
         params![now_epoch],
-    )?)
+    )?;
+    crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &expiring_ids)?;
+    tx.commit()?;
+    Ok(changed)
 }
 
 pub fn count_expired_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
@@ -441,6 +466,8 @@ pub fn soft_supersede(
             ));
         }
     }
+
+    crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &targets)?;
 
     let mut changed = 0usize;
     let now = chrono::Utc::now().timestamp();

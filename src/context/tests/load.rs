@@ -768,6 +768,27 @@ fn context_limits_new_memory_index_env_wins_over_legacy_alias() {
 }
 
 #[test]
+fn context_limits_relevance_k_defaults_overrides_disables_and_rejects_invalid() {
+    let defaults = ContextLimits::from_env_reader(|_| None);
+    assert_eq!(defaults.sessionstart_relevance_k, 1);
+
+    let overridden = ContextLimits::from_env_reader(|key| {
+        (key == "REMEM_CONTEXT_RELEVANCE_K").then(|| "5".to_string())
+    });
+    assert_eq!(overridden.sessionstart_relevance_k, 5);
+
+    let disabled = ContextLimits::from_env_reader(|key| {
+        (key == "REMEM_CONTEXT_RELEVANCE_K").then(|| "0".to_string())
+    });
+    assert_eq!(disabled.sessionstart_relevance_k, 0);
+
+    let invalid = ContextLimits::from_env_reader(|key| {
+        (key == "REMEM_CONTEXT_RELEVANCE_K").then(|| "invalid".to_string())
+    });
+    assert_eq!(invalid.sessionstart_relevance_k, 1);
+}
+
+#[test]
 fn load_context_data_keeps_core_candidates_when_index_limit_is_small() {
     let conn = Connection::open_in_memory().unwrap();
     setup_context_schema(&conn);

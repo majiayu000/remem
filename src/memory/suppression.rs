@@ -224,7 +224,8 @@ pub fn create_suppression(
         return Ok(existing);
     }
     let now = chrono::Utc::now().timestamp();
-    conn.execute(
+    let tx = conn.unchecked_transaction()?;
+    tx.execute(
         "INSERT INTO memory_suppressions
          (owner_scope, owner_key, target_kind, target_id, target_value, reason, actor,
           status, created_at_epoch, updated_at_epoch)
@@ -239,7 +240,13 @@ pub fn create_suppression(
         ],
     )
     .context("insert memory suppression")?;
-    load_suppression(conn, conn.last_insert_rowid())
+    crate::memory::preference::compilation::enqueue_for_suppression_targets(
+        &tx,
+        std::slice::from_ref(&req.target),
+    )?;
+    let record = load_suppression(&tx, tx.last_insert_rowid())?;
+    tx.commit()?;
+    Ok(record)
 }
 
 pub fn revoke_suppression_arg(
@@ -364,8 +371,12 @@ fn revoke_suppression_ids(
 ) -> Result<Vec<SuppressionRecord>> {
     let now = chrono::Utc::now().timestamp();
     let tx = conn.unchecked_transaction()?;
+    let active = ids
+        .iter()
+        .map(|id| load_suppression(&tx, *id))
+        .collect::<Result<Vec<_>>>()?;
     for id in ids {
-        tx.execute(
+        let updated = tx.execute(
             "UPDATE memory_suppressions
              SET status = 'revoked',
                  reason = ?1,
@@ -374,7 +385,19 @@ fn revoke_suppression_ids(
              WHERE id = ?4 AND status = 'active'",
             params![reason, actor, now, id],
         )?;
+        if updated != 1 {
+            bail!("suppression {id} was not active during revocation");
+        }
     }
+    let targets = active
+        .into_iter()
+        .map(|record| SuppressionTarget {
+            kind: record.target_kind,
+            id: record.target_id,
+            value: record.target_value,
+        })
+        .collect::<Vec<_>>();
+    crate::memory::preference::compilation::enqueue_for_suppression_targets(&tx, &targets)?;
     let mut revoked = Vec::new();
     for id in ids {
         revoked.push(load_suppression(&tx, *id)?);
@@ -554,6 +577,7 @@ mod tests {
     use rusqlite::{params, Connection};
 
     use super::*;
+    use crate::db::test_support::ScopedTestDataDir;
 
     #[test]
     fn parse_target_accepts_memory_claim_and_text_keys() -> Result<()> {
@@ -622,6 +646,59 @@ mod tests {
         let revoked = revoke_suppression_arg(&conn, &record.id.to_string(), None, None)?;
         assert_eq!(revoked[0].status, "revoked");
         assert!(active_suppressed_memory_ids(&conn, &[1])?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn preference_suppression_and_revocation_enqueue_fresh_compiles() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("preference-suppression-compile");
+        crate::runtime_config::init_config()?;
+        crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+        let conn = crate::db::open_db()?;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, topic_key, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, status, scope)
+             VALUES (1, '/repo', 'package-manager', 'Preference', 'Use bun, not npm',
+                     'preference', 10, 10, 'active', 'project')",
+            [],
+        )?;
+        conn.execute(
+            "INSERT INTO memory_preference_reinforcements
+             (memory_id, reinforcement_count, last_reinforced_at_epoch,
+              created_at_epoch, updated_at_epoch, machine_checkable)
+             VALUES (1, 3, 10, 10, 10, 1)",
+            [],
+        )?;
+
+        let record = create_suppression(
+            &conn,
+            &SuppressRequest {
+                target: parse_target("memory:1")?,
+                reason: Some("test suppression"),
+                actor: Some("test"),
+            },
+        )?;
+        let first_job: i64 = conn.query_row(
+            "SELECT id FROM jobs
+             WHERE job_type = 'compile_rules' AND project = '/repo' AND state = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+        conn.execute(
+            "UPDATE jobs SET state = 'processing' WHERE id = ?1",
+            params![first_job],
+        )?;
+
+        revoke_suppression_arg(&conn, &record.id.to_string(), None, None)?;
+
+        let states: (i64, i64) = conn.query_row(
+            "SELECT SUM(state = 'processing'), SUM(state = 'pending')
+             FROM jobs WHERE job_type = 'compile_rules' AND project = '/repo'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        assert_eq!(states, (1, 1));
         Ok(())
     }
 

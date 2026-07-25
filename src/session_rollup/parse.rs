@@ -7,7 +7,17 @@ use super::RollupRange;
 #[derive(Debug, Clone)]
 pub(super) struct RollupOutput {
     pub(super) summary_text: String,
+    pub(super) structured_fields: RollupStructuredFields,
     pub(super) segments: Vec<ParsedTopicSegment>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub(super) struct RollupStructuredFields {
+    pub(super) request: Option<String>,
+    pub(super) decisions: Option<String>,
+    pub(super) learned: Option<String>,
+    pub(super) next_steps: Option<String>,
+    pub(super) preferences: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -30,11 +40,13 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
         .filter(|summary| !summary.is_empty())
         .ok_or_else(|| anyhow!("session_rollup response missing non-empty <summary>"))?;
 
+    let structured_fields = parse_structured_fields(text)?;
     let segments_xml = extract_tag(text, "segments")
         .ok_or_else(|| anyhow!("session_rollup response missing <segments>"))?;
     if segments_xml.trim().is_empty() {
         return Ok(RollupOutput {
             summary_text,
+            structured_fields,
             segments: Vec::new(),
         });
     }
@@ -52,6 +64,7 @@ pub(super) fn parse_rollup_response(text: &str, range: &RollupRange) -> Result<R
     }
     Ok(RollupOutput {
         summary_text,
+        structured_fields,
         segments,
     })
 }
@@ -80,6 +93,25 @@ fn extract_top_level_summary(text: &str) -> Option<String> {
     extract_tag(&text[..segments_start], "summary")
 }
 
+fn parse_structured_fields(text: &str) -> Result<RollupStructuredFields> {
+    let body = extract_tag(text, "structured_fields")
+        .ok_or_else(|| anyhow!("session_rollup response missing <structured_fields>"))?;
+    Ok(RollupStructuredFields {
+        request: optional_structured_tag(&body, "request")?,
+        decisions: optional_structured_tag(&body, "decisions")?,
+        learned: optional_structured_tag(&body, "learned")?,
+        next_steps: optional_structured_tag(&body, "next_steps")?,
+        preferences: optional_structured_tag(&body, "preferences")?,
+    })
+}
+
+fn optional_structured_tag(body: &str, tag: &str) -> Result<Option<String>> {
+    let raw = extract_tag(body, tag)
+        .ok_or_else(|| anyhow!("session_rollup response missing <structured_fields><{tag}>"))?;
+    let value = raw.trim().to_string();
+    Ok((!value.is_empty()).then_some(value))
+}
+
 fn parse_segment(
     segment_index: i64,
     raw_segment: &str,
@@ -91,12 +123,17 @@ fn parse_segment(
     let open_tag = &raw_segment[..=open_end];
     let body = &raw_segment[open_end + 1..raw_segment.len() - "</segment>".len()];
 
-    let topic_key = extract_attr(open_tag, "topic_key")
+    let raw_topic_key = extract_attr(open_tag, "topic_key")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .context("segment missing topic_key")?;
-    if !is_valid_topic_key(&topic_key) {
-        return Err(anyhow!("invalid topic_key '{topic_key}'"));
+    let topic_key = if is_legacy_topic_key(&raw_topic_key) {
+        raw_topic_key.clone()
+    } else {
+        crate::memory::slugify_for_topic(&raw_topic_key, 96)
+    };
+    if topic_key.is_empty() {
+        return Err(anyhow!("invalid topic_key '{raw_topic_key}'"));
     }
 
     let status = extract_attr(open_tag, "status").unwrap_or_else(|| "open".to_string());
@@ -169,6 +206,13 @@ fn parse_segment(
     })
 }
 
+fn is_legacy_topic_key(value: &str) -> bool {
+    value.bytes().any(|byte| byte.is_ascii_alphanumeric())
+        && value.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || matches!(byte, b'-' | b'_')
+        })
+}
+
 fn required_tag(body: &str, tag: &str) -> Result<String> {
     extract_tag(body, tag)
         .map(|value| value.trim().to_string())
@@ -229,12 +273,6 @@ fn parse_files(raw: &str) -> Result<Vec<String>> {
     Ok(files)
 }
 
-fn is_valid_topic_key(value: &str) -> bool {
-    value
-        .chars()
-        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-' || ch == '_')
-}
-
 fn xml_unescape_text(raw: &str) -> String {
     raw.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -273,6 +311,13 @@ mod tests {
     fn parses_segments_with_overlapping_event_ranges() -> Result<()> {
         let parsed = parse_rollup_response(
             r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
             <segments>
             <segment topic_key="anti-bot-research" status="resolved">
               <title>Anti-bot research</title>
@@ -302,9 +347,103 @@ mod tests {
     }
 
     #[test]
+    fn normalizes_version_punctuation_in_topic_key() -> Result<()> {
+        let parsed = parse_rollup_response(
+            r#"<summary>release audit</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
+            <segments>
+            <segment topic_key="v0.2-release-audit" status="resolved">
+              <title>v0.2 release audit</title>
+              <summary>Audited the v0.2 release.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id>
+              <to_event_id>20</to_event_id>
+            </segment>
+            </segments>"#,
+            &range(),
+        )?;
+
+        assert_eq!(parsed.segments[0].topic_key, "v0-2-release-audit");
+        Ok(())
+    }
+
+    #[test]
+    fn preserves_existing_snake_case_topic_key() -> Result<()> {
+        let snake = parse_segment(
+            0,
+            r#"<segment topic_key="existing_topic_2" status="open">
+              <title>Existing topic</title><summary>Stable identity.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )?;
+        let kebab = parse_segment(
+            1,
+            r#"<segment topic_key="existing-topic-2" status="open">
+              <title>Existing topic</title><summary>Stable identity.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )?;
+
+        assert_eq!(snake.topic_key, "existing_topic_2");
+        assert_eq!(kebab.topic_key, "existing-topic-2");
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_topic_key_that_normalizes_to_empty() {
+        let err = parse_segment(
+            0,
+            r#"<segment topic_key="..." status="resolved">
+              <title>Invalid topic</title>
+              <summary>Invalid topic key.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id>
+              <to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )
+        .expect_err("punctuation-only topic key should fail closed");
+
+        assert!(err.to_string().contains("invalid topic_key '...'"));
+    }
+
+    #[test]
+    fn rejects_punctuation_only_topic_key() {
+        let err = parse_segment(
+            0,
+            r#"<segment topic_key="---" status="resolved">
+              <title>Invalid topic</title><summary>Invalid topic key.</summary>
+              <evidence_event_ids>10,20</evidence_event_ids>
+              <from_event_id>10</from_event_id><to_event_id>20</to_event_id>
+            </segment>"#,
+            &range(),
+        )
+        .expect_err("punctuation-only legacy grammar must fail closed");
+
+        assert!(err.to_string().contains("invalid topic_key '---'"));
+    }
+
+    #[test]
     fn rejects_segment_with_evidence_event_absent_from_loaded_events() {
         let err = parse_rollup_response(
             r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
             <segments>
             <segment topic_key="interleaved-session" status="open">
               <title>Interleaved session</title>
@@ -325,18 +464,84 @@ mod tests {
 
     #[test]
     fn missing_segments_tag_fails_entire_rollup_parse() {
-        let err = parse_rollup_response("<summary>done</summary>", &range())
-            .expect_err("missing segments should fail");
+        let err = parse_rollup_response(
+            r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>"#,
+            &range(),
+        )
+        .expect_err("missing segments should fail");
         assert!(err.to_string().contains("missing <segments>"));
     }
 
     #[test]
     fn explicit_empty_segments_is_accepted() -> Result<()> {
-        let parsed =
-            parse_rollup_response("<summary>done</summary><segments></segments>", &range())?;
+        let parsed = parse_rollup_response(
+            r#"<summary>done</summary>
+            <structured_fields>
+              <request></request>
+              <decisions></decisions>
+              <learned></learned>
+              <next_steps></next_steps>
+              <preferences></preferences>
+            </structured_fields>
+            <segments></segments>"#,
+            &range(),
+        )?;
 
         assert_eq!(parsed.summary_text, "done");
         assert!(parsed.segments.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn missing_structured_fields_tag_fails_entire_rollup_parse() {
+        let err = parse_rollup_response("<summary>done</summary><segments></segments>", &range())
+            .expect_err("missing structured fields should fail");
+        assert!(err.to_string().contains("missing <structured_fields>"));
+    }
+
+    #[test]
+    fn parses_optional_structured_summary_fields() -> Result<()> {
+        let parsed = parse_rollup_response(
+            r#"<summary>overall</summary>
+            <structured_fields>
+              <request>Compare rollup and summary writers</request>
+              <decisions>Keep session_summaries as the shared table.</decisions>
+              <learned>Rollup owns range identity.</learned>
+              <next_steps>Port structured fields before Summary retirement.</next_steps>
+              <preferences>Do not silently drop summary preferences.</preferences>
+            </structured_fields>
+            <segments></segments>"#,
+            &range(),
+        )?;
+
+        assert_eq!(parsed.summary_text, "overall");
+        assert_eq!(
+            parsed.structured_fields.request.as_deref(),
+            Some("Compare rollup and summary writers")
+        );
+        assert_eq!(
+            parsed.structured_fields.decisions.as_deref(),
+            Some("Keep session_summaries as the shared table.")
+        );
+        assert_eq!(
+            parsed.structured_fields.learned.as_deref(),
+            Some("Rollup owns range identity.")
+        );
+        assert_eq!(
+            parsed.structured_fields.next_steps.as_deref(),
+            Some("Port structured fields before Summary retirement.")
+        );
+        assert_eq!(
+            parsed.structured_fields.preferences.as_deref(),
+            Some("Do not silently drop summary preferences.")
+        );
         Ok(())
     }
 

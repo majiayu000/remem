@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from specrail_lib import (
@@ -16,12 +17,33 @@ from specrail_lib import (
     infer_state,
     load_pack,
     render_artifact_path,
+    resolve_path,
+    resolve_repo_path,
+    resolve_spec_packet_root,
+    spec_is_legacy,
+    spec_packet_artifact_paths,
     state_map,
+    validated_repo_relative_path,
     validate_action_policy,
     validate_labels,
     validate_state_graph,
 )
 from duplicate_work_gate import evaluate_duplicate_work_gate_path
+from rejection_items import (
+    add_prior_rejection_argument,
+    apply_prior_rejection,
+    finalize_items,
+    item_from_missing,
+    item_from_reason,
+    make_item,
+)
+from sensitive_enforcement import (
+    classification_from_approved_tech,
+    evaluate_sensitive_evidence,
+    sensitive_registry,
+    trusted_default_base,
+    validate_sensitive_registry,
+)
 
 
 ROUTE_ALIASES = {
@@ -84,7 +106,11 @@ def load_evidence(path: Path | None) -> dict[str, Any]:
 def artifact_exists(repo: Path, artifact_path: str | None) -> bool:
     if not artifact_path:
         return False
-    return (repo / artifact_path).is_file()
+    return resolve_repo_path(
+        repo,
+        artifact_path,
+        label="artifact path",
+    ).is_file()
 
 
 def stricter_decision(current: str, candidate: str) -> str:
@@ -100,16 +126,27 @@ def required_artifact_path(config: Any, artifact: str, issue: int | None) -> str
         return None
     if artifact == "verification":
         return None
+    if artifact in ARTIFACT_FILES and issue is not None:
+        return spec_packet_artifact_paths(config, issue)[artifact]
     return render_artifact_path(config, artifact, issue)
 
 
 def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
-    repo = Path(args.repo).resolve()
+    repo = resolve_path(Path(args.repo), label="repository")
     config = load_pack(repo)
     config_errors: list[str] = []
     config_errors.extend(validate_state_graph(config))
     config_errors.extend(validate_labels(config))
     config_errors.extend(validate_action_policy(config))
+    config_errors.extend(validate_sensitive_registry(config))
+    try:
+        configured_spec_paths = spec_packet_artifact_paths(config, 1)
+        configured_spec_root = PurePosixPath(
+            configured_spec_paths["spec_packet"]
+        ).parent
+        resolve_spec_packet_root(repo, configured_spec_root)
+    except SpecRailError as exc:
+        config_errors.append(str(exc))
 
     route = normalize_route(args.route)
     policies = action_policy(config)
@@ -131,11 +168,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     reasons: list[str] = []
     satisfied: list[str] = []
     missing: list[str] = []
+    items: list[dict[str, str]] = []
     blocked_actions: list[str] = []
     allowed_actions: list[str] = []
     required_artifacts: list[str] = []
     human_gates: list[str] = []
     duplicate_work_result: dict[str, Any] | None = None
+    sensitive_classification: dict[str, Any] | None = None
+    sensitive_errors: list[str] = []
 
     if config_errors:
         return {
@@ -147,6 +187,9 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             "reasons": config_errors,
             "satisfied": [],
             "missing": [],
+            "rejection_items": finalize_items(
+                item_from_reason(error, "config_error") for error in config_errors
+            ),
             "required_artifacts": [],
             "human_gates": [],
             "allowed_actions": [],
@@ -193,12 +236,28 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
     if current_state is None:
         missing.append("current_state")
         reasons.append("no state or matching readiness label was provided")
+        items.append(
+            make_item(
+                "missing_evidence_field",
+                "current_state",
+                "current_state provided via --state or a readiness label",
+                "absent",
+            )
+        )
     elif current_state in allowed_from:
         satisfied.append(f"state {current_state} allows {route}")
     else:
         missing.append(f"allowed_state:{'|'.join(allowed_from)}")
         reasons.append(
             f"route {route} requires one of {', '.join(allowed_from)}; got {current_state}"
+        )
+        items.append(
+            make_item(
+                "invalid_state",
+                f"allowed_state:{route}",
+                f"state in {', '.join(allowed_from)}",
+                str(current_state),
+            )
         )
 
     if (
@@ -213,6 +272,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
             f"state {current_state} came from untrusted {state_source} evidence; "
             "maintainer readiness label required"
         )
+        items.append(
+            make_item(
+                "invalid_state",
+                "trusted_state",
+                "state evidence trusted via maintainer readiness label",
+                f"state {current_state} from untrusted {state_source} evidence",
+            )
+        )
 
     provided_artifacts = dict(evidence.get("artifacts", {})) if isinstance(evidence.get("artifacts"), dict) else {}
     for raw_artifact in args.artifact or []:
@@ -220,16 +287,17 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         provided_artifacts[name] = value
 
     for artifact in required:
-        path = required_artifact_path(config, artifact, args.issue)
         if artifact == "linked_issue":
             if args.issue is None:
                 missing.append("linked_issue")
+                items.append(item_from_missing("linked_issue"))
             else:
                 satisfied.append(f"linked_issue: GH-{args.issue}")
             continue
         if artifact == "linked_pr":
             if args.pr is None:
                 missing.append("linked_pr")
+                items.append(item_from_missing("linked_pr"))
             else:
                 satisfied.append(f"linked_pr: PR-{args.pr}")
             continue
@@ -239,12 +307,81 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 satisfied.append("verification evidence provided")
             else:
                 missing.append("verification")
+                items.append(item_from_missing("verification"))
             continue
-        required_artifacts.append(path or artifact)
         provided = provided_artifacts.get(artifact)
-        if provided:
-            if artifact in ARTIFACT_FILES and not (repo / str(provided)).is_file():
+        if artifact in ARTIFACT_FILES and args.issue is None:
+            required_artifacts.append(str(provided) if provided else artifact)
+            if provided and artifact_exists(repo, str(provided)):
+                satisfied.append(f"{artifact}: {provided}")
+            elif provided:
                 missing.append(f"{artifact}:{provided}")
+                items.append(
+                    make_item(
+                        "missing_artifact",
+                        artifact,
+                        f"{artifact} exists at {provided}",
+                        "absent",
+                    )
+                )
+            else:
+                missing.append(artifact)
+                items.append(
+                    make_item(
+                        "missing_artifact",
+                        artifact,
+                        f"{artifact} path provided in evidence",
+                        "absent",
+                    )
+                )
+            continue
+        path = required_artifact_path(config, artifact, args.issue)
+        required_artifacts.append(path or artifact)
+        if provided:
+            if artifact in ARTIFACT_FILES:
+                try:
+                    normalized_provided = validated_repo_relative_path(
+                        str(provided),
+                        label=f"{artifact} evidence path",
+                    ).as_posix()
+                except SpecRailError as exc:
+                    missing.append(f"{artifact}:{path}")
+                    reasons.append(str(exc))
+                    items.append(
+                        make_item(
+                            "invalid_evidence_value",
+                            artifact,
+                            f"{artifact} at configured path {path}",
+                            str(exc),
+                        )
+                    )
+                    continue
+                if normalized_provided != path:
+                    missing.append(f"{artifact}:{path}")
+                    reasons.append(
+                        f"{artifact} provided at {provided} does not match "
+                        f"configured path {path}"
+                    )
+                    items.append(
+                        make_item(
+                            "invalid_evidence_value",
+                            artifact,
+                            f"{artifact} at configured path {path}",
+                            f"provided at {provided}",
+                        )
+                    )
+                elif not artifact_exists(repo, normalized_provided):
+                    missing.append(f"{artifact}:{normalized_provided}")
+                    items.append(
+                        make_item(
+                            "missing_artifact",
+                            artifact,
+                            f"{artifact} exists at {normalized_provided}",
+                            "absent",
+                        )
+                    )
+                else:
+                    satisfied.append(f"{artifact}: {normalized_provided}")
             else:
                 satisfied.append(f"{artifact}: {provided}")
             continue
@@ -253,21 +390,125 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
                 satisfied.append(f"{artifact}: {path}")
             else:
                 missing.append(f"{artifact}:{path}")
+                items.append(
+                    make_item(
+                        "missing_artifact",
+                        artifact,
+                        f"{artifact} exists at {path}",
+                        "absent",
+                    )
+                )
         elif path:
             required_artifacts.append(path)
 
+    legacy_spec = False
     if route == "implement":
-        duplicate_work_result = evaluate_duplicate_work_gate_path(
-            repo,
-            args.issue,
-            Path(args.duplicate_evidence) if args.duplicate_evidence else None,
+        # GH142 B-005/B-007: a legacy spec packet is never a basis for
+        # implementation; an unreadable product.md fails closed via the
+        # SpecRailError path in main().
+        if args.issue is not None and spec_is_legacy(repo, config, args.issue):
+            legacy_spec = True
+            legacy_packet = spec_packet_artifact_paths(config, args.issue)[
+                "spec_packet"
+            ]
+            missing.append("non_legacy_spec")
+            reasons.append(
+                f"spec packet {legacy_packet} is status: legacy; "
+                "rewrite via write_spec (needs_spec) before implementing"
+            )
+            items.append(
+                make_item(
+                    "contract_violation",
+                    "non_legacy_spec",
+                    f"spec packet {legacy_packet} without a status: legacy "
+                    "declaration in its Linked Issue section",
+                    "product.md declares status: legacy in its Linked Issue "
+                    "section",
+                )
+            )
+        trusted_classification: dict[str, Any] | None = None
+        sensitive_input = dict(evidence)
+        sensitive_input.pop("sensitive_classification", None)
+        registry = sensitive_registry(config)
+        if registry["paths"] or registry["specs"]:
+            try:
+                _trusted_base_ref, trusted_base_sha = trusted_default_base(
+                    repo,
+                    default_base_ref=evidence.get("default_base_ref"),
+                    default_base_sha=evidence.get("default_base_sha"),
+                )
+                trusted_classification = classification_from_approved_tech(
+                    config,
+                    repo,
+                    issue=args.issue,
+                    base_sha=trusted_base_sha,
+                )
+                sensitive_input["sensitive_classification"] = {
+                    key: trusted_classification[key]
+                    for key in [
+                        "source", "changed_paths", "spec_refs", "matched_paths",
+                        "matched_specs", "registry_configured",
+                        "enforcement_sensitive",
+                    ]
+                }
+            except (SpecRailError, TypeError) as exc:
+                sensitive_errors.append(str(exc))
+        sensitive_classification, sensitive_satisfied, evaluated_sensitive_errors = (
+            evaluate_sensitive_evidence(
+                config,
+                repo,
+                sensitive_input,
+                expected_source="tech_spec",
+                issue=args.issue,
+                expected_base_ref=evidence.get("base_ref"),
+                expected_base_head=evidence.get("base_sha"),
+            )
         )
+        sensitive_errors.extend(evaluated_sensitive_errors)
+        if trusted_classification is not None:
+            sensitive_classification = trusted_classification
+        satisfied.extend(sensitive_satisfied)
+        if sensitive_errors:
+            reasons.extend(sensitive_errors)
+            missing.append("sensitive_enforcement")
+            items.append(item_from_missing("sensitive_enforcement"))
+            items.extend(
+                item_from_reason(error, "contract_violation")
+                for error in sensitive_errors
+            )
+        if args.issue is None:
+            duplicate_work_result = {
+                "decision": "needs_human",
+                "issue": None,
+                "reasons": [
+                    "duplicate work evidence cannot be evaluated until a linked issue is provided"
+                ],
+                "satisfied": [],
+                "missing": ["duplicate_evidence"],
+                "blocked_actions": ["implement"],
+                "verification_commands": [
+                    "python3 checks/github_duplicate_evidence.py "
+                    "--github-repo OWNER/REPO --issue <issue> --json"
+                ],
+            }
+        else:
+            duplicate_work_result = evaluate_duplicate_work_gate_path(
+                repo,
+                args.issue,
+                Path(args.duplicate_evidence) if args.duplicate_evidence else None,
+            )
         for item in duplicate_work_result.get("satisfied", []):
             satisfied.append(f"duplicate_work: {item}")
         for item in duplicate_work_result.get("missing", []):
             missing.append(f"duplicate_work:{item}")
+            items.append(item_from_missing(f"duplicate_work:{item}"))
+        duplicate_work_allowed = duplicate_work_result.get("decision") == "allowed"
         for reason in duplicate_work_result.get("reasons", []):
             reasons.append(f"duplicate_work: {reason}")
+            if not duplicate_work_allowed:
+                items.append(
+                    item_from_reason(f"duplicate_work: {reason}", "contract_violation")
+                )
 
     for action, action_body in policies.items():
         allowed_states = [str(state) for state in action_body.get("allowed_from", [])]
@@ -294,11 +535,28 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
 
     if duplicate_work_result is not None:
         decision = stricter_decision(decision, str(duplicate_work_result["decision"]))
+    if sensitive_errors:
+        decision = "blocked"
+    if legacy_spec:
+        # GH142 B-005: legacy blocks in every mode; dry_run must not soften
+        # this to warn.
+        decision = "blocked"
 
     for artifact in creates:
+        if args.issue is None:
+            required_artifacts.append(artifact)
+            continue
         path = render_artifact_path(config, artifact, args.issue)
         if path:
             required_artifacts.append(path)
+
+    verification_commands = ["python3 checks/check_workflow.py --repo ."]
+    if args.issue:
+        spec_dir = spec_packet_artifact_paths(config, args.issue, repo=repo)["spec_packet"]
+        verification_commands.append(
+            "python3 checks/check_workflow.py --repo . --spec-dir="
+            + shlex.quote(spec_dir)
+        )
 
     return {
         "decision": decision,
@@ -310,19 +568,14 @@ def evaluate_route(args: argparse.Namespace) -> dict[str, Any]:
         "reasons": reasons,
         "satisfied": sorted(set(satisfied)),
         "missing": sorted(set(missing)),
+        "rejection_items": [] if decision == "allowed" else finalize_items(items),
         "required_artifacts": sorted(set(required_artifacts)),
         "human_gates": human_gates,
         "allowed_actions": sorted(set(allowed_actions)),
         "blocked_actions": sorted(set(blocked_actions)),
         "duplicate_work_gate": duplicate_work_result,
-        "verification_commands": [
-            "python3 checks/check_workflow.py --repo .",
-            *(
-                [f"python3 checks/check_workflow.py --repo . --spec-dir specs/GH{args.issue}"]
-                if args.issue
-                else []
-            ),
-        ],
+        "sensitive_classification": sensitive_classification,
+        "verification_commands": verification_commands,
     }
 
 
@@ -331,6 +584,7 @@ def blocked_result(
     current_state: str | None,
     args: argparse.Namespace,
     reasons: list[str],
+    item_category: str = "invalid_state",
 ) -> dict[str, Any]:
     return {
         "decision": "blocked",
@@ -342,6 +596,9 @@ def blocked_result(
         "reasons": reasons,
         "satisfied": [],
         "missing": [],
+        "rejection_items": finalize_items(
+            item_from_reason(reason, item_category) for reason in reasons
+        ),
         "required_artifacts": [],
         "human_gates": [],
         "allowed_actions": [],
@@ -402,6 +659,7 @@ def main() -> int:
         help="Evaluation enforcement mode",
     )
     parser.add_argument("--json", action="store_true", help="Print JSON output")
+    add_prior_rejection_argument(parser)
     args = parser.parse_args()
 
     try:
@@ -417,12 +675,19 @@ def main() -> int:
             "reasons": [str(exc)],
             "satisfied": [],
             "missing": [],
+            "rejection_items": finalize_items(
+                [item_from_reason(str(exc), "config_error")]
+            ),
             "required_artifacts": [],
             "human_gates": [],
             "allowed_actions": [],
             "blocked_actions": [normalize_route(args.route)],
             "verification_commands": ["python3 checks/check_workflow.py --repo ."],
         }
+
+    result = apply_prior_rejection(
+        result, args.prior_rejection, blocked_actions=[result["route"]]
+    )
 
     if args.json:
         print(json.dumps(result, indent=2, sort_keys=True))

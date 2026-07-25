@@ -1,22 +1,39 @@
 const DEFAULT_DELTA_CHAR_LIMIT: usize = 1200;
 
-pub(super) fn build_delta_output(output: &str) -> String {
+pub(super) struct DeltaOutput {
+    pub output: String,
+    pub retained_context_chars: usize,
+}
+
+pub(super) fn build_delta_output(output: &str) -> DeltaOutput {
     let limit = read_usize_env("REMEM_CONTEXT_DELTA_CHAR_LIMIT", DEFAULT_DELTA_CHAR_LIMIT);
     if limit == 0 {
-        return String::new();
+        return DeltaOutput {
+            output: String::new(),
+            retained_context_chars: 0,
+        };
     }
 
     let (body, footer) = split_stats_footer(output);
     let (header, body_without_header) = delta_header_and_body(body);
+    let copied_body = body_without_header.trim_start_matches('\n');
+    let original_body_offset = body.chars().count() - copied_body.chars().count();
     let mut delta = String::new();
     delta.push_str(&header);
     delta.push_str(
         "Context changed since the previous injection. Showing a compact preview. Full context: `remem context --force`.\n\n",
     );
-    delta.push_str(body_without_header.trim_start_matches('\n'));
+    let delta_prefix_chars = delta.chars().count();
+    delta.push_str(copied_body);
 
-    enforce_char_limit_preserving_footer(&mut delta, limit, footer);
-    delta
+    let retained_delta_chars = enforce_char_limit_preserving_footer(&mut delta, limit, footer);
+    let retained_copied_chars = retained_delta_chars
+        .saturating_sub(delta_prefix_chars)
+        .min(copied_body.chars().count());
+    DeltaOutput {
+        output: delta,
+        retained_context_chars: original_body_offset + retained_copied_chars,
+    }
 }
 
 fn split_stats_footer(output: &str) -> (&str, &str) {
@@ -93,9 +110,17 @@ fn boxed_delta_header_and_body(output: &str) -> Option<(String, &str)> {
     None
 }
 
-fn enforce_char_limit_preserving_footer(output: &mut String, char_limit: usize, footer: &str) {
+fn enforce_char_limit_preserving_footer(
+    output: &mut String,
+    char_limit: usize,
+    footer: &str,
+) -> usize {
     if output.chars().count() <= char_limit {
-        return;
+        return output
+            .strip_suffix(footer)
+            .unwrap_or(output.as_str())
+            .chars()
+            .count();
     }
 
     let marker = "\n[remem context delta truncated]\n";
@@ -108,18 +133,19 @@ fn enforce_char_limit_preserving_footer(output: &mut String, char_limit: usize, 
         truncated.push_str(marker);
         truncated.push_str(footer);
         *output = truncated;
-        return;
+        return keep_chars;
     }
 
     if marker_chars >= char_limit {
         *output = output.chars().take(char_limit).collect();
-        return;
+        return 0;
     }
 
     let keep_chars = char_limit - marker_chars;
     let mut truncated: String = output.chars().take(keep_chars).collect();
     truncated.push_str(marker);
     *output = truncated;
+    keep_chars
 }
 
 fn read_usize_env(key: &str, default: usize) -> usize {

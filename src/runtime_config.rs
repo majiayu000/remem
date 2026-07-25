@@ -3,18 +3,29 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use toml_edit::{value, DocumentMut, Item, Table};
 
+mod config_value;
 #[cfg(test)]
 mod migration_tests;
 mod model;
 mod promotion;
+mod rules;
+mod user_auto_promote;
+use config_value::cli_value;
 pub use model::{
     model_status, model_statuses, rollback_model_config, set_model, ModelChange, ModelPreset,
     ModelStatus, MODEL_PRESETS,
 };
 pub use promotion::{summary_gate_mode, SummaryGateMode};
+pub use rules::{rule_compilation_config, RuleCompilationConfig};
+pub use user_auto_promote::{
+    user_context_auto_promote_config, AutoPromotePolicy, UserContextAutoPromoteConfig,
+};
 
 pub const CLAUDE_HOST: &str = "claude-code";
 pub const CODEX_HOST: &str = "codex-cli";
+/// Canonical Cursor host name (GH-823). The install-side `hosts.cursor`
+/// defaults/normalization and receipt are owned by GH-824.
+pub const CURSOR_HOST: &str = "cursor";
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.2";
 pub const MEMORY_AI_PROFILE_FIELD: &str = "remem_ai_profile";
 
@@ -163,6 +174,7 @@ pub fn normalize_host(raw: &str) -> String {
     match raw.trim().to_ascii_lowercase().as_str() {
         "claude" | "claude-code" | "claudecode" => CLAUDE_HOST.to_string(),
         "codex" | "codex-cli" | "codexcli" => CODEX_HOST.to_string(),
+        "cursor" => CURSOR_HOST.to_string(),
         "unknown" => "unknown".to_string(),
         _ => raw.trim().to_string(),
     }
@@ -247,6 +259,8 @@ fn ensure_config_defaults(doc: &mut DocumentMut, hosts: &[&str]) -> Result<()> {
     }
 
     promotion::ensure_defaults(doc)?;
+    rules::ensure_defaults(doc)?;
+    user_auto_promote::ensure_defaults(doc)?;
 
     let memory_ai = top_table_mut(doc, "memory_ai")?;
     set_str_if_missing(memory_ai, "default_host", CODEX_HOST);
@@ -316,6 +330,15 @@ fn ensure_host_config(hosts: &mut Table, host: &str) -> Result<()> {
             set_str_if_missing(table, "context_gate", "auto");
             set_bool_if_missing(table, "context_color", true);
             set_str_if_missing(table, "capture_adapter", CLAUDE_HOST);
+        }
+        CURSOR_HOST => {
+            // GH-824 contract v1 defaults (B-002): never the generic
+            // `context_gate = "off"` fallback, and the capture adapter is
+            // the canonical host identity.
+            set_str_if_missing(table, "memory_profile", "codex");
+            set_str_if_missing(table, "context_gate", "strict");
+            set_bool_if_missing(table, "context_color", true);
+            set_str_if_missing(table, "capture_adapter", CURSOR_HOST);
         }
         "unknown" => {
             set_str_if_missing(table, "memory_profile", "codex");
@@ -415,13 +438,7 @@ fn profile_from_doc(doc: &DocumentMut, profile_name: &str) -> Result<ResolvedMem
         );
     };
     let executor = parse_executor(required_str(table, "executor")?)?;
-    let model = optional_str(table, "model").and_then(|model| {
-        if model.eq_ignore_ascii_case("auto") {
-            None
-        } else {
-            Some(model)
-        }
-    });
+    let model = optional_str(table, "model").filter(|model| !model.eq_ignore_ascii_case("auto"));
     Ok(ResolvedMemoryAiProfile {
         profile_name: profile_name.to_string(),
         executor,
@@ -468,6 +485,12 @@ fn set_bool_if_missing(table: &mut Table, key: &str, value_bool: bool) {
     }
 }
 
+fn set_i64_if_missing(table: &mut Table, key: &str, value_i64: i64) {
+    if table.get(key).is_none() {
+        table[key] = value(value_i64);
+    }
+}
+
 fn required_str<'a>(table: &'a Table, key: &str) -> Result<&'a str> {
     table
         .get(key)
@@ -482,30 +505,6 @@ fn optional_str(table: &Table, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
-}
-
-fn cli_value(raw: &str) -> Item {
-    let trimmed = raw.trim();
-    match trimmed.to_ascii_lowercase().as_str() {
-        "true" => value(true),
-        "false" => value(false),
-        _ => match trimmed.parse::<i64>() {
-            Ok(number) => value(number),
-            Err(_) => value(trim_outer_quotes(trimmed)),
-        },
-    }
-}
-
-fn trim_outer_quotes(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|value| value.strip_suffix('"'))
-        .or_else(|| {
-            value
-                .strip_prefix('\'')
-                .and_then(|value| value.strip_suffix('\''))
-        })
-        .unwrap_or(value)
 }
 
 #[cfg(test)]

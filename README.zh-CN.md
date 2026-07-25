@@ -14,11 +14,19 @@
 [![npm](https://img.shields.io/npm/v/%40remem-ai%2Fremem)](https://www.npmjs.com/package/@remem-ai/remem)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-![Remem Memory terminal demo](assets/remem-demo.gif)
+![Remem 记忆接续演示 — 新会话直接接上上周的 bug 修复](assets/remem-recall-demo.gif)
+
+*真实 Claude Code 会话（demo 仓库）：全新会话直接回忆出上周的根因、commit 和待办 TODO，并附记忆引用，无需重新解释。*
 
 ## 你会得到什么
 
 - Claude Code 和 Codex CLI 能跨会话记住项目决策。
+- Cursor 已有 v1 集成：`remem install --target cursor` 注册 remem MCP
+  server（macOS/Linux），工具事件捕获（`remem observe --host cursor`，GH-823）
+  和 Stop transcript 总结（`remem summarize --host cursor`，GH-825）的运行时
+  命令已合并。v1 安装面还不会注册 Cursor hook 条目，因此 Cursor 的自动记忆
+  捕获尚未启用，Cursor 上也不支持 session-init 注入。详见下方
+  [Cursor 能力矩阵](#cursor-能力矩阵)。
 - Bug 修复原因、偏好和项目模式可以搜索。
 - 记忆默认留在本地：SQLite + SQLCipher。
 - hooks、MCP tools、CLI 命令和 localhost REST API 共用同一份记忆库。
@@ -53,13 +61,41 @@ curl -fsSL https://raw.githubusercontent.com/majiayu000/remem/main/install.sh | 
 # 或：~/.local/bin/remem install --target all
 ```
 
-`remem install` 可以自动检测已有的 Claude Code 和 Codex CLI 配置目录。
-首次安装时请使用 `--target codex`、`--target claude` 或 `--target all`，
-这样 remem 可以创建所选配置文件。
+`remem install` 可以自动检测已有的 Claude Code、Codex CLI 和 Cursor
+配置目录。首次安装时请使用 `--target codex`、`--target claude` 或
+`--target all`，这样 remem 可以创建所选配置文件。
+
+`--target cursor`（macOS/Linux）只管理用户级的 `~/.cursor/hooks.json` 和
+`~/.cursor/mcp.json`：它注册 remem MCP server，对两个文件做严格校验，并在
+已校验的快照上语义化保留第三方条目（跨文件更新走 staged apply +
+补偿性回滚，不是跨文件原子事务；落在最终比较和 rename 之间的外部编辑
+仍可能丢失）。安装契约 v1 不会注册任何 Cursor hook 条目——Cursor 的
+自动记忆尚未启用——Cursor 上也不支持 `session-init`。`--target auto`
+只在 macOS/Linux 检测到 Cursor 配置时才包含 Cursor；Windows 因为没有
+批准的 hook 命令渲染器会被跳过并打印诊断，`--repair` 也不覆盖 Cursor。
+降级 remem 之前，请先用当前版本运行 `remem uninstall --target cursor`。
+
+### Cursor 能力矩阵
+
+下表反映已合并的运行时行为，不包含计划中的能力：
+
+| 能力 | Claude Code / Codex CLI | Cursor（v1） |
+|---|---|---|
+| MCP 记忆工具（search、`save_memory` 等） | `remem install` 注册 | `remem install --target cursor` 注册（仅 macOS/Linux） |
+| 会话开始记忆注入 | 安装 hook | 不支持；doctor 和 install 固定输出 `session-init: not supported on cursor` |
+| 自动工具事件捕获 | 安装 hook | 运行时命令已存在（`remem observe --host cursor`，对已验证的 generic tool 事件做严格 fail-closed 解析）；安装面 v1 不注册 hook 条目，因此不是自动的 |
+| Stop transcript 总结 | 安装 hook | 运行时命令已存在（`remem summarize --host cursor`，以 Stop key 做 transcript 快照，失败降级为显式 `degraded/<reason>`）；安装面 v1 不注册 hook 条目，因此不是自动的 |
+| `remem doctor` | Hooks/MCP 行 | 独立 Cursor 行，报告 detected/configured/drift/collision 及固定能力说明行 |
+| `remem install --repair` | 仅 Claude hooks | 不支持 |
+| Windows | 支持 | 不支持（没有批准的 hook 命令渲染器） |
 
 需要验证或排障时再运行 `remem doctor`。
 
 ## 成功检查
+
+![remem install 与 SessionStart 上下文注入](assets/remem-demo.gif)
+
+*`remem install` 配置了什么，以及新 Codex 会话在 SessionStart 收到的内容。demo 使用临时 HOME 和临时数据库，不会展示任何私人记忆。*
 
 安装后启动一个新的 Claude Code 或 Codex CLI 会话。remem 应该在
 SessionStart 时注入相关项目记忆，并在会话结束后总结耐久记忆。然后运行：
@@ -102,6 +138,21 @@ remem 面向需要可搜索、可审计、项目级隔离、可恢复的工程�
 - 通过 MCP 和 REST API 接入 coding agents 与本地工具
 - 追踪后台记忆任务的用量和成本
 - 避免手工维护很长的 `MEMORY.md` 或 `CLAUDE.md`
+
+### remem 在生态中的位置
+
+以下快照基于
+[记忆工具生态调研（2026-03）](docs/research/claude-memory-mcp-ecosystem-2026-03.md)，
+各项目当前特性请以其上游文档为准。
+
+| | remem | 内置 memory 文件 | claude-mem | mem0 / OpenMemory |
+|---|---|---|---|---|
+| 采集 | Hook 自动采集 + LLM 提炼 | 手工编辑 | Hook 自动采集 | 依赖 agent 调用保存工具 |
+| 支持的 agent | Claude Code + Codex 共享同一存储 | 各工具各自维护 | Claude Code | 任意 MCP 客户端 |
+| 存储 | 本地 SQLite，可选 SQLCipher 加密 | 纯文本文件 | SQLite + Chroma 向量库 | 向量库，托管平台或本地服务 |
+| 检索 | FTS + 可选 embeddings，CLI / MCP / REST | 整体加载 | 分层向量检索 | 向量检索 |
+| 运行时 | 单个 Rust binary | 无 | Node worker + 后台服务 | Python 服务 |
+| 可审计性 | `remem why`、来源追溯、用量与成本追踪 | Git 历史 | 调研中未见文档 | 调研中未见文档 |
 
 ## remem 如何解决会话失忆
 

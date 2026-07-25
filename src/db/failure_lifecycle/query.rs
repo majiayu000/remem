@@ -1,14 +1,16 @@
+use std::borrow::Cow;
+
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
 use super::sql::{column_exists, table_exists};
 use super::{FailureSurfaceStats, MAX_FAILURE_AUTO_RETRIES, SECONDS_PER_DAY};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(super) struct SurfaceQuery {
     pub(super) surface: &'static str,
     pub(super) table: &'static str,
-    pub(super) failed_predicate: &'static str,
+    pub(super) failed_predicate: Cow<'static, str>,
     pub(super) attempt_column: &'static str,
     pub(super) created_column: &'static str,
     pub(super) updated_column: &'static str,

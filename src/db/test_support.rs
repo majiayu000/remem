@@ -12,6 +12,7 @@ fn env_lock() -> &'static Mutex<()> {
 
 pub struct ScopedTestDataDir {
     _guard: MutexGuard<'static, ()>,
+    _config_guard: crate::runtime_config::TestEnvGuard,
     previous: Option<OsString>,
     previous_allow_plaintext: Option<OsString>,
     previous_cipher_key: Option<OsString>,
@@ -20,6 +21,9 @@ pub struct ScopedTestDataDir {
 
 impl ScopedTestDataDir {
     pub fn new(label: &str) -> Self {
+        let config_guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("runtime config test lock should acquire");
         let guard = env_lock().lock().unwrap_or_else(|e| e.into_inner());
         let previous = std::env::var_os("REMEM_DATA_DIR");
         let previous_allow_plaintext = std::env::var_os("REMEM_ALLOW_PLAINTEXT_DB");
@@ -39,6 +43,7 @@ impl ScopedTestDataDir {
         std::env::set_var("REMEM_ALLOW_PLAINTEXT_DB", "1");
         Self {
             _guard: guard,
+            _config_guard: config_guard,
             previous,
             previous_allow_plaintext,
             previous_cipher_key,
@@ -116,4 +121,35 @@ pub fn reset_runtime_connection_open_count() {
 
 pub fn runtime_connection_open_count() -> usize {
     crate::db::core::configured_connection_open_count()
+}
+
+pub fn insert_legacy_pending_fixture(
+    conn: &rusqlite::Connection,
+    host: &str,
+    session_id: &str,
+    project: &str,
+    tool_name: &str,
+    tool_input: Option<&str>,
+    tool_response: Option<&str>,
+    cwd: Option<&str>,
+) -> anyhow::Result<i64> {
+    let epoch = chrono::Utc::now().timestamp();
+    conn.execute(
+        "INSERT INTO pending_observations
+         (host, session_id, project, tool_name, tool_input, tool_response, cwd,
+          created_at_epoch, updated_at_epoch, status, attempt_count,
+          next_retry_epoch, last_error, lease_owner, lease_expires_epoch)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, 'pending', 0, NULL, NULL, NULL, NULL)",
+        rusqlite::params![
+            host,
+            session_id,
+            project,
+            tool_name,
+            tool_input,
+            tool_response,
+            cwd,
+            epoch
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
 }

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "package-manager-choice",
+      "correction": "Use bun, not npm",
+      "source_memory_id": 67101,
+      "reinforcement_count": 3,
+      "violating_command": "npm install left-pad",
+      "compliant_command": "bun add left-pad"
+    },
+    {
+      "id": "forbidden-commit-trailer",
+      "correction": "Never add the AI-generated-by trailer to git commits",
+      "source_memory_id": 67102,
+      "reinforcement_count": 4,
+      "violating_command": "git commit -m init --trailer AI-generated-by=bot",
+      "compliant_command": "git commit -m init"
+    },
+    {
+      "id": "forbidden-command",
+      "correction": "Never run git push --force",
+      "source_memory_id": 67103,
+      "reinforcement_count": 5,
+      "violating_command": "git push origin HEAD:main -f",
+      "compliant_command": "git push"
+    }
+  ]
+}

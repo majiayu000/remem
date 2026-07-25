@@ -1,0 +1,88 @@
+# Task Plan
+
+## Linked Issue
+
+GH-684
+
+## Spec Packet
+
+- Product: `product.md`
+- Tech: `tech.md`
+- Authoritative docs contract:
+  `docs/specs/legacy-observation-retirement/PRODUCT.md` and
+  `docs/specs/legacy-observation-retirement/TECH.md`
+
+## Current Status
+
+Phase 1 static inventory and dogfood evidence were recorded in PR #686 and in
+the issue status comment. The remaining work is not a wholesale observation
+rewrite; it is focused convergence of one dead surface, one duplicate writer
+chain, and one mislabeled current surface.
+
+## Implementation Tasks
+
+- [x] `SP684-T1` Owner: agent; Dependencies: spec approval; Done when: doctor/status reports legacy row counts, last-write epochs, and frozen-write violations for the tracked surfaces; Verify: doctor/status fixture tests.
+- [x] `SP684-T2` Owner: maintainer or agent with approved fixtures; Dependencies: `SP684-T1`; Done when: field-level output comparison is established for `finalize_summarize` and `persist_session_rollup`; Verify: `summary_writer_equivalence_fixture_documents_field_level_deltas` documents legacy-only structured fields, rollup-only range fields, and the cooldown side-effect delta.
+- [x] `SP684-T3` Owner: agent; Dependencies: `SP684-T2`; Done when: any load-bearing legacy Summary output delta is ported into SessionRollup; Verify: `summary_writer_equivalence_fixture_documents_field_level_deltas`, `session_rollup_structured_fields_feed_current_summary_readers`, `query_recent_summaries_uses_semantic_rollup_rows_without_synthetic_noise`, `recall_includes_semantic_rollup_session_but_excludes_synthetic_range_title`, and `overview_counts_semantic_rollup_summary_rows_as_sessions`.
+- [x] `SP684-T4` Owner: agent; Dependencies: `SP684-T2`; Done when: Stop-hook side effects currently coupled to Summary are preserved or re-homed before `JobType::Summary` retirement; Verify: Compress, Dream, raw ingest, citation, failure lesson, candidate finalization, and native-memory tests. GH684-T4 locks the current side-effect owners before retirement: `enqueue_summary_followup_jobs_dedups_dream_and_preserves_profile_payload`, `enqueue_summary_followup_jobs_skips_legacy_summary_job`, `bad_transcript_path_uses_last_assistant_message_hook_fallback`, `process_records_memory_citations_before_cooldown_skip`, `process_records_memory_citations_before_summary_skip`, `process_distills_failure_lesson_before_cooldown_skip`, `finalize_summary_creates_candidates_without_active_memories`, and `process_finalized_summary_syncs_native_memory_side_effect`.
+- [x] `SP684-T5` Owner: maintainer or release operator; Dependencies: `SP684-T1`; Done when: `pending_observations` emptiness is confirmed on real databases, or stragglers are migrated with `remem pending migrate-legacy`; Verify: GH-684 status comments `2026-07-08` confirm the default real database `/Users/apple/.remem/remem.db` and five dated `/Users/apple/Backups/remem/` stores have zero ready/delayed/processing/expired/failed rows; no migration was needed.
+- [x] `SP684-T6` Owner: agent; Dependencies: `SP684-T5`; Done when: dead pending queue claim/write machinery is frozen or removed while admin migration/reporting stays available; Verify: pending admin/status tests plus production `cargo check` prove legacy enqueue/claim modules are removed from the crate while tests seed historical rows through `db::test_support::insert_legacy_pending_fixture`.
+
+Issue #794 closes the transcript-prompt evidence gap within T7 without
+completing T7: selected Stop transcripts now supply byte-bounded user/assistant
+evidence to the summarizer and candidate support path through one shared,
+redacted budget; repeated paths use one widest covered boundary and exact
+captured-event duplicates are omitted. Migration v066 persists the exact-range
+evidence and raw archive checkpoint for side-effect retries. Legacy unbounded
+transcripts are never prompt evidence. Final assistant-message hashes and
+structured citation facts are persisted per bounded Stop outside that lossy
+slice, so long-tail or earlier-Stop citations survive source deletion. Repeated
+paths retain each bounded Stop's facts, while early v066 JSON retries reuse the
+original bounded hash. Captured conversational events provide
+the only compatibility fallback, otherwise the range fails permanently before
+AI. Missing or unusable required bounded evidence fails before a metadata-only
+summary can persist.
+Verification: `session_rollup_prompt_includes_only_bounded_transcript_text`,
+`session_rollup_prompt_does_not_duplicate_captured_message_text`,
+`session_rollup_missing_transcript_fails_before_metadata_only_summary`,
+`session_rollup_unbounded_transcript_without_captured_conversation_fails_permanently`,
+`session_rollup_legacy_unbounded_transcript_uses_captured_assistant_only`,
+`session_rollup_existing_retry_runs_side_effects_when_transcript_disappears`,
+`session_rollup_transcript_support_messages_are_bounded_before_promotion`,
+`session_rollup_retries_incomplete_raw_archive_ingest`,
+`session_rollup_unusable_transcript_fails_before_metadata_only_summary`, and
+`transcript_prompt_is_bounded_redacted_and_xml_safe`, plus
+`persisted_citation_evidence_keeps_long_assistant_tail`,
+`persisted_citation_evidence_survives_cross_stop_prompt_eviction`,
+`persisted_citation_evidence_covers_each_boundary_of_repeated_path`,
+`legacy_v066_citation_message_hash_stays_idempotent`, and
+`total_budget_never_retains_empty_utf8_message`.
+
+- [x] `SP684-T7` Owner: agent; Dependencies: `SP684-T2` `SP684-T3` `SP684-T4`; Issues #792, #794, #795, and #796 are implemented. The #795 slice keeps automatic native-memory filesystem failures visible at error level with exact-range identity while allowing persisted UserContextCandidate, Compress, and Dream follow-ups to continue; explicit synchronization remains fallible. The #796 slice adds migration v068 and records one durable Compress/Dream scheduling decision per `session_row_id` and covered event range in the same transaction as both job decisions. Same-range retries preserve completed, failed, or cooldown-expired job history and diagnostics, partial enqueue failures roll back the checkpoint and jobs, genuinely new ranges remain eligible, pre-v068 exact ranges and late inserts from already-running old workers are preserved as error-visible `legacy_unknown` decisions without inferred replacement jobs, v068 requeues their processing leases, and new decisions persist exact Compress/Dream job attribution plus structured Dream disposition. Done when: legacy `JobType::Summary` handling at upgrade is decided (drain, reject, or convert) and tested; Verify: migration v064 rejects non-terminal and retryable failed legacy Summary jobs as permanent failures, Stop hooks no longer enqueue new Summary jobs, capture-ledger failures spill instead of falling back to the retired writer, same-host/project/session stale spills are skipped after the current stop payload succeeds while other projects still replay, replayed Stop captures are idempotent after later replay-step failures, duplicate replay captures with the same fixed event ID do not revive completed rollup tasks, replay capture-ledger failures preserve one active spill row, the Stop hook keeps immediately available citation/failure side effects without synchronous transcript drain, transcript-only signals run after byte-bounded worker ingest, capture redaction preserves Stop payload `cwd` and `transcript_path` path fields while still redacting sensitive keys, worker-side SessionRollup drains every covered Stop payload through its captured boundary while deduplicating repeated transcript paths, persisted rollup candidates cite only events in their exact covered range, persisted rollups re-home summary-derived candidates, workstream upsert, native-memory sync, UserContextCandidate extraction, and Compress/Dream follow-up enqueue, deterministic commit linking consumes proven 1:N evidence from the exact task range by durable `session_row_id`, late fixed-ID evidence uses bounded link-only work without rerunning AI or rollup side effects, Compress/Dream follow-up jobs are enqueued only after rollup persistence, automatic native-memory sync failures do not suppress those durable follow-ups, one atomic v068 checkpoint prevents same-range maintenance rescheduling after terminal jobs while rollback and new-range behavior remain explicit, doctor/status ignore v064 upgrade rejection rows as freeze blockers and actionable failed jobs while worker-side post-retirement Summary rejections stay visible, old-version daemon heartbeats and legacy singleton locks do not suppress the current Stop fallback worker, current once-launch heartbeats prevent overlapping fallbacks, workers claim extraction tasks before Compress/Dream jobs, the worker rejects already-claimed Summary jobs before the retired path can run, terminal Summary history and non-summary jobs are preserved, and coverage includes `legacy_summary_upgrade_rejects_non_terminal_jobs`, `worker_rejects_legacy_summary_job_without_retry`, `summarize_hook_runs_stop_side_effects_without_summary_job`, `citation_failure_does_not_block_capture_payload`, `capture_redaction_preserves_stop_payload_paths_for_worker_side_effects`, `session_rollup_worker_drains_raw_archive_from_stop_payload`, `session_rollup_drains_every_coalesced_stop_payload`, `session_rollup_deduplicates_same_transcript_at_widest_stop_boundary`, `session_rollup_candidate_evidence_stays_with_claimed_range`, `session_rollup_honors_stop_transcript_snapshot_boundary`, `session_rollup_retries_transcript_side_effects_without_resummarizing`, `session_rollup_rehomes_finalize_side_effects`, `session_rollup_enqueues_followup_jobs_after_rollup`, `native_memory_write_failure_does_not_block_durable_rollup_followups`, `session_rollup_followup_scheduling_survives_completed_compress_before_retry`, `session_rollup_followup_scheduling_preserves_failed_dream_for_same_range`, `session_rollup_followup_scheduling_survives_expired_dream_cooldown_before_retry`, `session_rollup_new_range_gets_new_followup_scheduling_decision`, `session_rollup_new_range_persists_coalesced_inflight_dream_attribution`, `session_rollup_new_range_persists_recent_done_dream_suppression_attribution`, `session_rollup_upgrade_preserves_historical_unknown_followups_after_terminal_jobs`, `session_rollup_followup_scheduling_rolls_back_partial_enqueue`, `dry_run_pending_reports_v068_session_rollup_followup_checkpoint_drift`, `v068_marks_historical_exact_ranges_legacy_unknown_without_inventing_jobs`, `v068_late_v067_rollup_defaults_legacy_unknown_and_requeues_claim`, `captured_commit_evidence_links_exact_range`, `captured_commit_link_retry_is_idempotent`, `late_session_stop_evidence_links_without_replaying_rollup`, `replayed_observe_spill_preserves_commit_snapshot_when_head_moves`, `replay_capture_failure_is_preserved_once_by_replay_layer`, `replay_capture_is_idempotent_without_hook_followup_jobs`, `duplicate_fixed_event_id_does_not_revive_done_task`, `current_healthy_daemon_skips_stop_spawn`, `old_version_healthy_daemon_uses_stop_fallback_spawn`, `current_once_suppresses_spawn_with_newer_old_daemon_heartbeat`, `once_bypasses_lock_for_old_version_daemon_heartbeat`, `old_version_daemon_lock_allows_current_once_heartbeat`, `summarize_hook_replays_same_session_spill_for_different_project`, `capture_ledger_failure_blocks_followup_jobs`, `current_stop_payload_wins_over_same_session_spill_replay`, `upgrade_summary_rejections_are_not_actionable_but_worker_rejections_are`, and `legacy_surfaces_ignore_upgrade_summary_rejections_but_report_worker_rejections`.
+- [x] `SP684-T8` Owner: agent; Dependencies: none after spec approval; Done when: MCP and docs stop describing live `observations` as legacy; Verify: docs or descriptor tests.
+- [x] `SP684-T10` Owner: agent and release operator; Target release: remem 0.6.0, superseded by remem 0.6.1 for the GitHub release; Dependencies: `SP684-T1`; Done when: doctor and published release notes announce the pending-observations removal window, the no-earlier-than-0.7.0 guard, and the non-empty-store dry-run/apply sequence. Verify: the remem 0.6.0 source/tag contains the exact doctor fixture and announcement; release run `29539555944` failed only at Create Release; the later remem 0.6.1 run `29542986334` published the same head history successfully; and the remem 0.6.1 GitHub release notes publish `remem pending migrate-legacy --dry-run`, `remem pending migrate-legacy`, and the no-earlier-than-0.7.0 notice. The superseding release starts the deprecation window without rerunning the obsolete v0.6.0 publication chain.
+- [ ] `SP684-T9` Owner: agent; Dependencies: `SP684-T10` has shipped; Earliest release: remem 0.7.0; Done when: `remem pending migrate-legacy` reports migrated/skipped/valueless counts, and the guarded drop migration refuses to run while unmigrated valuable rows remain; Verify: migration report, idempotency, refusal, and schema-drift tests.
+- [ ] `SP684-T11` Owner: agent and release operator; Dependencies: `SP684-T10` has shipped and the removal window has elapsed; Earliest release: remem 0.7.0; Done when: dormant `JobType::Summary` processing, `process_summary_job_input`, `finalize_summarize`, and legacy-only summary persistence code are removed, while historical failed Summary rows remain visible until an explicit `remem cleanup` action is implemented; Verify: production-reference audit, focused summary retirement tests, `cargo check --all-targets`, and cleanup-action tests. This is separate from the `pending_observations` table drop in `SP684-T9`.
+
+## Parallelization
+
+Doctor visibility and wording fixes can proceed independently. Summary
+equivalence, side-effect preservation, and Summary job retirement must stay
+serial because they touch the same Stop-hook behavior.
+
+## Verification
+
+- `git diff --check`
+- `python3 checks/check_workflow.py --repo .`
+- `python3 checks/check_workflow.py --repo . --spec-dir specs/GH684`
+- `cargo fmt --check`
+- `cargo check`
+- Focused doctor, pending, summary equivalence, Stop-hook, and migration tests
+- `cargo test` before merge readiness
+
+## Handoff Notes
+
+Use `Refs #684` for spec-only or partial implementation PRs. Do not close
+GH-684 until every acceptance criterion in `product.md` is implemented and
+verified. Summary writer retirement requires explicit equivalence evidence and
+human review before merge.

@@ -184,9 +184,7 @@ fn committed_golden_dataset_contains_en_and_cjk_provider_comparison_cases() -> R
         "expected at least four provider_comparison cases"
     );
     assert!(cases.iter().any(|query| query.id.contains("-en-")));
-    assert!(cases
-        .iter()
-        .any(|query| query.query.chars().any(|character| !character.is_ascii())));
+    assert!(cases.iter().any(|query| !query.query.is_ascii()));
     Ok(())
 }
 
@@ -290,6 +288,7 @@ fn small_provider_dataset() -> GoldenDataset {
                 created_at_epoch: None,
                 access_count: None,
                 last_accessed_epoch: None,
+                search_context: None,
             },
             GoldenMemory {
                 project: "synthetic/provider-test".to_string(),
@@ -304,6 +303,7 @@ fn small_provider_dataset() -> GoldenDataset {
                 created_at_epoch: None,
                 access_count: None,
                 last_accessed_epoch: None,
+                search_context: None,
             },
         ],
         queries: vec![GoldenQuery {

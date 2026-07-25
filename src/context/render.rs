@@ -1,39 +1,58 @@
+use std::collections::HashSet;
 use std::time::Instant;
 
 use anyhow::Result;
 
 use crate::db;
 
-use super::audit::{build_context_audit_items, record_context_injection_items, ContextAuditItem};
+use super::audit::{
+    build_context_audit_items, record_context_injection_items, ContextAuditItem,
+    ContextAuditRenderState,
+};
 use super::format::{char_len, truncate_chars_with_ellipsis};
+use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
 use super::injection_gate::{
     apply_context_gate_with_data_version, compute_data_version_hint, pre_render_context_gate,
     ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
-    direct_context_invocation, resolve_context_invocation, ContextCliOptions, ContextInvocation,
+    direct_context_invocation, resolve_context_invocation, resolve_cursor_context_invocation,
+    ContextCliOptions, ContextInvocation,
 };
 use super::policy::{ContextPolicy, SectionKind};
+use super::relevance::{build_sessionstart_relevance_plan, candidates_for_loaded, selected_inputs};
 use super::render_inputs::{load_context_render_inputs, ContextRenderInputs};
 use super::sections::{
     empty_state_output, render_core_memory_with_limits_and_staleness,
     render_lessons_with_summary_and_staleness, render_memory_index_with_summary_and_staleness,
-    render_recent_sessions_with_limit, render_workstreams_with_summary,
+    render_ranked_memory_index_with_summary_and_staleness, render_recent_sessions_with_summary,
+    render_workstreams_with_summary,
 };
 use super::types::{ContextLoadError, ContextRequest};
 mod eval;
+mod finalize;
+mod helpers;
 mod stats;
 mod timer;
 mod truncation;
 pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
+use finalize::{finalize_context_output, RenderedIdentityBounds};
+use helpers::{
+    build_context_header_with_style, context_debug_enabled, context_source_note,
+    section_render_limits,
+};
+#[cfg(test)]
+pub(in crate::context) use helpers::{build_context_stats_footer, enforce_total_char_limit};
+pub(in crate::context) use helpers::{
+    context_stdout_for_invocation, enforce_total_char_limit_preserving_footer,
+};
 pub(in crate::context) use stats::{ContextRenderStats, SectionRenderStats};
 use timer::log_context_timer;
-use truncation::truncate_context_body_at_stable_boundary;
 
 pub(in crate::context) use super::debug::build_context_debug_trace;
 
-pub(crate) const RENDER_CONTRACT_VERSION: u32 = 2;
+pub(crate) const RENDER_CONTRACT_VERSION: u32 = 3;
 
 pub(in crate::context) struct RenderedContext {
     pub(in crate::context) output: String,
@@ -75,7 +94,31 @@ pub fn generate_context_from_cli(
     generate_context_for_invocation(invocation, true)
 }
 
+/// Cursor `remem context` entrypoint (GH-823): bounded stdin read, strict
+/// exact `sessionStart` validation, then the shared render pipeline. Any
+/// parse/limit failure returns before context generation with empty stdout
+/// and no side effects (B-009); no CLI/current-cwd fallback exists.
+pub fn generate_cursor_context_from_stdin() -> Result<()> {
+    let bytes = crate::cursor_hook::input::read_bounded_hook_stdin(&mut std::io::stdin().lock())?;
+    generate_cursor_context_from_bytes(&bytes)
+}
+
+pub fn generate_cursor_context_from_bytes(bytes: &[u8]) -> Result<()> {
+    let event = crate::cursor_hook::input::parse_session_start(bytes)?;
+    let invocation = resolve_cursor_context_invocation(&event);
+    generate_context_for_invocation(invocation, true)
+}
+
 fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool) -> Result<()> {
+    let stdout = generate_context_output_for_invocation(invocation, use_gate)?;
+    print!("{stdout}");
+    Ok(())
+}
+
+fn generate_context_output_for_invocation(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<String> {
     let timer = crate::log::Timer::start("context", &format!("cwd={}", invocation.cwd));
     let debug_enabled = invocation.debug || context_debug_enabled();
     let request = ContextRequest {
@@ -88,10 +131,20 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         use_colors: invocation.use_colors,
     };
     let policy = resolve_profile(request.host).default_policy();
+    let hook_integrity_warning = claude_hook_integrity_warning(&invocation);
     let db_open_start = Instant::now();
     let conn = match open_context_connection_or_error(&request, &policy) {
         Ok(conn) => conn,
         Err(rendered) => {
+            // GH-823 B-005: Cursor never receives a fallback/half-rendered
+            // context body; failure means empty stdout plus an error log.
+            if invocation.host == super::host::HostKind::Cursor {
+                crate::log::error(
+                    "context",
+                    "cursor context generation failed (database open); emitting no stdout",
+                );
+                anyhow::bail!("cursor context generation failed (database open)");
+            }
             let rendered = *rendered;
             let mut decision = if use_gate {
                 ContextGateDecision {
@@ -101,6 +154,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     key: None,
                     context_hash: None,
                     output_mode: None,
+                    retained_context_chars: None,
                 }
             } else {
                 ContextGateDecision {
@@ -110,6 +164,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     key: None,
                     context_hash: None,
                     output_mode: None,
+                    retained_context_chars: None,
                 }
             };
             if debug_enabled {
@@ -120,10 +175,8 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     &decision_for_debug,
                 );
             }
-            print!(
-                "{}",
-                context_stdout_for_invocation(&decision.output, &invocation)?
-            );
+            append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
+            let stdout = context_stdout_for_invocation(&decision.output, &invocation)?;
             log_context_timer(
                 timer,
                 &request,
@@ -131,7 +184,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 &rendered.stats,
                 ContextGatePrecheck::Off,
             );
-            return Ok(());
+            return Ok(stdout);
         }
     };
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
@@ -162,6 +215,13 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             let data_version = rendered.data_version;
             let has_load_errors = rendered.has_load_errors;
             let audit_items = rendered.audit_items;
+            if has_load_errors && invocation.host == super::host::HostKind::Cursor {
+                crate::log::error(
+                    "context",
+                    "cursor context load errors; emitting no stdout (B-005)",
+                );
+                anyhow::bail!("cursor context generation failed (context load errors)");
+            }
             let decision = if has_load_errors {
                 ContextGateDecision {
                     output,
@@ -170,6 +230,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                     key: None,
                     context_hash: None,
                     output_mode: Some("fail_open"),
+                    retained_context_chars: None,
                 }
             } else {
                 let gate_start = Instant::now();
@@ -199,6 +260,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
                 key: None,
                 context_hash: None,
                 output_mode: None,
+                retained_context_chars: None,
             },
             stats,
             ContextGatePrecheck::Off,
@@ -209,6 +271,7 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
         let decision_for_debug = decision.clone();
         append_context_gate_debug_trace(&mut decision.output, &request, &decision_for_debug);
     }
+    append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
     if !audit_items.is_empty() {
         let audit_write_start = Instant::now();
         if let Err(error) =
@@ -224,12 +287,9 @@ fn generate_context_for_invocation(invocation: ContextInvocation, use_gate: bool
             audit_write_start,
         ));
     }
-    print!(
-        "{}",
-        context_stdout_for_invocation(&decision.output, &invocation)?
-    );
+    let stdout = context_stdout_for_invocation(&decision.output, &invocation)?;
     log_context_timer(timer, &request, &decision, &stats, precheck);
-    Ok(())
+    Ok(stdout)
 }
 
 #[cfg(test)]
@@ -238,6 +298,14 @@ pub(in crate::context) fn generate_context_for_test(
     use_gate: bool,
 ) -> Result<()> {
     generate_context_for_invocation(invocation, use_gate)
+}
+
+#[cfg(test)]
+pub(in crate::context) fn generate_context_output_for_test(
+    invocation: ContextInvocation,
+    use_gate: bool,
+) -> Result<String> {
+    generate_context_output_for_invocation(invocation, use_gate)
 }
 
 pub(in crate::context) fn append_context_gate_debug_trace(
@@ -340,6 +408,7 @@ fn render_context_output_from_inputs(
     let load_timing = inputs.load_timing;
     let preference_timing = inputs.preference_timing;
     let preference_summary = preference_details.summary;
+    super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
 
     if preference_summary.rendered == 0
         && loaded.memories.is_empty()
@@ -350,7 +419,7 @@ fn render_context_output_from_inputs(
     {
         return Ok(RenderedContext {
             output: empty_context_output(request),
-            stats: empty_stats(request),
+            stats: stats::empty_stats(request),
             audit_items: Vec::new(),
             data_version,
             has_load_errors,
@@ -358,7 +427,11 @@ fn render_context_output_from_inputs(
     }
 
     let mut output = String::new();
-    let (mut lesson_ids, mut index_ids, mut workstream_ids) = (Vec::new(), Vec::new(), Vec::new());
+    let (mut lesson_ids, mut index_ids, mut session_ids, mut workstream_ids) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let (mut lesson_item_ends, mut index_item_ends, mut session_item_ends) =
+        (Vec::new(), Vec::new(), Vec::new());
+    let mut workstream_item_ends = Vec::new();
     output.push_str(&build_context_header_with_style(
         &request.project,
         request.current_branch.as_deref(),
@@ -396,8 +469,12 @@ fn render_context_output_from_inputs(
         },
         ..ContextRenderStats::default()
     };
-    stats.timings.push(load_timing);
-    stats.timings.push(preference_timing);
+    stats::absorb_evidence(
+        &mut stats,
+        load_timing,
+        preference_timing,
+        loaded.rerank.as_ref(),
+    );
 
     let section_start = Instant::now();
     let before = char_len(&output);
@@ -411,18 +488,55 @@ fn render_context_output_from_inputs(
         section_start,
     ));
 
-    if !loaded.lessons.is_empty() {
+    let render_limits = section_render_limits(&policy);
+    let section_start = Instant::now();
+    let mut core_output = String::new();
+    let core_summary = render_core_memory_with_limits_and_staleness(
+        &mut core_output,
+        &loaded.memories,
+        &render_limits,
+        loaded.render_reference_epoch,
+        &loaded.staleness_labels,
+    );
+    stats.core_ids = core_summary.ids.clone();
+    let core_item_ends = core_summary.item_end_chars.clone();
+    stats.core = SectionRenderStats {
+        count: core_summary.count,
+        chars: char_len(&core_output),
+    };
+    stats.timings.push(crate::perf::PhaseTiming::elapsed(
+        "section_core",
+        section_start,
+    ));
+    let core_ids = core_summary.ids.into_iter().collect::<HashSet<_>>();
+    let relevance_candidates = candidates_for_loaded(&loaded, &core_ids);
+    let relevance_plan = build_sessionstart_relevance_plan(
+        loaded.relevance_query.as_deref(),
+        policy.limits.sessionstart_relevance_k,
+        &relevance_candidates,
+    );
+    let governed = selected_inputs(&loaded, &relevance_plan, &core_ids)?;
+    stats.relevance.state = relevance_plan.state;
+    stats.relevance.k = relevance_plan.k;
+    stats.relevance.threshold = relevance_plan.threshold;
+    stats.relevance.candidates = relevance_plan.candidate_count;
+    stats.relevance.eligible = relevance_plan.eligible_count;
+    stats.relevance.below_threshold = relevance_plan.below_threshold_count;
+    stats.relevance.k_limited = relevance_plan.k_limited_count;
+
+    if !governed.lessons.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
         let lesson_summary = render_lessons_with_summary_and_staleness(
             &mut output,
-            &loaded.lessons,
+            &governed.lessons,
             policy.section_item_limit(SectionKind::Lessons, policy.limits.lesson_limit),
             policy.section_char_limit(SectionKind::Lessons, policy.limits.lesson_char_limit),
             loaded.render_reference_epoch,
             &loaded.staleness_labels,
         );
         lesson_ids = lesson_summary.ids;
+        lesson_item_ends = lesson_summary.item_end_chars;
         stats.lessons = SectionRenderStats {
             count: lesson_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -432,39 +546,32 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
-    if !loaded.memories.is_empty() {
-        let render_limits = section_render_limits(&policy);
+    let core_output_start = char_len(&output);
+    output.push_str(&core_output);
+    if !governed.memories.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
-        let core_summary = render_core_memory_with_limits_and_staleness(
-            &mut output,
-            &loaded.memories,
-            &render_limits,
-            loaded.render_reference_epoch,
-            &loaded.staleness_labels,
-        );
-        let core_count = core_summary.count;
-        stats.core_ids = core_summary.ids.clone();
-        stats.core = SectionRenderStats {
-            count: core_count,
-            chars: char_len(&output).saturating_sub(before),
+        let index_summary = if relevance_plan.state == "disabled" {
+            render_memory_index_with_summary_and_staleness(
+                &mut output,
+                &governed.memories,
+                &render_limits,
+                &core_ids,
+                loaded.render_reference_epoch,
+                &loaded.staleness_labels,
+            )
+        } else {
+            render_ranked_memory_index_with_summary_and_staleness(
+                &mut output,
+                &governed.memories,
+                &render_limits,
+                &core_ids,
+                loaded.render_reference_epoch,
+                &loaded.staleness_labels,
+            )
         };
-        stats.timings.push(crate::perf::PhaseTiming::elapsed(
-            "section_core",
-            section_start,
-        ));
-        let section_start = Instant::now();
-        let before = char_len(&output);
-        let core_ids = core_summary.ids.into_iter().collect();
-        let index_summary = render_memory_index_with_summary_and_staleness(
-            &mut output,
-            &loaded.memories,
-            &render_limits,
-            &core_ids,
-            loaded.render_reference_epoch,
-            &loaded.staleness_labels,
-        );
         index_ids = index_summary.ids;
+        index_item_ends = index_summary.item_end_chars;
         stats.index = SectionRenderStats {
             count: index_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -484,6 +591,7 @@ fn render_context_output_from_inputs(
             policy.section_char_limit(SectionKind::Workstreams, 1_200),
         );
         workstream_ids = workstream_summary.ids;
+        workstream_item_ends = workstream_summary.item_end_chars;
         stats.workstreams = SectionRenderStats {
             count: workstream_summary.count,
             chars: char_len(&output).saturating_sub(before),
@@ -493,16 +601,22 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
-    if !loaded.summaries.is_empty() {
+    if !governed.summaries.is_empty() {
         let section_start = Instant::now();
         let before = char_len(&output);
-        let session_count = render_recent_sessions_with_limit(
+        let session_item_limit =
+            policy.section_item_limit(SectionKind::Sessions, policy.limits.session_limit);
+        let session_summaries =
+            &governed.summaries[..governed.summaries.len().min(session_item_limit)];
+        let session_summary = render_recent_sessions_with_summary(
             &mut output,
-            &loaded.summaries,
+            session_summaries,
             policy.section_char_limit(SectionKind::Sessions, 2_200),
         );
+        session_ids = session_summary.ids;
+        session_item_ends = session_summary.item_end_chars;
         stats.sessions = SectionRenderStats {
-            count: session_count,
+            count: session_summary.count,
             chars: char_len(&output).saturating_sub(before),
         };
         stats.timings.push(crate::perf::PhaseTiming::elapsed(
@@ -510,6 +624,11 @@ fn render_context_output_from_inputs(
             section_start,
         ));
     }
+    let pre_total_governed_count = lesson_ids.len() + index_ids.len() + session_ids.len();
+    stats.relevance.final_injected = pre_total_governed_count;
+    stats.relevance.section_limited = relevance_plan
+        .selected_count
+        .saturating_sub(pre_total_governed_count);
 
     if debug {
         let diagnostics_start = Instant::now();
@@ -528,25 +647,46 @@ fn render_context_output_from_inputs(
         ));
     }
 
-    stats.output_chars = char_len(&output);
-    let mut stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-    stats.output_chars += char_len(&stats_footer);
-    stats.truncated = stats.total_char_limit > 0 && stats.output_chars > stats.total_char_limit;
-    stats_footer = build_context_stats_footer_with_style(&stats, request.use_colors);
-    stats.output_chars = char_len(&output) + char_len(&stats_footer);
-    output.push_str(&stats_footer);
-    enforce_total_char_limit_preserving_footer(
-        &mut output,
-        policy.limits.total_char_limit,
-        &stats_footer,
-    );
+    let core_item_ends = core_item_ends
+        .iter()
+        .map(|end| core_output_start + end)
+        .collect::<Vec<_>>();
+    let core_selected_ids = stats.core_ids.clone();
+    let bounds = RenderedIdentityBounds {
+        core_ids: &core_selected_ids,
+        core_ends: &core_item_ends,
+        lesson_ids: &lesson_ids,
+        lesson_ends: &lesson_item_ends,
+        index_ids: &index_ids,
+        index_ends: &index_item_ends,
+        session_ids: &session_ids,
+        session_ends: &session_item_ends,
+        workstream_ids: &workstream_ids,
+        workstream_ends: &workstream_item_ends,
+    };
+    let finalized = finalize_context_output(
+        std::mem::take(&mut output),
+        &mut stats,
+        request.use_colors,
+        &bounds,
+    )?;
+    output = finalized.output;
     let audit_start = Instant::now();
+    let audit_render = ContextAuditRenderState {
+        core_selected_ids: &core_selected_ids,
+        core_final_ids: &finalized.final_core_ids,
+        index_final_ids: &finalized.final_index_ids,
+        lesson_final_ids: &finalized.final_lesson_ids,
+        session_final_ids: &finalized.final_session_ids,
+        workstream_selected_ids: &workstream_ids,
+        workstream_final_ids: &finalized.final_workstream_ids,
+        item_end_chars: &finalized.item_end_chars,
+    };
     let audit_items = build_context_audit_items(
         &loaded,
-        &stats.core_ids,
-        &index_ids,
-        &lesson_ids,
-        &workstream_ids,
+        &audit_render,
+        &relevance_plan,
+        &finalized.total_truncated_keys,
     );
     stats.timings.push(crate::perf::PhaseTiming::elapsed(
         "audit_items",
@@ -593,7 +733,7 @@ fn render_context_open_error(
             format!("failed to open remem database: {error}"),
         )],
     );
-    let mut stats = empty_stats(request);
+    let mut stats = stats::empty_stats(request);
     stats.total_char_limit = policy.limits.total_char_limit;
     stats.output_chars = char_len(&output);
     enforce_total_char_limit_preserving_footer(&mut output, policy.limits.total_char_limit, "");
@@ -652,129 +792,4 @@ pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> Stri
         request.use_colors,
     );
     empty_state_output(&header, context_source_note(request.hook_source.as_deref()))
-}
-
-fn empty_stats(request: &ContextRequest) -> ContextRenderStats {
-    ContextRenderStats {
-        host: request.host.as_env_value().to_string(),
-        branch: request.current_branch.clone(),
-        hook_source: request.hook_source.clone(),
-        ..ContextRenderStats::default()
-    }
-}
-
-fn section_render_limits(policy: &ContextPolicy) -> super::policy::ContextLimits {
-    let mut limits = policy.limits;
-    limits.core_item_limit = policy.section_item_limit(SectionKind::Core, limits.core_item_limit);
-    limits.core_char_limit = policy.section_char_limit(SectionKind::Core, limits.core_char_limit);
-    limits.memory_index_limit =
-        policy.section_item_limit(SectionKind::MemoryIndex, limits.memory_index_limit);
-    limits.memory_index_char_limit =
-        policy.section_char_limit(SectionKind::MemoryIndex, limits.memory_index_char_limit);
-    limits
-}
-
-#[cfg(test)]
-pub(in crate::context) fn build_context_stats_footer(stats: &ContextRenderStats) -> String {
-    build_context_stats_footer_with_style(stats, false)
-}
-
-fn build_context_stats_footer_with_style(stats: &ContextRenderStats, use_colors: bool) -> String {
-    super::style::context_stats_footer(stats, use_colors)
-}
-
-fn context_source_note(source: Option<&str>) -> Option<&'static str> {
-    match source?.trim().to_ascii_lowercase().as_str() {
-        "compact" => Some("Codex compacted the chat, so remem refreshed memory context."),
-        "clear" => Some("Context was reloaded after an explicit clear."),
-        _ => None,
-    }
-}
-
-fn context_debug_enabled() -> bool {
-    std::env::var("REMEM_CONTEXT_DEBUG")
-        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false)
-}
-
-#[cfg(test)]
-pub(in crate::context) fn enforce_total_char_limit(output: &mut String, char_limit: usize) {
-    enforce_total_char_limit_preserving_footer(output, char_limit, "");
-}
-
-pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
-    output: &mut String,
-    char_limit: usize,
-    footer: &str,
-) {
-    if char_limit == 0 || output.chars().count() <= char_limit {
-        return;
-    }
-
-    let marker = "\n[remem context truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT]\n";
-    let marker_chars = marker.chars().count();
-    let footer_chars = footer.chars().count();
-
-    if !footer.is_empty() && output.ends_with(footer) && marker_chars + footer_chars <= char_limit {
-        let keep_chars = char_limit - marker_chars - footer_chars;
-        let body = output.strip_suffix(footer).unwrap_or(output.as_str());
-        let mut truncated = truncate_context_body_at_stable_boundary(body, keep_chars);
-        truncated.push_str(marker);
-        truncated.push_str(footer);
-        *output = truncated;
-        return;
-    }
-
-    if marker_chars >= char_limit {
-        *output = marker.chars().take(char_limit).collect();
-        return;
-    }
-
-    let keep_chars = char_limit - marker_chars;
-    let mut truncated = truncate_context_body_at_stable_boundary(output, keep_chars);
-    truncated.push_str(marker);
-    *output = truncated;
-}
-
-fn build_context_header_with_style(
-    project: &str,
-    current_branch: Option<&str>,
-    hook_source: Option<&str>,
-    host: super::host::HostKind,
-    use_colors: bool,
-) -> String {
-    super::style::context_header(project, current_branch, hook_source, host, use_colors)
-}
-
-pub(in crate::context) fn context_stdout_for_invocation(
-    output: &str,
-    invocation: &ContextInvocation,
-) -> Result<String> {
-    if output.is_empty() || !is_codex_session_start_hook(invocation) {
-        return Ok(output.to_string());
-    }
-
-    let additional_context = super::style::strip_ansi(output);
-    let hook_output = serde_json::json!({
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": additional_context,
-        }
-    });
-    Ok(format!("{}\n", serde_json::to_string(&hook_output)?))
-}
-
-fn is_codex_session_start_hook(invocation: &ContextInvocation) -> bool {
-    if invocation.host != super::host::HostKind::CodexCli {
-        return false;
-    }
-
-    matches!(
-        invocation
-            .source
-            .as_deref()
-            .map(|source| source.trim().to_ascii_lowercase()),
-        Some(source)
-            if matches!(source.as_str(), "startup" | "resume" | "clear" | "compact")
-    )
 }

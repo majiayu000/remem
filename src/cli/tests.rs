@@ -172,6 +172,7 @@ fn cli_parses_governance_delete_options() {
         Commands::Govern {
             project,
             action,
+            acknowledge_pattern,
             reason,
             actor,
             query,
@@ -188,6 +189,7 @@ fn cli_parses_governance_delete_options() {
         } => {
             assert_eq!(project.as_deref(), Some("/tmp/remem"));
             assert!(matches!(action, MemoryGovernanceCliAction::Delete));
+            assert!(acknowledge_pattern.is_none());
             assert_eq!(reason.as_deref(), Some("bad memory"));
             assert_eq!(actor.as_deref(), Some("codex"));
             assert!(query.is_none());
@@ -210,7 +212,7 @@ fn cli_parses_governance_delete_options() {
 fn cli_parses_scriptable_json_flags() {
     let status = Cli::parse_from(["remem", "status", "--json"]);
     match status.command {
-        Commands::Status { json } => assert!(json),
+        Commands::Status { json, .. } => assert!(json),
         _ => panic!("expected status command"),
     }
 
@@ -301,6 +303,7 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
         Commands::Govern {
             project,
             action,
+            acknowledge_pattern,
             reason,
             actor,
             query,
@@ -317,6 +320,7 @@ fn cli_parses_governance_batch_selectors_and_id_sources() {
         } => {
             assert_eq!(project.as_deref(), Some("/tmp/remem"));
             assert!(matches!(action, MemoryGovernanceCliAction::Stale));
+            assert!(acknowledge_pattern.is_none());
             assert!(reason.is_none());
             assert!(actor.is_none());
             assert_eq!(query.as_deref(), Some("old migration plan"));
@@ -763,7 +767,11 @@ fn cli_parses_markdown_export_and_import_commands() {
     match export.command {
         Commands::Export(args) => {
             assert!(args.markdown);
-            assert_eq!(args.output, std::path::PathBuf::from("/tmp/remem-md"));
+            assert_eq!(
+                args.output.as_deref(),
+                Some(std::path::Path::new("/tmp/remem-md"))
+            );
+            assert!(args.pack.is_none());
             assert_eq!(args.project.as_deref(), Some("/repo"));
             assert!(args.include_inactive);
             assert_eq!(args.limit, 25);
@@ -782,15 +790,46 @@ fn cli_parses_markdown_export_and_import_commands() {
     match import.command {
         Commands::Import {
             action:
-                ImportAction::Markdown {
+                Some(ImportAction::Markdown {
                     source,
                     best_effort,
-                },
+                }),
+            pack,
+            dry_run,
         } => {
             assert_eq!(source, std::path::PathBuf::from("/tmp/remem-md"));
             assert!(best_effort);
+            assert!(pack.is_none());
+            assert!(!dry_run);
         }
         _ => panic!("expected import markdown command"),
+    }
+}
+
+#[test]
+fn cli_parses_pack_export_command() {
+    let export = Cli::parse_from([
+        "remem",
+        "export",
+        "--pack",
+        "/repo/.remem-pack",
+        "--project",
+        "/repo",
+        "--limit",
+        "50",
+    ]);
+    match export.command {
+        Commands::Export(args) => {
+            assert!(!args.markdown);
+            assert!(args.output.is_none());
+            assert_eq!(
+                args.pack.as_deref(),
+                Some(std::path::Path::new("/repo/.remem-pack"))
+            );
+            assert_eq!(args.project.as_deref(), Some("/repo"));
+            assert_eq!(args.limit, 50);
+        }
+        _ => panic!("expected export command"),
     }
 }
 

@@ -44,19 +44,19 @@ Ship loader-visible associative fixtures and a reproducible baseline report:
 
 ## Acceptance Criteria
 
-- [ ] `eval/golden.json` includes at least 15 associative fixtures covering
+- [x] `eval/golden.json` includes at least 15 associative fixtures covering
       file path, crate, error signature, and issue-number entities.
-- [ ] Each associative query has a loader-validated `hop_path` with source,
+- [x] Each associative query has a loader-validated `hop_path` with source,
       entity type, entity, and target.
-- [ ] Loader validation rejects associative fixtures whose query text shares
+- [x] Loader validation rejects associative fixtures whose query text shares
       target-content tokens after normalization.
-- [ ] `remem eval-associative-baseline` writes the committed baseline report
+- [x] `remem eval-associative-baseline` writes the committed baseline report
       under `eval/associative-multihop/baseline.json`.
-- [ ] Tests cover CLI parsing, fixture contract coverage, report generation,
+- [x] Tests cover CLI parsing, fixture contract coverage, report generation,
       checked-in report parity, and overlap rejection.
 
 ## Follow-Up
 
-GH-676 remains open for per-channel attribution, entity-BFS and literal
-`graph_edges` arm deltas, trusted provenance fixture edge setup, and ADR
-decision recording.
+PR #695 completed the GH-694 first implementation slice. GH-676 remains open
+for per-channel attribution, entity-BFS and literal `graph_edges` arm deltas,
+trusted provenance fixture edge setup, and ADR decision recording.

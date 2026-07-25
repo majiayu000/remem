@@ -1,0 +1,12 @@
+event	bytes	lines
+stop	523	3
+beforeSubmitPrompt	523	3
+afterAgentResponse	890	6
+stop	890	6
+beforeSubmitPrompt	890	6
+preToolUse	890	6
+postToolUseFailure	1337	7
+beforeReadFile	1337	7
+postToolUse	1337	7
+afterAgentResponse	1942	10
+stop	1942	10

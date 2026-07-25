@@ -300,6 +300,76 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "candidate_review_metadata",
         sql: include_str!("../migrations/v059_candidate_review_metadata.sql"),
     },
+    Migration {
+        version: 60,
+        name: "memory_poisoning_defense",
+        sql: include_str!("../migrations/v060_memory_poisoning_defense.sql"),
+    },
+    Migration {
+        version: 61,
+        name: "memory_poisoning_injection_drops",
+        sql: include_str!("../migrations/v061_memory_poisoning_injection_drops.sql"),
+    },
+    Migration {
+        version: 62,
+        name: "preference_rule_state",
+        sql: include_str!("../migrations/v062_preference_rule_state.sql"),
+    },
+    Migration {
+        version: 63,
+        name: "procedure_exports",
+        sql: include_str!("../migrations/v063_procedure_exports.sql"),
+    },
+    Migration {
+        version: 64,
+        name: "reject_legacy_summary_jobs",
+        sql: include_str!("../migrations/v064_reject_legacy_summary_jobs.sql"),
+    },
+    Migration {
+        version: 65,
+        name: "preference_reinforcement",
+        sql: include_str!("../migrations/v065_preference_reinforcement.sql"),
+    },
+    Migration {
+        version: 66,
+        name: "session_rollup_evidence_checkpoint",
+        sql: include_str!("../migrations/v066_session_rollup_evidence_checkpoint.sql"),
+    },
+    Migration {
+        version: 67,
+        name: "capture_git_evidence",
+        sql: include_str!("../migrations/v067_capture_git_evidence.sql"),
+    },
+    Migration {
+        version: 68,
+        name: "session_rollup_followup_checkpoint",
+        sql: include_str!("../migrations/v068_session_rollup_followup_checkpoint.sql"),
+    },
+    Migration {
+        version: 69,
+        name: "job_queue_atomicity",
+        sql: include_str!("../migrations/v069_job_queue_atomicity.sql"),
+    },
+    Migration {
+        version: 70,
+        name: "web_console_governance",
+        sql: include_str!("../migrations/v070_web_console_governance.sql"),
+    },
+    Migration {
+        version: 71,
+        name: "raw_session_identity",
+        sql: include_str!("../migrations/v071_raw_session_identity.sql"),
+    },
+    Migration {
+        version: 72,
+        name: "memory_retrieval_enrichment",
+        sql: include_str!("../migrations/v072_memory_retrieval_enrichment.sql"),
+    },
+    Migration {
+        version: 73,
+        name: "session_summary_poisoning",
+        sql: include_str!("../migrations/v073_session_summary_poisoning.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

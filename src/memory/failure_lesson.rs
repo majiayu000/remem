@@ -23,6 +23,7 @@ struct FailureLessonCandidate {
     source_hash: String,
 }
 
+#[cfg(test)]
 pub(crate) fn distill_session_failure_lessons(
     conn: &Connection,
     session_id: &str,
@@ -30,7 +31,28 @@ pub(crate) fn distill_session_failure_lessons(
     branch: Option<&str>,
 ) -> Result<FailureLessonFeedReport> {
     let messages = load_session_messages(conn, project, session_id)?;
-    let Some(candidate) = detect_failure_lesson(&messages) else {
+    distill_messages(conn, session_id, project, branch, &messages)
+}
+
+pub(crate) fn distill_stop_failure_lessons(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    branch: Option<&str>,
+    transcript_identity_ids: &[i64],
+) -> Result<FailureLessonFeedReport> {
+    let messages = load_stop_messages(conn, project, session_id, transcript_identity_ids)?;
+    distill_messages(conn, session_id, project, branch, &messages)
+}
+
+fn distill_messages(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    branch: Option<&str>,
+    messages: &[RawMessage],
+) -> Result<FailureLessonFeedReport> {
+    let Some(candidate) = detect_failure_lesson(messages) else {
         return Ok(FailureLessonFeedReport {
             skipped: usize::from(!messages.is_empty()),
             ..FailureLessonFeedReport::default()
@@ -38,6 +60,37 @@ pub(crate) fn distill_session_failure_lessons(
     };
 
     save_failure_lesson_candidate(conn, session_id, project, branch, &candidate)
+}
+
+fn load_stop_messages(
+    conn: &Connection,
+    project: &str,
+    session_id: &str,
+    transcript_identity_ids: &[i64],
+) -> Result<Vec<RawMessage>> {
+    if transcript_identity_ids.is_empty() {
+        return load_session_messages(conn, project, session_id);
+    }
+    let placeholders = std::iter::repeat_n("?", transcript_identity_ids.len())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let sql = format!(
+        "SELECT id, session_id, project, role, content, source, branch, cwd, created_at_epoch
+         FROM raw_messages
+         WHERE (project = ? AND session_id = ?)
+            OR transcript_identity_id IN ({placeholders})
+         ORDER BY id ASC"
+    );
+    let mut values: Vec<&dyn rusqlite::ToSql> =
+        Vec::with_capacity(transcript_identity_ids.len() + 2);
+    values.push(&project);
+    values.push(&session_id);
+    for identity_id in transcript_identity_ids {
+        values.push(identity_id);
+    }
+    let mut statement = conn.prepare(&sql)?;
+    let rows = statement.query_map(values.as_slice(), raw_message_from_row)?;
+    crate::db::query::collect_rows(rows)
 }
 
 fn load_session_messages(
@@ -51,20 +104,22 @@ fn load_session_messages(
          WHERE project = ?1 AND session_id = ?2
          ORDER BY id ASC",
     )?;
-    let rows = stmt.query_map(params![project, session_id], |row| {
-        Ok(RawMessage {
-            id: row.get(0)?,
-            session_id: row.get(1)?,
-            project: row.get(2)?,
-            role: row.get(3)?,
-            content: row.get(4)?,
-            source: row.get(5)?,
-            branch: row.get(6)?,
-            cwd: row.get(7)?,
-            created_at_epoch: row.get(8)?,
-        })
-    })?;
+    let rows = stmt.query_map(params![project, session_id], raw_message_from_row)?;
     crate::db::query::collect_rows(rows)
+}
+
+fn raw_message_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RawMessage> {
+    Ok(RawMessage {
+        id: row.get(0)?,
+        session_id: row.get(1)?,
+        project: row.get(2)?,
+        role: row.get(3)?,
+        content: row.get(4)?,
+        source: row.get(5)?,
+        branch: row.get(6)?,
+        cwd: row.get(7)?,
+        created_at_epoch: row.get(8)?,
+    })
 }
 
 fn detect_failure_lesson(messages: &[RawMessage]) -> Option<FailureLessonCandidate> {

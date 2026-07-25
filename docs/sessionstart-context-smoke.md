@@ -22,7 +22,8 @@ rm -rf "$tmpdir"
 Expected checks:
 
 - Normal output has no `## Debug Trace` section.
-- Footer includes host, branch, per-section chars, approximate tokens, and truncation status.
+- Footer includes host, branch, per-section chars, relevance state/k/threshold/drop counts, approximate tokens, and truncation status.
+- `REMEM_CONTEXT_RELEVANCE_K=0` restores legacy governed-section selection.
 - Project preferences render by default; global preferences require `REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT`.
 - Long session requests are truncated inside the Sessions section.
 - Total truncation keeps the truncation marker and stats footer when both fit.

@@ -140,26 +140,61 @@ fn truncate_to_byte_limit(content: &str, max_bytes: usize) -> String {
     content[..end].to_string()
 }
 
-fn load_recent_sessions(conn: &rusqlite::Connection, project: &str) -> Result<Vec<SessionRow>> {
+pub(super) fn load_recent_sessions(
+    conn: &rusqlite::Connection,
+    project: &str,
+) -> Result<Vec<SessionRow>> {
     let mut stmt = conn.prepare(
-        "SELECT request, completed, decisions, created_at_epoch \
+        "SELECT id, \
+             CASE \
+               WHEN request LIKE 'Captured event range %..%' THEN \
+                 COALESCE(NULLIF(decisions, ''), NULLIF(learned, ''), \
+                          NULLIF(next_steps, ''), NULLIF(preferences, ''), \
+                          NULLIF(completed, ''), request) \
+               ELSE request \
+             END AS display_request, \
+             completed, decisions, created_at_epoch \
          FROM session_summaries \
-         WHERE project = ?1 AND request IS NOT NULL AND request != '' \
+         WHERE project = ?1 \
+           AND request IS NOT NULL \
+           AND request != '' \
+           AND COALESCE(poisoning_status, 'legacy_unscanned') != 'quarantined' \
+           AND (session_row_id IS NULL \
+                OR request NOT LIKE 'Captured event range %..%' \
+                OR COALESCE(decisions, '') != '' \
+                OR COALESCE(learned, '') != '' \
+                OR COALESCE(next_steps, '') != '' \
+                OR COALESCE(preferences, '') != '') \
          ORDER BY created_at_epoch DESC LIMIT ?2",
     )?;
 
     let rows = stmt.query_map(params![project, max_sessions() as i64], |row| {
-        Ok(SessionRow {
-            request: row.get(0)?,
-            completed: row.get(1)?,
-            decisions: row.get(2)?,
-            created_at_epoch: row.get(3)?,
-        })
+        Ok((
+            row.get::<_, i64>(0)?,
+            SessionRow {
+                request: row.get(1)?,
+                completed: row.get(2)?,
+                decisions: row.get(3)?,
+                created_at_epoch: row.get(4)?,
+            },
+        ))
     })?;
 
     let mut sessions = Vec::new();
     for row in rows {
-        sessions.push(row?);
+        let (summary_id, session) = row?;
+        if crate::db::summary_poisoning::summary_injectable(
+            conn,
+            summary_id,
+            &[
+                ("request", Some(session.request.as_str())),
+                ("completed", session.completed.as_deref()),
+                ("decisions", session.decisions.as_deref()),
+            ],
+            "native_memory_sync",
+        ) {
+            sessions.push(session);
+        }
     }
     Ok(sessions)
 }

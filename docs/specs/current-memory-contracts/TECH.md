@@ -27,7 +27,7 @@ introduce a replacement storage model or a second retrieval stack.
 
 | Contract | Existing owner | Notes |
 |---|---|---|
-| Durable curated memory | `memories` plus `src/memory/` | `content` remains canonical body; `search_context` is rebuildable metadata. |
+| Durable curated memory | `memories` plus `src/memory/` | `content` remains canonical body; `search_context` is rebuildable index-only metadata. Since v072 (GH-850) it is the single authoritative enrichment surface: deterministic hints plus optional generated `context:`/`keywords:` lines, tracked by generator/security-policy versions and a source hash, never rendered, exported, or exposed in DTOs. |
 | Current slot | `memory_state_keys`, `current_state` | Returns active/unexpired rows and conflict states. |
 | Operation audit | `memory_operation_log` | Records add/update/noop/defer/conflict decisions. |
 | Memory lifecycle relations | `memory_edges` | Handles supersedes, duplicate, merge, split, conflict links. |
@@ -254,6 +254,15 @@ Required boundaries:
   app/connector id exists.
 - JavaScript app code must not reimplement staleness, temporal, retrieval,
   ranking, promotion, or conflict semantics.
+- The Cursor hook boundary (`src/cursor_hook/`, GH-823) owns strict Cursor
+  payload parsing and the canonical `cursor` host identity. Its context
+  capability is version-audited and capability-specific: on Cursor 3.12.17
+  session-start injection is disabled (PR #914 absent marker) and GH-823 v1
+  ships no post-tool context command/renderer/install entry, so neither
+  model-visible Cursor context path is wired. Cursor observe uses the shared
+  capture ledger with `tool_use_id` as the per-call event key and the existing
+  `captured_events.event_type = "cursor_tool_failure"` text discriminator for
+  the observed failed-tool path; no Cursor-specific storage model exists.
 
 ## Evaluation Contract
 

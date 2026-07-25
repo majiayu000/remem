@@ -16,7 +16,10 @@ pub use coverage::{
     active_embedding_coverage, active_embedding_coverage_for_status,
     prune_inactive_memory_embeddings, ActiveEmbeddingCoverage, InactiveEmbeddingPruneReport,
 };
-use reindex::select_memory_embedding_reindex_candidates;
+use reindex::{
+    prepare_memory_embedding_batch, select_memory_embedding_reindex_candidates,
+    PreparedMemoryEmbedding,
+};
 
 const EMBEDDING_REINDEX_WRITE_BATCH_SIZE: usize = 512;
 const UPSERT_EMBEDDING_SQL: &str = "INSERT INTO memory_embeddings
@@ -121,6 +124,9 @@ pub fn upsert_embedding(conn: &Connection, memory_id: i64, embedding: &[f32]) ->
     )
 }
 
+/// Upsert the index embedding for one memory row from the authoritative
+/// passage (canonical fields + index-only `search_context`). The stored
+/// `content_hash` is the versioned `memory_index_hash` of the same snapshot.
 pub fn upsert_memory_embedding(
     conn: &Connection,
     memory_id: i64,
@@ -128,11 +134,18 @@ pub fn upsert_memory_embedding(
     content: &str,
     memory_type: &str,
     topic_key: Option<&str>,
+    search_context: &str,
 ) -> Result<()> {
     if super::embedding::provider_disabled_or_error()? {
         return Ok(());
     }
-    let embedding = match super::embedding::embed_memory(title, content, memory_type, topic_key) {
+    let embedding = match super::embedding::embed_memory_index(
+        title,
+        content,
+        memory_type,
+        topic_key,
+        search_context,
+    ) {
         Ok(embedding) => embedding,
         Err(error) if super::embedding::is_embedding_provider_off_error(&error) => return Ok(()),
         Err(error) if super::embedding::is_local_embedding_model_unavailable_error(&error) => {
@@ -145,7 +158,7 @@ pub fn upsert_memory_embedding(
         Err(error) => return Err(error),
     };
     let content_hash =
-        super::embedding::embedding_content_hash(title, content, memory_type, topic_key);
+        super::embedding::memory_index_hash(title, content, memory_type, topic_key, search_context);
     upsert_embedding_with_metadata(
         conn,
         memory_id,
@@ -157,16 +170,47 @@ pub fn upsert_memory_embedding(
     .with_context(|| format!("memory embedding upsert failed for memory id={memory_id}"))
 }
 
+/// Row-atomic upsert used by the enrichment success CAS: the caller already
+/// prepared the vector and index hash for the committed snapshot.
+pub(crate) fn upsert_index_embedding(
+    conn: &Connection,
+    memory_id: i64,
+    model: &str,
+    index_hash: &str,
+    values: &[f32],
+) -> Result<()> {
+    upsert_embedding_with_metadata(
+        conn,
+        memory_id,
+        model,
+        index_hash,
+        values,
+        chrono::Utc::now().timestamp(),
+    )
+    .with_context(|| format!("index embedding upsert failed for memory id={memory_id}"))
+}
+
 pub fn upsert_memory_embedding_for_row(conn: &Connection, memory_id: i64) -> Result<()> {
-    let (topic_key, title, content, memory_type): (Option<String>, String, String, String) = conn
+    let row: (Option<String>, String, String, String, Option<String>) = conn
         .query_row(
-            "SELECT topic_key, title, content, memory_type
+            "SELECT topic_key, title, content, memory_type,
+                    CASE WHEN search_context_source_hash IS NOT NULL
+                         THEN search_context ELSE '' END
              FROM memories
              WHERE id = ?1",
             [memory_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .with_context(|| format!("load memory row for embedding id={memory_id}"))?;
+    let (topic_key, title, content, memory_type, search_context) = row;
     upsert_memory_embedding(
         conn,
         memory_id,
@@ -174,6 +218,7 @@ pub fn upsert_memory_embedding_for_row(conn: &Connection, memory_id: i64) -> Res
         &content,
         &memory_type,
         topic_key.as_deref(),
+        search_context.as_deref().unwrap_or(""),
     )
 }
 
@@ -341,47 +386,6 @@ pub fn embedding_count(conn: &Connection) -> Result<i64> {
     )
 }
 
-struct MemoryEmbeddingReindexCandidate {
-    id: i64,
-    topic_key: Option<String>,
-    title: String,
-    content: String,
-    memory_type: String,
-}
-
-struct PreparedMemoryEmbedding {
-    memory_id: i64,
-    model: String,
-    content_hash: String,
-    values: Vec<f32>,
-    updated_at_epoch: i64,
-}
-
-fn prepare_memory_embedding_batch(
-    batch: &[MemoryEmbeddingReindexCandidate],
-    timings: &mut Vec<crate::perf::PhaseTiming>,
-    fallback_cache: &mut super::embedding::EmbeddingFallbackCache,
-) -> Result<Vec<PreparedMemoryEmbedding>> {
-    if batch.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    let embed_start = Instant::now();
-    let mut prepared = Vec::with_capacity(batch.len());
-    for candidate in batch {
-        prepared.push(
-            prepare_memory_embedding(candidate, fallback_cache).with_context(|| {
-                format!(
-                    "memory embedding preparation failed for memory id={}",
-                    candidate.id
-                )
-            })?,
-        );
-    }
-    crate::perf::push_elapsed(timings, "embed_memory", embed_start);
-    Ok(prepared)
-}
-
 fn upsert_prepared_memory_embedding_batch(
     conn: &Connection,
     prepared: &[PreparedMemoryEmbedding],
@@ -440,32 +444,6 @@ fn upsert_prepared_memory_embedding_batch(
             }
         }
     }
-}
-
-fn prepare_memory_embedding(
-    candidate: &MemoryEmbeddingReindexCandidate,
-    fallback_cache: &mut super::embedding::EmbeddingFallbackCache,
-) -> Result<PreparedMemoryEmbedding> {
-    let embedding = super::embedding::embed_memory_with_fallback_cache(
-        &candidate.title,
-        &candidate.content,
-        &candidate.memory_type,
-        candidate.topic_key.as_deref(),
-        fallback_cache,
-    )?;
-    let content_hash = super::embedding::embedding_content_hash(
-        &candidate.title,
-        &candidate.content,
-        &candidate.memory_type,
-        candidate.topic_key.as_deref(),
-    );
-    Ok(PreparedMemoryEmbedding {
-        memory_id: candidate.id,
-        model: embedding.model().to_string(),
-        content_hash,
-        values: embedding.values().to_vec(),
-        updated_at_epoch: chrono::Utc::now().timestamp(),
-    })
 }
 
 fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
@@ -549,6 +527,7 @@ pub fn vector_search_embedding_filtered(
     if limit == 0 {
         return Ok(VectorSearchOutcome::ready(vec![]));
     }
+    crate::memory::retrieval_enrichment::ensure_retrieval_open(conn)?;
     if super::embedding::provider_disabled_or_error()? {
         return Ok(VectorSearchOutcome::disabled("embedding provider is off"));
     }

@@ -126,6 +126,7 @@ pub fn open_db() -> Result<Connection> {
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::run_migrations(&conn)?;
     crate::retrieval::vector::ensure_vec_table(&conn)?;
+    crate::memory::retrieval_enrichment::enforce_binary_policy_floor(&conn)?;
     Ok(conn)
 }
 
@@ -139,6 +140,7 @@ pub fn open_db_no_migrate() -> Result<Connection> {
     let conn = open_configured_existing_read_write_connection(&path, key.as_ref())?;
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::ensure_schema_current(&conn)?;
+    crate::memory::retrieval_enrichment::enforce_binary_policy_floor(&conn)?;
     Ok(conn)
 }
 
@@ -157,6 +159,14 @@ pub fn open_db_read_only() -> Result<Connection> {
     }
 
     open_configured_read_only_connection(&path, key.as_ref())
+}
+
+/// Open an existing database read-only and fail closed unless its schema is
+/// current for this binary. This never creates, migrates, or repairs the store.
+pub fn open_db_read_only_current() -> Result<Connection> {
+    let conn = open_db_read_only()?;
+    crate::migrate::ensure_schema_current(&conn)?;
+    Ok(conn)
 }
 
 pub(crate) fn open_configured_connection(
@@ -214,13 +224,8 @@ pub(crate) fn open_configured_read_only_connection(
 }
 
 pub fn detect_git_branch(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let output =
+        crate::git_util::git_output_soft(Path::new(cwd), &["rev-parse", "--abbrev-ref", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -253,13 +258,8 @@ impl Drop for DataDirOverrideGuard {
 }
 
 pub fn detect_git_commit(cwd: &str) -> Option<String> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(cwd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let output =
+        crate::git_util::git_output_soft(Path::new(cwd), &["rev-parse", "--short", "HEAD"])?;
     if !output.status.success() {
         return None;
     }
@@ -503,6 +503,51 @@ mod tests {
     }
 
     #[test]
+    fn open_db_read_only_current_works_while_writer_holds_immediate_lock() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("readonly-current-write-lock");
+        let writer = crate::db::open_db()?;
+        writer.execute_batch("BEGIN IMMEDIATE")?;
+
+        let readonly = crate::db::open_db_read_only_current()?;
+        let latest: i64 =
+            readonly.query_row("SELECT MAX(version) FROM _schema_migrations", [], |row| {
+                row.get(0)
+            })?;
+
+        assert_eq!(latest, crate::migrate::latest_schema_version());
+        writer.execute_batch("ROLLBACK")?;
+        Ok(())
+    }
+
+    #[test]
+    fn open_db_read_only_current_rejects_stale_schema_without_writes() -> Result<()> {
+        let _test_dir = ScopedTestDataDir::new("readonly-current-stale");
+        let setup = crate::db::open_db()?;
+        let latest = crate::migrate::latest_schema_version();
+        setup.execute(
+            "DELETE FROM _schema_migrations WHERE version = ?1",
+            [latest],
+        )?;
+        drop(setup);
+
+        let err =
+            crate::db::open_db_read_only_current().expect_err("stale schema must fail closed");
+        assert!(
+            err.to_string().contains("run a foreground remem command"),
+            "unexpected error: {err:#}"
+        );
+
+        let check = Connection::open(crate::db::db_path())?;
+        let rows: i64 = check.query_row(
+            "SELECT COUNT(*) FROM _schema_migrations WHERE version = ?1",
+            [latest],
+            |row| row.get(0),
+        )?;
+        assert_eq!(rows, 0);
+        Ok(())
+    }
+
+    #[test]
     fn open_db_no_migrate_does_not_create_missing_database() {
         let test_dir = ScopedTestDataDir::new("no-migrate-missing");
         test_dir.remove_db_files();
@@ -620,7 +665,12 @@ mod tests {
         let _test_dir = ScopedTestDataDir::new("no-migrate-incomplete-schema");
         let setup = crate::db::open_db()?;
         let latest = crate::migrate::latest_schema_version();
-        let missing = latest - 1;
+        let missing = crate::migrate::MIGRATIONS
+            .iter()
+            .rev()
+            .find(|migration| migration.version < latest)
+            .expect("test requires at least two migrations")
+            .version;
         setup.execute(
             "DELETE FROM _schema_migrations WHERE version = ?1",
             [missing],

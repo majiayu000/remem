@@ -1,7 +1,15 @@
 # Coding-Agent A/B Benchmark Product Spec
 
-Status: Current contract
+Status: Current contract (condition naming and primary matrix superseded by
+`docs/specs/GH931/`)
 Issue: #385
+
+Naming note (#931): the `remem` condition described below is now the
+diagnostic `remem_preloaded` condition and `curated_file` is now the
+diagnostic `curated_file_expert` condition. The claim-bearing primary matrix
+is `no_memory` / `curated_file_budgeted` / `remem_e2e`; see
+`eval/coding-bench/conditions.json`. Tables in this file record runs executed
+under the legacy ids.
 
 ## Problem
 

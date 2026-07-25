@@ -6,13 +6,17 @@ use super::*;
 
 const BATCH_LIMIT_DEFAULT: i64 = 200;
 
-fn setup_conn() -> Connection {
+pub(super) fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().expect("in-memory db should open");
     crate::migrate::run_migrations(&conn).expect("migrations should run");
     conn
 }
 
-fn insert_pending_candidate(conn: &mut Connection, topic_key: &str, text: &str) -> Result<i64> {
+pub(super) fn insert_pending_candidate(
+    conn: &mut Connection,
+    topic_key: &str,
+    text: &str,
+) -> Result<i64> {
     insert_pending_candidate_with_scope(conn, topic_key, text, "project")
 }
 

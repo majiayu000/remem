@@ -11,12 +11,15 @@ pub(super) struct StatusReport {
     pub raw_archive: RawArchiveStatus,
     pub capture_pipeline: CapturePipelineStatus,
     pub promotion_funnel: PromotionFunnelStatus,
+    pub legacy_surfaces: Vec<LegacySurfaceStatus>,
     pub usage_feedback: UsageFeedbackStatus,
     pub pending_observations: PendingObservationStatus,
     pub review_queue: ReviewQueueStatus,
     pub candidate_promotion: Vec<CandidatePromotionStatus>,
+    pub user_context: UserContextStatus,
     pub jobs: JobStatus,
     pub failure_lifecycle: db::FailureLifecycleStats,
+    pub poisoning_defense: db::PoisoningDefenseStats,
     pub worker_daemon: WorkerDaemonStatus,
     pub latest_session_memory_spend: Option<LatestSessionMemorySpendStatus>,
     pub today: DailyStatus,
@@ -108,6 +111,16 @@ pub(super) struct PromotionFunnelStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(super) struct LegacySurfaceStatus {
+    pub surface: String,
+    pub disposition: String,
+    pub row_count: i64,
+    pub last_write_epoch: Option<i64>,
+    pub last_write_age_secs: Option<i64>,
+    pub frozen_write_violations: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct UsageFeedbackStatus {
     pub citation_events: i64,
     pub citation_line_present_events: i64,
@@ -127,6 +140,7 @@ pub(super) struct PendingObservationStatus {
     pub processing: i64,
     pub expired: i64,
     pub failed: i64,
+    pub replayable_legacy: i64,
     pub oldest_ready_epoch: Option<i64>,
     pub oldest_ready_age_secs: Option<i64>,
 }
@@ -169,6 +183,24 @@ pub(super) struct CandidatePromotionStatus {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub(super) struct UserContextStatus {
+    pub claims_total: i64,
+    pub claims_active: i64,
+    pub claims_suppressed: i64,
+    pub claims_deleted: i64,
+    pub candidates_total: i64,
+    pub candidates_pending_review: i64,
+    pub candidates_auto_promoted: i64,
+    pub candidate_block_reasons: Vec<UserContextBlockReasonStatus>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct UserContextBlockReasonStatus {
+    pub reason: Option<String>,
+    pub pending: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub(super) struct JobStatus {
     pub pending: i64,
     pub processing: i64,
@@ -193,6 +225,17 @@ pub(super) struct LatestSessionMemorySpendStatus {
     pub context_estimated_tokens: i64,
     pub context_emit_count: i64,
     pub context_suppress_count: i64,
+    pub relevance_state: String,
+    pub relevance_policy_version: Option<String>,
+    pub relevance_k: Option<i64>,
+    pub relevance_threshold: Option<f64>,
+    pub relevance_candidate_count: i64,
+    pub relevance_eligible_count: i64,
+    pub relevance_final_injected_count: i64,
+    pub relevance_below_threshold_count: i64,
+    pub relevance_k_limited_count: i64,
+    pub relevance_section_budget_count: i64,
+    pub relevance_total_char_limit_count: i64,
     pub ai_usage_attribution: String,
     pub ai_calls: i64,
     pub ai_total_tokens: i64,

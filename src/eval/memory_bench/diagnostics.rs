@@ -19,7 +19,15 @@ pub(super) fn score_policy(
         return MemoryBenchPolicyOutcome::default();
     };
     let storage_condition = stores_memory_condition(condition);
+    // GH-855: the production instruction-pattern scanner runs over every
+    // evidence payload. A hit blocks retention regardless of the fixture's
+    // retention_allowed flag (quarantine wins over retention).
+    let poisoning_scanner_matched = task.evidence.iter().any(|evidence| {
+        crate::memory::poisoning::scan_instruction_pattern(&evidence.content).is_some()
+    });
+    let poisoning_applicable = policy.poisoning_quarantine_expected;
     let active_claim_count = if storage_condition
+        && !poisoning_scanner_matched
         && task
             .evidence
             .iter()
@@ -80,6 +88,10 @@ pub(super) fn score_policy(
     if policy_abstention_applicable && !policy_abstention_correct {
         policy_failure_count += 1;
     }
+    if poisoning_applicable && !poisoning_scanner_matched {
+        // The fixture declares an injection payload the scanner must catch.
+        policy_failure_count += 1;
+    }
     if storage_condition {
         if active_claim_count != policy.expected_active_claims {
             policy_failure_count += 1;
@@ -106,6 +118,8 @@ pub(super) fn score_policy(
         sensitive_restricted_default_excluded,
         policy_abstention_applicable,
         policy_abstention_correct,
+        poisoning_applicable,
+        poisoning_scanner_matched,
         policy_failure_count,
     }
 }

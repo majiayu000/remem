@@ -1,8 +1,8 @@
 use super::*;
 use crate::memory::suppression::{create_suppression, parse_target, SuppressRequest};
 use crate::user_context::claims::{
-    create_manual_claim, suppress_claim, ManualClaimRequest, UserContextClaimType,
-    UserContextSensitivity,
+    create_manual_claim, create_preference_backfill_claim, suppress_claim, ManualClaimRequest,
+    PreferenceBackfillClaimRequest, UserContextClaimType, UserContextSensitivity,
 };
 
 fn summary_migrated_conn() -> Result<Connection> {
@@ -81,6 +81,46 @@ fn refresh_compiles_sources_and_filters_unsafe_claims() -> Result<()> {
         .dropped_claims
         .iter()
         .any(|source| source.reason == "expired"));
+    Ok(())
+}
+
+#[test]
+fn refresh_summary_excludes_synthetic_rollup_activity_refs() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    insert_summary_session_source(&conn, 30, "/repo", "Reviewed user context design")?;
+    conn.execute(
+        "INSERT INTO session_summaries
+         (id, memory_session_id, project, request, created_at_epoch,
+          source_project, target_project, owner_scope, owner_key, session_row_id,
+         covered_from_event_id, covered_to_event_id)
+         VALUES
+         (31, 'rollup-synthetic', '/repo', 'Captured event range 1..3', 11,
+          '/repo', '/repo', 'repo', '/repo', 1, 1, 3),
+         (32, 'rollup-semantic', '/repo', 'Retire legacy Summary writer', 12,
+          '/repo', '/repo', 'repo', '/repo', 2, 4, 6),
+         (33, 'rollup-structured-fallback', '/repo', 'Captured event range 7..9', 13,
+          '/repo', '/repo', 'repo', '/repo', 3, 7, 9)",
+        [],
+    )?;
+    conn.execute(
+        "UPDATE session_summaries
+         SET decisions = 'Rollup structured decision'
+         WHERE id = 33",
+        [],
+    )?;
+
+    let sources = load_summary_sources(&conn, &summary_request("/repo"), false)?;
+    let labels: Vec<&str> = sources
+        .included_activity_refs
+        .iter()
+        .map(|activity| activity.label.as_str())
+        .collect();
+
+    assert!(labels.contains(&"Rollup structured decision"));
+    assert!(labels.contains(&"Retire legacy Summary writer"));
+    assert!(labels.contains(&"Reviewed user context design"));
+    assert!(!labels.contains(&"Captured event range 1..3"));
+    assert!(!labels.contains(&"Captured event range 7..9"));
     Ok(())
 }
 
@@ -173,6 +213,48 @@ fn refresh_excludes_policy_suppressed_claims_and_memories() -> Result<()> {
     assert!(!summary.summary_text.contains("Do not summarize"));
     assert!(!summary.summary_text.contains("secret pattern"));
     assert!(!summary.summary_text.contains("Hidden memory source"));
+    Ok(())
+}
+
+#[test]
+fn refresh_summary_excludes_backfilled_user_preference_memory_source() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    insert_summary_user_preference_source(&conn, 12, "Prefer backfilled summary source")?;
+    let claim = create_preference_backfill_claim(
+        &conn,
+        &PreferenceBackfillClaimRequest {
+            memory_id: 12,
+            text: "Prefer backfilled summary source",
+        },
+    )?;
+
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+
+    assert_eq!(summary.source_claim_ids, vec![claim.id]);
+    assert!(summary.source_memory_ids.is_empty());
+    assert!(summary
+        .summary_text
+        .contains("Prefer backfilled summary source"));
+    assert!(!summary.summary_text.contains("[memory:12]"));
+    Ok(())
+}
+
+#[test]
+fn active_summary_is_hidden_after_memory_source_is_backfilled_as_claim() -> Result<()> {
+    let conn = summary_migrated_conn()?;
+    insert_summary_user_preference_source(&conn, 13, "Prefer stale summary source")?;
+    let summary = refresh_summary(&conn, &summary_request("/repo"))?;
+    assert_eq!(summary.source_memory_ids, vec![13]);
+
+    create_preference_backfill_claim(
+        &conn,
+        &PreferenceBackfillClaimRequest {
+            memory_id: 13,
+            text: "Prefer stale summary source",
+        },
+    )?;
+
+    assert!(load_active_summary(&conn, &summary_request("/repo"))?.is_none());
     Ok(())
 }
 
@@ -321,6 +403,19 @@ fn insert_summary_memory_source(
          VALUES (?1, NULL, ?2, NULL, ?3, ?4, 'decision', NULL, 10, 10, 'active',
                  NULL, 'project', ?2, ?2, 'repo', ?2)",
         params![id, project, title, text],
+    )?;
+    Ok(())
+}
+
+fn insert_summary_user_preference_source(conn: &Connection, id: i64, text: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_project,
+          target_project, owner_scope, owner_key)
+         VALUES (?1, NULL, '/repo', NULL, 'Preference', ?2, 'preference', NULL,
+                 10, 10, 'active', NULL, 'global', '/repo', NULL, 'user', 'user:default')",
+        params![id, text],
     )?;
     Ok(())
 }

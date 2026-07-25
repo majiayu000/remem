@@ -1,8 +1,10 @@
 use anyhow::Result;
+use rusqlite::Connection;
 
 use super::super::promote_summary_to_memory_candidates;
 use super::super::summary::promote_summary_to_memory_candidates_with_gate_mode;
 use super::promote::{record_summary_evidence, record_summary_evidence_with_content, setup_conn};
+use crate::db;
 use crate::runtime_config::SummaryGateMode;
 
 #[test]
@@ -31,7 +33,7 @@ fn test_summary_candidates_multi_decisions_do_not_create_memories() -> Result<()
     let candidate_rows = conn
         .prepare(
             "SELECT memory_type, review_status, evidence_event_ids, source_kind,
-                    auto_promote_block_reason
+                    auto_promote_block_reason, source_trust_class
              FROM memory_candidates
              ORDER BY id ASC",
         )?
@@ -42,6 +44,7 @@ fn test_summary_candidates_multi_decisions_do_not_create_memories() -> Result<()
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -54,7 +57,8 @@ fn test_summary_candidates_multi_decisions_do_not_create_memories() -> Result<()
             && row.1 == "pending_review"
             && row.2 == evidence_json
             && row.3 == "summary"
-            && row.4 == "summary_source_support_failed"
+            && row.4 == "source_trust_below_floor"
+            && row.5 == "external_content"
     }));
     Ok(())
 }
@@ -65,7 +69,7 @@ fn summary_decision_shadow_gate_records_would_promote_without_active_memory() ->
     let session_id = "session-summary-shadow";
     let project = "test/proj";
     let decision = "Use source kind telemetry for summary promotion gate";
-    record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
+    record_trusted_summary_evidence_with_content(&conn, session_id, project, decision)?;
 
     let count = promote_summary_to_memory_candidates_with_gate_mode(
         &mut conn,
@@ -101,7 +105,7 @@ fn summary_decision_enforce_gate_auto_promotes_supported_candidate() -> Result<(
     let session_id = "session-summary-enforce";
     let project = "test/proj";
     let decision = "Use source kind telemetry for summary promotion gate";
-    record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
+    record_trusted_summary_evidence_with_content(&conn, session_id, project, decision)?;
 
     let count = promote_summary_to_memory_candidates(
         &mut conn,
@@ -131,6 +135,45 @@ fn summary_decision_enforce_gate_auto_promotes_supported_candidate() -> Result<(
     assert_eq!(block_reason, None);
     assert_eq!(memory_type, "decision");
     assert_eq!(content, decision);
+    Ok(())
+}
+
+#[test]
+fn summary_decision_enforce_gate_blocks_supported_session_stop_source() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-enforce-external";
+    let project = "test/proj";
+    let decision = "Use source kind telemetry for summary promotion gate";
+    record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
+
+    let count = promote_summary_to_memory_candidates(
+        &mut conn,
+        session_id,
+        project,
+        None,
+        Some(decision),
+        None,
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (memory_count, review_status, block_reason, source_trust_class): (
+        i64,
+        String,
+        String,
+        String,
+    ) = conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM memories), review_status, auto_promote_block_reason,
+                source_trust_class
+         FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+
+    assert_eq!(memory_count, 0);
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(block_reason, "source_trust_below_floor");
+    assert_eq!(source_trust_class, "external_content");
     Ok(())
 }
 
@@ -195,4 +238,27 @@ fn summary_gate_off_keeps_supported_candidate_pending_without_shadow() -> Result
     assert_eq!(review_status, "pending_review");
     assert_eq!(block_reason, "summary_gate_off");
     Ok(())
+}
+
+fn record_trusted_summary_evidence_with_content(
+    conn: &Connection,
+    session_id: &str,
+    project: &str,
+    content: &str,
+) -> Result<i64> {
+    let outcome = db::record_captured_event(
+        conn,
+        &db::CaptureEventInput {
+            host: "codex-cli",
+            session_id,
+            project,
+            cwd: Some(project),
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some("Bash"),
+            content,
+            task_kind: Some(db::ExtractionTaskKind::SessionRollup),
+        },
+    )?;
+    Ok(outcome.event_row_id)
 }

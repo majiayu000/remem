@@ -5,11 +5,14 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod config;
+mod index_text;
 mod local_semantic;
 mod status;
 
 use config::env_value;
 pub(crate) use config::resolve_embedding_config;
+pub(crate) use index_text::embed_memory_index_with_fallback_cache;
+pub use index_text::{embed_memory_index, memory_index_hash};
 use local_semantic::LocalEmbeddingInputKind;
 pub use local_semantic::{
     LocalEmbeddingDownloadReport, LocalEmbeddingInventoryReport, LocalEmbeddingModelInventory,
@@ -212,17 +215,6 @@ pub fn embed_memory(
 ) -> Result<TextEmbedding> {
     let text = memory_embedding_text(title, content, memory_type, topic_key);
     embed_text(&text, LocalEmbeddingInputKind::Passage)
-}
-
-pub(crate) fn embed_memory_with_fallback_cache(
-    title: &str,
-    content: &str,
-    memory_type: &str,
-    topic_key: Option<&str>,
-    cache: &mut EmbeddingFallbackCache,
-) -> Result<TextEmbedding> {
-    let text = memory_embedding_text(title, content, memory_type, topic_key);
-    embed_text_with_fallback_cache(&text, LocalEmbeddingInputKind::Passage, cache)
 }
 
 pub fn embed_query_text_local(query: &str) -> Vec<f32> {

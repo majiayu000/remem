@@ -2,9 +2,13 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use super::{
-    normalize_memory_type, normalize_scope, normalize_topic_key,
-    promote_candidate_to_memory_with_route, route_candidate, update_candidate_after_lifecycle,
-    CandidateRoute, ParsedMemoryCandidate,
+    normalize_memory_type, normalize_scope, normalize_topic_key, route_candidate, CandidateRoute,
+    ParsedMemoryCandidate,
+};
+mod approval;
+
+pub(crate) use approval::{
+    approve_candidate_in_transaction, edit_candidate_in_transaction, normalize_candidate_edit,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +23,9 @@ pub(crate) struct ReviewCandidate {
     pub evidence_preview: Vec<String>,
     pub confidence: f64,
     pub risk_class: String,
+    pub review_status: String,
+    pub quarantine_pattern_id: Option<String>,
+    pub quarantine_pattern_version: Option<i64>,
     pub created_at_epoch: i64,
 }
 
@@ -148,11 +155,15 @@ struct CandidateRow {
     memory_type: String,
     topic_key: String,
     text: String,
+    source_kind: Option<String>,
     evidence_event_ids: String,
     confidence: f64,
     risk_class: String,
     review_status: String,
     created_at_epoch: i64,
+    source_trust_class: String,
+    quarantine_pattern_id: Option<String>,
+    quarantine_pattern_version: Option<i64>,
 }
 
 pub(crate) fn list_pending(
@@ -167,10 +178,12 @@ pub(crate) fn list_pending(
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                     c.review_status, c.created_at_epoch, c.source_project,
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
-                    c.routing_confidence, c.routing_reason, c.context_class
+                    c.routing_confidence, c.routing_reason, c.context_class,
+                    c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
+                    c.quarantine_pattern_version
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
-             WHERE c.review_status = 'pending_review'
+             WHERE c.review_status IN ('pending_review', 'quarantined')
                AND p.project_path = ?1
              ORDER BY c.created_at_epoch ASC, c.id ASC
              LIMIT ?2",
@@ -185,10 +198,12 @@ pub(crate) fn list_pending(
                     c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                     c.review_status, c.created_at_epoch, c.source_project,
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
-                    c.routing_confidence, c.routing_reason, c.context_class
+                    c.routing_confidence, c.routing_reason, c.context_class,
+                    c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
+                    c.quarantine_pattern_version
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
-             WHERE c.review_status = 'pending_review'
+             WHERE c.review_status IN ('pending_review', 'quarantined')
              ORDER BY c.created_at_epoch ASC, c.id ASC
              LIMIT ?1",
         )?;
@@ -212,6 +227,9 @@ pub(crate) fn list_pending(
                 evidence_preview,
                 confidence: row.confidence,
                 risk_class: row.risk_class,
+                review_status: row.review_status,
+                quarantine_pattern_id: row.quarantine_pattern_id,
+                quarantine_pattern_version: row.quarantine_pattern_version,
                 created_at_epoch: row.created_at_epoch,
             })
         })
@@ -227,14 +245,20 @@ pub(crate) fn approve_candidate_with_meta(
     id: i64,
     meta: &ReviewMeta,
 ) -> Result<Option<i64>> {
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let Some(row) = load_candidate(&tx, id)? else {
-        return Ok(None);
-    };
-    ensure_pending(&row)?;
-    let promotion = promote_row(&tx, &row, "approved", None, meta)?;
-    tx.commit()?;
-    Ok(Some(promotion.memory_id))
+    approval::approve_candidate_with_meta_and_ack(conn, id, meta, None)
+}
+
+pub(crate) fn approve_candidate_with_ack(
+    conn: &mut Connection,
+    id: i64,
+    acknowledged_pattern_id: &str,
+) -> Result<Option<i64>> {
+    approval::approve_candidate_with_meta_and_ack(
+        conn,
+        id,
+        &ReviewMeta::single(default_review_actor()),
+        Some(acknowledged_pattern_id),
+    )
 }
 
 pub(crate) fn discard_candidate(conn: &Connection, id: i64) -> Result<bool> {
@@ -252,7 +276,7 @@ pub(crate) fn discard_candidate_with_meta(
          SET review_status = 'discarded', updated_at_epoch = ?1,
              review_actor = ?2, reviewed_at_epoch = ?1,
              review_action_source = ?3, review_batch_id = ?4, review_reason = ?5
-         WHERE id = ?6 AND review_status = 'pending_review'",
+         WHERE id = ?6 AND review_status IN ('pending_review', 'quarantined')",
         params![
             now,
             meta.actor,
@@ -270,23 +294,11 @@ pub(crate) fn edit_candidate(
     id: i64,
     edit: CandidateEdit,
 ) -> Result<Option<i64>> {
-    if edit.scope.is_none()
-        && edit.memory_type.is_none()
-        && edit.topic_key.is_none()
-        && edit.text.is_none()
-    {
-        bail!("edit requires at least one changed field");
-    }
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    let Some(row) = load_candidate(&tx, id)? else {
-        return Ok(None);
-    };
-    ensure_pending(&row)?;
-    let edited = row.apply_edit(edit)?;
     let meta = ReviewMeta::single(default_review_actor());
-    let promotion = promote_row(&tx, &row, "edited", Some(&edited), &meta)?;
+    let result = approval::edit_candidate_in_transaction(&tx, id, edit, &meta)?;
     tx.commit()?;
-    Ok(Some(promotion.memory_id))
+    Ok(result)
 }
 
 pub(crate) fn resolve_batch(conn: &Connection, filter: &BatchFilter) -> Result<BatchPreview> {
@@ -340,7 +352,7 @@ fn resolve_batch_rows(conn: &Connection, filter: &BatchFilter) -> Result<Vec<Bat
                 c.memory_type, c.topic_key, c.text
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
-         WHERE c.review_status = 'pending_review'",
+         WHERE c.review_status IN ('pending_review', 'quarantined')",
     );
     let mut args: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(project) = &filter.project {
@@ -472,7 +484,7 @@ pub(crate) fn approve_batch(
         let row = load_candidate(&tx, *id)?
             .with_context(|| format!("candidate {id} disappeared during batch"))?;
         ensure_pending(&row)?;
-        let promotion = promote_row(&tx, &row, "approved", None, meta)?;
+        let promotion = approval::promote_row(&tx, &row, "approved", None, meta, None)?;
         if promotion.promoted {
             promoted_memory_ids.push(promotion.memory_id);
         }
@@ -532,21 +544,34 @@ impl CandidateRow {
             routing_confidence: row.get(16)?,
             routing_reason: row.get(17)?,
             context_class: row.get(18)?,
+            source_kind: row.get(19)?,
+            source_trust_class: row.get(20)?,
+            quarantine_pattern_id: row.get(21)?,
+            quarantine_pattern_version: row.get(22)?,
         })
     }
 
     fn as_candidate(&self) -> ParsedMemoryCandidate {
+        let (title_override, text) = if self.source_kind.as_deref() == Some("pack") {
+            decode_pack_review_text(&self.text)
+                .map(|(title, content)| (Some(title), content))
+                .unwrap_or((None, self.text.clone()))
+        } else {
+            (None, self.text.clone())
+        };
         ParsedMemoryCandidate {
             scope: self.scope.clone(),
             memory_type: self.memory_type.clone(),
             topic_key: self.topic_key.clone(),
-            text: self.text.clone(),
+            title_override,
+            text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
         }
     }
 
     fn apply_edit(&self, edit: CandidateEdit) -> Result<ParsedMemoryCandidate> {
+        let existing = self.as_candidate();
         let scope = edit
             .scope
             .as_deref()
@@ -571,11 +596,12 @@ impl CandidateRow {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| self.text.clone());
+            .unwrap_or(existing.text);
         Ok(ParsedMemoryCandidate {
             scope,
             memory_type,
             topic_key,
+            title_override: existing.title_override,
             text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
@@ -617,13 +643,26 @@ impl CandidateRow {
     }
 }
 
+fn decode_pack_review_text(text: &str) -> Option<(String, String)> {
+    let mut lines = text.lines();
+    let title_line = lines.next()?;
+    let content_marker = lines.next()?;
+    let title = title_line.strip_prefix("pack_title:")?.trim().to_string();
+    if content_marker.trim() != "pack_content:" || title.is_empty() {
+        return None;
+    }
+    Some((title, lines.collect::<Vec<_>>().join("\n")))
+}
+
 fn load_candidate(conn: &Connection, id: i64) -> Result<Option<CandidateRow>> {
     conn.query_row(
         "SELECT c.id, p.project_path, c.scope, c.memory_type, c.topic_key,
                 c.text, c.evidence_event_ids, c.confidence, c.risk_class,
                 c.review_status, c.created_at_epoch, c.source_project,
                 c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
-                c.routing_confidence, c.routing_reason, c.context_class
+                c.routing_confidence, c.routing_reason, c.context_class,
+                c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
+                c.quarantine_pattern_version
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.id = ?1",
@@ -645,57 +684,15 @@ fn ensure_pending(row: &CandidateRow) -> Result<()> {
     Ok(())
 }
 
-fn promote_row(
-    conn: &Connection,
-    row: &CandidateRow,
-    review_status: &str,
-    edited: Option<&ParsedMemoryCandidate>,
-    meta: &ReviewMeta,
-) -> Result<ReviewPromotion> {
-    let project = row
-        .source_project
-        .as_deref()
-        .or(row.project.as_deref())
-        .context("candidate is missing source project path")?;
-    let candidate = edited.cloned().unwrap_or_else(|| row.as_candidate());
-    let route = if edited.is_some() {
-        route_candidate(project, None, &candidate, std::iter::empty())
-    } else {
-        row.route_for(&candidate)
-    };
-    let outcome = promote_candidate_to_memory_with_route(
-        conn,
-        None,
-        project,
-        row.id,
-        &candidate,
-        &row.evidence_event_ids,
-        &route,
-    )?;
-    let status = outcome.review_status_for(review_status);
-    let now = chrono::Utc::now().timestamp();
-    update_candidate_after_lifecycle(conn, row.id, &candidate, &route, status)?;
-    conn.execute(
-        "UPDATE memory_candidates
-         SET updated_at_epoch = ?1, review_actor = ?2, reviewed_at_epoch = ?1,
-             review_action_source = ?3, review_batch_id = ?4, review_reason = ?5
-         WHERE id = ?6",
-        params![
-            now,
-            meta.actor,
-            meta.action_source.as_str(),
-            meta.batch_id,
-            meta.reason,
-            row.id
-        ],
-    )?;
-    let memory_id = outcome
-        .memory_id
-        .context("candidate promotion produced no memory id")?;
-    Ok(ReviewPromotion {
-        memory_id,
-        promoted: outcome.promoted,
-    })
+fn ensure_reviewable(row: &CandidateRow) -> Result<()> {
+    if !matches!(row.review_status.as_str(), "pending_review" | "quarantined") {
+        bail!(
+            "candidate {} is {}, expected pending_review or quarantined",
+            row.id,
+            row.review_status
+        );
+    }
+    Ok(())
 }
 
 fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String>> {
@@ -731,3 +728,6 @@ fn evidence_preview(conn: &Connection, evidence_json: &str) -> Result<Vec<String
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod poisoning_tests;

@@ -1,9 +1,42 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
+use crate::db::summary_poisoning::{summary_injectable, NOT_QUARANTINED_SQL};
 use crate::db::SessionSummary;
 
 use super::shared::{collect_rows, push_project_filter, EPOCH_SECS_ONLY};
+
+fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SessionSummary> {
+    Ok(SessionSummary {
+        id: row.get(0)?,
+        memory_session_id: row.get(1)?,
+        request: row.get(2)?,
+        completed: row.get(3)?,
+        decisions: row.get(4)?,
+        learned: row.get(5)?,
+        next_steps: row.get(6)?,
+        preferences: row.get(7)?,
+        created_at: row.get(8)?,
+        created_at_epoch: row.get(9)?,
+        project: row.get(10)?,
+    })
+}
+
+fn summary_passes_poisoning_gate(conn: &Connection, summary: &SessionSummary, sink: &str) -> bool {
+    summary_injectable(
+        conn,
+        summary.id,
+        &[
+            ("request", summary.request.as_deref()),
+            ("completed", summary.completed.as_deref()),
+            ("decisions", summary.decisions.as_deref()),
+            ("learned", summary.learned.as_deref()),
+            ("next_steps", summary.next_steps.as_deref()),
+            ("preferences", summary.preferences.as_deref()),
+        ],
+        sink,
+    )
+}
 
 pub fn query_summaries(
     conn: &Connection,
@@ -18,28 +51,16 @@ pub fn query_summaries(
         "SELECT id, memory_session_id, request, completed, decisions, learned, \
          next_steps, preferences, created_at, created_at_epoch, project \
          FROM session_summaries \
-         WHERE {} AND {} \
+         WHERE {} AND {} AND {} \
          ORDER BY created_at_epoch DESC LIMIT ?{}",
-        project_filter, EPOCH_SECS_ONLY, idx
+        project_filter, EPOCH_SECS_ONLY, NOT_QUARANTINED_SQL, idx
     ))?;
 
     let refs = crate::db::to_sql_refs(&param_values);
-    let rows = stmt.query_map(refs.as_slice(), |row| {
-        Ok(SessionSummary {
-            id: row.get(0)?,
-            memory_session_id: row.get(1)?,
-            request: row.get(2)?,
-            completed: row.get(3)?,
-            decisions: row.get(4)?,
-            learned: row.get(5)?,
-            next_steps: row.get(6)?,
-            preferences: row.get(7)?,
-            created_at: row.get(8)?,
-            created_at_epoch: row.get(9)?,
-            project: row.get(10)?,
-        })
-    })?;
-    collect_rows(rows)
+    let rows = stmt.query_map(refs.as_slice(), summary_from_row)?;
+    let mut summaries = collect_rows(rows)?;
+    summaries.retain(|summary| summary_passes_poisoning_gate(conn, summary, "query_summaries"));
+    Ok(summaries)
 }
 
 pub fn get_summary_by_session(
@@ -55,30 +76,22 @@ pub fn get_summary_by_session(
         "SELECT id, memory_session_id, request, completed, decisions, learned, \
          next_steps, preferences, created_at, created_at_epoch, project \
          FROM session_summaries \
-         WHERE memory_session_id = ?1 AND {} AND {} \
+         WHERE memory_session_id = ?1 AND {} AND {} AND {} \
          ORDER BY created_at_epoch DESC LIMIT 1",
-        project_filter, EPOCH_SECS_ONLY
+        project_filter, EPOCH_SECS_ONLY, NOT_QUARANTINED_SQL
     ))?;
 
     let refs = crate::db::to_sql_refs(&param_values);
-    let mut rows = stmt.query_map(refs.as_slice(), |row| {
-        Ok(SessionSummary {
-            id: row.get(0)?,
-            memory_session_id: row.get(1)?,
-            request: row.get(2)?,
-            completed: row.get(3)?,
-            decisions: row.get(4)?,
-            learned: row.get(5)?,
-            next_steps: row.get(6)?,
-            preferences: row.get(7)?,
-            created_at: row.get(8)?,
-            created_at_epoch: row.get(9)?,
-            project: row.get(10)?,
-        })
-    })?;
+    let mut rows = stmt.query_map(refs.as_slice(), summary_from_row)?;
 
     match rows.next() {
-        Some(Ok(summary)) => Ok(Some(summary)),
+        Some(Ok(summary)) => {
+            if summary_passes_poisoning_gate(conn, &summary, "get_summary_by_session") {
+                Ok(Some(summary))
+            } else {
+                Ok(None)
+            }
+        }
         Some(Err(err)) => Err(err.into()),
         None => Ok(None),
     }

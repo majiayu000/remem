@@ -115,7 +115,7 @@ node --test plugins/remem/scripts/remem-runtime.test.js plugins/remem/apps/remem
 python3 scripts/ci/check_version_bump.py <base-sha> HEAD
 cargo run -- eval-extraction --json --check-baseline
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
-cargo clippy -- -D warnings
+cargo clippy --all-targets -- -D warnings
 ```
 
 Use focused tests first for narrow fixes, then the broader gate when practical. Do not claim completion from earlier or unrelated output.

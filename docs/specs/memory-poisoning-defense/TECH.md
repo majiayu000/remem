@@ -168,3 +168,53 @@ Config flags disable the injection re-scan and the trust floor independently;
 quarantined rows can be bulk-moved back to `pending_review` with a one-line
 SQL update documented in the migration notes. The additive migration columns
 can remain in place when the feature is disabled.
+
+## Capture/Extraction Path Extension (GH-855, staged 0.6.24)
+
+The GH-672 contract covered candidates, direct saves, and memory/lesson
+injection. GH-855 extends the same v1 pattern set (`src/memory/poisoning.rs`,
+`INSTRUCTION_PATTERN_SET_VERSION`) to every capture/extraction surface:
+
+- **Combined source + generated verdict for rollups**
+  (`src/session_rollup/persist.rs`): before a session rollup is persisted, the
+  captured source events (ascending event id) and every generated summary
+  field (`summary_text`, `request`, `decisions`, `learned`, `next_steps`,
+  `preferences`, segment titles/summaries) are scanned. A source hit cannot be
+  laundered by a clean summary. A hit stores a durable `quarantined` summary
+  row and withholds topic segments and all model-visible side effects; worker
+  retries keep the block without re-calling the summarizer.
+- **Durable summary state (migration v072)**: `session_summaries` gains
+  `poisoning_status` (`legacy_unscanned|safe|quarantined|acknowledged`),
+  quarantine stage/field/event/pattern metadata, acknowledgement columns, and
+  block counters. Pre-migration rows are marked `legacy_unscanned` and are
+  re-scanned by every reader until a verdict lands; new writers write an
+  explicit verdict.
+- **Fail-closed reader gate** (`src/db/summary_poisoning.rs`): all
+  model-visible summary sinks — SessionStart recent sessions, MEMORY.md native
+  sync, observation/summarize prompt context, user-context
+  extraction/recall/activity, git/MCP commit trace, and the shared summary
+  queries — exclude quarantined rows in SQL and re-scan the exact fields they
+  expose immediately before use. An unacknowledged hit quarantines the row in
+  place (loud error log, block counter); state-load errors drop the row.
+  Acknowledgement requires an exact pattern id + version match.
+- **Observation and legacy summarize writers**: `insert_observation*` scans
+  generated fields and lands hits as `status='poisoning_quarantined'`
+  (excluded from all active/stale queries); `finalize_summarize` writes the
+  same explicit summary verdict.
+- **Observability**: `remem doctor` (Memory poisoning defense check),
+  `remem status`, and HTTP `/status` expose a `poisoning_defense` aggregate:
+  pattern set version, candidate/summary/observation quarantine counts,
+  legacy-unscanned summaries, summary block count, and injection drops.
+  Metadata only — no payload or matched text is ever emitted.
+- **Eval**: the public `adversarial-policy` suite is revised to v2 with
+  `instruction_injection` (EN/ZH), `authority_claim`, `opaque_payload`, and
+  `benign_quoted_instruction` categories. Policy scoring runs the production
+  scanner over fixture evidence; quarantine wins over `retention_allowed`,
+  and a declared injection fixture the scanner misses counts as a policy
+  failure. Deterministic capture E2E lives in
+  `src/session_rollup/tests/poisoning.rs` (real capture -> rollup pipeline
+  with a fixture summarizer, no network).
+
+Failure semantics: prefer false-positive quarantine over letting content reach
+a model-visible sink; scan/state errors exclude the row rather than degrade to
+"assume safe"; captured events and raw archives are never deleted by a match.

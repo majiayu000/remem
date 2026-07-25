@@ -35,6 +35,7 @@ pub(super) struct ContextLimits {
     pub preference_char_limit: usize,
     pub lesson_limit: usize,
     pub lesson_char_limit: usize,
+    pub sessionstart_relevance_k: usize,
 }
 
 impl Default for ContextLimits {
@@ -53,6 +54,7 @@ impl Default for ContextLimits {
             preference_char_limit: 1_500,
             lesson_limit: 4,
             lesson_char_limit: 1_200,
+            sessionstart_relevance_k: 1,
         }
     }
 }
@@ -133,6 +135,11 @@ impl ContextLimits {
                 &mut read,
                 "REMEM_CONTEXT_LESSON_CHAR_LIMIT",
                 defaults.lesson_char_limit,
+            ),
+            sessionstart_relevance_k: read_usize_allow_zero(
+                &mut read,
+                "REMEM_CONTEXT_RELEVANCE_K",
+                defaults.sessionstart_relevance_k,
             ),
         }
     }
@@ -250,6 +257,15 @@ where
     F: FnMut(&str) -> Option<String>,
 {
     parse_usize(read(key)).unwrap_or(default)
+}
+
+fn read_usize_allow_zero<F>(read: &mut F, key: &str, default: usize) -> usize
+where
+    F: FnMut(&str) -> Option<String>,
+{
+    read(key)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .unwrap_or(default)
 }
 
 fn read_usize_with_alias<F>(read: &mut F, key: &str, alias: &str, default: usize) -> usize

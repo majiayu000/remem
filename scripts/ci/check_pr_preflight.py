@@ -107,6 +107,14 @@ def add_pr_body_steps(
 
 def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
     return [
+        (
+            "Test SpecRail gate wiring",
+            ["python3", "scripts/ci/test_specrail_gate_wiring.py"],
+        ),
+        (
+            "Verify synced SpecRail checks",
+            ["scripts/sync-specrail-checks.sh", "--verify"],
+        ),
         ("Check plugin version sync", ["python3", "scripts/ci/check_plugin_version_sync.py"]),
         ("Check public surface", ["python3", "scripts/ci/check_public_surface.py"]),
         ("Check public benchmark claims", ["python3", "scripts/ci/check_public_claims.py"]),
@@ -125,7 +133,10 @@ def fast_steps(base: str, head: str) -> list[tuple[str, list[str]]]:
         ),
         ("Check version bump", ["python3", "scripts/ci/check_version_bump.py", base, head]),
         ("Run cargo fmt --check", ["cargo", "fmt", "--check"]),
-        ("Run cargo clippy -- -D warnings", ["cargo", "clippy", "--", "-D", "warnings"]),
+        (
+            "Run cargo clippy --all-targets -- -D warnings",
+            ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"],
+        ),
     ]
 
 

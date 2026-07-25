@@ -129,10 +129,21 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     };
     let detail = format!("{detail}{replay_detail}{lifecycle_detail}");
 
+    let legacy_pending_replay_candidates =
+        match db::pending::admin::count_legacy_migration_candidates(conn, None, i64::MAX) {
+            Ok(count) => count as i64,
+            Err(err) => {
+                return Check::new(
+                    "Pending queue",
+                    Status::Warn,
+                    format!("{detail} (cannot count legacy replay candidates: {err})"),
+                );
+            }
+        };
     let actions = if stats.retryable_extraction_replay_ranges > 0 {
         queue_actions_with_replay(
             stats.failed_pending_observations,
-            stats.expired_processing_pending_observations,
+            legacy_pending_replay_candidates,
             stats.expired_processing_extraction_tasks,
             stats.failed_jobs,
             stats.stuck_jobs,
@@ -142,7 +153,7 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
     } else {
         queue_actions(
             stats.failed_pending_observations,
-            stats.expired_processing_pending_observations,
+            legacy_pending_replay_candidates,
             stats.expired_processing_extraction_tasks,
             stats.failed_jobs,
             stats.stuck_jobs,
@@ -153,10 +164,13 @@ pub(super) fn check_pending_queue(conn: Option<&Connection>) -> Check {
         .map(|hints| format!("; actions: {hints}"))
         .unwrap_or_default();
 
-    if stats.expired_processing_pending_observations > 0
-        || stats.expired_processing_extraction_tasks > 0
-        || stats.stuck_jobs > 0
-    {
+    if legacy_pending_replay_candidates > 0 {
+        Check::new(
+            "Pending queue",
+            Status::Warn,
+            format!("{detail} (requires legacy replay{action_suffix})"),
+        )
+    } else if stats.expired_processing_extraction_tasks > 0 || stats.stuck_jobs > 0 {
         Check::new(
             "Pending queue",
             Status::Warn,
@@ -415,6 +429,80 @@ pub(super) fn check_declared_empty_surfaces(conn: Option<&Connection>) -> Check 
     }
 }
 
+const LEGACY_PENDING_DEPRECATION_NOTICE: &str = "pending_observations is deprecated in remem 0.6.0 and scheduled for guarded removal no earlier than remem 0.7.0";
+const LEGACY_PENDING_MIGRATION_NOTICE: &str = "actionable pending_observations: preview with `remem pending migrate-legacy --dry-run`, then apply with `remem pending migrate-legacy`; if the legacy host is unknown, apply explicitly with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`";
+
+pub(super) fn check_legacy_surfaces(conn: Option<&Connection>) -> Check {
+    let Some(conn) = conn else {
+        return Check::new(
+            "Legacy surfaces",
+            Status::Warn,
+            format!("cannot open database; {LEGACY_PENDING_DEPRECATION_NOTICE}"),
+        );
+    };
+    let stats = match db::query_system_stats(conn) {
+        Ok(stats) => stats,
+        Err(err) => {
+            return Check::new(
+                "Legacy surfaces",
+                Status::Warn,
+                format!(
+                    "cannot load legacy surface stats: {err}; {LEGACY_PENDING_DEPRECATION_NOTICE}"
+                ),
+            );
+        }
+    };
+    let actionable_pending_rows = match db::pending::admin::count_legacy_migration_candidates(
+        conn,
+        None,
+        i64::MAX,
+    ) {
+        Ok(count) => count,
+        Err(err) => return Check::new(
+            "Legacy surfaces",
+            Status::Warn,
+            format!("cannot count actionable legacy pending rows: {err}; {LEGACY_PENDING_DEPRECATION_NOTICE}"),
+        ),
+    };
+    let mut detail = stats
+        .legacy_surfaces
+        .iter()
+        .map(|surface| {
+            let last_write = surface
+                .last_write_epoch
+                .map(|epoch| epoch.to_string())
+                .unwrap_or_else(|| "none".to_string());
+            format!(
+                "{} rows={} disposition={} last_write_epoch={} frozen_write_violations={}",
+                surface.surface,
+                surface.row_count,
+                surface.disposition,
+                last_write,
+                surface.frozen_write_violations
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    detail.push_str(&format!("; {LEGACY_PENDING_DEPRECATION_NOTICE}"));
+    if actionable_pending_rows > 0 {
+        detail.push_str(&format!("; {LEGACY_PENDING_MIGRATION_NOTICE}"));
+    }
+    let violations: i64 = stats
+        .legacy_surfaces
+        .iter()
+        .map(|surface| surface.frozen_write_violations)
+        .sum();
+    if violations > 0 {
+        Check::new(
+            "Legacy surfaces",
+            Status::Fail,
+            format!("{detail}; retire/freeze blockers={violations}"),
+        )
+    } else {
+        Check::new("Legacy surfaces", Status::Ok, detail)
+    }
+}
+
 pub(super) fn check_promotion_funnel(conn: Option<&Connection>) -> Check {
     let Some(conn) = conn else {
         return Check::new("Promotion funnel", Status::Warn, "cannot open database");
@@ -604,7 +692,7 @@ fn percent(numerator: i64, denominator: i64) -> f64 {
     }
 }
 
-fn table_count(conn: &Connection, table: &str) -> Result<i64, rusqlite::Error> {
+pub(super) fn table_count(conn: &Connection, table: &str) -> Result<i64, rusqlite::Error> {
     let exists: Option<i64> = conn
         .query_row(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1",

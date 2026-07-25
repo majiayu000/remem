@@ -550,6 +550,8 @@ fn write_run_artifacts(
                 "active_claim_count": outcome.policy.active_claim_count,
                 "candidate_count": outcome.policy.candidate_count,
                 "summary_input_count": outcome.policy.summary_input_count,
+                "poisoning_applicable": outcome.policy.poisoning_applicable,
+                "poisoning_scanner_matched": outcome.policy.poisoning_scanner_matched,
                 "policy_failure_count": outcome.policy.policy_failure_count,
             },
         }),

@@ -1,6 +1,12 @@
 mod auth;
+// SP880-T1 lands shared primitives before the T2-T4 handlers consume them.
+#[allow(dead_code)]
+pub(crate) mod cursor;
 mod handlers;
 mod helpers;
+#[allow(dead_code)]
+pub(crate) mod mutation;
+mod read_resources;
 mod server;
 #[cfg(test)]
 mod tests;

@@ -159,7 +159,7 @@ pub(in crate::cli) enum RawAction {
         /// Only rows at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
         #[arg(long)]
         since: Option<String>,
-        /// Only rows at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        /// Only rows at or before this time; YYYY-MM-DD includes that full UTC day.
         #[arg(long)]
         until: Option<String>,
         /// Emit a single JSON object with stable fields for scripts.
@@ -171,7 +171,7 @@ pub(in crate::cli) enum RawAction {
         /// Only sessions with messages at or after this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
         #[arg(long)]
         since: Option<String>,
-        /// Only sessions with messages at or before this time (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        /// Only sessions with messages at or before this time; YYYY-MM-DD includes that full UTC day.
         #[arg(long)]
         until: Option<String>,
         /// Restrict to one project path.
@@ -181,6 +181,46 @@ pub(in crate::cli) enum RawAction {
         #[arg(long, default_value = "0")]
         sample: i64,
         /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Export one exact raw session in chronological order.
+    Messages {
+        /// Durable transcript source-root label.
+        #[arg(long)]
+        source_root: String,
+        /// Exact project identity.
+        #[arg(long, short)]
+        project: String,
+        /// Exact session identity.
+        #[arg(long)]
+        session_id: String,
+        /// Maximum messages to return (capped at 2000).
+        #[arg(
+            long,
+            short = 'n',
+            default_value_t = crate::memory::raw_query::RAW_SESSION_MESSAGES_DEFAULT_LIMIT
+        )]
+        limit: i64,
+        /// Opaque continuation cursor from a prior response.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare indexed transcript occurrences with the raw archive.
+    Reconcile {
+        /// Inclusive lower bound (Unix epoch, ISO8601 datetime, or YYYY-MM-DD).
+        #[arg(long)]
+        since: String,
+        /// Inclusive upper bound; YYYY-MM-DD includes that full UTC day.
+        #[arg(long)]
+        until: String,
+        /// Additional required transcript root in label=path form.
+        #[arg(long = "root")]
+        roots: Vec<String>,
+        /// Emit the privacy-safe aggregate report as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -234,6 +274,18 @@ pub(in crate::cli) enum UserAction {
         json: bool,
         /// Claim text to remember.
         text: String,
+    },
+    /// Preview or apply user-scope preference memory backfill into user-context claims.
+    Backfill {
+        /// Apply conversions instead of dry-run preview.
+        #[arg(long)]
+        apply: bool,
+        /// Emit a single JSON object with stable fields for scripts.
+        #[arg(long)]
+        json: bool,
+        /// Maximum source memories to inspect in this run. Defaults to unlimited.
+        #[arg(long)]
+        limit: Option<i64>,
     },
     /// Inspect or govern explicit user-context claims.
     Claims {

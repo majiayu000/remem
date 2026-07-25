@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://remem.local/schemas/sensitive_implement_gate_result.schema.json",
+  "title": "Sensitive Implement Gate Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "wrapper", "authorization", "final_trust_root", "ordinary_pr_ci_is_final_authorization", "started_at", "completed_at", "repository", "remote_url", "issue", "pr", "label_event", "label_authority", "final_label_event", "final_label_authority", "evidence_trust", "branch_ownership_decision", "self_exemptions", "changed_files", "planned_scope", "artifacts", "artifact_hashes", "route_argv", "route_gate", "decision"],
+  "properties": {
+    "schema_version": {"const": 2},
+    "wrapper": {"const": "remem-sensitive-implement-gate/v2"},
+    "authorization": {"const": "advisory_only"},
+    "final_trust_root": {"const": "external_github_app_or_org_required_workflow_t6"},
+    "ordinary_pr_ci_is_final_authorization": {"const": false},
+    "started_at": {"type": "string", "minLength": 1},
+    "completed_at": {"type": "string", "minLength": 1},
+    "repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"},
+    "remote_url": {"type": "string", "minLength": 1},
+    "issue": {"type": "integer", "minimum": 1},
+    "pr": {
+      "type": "object", "additionalProperties": false,
+      "required": ["number", "url", "state", "draft", "body", "head_ref", "head_sha", "head_repository", "head_repository_fork", "base_ref", "base_sha", "base_repository", "changed_files", "remote_head_ref"],
+      "properties": {"number": {"type": "integer", "minimum": 1}, "url": {"type": "string", "minLength": 1}, "state": {"const": "OPEN"}, "draft": {"type": "boolean"}, "body": {"type": "string", "minLength": 1}, "head_ref": {"type": "string", "minLength": 1}, "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "head_repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "head_repository_fork": {"const": false}, "base_ref": {"type": "string", "minLength": 1}, "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}, "base_repository": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "changed_files": {"type": "integer", "minimum": 1}, "remote_head_ref": {"type": "string", "pattern": "^refs/remotes/origin/.+$"}}
+    },
+    "label_event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["label", "event", "actor", "actor_type", "created_at", "event_id", "source"],
+      "properties": {"label": {"const": "ready_to_implement"}, "event": {"const": "labeled"}, "actor": {"type": "string", "minLength": 1}, "actor_type": {"const": "User"}, "created_at": {"type": "string", "minLength": 1}, "event_id": {"type": ["integer", "string", "null"]}, "source": {"type": "string", "minLength": 1}}
+    },
+    "label_authority": {
+      "type": "object", "additionalProperties": false, "required": ["actor", "actor_type", "permission", "role", "authority_source"],
+      "properties": {"actor": {"type": "string", "minLength": 1}, "actor_type": {"const": "User"}, "permission": {"enum": ["admin", "maintain"]}, "role": {"enum": ["owner", "maintainer"]}, "authority_source": {"type": "string", "minLength": 1}}
+    },
+    "final_label_event": {
+      "type": "object", "additionalProperties": false,
+      "required": ["label", "event", "actor", "actor_type", "created_at", "event_id", "source"],
+      "properties": {"label": {"const": "ready_to_implement"}, "event": {"const": "labeled"}, "actor": {"type": "string", "minLength": 1}, "actor_type": {"const": "User"}, "created_at": {"type": "string", "minLength": 1}, "event_id": {"type": ["integer", "string", "null"]}, "source": {"type": "string", "minLength": 1}}
+    },
+    "final_label_authority": {
+      "type": "object", "additionalProperties": false, "required": ["actor", "actor_type", "permission", "role", "authority_source"],
+      "properties": {"actor": {"type": "string", "minLength": 1}, "actor_type": {"const": "User"}, "permission": {"enum": ["admin", "maintain"]}, "role": {"enum": ["owner", "maintainer"]}, "authority_source": {"type": "string", "minLength": 1}}
+    },
+    "evidence_trust": {
+      "type": "object", "additionalProperties": false,
+      "required": ["state", "state_source", "state_trusted", "duplicate_age_seconds", "max_age_seconds", "fresh"],
+      "properties": {"state": {"const": "ready_to_implement"}, "state_source": {"const": "label"}, "state_trusted": {"const": true}, "duplicate_age_seconds": {"type": "number", "minimum": 0, "exclusiveMaximum": 301}, "max_age_seconds": {"const": 300}, "fresh": {"const": true}}
+    },
+    "branch_ownership_decision": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["url", "comment_id", "actor", "actor_type", "created_at", "rationale", "decision", "branches", "authority"],
+          "properties": {
+            "url": {"type": "string", "minLength": 1}, "comment_id": {"type": "integer", "minimum": 1}, "actor": {"type": "string", "minLength": 1}, "actor_type": {"const": "User"}, "created_at": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1}, "decision": {"enum": ["continue_existing_work", "cleanup_completed"]}, "branches": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "authority": {"type": "object", "additionalProperties": false, "required": ["actor", "actor_type", "permission", "role", "authority_source"], "properties": {"actor": {"type": "string", "minLength": 1}, "actor_type": {"const": "User"}, "permission": {"enum": ["admin", "maintain"]}, "role": {"enum": ["owner", "maintainer"]}, "authority_source": {"type": "string", "minLength": 1}}}
+          }
+        }
+      ]
+    },
+    "self_exemptions": {
+      "type": "object", "additionalProperties": false, "required": ["prs", "branches"],
+      "properties": {"prs": {"type": "array", "minItems": 1, "items": {"type": "object"}}, "branches": {"type": "array", "minItems": 1, "items": {"type": "object"}}}
+    },
+    "changed_files": {
+      "type": "object", "additionalProperties": false,
+      "required": ["api_limit", "expected_count", "collected_count", "complete", "entries", "classification_paths"],
+      "properties": {"api_limit": {"const": 3000}, "expected_count": {"type": "integer", "minimum": 1}, "collected_count": {"type": "integer", "minimum": 1}, "complete": {"const": true}, "entries": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["filename", "status"], "properties": {"filename": {"type": "string", "minLength": 1}, "status": {"type": "string", "minLength": 1}, "previous_filename": {"type": "string", "minLength": 1}}}}, "classification_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}}
+    },
+    "planned_scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifest_source", "manifest_complete", "planned_paths", "changed_paths", "planned_paths_without_diff", "unplanned_paths", "spec_refs", "classification", "allowed_scope"],
+      "properties": {"manifest_source": {"type": "string", "minLength": 1}, "manifest_complete": {"const": true}, "planned_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}, "changed_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}, "planned_paths_without_diff": {"type": "array", "items": {"type": "string", "minLength": 1}}, "unplanned_paths": {"const": []}, "spec_refs": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}, "classification": {"type": "object"}, "allowed_scope": {"const": true}}
+    },
+    "artifacts": {
+      "type": "object", "additionalProperties": false, "required": ["issue_evidence", "duplicate_original", "duplicate_after_decision", "duplicate_filtered"],
+      "properties": {"issue_evidence": {"type": "object"}, "duplicate_original": {"type": "object"}, "duplicate_after_decision": {"type": "object"}, "duplicate_filtered": {"type": "object"}}
+    },
+    "artifact_hashes": {
+      "type": "object", "additionalProperties": false,
+      "required": ["issue_evidence_pre", "issue_evidence_post", "duplicate_filtered_pre", "duplicate_filtered_post", "duplicate_original", "duplicate_after_decision", "changed_files_initial", "changed_files_final", "original_open_prs", "filtered_open_prs", "original_remote_branches", "filtered_remote_branches"],
+      "properties": {"issue_evidence_pre": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "issue_evidence_post": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duplicate_filtered_pre": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duplicate_filtered_post": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duplicate_original": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "duplicate_after_decision": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "changed_files_initial": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "changed_files_final": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "original_open_prs": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "filtered_open_prs": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "original_remote_branches": {"type": "string", "pattern": "^[0-9a-f]{64}$"}, "filtered_remote_branches": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+    },
+    "route_argv": {"type": "array", "minItems": 14, "items": {"type": "string"}},
+    "route_gate": {
+      "type": "object",
+      "required": ["decision", "missing", "current_state", "satisfied", "sensitive_classification"],
+      "properties": {"decision": {"const": "allowed"}, "missing": {"type": "array"}, "current_state": {"const": "ready_to_implement"}, "satisfied": {"type": "array", "items": {"type": "string"}}, "sensitive_classification": {"type": "object", "required": ["enforcement_sensitive"], "properties": {"enforcement_sensitive": {"const": true}}}}
+    },
+    "decision": {"const": "allowed"}
+  }
+}

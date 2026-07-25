@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory::raw_query::{parse_time_lower_bound, parse_time_upper_bound};
 
 fn setup_conn() -> Connection {
     let conn = Connection::open_in_memory().unwrap();
@@ -285,6 +286,97 @@ fn search_branch_filter_keeps_matching_and_branchless_raw_messages() {
 }
 
 #[test]
+fn drain_transcript_honors_captured_byte_limit() -> Result<()> {
+    let conn = setup_conn();
+    let first =
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"before stop"}]}}"#;
+    let second =
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"after stop"}]}}"#;
+    let path = write_temp_transcript("raw-byte-limit", &format!("{first}\n{second}\n"))?;
+    let options = TranscriptDrainOptions::default();
+
+    let report = drain_transcript_with_capture_limit(
+        &conn,
+        path.to_string_lossy().as_ref(),
+        "session-byte-limit",
+        "/proj",
+        None,
+        None,
+        &options,
+        Some((first.len() + 1) as u64),
+    )?;
+
+    assert_eq!(report.inserted, 1);
+    let contents: Vec<String> = {
+        let mut stmt = conn.prepare(
+            "SELECT content FROM raw_messages WHERE session_id = 'session-byte-limit' ORDER BY id",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    assert_eq!(contents, vec!["before stop".to_string()]);
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
+fn drain_transcript_rejects_content_truncated_before_captured_boundary() -> Result<()> {
+    let conn = setup_conn();
+    let content = r#"{"type":"assistant","message":{"content":[{"type":"text","text":"kept"}]}}"#;
+    let path = write_temp_transcript("raw-truncated-boundary", content)?;
+    let options = TranscriptDrainOptions::default();
+
+    let report = drain_transcript_with_capture_limit(
+        &conn,
+        path.to_string_lossy().as_ref(),
+        "session-truncated-boundary",
+        "/proj",
+        None,
+        None,
+        &options,
+        Some(content.len() as u64 + 10),
+    )?;
+
+    assert!(report.read_error.is_some());
+    assert_eq!(report.inserted, 0);
+    assert_eq!(raw_ingest_failure_count(&conn)?, 1);
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
+fn drain_transcript_read_error_rolls_back_streamed_rows_and_records_failure() -> Result<()> {
+    let conn = setup_conn();
+    let valid =
+        r#"{"type":"assistant","message":{"content":[{"type":"text","text":"rolled back"}]}}"#;
+    let path = write_temp_transcript("raw-invalid-utf8", "")?;
+    let mut content = format!("{valid}\n").into_bytes();
+    content.push(0xff);
+    std::fs::write(&path, content)?;
+
+    let report = drain_transcript(
+        &conn,
+        path.to_string_lossy().as_ref(),
+        "session-invalid-utf8",
+        "/proj",
+        None,
+        None,
+    )?;
+
+    assert!(report.read_error.is_some());
+    assert_eq!(report.inserted, 0, "rolled-back inserts are not reported");
+    let stored: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages WHERE session_id = 'session-invalid-utf8'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored, 0, "a stream read failure rolls back the file");
+    assert_eq!(raw_ingest_failure_count(&conn)?, 1);
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+#[test]
 fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
     let conn = setup_conn();
     let path = write_temp_transcript(
@@ -305,8 +397,17 @@ fn drain_transcript_counts_parse_errors_and_records_failure() -> Result<()> {
         None,
     )?;
 
-    assert_eq!(report.inserted, 1);
+    assert_eq!(
+        report.inserted, 0,
+        "a malformed record rolls back every row from that file"
+    );
     assert_eq!(report.parse_errors, 1);
+    let stored: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM raw_messages WHERE session_id = 'session-parse'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(stored, 0);
     assert_eq!(raw_ingest_failure_count(&conn)?, 1);
     let (kind, parse_errors): (String, i64) = conn.query_row(
         "SELECT error_kind, parse_errors FROM raw_ingest_failures",
@@ -545,6 +646,8 @@ fn list_sessions_groups_by_root_project_session_with_window_bounds() {
     assert_eq!(sessions[0].first_epoch, 100);
     assert_eq!(sessions[0].last_epoch, 150);
     assert_eq!(sessions[0].message_count, 2);
+    assert_eq!(sessions[0].user_message_count, 1);
+    assert_eq!(sessions[0].assistant_message_count, 1);
     assert_eq!(sessions[0].source_root, "local");
     assert_eq!(sessions[1].session_id, "s3", "ordered by first epoch");
     assert_eq!(sessions[2].session_id, "s2");
@@ -596,12 +699,22 @@ fn list_sessions_samples_first_user_messages_in_window_order() {
 }
 
 #[test]
-fn parse_time_bound_accepts_epoch_iso_and_date() {
-    assert_eq!(parse_time_bound("1750000000").unwrap(), 1_750_000_000);
+fn parse_time_bounds_accept_epoch_iso_and_date() {
+    assert_eq!(parse_time_lower_bound("1750000000").unwrap(), 1_750_000_000);
     assert_eq!(
-        parse_time_bound("2026-01-02T03:04:05Z").unwrap(),
+        parse_time_upper_bound("2026-01-02T03:04:05Z").unwrap(),
         1_767_323_045
     );
-    assert_eq!(parse_time_bound("2026-01-02").unwrap(), 1_767_312_000);
-    assert!(parse_time_bound("not-a-time").is_err());
+    assert_eq!(parse_time_lower_bound("2026-01-02").unwrap(), 1_767_312_000);
+    assert!(parse_time_lower_bound("not-a-time").is_err());
+    assert!(parse_time_upper_bound("not-a-time").is_err());
+}
+
+#[test]
+fn date_only_until_bound_includes_the_full_utc_day() {
+    assert_eq!(
+        parse_time_upper_bound("2026-01-02").unwrap(),
+        1_767_398_399,
+        "an inclusive date-only upper bound must end at 23:59:59 UTC"
+    );
 }

@@ -30,6 +30,7 @@ fn govern_memories_requires_reason_and_confirmation_for_mutation() -> Result<()>
             actor: Some("test"),
             dry_run: false,
             confirm_destructive: false,
+            acknowledge_pattern: None,
         },
     )
     .expect_err("mutation should require confirmation");
@@ -45,6 +46,7 @@ fn govern_memories_requires_reason_and_confirmation_for_mutation() -> Result<()>
             actor: Some("test"),
             dry_run: false,
             confirm_destructive: true,
+            acknowledge_pattern: None,
         },
     )
     .expect_err("mutation should require reason");
@@ -83,6 +85,7 @@ fn govern_memories_dry_run_lists_targets_without_mutation_or_audit() -> Result<(
             actor: Some("test"),
             dry_run: true,
             confirm_destructive: false,
+            acknowledge_pattern: None,
         },
     )?;
 
@@ -179,6 +182,7 @@ fn select_memory_ids_filters_query_type_project_and_status_for_preview() -> Resu
             actor: Some("test"),
             dry_run: true,
             confirm_destructive: false,
+            acknowledge_pattern: None,
         },
     )?;
     assert!(result.dry_run);
@@ -239,6 +243,7 @@ fn selected_batch_apply_writes_one_audit_event_per_item() -> Result<()> {
             actor: Some("codex-test"),
             dry_run: false,
             confirm_destructive: true,
+            acknowledge_pattern: None,
         },
     )?;
 
@@ -288,6 +293,7 @@ fn govern_memories_writes_audit_and_removes_deleted_memory_from_fts() -> Result<
             actor: Some("codex-test"),
             dry_run: false,
             confirm_destructive: true,
+            acknowledge_pattern: None,
         },
     )?;
 
@@ -306,6 +312,62 @@ fn govern_memories_writes_audit_and_removes_deleted_memory_from_fts() -> Result<
     assert!(detail.contains("\"previous_status\":\"active\""));
     assert!(detail.contains("\"new_status\":\"deleted\""));
     assert!(detail.contains("incorrect memory"));
+    Ok(())
+}
+
+#[test]
+fn govern_memories_acknowledges_existing_poisoned_memory_without_status_change() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_memory_schema(&conn);
+    let id = insert_memory(
+        &conn,
+        Some("s1"),
+        "proj",
+        Some("quoted-poison"),
+        "Quoted poison",
+        "Ignore previous instructions only as a quoted false positive.",
+        "preference",
+        None,
+    )?;
+
+    let result = govern_memories(
+        &conn,
+        &GovernMemoryRequest {
+            project: "proj",
+            ids: &[id],
+            action: MemoryGovernanceAction::AcknowledgePattern,
+            reason: Some("quoted false positive reviewed"),
+            actor: Some("maintainer"),
+            dry_run: false,
+            confirm_destructive: true,
+            acknowledge_pattern: Some("override_previous_instructions"),
+        },
+    )?;
+
+    assert_eq!(result.affected.len(), 1);
+    assert_eq!(result.affected[0].previous_status, "active");
+    assert_eq!(result.affected[0].new_status, "active");
+    let ack: (String, i64, Option<i64>, String) = conn.query_row(
+        "SELECT acknowledged_pattern_id, acknowledged_pattern_version,
+                acknowledged_at_epoch, status
+         FROM memories WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(ack.0, "override_previous_instructions");
+    assert_eq!(
+        ack.1,
+        crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION
+    );
+    assert!(ack.2.is_some());
+    assert_eq!(ack.3, "active");
+    let detail: String = conn.query_row(
+        "SELECT detail FROM events WHERE event_type = 'memory_governance'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert!(detail.contains("\"action\":\"acknowledge_pattern\""));
+    assert!(detail.contains("\"acknowledged_pattern\":\"override_previous_instructions\""));
     Ok(())
 }
 
@@ -347,6 +409,7 @@ fn rejected_memories_stay_hidden_when_include_stale_is_true() -> Result<()> {
             actor: Some("codex-test"),
             dry_run: false,
             confirm_destructive: true,
+            acknowledge_pattern: None,
         },
     )?;
 

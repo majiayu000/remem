@@ -3,6 +3,9 @@ use rusqlite::{params, Connection};
 
 use super::{run_migrations, MIGRATIONS};
 
+#[path = "tests_web_console_governance.rs"]
+mod web_console_governance;
+
 struct GraphSchemaFixture {
     now: i64,
     project_id: i64,
