@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cx2cc-stale-superseded-decision",
+  "direction": "codex_to_claude",
+  "category": "stale_superseded_decision",
+  "status": "skeleton_todo",
+  "source_host": "codex",
+  "target_host": "claude_code",
+  "history_episodes": [
+    {
+      "episode_id": "cx2cc-stale-superseded-decision-episode-1",
+      "host": "codex",
+      "summary": "An early source-host decision was later superseded; both versions exist in history.",
+      "expected_memory_facts": [
+        "fact:current_decision"
+      ],
+      "memories": [
+        {
+          "title": "Superseding decision that replaces the stale one",
+          "text": "TODO: record the current decision plus a pointer to the superseded one, with supersession order and timestamps.",
+          "memory_type": "decision",
+          "topic_key": "cx2cc-stale-superseded-decision"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Apply the current decision. Following the older superseded decision must fail hidden tests and count as stale_memory_followed. TODO: bind to a fixture with both decision generations.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:current_decision"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cx2cc-stale-superseded-decision-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}

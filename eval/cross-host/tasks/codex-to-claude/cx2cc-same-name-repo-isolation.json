@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cx2cc-same-name-repo-isolation",
+  "direction": "codex_to_claude",
+  "category": "same_name_repo_isolation",
+  "status": "skeleton_todo",
+  "source_host": "codex",
+  "target_host": "claude_code",
+  "history_episodes": [
+    {
+      "episode_id": "cx2cc-same-name-repo-isolation-episode-1",
+      "host": "codex",
+      "summary": "Two same-named projects exist in source-host history; only one is relevant to the target task.",
+      "expected_memory_facts": [
+        "fact:same_name_repo_truth"
+      ],
+      "memories": [
+        {
+          "title": "Fact scoped to the correct same-name project",
+          "text": "TODO: record the per-project facts for both same-named repositories, with distinct project identities.",
+          "memory_type": "discovery",
+          "topic_key": "cx2cc-same-name-repo-isolation"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Work in the stated project only. Injecting or following the other same-named project's memory counts as wrong_project_injection and fails stop-loss. TODO: bind to two same-named fixture repos.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:same_name_repo_truth"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cx2cc-same-name-repo-isolation-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}

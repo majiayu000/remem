@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "charter_version": "cross-host-v1",
+  "status": "infrastructure_only_no_runs",
+  "issue": "#935",
+  "related_issues": ["#849", "#852", "#385"],
+  "question": "Can history produced in one host (Claude Code or Codex) be reliably used by the other host on a new continuation task, and does remem beat target-host native memory and exported files?",
+  "directions": [
+    {
+      "id": "claude_to_codex",
+      "source_host": "claude_code",
+      "target_host": "codex"
+    },
+    {
+      "id": "codex_to_claude",
+      "source_host": "codex",
+      "target_host": "claude_code"
+    }
+  ],
+  "primary_conditions": {
+    "no_memory": "Target host gets no source-host history, no native memory, no exported file, no remem.",
+    "target_host_native": "Target host may use only its own native memory surface. Proves source-host history does not appear cross-host on its own.",
+    "exported_file": "Source history is exported to a repo-local handoff MEMORY.md by a fixed protocol. Generation and maintenance cost must be measured and reported.",
+    "remem_shared": "Source host writes remem through the real capture/extraction pipeline; target host reads the same store through the normal SessionStart/MCP/Context Bundle path."
+  },
+  "diagnostic_conditions": [
+    "source_host_native_imported",
+    "remem_preloaded",
+    "oracle_handoff",
+    "full_transcript",
+    "remem_without_host_native_import",
+    "remem_with_host_native_import"
+  ],
+  "task_requirements": {
+    "min_tasks_per_direction": 12,
+    "runs_per_task_condition": 3,
+    "required_categories": [
+      "architecture_decision",
+      "prior_bug_root_cause",
+      "failed_attempt_lesson",
+      "negative_constraint",
+      "workstream_next_action",
+      "stale_superseded_decision",
+      "branch_specific_truth",
+      "multi_hop_relation",
+      "user_project_preference",
+      "unresolved_conflict_abstention",
+      "git_evidence",
+      "same_name_repo_isolation"
+    ]
+  },
+  "handoff_protocol": {
+    "history_phase": [
+      "Source host completes a set of real or deterministic episodes.",
+      "remem captures/distills through the production pipeline (remem conditions only).",
+      "Record source host, session, project, branch, task, and evidence refs.",
+      "Terminate the source host and clean up its runtime state."
+    ],
+    "target_phase": [
+      "Start the target host with a fresh isolated HOME/config.",
+      "Reading the source host session store is forbidden.",
+      "Expose only the memory surface allowed by the condition.",
+      "Run the continuation task.",
+      "Score with hidden tests as the primary outcome."
+    ],
+    "isolation_rules": [
+      "Source and target hosts use independent HOME, config, and session stores.",
+      "No context may leak via the real host HOME, host session files, auth/config files, or benchmark-private paths.",
+      "The artifact scanner must pass on every run artifact before the run counts."
+    ]
+  },
+  "metrics": {
+    "primary": "resolved_rate",
+    "secondary": [
+      "handoff_fact_recall",
+      "stale_followed",
+      "source_scope_leak",
+      "target_scope_leak",
+      "memory_hurt",
+      "tokens_per_resolved_task",
+      "wall_time_per_resolved_task",
+      "turns_to_first_correct_hypothesis",
+      "time_to_first_relevant_file",
+      "repeated_failed_action_count",
+      "imported_native_memory_contribution",
+      "exported_file_generation_cost",
+      "exported_file_maintenance_cost",
+      "citation_attribution_rate"
+    ]
+  },
+  "stop_loss": {
+    "wrong_project_injection": 0,
+    "wrong_user_injection": 0,
+    "source_private_session_leak": 0,
+    "stale_memory_followed_max_rate": 0.01,
+    "memory_hurt_max_rate": 0.02,
+    "rule": "Any security-boundary leak fails the release claim even if resolved_rate improves."
+  },
+  "claim_gate": {
+    "paired_report_required": true,
+    "paired_bootstrap_required": true,
+    "direction_specific_reporting": "Reports must show claude_to_codex and codex_to_claude separately; publishing only a merged average is forbidden.",
+    "ci_zero_rule": "If the confidence interval includes 0, the result may only be described as directional.",
+    "readme_rule": "README may only cite conclusions that passed this gate."
+  },
+  "non_goals": [
+    "No live bidirectional Claude/Codex session bridge.",
+    "remem does not manage agent leases, task queues, or concurrent execution.",
+    "Full source transcripts are not injected into the target host by default.",
+    "Host-native memory is not treated as automatically trusted canonical truth.",
+    "The #852 import details are not implemented by this benchmark."
+  ]
+}

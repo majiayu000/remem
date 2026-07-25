@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cc2cx-failed-attempt-lesson",
+  "direction": "claude_to_codex",
+  "category": "failed_attempt_lesson",
+  "status": "skeleton_todo",
+  "source_host": "claude_code",
+  "target_host": "codex",
+  "history_episodes": [
+    {
+      "episode_id": "cc2cx-failed-attempt-lesson-episode-1",
+      "host": "claude_code",
+      "summary": "Source-host session tried an approach that failed for a non-obvious reason and recorded the lesson.",
+      "expected_memory_facts": [
+        "fact:failed_attempt_lesson"
+      ],
+      "memories": [
+        {
+          "title": "Lesson from the failed attempt",
+          "text": "TODO: record which approach failed, the observed failure mode, and why it must not be retried.",
+          "memory_type": "lesson",
+          "topic_key": "cc2cx-failed-attempt-lesson"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Implement the requested change. The naive approach is the one that already failed in the source-host session. TODO: bind to a fixture where retrying the failed approach trips hidden tests.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:failed_attempt_lesson"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cc2cx-failed-attempt-lesson-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}
