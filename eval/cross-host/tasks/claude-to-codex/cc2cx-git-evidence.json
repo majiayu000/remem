@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cc2cx-git-evidence",
+  "direction": "claude_to_codex",
+  "category": "git_evidence",
+  "status": "skeleton_todo",
+  "source_host": "claude_code",
+  "target_host": "codex",
+  "history_episodes": [
+    {
+      "episode_id": "cc2cx-git-evidence-episode-1",
+      "host": "claude_code",
+      "summary": "The load-bearing fact is anchored in git evidence (commit, blame, tag) from the source-host session.",
+      "expected_memory_facts": [
+        "fact:git_evidence"
+      ],
+      "memories": [
+        {
+          "title": "Git-evidence-anchored fact",
+          "text": "TODO: record the fact with its git anchor (fixture commit hash, tag, or blame range) from the deterministic fixture history.",
+          "memory_type": "discovery",
+          "topic_key": "cc2cx-git-evidence"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Answer/fix using the git-anchored truth. The working tree alone is misleading without the recorded git evidence. TODO: bind to a fixture repo with scripted git history.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:git_evidence"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cc2cx-git-evidence-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}

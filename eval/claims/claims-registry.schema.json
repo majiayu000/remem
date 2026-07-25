@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "remem public claim registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "issue", "locked", "claims"],
+  "properties": {
+    "schema_version": { "type": "integer", "minimum": 1 },
+    "issue": { "type": "string", "pattern": "^#[0-9]+$" },
+    "locked": { "type": "boolean" },
+    "claims": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "comparison",
+          "metric",
+          "gate",
+          "status",
+          "allowed_wording",
+          "forbidden_wording",
+          "supporting_report"
+        ],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "comparison": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["treatment", "control"],
+            "properties": {
+              "treatment": { "type": "string", "minLength": 1 },
+              "control": { "type": "string", "minLength": 1 }
+            }
+          },
+          "metric": { "type": "string", "minLength": 1 },
+          "gate": { "type": "object" },
+          "status": { "enum": ["PASS", "FAIL", "INSUFFICIENT"] },
+          "allowed_wording": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "forbidden_wording": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "supporting_report": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

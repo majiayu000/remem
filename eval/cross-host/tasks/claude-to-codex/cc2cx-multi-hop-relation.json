@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cc2cx-multi-hop-relation",
+  "direction": "claude_to_codex",
+  "category": "multi_hop_relation",
+  "status": "skeleton_todo",
+  "source_host": "claude_code",
+  "target_host": "codex",
+  "history_episodes": [
+    {
+      "episode_id": "cc2cx-multi-hop-relation-episode-1",
+      "host": "claude_code",
+      "summary": "Resolving the target task requires chaining issue -> file -> component relations recorded across source-host episodes.",
+      "expected_memory_facts": [
+        "fact:multi_hop_relation"
+      ],
+      "memories": [
+        {
+          "title": "Multi-hop issue/file/component relation",
+          "text": "TODO: record the hop chain (issue ref, linking entity, target component) split across at least two episodes.",
+          "memory_type": "discovery",
+          "topic_key": "cc2cx-multi-hop-relation"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Locate and fix the right component. No single memory names it; the chain of recorded relations does. TODO: bind to a fixture with a verifiable hop path.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:multi_hop_relation"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cc2cx-multi-hop-relation-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}

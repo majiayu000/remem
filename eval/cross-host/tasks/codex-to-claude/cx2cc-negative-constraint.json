@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "suite": "cross-host-v1",
+  "id": "cx2cc-negative-constraint",
+  "direction": "codex_to_claude",
+  "category": "negative_constraint",
+  "status": "skeleton_todo",
+  "source_host": "codex",
+  "target_host": "claude_code",
+  "history_episodes": [
+    {
+      "episode_id": "cx2cc-negative-constraint-episode-1",
+      "host": "codex",
+      "summary": "Source-host session established a hard 'do not do X' constraint for this project.",
+      "expected_memory_facts": [
+        "fact:negative_constraint"
+      ],
+      "memories": [
+        {
+          "title": "Negative constraint for this project",
+          "text": "TODO: record the explicit prohibition (forbidden API, forbidden file, forbidden pattern) and its reason.",
+          "memory_type": "procedure",
+          "topic_key": "cx2cc-negative-constraint"
+        }
+      ]
+    }
+  ],
+  "target_task": {
+    "prompt": "Complete the task without violating the project's recorded prohibition. The constraint is not visible in the repository. TODO: bind to a fixture with a forbidden patch pattern check.",
+    "allowed_paths": [
+      "TODO: fixture source paths",
+      "tests"
+    ],
+    "forbidden_paths": [
+      "MEMORY.md",
+      "REMEM_CONTEXT.md"
+    ],
+    "timeout_ms": 180000
+  },
+  "score": {
+    "commands": [],
+    "hidden_files": {},
+    "required_patch_patterns": [],
+    "forbidden_patch_patterns": []
+  },
+  "gold_memory": {
+    "required_facts": [
+      "fact:negative_constraint"
+    ],
+    "forbidden_facts": [],
+    "supporting_event_ids": [
+      "cx2cc-negative-constraint-episode-1:e1"
+    ]
+  },
+  "todo": [
+    "Fill history_episodes with real or deterministic source-host episode content; current text fields are design intent, not fixture data.",
+    "Bind target_task.prompt and allowed_paths to a concrete deterministic fixture repository.",
+    "Add hidden test files and score.commands; hidden tests are the primary outcome.",
+    "Set status to ready and clear this todo list once the fixture is real."
+  ]
+}
