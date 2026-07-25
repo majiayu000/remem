@@ -12,6 +12,7 @@ mod build_info;
 mod captured_git;
 pub mod cli;
 pub mod context;
+pub mod context_bundle;
 pub mod cursor_hook;
 pub mod db;
 pub mod doctor;

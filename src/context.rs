@@ -32,7 +32,12 @@ use std::ffi::OsString;
 mod tests;
 mod types;
 
+pub(crate) use policy::ContextLimits;
 pub(crate) use prompt_submit::prompt_submit_additional_context;
+pub(crate) use relevance::{
+    build_sessionstart_relevance_plan, RelevanceCandidate, RelevanceSection,
+    SESSIONSTART_RELEVANCE_POLICY_VERSION,
+};
 pub(crate) use render::governance_eval_snapshot;
 pub(crate) use render::session_start_eval_snapshot;
 pub(crate) use render::RENDER_CONTRACT_VERSION;

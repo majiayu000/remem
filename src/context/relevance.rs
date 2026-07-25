@@ -7,33 +7,33 @@ use crate::memory::{Memory, MemoryType};
 
 use super::types::{LoadedContext, SessionSummaryBrief};
 
-pub(super) const SESSIONSTART_RELEVANCE_POLICY_VERSION: &str = "sessionstart_significant_token_v1";
+pub(crate) const SESSIONSTART_RELEVANCE_POLICY_VERSION: &str = "sessionstart_significant_token_v1";
 pub(super) const BELOW_RELEVANCE_THRESHOLD: &str = "below_sessionstart_relevance_threshold";
 pub(super) const SESSIONSTART_K_LIMIT: &str = "sessionstart_k_limit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(super) enum RelevanceSection {
+pub(crate) enum RelevanceSection {
     Lessons,
     MemoryIndex,
     Sessions,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RelevanceCandidate {
+pub(crate) struct RelevanceCandidate {
     pub stable_key: String,
     pub section: RelevanceSection,
     pub text: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(super) struct RelevanceDecision {
+pub(crate) struct RelevanceDecision {
     pub score: f64,
     pub selected: bool,
     pub drop_reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct SessionStartRelevancePlan {
+pub(crate) struct SessionStartRelevancePlan {
     pub state: &'static str,
     pub k: usize,
     pub threshold: Option<f64>,
@@ -208,7 +208,7 @@ pub(super) fn session_stable_key(id: i64) -> String {
     format!("session_summary:{id}")
 }
 
-pub(super) fn build_sessionstart_relevance_plan(
+pub(crate) fn build_sessionstart_relevance_plan(
     query: Option<&str>,
     k: usize,
     candidates: &[RelevanceCandidate],
