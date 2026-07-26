@@ -4,9 +4,10 @@
 
 GH-933
 
-PR #939 仅交付 Phase A 的只读 projection，使用 `Refs #933`。它是本产品
-契约的 partial implementation，不关闭 GH-933，也不表示 Phase B 或 Phase C
-已经完成。
+PR #939 已于 2026-07-26 合并（merge commit `0ed42e3d`），仅交付 Phase A
+只读 projection baseline，并以 `Refs #933` 保持 GH-933 开放。维护者已授权
+为剩余 Phase A hardening 使用新的 follow-up PR；该授权不是对本次修订后
+spec packet 的 `spec_approval`，也不表示 Phase B 或 Phase C 已完成。
 
 ## 用户问题
 
@@ -27,8 +28,10 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
   策略可见性或发布状态误当作事实真假。
 - 对 scope、`as_of`、supersedes、evidence trust、冲突和证据不足采用可解释、
   确定性的选择规则。
-- Phase A 先提供可重建的只读 projection；Phase B 再让 Context Bundle
-  消费 projection；Phase C 仅在读取模型和质量证据稳定后评估 writer 收敛。
+- Phase A baseline 先提供可重建的只读 projection；下一份 Phase A hardening
+  follow-up 补齐 scope/relation 隔离、可诊断 provenance、只读证明与 bounded
+  relation lookup；Phase B 再让 Context Bundle 消费 projection；Phase C 仅在
+  读取模型和质量证据稳定后评估 writer 收敛。
 - 在所有阶段保留 canonical ref、evidence refs 和明确的
   `TruthSelectionReason`，使结果可以审计。
 
@@ -38,8 +41,8 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 - 不引入新的图数据库或实时 multi-agent blackboard。
 - 不让 LLM 任意裁决 truth，也不把模型自报 confidence 当作真实性分数。
 - 不把所有 event 或 generated enrichment 自动提升为 canonical Claim。
-- PR #939 不接入 Context Bundle，不交付 worktree/task selector，不修改
-  canonical writer，也不声明 Phase B/C 完成。
+- Phase A hardening follow-up 不接入 Context Bundle，不交付 worktree/task
+  selector，不修改 canonical writer/schema，也不声明 Phase B/C 完成。
 - 本规格不把 archived、compressed 或 suppressed 简化为 false。
 
 ## Behavior Invariants
@@ -52,8 +55,9 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    `Compressed` 不等于 false，`Suppressed` 不得自动改写 claim 的真假。
 3. CT-003 查询必须先应用 scope 隔离。Phase A 至少支持 project 和 branch；
    project 不匹配的 claim 不得泄露，带 branch 的 claim 只在对应 branch
-   中可见。worktree/task selector 属于 GH-933 后续阶段，不是 PR #939
-   的完成项。
+   中可见；relation 的两个 endpoint 也必须同时属于同一 scoped claim set，
+   scope 外 relation 不得改变 scope 内结果。worktree/task selector 属于
+   GH-933 后续阶段，不是 Phase A hardening 的完成项。
 4. CT-004 指定 `as_of` 时，projection 只能使用该时点已存在且在有效时间窗内
    的 claim、relation 和 evidence。若底层数据没有足够历史信息恢复过去状态，
    必须暴露限制或返回 `Unknown`，不得根据当前值伪造历史 truth。
@@ -71,7 +75,7 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    `TruthSelectionReason`。
 10. CT-010 generated enrichment 不得仅凭模型生成身份创建或覆盖 canonical
     Claim。Phase A 的读取结果必须排除不具备 claim standing 的 enrichment；
-    writer 侧的统一防线属于 Phase C，PR #939 不宣称已完成。
+    writer 侧的统一防线属于 Phase C，Phase A hardening 不宣称已完成。
 11. CT-011 stale、expired、deleted、candidate、suppressed 和 archived 状态
     必须分别处理并有独立可观察结果；未知状态必须 fail closed，不能 panic、
     自动视为 current 或静默降级。
@@ -90,17 +94,27 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 
 ## 验收标准
 
-### PR #939：Phase A partial implementation
+### 已合并 baseline：PR #939
 
-- [ ] 提供 versioned `EvidenceView`、`ClaimView`、`RelationView` 和
-      `CurrentTruthView`，且 projection 对现有受支持对象保持只读。
-- [ ] project、branch、`as_of`、supersedes、refutes、supports、evidence
-      trust 和 selection reason 均有确定性行为验证。
-- [ ] 每种现有受支持状态均有 lifecycle 映射验证；未知状态 fail closed。
-- [ ] golden fixtures 覆盖 supersedes、双 evidence 支持、contradiction、
-      branch isolation、`as_of` history、scope isolation 和 abstention。
-- [ ] unresolved conflict 不被静默选择；无足够证据不产生 invented truth。
-- [ ] PR body 保持 `Refs #933`，并明确 Phase B/C 未完成、GH-933 保持开放。
+PR #939 是已合并的 Phase A baseline evidence：提供 versioned DTO、lifecycle
+mapping、read adapter、deterministic resolution 和 18 个 truth tests。它不是
+本轮 fresh verification，也不覆盖以下 hardening 验收项。
+
+### 下一份 Phase A hardening follow-up
+
+- [ ] relation 只有在两个 endpoint 同时属于本次 query 的 scoped claim set
+      且属于相关 subject group 时才参与 resolution；cross-project、
+      cross-branch 与 cross-subject relation 不泄露也不影响 scope 内 truth。
+- [ ] `memory_edges` 与 trusted memory-to-memory `graph_edges` lookup 在 SQL
+      或等价 bounded lookup 中受 scoped IDs 约束，不扫描无关项目全表；提供
+      `EXPLAIN QUERY PLAN` 与 representative p50/p95/row-bound evidence。
+- [ ] `ClaimRelationKind::Supports` 有真实 adapter/output fixture。
+- [ ] malformed `evidence_event_ids` 与 `source_refs_json` fail closed，并返回
+      可诊断错误或明确 diagnostic；不得静默形成较低 trust 的“正常成功”。
+- [ ] SQLite authorizer、`total_changes` 或等价 regression 证明 projection
+      SELECT-only；projection v1 golden output 的变更必须显式审核。
+- [ ] follow-up PR 使用 `Refs #933`，只修改批准的 Phase A hardening 与必要的
+      release metadata，不接入 Context Bundle/writers/schema，不关闭 GH-933。
 
 ### GH-933：后续整体完成条件
 
@@ -129,7 +143,9 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 
 ## 发布说明
 
-PR #939 只发布 Phase A library-level read projection，不新增 CLI/HTTP 或
-Context Bundle 用户界面，并继续以 `Refs #933` 关联开放 issue。Phase B/C
-必须独立经过 spec approval、实现验证和发布说明；在这些阶段完成前，不得将
-GH-933 或完整 CurrentTruth 能力标记为已交付。
+PR #939 已发布 Phase A library-level read projection baseline，不新增 CLI/HTTP
+或 Context Bundle 用户界面。下一份 Phase A hardening follow-up 仍以
+`Refs #933` 关联开放 issue，并按实现时 `main` 的版本顺序做一次必要的 patch
+version 同步；不在本规格中预占具体版本号。Phase B/C 必须独立经过
+spec approval、实现验证和发布说明；在这些阶段完成前，不得将 GH-933 或完整
+CurrentTruth 能力标记为已交付。

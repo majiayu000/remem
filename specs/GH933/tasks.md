@@ -4,9 +4,11 @@
 
 GH-933
 
-PR #939 是原关联 Phase A partial implementation，必须继续使用 `Refs #933`。
-本计划不授权新建替代 PR，不表示 Phase A 已 fresh verified，也不表示 Phase B/C
-已完成。
+PR #939 已于 2026-07-26 合并（merge commit `0ed42e3d`），是 Phase A
+baseline，不再是可写 implementation lane。维护者已授权新的 Phase A
+hardening follow-up PR 策略并将 issue 标记为 `ready_to_spec`；exact revised
+packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verified，
+也不表示 Phase B/C 已完成。
 
 ## Spec Packet
 
@@ -15,9 +17,13 @@ PR #939 是原关联 Phase A partial implementation，必须继续使用 `Refs #
 
 ## 当前证据状态
 
-- PR #939 已包含 Phase A 的 `src/truth*`、`src/lib.rs` export、version-sync
-  变更和 18 个 truth tests；这些是 existing implementation evidence，不是
-  本轮 fresh verification，因此以下任务全部保持未勾选。
+- PR #939 已合并 Phase A 的 `src/truth*`、`src/lib.rs` export、version-sync
+  变更和 18 个 truth tests；这些是 baseline implementation evidence，不是
+  本轮 fresh verification，也不能通过继续写其 merged branch 来修复。
+- Live issue 已有 `ready_to_spec`；本轮 fresh
+  `python3 checks/route_gate.py --repo . --route write_spec --issue 933 --state ready_to_spec --json`
+  返回 `decision=allowed`。该结果只授权写 spec，不等于
+  `ready_to_implement` 或 human `spec_approval`。
 - Phase A 待补/待证：cross-project relation 隔离、focused Supports relation、
   malformed provenance、SELECT-only/no-write，以及完整 current-head verification。
 - relation bounded query 与 representative performance evidence 必须在 Phase B
@@ -27,15 +33,15 @@ PR #939 是原关联 Phase A partial implementation，必须继续使用 `Refs #
 
 ## 实现任务
 
-- [ ] `SP933-T1` Owner: coordinator + human maintainer; Dependencies: accepted `product.md`/`tech.md`/`tasks.md`, readiness label, human `spec_approval`; Done when: coordinator 提供 trusted non-empty base ref、trusted sensitive-path evidence 和 `sensitive_enforcement` evidence，duplicate-work evidence 明确 PR #939 是 GH-933 已授权的原 implementation PR 而不是新重复工作，并在当前 head 重新运行 implement route gate 得到 `decision=allowed`; Verify: `python3 checks/route_gate.py --repo . --route implement --issue 933 --pr 939 --state ready_to_implement <approved-evidence-args> --json` 的 fresh JSON、human gate evidence 和 PR #939 head SHA。
+- [ ] `SP933-T1` Owner: coordinator + human maintainer; Dependencies: committed revised `product.md`/`tech.md`/`tasks.md`, existing `ready_to_spec`, human approval of the exact revised packet; Done when: maintainer records `spec_approval`, transitions GH-933 to `ready_to_implement`, and coordinator provides trusted live `origin/main`, approved-spec, duplicate-work, planned-path and `enforcement_sensitive` evidence; duplicate evidence classifies #939 and its retained branch as merged historical baseline, the authorized follow-up is the only writable lane, and the fresh implement route gate returns `decision=allowed`; Verify: `python3 checks/route_gate.py --repo . --route implement --issue 933 --state ready_to_implement <approved-evidence-args> --json`, exact packet commit/hash, human approval evidence and live base SHA.
 
-- [ ] `SP933-T2` Owner: Phase A verification agent; Dependencies: `SP933-T1`; Done when: 在原 PR #939 原分支逐项核对 `CT-001`、`CT-002`、`CT-004`–`CT-009`、`CT-011`、`CT-012`、`CT-015`，确认 public DTO/version、lifecycle total mapping、scope/as-of/supersedes/refutes/evidence-trust/recency order、Contradicted/Unknown output 和 canonical/evidence/relation refs 与当前 specs 一致，任何 mismatch 全量列出且不以文档覆盖代码事实; Verify: `cargo test truth`、serialized golden inspection、`git diff --check origin/main...HEAD` 和绑定 current PR head 的 invariant review notes。
+- [ ] `SP933-T2` Owner: Phase A verification agent; Dependencies: `SP933-T1`; Done when: 在从 fresh `origin/main` 创建的新 follow-up branch 上逐项核对 #939 baseline 的 `CT-001`、`CT-002`、`CT-004`–`CT-009`、`CT-011`、`CT-012`、`CT-015`，全量记录 mismatch，并确认 v1 golden bytes 与当前 code truth；Verify: `cargo test truth -- --nocapture`、serialized golden inspection、`git diff --check origin/main...HEAD` 和绑定 current follow-up head 的 invariant review notes。
 
-- [ ] `SP933-T3` Owner: Phase A implementation agent on original PR #939 branch; Dependencies: `SP933-T1`, findings from `SP933-T2`; Done when: relation 只有两个 endpoint 都属于同一 scoped claim set 时才能参与 resolution，cross-project/cross-branch relation 不泄露也不改变 scope 内 truth，`ClaimRelationKind::Supports` 有真实 adapter/output fixture，malformed `evidence_event_ids` 与 `source_refs_json` 的 fail-closed trust/result 被 focused tests 锁定且产生产品契约要求的可诊断 evidence，projection 经 SQLite authorizer 或等价 `total_changes` regression 证明 SELECT-only，且 fixes 不改 writer/schema/context; Verify: focused cross-scope/Supports/malformed/no-write tests、`cargo test truth`、`cargo fmt --check`、`cargo check`、`git diff --check`。
+- [ ] `SP933-T3` Owner: Phase A hardening implementation agent; Dependencies: `SP933-T1`, findings from `SP933-T2`; Done when: writable source files are exactly `src/truth/adapter.rs`, `src/truth/projection.rs` and `src/truth/tests.rs`，relation 只有两个 endpoint 同时属于 scoped claim set 且属于 resolver 当前 subject group 时才参与 resolution，cross-project/cross-branch/cross-subject relation 不泄露也不影响 scope 内 truth，`ClaimRelationKind::Supports` 有真实 adapter/output fixture，malformed `evidence_event_ids` 与 `source_refs_json` fail closed 并产生可诊断 error/diagnostic，SQLite authorizer 或等价 `total_changes` regression 证明 SELECT-only；不得修改 writer/schema/context，若确需 `src/truth/types.rs` 或 `src/truth.rs` 则停止并重新请求 planned-path approval；Verify: focused cross-scope/Supports/malformed/no-write tests、`cargo test truth -- --nocapture`、`cargo fmt --check`、`cargo check`、`git diff --check`。
 
-- [ ] `SP933-T4` Owner: Phase A performance agent; Dependencies: `SP933-T3`; Done when: relation lookup 不再扫描无关 project 的全部 `memory_edges`/trusted `graph_edges`，membership 与 evidence lookup 在 representative corpus 上 bounded，query plan 使用现有或经独立批准新增的 indexes，结果 bytes 与 projection version 1 fixtures 不变，并记录 p50/p95、rows scanned、memory bound；若 Phase A PR 不承载优化，必须建立明确的 Phase B blocking task/PR 且在 Context Bundle wiring 前落地，不能以 later 无 owner 延期; Verify: `EXPLAIN QUERY PLAN` artifact、representative benchmark、`cargo test truth`、full projection golden parity、`cargo fmt --check`、`cargo check`。
+- [ ] `SP933-T4` Owner: Phase A performance verifier; Dependencies: `SP933-T3`; Done when: relation lookup 不再扫描无关 project 的全部 `memory_edges`/trusted `graph_edges`，scoped ID membership 与 evidence lookup 有 bounded argument/row behavior，query plan 使用现有 indexes，结果 bytes 与 projection version 1 fixtures 保持 intentional，并记录 representative corpus、`EXPLAIN QUERY PLAN`、p50/p95、rows examined/returned 与 memory bound；新增 migration/index 不在批准范围内，若现有 index 不足必须停止并回到 spec approval；Verify: query-plan/benchmark artifact、`cargo test truth -- --nocapture`、full projection golden parity、`cargo fmt --check`、`cargo check`。
 
-- [ ] `SP933-T5` Owner: Phase A coordinator; Dependencies: `SP933-T2`, `SP933-T3`, and either completed `SP933-T4` or a human-approved Phase B blocking handoff; Done when: PR #939 仍为 `Refs #933` 且明确 Phase A partial、不声称 Context Bundle/worktree-task/writer convergence，version `0.6.26` 的 Cargo/plugin/npm/server/release manifests 同步，current-head focused/full checks、preflight、independent review、review threads 和 PR gate evidence 齐全，合并 PR #939 不关闭 GH-933; Verify: `cargo fmt --check`、`cargo check`、`cargo test truth`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、plugin version sync、version bump、SpecRail check、full preflight 和 current-head read-only `pr_gate`。
+- [ ] `SP933-T5` Owner: Phase A coordinator; Dependencies: `SP933-T2`, `SP933-T3`, `SP933-T4`; Done when: coordinator rebases the new follow-up on live `origin/main`, stages one patch version strictly above that base across `CHANGELOG.md` and Cargo/plugin/npm/server/release metadata, and opens one implementation PR using `Refs #933`；PR 只声明 Phase A hardening，不声称 Context Bundle/worktree-task/writer convergence，不关闭 GH-933，并在 human merge 前具备 current-head focused/full checks、preflight、independent review、review threads 与 PR-gate evidence；Verify: `cargo fmt --check`、`cargo check`、`cargo test truth -- --nocapture`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、plugin version sync、version bump、SpecRail check、full preflight 和 current-head read-only `pr_gate`。
 
 - [ ] `SP933-T6` Owner: Phase B spec owner + human maintainer; Dependencies: `SP933-T5`, `SP933-T4`; Done when: Phase A 已有真实运行/性能 evidence，product/tech contract 被更新为可实施的 Phase B closed design，明确 shared render reference epoch、Context Bundle current truth/decisions/conflicts、worktree/task selectors、historical explanation、policy/sensitivity、cache/budget、error-visible behavior、rollout/rollback gate 和 owned files，human 批准 exact spec head，新的 implement route gate 为 allowed; Verify: updated CT mapping、deterministic commands、SpecRail packet check、human `spec_approval`、fresh duplicate evidence 和 allowed route-gate JSON。
 
@@ -53,9 +59,13 @@ PR #939 是原关联 Phase A partial implementation，必须继续使用 `Refs #
 
 - `SP933-T1` 是所有 implementation 的串行前置 gate；blocked 时只能继续只读
   review/spec planning，禁止写代码。
-- 原 PR #939 的 `src/truth/adapter.rs`、`projection.rs`、`types.rs` 与 tests
-  共享同一 correctness surface，因此 `SP933-T2`–`SP933-T5` 默认串行；
-  read-only reviewer 可并行，但不得与 implementation agent 共享 writable files。
+- 新 Phase A hardening lane 独占 `src/truth/adapter.rs`、
+  `src/truth/projection.rs`、`src/truth/tests.rs`；`SP933-T2`–`SP933-T5`
+  默认串行，read-only reviewer 可并行，但不得共享 writable files。
+- Version/changelog metadata 与 PR body 由 coordinator 在 implementation
+  agent 停止写入后单独拥有；spec packet 由 spec owner 独占。不得把
+  `src/truth/types.rs`、`src/truth.rs`、migration、context 或 writer 路径
+  静默加入 lane。
 - Phase B 在 Phase A evidence 与 `SP933-T4` 性能 gate 后串行开始；Phase C
   在 Phase B 验证后开始。不得并行修改 `src/context/*` 与 writers 来提前实现
   未批准 Phase C。
@@ -64,7 +74,8 @@ PR #939 是原关联 Phase A partial implementation，必须继续使用 `Refs #
 
 ## 验证
 
-- Fresh implement route gate 返回 `decision=allowed`；当前 blocked JSON 不得被解释为 authorization。
+- Fresh implement route gate 返回 `decision=allowed`；本轮 allowed
+  `write_spec` gate 不得被解释为 implementation authorization。
 - 每个 task 使用自身列出的 focused checks，并把输出绑定到 current head。
 - Phase A/Phase B/Phase C 每个 PR 运行 `cargo fmt --check`、`cargo check`、relevant focused tests 与 `git diff --check`。
 - Runtime/shared behavior submission 前运行 `cargo test` 和 `cargo clippy --all-targets -- -D warnings`。
@@ -75,19 +86,17 @@ PR #939 是原关联 Phase A partial implementation，必须继续使用 `Refs #
 
 ## Handoff Notes
 
-- Coordinator rejection evidence：`.specrail/runtime/rejections/route-gate-933.json`。
-  该 runtime rejection 是本地 orchestrator evidence，不属于 PR commit；远端
-  handoff 以 PR、CI 和 gate artifact 为准。
-- 当前 implement route gate 为 `decision=blocked`。明确 rejection：
-  `duplicate_work` 检出 open PR #939；trusted default base ref 为空；
-  configured sensitive registry 缺 trusted path evidence；
-  `sensitive_enforcement` evidence 缺失。
-- Human gates 仍包括 `readiness_label` 与 `spec_approval`。本 task packet 不是
-  spec approval、final review、merge、release 或 security decision。
-- Duplicate gate 必须识别 PR #939 是原关联 implementation lane；不得通过创建
-  新 PR、换分支或绕过 evidence 来“解决” duplicate。
-- PR #939 的修复只能在原 PR 原分支进行，并持续使用 `Refs #933`；Phase A
-  合并后 GH-933 仍开放。Phase B PR 同样是 partial/`Refs #933`。
+- 旧 `.specrail/runtime/rejections/route-gate-933.json` 与 “open PR #939”
+  结论是 pre-merge historical evidence，不能代表当前远端事实；#939 已合并。
+- Readiness/follow-up strategy 已由维护者授权，live issue 已标记
+  `ready_to_spec`。剩余 human gate 是批准本次 committed exact packet，
+  随后设置 `ready_to_implement`；本 task packet 本身不是 `spec_approval`、
+  final review、merge、release 或 security decision。
+- Duplicate gate 必须识别 PR #939 及其 retained remote branch 为 merged
+  historical baseline，并绑定新 follow-up branch/PR 的 exact head；不得把
+  merged branch 当成可继续修改的原 PR，也不得绕过 duplicate evidence。
+- 新 Phase A hardening PR 与后续 Phase B PR 均使用 `Refs #933`，保持 issue
+  开放；只有 `SP933-T11` closure audit 后的最终实现才能考虑 closing linkage。
 - 所有 checkbox 保持未勾选，因为本 planning turn 没有运行 fresh Rust/CI/
   PR-gate verification。旧 PR body 中的测试描述不能替代 fresh evidence。
 - `SP933-T10` 是 conditional task；human 选择
