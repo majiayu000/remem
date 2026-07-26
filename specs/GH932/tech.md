@@ -171,13 +171,24 @@ deadline 与 cancellation/SQLite interrupt handle：
 9. 在 transaction 内完成 hash；只在全部验证通过后发布 immutable result。
 
 现有 `execute(plan, ExecutorInputs)` 改为 crate-private fixture seam，或显式命名为
-`execute_candidates_for_test`；MCP/REST/SessionStart 不得调用它。此 issue 不新增 migration，
-不写 runtime DB。
+`execute_candidates_for_test`；MCP/REST/SessionStart 不得调用它。planner 与 `execute_db`
+的 plan/load/render 路径不产生任何 runtime DB write；唯一的 schema 变更是第 7 节定义的
+additive audit-evidence migration，唯一的 write 是 SessionStart bridge 在 Bundle publish
+之后的 audit 持久化，两者都不发生在 read snapshot 内。
 
 ### 5. As-of 与 conflict/freshness
 
 - 所有 source rows 先检查 `created_at_epoch <= as_of_epoch`；有 valid-from/to、expiry、
   invalidation、supersession 的表按 `[valid_from, valid_to)` 解释。
+- as-of 合同只对可验证版本化的数据承诺历史真值：不可变创建记录、显式
+  `[valid_from, valid_to)` 区间与 supersession 链。对被 in-place overwrite 的可变字段
+  （`src/workstream/write.rs` 覆写 title/status/progress/action，
+  `src/memory/store/write.rs` 覆写 canonical memory content），当前列值无法证明等于
+  `as_of_epoch` 时刻的值；当 row 存在晚于 `as_of_epoch` 的 last-modified 证据、或该表
+  没有可信 last-modified 列因而无法证明未被改写时，该 item 不得以当前值冒充历史值，
+  必须进入 abstention，machine reason 固定为 `as_of_unversioned_mutation`。本 issue 不为
+  这些表引入 version-history 存储；request 未显式携带 as-of（默认取当前时刻）的路径不受
+  此收窄影响，audit/product 文档必须如实描述该边界。
 - current-state 选择使用已有 owner/state-key/temporal predicates；同一 key 在 as-of 时刻
   有唯一 winner 才进入 current truth/decision/constraint。
 - 无唯一 winner 的 active canonical rows进入 `ContextConflict`，包含 stable refs 与
@@ -194,8 +205,16 @@ deadline 与 cancellation/SQLite interrupt handle：
 - `render_contract_version` 使用现有 `RENDER_CONTRACT_VERSION` 的 approved value；它与
   estimator/package version 分离，进入 plan、audit、Bundle/capabilities 与 benchmark
   evidence。任何 body 格式改变而未 bump version 的 fixture 必须失败。
-- budget 只约束 `rendered_context`，不约束传输 envelope/audit JSON；REST/MCP 必须分别返回
-  `rendered_token_estimate` 和 audit，避免误称整个 JSON 在模型预算内。
+- token budget 只约束 `rendered_context`，不声称覆盖传输 envelope/audit JSON；REST/MCP 必须
+  分别返回 `rendered_token_estimate` 和 audit，避免误称整个 JSON 在模型预算内。
+- 结构化 transport payload 另有独立 byte caps：policy v2 定义 versioned
+  `transport_item_text_max_bytes`（semantic section 内单个 `ContextItem.text` 上限）与
+  `transport_bundle_max_bytes`（序列化 Bundle envelope 总上限）。超过 per-item cap 的 text
+  按 safe UTF-8 boundary 截断，audit 记录 `transport_text_truncated` 与原文 sha256；stable
+  key、canonical ref、evidence refs 永不截断。序列化总量超过 total cap 时，从 role priority
+  最低的 section 起把 item text 降级为 stable-ref-only 并记录 `transport_payload_reduced`；
+  禁止在宣称 bounded Bundle 的同时返回 unbounded JSON。两个 caps 进入 plan、audit 与
+  capabilities，MCP/REST 共用同一实现。
 - renderer 先把每个完整 item（heading、title、body、citation、separator）渲染为独立 UTF-8
   segment，再按 role priority、section budget、total budget 原子纳入。固定 header/footer
   先计入总预算；`session_context` 使用独立 section budget。若连最小 header 都装不下，
@@ -211,8 +230,18 @@ deadline 与 cancellation/SQLite interrupt handle：
 ### 7. SessionStart bridge 与 rollback
 
 - 新增小型 `context::bundle_bridge`：从现有 invocation 构造 schema v2 request，调用
-  `plan` + `execute_db`，再把 `rendered_context` 与 Bundle audit 映射到现有 injection gate/
-  persistence。
+  `plan` + `execute_db`，再把 `rendered_context` 交给现有 injection gate。
+- Bundle audit 有专属 durable 存储：additive migration
+  `src/migrations/v074_context_bundle_injection_audit.sql` 新建
+  `context_bundle_injection_audits` 表（含 session/invocation identity、schema/policy/
+  estimator/render-contract versions、`plan_hash`、`audit_hash`、`snapshot_fingerprint`、
+  `rendered_sha256`、rendered/final token estimates、`final_injection_sha256`、terminal-state
+  rollup 含 `conflict`/abstention counts、canonical audit JSON），在
+  `src/migrate/types.rs` 与 schema-drift invariants 注册。现有
+  `context_injection_items`（v039）与 duplicate-suppression `context_hash`（v016）schema 与
+  语义不变：`conflict` 不塞进 v039 的 status CHECK，dedupe hash 不被 plan/audit/final hash
+  覆写；跨表以同一 injection identity 关联，Bundle audit 不因映射进旧表而 collapse 或丢失
+  rollback/benchmark evidence。
 - SessionStart 没有显式 task 时 bridge 必须选择 `snapshot_session_signals`，由
   `execute_db` 在同一 snapshot 从 commit messages、session summaries、workstreams 派生
   relevance；禁止传空 task 当作等价查询，也禁止在 planner 前预读 payload。
@@ -277,6 +306,14 @@ deadline 与 cancellation/SQLite interrupt handle：
 - remem condition 必须从实际 production SessionStart/Bundle bridge 捕获 evidence；validator
   重算格式/hash/预算并绑定同 run head + fixture。control conditions 明确 `null/not_applicable`。
   不能从固定字符串或另一次 synthetic plan 填充。
+- evidence 必须覆盖 agent 实际读到的完整 context 文件字节。当前
+  `src/eval/coding_bench/condition.rs` 在捕获 production snapshot 后追加
+  `Benchmark Memory Details` 再写盘，导致 production-bridge hash 只覆盖 strict prefix；
+  完成实现后禁止在 `finalize_injection_body` 之后追加任何 benchmark-only 文本：appendix
+  要么移除，要么在 finalizer 之前进入同一 versioned estimate/budget。
+  `final_injection_token_estimate` / `final_injection_sha256` 对最终写给 agent 的文件全部
+  字节计算；validator 重新读取该文件字节重算 hash/estimate，prefix-only 或 post-finalize
+  append 一律作为 tamper 负例失败。
 
 ## Product-to-Test Mapping
 
@@ -437,6 +474,10 @@ any validation/query/render/cancel/deadline/finalizer failure
     "src/context_bundle/tests/db_executor.rs",
     "src/context_bundle/tests/render.rs",
     "src/context_bundle/tests/schema.rs",
+    "src/migrations/v074_context_bundle_injection_audit.sql",
+    "src/migrate/types.rs",
+    "src/migrate/schema_drift/invariants.rs",
+    "src/migrate/schema_drift/invariants/v074.rs",
     "src/context.rs",
     "src/context/bundle_bridge.rs",
     "src/context/render.rs",

@@ -53,7 +53,11 @@ readiness/spec approval，也不授权 production edit。
     - `python3 checks/github_issue_evidence.py --repo . --github-repo majiayu000/remem --issue 932 --json > /tmp/gh932-issue-evidence.json`
     - `python3 checks/github_duplicate_evidence.py --github-repo majiayu000/remem --issue 932 --remote origin --json > /tmp/gh932-duplicate-evidence.json`
     - `GH932_BASE_SHA=$(git rev-parse origin/main)`
-    - `jq --arg base_sha "$GH932_BASE_SHA" '. + {default_base_ref:"origin/main", default_base_sha:$base_sha, base_ref:"origin/main", base_sha:$base_sha, enforcement_sensitive:false}' /tmp/gh932-issue-evidence.json > /tmp/gh932-route-evidence.json`
+    - `jq --arg base_sha "$GH932_BASE_SHA" '. + {default_base_ref:"main", default_base_sha:$base_sha, base_ref:"main", base_sha:$base_sha, enforcement_sensitive:false}' /tmp/gh932-issue-evidence.json > /tmp/gh932-route-evidence.json`
+    - ref 字段必须是 unqualified branch name `main`：`trusted_default_base` 会把该值解析为
+      `refs/remotes/origin/{branch}`，传 `origin/main` 会生成不存在的
+      `refs/remotes/origin/origin/main` 并让 gate 在 classification 前失败。sha 仍取自
+      `git rev-parse origin/main`。
     - `python3 checks/route_gate.py --repo . --route implement --issue 932 --evidence /tmp/gh932-route-evidence.json --duplicate-evidence /tmp/gh932-duplicate-evidence.json --mode required --json`
     - 检查 route output 的 repository/base/readiness/spec/duplicate/planned-path classification
       均绑定且 `decision=allowed`、`missing=[]`，并明确
@@ -147,7 +151,9 @@ readiness/spec approval，也不授权 production edit。
 - [ ] `SP932-T5` — SessionStart Bundle bridge、single-path gate 与 rollback — Owner: context integration agent；Dependencies: `SP932-T2`, `SP932-T3`, `SP932-T4`；Covers: `B-015`–`B-022`, `B-026`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context.rs`, `src/context/bundle_bridge.rs`,
     `src/context/{render,audit}.rs`, `src/context/tests/{mod,bundle_bridge,gate_pipeline,render,truncation}.rs`,
-    `src/runtime_config.rs`。
+    `src/runtime_config.rs`,
+    `src/migrations/v074_context_bundle_injection_audit.sql`, `src/migrate/types.rs`,
+    `src/migrate/schema_drift/invariants.rs`, `src/migrate/schema_drift/invariants/v074.rs`。
   - Done when: selector 默认 legacy、显式 bundle_v2；单次只 load/render/inject 一条路径；
     SessionStart 选择 `snapshot_session_signals`，在同一 snapshot 从 commit/summary/workstream
     signals 派生 relevance，禁止空 task 或 plan 前预读；
@@ -156,7 +162,9 @@ readiness/spec approval，也不授权 production edit。
     不能跳过或重复扫描；未确认命中项只产生 error-level diagnostic 与唯一 audit terminal
     drop；poisoned workstream 固定 unacknowledgeable drop，且不写 snapshot connection；
     gate/delta、debug trace、hook warning 之后由唯一 `finalize_injection_body` 重算预算与
-    `final_injection_sha256`，之后禁止 mutation，超限不发布 stdout；semantic parity、
+    `final_injection_sha256`，之后禁止 mutation，超限不发布 stdout；Bundle audit 持久化到
+    additive `context_bundle_injection_audits`（v074），`conflict` 等 terminal state 无损保存，
+    v039 items 与 v016 dedupe hash schema/语义不变；semantic parity、
     strict gate、audit persistence、error visibility 与 rollback 都通过；
     `src/context/render.rs` 不因集成超过 800 行。
   - Verify:
@@ -208,7 +216,9 @@ readiness/spec approval，也不授权 production edit。
   - Done when: 每个 remem-backed run 从实际 production bridge 保存
     schema/policy/render-contract/estimator、plan/audit/snapshot fingerprint、Bundle
     rendered hash、post-gate final injection hash、degraded mode、两个明确命名的预算、
-    head、fixture；validator fail closed，control arm 明确 not-applicable。
+    head、fixture；`final_injection_sha256`/estimate 覆盖实际写给 agent 的完整 context
+    文件字节，benchmark-only appendix 移除或在 finalizer 前进入同一预算，validator 对
+    文件字节重算 hash；validator fail closed，control arm 明确 not-applicable。
   - Verify:
     - `cargo test eval::coding_bench -- --nocapture`
     - missing/wrong/tampered render-contract version、plan/audit/Bundle-render/final-injection
