@@ -64,16 +64,19 @@ GH-935
   - Covers: B-001, B-002, B-003, B-004, B-005, B-030
   - File ownership:
     - `eval/cross-host/benchmark-charter.json`
+    - `eval/cross-host/live-run-approvals.json`
     - `eval/cross-host/schemas/`
     - `eval/cross-host/examples/`
     - `eval/cross-host/scripts/{schema_validate.py,run_dry.py}`
     - `eval/cross-host/tasks/`
   - Done when:
-    - task/run/report/live-run-approval schemas versioned 且 fail closed；
+    - task/run/report/live-run-approval/source-seal schemas versioned 且 fail closed；
     - `eval/cross-host/live-run-approvals.json` 是 append-only、默认分支可信
-      registry；entry 的 ID 由 canonical digest + approval review node + merge
-      commit 派生，不能由执行者自选。
-    - 24 个 task 逐个包含 deterministic repo fixture、source episode、
+      registry；entry 的 stable `approval_key` 由不含自身、review node 或 merge
+      commit 的 canonical policy digest、approval PR number 与 approved head
+      tree OID 派生，不能由执行者自选；
+    - 24 个 task 逐个包含 deterministic repo fixture、至少两个 chronological
+      source episodes、source-seal contract、
       hidden tests、score commands、gold facts、allowed/forbidden paths；
     - 每个 task 为 `ready` 且 `todo: []`；
     - 两个方向各覆盖 12 个必需 category，无 fabricated placeholder；
@@ -101,10 +104,15 @@ GH-935
   - Done when:
     - coding bench 与 cross-host 共用一个 env allowlist、private-root、
       host-read sandbox、timeout/process cleanup primitive；
-    - Claude Code/Codex adapters 使用独立 HOME/config/session roots；
+    - Claude Code/Codex adapters 使用独立 HOME/config/session roots，GitHub
+      authority phase 与 host/provider phase 分离，后者不可读取 authority
+      credential；
     - source/target 的 phase-private condition roots 保持不同；只有
       `remem_shared` 可串行挂载当前 run 独有且位于两侧 private roots 之外的
       transfer store，任何其他 shared/cross-run path 都 fail closed；
+    - source/target 严格串行复用同一 run-scoped canonical absolute workspace
+      path，target 前从 approved fixture 重置并保持 project ID；same-name decoy
+      使用不同 canonical path/project ID；
     - credential bootstrap 最小化且 credential bytes 不进入 artifacts；
     - 非 macOS 在没有等价 deny-host-read 证明时 fail closed；
     - dry-run/verify call graph 不 spawn 宿主或网络。
@@ -129,8 +137,15 @@ GH-935
       retrieval，测试证明未调用 direct seed/save/preload shortcut；
     - surface manifest 证明 `remem_shared` 唯一共同路径是 run-scoped transfer
       store，source session/phase-private/cross-run path 的负例全部拒绝；
-    - `exported_file` target-blind 冻结并记录 generation/maintenance cost；
-    - native import with/without 除 import switch 外 config hash 完全相同；
+    - `target_host_native` 在 prompt 揭示前通过目标宿主真实 preparation/import
+      protocol 产生可读 native state 并记录成本；空/不可读 native state
+      fail closed，不能退化成 `no_memory`；
+    - `exported_file` 在第一 episode 后生成、后续每 episode 更新，经所有
+      condition 共用的 host-neutral context-envelope 消费，target-blind 冻结并
+      分别记录 generation/maintenance cost；
+    - native import with arm 仅将 importer 产出的 candidate 经 target-blind
+      独立 review/promotion 后激活，保留 `host_native_import` origin 与
+      non-canonical trust；without control 走相同 reviewer schedule；
     - diagnostic data 不进入 primary denominator。
   - Verify:
 
@@ -153,14 +168,19 @@ GH-935
     - `eval/cross-host/scripts/scan_artifacts.py`
     - `eval/cross-host/evidence/cross-host-v1/{primary-run-records.jsonl,native-ablation-run-records.jsonl,source-manifest.json}`
   - Done when:
-    - primary dry-run 精确产生 288 个唯一 tuple；
-    - source terminate/drain/evidence seal 先于 target launch；
+    - primary dry-run 精确产生 288 个唯一 tuple，native ablation dry-run
+      精确产生 144 个唯一 tuple；
+    - 72 个 `(direction,task,run_index)` 各只执行一次 source episode sequence；
+      source terminate/drain/immutable seal 先于 fanout 和 target launch，全部
+      conditions 绑定同一 seal；
     - artifact 使用 atomic write、stable `matrix_key`、unique `attempt_id`
       和 content hash；
     - pre-target retry 保留失败，target-started outcome 不可被成功重跑替换；
     - resume 只补缺失 tuple，并拒绝 duplicate/hash drift/partial artifacts；
     - hidden tests 只在 agent 退出后注入；
-    - attribution refs 全部可解析且 origin/scope/validity 一致；
+    - attribution 每阶段必须是可解析 `present(ref)` 或 typed
+      `absent_due_to(failure)`；合法上游 failure 的下游 absence 保留 failed run
+      于 denominator，无 failure 的缺 ref 被拒绝，origin/scope/validity 一致；
     - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏。
     - evidence writer 输出 scanner-passed primary/native-ablation JSONL bundles
       与 schema-valid source manifest，绑定全部 attempt/matrix/scanner/code/
@@ -170,10 +190,11 @@ GH-935
       registry、merged approval PR、APPROVED maintainer review、canonical digest、
       exact code/fixture/config/model/host hashes、allowed tuple set 与
       host/LLM/cost hard caps；smoke plan 恰好一个 tuple 且永久排除公开分母。
-    - 每条命令生成独立 `execution_id`，但由 canonical owner/repo +
-      derived `approval_id` 固定定位的 append-only usage ledger 跨命令累计
-      host/LLM/cost；CLI/env 不可覆盖 root/ID，锁、hash chain、atomic write 与
-      immutable artifact reconciliation 拒绝并发超额、ledger rollback 或拆单重置。
+    - 每条命令生成独立 `execution_id`，但 stable `approval_key` 对应
+      protected remote ledger 在每个 billable call 前以 non-force fast-forward
+      CAS durable reserve worst-case host/LLM/cost，完成后 settlement；crash/
+      abandon 仍计费，跨 clone/resume/execution ID/并发共享累计预算，拒绝
+      rollback、replay、non-FF history、reconciliation drift 或拆单重置。
   - Verify:
 
     ```bash
@@ -186,6 +207,10 @@ GH-935
       --runs-per-condition 3 --matrix primary --dry-run \
       --json-out /tmp/remem-cross-host-plan.json
     jq -e '.planned_runs == 288' /tmp/remem-cross-host-plan.json
+    cargo run -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --matrix native-import-ablation --dry-run \
+      --json-out /tmp/remem-cross-host-ablation-plan.json
+    jq -e '.planned_runs == 144' /tmp/remem-cross-host-ablation-plan.json
     ```
 
 - [ ] `SP935-T6` Owner: report-claim lane; Done when: direction report、paired bootstrap、cost、stop-loss 与 hash-bound claim gate 完整； Verify: report/bootstrap/claim tests 与 public claim self-test 通过； Covers: B-022, B-023, B-024, B-025, B-026, B-027, B-028, B-029, B-031。
@@ -205,11 +230,16 @@ GH-935
       direction-first candidate report，公开分子、分母、missing_count 和
       aggregate，且 candidate 不含自引用 verdict；
     - exported cost 与 native-import ablation 分开报告；
+    - native-import ablation completeness 固定为 144；
     - fixed-seed task-cluster paired bootstrap 可重复；
     - CI 含 0 只输出 directional/insufficient；
+    - leak stop-loss 分母固定为 288；`memory_hurt`/`stale_memory_followed`
+      分母固定为每方向 36、aggregate 72，并按 B-027 的 attribution-causal
+      predicates 计算；缺 required attribution 为 INSUFFICIENT；
     - 五项 stop-loss 边界和“gain + leak = FAIL”负例通过；
     - claim gate 消费 candidate report hash，另写并保留 PASS/FAIL/INSUFFICIENT
-      gate result；registry/report/gate hash/wording 四者绑定；
+      gate result；`bench cross-host gate` 是唯一 result-writer，registry/
+      report/gate hash/wording 四者绑定；
     - FAIL/INSUFFICIENT 不删除或改写 candidate report/evidence；
     - public claim checker 在非 PASS 时拒绝正向 README wording。
   - Verify:
@@ -219,6 +249,10 @@ GH-935
     cargo test eval::cross_host::tests::evidence_bundle
     cargo test eval::cross_host::tests::paired_bootstrap
     cargo test eval::cross_host::tests::claim_gate
+    cargo run -- bench cross-host gate --root eval/cross-host \
+      --registry eval/cross-host/claims-registry.json \
+      --report eval/cross-host/reports/cross-host-v1.json \
+      --json-out /tmp/remem-cross-host-gate.json
     python3 eval/claims/claim_gate.py check \
       eval/cross-host/claims-registry.json
     python3 scripts/ci/check_public_claims.py --self-test
@@ -241,7 +275,7 @@ GH-935
     - `CHANGELOG.md`
     - version-sync files declared in `tech.md`
   - Done when:
-    - `bench cross-host run|verify|report` 接线且所有 output path 显式；
+    - `bench cross-host run|verify|report|gate` 接线且所有 output path 显式；
     - docs 保持 `executable_no_runs`/“无公开结论”，不引用 dry-run 数字为结果；
     - version-sync 文件使用同一新版本；
     - 当前 integration/version PR 的 touched paths 全部属于 planned-path
@@ -286,6 +320,9 @@ GH-935
     cargo test
     python3 scripts/ci/check_plugin_version_sync.py
     python3 scripts/ci/check_public_claims.py
+    gh pr view "$PR_NUMBER" --json body --jq .body > /tmp/pr-body.md
+    python3 scripts/ci/check_pr_preflight.py --base origin/main \
+      --pr-body-file /tmp/pr-body.md
     ```
 
 - [ ] `SP935-T9` Owner: maintainer/security owner; Done when: smoke 与 full live-run 的 auth/network/cost/security 授权分别记录； Verify: trusted approval registry 与真实 smoke execution/verification； Covers: B-009, B-032。
@@ -303,18 +340,22 @@ GH-935
       APPROVED review 的 PR merge 到 default branch，绑定 exact
       head/fixture/config/model/host versions、两个允许 tuple、有效期、credential
       bootstrap reference 与 host/LLM/cost hard caps；entry 不含 credential
-      bytes，`approval_id` 由 review node/merge commit/canonical digest 派生。
+      bytes；pre-merge `approval_key` 只由 approval PR number、approved head
+      tree OID 与不含自身/review/merge 字段的 canonical policy digest 派生。
+      runner 必须先完成 authority-only remote validation，再清除 GitHub
+      credential；每个 billable call 前 remote ledger reservation 已 durable，
+      crash/跨 clone/并发预算测试均通过。
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_SMOKE_APPROVAL_ID"
+    test -n "$CROSS_HOST_SMOKE_APPROVAL_KEY"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --matrix smoke --direction claude_to_codex \
       --task-id cc2cx-architecture-decision --condition remem_shared \
-      --run-index 0 --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
+      --run-index 0 --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
@@ -322,19 +363,19 @@ GH-935
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --matrix smoke --direction codex_to_claude \
       --task-id cx2cc-architecture-decision --condition remem_shared \
-      --run-index 0 --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
+      --run-index 0 --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
       --json-out /tmp/remem-cross-host-smoke-cx2cc.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --input /tmp/remem-cross-host-smoke-cc2cx.json \
-      --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
+      --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
       --expected-matrix smoke --expected-valid-runs 1 \
       --json-out /tmp/remem-cross-host-smoke-cc2cx-verify.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --input /tmp/remem-cross-host-smoke-cx2cc.json \
-      --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
+      --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
       --expected-matrix smoke --expected-valid-runs 1 \
       --json-out /tmp/remem-cross-host-smoke-cx2cc-verify.json
     ```
@@ -346,6 +387,9 @@ GH-935
     B-015, B-016, B-017, B-018, B-019, B-020, B-021, B-022, B-023,
     B-024, B-027, B-028
   - Done when:
+    - report-claim lane 先 handoff immutable 288-tuple plan/source-seal/approved
+      binary+fixture+profile hashes；operator 只拥有 live execution outputs，
+      不修改 runner/report code 或 approved inputs；
     - 两个方向、24 tasks、四 primary conditions、每 tuple 3 runs 均产生
       scanner-passed immutable artifact；
     - verifier 证明 288 个唯一有效 tuple，失败 run 留在分母；
@@ -357,13 +401,13 @@ GH-935
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_PRIMARY_APPROVAL_ID"
+    test -n "$CROSS_HOST_PRIMARY_APPROVAL_KEY"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --runs-per-condition 3 --matrix primary \
-      --approval-id "$CROSS_HOST_PRIMARY_APPROVAL_ID" --confirm-live-run \
+      --approval-key "$CROSS_HOST_PRIMARY_APPROVAL_KEY" --confirm-live-run \
       --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
@@ -383,7 +427,10 @@ GH-935
   - Covers: B-007, B-022, B-023, B-024, B-025, B-026, B-027, B-028,
     B-029, B-031
   - Done when:
-    - with/without native import 在两个方向形成完整 paired evidence；
+    - report-claim lane handoff immutable 144-tuple ablation plan、approved inputs
+      与 report/gate schemas；operator 仅生成 live ablation outputs，随后
+      report-claim lane 独占 candidate report、gate 和 current-doc updates；
+    - with/without native import 在两个方向形成完整 144-tuple paired evidence；
     - native-ablation sanitized records 追加到独立 committed bundle，完成
       source manifest 后，先生成 immutable direction-specific candidate
       JSON/Markdown report 与 hash；
@@ -394,16 +441,20 @@ GH-935
       report、gate result 与 evidence；
     - 只有 gate PASS 时才由独立 human wording review 更新 README；否则保持
       无公开正向结论，但不得删除 FAIL/INSUFFICIENT evidence。
+    - 无论 verdict 为 PASS/FAIL/INSUFFICIENT，都更新 `eval/cross-host/README.md`、
+      `docs/specs/README.md`、`docs/specs/GH935/{PRODUCT.md,TECH.md}` 和
+      `docs/specs/public-memory-benchmark/{PRODUCT.md,TECH.md}` 的真实运行状态与
+      report/gate links；不得继续声明 `executable_no_runs`。
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_ABLATION_APPROVAL_ID"
+    test -n "$CROSS_HOST_ABLATION_APPROVAL_KEY"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --runs-per-condition 3 --matrix native-import-ablation \
-      --approval-id "$CROSS_HOST_ABLATION_APPROVAL_ID" --confirm-live-run \
+      --approval-key "$CROSS_HOST_ABLATION_APPROVAL_KEY" --confirm-live-run \
       --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
@@ -413,8 +464,8 @@ GH-935
       --markdown-out eval/cross-host/reports/cross-host-v1.md
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --json-out /tmp/remem-cross-host-final-verify.json
-    python3 eval/claims/claim_gate.py check \
-      eval/cross-host/claims-registry.json \
+    cargo run --release -- bench cross-host gate --root eval/cross-host \
+      --registry eval/cross-host/claims-registry.json \
       --report eval/cross-host/reports/cross-host-v1.json \
       --json-out eval/cross-host/reports/cross-host-v1-gate.json
     python3 scripts/ci/check_public_claims.py
@@ -437,7 +488,13 @@ GH-935
     ```bash
     test -n "$PR_NUMBER"
     gh pr view "$PR_NUMBER" --json headRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
-    python3 checks/pr_gate.py --repo . --pr "$PR_NUMBER" --json
+    gh pr view "$PR_NUMBER" --json body --jq .body > /tmp/pr-body.md
+    python3 checks/github_pr_evidence.py --repo . --github-repo \
+      "$(gh repo view --json nameWithOwner --jq .nameWithOwner)" \
+      --pr "$PR_NUMBER" --issue 935 --review-manifest /tmp/pr-body.md \
+      --json > /tmp/pr-evidence.json
+    python3 checks/pr_gate.py --repo . --evidence /tmp/pr-evidence.json \
+      --mode required --json
     ```
 
 ## 并行拆分

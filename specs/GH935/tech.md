@@ -33,6 +33,7 @@ GH-935
     "eval/cross-host/claims-registry.json",
     "eval/cross-host/schemas/cross-host-task.schema.json",
     "eval/cross-host/schemas/cross-host-run.schema.json",
+    "eval/cross-host/schemas/cross-host-source-seal.schema.json",
     "eval/cross-host/schemas/cross-host-report.schema.json",
     "eval/cross-host/schemas/cross-host-claim-verdict.schema.json",
     "eval/cross-host/schemas/evidence-source-manifest.schema.json",
@@ -170,7 +171,12 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   evidence，不作为任何 condition 的 DB seed 输入。
 - 24 个 task 逐个人工填充确定性代码 fixture、source episode、target prompt、
   hidden files、score commands、required/forbidden patch patterns 和 gold
-  facts；完成后才清空 `todo` 并设为 `ready`。
+  facts；每 task 至少两个 chronological source episodes，以支持 exporter
+  generation + update maintenance cycle。完成后才清空 `todo` 并设为 `ready`。
+- source-seal schema 固定 source host transcript、tool events、git patch、
+  episode boundaries、binary/model/profile hashes 和 content hash；同一
+  `(direction,task,run_index)` 只生成一次 seal，conditions 只能消费 seal，
+  不得各自重新运行 nondeterministic source episode。
 - v1 skeleton 和旧 run schema 不做 silent migration。validator 可给出明确
   `schema_version unsupported` 或通过一次性、可审阅的 converter 产生新文件；
   原文件和 hash 保留。
@@ -182,8 +188,12 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   lifecycle、process-group cleanup 和 marker scan。现有 coding bench 迁移到
   同一 primitive，确保没有隔离回归。
 - `cross_host/isolation.rs` 定义闭集 `HostKind::{ClaudeCode,Codex}` 和各自
-  adapter。每个 phase 建立独立 HOME、host config/session root、repo worktree
-  和 phase-private condition data root；只有 condition 明确允许的 sanitized
+  adapter。每个 phase 建立独立 HOME、host config/session root 和
+  phase-private condition data root；source 与 target 严格串行复用同一个
+  run-scoped canonical absolute workspace path。source seal/cleanup 后，该 path
+  必须从 approved fixture 重建再启动 target，保持
+  `project_id.rs` 的 canonical Git-root identity；same-name decoy 使用不同 path/
+  project ID。只有 condition 明确允许的 sanitized
   credential bootstrap 可以复制到 private root，credential bytes 永不进入
   artifact。`remem_shared` 另建一个位于两侧 private roots 之外、按 run 唯一命名
   的 transfer store；source/target 只能串行把它挂载为 `REMEM_DATA_DIR`，其他
@@ -191,29 +201,31 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 - macOS 使用 host-read sandbox；其他平台在获得等价 deny-host-read 证据前
   fail closed。adapter 启动前记录宿主 binary/version/model/reasoning 和
   executable hash；未知 alias 或版本探测失败即停止。
-- live `run` 必须同时带显式确认参数与 `--approval-id`。唯一信任源是
-  `origin` 默认分支上的 `eval/cross-host/live-run-approvals.json`；调用方不能
-  传任意 approval 文件或 root。每个 append-only registry entry 通过
-  `live-run-approval.schema.json`，绑定 maintainer approval PR、APPROVED review
-  node、reviewer login/association、merge commit、approved/expires timestamps、
-  exact code/fixture/config/model/host-version hashes、允许的 matrix/tuple selectors、
-  credential-bootstrap reference（不得含 credential bytes）、
-  `max_host_calls`、`max_llm_calls`、`max_estimated_cost_usd` 与
-  `decision=allow`。`approval_id` 由 canonical entry digest + approval review
-  node + merge commit 派生，不接受调用方自选值。
-- runner 在 spawn/network 前从 GitHub API fresh 验证 approval PR 已 merge 到
-  default branch、review 为 APPROVED 且 reviewer association 符合 maintainer
-  role、远端 registry blob/digest 与本地 entry 完全一致；离线、远端漂移、过期、
-  hash/tuple 不匹配均 fail closed。每次命令另生成 `execution_id`，它不能改变
-  `approval_id` 或增加预算。
+- live `run` 必须同时带显式确认参数与 `--approval-key`。唯一 policy 源是
+  `origin` default branch 的 `eval/cross-host/live-run-approvals.json`；调用方
+  不能传任意 approval 文件/root。entry canonical preimage 明确排除
+  `approval_key`、review node、merge commit 与 usage；
+  `approval_key = sha256(repo_id || approval_pr_number ||
+  approved_head_tree_oid || canonical_policy_digest)`，字段在 review 前可知且
+  不自引用。policy 绑定 approved/expires timestamps、exact code/fixture/
+  source-seal/config/model/host executable/profile hashes、allowed matrix/tuples、
+  credential-bootstrap ref、hard caps 与 `decision=allow`。
+- runner 先执行隔离 authority-only phase：仅该 phase 可读取 repo-scoped
+  GitHub credential，fresh 验证 registry approved tree/blob、approval PR 已
+  merge、APPROVED review 未 dismissed 且 reviewer association 符合 maintainer。
+  它不能读取 host/provider auth 或启动 benchmark。清除 authority credential
+  后才允许 host bootstrap；offline、remote drift、过期、hash/tuple mismatch
+  均 fail closed。
 - CLI 还要求调用方显式传入不高于 registry entry 的三项 hard caps。
-  append-only usage ledger 的位置由 canonical GitHub owner/repo +
-  `approval_id` 在 git common dir 下确定，不接受 CLI/env/root override；启动时
-  以 ledger 与该 approval 所有 immutable run artifacts 的最大累计值为准。
-  ledger 使用锁、hash chain 与 atomic write。相同 approval/scope 的新
-  `execution_id` 必须继承已消费预算；只有新的独立 maintainer-approved、
-  default-branch-merged registry entry 才能增加预算。ledger 缺失、回退、
-  artifact/ledger 不一致或预算耗尽均在 spawn/network 前 fail closed。
+  authoritative usage ledger 是 repo-scoped protected
+  `refs/heads/remem-live-ledger`，不是 clone-local git common dir。每个 billable
+  host/LLM call 前，以当前 remote tip 为 parent 写入包含 approval/reservation/
+  tuple/call-kind/worst-case units/cost 的 commit，并用 non-force fast-forward
+  ref update 做 compare-and-swap；concurrent sibling update 必须 refetch/
+  recompute。reservation durable 后才允许 call，完成后追加 settlement；
+  crash/timeout/abandoned reservation 永久按 worst-case 计费。force/non-FF
+  history、reservation replay、cross-clone/execution ID split、reconciliation
+  drift 或预算耗尽均 fail closed；只有新的独立 reviewed policy 可增加预算。
   `--dry-run`、verify、schema self-test 和普通 CI 的 call graph 不得读取 auth
   或进入 adapter spawn。
 - source phase 完成后先终止进程、flush hook/capture、等待 bounded extraction
@@ -223,14 +235,20 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 ### 3. Condition engine（B-008、B-012-B-016、B-029）
 
 `cross_host/condition.rs` 以闭集实现 memory surface，所有 condition 共享
-fixture/prompt/scorer/model hash：
+fixture/prompt/scorer/source-seal/executable/model/profile hash：
 
 - `no_memory`：hooks/MCP/remem/native/export 全部关闭。
-- `target_host_native`：使用全新目标 HOME 中仅由目标宿主自己产生的 baseline
-  native memory；不得导入来源宿主内容。
-- `exported_file`：在 target prompt 揭示前，对 source history 运行固定、
-  target-blind exporter；冻结 repo-local handoff 的 content hash，并记录
-  generation/maintenance tokens、wall time、turns、bytes 和 diff size。
+- `target_host_native`：在 target prompt 揭示前，将同一 source seal 经
+  target host 的真实 native-memory preparation/import surface ingest 到全新
+  target HOME，再重新启动 target session；只允许目标宿主自己的 native store，
+  记录 preparation tokens/time/turns。ingest 后 native store 为空、不可读取或
+  target prompt 已揭示均 invalid，不能计作 native control。
+- `exported_file`：第一 source episode 后 target-blind 生成 handoff，后续每个
+  episode 后 update，记录 generation/maintenance tokens/time/turns/bytes/diff，
+  最终 freeze。所有 conditions/hosts 使用同一 versioned
+  `condition_context_envelope` broker/config；prompt 中仅有相同的 envelope
+  protocol，不加 condition-only note。exported condition 将 frozen content
+  放入 envelope，其他 condition 使用各自 surface/empty envelope。
 - `remem_shared`：source adapter 使用生产 hooks/automatic capture 写入临时
   run-scoped transfer store，bounded worker drain 后先销毁 source 的
   HOME/config/session/condition roots，再由 target adapter 将同一 transfer store
@@ -240,16 +258,23 @@ fixture/prompt/scorer/model hash：
   `coding_bench::condition::render_seeded_remem_context` 或
   `save_memory` shortcut。
 - `remem_without_host_native_import` /
-  `remem_with_host_native_import` 仅改变 #852 import switch，其余 config hash
-  必须一致。imported items 保留 origin/trust，不能转成 canonical。
+  `remem_with_host_native_import` 使用完整 144-tuple diagnostic plan。with arm
+  通过 #852 importer 产生 pending/quarantined candidates 后，执行预注册、
+  target-blind、独立 reviewer protocol；只把明确 approved candidates 提升到
+  可检索 projection，记录 reviewer cost/decision/evidence，且始终保留
+  `host_native_import` origin 与 non-canonical trust。without arm 执行相同
+  reviewer schedule 的 empty control；除 import content/review outcomes 外
+  config hash 必须一致。禁止把 quarantine 自动当作 active memory。
 - oracle/full transcript/preloaded 等 diagnostic surfaces 有独立 condition id，
   report 层永不把它们加入 primary denominator 或 public comparison。
 
 ### 4. Runner、状态机与 artifact（B-006-B-008、B-017-B-021）
 
-- `cross_host/runner.rs` 构造随机化但完整的 tuple plan：
-  `direction × task × condition × run_index`。primary 固定 288 tuple；
-  native ablation 另建 paired diagnostic plan。
+- `cross_host/runner.rs` 先构造 72 个
+  `(direction,task,run_index)` source-stage keys，每 key 只运行一次 source host，
+  原子封存 source seal 后才 fan out。随后构造随机化完整 tuple plan：
+  primary 固定 `24×4×3=288`；native ablation 固定 `24×2×3=144`。missing、
+  duplicate、seal mismatch 或 source re-execution 都 fail closed。
 - 每个 tuple 具有稳定 `matrix_key` 和不可复用 `attempt_id`。artifact 先写临时
   文件，flush/fsync 后 atomic rename；完成 artifact 不可覆盖。
 - pre-target infrastructure failure 可使用新 attempt 重试同一 tuple，历史
@@ -262,9 +287,11 @@ fixture/prompt/scorer/model hash：
   运行 array-argument score commands，验证 changed paths/patch patterns，
   并生成 failure taxonomy、metrics 与 attribution linkage。
 - run schema 将 environment/artifacts 改为 closed object，并要求 suite/
-  code/fixture/config hash、phase status、attempt history、scanner result、
-  scoring provenance、export cost 和 attribution refs。scanner 同时扫描 raw
-  local artifacts 与待提交 sanitized artifact。
+  code/fixture/source-seal/config hash、phase status、attempt history、scanner
+  result、scoring provenance、target-native/export/import-review cost 和
+  attribution stage refs。每个 stage 必须是 `present(ref)` 或 typed
+  `absent_due_to(failure)`；pipeline failure 的下游 absence 不排除 run，target
+  started outcome 仍以 failure 留在 primary denominator。
 - raw stdout/stderr/auth/private roots 留在 `.gitignore` 的本地 artifact
   目录。official evidence writer 分别将 288 个 primary attempts/runs 与完整
   native-import ablation 写入 scanner-passed sanitized JSONL bundles，并生成
@@ -287,11 +314,15 @@ fixture/prompt/scorer/model hash：
   outcome cluster；方向分别计算，aggregate 只作为补充。
 - `claim_gate.rs` 消费 candidate report hash 与 locked registry，依次检查：
   1. 288 primary completeness；
-  2. native import ablation completeness；
+  2. 144 native import ablation completeness；
   3. artifact/scanner/attribution integrity；
   4. direction-specific paired CI；
   5. exported-file cost presence；
   6. 五项 stop-loss。
+  leak predicates 扫描全部 288 primary tuples；`memory_hurt` 与
+  `stale_memory_followed` 按 product B-027 在每方向固定 36、aggregate 72 个
+  remem tuples 上计算。required attribution missing 使 verdict insufficient，
+  不得缩 denominator。
   任一安全 leak/stop-loss 失败优先于 effect；CI 含 0 只生成预注册
   directional/insufficient wording。gate 把 `PASS`/`FAIL`/`INSUFFICIENT`、
   candidate report hash、registry hash、允许/禁止 wording 与 reason codes
@@ -322,29 +353,38 @@ remem bench cross-host run --root eval/cross-host --runs-per-condition 3 \
   --matrix native-import-ablation --json-out <path> [--dry-run]
 remem bench cross-host run --root eval/cross-host --matrix smoke \
   --direction <direction> --task-id <task-id> --condition <condition> \
-  --run-index <index> --approval-id <id> --confirm-live-run \
+  --run-index <index> --approval-key <key> --confirm-live-run \
   --max-host-calls <n> --max-llm-calls <n> \
   --max-estimated-cost-usd <usd> --json-out <path>
 remem bench cross-host report --root eval/cross-host \
   --json-out <path> --markdown-out <path>
+remem bench cross-host gate --root eval/cross-host \
+  --registry eval/cross-host/claims-registry.json \
+  --report eval/cross-host/reports/cross-host-v1.json \
+  --json-out eval/cross-host/reports/cross-host-v1-gate.json
 ```
 
 - 所有写 report 的命令要求显式 output path。
 - 任意非 dry-run `primary`/`native-import-ablation` 也必须提供
-  `--approval-id`、`--confirm-live-run` 和三项 hard caps；approval registry
+  `--approval-key`、`--confirm-live-run` 和三项 hard caps；approval registry
   entry 的 allowed tuple set 必须覆盖实际 plan，且 runtime counter 不能超过
   任何 cap。
 - `--matrix smoke` 强制 direction/task/condition/run-index 各恰好一个，只产生
   一个 tuple，并在 schema/report 中永久标记 `excluded_from_public_denominator`。
-  `verify --input <run-artifact> --approval-id <id> --expected-matrix smoke`
+  `verify --input <run-artifact> --approval-key <key> --expected-matrix smoke`
   重新校验 exact head/fixture/model、授权期限、调用/成本计数、sandbox、cleanup
   与 exclusion marker。
 - `run --dry-run` 只验证 tasks、matrix、adapter availability declaration 和
   paths，不读取 auth、不启动宿主。
 - `verify` 对 committed report、sanitized artifacts、hash、claim registry
-  做离线验证。
-- README 结果段落依赖最后一个人工 task：只有 report + gate PASS 后才加入
-  direction-specific 数字与直接链接；否则仅保留“无公开结论”政策。
+  做离线验证；`gate` 是 `cross_host/claim_gate.rs` 的唯一 result-writer，
+  原子写入 schema-valid gate JSON。通用 Python `eval/claims/claim_gate.py`
+  只验证 registry/hash/wording，不接收未实现的 `--report/--json-out`。
+- report/evidence task 对 PASS/FAIL/INSUFFICIENT 都必须更新
+  `eval/cross-host/README.md`、`docs/specs/README.md` 和 canonical GH935/public
+  benchmark contracts 的实际运行状态与 report/gate links。root README 只有
+  report + gate PASS + exact wording approval 后才加入数字；否则保留无正向
+  结论但 current contracts 不能继续声称 `executable_no_runs`。
 - 代码引入用户可见 CLI，按 repo version-sync contract 在一个实现 PR 中同步
   Cargo/plugin/npm/server 版本和 CHANGELOG；真实 run/report evidence 可在后续
   非版本 PR 中提交。
@@ -357,33 +397,35 @@ remem bench cross-host report --root eval/cross-host \
 | B-002, B-005 task directions/categories | task schema、`fixture.rs` | `python3 eval/cross-host/scripts/run_dry.py` 证明两个方向各 12 类；wrong-host fixture 被拒绝。 |
 | B-003, B-004 ready lifecycle/empty fields | task schema、schema self-tests | 24 files 为 `ready` 且 todo/score/fixture 完整；ready+empty-score 与 missing-key negative fixtures 失败。 |
 | B-006 primary 288 | run plan、evidence source manifest、report completeness | dry-run 精确打印 288；删一个、复制一个、unverified 一个或 bundle hash drift 的 report tests 均 insufficient。 |
-| B-007 native paired ablation | diagnostic plan、report | with/without import 同 hash 配对通过；缺侧或 config drift negative tests 失败。 |
-| B-008 comparability | matrix/config hashing | target prompt/fixture/model 任一 drift 的 paired fixture 被 verifier 拒绝。 |
-| B-009, B-032 explicit/human authorization | CLI、default-branch approval registry/schema、route/handoff | `--dry-run` mock 证明零 spawn/network；伪造/未 merge/未 APPROVED/过期/mismatched approval、换 execution ID/root、缺 confirm 或超累计 hard cap 的 live command 在 spawn 前失败；human gate tasks 未勾选。 |
-| B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session/phase roots 全异；`remem_shared` 仅允许当前 run transfer store；target 先启动、其他 shared path 和 source cleanup failure tests 均失败。 |
+| B-007 native paired ablation | 144-tuple diagnostic plan、report | dry-run 精确输出 144；with/without import 同 hash 配对通过；缺侧、重复或 config drift negative tests 失败。 |
+| B-008 comparability | one-source seal、matrix/config hashing | 每个 direction/task/run 只执行一次 source 并 fan out 同一 seal；source 重跑或 prompt/fixture/executable/model/profile 任一 drift 被 verifier 拒绝。 |
+| B-009, B-032 explicit/human authorization | CLI、default-branch approval registry/schema、remote usage ledger、route/handoff | `--dry-run` mock 证明零 spawn/network；自引用 key、伪造/未 merge/未 APPROVED/过期/mismatched approval、authority credential 泄漏到 provider phase、换 clone/execution ID/root、reservation crash、CAS race、缺 confirm 或超全局 hard cap 均在 billable call 前失败；human gate tasks 未勾选。 |
+| B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session/phase roots 全异；source/target 串行复用同一 canonical workspace 并保持 project ID；decoy 为不同 ID；`remem_shared` 仅允许当前 run transfer store；target 先启动、其他 shared path 和 source cleanup failure tests 均失败。 |
 | B-011, B-016 leakage/hidden tests | sandbox、scanner、score timing | scanner self-test 覆盖真实 HOME/session/auth/private/hidden paths；agent 读取 hidden file 的 fixture 判 breach。 |
-| B-012 condition surfaces | condition engine | 每个 primary condition 的正例 + 任一额外 surface 的负例；surface manifest 必须闭集相等。 |
+| B-012 condition surfaces | condition engine | target-native preparation 产生可读 native state、exported handoff 经共同 host-neutral envelope 被消费；任一条件退化成 no-memory 或出现额外 surface 的负例失败。 |
 | B-013 real remem pipeline | remem_shared condition、capture attribution | integration test 从 hook event 到 selected context refs；production code test 断言未调用 seed/save/preload shortcut。 |
-| B-014, B-024 export freeze/cost | exported-file protocol、report | target-prompt-before-freeze 与缺 cost artifact 被拒绝；report 列出 per-task/aggregate 四类成本。 |
+| B-014, B-024 export freeze/cost | exported-file generation/update protocol、report | 至少两 episode、首次 generation、逐 episode update、target-prompt-before-freeze 与缺 cost artifact 被拒绝；report 列出 per-task/aggregate 四类成本。 |
 | B-017 failure completeness | runner/artifact schema | auth/crash/timeout/extraction/score/scanner/cleanup fault injection 均产生 typed failure 或 suite error。 |
 | B-018, B-019 retry/resume | artifact store、attempt policy | retry 保留旧 artifact；overwrite、duplicate matrix key、partial file、changed hash tests 全部失败。 |
-| B-020, B-021 attribution integrity | run schema、score/ref resolver | 缺每种 ref、跨 run ref、unknown/conflicting origin、native-as-canonical negative fixtures 均被拒绝。 |
+| B-020, B-021 attribution integrity | run schema、score/ref resolver | present ref 可解析；合法 typed downstream absence 保留 pipeline failure 于分母；无 failure 的缺 ref、跨 run ref、unknown/conflicting origin、native-as-canonical negative fixtures 均被拒绝。 |
 | B-022, B-023 denominators/directions | sanitized primary/ablation bundles、source manifest、report builder | failure run 在分母；缺值为 null；单方向缺失时 aggregate 不得 PASS；从 committed bundles 独立重算得到相同 candidate input hash。 |
 | B-025, B-026 paired bootstrap/CI wording | bootstrap、claim gate | fixed seed golden CI 可重现；unpaired/config drift/CI includes 0 只能得 directional/insufficient。 |
-| B-027, B-028 stop-loss precedence | report/claim gate | 每项阈值边界正负例；resolved gain + 任一 leak 仍为 FAIL。 |
-| B-029 native import trust | condition/attribution/report | with/without report 分开；import origin/trust 被篡改或混入 primary 时失败。 |
+| B-027, B-028 stop-loss precedence | report/claim gate | leak 分母固定 288，hurt/stale 每方向 36/aggregate 72；精确 causal predicate 与阈值边界正负例；缺 attribution 为 INSUFFICIENT，resolved gain + 任一 leak 仍为 FAIL。 |
+| B-029 native import trust | condition/attribution/report | 完整 144 with/without report 分开；import candidate 未经独立 review/promotion、origin/trust 被篡改或混入 primary 时失败。 |
 | B-030 compatibility | versioned loaders | v1 skeleton/old artifact 被明确拒绝或转换后重新验证，不能直接 complete。 |
-| B-031 public claim surface | immutable candidate report、separate gate result、CI check | candidate 先生成且 PASS/FAIL/INSUFFICIENT 均保留；report/gate hash mismatch、非 PASS + positive README wording 均使 `check_public_claims.py` 失败；PASS+link 正例通过。 |
+| B-031 public claim surface | immutable candidate report、Rust `bench cross-host gate`、CI check、post-live docs | candidate 先生成且 PASS/FAIL/INSUFFICIENT 均保留；真实 gate CLI 写 schema-valid result；report/gate hash mismatch、非 PASS + positive README wording 均使 `check_public_claims.py` 失败；任一 verdict 后 current contract/status/link 更新，PASS+approved wording/link 正例通过。 |
 
 ## 数据流
 
 ```text
 versioned charter + 24 ready tasks
   -> dry-run / complete randomized matrix plan
-  -> source host isolated phase
-  -> condition-specific handoff materialization
-  -> source termination + bounded pipeline drain + evidence seal
-  -> target host isolated phase
+  -> one source host isolated phase per direction/task/run
+  -> source termination + bounded pipeline drain + immutable source seal
+  -> fan out the same seal to target-native preparation / exported generation+updates /
+     remem transfer / no-memory surface
+  -> target host isolated phase at the same canonical workspace identity
+  -> target-blind native-import review/promotion diagnostic
   -> hidden-test scoring
   -> leak scan + attribution resolution
   -> immutable sanitized primary/ablation bundles + source manifest

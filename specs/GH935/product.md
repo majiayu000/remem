@@ -86,46 +86,57 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
    `24 tasks × 4 primary conditions × 3 runs = 288` 个有效 run artifact，
    两个方向各 144 个；少一个、重复顶替一个或存在未验证 artifact 都不得
    生成 complete verdict。
-7. **B-007** native-memory contribution 必须使用
-   `remem_without_host_native_import` 与
-   `remem_with_host_native_import` 的 paired ablation；两个方向、同一 task、
-   同一 run index 和相同非 ablation 配置必须成对，缺少任一侧时结论为
-   insufficient。
-8. **B-008** 同一 `(direction, task_id, run_index)` 的 primary conditions
-   必须共享相同 fixture revision、target prompt、hidden scoring 和模型/
-   reasoning 配置；只允许 condition memory surface 不同，避免用输入漂移
-   制造效果差异。
-9. **B-009** live host/network/LLM runs 只能由明确的人工命令启动，并记录
-   操作者确认、宿主版本、模型和代码/fixture revision；每次 live smoke/full
-   run 还必须绑定未过期的授权 artifact、exact allowed tuples、累计最大
-   host/LLM calls 与累计最大估算成本；同一授权拆成多条命令也不能重置预算。
-   普通 CI、schema check、dry-run 和 report verify 不得启动宿主或网络调用。
+7. **B-007** native-memory contribution 必须使用完整
+   `24 tasks × 2 conditions × 3 runs = 144` tuple 的
+   `remem_without_host_native_import` /
+   `remem_with_host_native_import` paired ablation；两个方向、同一 task/run
+   index 和相同非 ablation 配置必须成对。少一个、重复一个、hash drift 或
+   unverified artifact 都使 contribution verdict `INSUFFICIENT`。
+8. **B-008** 每个 `(direction, task_id, run_index)` 只执行一次 source
+   episode，先封存 immutable source transcript/tool-event/git patch/hash，再将
+   同一 seal fan out 给全部 primary/native-ablation conditions。它们必须共享
+   fixture revision、target prompt、hidden scoring、source seal 和全部
+   executable/model/profile 配置；只允许 condition memory surface 不同。重新
+   执行 source episode 或 seal/hash 不同的 pair 无效。
+9. **B-009** live host/network/LLM runs 只能由明确的人工命令启动。stable
+   `approval_key` 只由 pre-merge 可知且不包含自身的 canonical policy digest、
+   approval PR number 与 approved head tree OID 派生；merge/review attestation
+   不进入 ID preimage。每次 billable call 前必须在 authoritative protected
+   remote ledger 以 atomic non-force compare-and-swap durable reserve
+   worst-case calls/cost；crash/abandoned reservation 仍计费。同一 approval
+   跨 clone、resume、execution ID、并发或拆单都共享累计上限。普通 CI、
+   schema check、dry-run 和 report verify 不得启动宿主或网络调用。
 
 ### 隔离与 condition 边界
 
-10. **B-010** 每个 run 的来源阶段与目标阶段必须使用互不相同的新建
-    HOME、config、session store 和 phase-private condition data root；目标阶段
-    不得读取来源 session store、真实用户 HOME、其他 run 的数据或
-    benchmark-private paths。唯一例外是 `remem_shared` 可让两阶段依次挂载一个
-    与两侧 private roots 分离、仅属于当前 run 的 remem transfer store；该
-    store 不是 session/condition root，且不得承载其他 surface。
+10. **B-010** 每个 run 的来源阶段与目标阶段使用互不相同的新建 HOME、
+    config、session store 和 phase-private condition data root，但两阶段必须
+    严格串行复用同一个 run-scoped canonical absolute workspace path；source
+    cleanup/immutable seal 后将该 path 重置到 approved fixture，再启动 target，
+    从而保持 remem 的 canonical Git-root project identity。目标不得读取来源
+    session/private roots。`remem_shared` 仅额外挂载 run-scoped transfer store；
+    same-name decoy repo 必须保持不同 canonical path/project ID。
 11. **B-011** 任何 host HOME、auth/config、session、hidden test、
     private-root 或跨 project/user 泄漏都会使对应 run 无效并触发 suite
     stop-loss；泄漏 run 不得以“任务成功”掩盖，也不得从分母删除。
 12. **B-012** 四个 primary condition 的可见 memory surface 是闭集：
-    `no_memory` 无记忆面；`target_host_native` 仅有目标宿主自己的 native
-    memory；`exported_file` 仅有按固定协议冻结的 repo-local handoff；
-    `remem_shared` 仅通过真实 remem pipeline 写入并通过正常
-    SessionStart/MCP/Context Bundle 读取。`remem_shared` 的 run-scoped transfer
-    store 是唯一允许的跨阶段共同存储面；出现其他 shared path 或额外 surface
-    时 run 无效。
+    `no_memory` 无记忆面；`target_host_native` 必须在 target prompt 揭示前把
+    同一 source seal 通过目标宿主真实 native-memory preparation protocol
+    ingest 到新的 target HOME，并记录 preparation cost；`exported_file` 必须
+    通过所有 conditions 共用、prompt/config hash 相同的 versioned
+    host-neutral context-envelope protocol 提供冻结 handoff，不能加
+    condition-only prompt note；`remem_shared` 仅通过真实 remem pipeline 写入并
+    通过正常 SessionStart/MCP/Context Bundle 读取。任何 preparation/ingest/
+    envelope 验证缺失使对应 condition invalid，不能退化成 `no_memory`。
 13. **B-013** `remem_shared` 的来源证据必须经过自动 capture、extraction、
     review/promotion policy 和 production retrieval；直接写入 gold memory、
     调用手工 save、预载完整 evidence 或把 expected answer 写入 prompt
     都是无效捷径。
-14. **B-014** `exported_file` 必须在 target prompt 揭示前按固定、target-blind
-    协议生成并冻结；生成和后续维护的 wall time、tokens、turns 与变更量必须
-    作为结果的一部分记录，缺失成本的 run 无效。
+14. **B-014** 每个 task 必须有至少两个 chronological source episodes。
+    `exported_file` 在第一 episode 后 target-blind 生成 handoff，随后每个
+    episode 后执行一次 update，最终在 target prompt 揭示前冻结；分别记录
+    generation 与 maintenance 的 wall time、tokens、turns、bytes/diff。缺
+    update cycle、成本或 freeze hash 的 run 无效。
 15. **B-015** 来源宿主结束并清理运行态后才能启动目标宿主；阶段重叠、
     共享进程态或共享 session continuity 的 run 无效。
 16. **B-016** hidden tests 在 agent 退出前不可读、不可出现在 prompt、
@@ -146,10 +157,11 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
 
 ### Attribution、指标与成本
 
-20. **B-020** 每个 `remem_shared` run 必须记录 source/target host、
-    source session、captured event、promoted memory、selected context item、
-    cited/used ref，以及每个 ref 的 origin、target-time scope 和 validity；
-    缺任一必需链路时 run 不得计入 primary evidence。
+20. **B-020** 每个 `remem_shared` run 必须为 source/target host、source
+    session、capture、extraction、review/promotion、selection、citation/use
+    各阶段记录 `present` ref 或 typed `absent_due_to`。成功走到某阶段时 ref
+    必须可解析；上游 pipeline failure 导致下游 ref 不可能存在时保留 typed
+    absence、将 run 计为失败并留在 primary denominator，而不是排除。
 21. **B-021** attribution ref 必须可回溯到同一 run 的真实 artifact，origin
     只能来自闭集 `remem_canonical_capture`、`host_native_import`、
     `generated_projection`、`manual_save`；未声明 ref、跨 run ref、重复冲突
@@ -181,13 +193,21 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     `wrong_project_injection = 0`、`wrong_user_injection = 0`、
     `source_private_session_leak = 0`、
     `stale_memory_followed <= 1%`、`memory_hurt <= 2%`；分母必须来自完整、
-    可审计的适用 run 集。
+    可审计的适用 run 集。前三项扫描全部 288 primary tuples；后二项分别在每个
+    direction 的 36 个 `remem_shared` tuples 及 aggregate 72 tuples 上计算。
+    `memory_hurt` numerator 是 paired `no_memory` resolved=1、
+    `remem_shared` resolved=0 且 attribution 证明 injected/cited/used memory
+    导致错误动作的 tuple；`stale_memory_followed` numerator 是 cited/used
+    stale/superseded item 导致错误动作的 tuple。required attribution 缺失使
+    gate `INSUFFICIENT`，不得删除 run、缩小 denominator 或填 0。
 28. **B-028** 任一安全边界泄漏或 stop-loss 超阈值都使 release/public
     comparative claim FAIL，即使 resolved rate 或其置信区间改善；不得以
     warning、降级成功或只报告无泄漏子集替代失败。
 29. **B-029** host-native import 必须始终保留来源标记和非 canonical trust，
-    独立报告 with/without import 的贡献、伤害和 scope/stale 指标；不得把
-    diagnostic ablation 当作 primary condition。
+    importer 产物先保持 candidate/quarantined，只有经预注册、target-blind、
+    独立审计的 review/promotion 才能进入可检索 projection；未批准 candidate
+    不可自动激活。独立报告 with/without import 的贡献、伤害和 scope/stale
+    指标；不得把 diagnostic ablation 当作 primary condition。
 30. **B-030** schema/charter/task/report 必须 versioned；现有
     `cross-host-v1` skeleton 与旧 artifact 不得被新 harness 静默视为
     executable/complete，兼容迁移必须显式转换并重新验证，否则拒绝。
@@ -198,7 +218,9 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     gate result 为 hash-bound `PASS`、完整矩阵、paired bootstrap、
     direction-specific 结果和 stop-loss 全部通过后才能引用正向跨宿主结论；
     `FAIL`/`INSUFFICIENT` report 与 evidence 仍须保留，公开面只能保持政策或
-    “无公开结论”说明。
+    “无公开结论”说明。任一 verdict 产生后，benchmark README、spec index 与
+    canonical GH935/public benchmark contracts 必须更新真实运行状态和
+    report/gate links，不得继续声称 `executable_no_runs`。
 32. **B-032** readiness、spec approval、live-run authorization、最终 PR
     review、merge 与 release 均保持人工门禁；`implx auto` 或 benchmark
     执行授权不能替代 security、claim wording 或 release 决策。
@@ -210,8 +232,8 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
 - [ ] isolated Claude Code/Codex source→target harness 通过正负 isolation、
   cleanup、timeout、resume 和 artifact-integrity 测试。
 - [ ] 四个 primary conditions 形成 288 个验证通过的 run artifacts。
-- [ ] native-memory with/without import ablation 在两个方向形成完整 paired
-  evidence。
+- [ ] native-memory with/without import ablation 在两个方向形成完整
+  144-tuple paired evidence。
 - [ ] 每个 remem run 有完整 capture→memory→selection→use attribution，
   每个 exported-file run 有生成/维护成本。
 - [ ] 288+ablation sanitized evidence bundle/source manifest 可独立复算；
