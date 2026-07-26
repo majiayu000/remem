@@ -32,15 +32,39 @@ GH-931
       <fresh-exact-head-evidence-arguments-required-by-current-workflow> --json
     ```
 
+- [ ] `SP931-T1A` Owner: governance-security lane; Done when: machine-sensitive registry prerequisite 经独立 security review 合入 default branch，future approved-tech classification 为 `enforcement_sensitive=true`； Verify: workflow check 与 planned-tech classifier 通过； Covers: B-020, B-030。
+  - Owner: governance-security lane
+  - Dependencies: SP931-T1
+  - Covers: B-020, B-030
+  - File ownership:
+    - `workflow.yaml`
+  - Done when:
+    - `enforcement.sensitive_registry` 明确覆盖 `specs/GH931/*`、
+      `eval/coding-bench/schemas/live-run-approval.schema.json`、
+      `eval/coding-bench/live-run-approvals.json`、
+      `src/eval/coding_bench/approval.rs` 与 GH-931 public-claim authority；
+    - 该治理变更以独立、`enforcement_sensitive=true` 的 PR 接受 security
+      review 并 merge，不能由后续 implementation PR 自报 sensitive；
+    - 对本 complete planned manifest 的 approved-tech classifier 返回 true，
+      对当前只改 `specs/GH931/*` 的 spec PR 仍返回 false。
+  - Verify:
+
+    ```bash
+    python3 checks/check_workflow.py --repo .
+    python3 scripts/ci/check_pr_tier.py --self-test
+    ```
+
 ## 实现任务
 
 - [ ] `SP931-T2` Owner: condition-contract lane; Done when: condition registry、Rust IDs、schemas 与 legacy artifact policy 收敛且无 alias； Verify: validator、ID parse tests 与 primary 144-plan tests 通过； Covers: B-001-B-006, B-013。
   - Owner: condition-contract lane
-  - Dependencies: SP931-T1
+  - Dependencies: SP931-T1A
   - Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-013
   - File ownership:
     - `eval/coding-bench/{benchmark-charter.json,conditions.json,validate_schemas.py}`
     - `eval/coding-bench/schemas/{conditions.schema.json,flagship-run.schema.json,flagship-report.schema.json}`
+    - `eval/coding-bench/schemas/live-run-approval.schema.json`
+    - `eval/coding-bench/live-run-approvals.json`
     - `src/eval/coding_bench/{types.rs,run_plan.rs,fixture.rs}`
   - Done when:
     - primary/diagnostic ID 闭集与 Rust/JSON 一致；
@@ -61,23 +85,29 @@ GH-931
 
 - [ ] `SP931-T3` Owner: isolation-artifact lane; Done when: 每 run 私有边界、immutable attempts、resume、hidden scoring 与 dry-run 零外部调用完整； Verify: isolation/artifact/score fault tests 通过； Covers: B-014-B-020。
   - Owner: isolation-artifact lane
-  - Dependencies: SP931-T1
+  - Dependencies: SP931-T1A
   - Covers: B-014, B-015, B-016, B-017, B-018, B-019, B-020
   - File ownership:
     - `.gitignore`
-    - `src/eval/coding_bench/{isolation.rs,artifact.rs,score.rs}`
+    - `src/eval/coding_bench/{approval.rs,isolation.rs,artifact.rs,score.rs}`
   - Done when:
     - HOME/CODEX_HOME/DB/repo/artifact roots 对每 run/condition 唯一；
     - auth bootstrap 仅进入 private root 且 artifact 不含 secret bytes；
     - hidden files 在 agent 退出后才存在，score command 使用 argument array；
     - temp-write/fsync/atomic rename、unique attempt、resume-only-missing 生效；
     - timeout/crash/cleanup/scanner/partial/duplicate/hash drift 都有负例；
+    - runner 只接受 default-branch merged + maintainer APPROVED 的 canonical
+      approval entry，伪造/过期/dismissed/drift/hash/tuple/cap mismatch 在外部
+      调用前失败；
+    - approval-scoped append-only usage ledger 跨 resume、新 `execution_id` 和
+      并发命令累计，rollback、missing/reconciliation drift 与超额 fail closed；
     - dry-run mock 证明零 auth/provider/network/agent spawn。
   - Verify:
 
     ```bash
     cargo test eval::coding_bench::isolation
     cargo test eval::coding_bench::artifact
+    cargo test eval::coding_bench::approval
     cargo test eval::coding_bench::score
     ```
 
@@ -136,6 +166,8 @@ GH-931
     - `src/eval/coding_bench/runner.rs`
     - `eval/claims/{registry.json,claims-registry.schema.json,claim_gate.py}`
     - `eval/coding-bench/reports/{flagship-e2e-v1.json,flagship-e2e-v1.md}`
+    - `eval/coding-bench/evidence/flagship-e2e-v1/{run-records.jsonl,source-manifest.json}`
+    - `eval/coding-bench/schemas/evidence-source-manifest.schema.json`
     - report/bootstrap implementation must remain in an existing planned
       coding-bench file or update manifest/spec before adding a module
   - Done when:
@@ -144,6 +176,8 @@ GH-931
     - cost、failure denominator、null missing 和 attribution 完整；
     - registry 在 official run 前可锁定且 official digest mismatch invalid；
     - effect/CI/non-inferiority/cost/stop-loss/report-hash gates 有边界测试；
+    - 144 个 scanner-passed sanitized run records 和 source manifest 完整，
+      report 可仅从该 bundle 重算且 input hash 一致；
     - 未执行 live matrix 时 report/registry 保持 `INSUFFICIENT`。
   - Verify:
 
@@ -151,6 +185,7 @@ GH-931
     cargo test eval::coding_bench::tests::runner
     cargo test eval::coding_bench::tests::report
     cargo test eval::coding_bench::tests::paired_bootstrap
+    cargo test eval::coding_bench::tests::evidence_bundle
     python3 eval/claims/claim_gate.py --self-test
     python3 eval/claims/claim_gate.py check
     ```
@@ -226,6 +261,14 @@ GH-931
       expiry、max agent calls、max LLM calls 和 max estimated cost；
     - credential bytes 不进入 approval/artifact；
     - smoke 永久排除于 official denominator。
+    - smoke/full approval entry 通过
+      `eval/coding-bench/schemas/live-run-approval.schema.json`，经独立
+      maintainer APPROVED review 的 PR merge 到 default branch；entry 绑定
+      exact hashes/tuple selectors/有效期/caps 且不含 credential bytes，
+      `approval_id` 由 review node/merge commit/canonical digest 派生；
+    - runner 的 negative suite 已证明 caller 自选 ID、未 merge/未 APPROVED/
+      过期 registry、换 `execution_id`、ledger rollback 与拆单超额均在
+      auth/network/agent spawn 前失败。
   - Verify:
 
     ```bash
@@ -233,6 +276,8 @@ GH-931
     test -n "$GH931_MAX_AGENT_CALLS"
     test -n "$GH931_MAX_LLM_CALLS"
     test -n "$GH931_MAX_ESTIMATED_COST_USD"
+    cargo test eval::coding_bench::approval
+    cargo test eval::coding_bench::tests::cumulative_usage_ledger
     ```
 
 - [ ] `SP931-T10` Owner: authorized benchmark operator; Done when: 144 个 primary tuple 都有 immutable verified artifacts； Verify: final verifier 报告 `valid_primary_runs == 144`； Covers: B-004-B-006, B-014-B-024。
@@ -246,6 +291,10 @@ GH-931
     - no secret/HOME/hidden/cross-run leak；
     - run 使用 locked registry digest 和累计预算；
     - report 可从 artifacts 重建。
+    - scanner-passed sanitized attempts/runs 写入 committed
+      `run-records.jsonl`，`source-manifest.json` 绑定全部 attempt、matrix、
+      scanner、code/fixture/registry 与 report-input hashes；raw/private/secret
+      evidence 不进入 git。
   - Verify:
 
     ```bash
@@ -256,6 +305,9 @@ GH-931
       --max-estimated-cost-usd "$GH931_MAX_ESTIMATED_COST_USD" \
       --json-out /tmp/gh931-primary.json
     jq -e '.valid_primary_runs == 144' /tmp/gh931-primary.json
+    cargo run -- bench coding-report \
+      --input eval/coding-bench/evidence/flagship-e2e-v1 \
+      --json-out /tmp/gh931-recomputed-report.json
     ```
 
 - [ ] `SP931-T11` Owner: report-claim lane + maintainer; Done when: paired report、cost、stop-loss、wording、review/merge/issue/release 决策完整； Verify: claim/public checks 与 exact-head PR gate 通过； Covers: B-023-B-030。
@@ -263,7 +315,8 @@ GH-931
   - Dependencies: SP931-T10
   - Covers: B-023, B-024, B-025, B-026, B-027, B-028, B-029, B-030
   - Done when:
-    - JSON/Markdown report、source artifact manifest/hash 与 registry 一致；
+    - JSON/Markdown report、committed sanitized run-record bundle、
+      source manifest/hash 与 registry 一致；
     - paired CI、maintenance cost、memory-harm stop-loss 可复算；
     - 只有 PASS 才由 maintainer 批准具体 public wording；
     - independent review、CI、threads/PR gate 与 closure audit 完成；
@@ -279,7 +332,8 @@ GH-931
 
 ## 并行拆分
 
-- SP931-T2 与 SP931-T3 在 T1 后可并行，文件所有权不重叠。
+- SP931-T1A 必须在 T1 后独立落地；它 merge 前不得启动 T2-T11。
+- SP931-T2 与 SP931-T3 在 T1A 后可并行，文件所有权不重叠。
 - SP931-T5 可与 T2/T3 并行且只写 curator contract 文件；T4 等待三者完成后
   独占 `condition.rs`/`failure.rs` 与指定 test sections。
 - T6 等待 T4/T5 后独占 runner/report/claim integration。

@@ -17,6 +17,7 @@ GH-931
     "specs/GH931/product.md",
     "specs/GH931/tech.md",
     "specs/GH931/tasks.md",
+    "workflow.yaml",
     ".gitignore",
     "README.md",
     "README.zh-CN.md",
@@ -38,14 +39,20 @@ GH-931
     "eval/coding-bench/schemas/curator-log.schema.json",
     "eval/coding-bench/schemas/flagship-run.schema.json",
     "eval/coding-bench/schemas/flagship-report.schema.json",
+    "eval/coding-bench/schemas/evidence-source-manifest.schema.json",
+    "eval/coding-bench/schemas/live-run-approval.schema.json",
     "eval/coding-bench/examples/curator-log.example.json",
     "eval/coding-bench/validate_schemas.py",
+    "eval/coding-bench/live-run-approvals.json",
+    "eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl",
+    "eval/coding-bench/evidence/flagship-e2e-v1/source-manifest.json",
     "eval/coding-bench/reports/flagship-e2e-v1.json",
     "eval/coding-bench/reports/flagship-e2e-v1.md",
     "eval/claims/claims-registry.schema.json",
     "eval/claims/registry.json",
     "eval/claims/claim_gate.py",
     "src/eval/coding_bench/artifact.rs",
+    "src/eval/coding_bench/approval.rs",
     "src/eval/coding_bench/condition.rs",
     "src/eval/coding_bench/failure.rs",
     "src/eval/coding_bench/fixture.rs",
@@ -85,6 +92,15 @@ report/wording 的累计路径边界，不要求单个 PR 触及全集。每个 
 做精确核对。若实现证明需要新路径，先更新本 manifest 并重新取得
 spec/security approval；spec lane 不预创建或伪造 report。
 
+`workflow.yaml` 是必须先落地、单独复审的 sensitive-registry prerequisite，
+不是允许普通实现 lane 顺手改治理配置。该 prerequisite 必须把
+`specs/GH931/*`、live approval schema/registry、`approval.rs` 和 public-claim
+authority 纳入 `enforcement.sensitive_registry`；在它合入 default branch 前，
+不得实现 live authorization、运行 official matrix 或发布 claim。因为
+`workflow.yaml` 本身已是 trusted sensitive path，本 complete manifest 的
+approved-tech classification 必须为 `enforcement_sensitive=true`；当前只改
+`specs/GH931/*` 的 spec PR 则仍应声明 `enforcement_sensitive=false`。
+
 ## Codebase Context
 
 以下事实已在
@@ -103,6 +119,7 @@ spec/security approval；spec lane 不预创建或伪造 report。
 | Curator scaffold | `curated-file-budgeted-protocol.md`, curator schema/example | target-blind protocol 与 log shape 已定义，runner 未验证 freeze hash/预算。 | 接入真实 budgeted primary condition。 |
 | Claim gate | `eval/claims/{registry.json,claim_gate.py}` | 三个 claim 均 `INSUFFICIENT`，registry `locked=false`，无 supporting report。 | 首个 official run 前锁定；无证据继续 fail closed。 |
 | Public claim CI | `scripts/ci/check_public_claims.py` | 只基于旧 public baseline gate 扫 public surfaces。 | 接入 GH-931 hash-bound verdict，属于 enforcement-sensitive 路径。 |
+| Live authorization | `eval/coding-bench/` | 当前没有 default-branch approval registry、approval schema 或跨命令 usage ledger。 | caller-provided ID/caps 不是授权；B-020/B-030 要求 trusted registry 与累计预算。 |
 
 ## 设计方案
 
@@ -136,6 +153,28 @@ spec/security approval；spec lane 不预创建或伪造 report。
   tests。
 - artifact 采用 temp-write + fsync + atomic rename；`attempt_id` 唯一，完成
   文件不覆盖。resume 只接受 hash 验证后的完成 tuple。
+- live `run` 的唯一授权源是 `origin` default branch 上的
+  `eval/coding-bench/live-run-approvals.json`，调用方不得传任意 registry path
+  或自己选择 approval 内容。每个 entry 通过
+  `live-run-approval.schema.json`，绑定 merged approval PR、APPROVED maintainer
+  review node/reviewer association、merge commit、approved/expires 时间、
+  canonical entry digest、exact code/fixture/claim-registry/model/timeout/
+  sandbox hashes、允许的 matrix/tuple selectors、credential bootstrap ref
+  （不含 secret bytes）以及累计 agent/LLM/cost hard caps；`approval_id` 由
+  canonical digest + review node + merge commit 派生。
+- `approval.rs` 必须在任何 auth read、network/provider/agent spawn 前通过
+  GitHub API fresh 验证 approval PR 已 merge 到 default branch、reviewer 具备
+  maintainer association、remote registry blob/digest 与本地 entry 完全一致。
+  离线、过期、review 被 dismiss、registry drift、hash/tuple/cap 不匹配都
+  fail closed；CLI 传入的 cap 只能进一步收紧，不能扩大授权。
+- 每条命令生成独立 `execution_id`，但 canonical owner/repo +
+  derived `approval_id` 唯一定位 append-only usage ledger；CLI/env/output root
+  不得覆盖 ledger identity/location。ledger 使用跨进程锁、hash chain、
+  temp-write/fsync/atomic rename，并与同 approval 的 immutable attempt/run
+  artifacts 取累计消耗的最大一致值。resume、新 `execution_id`、并发命令和
+  拆单都继承已消费 calls/cost；ledger missing/rollback、artifact reconciliation
+  不一致或累计上限耗尽均在外部调用前失败。只有新的 maintainer-approved、
+  default-branch-merged approval entry 能增加预算。
 
 ### 3. `remem_e2e` production adapter（B-008-B-010、B-017、B-021-B-022）
 
@@ -178,9 +217,16 @@ spec/security approval；spec lane 不预创建或伪造 report。
 - flagship run schema 固定 run identity、attempt history、condition surface、
   runtime/score result、stage failure、tokens/wall time、curator cost、
   memory-harm 和 attribution DAG/hash。
+- official evidence writer 将每个 scanner-passed sanitized attempt/run 追加到
+  `eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl`，并生成
+  `source-manifest.json`：记录 144 个 matrix keys、全部 attempt hashes、schema/
+  code/fixture/registry hashes、scanner verdict、denominator policy、bundle hash
+  和 report input hash。manifest 通过独立 schema；raw stdout/stderr/auth/
+  private roots 只留在 ignored local artifacts，不能进入 bundle。
 - report builder 先验证 144 tuple completeness、attempt policy、同 pair hashes
-  和 artifact integrity，再汇总 task-level denominator。缺失 metric 使用
-  `null` 与 `missing_count`。
+  、source manifest 与 bundle hash，再汇总 task-level denominator。缺失
+  metric 使用 `null` 与 `missing_count`。aggregate-only report 或只位于
+  `/tmp` 的 run output 不允许成为 public claim supporting evidence。
 - paired bootstrap 以 task 为 resampling cluster，固定 algorithm/version/seed，
   分别计算 E2E vs no-memory superiority 与 E2E vs budgeted non-inferiority；
   run repetition 只在 task cluster 内聚合。
@@ -226,9 +272,9 @@ remem bench coding-report --input <artifact-root> \
 | B-008-B-010 E2E path | capture/extraction adapter、worker drain、context render | isolated integration test 证明 capture→use DAG；seed/save/preload shortcut 测试失败；provider/drain failure 不降级。 |
 | B-011-B-013 curator/diagnostics | curator adapter、condition registry | target-blind/freeze/hash/budget 正负例；diagnostic 不进入 primary。 |
 | B-014-B-016 isolation/security | isolation、score | unique private roots；host path/secret/hidden leak scanner；hidden file agent phase 不存在。 |
-| B-017-B-020 failure/retry/dry-run | artifact store、runner | fault injection、immutable attempt、resume、duplicate/partial/hash drift negatives；dry-run mock 零 spawn/network/auth。 |
+| B-017-B-020 failure/retry/dry-run | artifact store、approval verifier/ledger、runner | fault injection、immutable attempt、resume、duplicate/partial/hash drift negatives；伪造/未 merge/未 APPROVED/过期/drift approval 与 ledger rollback/并发超额/新 execution ID negatives；dry-run mock 零 spawn/network/auth。 |
 | B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；每 failure 恰好一个 stage/code。 |
-| B-023-B-024 report/bootstrap | report builder | failure留分母、null missing、task-cluster golden CI、unpaired/hash drift insufficient。 |
+| B-023-B-024 report/bootstrap | sanitized evidence bundle/source manifest、report builder | 144 records/hash/referential completeness；failure 留分母、null missing、task-cluster golden CI、unpaired/hash drift insufficient；从 bundle 独立重算得到相同 report input hash。 |
 | B-025-B-029 claim gates | claim registry/gate/public CI | effect/CI/non-inferiority/cost/stop-loss 边界、自报 PASS、hash drift、非 PASS 正向 wording 全部覆盖。 |
 | B-030 human gates | CLI/live authorization/handoff | 缺 approval/confirm/hard caps 在 agent/provider 调用前失败；spec 不自批。 |
 
@@ -247,14 +293,16 @@ remem bench coding-report --input <artifact-root> \
   -> hidden deterministic scoring
   -> failure-stage + attribution resolution
   -> immutable run artifact/hash
+  -> scanner-passed sanitized run-record bundle + source manifest
   -> task-level paired aggregation/bootstrap
   -> stop-loss + claim gate
   -> hash-bound JSON/Markdown report
   -> public wording CI + human release decision
 ```
 
-只有 isolated temp roots、显式 artifact output 和最终 sanitized report 可写。
-真实 HOME、auth bytes、host session 与 hidden content 不进入可提交 artifact。
+只有 isolated temp roots、显式 artifact output、scanner-passed sanitized
+run-record bundle/source manifest 和最终 sanitized report 可写。真实 HOME、
+auth bytes、host session 与 hidden content 不进入可提交 artifact。
 
 ## 备选方案
 

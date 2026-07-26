@@ -131,7 +131,11 @@ stale/irrelevant memory harm。
 19. **B-019** resume 只补缺失 tuple；duplicate tuple、hash drift、partial
     artifact 或已完成 artifact overwrite 必须被拒绝。
 20. **B-020** dry-run、schema validation、report verify 和普通 CI 不读取
-    provider key、不启动 agent、不访问网络；live run 必须有新的人工限额授权。
+    provider key、不启动 agent、不访问网络；live run 必须引用 default branch
+    上经 maintainer review/merge 的 immutable approval entry。approval 必须绑定
+    exact code/fixture/registry/model/timeout、允许 tuple 和累计 calls/cost 上限；
+    resume、换 `execution_id` 或拆成多条命令都不得重置同一 `approval_id` 的
+    已消费预算。
 
 ### Attribution、失败分解与 claim
 
@@ -144,7 +148,10 @@ stale/irrelevant memory harm。
 23. **B-023** report 必须公开每个 condition/task 的成功、失败、缺失分母，
     `resolved_rate`、compile/timeout/wrong-file、tokens、wall time、人工维护
     成本、memory helped/hurt、stale/irrelevant/missing 和 citation 指标；无数据
-    用 `null` + missing count。
+    用 `null` + missing count。144 个 primary tuple 的 scanner-passed sanitized
+    run records 与 source manifest 必须作为 committed release evidence 保留，
+    并足以独立重算分母、失败、成本、attribution、report hash 和 gate input；
+    `/tmp` 或 aggregate-only report 不构成可复验证据。
 24. **B-024** `remem_e2e` 与两个 controls 的比较必须使用 fixed-seed
     task-cluster paired bootstrap，报告 absolute pp difference 与 95% CI；
     pair/hash 缺失时 verdict 为 `INSUFFICIENT`。
@@ -173,7 +180,8 @@ stale/irrelevant memory harm。
 - [ ] condition/run 隔离、timeout、cleanup、resume、attempt integrity 和
   hidden-test 边界有 deterministic tests。
 - [ ] 6-stage / 12-enum failure attribution 与完整 source-to-use refs 可验证。
-- [ ] 144-run official artifacts、paired report、成本与 stop-loss 可复算。
+- [ ] 144-run official artifacts 有 committed sanitized run-record bundle 与
+  source manifest；paired report、成本、attribution 与 stop-loss 可独立复算。
 - [ ] claim registry 在 official run 前锁定，wording 只引用 hash-bound verdict。
 - [ ] 没有 official runs 时保持 `INSUFFICIENT`，不产生 public outcome claim。
 
