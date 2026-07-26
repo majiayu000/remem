@@ -17,6 +17,7 @@ GH-935
     "specs/GH935/product.md",
     "specs/GH935/tech.md",
     "specs/GH935/tasks.md",
+    "workflow.yaml",
     ".gitignore",
     "README.md",
     "README.zh-CN.md",
@@ -33,6 +34,8 @@ GH-935
     "eval/cross-host/schemas/cross-host-task.schema.json",
     "eval/cross-host/schemas/cross-host-run.schema.json",
     "eval/cross-host/schemas/cross-host-report.schema.json",
+    "eval/cross-host/schemas/cross-host-claim-verdict.schema.json",
+    "eval/cross-host/schemas/evidence-source-manifest.schema.json",
     "eval/cross-host/schemas/live-run-approval.schema.json",
     "eval/cross-host/live-run-approvals.json",
     "eval/cross-host/examples/run-artifact-valid.json",
@@ -40,6 +43,9 @@ GH-935
     "eval/cross-host/scripts/schema_validate.py",
     "eval/cross-host/scripts/scan_artifacts.py",
     "eval/cross-host/scripts/run_dry.py",
+    "eval/cross-host/evidence/cross-host-v1/primary-run-records.jsonl",
+    "eval/cross-host/evidence/cross-host-v1/native-ablation-run-records.jsonl",
+    "eval/cross-host/evidence/cross-host-v1/source-manifest.json",
     "eval/cross-host/tasks/claude-to-codex/cc2cx-architecture-decision.json",
     "eval/cross-host/tasks/claude-to-codex/cc2cx-branch-specific-truth.json",
     "eval/cross-host/tasks/claude-to-codex/cc2cx-failed-attempt-lesson.json",
@@ -66,6 +72,7 @@ GH-935
     "eval/cross-host/tasks/codex-to-claude/cx2cc-workstream-next-action.json",
     "eval/cross-host/reports/cross-host-v1.json",
     "eval/cross-host/reports/cross-host-v1.md",
+    "eval/cross-host/reports/cross-host-v1-gate.json",
     "src/eval.rs",
     "src/eval/host_isolation.rs",
     "src/eval/coding_bench/isolation.rs",
@@ -109,8 +116,20 @@ spec/implementation/report PR 的 diff 等于全集。每个 PR 的 touched-path
 必须属于该 manifest；T12 closure audit 从固定 baseline 起收集全部 linked PR 的
 file lists，并对 union 做最终精确相等检查。若真实宿主 CLI 探测、fixture 设计或
 实现证明需要其他路径，必须先用准确路径更新本 manifest、重新取得 human
-spec/security review，再修改新增路径。报告文件只有在真实运行和 gate 通过后
-才生成；本 spec lane 不创建或伪造报告。
+spec/security review，再修改新增路径。candidate report 只有在真实运行
+evidence 经 scanner/verifier 通过后才生成，但不得等待 claim gate PASS：
+`PASS`、`FAIL`、`INSUFFICIENT` 的 candidate report/evidence 都必须保留。
+claim gate 消费 immutable candidate report hash 并另写 gate result；本 spec
+lane 不创建或伪造任何运行、报告或 verdict。
+
+`workflow.yaml` 是必须先落地、单独复审的 sensitive-registry prerequisite，
+不是普通实现 lane 可顺手修改的治理文件。它必须在 live authority/claim
+implementation 前把 `specs/GH935/*`、approval schema/registry、
+`src/eval/cross_host/{approval.rs,claim_gate.rs}`、claim verdict schema/result
+与 public-claim authority 纳入 `enforcement.sensitive_registry`。因为
+`workflow.yaml` 本身是 trusted sensitive path，本 complete manifest 的
+approved-tech classification 必须为 `enforcement_sensitive=true`；当前只改
+`specs/GH935/*` 的 spec PR 仍应声明 `enforcement_sensitive=false`。
 
 ## Codebase Context
 
@@ -247,18 +266,26 @@ fixture/prompt/scorer/model hash：
   scoring provenance、export cost 和 attribution refs。scanner 同时扫描 raw
   local artifacts 与待提交 sanitized artifact。
 - raw stdout/stderr/auth/private roots 留在 `.gitignore` 的本地 artifact
-  目录；committed report 只引用 scanner-passed sanitized run records/hash。
+  目录。official evidence writer 分别将 288 个 primary attempts/runs 与完整
+  native-import ablation 写入 scanner-passed sanitized JSONL bundles，并生成
+  `source-manifest.json`，绑定全部 matrix/attempt hashes、schema/code/fixture/
+  config/approval hashes、scanner verdict、denominator policy、bundle hashes
+  与 candidate-report input hash。manifest 通过独立 schema；committed
+  candidate report 只引用该 evidence/source-manifest，不引用 raw local paths。
 
 ### 5. Report、paired bootstrap 与 claim gate（B-022-B-031）
 
-- `cross_host/report.rs` 先验证 matrix completeness 和每个 run schema/hash，
-  再按方向/condition/task 汇总。所有适用失败进入分母；缺失 metric 输出
-  `null` 加 `missing_count`，不写 0。
+- `cross_host/report.rs` 先验证 primary/native-ablation source manifest、
+  bundle hashes、matrix completeness 和每个 run schema/hash，再按
+  方向/condition/task 汇总。所有适用失败进入分母；缺失 metric 输出 `null`
+  加 `missing_count`，不写 0。它先生成 immutable candidate JSON/Markdown
+  report 与 content hash，candidate 不含自引用 verdict，且无论后续
+  `PASS`、`FAIL` 或 `INSUFFICIENT` 都保留。
 - `bootstrap.rs` 用固定算法版本、显式 seed、95% CI 和 task-cluster
   resampling，对 `remem_shared` 分别配对 `target_host_native` 和
   `exported_file`。配对单位是同方向、同 task、相同 run-index config 的
   outcome cluster；方向分别计算，aggregate 只作为补充。
-- `claim_gate.rs` 依次检查：
+- `claim_gate.rs` 消费 candidate report hash 与 locked registry，依次检查：
   1. 288 primary completeness；
   2. native import ablation completeness；
   3. artifact/scanner/attribution integrity；
@@ -266,14 +293,18 @@ fixture/prompt/scorer/model hash：
   5. exported-file cost presence；
   6. 五项 stop-loss。
   任一安全 leak/stop-loss 失败优先于 effect；CI 含 0 只生成预注册
-  directional/insufficient wording。
+  directional/insufficient wording。gate 把 `PASS`/`FAIL`/`INSUFFICIENT`、
+  candidate report hash、registry hash、允许/禁止 wording 与 reason codes
+  写入独立 immutable `cross-host-v1-gate.json`；不得改写或删除 candidate
+  report 来隐藏失败。
 - `claims-registry.json` 预注册两个方向的 remem-vs-native、
   remem-vs-exported 和 stop-loss claim，初始均为 `INSUFFICIENT`。gate 复用
   `eval/claims/claim_gate.py` 的 report-hash/wording contract，同时要求专用
   cross-host verdict 与 report hash 一致。
 - `cross-host-report.schema.json` 固定 matrix counts、direction results、
-  denominator、bootstrap config/CI、cost、ablation、stop-loss、claim verdict、
-  code/fixture hashes 和 source artifact manifest。
+  denominator、bootstrap config/CI、cost、ablation、stop-loss、code/fixture
+  hashes 和 source artifact manifest；claim verdict 使用独立
+  `cross-host-claim-verdict.schema.json`，避免 report/hash/verdict 自引用。
 - `scripts/ci/check_public_claims.py` 读取 committed cross-host report/registry；
   没有 hash-bound PASS 时，README/README.zh-CN/CHANGELOG 中的正向跨宿主
   superiority wording 失败。普通 CI 只验证已提交 evidence，绝不执行 live
@@ -325,7 +356,7 @@ remem bench cross-host report --root eval/cross-host \
 | B-001 infrastructure/insufficient truth | charter state derivation、report gate | synthetic empty suite：`bench cross-host verify` 输出 `insufficient` 且非 PASS；README 无结果。 |
 | B-002, B-005 task directions/categories | task schema、`fixture.rs` | `python3 eval/cross-host/scripts/run_dry.py` 证明两个方向各 12 类；wrong-host fixture 被拒绝。 |
 | B-003, B-004 ready lifecycle/empty fields | task schema、schema self-tests | 24 files 为 `ready` 且 todo/score/fixture 完整；ready+empty-score 与 missing-key negative fixtures 失败。 |
-| B-006 primary 288 | run plan、report completeness | dry-run 精确打印 288；删一个、复制一个、unverified 一个的 report tests 均 insufficient。 |
+| B-006 primary 288 | run plan、evidence source manifest、report completeness | dry-run 精确打印 288；删一个、复制一个、unverified 一个或 bundle hash drift 的 report tests 均 insufficient。 |
 | B-007 native paired ablation | diagnostic plan、report | with/without import 同 hash 配对通过；缺侧或 config drift negative tests 失败。 |
 | B-008 comparability | matrix/config hashing | target prompt/fixture/model 任一 drift 的 paired fixture 被 verifier 拒绝。 |
 | B-009, B-032 explicit/human authorization | CLI、default-branch approval registry/schema、route/handoff | `--dry-run` mock 证明零 spawn/network；伪造/未 merge/未 APPROVED/过期/mismatched approval、换 execution ID/root、缺 confirm 或超累计 hard cap 的 live command 在 spawn 前失败；human gate tasks 未勾选。 |
@@ -337,12 +368,12 @@ remem bench cross-host report --root eval/cross-host \
 | B-017 failure completeness | runner/artifact schema | auth/crash/timeout/extraction/score/scanner/cleanup fault injection 均产生 typed failure 或 suite error。 |
 | B-018, B-019 retry/resume | artifact store、attempt policy | retry 保留旧 artifact；overwrite、duplicate matrix key、partial file、changed hash tests 全部失败。 |
 | B-020, B-021 attribution integrity | run schema、score/ref resolver | 缺每种 ref、跨 run ref、unknown/conflicting origin、native-as-canonical negative fixtures 均被拒绝。 |
-| B-022, B-023 denominators/directions | report builder | failure run 在分母；缺值为 null；单方向缺失时 aggregate 不得 PASS。 |
+| B-022, B-023 denominators/directions | sanitized primary/ablation bundles、source manifest、report builder | failure run 在分母；缺值为 null；单方向缺失时 aggregate 不得 PASS；从 committed bundles 独立重算得到相同 candidate input hash。 |
 | B-025, B-026 paired bootstrap/CI wording | bootstrap、claim gate | fixed seed golden CI 可重现；unpaired/config drift/CI includes 0 只能得 directional/insufficient。 |
 | B-027, B-028 stop-loss precedence | report/claim gate | 每项阈值边界正负例；resolved gain + 任一 leak 仍为 FAIL。 |
 | B-029 native import trust | condition/attribution/report | with/without report 分开；import origin/trust 被篡改或混入 primary 时失败。 |
 | B-030 compatibility | versioned loaders | v1 skeleton/old artifact 被明确拒绝或转换后重新验证，不能直接 complete。 |
-| B-031 public claim surface | dedicated claim gate、CI check | report hash mismatch、INSUFFICIENT/FAIL + positive README wording 均使 `check_public_claims.py` 失败；PASS+link 正例通过。 |
+| B-031 public claim surface | immutable candidate report、separate gate result、CI check | candidate 先生成且 PASS/FAIL/INSUFFICIENT 均保留；report/gate hash mismatch、非 PASS + positive README wording 均使 `check_public_claims.py` 失败；PASS+link 正例通过。 |
 
 ## 数据流
 
@@ -355,11 +386,12 @@ versioned charter + 24 ready tasks
   -> target host isolated phase
   -> hidden-test scoring
   -> leak scan + attribution resolution
-  -> immutable sanitized run artifact + hash manifest
+  -> immutable sanitized primary/ablation bundles + source manifest
   -> direction-specific aggregation
   -> paired task-cluster bootstrap
   -> native-import ablation + exported-file cost + stop-loss
-  -> claim verdict + hash-bound JSON/Markdown report
+  -> immutable candidate JSON/Markdown report
+  -> claim gate -> separate hash-bound PASS/FAIL/INSUFFICIENT result
   -> offline public-claim CI
   -> optional human-approved README wording
 ```

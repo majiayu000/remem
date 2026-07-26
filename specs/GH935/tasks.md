@@ -35,11 +35,32 @@ GH-935
       <fresh-exact-head-evidence-arguments-required-by-current-workflow> --json
     ```
 
+- [ ] `SP935-T1A` Owner: governance-security lane; Done when: machine-sensitive registry prerequisite 经独立 security review 合入 default branch，future approved-tech classification 为 `enforcement_sensitive=true`； Verify: workflow check 与 planned-tech classifier 通过； Covers: B-009, B-031, B-032。
+  - Owner: governance-security lane
+  - Dependencies: SP935-T1
+  - Covers: B-009, B-031, B-032
+  - File ownership:
+    - `workflow.yaml`
+  - Done when:
+    - `enforcement.sensitive_registry` 明确覆盖 `specs/GH935/*`、live approval
+      schema/registry、`src/eval/cross_host/{approval.rs,claim_gate.rs}`、
+      claim-verdict schema/result 与 GH-935 public-claim authority；
+    - 该治理变更以独立、`enforcement_sensitive=true` 的 PR 接受 security
+      review 并 merge；后续 implementation PR 不能用 author declaration 替代；
+    - 本 complete planned manifest 的 approved-tech classifier 返回 true，
+      当前只改 `specs/GH935/*` 的 spec PR 仍返回 false。
+  - Verify:
+
+    ```bash
+    python3 checks/check_workflow.py --repo .
+    python3 scripts/ci/check_pr_tier.py --self-test
+    ```
+
 ## 实现任务
 
 - [ ] `SP935-T2` Owner: fixture-contract lane; Done when: versioned schemas 与 24 个 deterministic tasks 全部 `ready`； Verify: schema self-test 与 `run_dry.py` 通过； Covers: B-001, B-002, B-003, B-004, B-005, B-030。
   - Owner: fixture-contract lane
-  - Dependencies: SP935-T1
+  - Dependencies: SP935-T1A
   - Covers: B-001, B-002, B-003, B-004, B-005, B-030
   - File ownership:
     - `eval/cross-host/benchmark-charter.json`
@@ -71,7 +92,7 @@ GH-935
 
 - [ ] `SP935-T3` Owner: host-isolation lane; Done when: Claude/Codex 共用 fail-closed host isolation 且 dry-run 零 spawn； Verify: host-isolation/coding-bench/cross-host isolation tests 通过； Covers: B-009, B-010, B-011, B-015, B-016, B-017, B-032。
   - Owner: host-isolation lane
-  - Dependencies: SP935-T1
+  - Dependencies: SP935-T1A
   - Covers: B-009, B-010, B-011, B-015, B-016, B-017, B-032
   - File ownership:
     - `src/eval/host_isolation.rs`
@@ -130,6 +151,7 @@ GH-935
     - `src/eval.rs`
     - `.gitignore`
     - `eval/cross-host/scripts/scan_artifacts.py`
+    - `eval/cross-host/evidence/cross-host-v1/{primary-run-records.jsonl,native-ablation-run-records.jsonl,source-manifest.json}`
   - Done when:
     - primary dry-run 精确产生 288 个唯一 tuple；
     - source terminate/drain/evidence seal 先于 target launch；
@@ -140,6 +162,10 @@ GH-935
     - hidden tests 只在 agent 退出后注入；
     - attribution refs 全部可解析且 origin/scope/validity 一致；
     - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏。
+    - evidence writer 输出 scanner-passed primary/native-ablation JSONL bundles
+      与 schema-valid source manifest，绑定全部 attempt/matrix/scanner/code/
+      fixture/config/approval hashes及 candidate-report input hash；raw/private/
+      secret paths 不进入 git。
     - runner 在任何 live spawn 前通过 GitHub API 验证 default-branch approval
       registry、merged approval PR、APPROVED maintainer review、canonical digest、
       exact code/fixture/config/model/host hashes、allowed tuple set 与
@@ -169,20 +195,28 @@ GH-935
   - File ownership:
     - `src/eval/cross_host/{report.rs,bootstrap.rs,claim_gate.rs}`
     - `eval/cross-host/schemas/cross-host-report.schema.json`
+    - `eval/cross-host/schemas/cross-host-claim-verdict.schema.json`
+    - `eval/cross-host/schemas/evidence-source-manifest.schema.json`
     - `eval/cross-host/claims-registry.json`
+    - `eval/cross-host/reports/{cross-host-v1.json,cross-host-v1.md,cross-host-v1-gate.json}`
     - `scripts/ci/check_public_claims.py`
   - Done when:
-    - direction-first 报告公开分子、分母、missing_count 和 aggregate；
+    - report builder 先从 verified source manifest/bundles 生成 immutable
+      direction-first candidate report，公开分子、分母、missing_count 和
+      aggregate，且 candidate 不含自引用 verdict；
     - exported cost 与 native-import ablation 分开报告；
     - fixed-seed task-cluster paired bootstrap 可重复；
     - CI 含 0 只输出 directional/insufficient；
     - 五项 stop-loss 边界和“gain + leak = FAIL”负例通过；
-    - registry/report hash/wording 三者绑定；
+    - claim gate 消费 candidate report hash，另写并保留 PASS/FAIL/INSUFFICIENT
+      gate result；registry/report/gate hash/wording 四者绑定；
+    - FAIL/INSUFFICIENT 不删除或改写 candidate report/evidence；
     - public claim checker 在非 PASS 时拒绝正向 README wording。
   - Verify:
 
     ```bash
     cargo test eval::cross_host::tests::report
+    cargo test eval::cross_host::tests::evidence_bundle
     cargo test eval::cross_host::tests::paired_bootstrap
     cargo test eval::cross_host::tests::claim_gate
     python3 eval/claims/claim_gate.py check \
@@ -317,6 +351,9 @@ GH-935
     - verifier 证明 288 个唯一有效 tuple，失败 run 留在分母；
     - 无真实 HOME/session/auth/hidden/private leak；
     - execution checkpoint 支持 resume 且记录所有失败 attempt。
+    - scanner-passed primary records 写入 committed bundle，source manifest
+      绑定 288 matrix keys、全部 attempts 与 report input hash；raw/private/
+      credential evidence 不进入 git。
   - Verify:
 
     ```bash
@@ -335,6 +372,9 @@ GH-935
       --json-out /tmp/remem-cross-host-primary-verify.json
     jq -e '.passed == true and .matrix.primary.valid_runs == 288' \
       /tmp/remem-cross-host-primary-verify.json
+    cargo run --release -- bench cross-host verify --root eval/cross-host \
+      --evidence-manifest eval/cross-host/evidence/cross-host-v1/source-manifest.json \
+      --json-out /tmp/remem-cross-host-evidence-verify.json
     ```
 
 - [ ] `SP935-T11` Owner: authorized benchmark operator + report-claim lane; Done when: native ablation、direction reports、bootstrap、stop-loss 与 claim verdict 可复算； Verify: report verifier、claim gate 与 public claim check 通过； Covers: B-007, B-022…B-031。
@@ -344,11 +384,16 @@ GH-935
     B-029, B-031
   - Done when:
     - with/without native import 在两个方向形成完整 paired evidence；
-    - 生成 direction-specific JSON/Markdown report、source manifest 和 hash；
+    - native-ablation sanitized records 追加到独立 committed bundle，完成
+      source manifest 后，先生成 immutable direction-specific candidate
+      JSON/Markdown report 与 hash；
     - exported cost、native contribution、bootstrap CI、全部 stop-loss 和
       claim verdict 可复算；
+    - claim gate 消费 candidate report 后另写
+      `cross-host-v1-gate.json`；PASS/FAIL/INSUFFICIENT 都保留 candidate
+      report、gate result 与 evidence；
     - 只有 gate PASS 时才由独立 human wording review 更新 README；否则保持
-      无公开正向结论。
+      无公开正向结论，但不得删除 FAIL/INSUFFICIENT evidence。
   - Verify:
 
     ```bash
@@ -369,7 +414,9 @@ GH-935
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --json-out /tmp/remem-cross-host-final-verify.json
     python3 eval/claims/claim_gate.py check \
-      eval/cross-host/claims-registry.json
+      eval/cross-host/claims-registry.json \
+      --report eval/cross-host/reports/cross-host-v1.json \
+      --json-out eval/cross-host/reports/cross-host-v1-gate.json
     python3 scripts/ci/check_public_claims.py
     ```
 
@@ -395,8 +442,10 @@ GH-935
 
 ## 并行拆分
 
-仅在 SP935-T1 解除后允许：
+仅在 SP935-T1A 解除后允许：
 
+- SP935-T1A 必须在 T1 后以独立 sensitive-registry PR 落地；它 merge 前不得
+  启动 T2-T12。
 - `fixture-contract lane`（SP935-T2）与 `host-isolation lane`（SP935-T3）
   可并行；前者只写 `eval/cross-host` contract/tasks，后者只写列明的 Rust
   isolation 文件。

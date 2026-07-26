@@ -157,7 +157,11 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
 22. **B-022** 报告的 resolved rate、recall、stale-followed、scope leak、
     memory-hurt、tokens、wall time、turns、失败动作和 attribution 指标必须
     包含所有适用的有效/失败 run，并公开分子、分母和缺失值；无数据必须为空
-    或 insufficient，不得填 0。
+    或 insufficient，不得填 0。288 个 primary runs 与完整 native-import
+    ablation 的 scanner-passed sanitized records/source manifest 必须作为
+    committed release evidence 保留，并足以独立重算分母、attribution、失败、
+    成本、candidate report 和 gate input；aggregate-only report 或 `/tmp`
+    artifacts 不构成可复验证据。
 23. **B-023** 报告必须分别展示 `claude_to_codex` 与
     `codex_to_claude`，再展示 aggregate；任一方向缺失、失败或退化不得被
     aggregate 平均数隐藏。
@@ -187,10 +191,14 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
 30. **B-030** schema/charter/task/report 必须 versioned；现有
     `cross-host-v1` skeleton 与旧 artifact 不得被新 harness 静默视为
     executable/complete，兼容迁移必须显式转换并重新验证，否则拒绝。
-31. **B-031** README、README.zh-CN、CHANGELOG 或 release surface 只有在
-    committed report hash、完整矩阵、paired bootstrap、direction-specific
-    结果和 stop-loss gate 全部通过时才能引用正向跨宿主结论；报告为
-    insufficient/FAIL 时只能保留政策或“无公开结论”说明。
+31. **B-031** verified evidence 必须先生成并保留 immutable candidate
+    JSON/Markdown report，不论后续 verdict 为 `PASS`、`FAIL` 或
+    `INSUFFICIENT`；claim gate 以该 candidate report hash 为输入，另写不可变
+    gate result。README、README.zh-CN、CHANGELOG 或 release surface 只有在
+    gate result 为 hash-bound `PASS`、完整矩阵、paired bootstrap、
+    direction-specific 结果和 stop-loss 全部通过后才能引用正向跨宿主结论；
+    `FAIL`/`INSUFFICIENT` report 与 evidence 仍须保留，公开面只能保持政策或
+    “无公开结论”说明。
 32. **B-032** readiness、spec approval、live-run authorization、最终 PR
     review、merge 与 release 均保持人工门禁；`implx auto` 或 benchmark
     执行授权不能替代 security、claim wording 或 release 决策。
@@ -206,8 +214,9 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
   evidence。
 - [ ] 每个 remem run 有完整 capture→memory→selection→use attribution，
   每个 exported-file run 有生成/维护成本。
-- [ ] direction-specific 与 aggregate 报告均通过 report schema，缺失值不
-  被填 0。
+- [ ] 288+ablation sanitized evidence bundle/source manifest 可独立复算；
+  direction-specific 与 aggregate candidate report 均通过 schema，缺失值不
+  被填 0，PASS/FAIL/INSUFFICIENT gate result 均保留。
 - [ ] paired bootstrap、CI wording rule 和五项 stop-loss 被 deterministic
   gate 验证。
 - [ ] public claim surface 只能引用 hash-bound、gate-passed report。
