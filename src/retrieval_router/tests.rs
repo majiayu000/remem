@@ -334,20 +334,75 @@ fn reviewer_role_enables_constraints_channel() {
 }
 
 #[test]
-fn history_intents_allow_superseded_validity() {
-    let p = plan(&request("t"), Some(ContextIntent::ExplainDecision)).unwrap();
-    assert!(p.freshness_policy.include_superseded);
-    let superseded = p
+fn history_intents_compile_one_effective_superseded_scope() {
+    for intent in [
+        ContextIntent::ExplainDecision,
+        ContextIntent::ExploreHistory,
+    ] {
+        let p = plan(&request("t"), Some(intent)).unwrap();
+        assert!(p.filters.include_superseded, "intent {intent:?}");
+        assert!(p.freshness_policy.include_superseded, "intent {intent:?}");
+        let superseded = p
+            .channel_plans
+            .iter()
+            .find(|c| c.channel == RetrievalChannel::SupersededHistory)
+            .unwrap();
+        assert!(superseded.enabled, "intent {intent:?}");
+        assert!(
+            superseded
+                .allowed_validity
+                .contains(&ItemValidity::Superseded),
+            "intent {intent:?}"
+        );
+    }
+}
+
+#[test]
+fn non_history_intents_do_not_implicitly_expand_superseded_scope() {
+    for intent in [
+        ContextIntent::ResumeWork,
+        ContextIntent::DebugFailure,
+        ContextIntent::ApplyPreference,
+        ContextIntent::ReviewChange,
+    ] {
+        let p = plan(&request("t"), Some(intent)).unwrap();
+        assert!(!p.filters.include_superseded, "intent {intent:?}");
+        assert!(!p.freshness_policy.include_superseded, "intent {intent:?}");
+        assert!(
+            p.channel_plans
+                .iter()
+                .all(|channel| !channel.allowed_validity.contains(&ItemValidity::Superseded)),
+            "intent {intent:?}"
+        );
+    }
+}
+
+#[test]
+fn apply_preference_requires_explicit_opt_in_for_superseded_conflict_history() {
+    let default_plan = plan(&request("t"), Some(ContextIntent::ApplyPreference)).unwrap();
+    let default_history = default_plan
         .channel_plans
         .iter()
         .find(|c| c.channel == RetrievalChannel::SupersededHistory)
         .unwrap();
-    assert!(superseded
+    assert!(default_history.enabled);
+    assert!(!default_history
         .allowed_validity
         .contains(&ItemValidity::Superseded));
 
-    let p = plan(&request("t"), Some(ContextIntent::DebugFailure)).unwrap();
-    assert!(!p.freshness_policy.include_superseded);
+    let mut opted_in = request("t");
+    opted_in.include_superseded = true;
+    let opted_in_plan = plan(&opted_in, Some(ContextIntent::ApplyPreference)).unwrap();
+    assert!(opted_in_plan.filters.include_superseded);
+    assert!(opted_in_plan.freshness_policy.include_superseded);
+    let opted_in_history = opted_in_plan
+        .channel_plans
+        .iter()
+        .find(|c| c.channel == RetrievalChannel::SupersededHistory)
+        .unwrap();
+    assert!(opted_in_history
+        .allowed_validity
+        .contains(&ItemValidity::Superseded));
 }
 
 // --- determinism / hashing ---------------------------------------------

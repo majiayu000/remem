@@ -207,13 +207,13 @@ pub fn plan(
     let resolved = resolve_intent(explicit_intent, &request.task);
     let mut reason_codes = vec![resolved.reason_code.clone()];
 
-    let mut channel_plans = compile_channels(resolved.intent);
+    let freshness_policy = freshness_policy_for(resolved.intent, request);
+    let mut channel_plans = compile_channels(resolved.intent, freshness_policy.include_superseded);
     let mut rerank_policy = rerank_policy_for(resolved.intent);
     let mut trust_policy = TrustPolicy {
         minimum_trust: TrustClass::Standard,
         allow_quarantined: false,
     };
-    let freshness_policy = freshness_policy_for(resolved.intent, request);
     let mut abstention_policy = AbstentionPolicy {
         mode: AbstentionMode::Never,
         min_selected_items: 0,
@@ -245,12 +245,10 @@ pub fn plan(
     if request.role == AgentRole::Reviewer {
         for cp in channel_plans.iter_mut() {
             if cp.channel == RetrievalChannel::Constraints && !cp.enabled {
-                *cp = channel_plan_from_spec(&ChannelSpec::priority(
-                    RetrievalChannel::Constraints,
-                    0.6,
-                    5,
-                    3,
-                ));
+                *cp = channel_plan_from_spec(
+                    &ChannelSpec::priority(RetrievalChannel::Constraints, 0.6, 5, 3),
+                    freshness_policy.include_superseded,
+                );
                 reason_codes.push(REASON_REVIEWER_CONSTRAINTS_ENABLED.to_string());
             }
         }
@@ -268,7 +266,7 @@ pub fn plan(
         filters: ContextFilters {
             project: request.project.key.clone(),
             branch: request.branch.clone(),
-            include_superseded: request.include_superseded,
+            include_superseded: freshness_policy.include_superseded,
             as_of_epoch: request.as_of_epoch,
         },
         rerank_policy,
@@ -284,7 +282,7 @@ pub fn plan(
 
 /// Build one `ChannelPlan` per known channel (enabled or disabled) in
 /// [`RetrievalChannel::ORDERED`] order.
-fn compile_channels(intent: ContextIntent) -> Vec<ChannelPlan> {
+fn compile_channels(intent: ContextIntent, include_superseded: bool) -> Vec<ChannelPlan> {
     let mut specs = vec![BASELINE_FTS, BASELINE_VECTOR, BASELINE_ENRICHMENT];
     specs.extend(intent_priority_channels(intent));
     RetrievalChannel::ORDERED
@@ -293,22 +291,20 @@ fn compile_channels(intent: ContextIntent) -> Vec<ChannelPlan> {
             specs
                 .iter()
                 .find(|spec| spec.channel == *channel)
-                .map(channel_plan_from_spec)
+                .map(|spec| channel_plan_from_spec(spec, include_superseded))
                 .unwrap_or_else(|| disabled_channel_plan(*channel))
         })
         .collect()
 }
 
-fn channel_plan_from_spec(spec: &ChannelSpec) -> ChannelPlan {
-    let allowed_validity = if spec.allow_history {
-        vec![
-            ItemValidity::Current,
-            ItemValidity::Stale,
-            ItemValidity::Superseded,
-        ]
-    } else {
-        vec![ItemValidity::Current]
-    };
+fn channel_plan_from_spec(spec: &ChannelSpec, include_superseded: bool) -> ChannelPlan {
+    let mut allowed_validity = vec![ItemValidity::Current];
+    if spec.allow_history {
+        allowed_validity.push(ItemValidity::Stale);
+        if include_superseded {
+            allowed_validity.push(ItemValidity::Superseded);
+        }
+    }
     ChannelPlan {
         channel: spec.channel,
         enabled: true,

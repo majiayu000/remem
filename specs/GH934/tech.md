@@ -10,11 +10,13 @@ GH-934
 
 ## 基线与实现状态
 
-本 spec 以原 PR #940 head `7c327b7b2df7db3ce86c6b934da49d25f2c497ef` 的 diff 为
-Phase A 部分实现证据。该 PR 当前以 `codex/issue932-context-bundle-v1` 为 base，GitHub
-`mergeStateStatus=DIRTY`；实施前必须刷新 remote truth，在原 PR/原分支处理 base 与冲突，不能创建
-替代 PR。Phase A 已实现 plan compilation/debug，但没有 DB-backed execution、公开 Context Bundle
-adapter、per-intent eval、ablation 或 default gate。
+本 spec 以原 PR #940 原分支的当前 diff 为 Phase A 部分实现证据。此次终审修复开始时，该分支已合入
+`main@21b8133ed0630b766783bdaa0cee477881f721b8`，其中包含已合并的 GH-932 Context Bundle 与
+GH-933 canonical projection；GitHub 对修复前 review head 报告 `MERGEABLE/CLEAN`。最终 head
+不在本文件写死：修复 push 后必须重新读取 PR head、base、merge state 与 CI，并把独立 review
+artifact 绑定到该 exact head。所有修复继续在原 PR/原分支完成，不能创建替代 PR。Phase A 已实现
+plan compilation/debug，但没有 DB-backed execution、公开 Context Bundle adapter、per-intent
+eval、ablation 或 default gate。
 
 `docs/specs/GH934/{PRODUCT,TECH}.md` 是当前 remem contract，明确把 execution wiring、golden
 fixtures 与 ablation 留作 follow-up。本 packet 细化剩余 issue 验收；实现必须同步更新 current
@@ -31,7 +33,7 @@ contract，不能把历史 Phase A 文本当成完整完成证明。
 | Curated retrieval / fusion | `src/retrieval/search/memory/runner.rs`, `src/retrieval/search/memory/text.rs`, `src/retrieval/search/memory/weights.rs`, `src/retrieval/search/memory/explain.rs` | 静态 channel weights + weighted RRF，source-anchor/confidence gate 后统一 rerank | Router execution 必须把 channel plan 编译成可执行 limits/weights/caps，并保留现有 safety gates |
 | Entity/graph/temporal/vector | `src/retrieval/entity/`, `src/retrieval/graph/`, `src/retrieval/temporal/`, `src/retrieval/vector_candidates.rs` | 已有独立检索能力 | 作为 adapter 被 plan 调度；不得新增平行 SQL/索引 |
 | Rerank | `src/retrieval/rerank/stage.rs`, `src/retrieval/rerank/types.rs`, `src/retrieval/rerank/tests.rs` | GH-851 统一 post-eligibility rerank，off/failure 保留 baseline order | Router 仅传 participation/N/k/fallback/canonical requirement |
-| Enrichment | GH-933 原 PR #939 及合并后的 canonical projection implementation；`src/memory/retrieval_enrichment.rs` 与 tests 是当前已存在的 enrichment truth | 当前 #940 worktree 尚未含 GH-933 execution projection；Issue 要求 generated 与 canonical 分离 | 实现前先以 post-merge code truth 确认 exact anchor，复用其 source binding；不得创建第二套 projection |
+| Enrichment | GH-933 原 PR #939 及合并后的 canonical projection implementation；`src/memory/retrieval_enrichment.rs` 与 tests 是当前已存在的 enrichment truth | 当前 #940 worktree 已通过 main 包含 GH-933 source-bound projection；Phase A router 仍只有 compilation/debug，尚未接入该 execution projection | 后续 execution 直接复用 current source binding；不得创建第二套 projection |
 | Service boundary | `src/memory/service/types.rs`, `src/memory/service/search.rs` | MCP/REST/CLI search 共享 `SearchRequest`，默认 static fusion | 新 Context Bundle service 应复用共享 DB access，不把 router 逻辑散落到 adapters |
 | MCP | `src/mcp/types.rs`, `src/mcp/server/context_tools.rs`, `src/mcp/server/tests.rs` | 有 user recall、timeline、observation details；没有 versioned Context Bundle tool | 新 `context_bundle` 参数直接承载 typed request/intent，稳定错误且无隐藏 fallback |
 | REST | `src/api/server.rs`, `src/api/types.rs`, `src/api/handlers.rs`, `src/api/handlers/capabilities.rs`, `src/api/tests.rs` | 有 GET search 与 POST user recall；没有 generic Context Bundle endpoint | 新 `POST /api/v1/context` 返回 versioned bundle/audit，capability map 显式声明 |
@@ -286,7 +288,8 @@ MCP context_bundle / POST /api/v1/context / offline eval
 
 - Security：intent、role、risk 或 scope adapter 错配可能越权检索；通过 typed DTO、显式优先、
   existing eligibility readers、high-risk canonical/trust gate 与 negative fixtures 控制。
-- Compatibility：PR #940 叠在 #932 且版本 surfaces 有冲突；必须先刷新 base、在原 PR 处理，不以
+- Compatibility：PR #940 已在原分支合入包含 #932/#933 的当前 main；main 后续仍可能推进，因此
+  terminal review/merge 前必须重新核对 exact base、head、merge state 与 version surfaces，不以
   force push 或替代 PR 绕过。旧 search surfaces 保持 shape/default。
 - Performance：15 channel 可能放大查询；disabled channel zero-call、candidate cap、timeout、
   contribution cap、p95 gate 与 no-required-network 约束控制。
