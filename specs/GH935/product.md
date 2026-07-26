@@ -16,6 +16,12 @@ dry-run。当前没有可执行 fixture、真实宿主 harness、benchmark run�
 或可公开引用的跨宿主结论；任何后续工作都必须保留这一事实，不能把
 infrastructure readiness 表述为 outcome evidence。
 
+本 packet 已在 `origin/main@5627a74942a41f51bdc03518fce726dbf1b46098`
+重新核对：24 个 task 仍全部为 `skeleton_todo`，`eval/cross-host/` 下仍没有
+report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授权只
+覆盖 spec 流程，不构成 Claude Code/Codex auth、network/LLM cost、smoke、
+完整 live matrix、公开 claim 或 release 授权。
+
 ## 用户问题
 
 用户需要知道：Claude Code 中形成的历史经验能否在全新、隔离的 Codex

@@ -13,27 +13,26 @@ GH-935
 
 ## Human Gates First
 
-- [ ] `SP935-T1` Owner: maintainer; Done when: readiness、spec approval、trusted evidence 与 implement route 全部通过； Verify: exact-head route gate 返回 `allowed`； Covers: none（人工治理门禁）。
+- [ ] `SP935-T1` Owner: maintainer; Done when: exact packet 获得 spec approval、GH-935 转为 `ready_to_implement`，且实现 coordinator 对当时 exact head 完成 fresh route evidence； Verify: exact-head implement route gate 返回 `allowed`； Covers: none（人工治理门禁）。
   - Owner: maintainer
   - Dependencies: none
   - Covers: none — 这是实施前的人工治理门禁，不实现产品行为。
   - Done when:
     - maintainer 审阅 canonical product/tech exact diff；
-    - issue 具有有效 readiness state，并记录 `spec_approval`；
-    - fresh duplicate-work evidence、trusted default-base/path evidence 和
-      `sensitive_enforcement` 完整；
+    - 已满足的 `ready_to_spec` 只证明可写 spec；maintainer 另行记录
+      `spec_approval` 并把 issue 置为 `ready_to_implement`；
+    - implementation coordinator 针对准备实现的 exact head 和当时 default
+      base 收集 route gate 所要求的 fresh evidence；不复用本 spec lane 的
+      历史输出；
     - `implement` route gate 对 exact head 返回 `allowed`；
     - security reviewer 明确接受宿主 auth、host-read sandbox、hidden tests
       和 public-claim 边界。
   - Verify:
 
     ```bash
-    python3 checks/github_duplicate_evidence.py \
-      --github-repo majiayu000/remem --issue 935 --json
     python3 checks/route_gate.py --repo . --route implement \
       --issue 935 --state ready_to_implement \
-      --duplicate-evidence <trusted-duplicate-evidence.json> \
-      --evidence <trusted-implement-evidence.json> --json
+      <fresh-exact-head-evidence-arguments-required-by-current-workflow> --json
     ```
 
 ## 实现任务
@@ -413,12 +412,17 @@ GH-935
 
 ## Handoff Notes
 
-- 当前 write_spec gate：`allowed`，human gate 为 `readiness_label`。
-- 当前 implement gate：`blocked`；缺
-  `duplicate_work:duplicate_evidence`、trusted default-base/path evidence、
-  `sensitive_enforcement`，并仍需 `readiness_label` 与 `spec_approval`。
+- `origin/main@5627a74942a41f51bdc03518fce726dbf1b46098` 上的当前事实：
+  charter 为 `infrastructure_only_no_runs`，24/24 task 为
+  `skeleton_todo`，report artifact 为 0。
+- GH-935 已获 `ready_to_spec`，fresh write-spec route gate 为 `allowed`；
+  尚缺 exact packet 的 `spec_approval` 和后续 `ready_to_implement`。
+- 本 lane 未把一个不带 implementation evidence 的预检快照包装成“当前
+  implement gate 结论”。SP935-T1 必须在未来实现 head/base 确定后重新收集
+  route 所需证据。
 - 本 packet 只规划未来实现；没有运行 benchmark、没有生成 report、没有修改
-  issue/PR/label，也没有授予 live-run/merge/release 权限。
+  source/docs/runtime，也没有授予 host auth、network/LLM cost、live-run、
+  public-claim、merge 或 release 权限。
 - Product invariant set：
   `B-001`…`B-032`。
 - Task coverage union：

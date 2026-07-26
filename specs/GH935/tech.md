@@ -115,7 +115,7 @@ spec/security review，再修改新增路径。报告文件只有在真实运行
 ## Codebase Context
 
 以下 anchors 已在 `origin/main`
-`284cdf94406dbbe2583e6ee31f23e2a48af561bf` 核对：
+`5627a74942a41f51bdc03518fce726dbf1b46098` 核对：
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
@@ -134,6 +134,7 @@ spec/security review，再修改新增路径。报告文件只有在真实运行
 | Public claim surface | `scripts/ci/check_public_claims.py:16-21`, `66-87`, `98-135` | CI 扫 README/CHANGELOG，但只读取现有 public baseline gate。 | 接入 hash-bound cross-host gate，避免未经批准的跨宿主结论。 |
 | Public benchmark contract | `docs/specs/public-memory-benchmark/TECH.md:96-120` | 允许 Rust eval 实现；要求显式 report path，dry-run 不调用 agent。 | GH-935 作为第三类 cross-host outcome evidence 扩展该 current contract。 |
 | GH935 current contract | `docs/specs/GH935/PRODUCT.md:36-47`; `TECH.md:36-42` | 明确基础设施-only，列出 executable fixtures、host harness、bootstrap/claim 和 export cost follow-ups。 | canonical packet 把这些 follow-ups 变为 gated tasks，不改写已完成历史。 |
+| Live evidence/authorization | `eval/cross-host/` | 没有 report 目录、live-run approval schema/registry 或已执行 run；本次仅批准 spec 流程。 | live smoke/full matrix 必须在实现、独立复审和新的限额授权之后执行，不能继承本次授权。 |
 
 ## 设计方案
 
@@ -460,8 +461,11 @@ sanitized report paths。真实 user HOME、默认 remem DB、来源宿主 sessi
 
 ## Human Gates
 
-本文件不构成 `spec_approval`。只有 maintainer 批准 product/tech exact diff、
-确认宿主 auth/sandbox 与 public-claim security 边界、把 GH-935 置为
-`ready_to_implement`，并使 fresh duplicate evidence 与 implement route gate
-通过后，才能开始实现。live 288+ run、最终 claim wording、PR review、merge 和
-release 还需各自人工门禁。
+GH-935 当前 `ready_to_spec` 已由 maintainer 明确授权，write-spec route 的
+readiness gate 已满足；本文件仍不构成 `spec_approval`。只有 maintainer
+批准 product/tech exact diff、确认宿主 auth/sandbox 与 public-claim security
+边界并把 GH-935 置为 `ready_to_implement` 后，才能为当时的 exact
+implementation head 收集所需 route evidence 并执行实现门禁。不得把本 packet
+里的历史 gate 输出、重复工作搜索或预期路径 manifest 当成未来 head 的 fresh
+implement evidence。live smoke、288+ run、最终 claim wording、PR review、
+merge 和 release 还需各自独立人工门禁。
