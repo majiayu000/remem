@@ -108,7 +108,13 @@ stale/irrelevant memory harm。
    或把 expected answer 写入 prompt。
 10. **B-010** extraction/provider 缺失、worker drain 未完成、candidate 未按
     policy 处理或 retrieval evidence 不完整时，该 run 必须明确失败并保留
-    stage evidence；不得降级到 preload 或手工补记忆。
+    stage evidence；不得降级到 preload 或手工补记忆。若 treatment 使用人工
+    candidate review/edit/promotion，reviewer 只能看到 closed、hashed、
+    gold-free 的 `treatment_review_input_projection`，其中只含 pre-target
+    candidate/source provenance/conflict/quality/rubric；必须排除 target
+    prompt、gold/expected、hidden/scorer 与 target outcome。全部 review/
+    promotion 在 target reveal 前完成并冻结；post-reveal intervention 使 run
+    invalid。
 11. **B-011** `curated_file_budgeted` 的 curator 只能看到由 schema allowlist
     从历史 `raw_events` 投影出的 chronological `curator_input_projection`；
     projection 必须排除 `expected_memory_facts`、gold `memories`/refs、target
@@ -165,9 +171,15 @@ stale/irrelevant memory harm。
     digest、approval PR number 与 repository identity 派生；不得包含承载该
     key 的 Git blob/tree/commit OID。merge/review/head-tree attestation 由
     verifier 对 registry blob 另行查询，不能写入 key preimage。approval 必须绑定
-    exact executable/profile/fixture/registration hashes、允许 tuple 和累计
-    calls/cost 上限；每次 billable call 前必须在 authoritative shared ledger
-    durably reserve worst-case budget，crash/abandoned reservation 仍按上限计费。
+    exact executable/profile/fixture/registration hashes、允许 tuple、累计
+    calls/cost 上限，以及 immutable canonical pricing snapshot：币种固定为
+    USD、provider/model SKU、effective timestamp、input/output/cache/tool
+    token 单价、各 call-kind 最大 input/output/cache/tool tokens 与明确的向上
+    取整规则。调用方不得提交 `worst_case_cost`；service broker 必须从 reviewed
+    rates × per-call ceilings 保守计算 reservation，计算溢出、未知 SKU、价格
+    漂移或 currency/rounding mismatch 均在调用前 fail closed。每次 billable
+    call 前必须在 authoritative shared ledger durably reserve该计算值，
+    crash/abandoned reservation 仍按上限计费。
     ledger 必须从 policy 中固定的 genesis OID 延伸，且 authority phase fresh
     验证保护该 ref 的 active non-bypassable ruleset：禁止 delete/force push、
     bypass actor 为空并覆盖管理员与 automation；任一保护/audit drift 都

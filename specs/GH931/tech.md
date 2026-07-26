@@ -51,6 +51,7 @@ GH-931
     "eval/claims/claims-registry.schema.json",
     "eval/claims/registry.json",
     "eval/claims/claim_gate.py",
+    "src/eval/coding_bench.rs",
     "src/eval/coding_bench/artifact.rs",
     "src/eval/coding_bench/approval.rs",
     "src/eval/coding_bench/condition.rs",
@@ -140,6 +141,10 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 
 ### 2. Isolation、fixture 和 live boundary（B-005-B-006、B-014-B-020）
 
+- `src/eval/coding_bench.rs` 是现有 child-module authority；本 tranche 由 T3
+  在该 parent 中显式声明并测试 `mod approval;`，再由 runner 调用。parent 与
+  `approval.rs` 同时位于 complete planned manifest/single-writer ownership，
+  禁止通过未声明 parent edit 或平行 duplicate module 绕过 wiring。
 - `CodingBenchRunIdentity` 绑定 task、condition、run index、attempt、
   fixture/prompt/score/timeout/sandbox hash、randomization seed、从 approved
   commit reproducibly build 后以 absolute path 调用的 remem binary digest、
@@ -191,6 +196,10 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   approved/expires 时间、exact executable/profile/fixture/
   `registration_projection`/timeout/sandbox hashes、allowed tuples、
   credential-bootstrap ref（无 secret bytes）和累计 agent/LLM/cost hard caps。
+  policy 还内嵌 immutable canonical pricing snapshot：`currency=USD`、provider/
+  model SKU、effective timestamp、input/output/cache/tool-token 单价、每个
+  call-kind 的最大 input/output/cache/tool tokens 与 decimal 向上取整 scale。
+  currency conversion 不允许；SKU/price 变化必须新建 reviewed policy。
 - verifier 先启动一个隔离的 authority-only phase：仅该 phase 可读取
   repo-scoped GitHub credential并访问 GitHub API；它不得读取 provider/host
   credential、启动 agent 或执行 benchmark。它 fresh 验证 approval PR 的
@@ -201,13 +210,19 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   GitHub unavailable、过期、drift、hash/tuple/cap mismatch 均 fail closed。
 - cumulative budget 的 trust root 是 repo-scoped protected
   `refs/heads/remem-live-ledger`，不是 clone-local git common dir。每次 billable
-  host/LLM call 前，runner 以当前 remote ledger tip 为 parent 创建包含
-  `(approval_key,reservation_id,call_kind,worst_case_calls,worst_case_cost,
+  host/LLM call 前，service broker 不接受 caller cost，而以 reviewed
+  call-kind token ceilings × pinned rates 做 checked-decimal conservative
+  calculation，并按 policy scale 向上取整。unknown SKU/rate、token ceiling
+  缺失、overflow 或 price snapshot drift 均 fail closed。runner 随后以当前
+  remote ledger tip 为 parent 创建包含
+  `(approval_key,reservation_id,call_kind,token_ceilings,pricing_snapshot_hash,
+  computed_worst_case_cost,
   execution_id,tuple,attempt)` 的 append-only reservation commit，并以
   non-force fast-forward ref update 作为 compare-and-swap；并发 sibling update
   失败后必须 refetch/recompute。reservation durable 后才允许 call；完成后追加
-  settlement commit，crash/timeout/abandoned reservation 永久按 worst-case
-  计入累计值。ledger ref 缺失、non-FF/force history、reconciliation drift、
+  settlement commit；settlement 记录 broker-metered actual tokens/cost，但
+  crash/timeout/abandoned reservation 永久按 computed worst-case 计入累计值。
+  ledger ref 缺失、non-FF/force history、reconciliation drift、
   reservation reuse 或预算耗尽均 fail closed。resume、新 clone/
   `execution_id`、并发和拆单共享同一 remote total；只有新的 independently
   reviewed policy 可增加预算。approval policy 固定 `ledger_genesis_oid` 与
@@ -259,9 +274,16 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 - human maintenance claim 只接受人工 curator log；若为自动 curator，artifact
   必须标记不同 actor 类型且不得用于 70% human-maintenance comparison。
 - `remem_e2e` 也记录同一 task/session 时间轴上的人工 candidate review、
-  rejection、editing 与 manual promotion minutes/actions。official run 可以使用
-  正常人工 review policy，但任何 intervention 都进入 treatment cost；缺 log
-  时 maintenance comparison `INSUFFICIENT`。若声明 zero-touch tranche，则
+  rejection、editing 与 manual promotion minutes/actions。人工 reviewer 的唯一
+  输入是 closed `treatment_review_input_projection`：只允许 pre-target
+  candidate content、source provenance、conflict/quality signals 与 policy
+  rubric；明确排除 target prompt、gold/expected refs、hidden/scorer data 和
+  任何 target outcome。runner 在 target reveal 前 canonicalize/hash 该
+  projection，review/promotion 全部完成后 freeze promoted projection 与 log；
+  committed artifact 保存输入/输出 hashes，verifier 可重建。target reveal 后
+  的 review/edit/promotion 或 projection drift 使 run invalid。official run
+  可以使用正常人工 review policy，但任何 intervention 都进入 treatment cost；
+  缺 log 时 maintenance comparison `INSUFFICIENT`。若声明 zero-touch tranche，
   任一 manual intervention 直接使该 tranche invalid，不能记为 0 minutes。
 
 ### 5. Failure taxonomy、report 与 claims（B-017-B-029）
@@ -341,10 +363,10 @@ remem bench coding-report --input <artifact-root> \
 | B-001-B-004 state/IDs/matrix | types、run plan、registry validator | 新 ID parse 正例；旧 ID 负例；primary dry-run `planned_runs == 144`；缺/重 tuple 被拒绝。 |
 | B-005-B-006 pair/randomization | run identity、planner | same-pair executable + target/extraction/enrichment/promotion/retrieval profile hash equality；fixed seed 可复现；任一 binary/profile/prompt drift 失败。 |
 | B-007 no-memory | condition/isolation | hooks/MCP/SessionStart/file/native surfaces 全无；额外 surface 负例失败。 |
-| B-008-B-010 E2E path | raw-event fixture schema、capture/extraction adapter、worker drain、context render | answer-bearing raw event→capture→use DAG；gold-only fixture 与 seed/save/preload shortcut 失败；provider/drain failure 不降级。 |
+| B-008-B-010 E2E path | raw-event fixture、capture/extraction adapter、treatment-review projection、worker drain、context render | answer-bearing raw event→capture→use DAG；review input gold-free 且 pre-target frozen；target/outcome注入、post-reveal review、seed/save/preload 与 drain failure 均失败。 |
 | B-011-B-013 curator/diagnostics | curator projection/schema、adapter、condition registry | allowlisted projection 可从 fixture byte-identical 重建；gold/target/hidden/scorer 注入、freeze/hash/budget 负例失败；diagnostic 不进入 primary。 |
 | B-014-B-016 isolation/security | service/agent privilege split、deny-egress broker、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root/network/public-repo access；provider broker 拒绝 fetch/tunnel；secret-before-write、symlink/hardlink/import bootstrap tamper 全失败。 |
-| B-017-B-020 failure/retry/dry-run | remote attempt transitions、approval verifier、anchored remote CAS reservation ledger、runner | key preimage 不含 containing tree；target_started-before-spawn/crash recovery 固定为 0；ruleset/genesis rollback anchor、cross-clone race、pre-call reservation/crash/超额 negatives；dry-run 零 spawn/network/auth。 |
+| B-017-B-020 failure/retry/dry-run | parent-wired approval module、remote attempt transitions、pricing broker、anchored CAS ledger、runner | `coding_bench.rs` module wiring；key preimage 不含 containing tree；broker 以 pinned USD rates/token ceilings 向上计算；caller underquote、unknown SKU/overflow、target_started crash、rollback/race/超额 negatives；dry-run 零 spawn/network/auth。 |
 | B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；overlapping failures 按 earliest causal root 稳定，downstream consequences 单列。 |
 | B-023-B-024 report/bootstrap | sanitized evidence bundle/source manifest、report builder | 144 records；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden；从 bundle 独立重算同 hash。 |
 | B-025-B-029 claim gates | registration projection、result bindings、gate/public CI | superiority/non-inferiority lower bounds、48-run stop-loss denominators、treatment review cost、post-smoke projection mutation、PASS-era exact wording/report link negatives。 |

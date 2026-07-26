@@ -91,6 +91,8 @@ GH-931
       validator 拒绝只在 summary/gold `memories` 中存在答案的 fixture；
     - closed `curator_input_projection` schema 只允许 chronological raw-event
       字段；validator 拒绝 gold/expected/target/hidden/scorer 字段；
+    - live approval schema 要求 canonical USD pricing snapshot、SKU/rates、
+      per-call token ceilings/rounding fields，拒绝 caller-supplied cost；
     - pair identity 分别绑定 actual remem/agent executables 与 target/extraction/
       enrichment/promotion/retrieval profiles，不用单个 `model` hash 代替；
     - schema 对 missing/duplicate/hash drift/extra keys fail closed。
@@ -111,6 +113,7 @@ GH-931
   - Covers: B-014, B-015, B-016, B-017, B-018, B-019, B-020
   - File ownership:
     - `.gitignore`
+    - `src/eval/coding_bench.rs`（仅 parent module declaration/wiring）
     - `src/eval/coding_bench/{approval.rs,isolation.rs,artifact.rs,score.rs}`
   - Done when:
     - HOME/CODEX_HOME/DB/repo/artifact roots 对每 run/condition 唯一，service/
@@ -130,6 +133,13 @@ GH-931
       digest 与 PR number 派生，明确排除承载 key 的 blob/tree/commit；隔离
       authority-only GitHub phase 完成 merge/review/blob attestation 后，才允许
       读取 provider/host auth；
+    - parent `src/eval/coding_bench.rs` 显式 `mod approval;` 并将 runner/tests
+      接到同一 module；planned manifest 与 T3 single-writer ownership 包含该
+      parent，不靠未授权文件改动完成 wiring；
+    - approval schema 绑定 USD canonical pricing snapshot、provider/model SKU、
+      effective timestamp、input/output/cache/tool rates、每 call-kind token
+      ceilings 与向上取整；broker 忽略/拒绝 caller cost，使用 checked arithmetic
+      计算 conservative reservation，unknown/drift/overflow fail closed；
     - protected remote ledger ref 以 non-force fast-forward CAS 做跨 clone
       reservation；每次 billable call 前 durable reserve worst-case budget，
       settlement 后追加，crash/abandoned reservation 仍计费；
@@ -176,6 +186,9 @@ GH-931
       fixture 重建，gold/expected/target/hidden/scorer 字段注入均失败；
     - remem-side manual review/promotion 与 curator 使用同一 task/session cost
       denominator；缺 treatment log 时 maintenance claim insufficient；
+    - treatment reviewer 只看到可重建、hashed、gold-free 的
+      `treatment_review_input_projection`，review/promotion 在 target reveal 前
+      freeze；target/gold/hidden/scorer/outcome 注入或 post-reveal edit 失败；
     - overlapping failures 按 earliest causal stage 选唯一 root，downstream
       consequences 单列；无法判定时显式 suite error。
   - Verify:
@@ -229,6 +242,8 @@ GH-931
     - cost、failure denominator、null missing 和 attribution 完整；
     - immutable registration projection 在任何 official-fixture smoke 前锁定；
       mutable result bindings 不改变 run digest，outcome 后改 projection invalid；
+    - treatment review input/output hashes、pre-target freeze timestamp 与
+      target-reveal ordering 在 report 前验证；
     - superiority lower bound、non-inferiority lower bound >=-3pp、treatment-side
       review cost、固定 48-run stop-loss denominator 与 attribution-missing
       insufficient 全有边界测试；
@@ -320,7 +335,8 @@ GH-931
       批准 144-run official matrix；
     - approval 绑定 exact code/fixture/registration、actual remem/agent binaries、
       target/extraction/enrichment/promotion/retrieval profiles、timeout、tuple
-      selectors、expiry、max agent/LLM calls 和 max estimated cost；
+      selectors、expiry、max agent/LLM calls、max estimated cost、USD pricing
+      snapshot/SKU/token ceilings/rounding policy；
     - credential bytes 不进入 approval/artifact；
     - smoke 永久排除于 official denominator。
     - smoke/full approval entry 通过
@@ -346,6 +362,7 @@ GH-931
     cargo test eval::coding_bench::tests::pre_call_reservation_crash
     cargo test eval::coding_bench::tests::started_attempt_recovery
     cargo test eval::coding_bench::tests::ledger_protection_anchor
+    cargo test eval::coding_bench::tests::pricing_reservation
     ```
 
 - [ ] `SP931-T10` Owner: authorized benchmark operator; Done when: 144 个 primary tuple 都有 immutable verified artifacts； Verify: final verifier 报告 `valid_primary_runs == 144`； Covers: B-004-B-006, B-014-B-024。
