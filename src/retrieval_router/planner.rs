@@ -20,7 +20,7 @@ use super::domain::{
 use super::intent::resolve_intent;
 
 /// Bump when the intent mapping tables or policy adjustments change.
-pub const RETRIEVAL_ROUTER_POLICY_VERSION: &str = "retrieval_router_v1";
+pub const RETRIEVAL_ROUTER_POLICY_VERSION: &str = "retrieval_router_v2";
 
 // Reason codes for deterministic policy adjustments.
 const REASON_HIGH_RISK_TRUSTED_ONLY: &str = "high_risk_trusted_only";

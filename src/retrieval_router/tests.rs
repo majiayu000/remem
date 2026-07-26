@@ -220,6 +220,7 @@ fn plan_carries_versions_scope_and_budget() {
     let p = plan(&req, Some(ContextIntent::ExploreHistory)).unwrap();
     assert_eq!(p.schema_version, RETRIEVAL_PLAN_SCHEMA_VERSION);
     assert_eq!(p.policy_version, RETRIEVAL_ROUTER_POLICY_VERSION);
+    assert_eq!(p.policy_version, "retrieval_router_v2");
     assert_eq!(p.filters.project, "demo/project");
     assert_eq!(p.filters.branch.as_deref(), Some("main"));
     assert_eq!(p.filters.as_of_epoch, 1_710_000_000);
