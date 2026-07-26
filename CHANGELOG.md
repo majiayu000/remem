@@ -19,6 +19,16 @@
   contents; no LLM or network call on any router path. Wiring the plan
   into retrieval execution, rerank mechanics (GH-851), and per-intent
   golden-fixture ablation remain follow-up work on GH-934.
+- Staged source version `0.6.26` for GH-933 Phase A: read-only CurrentTruth
+  projection module (`remem_ai::truth`). Versioned Evidence/Claim/Relation/
+  CurrentTruth read DTOs, a three-dimension lifecycle mapping (publication /
+  validity / retention plus policy visibility) covering every stored status
+  value of memories, observations, user-context claims, and memory
+  candidates, and a deterministic resolution policy: scope and branch
+  isolation, `as_of` filtering, explicit supersedes over recency, verified
+  evidence over model-generated, `Contradicted` for unresolved conflicts, and
+  abstention instead of guessing. No writer, schema, or context-path changes;
+  Context Bundle wiring is Phase B. Contract: `docs/specs/GH933/`.
 - Staged source version `0.6.25` for GH-932: Context Bundle v1 internal
   contract. New `src/context_bundle/` module with versioned
   `ContextRequest` / `ContextPlan` / `ContextBundle` / `ContextAudit`
