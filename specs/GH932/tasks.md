@@ -66,12 +66,16 @@ readiness/spec approval，也不授权 production edit。
     `src/context_bundle/{domain,planner,policy,hash,audit}.rs`,
     `src/context_bundle/tests/{mod,planner,schema}.rs`。
   - Done when: schema/policy upgrade、完整 semantic sections、role/risk/worktree/as-of filters、
-    exact plan-hash revalidation、canonical audit hash 与 stable ordering 全部落地；schema v1/
-    unknown enum 明确拒绝。
+    `relevance_derivation`、`session_context`、content-derived
+    `snapshot_fingerprint`、`render_contract_version`、exact plan-hash revalidation、
+    canonical audit hash 与 stable ordering 在 T1 freeze 前一次定型；schema v1/unknown enum
+    明确拒绝。
   - Verify:
     - `cargo test context_bundle::tests::planner -- --nocapture`
     - `cargo test context_bundle::tests::schema -- --nocapture`
-    - tampered/empty/mismatched hash、reverse insertion、clock/env independence fixtures 全绿。
+    - plan-only DB-read sentinel；explicit/snapshot-session derivation mode 与 policy/version
+      tamper；render-contract version tamper；empty/mismatched hash、reverse insertion、
+      clock/env independence fixtures 全绿。
 
 - [ ] `SP932-T2` — strict DB snapshot executor 与 scope/temporal eligibility — Owner: DB/context adapter agent；Dependencies: `SP932-T1` frozen domain interface；Covers: `B-003`, `B-004`, `B-006`, `B-009`–`B-014`, `B-017`–`B-020`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context_bundle/{executor,db_executor}.rs`,
@@ -80,34 +84,48 @@ readiness/spec approval，也不授权 production edit。
     还独占接收 `src/context_bundle.rs` 与 `src/context_bundle/tests/mod.rs`，仅用于注册
     executor/db_executor 模块和 focused tests。T2 完成后再次冻结并移交，禁止与 T1/T3/T4
     共享写入这两个 registry 文件。
-  - Done when: production path 只从同一 read transaction 读取真实 remem candidates；所有
+  - Done when: production `execute_db(conn, plan, execution_control)` 只从同一 read
+    transaction 读取真实 remem candidates；`ExecutionControl` 传播 absolute deadline 与
+    cancellation/SQLite interrupt，且不进入成功 hash；所有
     loader error 原子失败；project/worktree/branch/role/risk/as-of/supersession 在 query 和
     executor 双层执行；caller-provided seam 仅测试可见；candidate loader 只复用 read-only
     SELECT/typed mapping，不调用会写 poisoning-drop row 的 SessionStart preference renderer；
+    implicit mode 在该 snapshot 内从 commit messages、session summaries、workstreams 派生
+    effective query，并将 query hash、signal stable refs、content-derived snapshot fingerprint
+    绑定到 audit；connection-local `PRAGMA data_version` 不进入 canonical hash；
     全部 channel load 完成后只运行一次纯只读 current-pattern scanner，未确认 poisoning
-    candidate 只产生 error-level diagnostic 与唯一 audit terminal state，ack/state query error
+    candidate 只产生 error-level diagnostic 与唯一 audit terminal state；ack-capable source
+    可按 exact pattern/version 保留，poisoned workstream 固定以
+    `poisoning_unacknowledgeable_source` drop 且不查询不存在的 ack；ack/state query error
     原子 fail closed；无 runtime DB write。
   - Verify:
     - `cargo test context_bundle::tests::executor -- --nocapture`
     - `cargo test context_bundle::tests::db_executor -- --nocapture`
-    - real migration fixtures；same-snapshot concurrent writer；read-only connection write
-      sentinel；future/expired/invalidated/branch/worktree mismatch；当前 pattern 新命中、
-      exact-version acknowledgement、旧/错误 acknowledgement、preference/summary/workstream
-      poisoning；ack/state/loader error 与 cancel no-partial 矩阵全绿，并断言 poisoning-drop
-      row counts、`PRAGMA data_version` 与其他 runtime tables 均不变。
+    - real migration fixtures；same-snapshot concurrent writer；不同 connection history 的相同
+      内容 hash 相同、内容/ack/pattern state 变化则 fingerprint 变化、diagnostic
+      `PRAGMA data_version` tamper 不改变 canonical hash；read-only connection write
+      sentinel；future/expired/invalidated/branch/worktree mismatch；commit-only、
+      summary-only、workstream-only implicit query；当前 pattern 新命中、ack-capable source
+      exact-version acknowledgement、旧/错误 acknowledgement、non-poisoned workstream
+      retain、poisoned workstream always-drop/no-ack-lookup；ack/state/loader error、真实长查询
+      cancellation/deadline、progress-handler cleanup 与 no-partial 矩阵全绿，并断言
+      poisoning-drop row counts 与其他 runtime tables 均不变、connection 后续可复用。
 
 - [ ] `SP932-T3` — semantic classification、conflict/abstention、provenance/freshness — Owner: bundle policy agent；Dependencies: `SP932-T2`；Covers: `B-005`–`B-008`, `B-012`–`B-014`, `B-017`, `B-018`；Done when: 见下；Verify: 见下
   - Writable ownership: T2 完成后接收
     `src/context_bundle/{domain,executor,db_executor,audit}.rs` 与其 focused tests；移交前不得
     与 T1/T2 并行写 shared files。
-  - Done when: memory/current-state/lesson/session/workstream 进入正确 semantic section；
+  - Done when: memory/current-state/lesson/workstream 进入正确 semantic section，recent
+    session summary 的可见 request/completed preview 进入低优先级、受预算的
+    `session_context` 而非 canonical truth 或纯 evidence ref；
     generated/graph-derived attribution 不冒充 canonical；每个 candidate exactly-once
     selected/dropped/abstained/conflict；poisoning scan 的 terminal drop 不被后续
     classification 重复计数或重新选入；freshness rollup 可重算。
   - Verify:
     - `cargo test context_bundle -- --nocapture`
     - unique-winner/two-active conflict、missing backing ref、high-risk、unknown temporal
-      provenance、poisoned candidate exactly-once terminal-state property tests 全绿。
+      provenance、summary-only renderable classification、poisoned candidate exactly-once
+      terminal-state property tests 全绿。
 
 - [ ] `SP932-T4` — segmented renderer 与 strict rendered budget — Owner: rendering agent；Dependencies: `SP932-T1` frozen DTO（原型）, `SP932-T3` frozen shared registries（最终 wiring）；Covers: `B-003`, `B-015`, `B-016`, `B-018`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context_bundle/render.rs`,
@@ -116,32 +134,42 @@ readiness/spec approval，也不授权 production edit。
     `src/context_bundle.rs` 与 `src/context_bundle/tests/mod.rs`，仅完成 render module/test
     wiring，随后冻结移交给 T5/T6。
   - Done when: versioned UTF-8 upper-bound estimator 计算 header/title/body/ref/separator 的完整
-    rendered segments；section/total budget 永不超限；tiny budget、multibyte、item-boundary、
-    rendered hash 与 audit/body parity 全部固定。
+    rendered segments，含独立 `session_context` section budget；现有
+    `RENDER_CONTRACT_VERSION` 进入 frozen plan/audit/evidence，格式改变必须 bump；
+    section/total budget 永不超限；tiny budget、multibyte、item-boundary、rendered hash 与
+    audit/body parity 全部固定。
   - Verify:
     - `cargo test context_bundle::tests::render -- --nocapture`
     - property cases 断言任意生成 item 下 `rendered_token_estimate <= token_budget`，且 section
-      counts、drop reasons、UTF-8 都合法。
+      counts、drop reasons、UTF-8 都合法；format-without-version-bump 负例、version bump
+      hash/injection-data-version 变化全绿。
 
 - [ ] `SP932-T5` — SessionStart Bundle bridge、single-path gate 与 rollback — Owner: context integration agent；Dependencies: `SP932-T2`, `SP932-T3`, `SP932-T4`；Covers: `B-015`–`B-022`, `B-026`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context.rs`, `src/context/bundle_bridge.rs`,
     `src/context/{render,audit}.rs`, `src/context/tests/{mod,bundle_bridge,gate_pipeline,render,truncation}.rs`,
     `src/runtime_config.rs`。
   - Done when: selector 默认 legacy、显式 bundle_v2；单次只 load/render/inject 一条路径；
+    SessionStart 选择 `snapshot_session_signals`，在同一 snapshot 从 commit/summary/workstream
+    signals 派生 relevance，禁止空 task 或 plan 前预读；
     `execute_db` 在最终 render 前按当前 pattern-set version 对全部可注入字段执行唯一一次
     acknowledgement-aware poisoning rescan；bridge 只接收已通过 scan 的 immutable Bundle，
     不能跳过或重复扫描；未确认命中项只产生 error-level diagnostic 与唯一 audit terminal
-    drop，且不写 snapshot connection；semantic parity、strict gate、audit persistence、
-    error visibility 与 rollback 都通过；
+    drop；poisoned workstream 固定 unacknowledgeable drop，且不写 snapshot connection；
+    gate/delta、debug trace、hook warning 之后由唯一 `finalize_injection_body` 重算预算与
+    `final_injection_sha256`，之后禁止 mutation，超限不发布 stdout；semantic parity、
+    strict gate、audit persistence、error visibility 与 rollback 都通过；
     `src/context/render.rs` 不因集成超过 800 行。
   - Verify:
     - `cargo test context::tests::bundle_bridge -- --nocapture`
     - `cargo test context::tests::gate_pipeline -- --nocapture`
     - `cargo test context::tests::render -- --nocapture`
-    - legacy/bundle same-snapshot golden、pattern-set version 升级后新命中、acknowledged
-      same-version allow、preference/workstream/summary poisoning drop、read-only write
-      sentinel、double-injection sentinel、invalid config、rollback、empty/error/tiny-budget
-      fixtures全绿。
+    - legacy/bundle same-snapshot golden（commit-only、summary-only、workstream-only）、
+      summary-only model-visible `session_context`、pattern-set version 升级后新命中、
+      ack-capable source acknowledged same-version allow、preference/summary poisoning drop、
+      poisoned workstream always-drop/no-ack-lookup、full/suppressed/delta gate × debug ×
+      hook-warning、final stdout exact hash/estimate、post-finalize mutation sentinel、
+      overflow no-output、read-only write sentinel、double-injection sentinel、invalid config、
+      rollback、empty/error/tiny-budget fixtures 全绿。
 
 - [ ] `SP932-T6` — MCP/REST experimental surfaces 与 parity/auth — Owner: transport agent；Dependencies: `SP932-T2`, `SP932-T4` frozen API；Covers: `B-001`, `B-004`, `B-009`–`B-020`, `B-023`, `B-026`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/mcp/server.rs`,
@@ -152,20 +180,22 @@ readiness/spec approval，也不授权 production edit。
     `src/api/tests.rs`, `src/api/tests/context_bundle.rs`, `tests/api_public.rs`。这些 transport
     registry 与 focused test files 由 T6 单一 owner 串行写入，不与其他 lane 共享。
   - Done when: MCP `context_plan`/`context_bundle` 与 REST POST plan/bundle 使用同一 DTO/
-    executor；capability 标 experimental/schema/policy；stable errors 一致；REST unauthorized
-    在 DB read 前拒绝。
+    executor；REST/MCP request lifetime 构造并传播同一 `ExecutionControl`，真实
+    cancellation/deadline 中断 SQLite 工作并返回 `cancelled` / `deadline_exceeded`；
+    capability 标 experimental/schema/policy/render-contract；stable errors 一致；REST
+    unauthorized 在 DB read 前拒绝。
   - Verify:
     - `cargo test mcp::server -- --nocapture`
     - `cargo test api::tests::context_bundle -- --nocapture`
     - `cargo test --test api_public -- --nocapture`
-    - cross-transport golden equality、tool schema、HTTP/MCP error mapping、auth read-sentinel、
-      deny-network fixtures 全绿。
+    - different-connection-history cross-transport golden equality、tool schema、HTTP/MCP
+      cancellation/deadline/error mapping、auth read-sentinel、deny-network fixtures 全绿。
 
 - [ ] `SP932-T7` — doctor capability/degraded report without payload — Owner: diagnostics agent；Dependencies: `SP932-T5`, `SP932-T6`；Covers: `B-017`, `B-022`, `B-024`, `B-026`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/doctor.rs`, `src/doctor/context_bundle.rs`,
     `src/doctor/{report,types}.rs`, `src/doctor/tests/context_bundle.rs`；shared `tests.rs` 只做最小
     module wiring。
-  - Done when: human/JSON 报告 schema/policy/estimator/DB readiness/configured+effective
+  - Done when: human/JSON 报告 schema/policy/render-contract/estimator/DB readiness/configured+effective
     SessionStart path/MCP+REST capability/degraded reason；doctor JSON schema 提升且不输出 memory
     text、query、path、evidence 或 secret。
   - Verify:
@@ -175,26 +205,33 @@ readiness/spec approval，也不授权 production edit。
 - [ ] `SP932-T8` — coding-bench same-run plan/audit evidence — Owner: eval agent；Dependencies: `SP932-T5`；Covers: `B-002`–`B-004`, `B-015`–`B-019`, `B-025`, `B-026`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/eval/coding_bench/{artifact,condition,runner,types,tests}.rs`,
     `eval/coding-bench/README.md`。
-  - Done when: 每个 remem-backed run 从实际 production bridge 保存 schema/policy/estimator/
-    plan/audit/render hashes、degraded mode、预算、head、fixture；validator fail closed，control
-    arm 明确 not-applicable。
+  - Done when: 每个 remem-backed run 从实际 production bridge 保存
+    schema/policy/render-contract/estimator、plan/audit/snapshot fingerprint、Bundle
+    rendered hash、post-gate final injection hash、degraded mode、两个明确命名的预算、
+    head、fixture；validator fail closed，control arm 明确 not-applicable。
   - Verify:
     - `cargo test eval::coding_bench -- --nocapture`
-    - tampered plan/audit/render hash、budget overflow、wrong head/fixture、missing evidence、
-      synthetic-other-run evidence 负例全绿。
+    - missing/wrong/tampered render-contract version、plan/audit/Bundle-render/final-injection
+      hash、budget overflow、wrong head/fixture、missing evidence、synthetic-other-run evidence
+      负例全绿。
     - `cargo run -- eval-coding-bench --fixture eval/coding-bench/fixtures/tasks.json --runs-per-condition 1 --dry-run --json-out /tmp/gh932-coding-bench.json`
 
 - [ ] `SP932-T9` — current contracts、user docs、changelog 与 version sync — Owner: docs/version agent；Dependencies: `SP932-T5`, `SP932-T6`, `SP932-T7`, `SP932-T8`；Covers: `B-001`, `B-021`–`B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `docs/specs/GH932/{PRODUCT,TECH}.md`, `docs/specs/README.md`,
-    `README.md`, `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`,
+    `docs/specs/SPEC-web-api.md`, `README.md`, `docs/ARCHITECTURE.md`, `CHANGELOG.md`,
+    `Cargo.toml`, `Cargo.lock`,
     `plugins/remem/.codex-plugin/plugin.json`, `plugins/remem/runtimes/remem-releases.json`,
     `npm/remem/package.json`, `server.json`。
   - Done when: 文档明确 Phase A history 与 current complete behavior、experimental surfaces、
-    default gate/rollback、budget estimator/degraded semantics；一次 unreleased version staging
-    全部同步，不发布 release。
+    default gate/rollback、budget estimator/degraded semantics；`docs/specs/SPEC-web-api.md`
+    增加两个 POST endpoints、experimental capability、schema/policy/render-contract versions、
+    bearer pre-read auth 与稳定 400/401/409/500/503 error mapping，且明确这是 source/unreleased
+    contract、不能提前声称已发布；一次 unreleased version staging 全部同步，不发布 release。
   - Verify:
     - `python3 scripts/ci/check_plugin_version_sync.py`
     - `python3 scripts/ci/check_version_bump.py <LIVE_ORIGIN_MAIN_SHA> HEAD`
+    - `cargo test api::tests::context_bundle -- --nocapture`
+    - `cargo test --test api_public -- --nocapture`
     - `git diff --check`
 
 - [ ] `SP932-T10` — full verification 与 independent review handoff — Owner: verification agent；Dependencies: `SP932-T1`–`SP932-T9`；Covers: `B-001`–`B-027`；Done when: 见下；Verify: 见下

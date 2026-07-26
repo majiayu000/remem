@@ -44,12 +44,23 @@ benchmark hashes 留给 #932。后续实现必须增量完成这些边界，不�
   的第二版 schema/policy，不把 Phase A shape 伪装为兼容。
 - `ContextPlan` 必须完整包含 normalized project、canonical worktree identity、branch、
   role、risk、as-of、include_superseded、channel order/budgets、estimator version 与
-  policy versions。
+  `render_contract_version`、policy versions，以及 closed
+  `relevance_derivation={explicit_task,snapshot_session_signals}` 和
+  `relevance_derivation_policy_version`。`explicit_task` 绑定 normalized task query；
+  `snapshot_session_signals` 只绑定派生算法，不在 plan 阶段读取 DB payload。
 - `plan_hash` 为 canonical JSON（`plan_hash=""`）的 SHA-256。`execute` 在任何 DB read
   前重算并 constant-time 比较；mismatch 返回 `plan_hash_mismatch`。
-- `ContextAudit` 新增 `audit_hash`、snapshot/data-version、rendered budget counts、
+- `ContextAudit` 新增 `audit_hash`、content-derived `snapshot_fingerprint`、
+  `effective_relevance_query_sha256`、signal stable refs、`render_contract_version`、
+  rendered budget counts、
   conflicts/abstentions rollup。`audit_hash` 对 `audit_hash=""` 的完整 canonical audit JSON
   计算 SHA-256；entries 先按 `(channel, stable_key, terminal_state)` 稳定排序。
+- `snapshot_fingerprint` 是同一 read snapshot 内实际影响 candidate、eligibility、
+  acknowledgement、pattern-set/current-state 的 canonical inputs 的稳定有序内容 hash。
+  connection-local `PRAGMA data_version` 若作为 diagnostics 保留，必须明确从
+  `audit_hash` projection 排除；connection identity、wall clock 也不得进入 canonical hash。
+- `render_contract_version` 独立于 estimator/package version；renderer 格式改变必须 bump，
+  并改变 plan/audit/evidence hash 与 injection data-version。
 - canonical JSON 只使用 typed structs、ordered vectors/`BTreeMap`；禁止依赖
   `HashMap` iteration order。
 
@@ -68,6 +79,7 @@ decisions[]
 constraints[]
 failure_lessons[]
 workstreams[]
+session_context[]
 conflicts[]
 abstentions[]
 evidence_refs[]
@@ -85,13 +97,15 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 | preference、rule、explicit constraint | `constraints` |
 | lesson、bugfix/failure lesson | `failure_lessons` |
 | active workstream | `workstreams` |
+| recent session summary request/completed preview | `session_context`（model-visible、低优先级、非 canonical truth） |
 | competing canonical rows without unique temporal/current winner | `conflicts` |
 | insufficient provenance/scope/time/derived backing | `abstentions` |
-| session summary、source event、projection/backing refs | deduplicated `evidence_refs` |
+| source event、projection/backing refs、session summary identity | deduplicated `evidence_refs` |
 
 `memory_index` 与 `recent_sessions` 不再作为语义 top-level section；其 eligible items 按上表
-进入语义 section，原始 source/channel 写入 provenance/audit。schema v1 input/plan 明确拒绝，
-而不是通过 serde default 混用。
+进入语义 section；recent session 的可见正文进入 `session_context`，其稳定 identity 同时可
+进入 `evidence_refs`。原始 source/channel 写入 provenance/audit。schema v1 input/plan 明确
+拒绝，而不是通过 serde default 混用。
 
 ### 3. Typed role/risk/scope policy
 
@@ -100,10 +114,10 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 
 | Role | Stable priority (high → low) |
 | --- | --- |
-| `coder` | constraints, current_truth, decisions, failure_lessons, workstreams, conflicts |
-| `reviewer` | constraints, decisions, conflicts, failure_lessons, current_truth, workstreams |
-| `planner` | constraints, current_truth, decisions, workstreams, conflicts, failure_lessons |
-| `researcher` | constraints, current_truth, decisions, failure_lessons, conflicts, workstreams |
+| `coder` | constraints, current_truth, decisions, failure_lessons, workstreams, conflicts, session_context |
+| `reviewer` | constraints, decisions, conflicts, failure_lessons, current_truth, workstreams, session_context |
+| `planner` | constraints, current_truth, decisions, workstreams, conflicts, failure_lessons, session_context |
+| `researcher` | constraints, current_truth, decisions, failure_lessons, conflicts, workstreams, session_context |
 
 - role 只决定 priority/section allocation，不改变 owner/project/trust/suppression/temporal
   eligibility。risk policy 只增加 evidence minimum 与 abstention strictness：
@@ -113,31 +127,48 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
   plan 保存 canonical repo-relative identity/hash，不把任意绝对路径回显到 MCP/REST/doctor。
 - DB query 用 project/owner + branch filter；executor 复查每个 item。branchless/global 行只按
   现有 owner policy 的显式 compatibility rule 进入，并记录 `branchless_owner_compatible`。
+- `session_context` 有独立 section budget，始终保持低于 canonical/constraint/decision
+  sections 的优先级；它不能因 role 变化提升为 `current_truth`。
 
 ### 4. DB-backed executor 与 snapshot
 
-新增 `execute_db(conn, plan)` 作为 production path：
+新增 `execute_db(conn, plan, execution_control)` 作为 production path。
+`ExecutionControl` 是不序列化、不进入成功 plan/audit hash 的 runtime input，包含 absolute
+deadline 与 cancellation/SQLite interrupt handle：
 
 1. 重算/验证 plan、schema/policy/estimator/scope。
 2. 在现有 connection 上开启一个 deferred read transaction，并在第一次 read 后固定 SQLite
-   snapshot/data version。
-3. 通过独立的只读 typed candidate loader 复用底层 SELECT、current-state、lesson、
+   snapshot；在该 transaction 内对实际使用的稳定 ordered rows/policy state 计算
+   `snapshot_fingerprint`。`PRAGMA data_version` 仅可记录为非 canonical local diagnostic。
+3. 若 plan 是 `snapshot_session_signals`，在同一 snapshot 内先读取 recent commit messages、
+   session summaries 与 active workstreams 的 stable refs/text，按 versioned policy 派生
+   normalized implicit query；audit 绑定 derivation mode/policy、
+   `effective_relevance_query_sha256`、signal stable refs 与 snapshot fingerprint。planner
+   不得预读这些 rows；若 plan 是 `explicit_task`，使用 plan 绑定的 normalized query。
+4. 通过独立的只读 typed candidate loader 复用底层 SELECT、current-state、lesson、
    workstream、session 与 staleness/temporal mapping，将行映射为 typed candidates。禁止直接
    调用 `load_context_render_inputs` / `render_preferences_to_buffer`：其 preference poisoning
    路径会调用 `record_preference_injection_drop` 并写入带 wall-clock 的 row。新 loader 在同一
    snapshot 内只读 candidates 与 acknowledgement/pattern state，不 render、不 drop、不写
    telemetry；所有 channel 都加载完成后只调用一次第 6 步的统一 scanner。MCP read-only
    connection 与 writable SessionStart connection 都不得因 candidate load 产生 runtime write。
-4. 将 request `as_of_epoch` 传入所有 temporal/staleness/current-state 查询；禁止在 adapter
+5. 将 request `as_of_epoch` 传入所有 temporal/staleness/current-state 查询；禁止在 adapter
    内调用 `Utc::now()` 代替。
-5. 任一 loader error 都立即取消整个 result，并生成 error-level evidence；不把
+6. 在 execute 开始、implicit derivation、每个 loader/phase boundary 与 render 前检查
+   `ExecutionControl`，并安装有界 SQLite progress handler/interrupt 以中止长查询。任一
+   cancel/deadline/error 都 rollback/discard temporary result、清除 handler，保证 connection
+   后续可查询；不能等 query 完成后才观察取消。
+7. 任一 loader error 都立即取消整个 result，并生成 error-level evidence；不把
    `LoadedContext.errors + partial rows` 发布为 Bundle。
-6. 在最终 render 前只运行一次统一的纯函数式 poisoning scanner：按当前 pattern-set version
-   检查所有可注入 typed candidates，exact-version acknowledgement 才可保留；未确认命中生成
-   error-level diagnostic 与 exactly-once `ContextAudit` terminal drop。ack/state query error
-   原子 fail closed；scanner 不调用 legacy drop/quarantine/telemetry writer。随后运行其余
-   eligibility、conflict/abstention、role order、budget/render/audit。
-7. 在 transaction 内完成 hash；只在全部验证通过后发布 immutable result。
+8. 在最终 render 前只运行一次统一的纯函数式 poisoning scanner：按当前 pattern-set version
+   检查所有可注入 typed candidates。只有已有持久 acknowledgement contract 的 source 可凭
+   exact pattern/version acknowledgement 保留；workstream 没有 acknowledgement storage，
+   任何命中都以 `poisoning_unacknowledgeable_source` 产生 error-level、exactly-once
+   `ContextAudit` terminal drop，不执行不存在的 ack lookup。其他未确认命中同样 terminal
+   drop；ack/state query error 原子 fail closed；scanner 不调用 legacy
+   drop/quarantine/telemetry writer。随后运行其余 eligibility、conflict/abstention、role
+   order、budget/render/audit。
+9. 在 transaction 内完成 hash；只在全部验证通过后发布 immutable result。
 
 现有 `execute(plan, ExecutorInputs)` 改为 crate-private fixture seam，或显式命名为
 `execute_candidates_for_test`；MCP/REST/SessionStart 不得调用它。此 issue 不新增 migration，
@@ -160,27 +191,39 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 
 - 新增 `CONTEXT_TOKEN_ESTIMATOR_VERSION = "utf8_upper_bound_v1"`：一个 token budget unit
   取 UTF-8 byte upper bound。它是本地、确定性、保守上界；不声称等于某个 provider tokenizer。
+- `render_contract_version` 使用现有 `RENDER_CONTRACT_VERSION` 的 approved value；它与
+  estimator/package version 分离，进入 plan、audit、Bundle/capabilities 与 benchmark
+  evidence。任何 body 格式改变而未 bump version 的 fixture 必须失败。
 - budget 只约束 `rendered_context`，不约束传输 envelope/audit JSON；REST/MCP 必须分别返回
   `rendered_token_estimate` 和 audit，避免误称整个 JSON 在模型预算内。
 - renderer 先把每个完整 item（heading、title、body、citation、separator）渲染为独立 UTF-8
   segment，再按 role priority、section budget、total budget 原子纳入。固定 header/footer
-  先计入总预算；若连最小 header 都装不下，正文为空并记录 `budget_below_minimum`.
+  先计入总预算；`session_context` 使用独立 section budget。若连最小 header 都装不下，
+  正文为空并记录 `budget_below_minimum`.
 - 任何 item 只能整体保留或按一个已测试的 safe text boundary 截断；stable key、canonical ref、
   evidence refs 不可截断。最终重新计数并断言 section/total；assert 失败返回
   `render_budget_invariant_failed`，不能发布超限正文。
 - audit 记录 pre/post estimate、item boundary、section/total drop reason 与最终 rendered hash。
+- canonical Bundle 保持明确命名的 `rendered_context` / `rendered_sha256`。SessionStart
+  另有 post-gate `final_injection_body` / `final_injection_sha256` / estimate；gate-specific
+  final hash 不写回 immutable Bundle audit，也不影响 MCP/REST determinism。
 
 ### 7. SessionStart bridge 与 rollback
 
 - 新增小型 `context::bundle_bridge`：从现有 invocation 构造 schema v2 request，调用
   `plan` + `execute_db`，再把 `rendered_context` 与 Bundle audit 映射到现有 injection gate/
   persistence。
+- SessionStart 没有显式 task 时 bridge 必须选择 `snapshot_session_signals`，由
+  `execute_db` 在同一 snapshot 从 commit messages、session summaries、workstreams 派生
+  relevance；禁止传空 task 当作等价查询，也禁止在 planner 前预读 payload。
 - `execute_db` 在最终 render 前必须执行第 6 步唯一的纯函数式、deterministic、
   acknowledgement-aware injection-time rescan；`bundle_v2` bridge 只能接收已通过该 scan
   的 immutable Bundle，不能跳过或重复扫描。scanner 使用当前 pattern-set version 检查
   current truth、decision、constraint/preference、failure lesson、workstream、session summary
-  与其他所有可注入文本字段。已确认的同 pattern/version 可继续；新增/升级 pattern 命中的
-  未确认项以 error-level diagnostic 和唯一 `ContextAudit` terminal drop 结束。该逻辑不得直接
+  与其他所有可注入文本字段。ack-capable source 已确认的同 pattern/version 可继续；
+  workstream match 永远以 `poisoning_unacknowledgeable_source` drop；新增/升级 pattern
+  命中的其他未确认项以 error-level diagnostic 和唯一 `ContextAudit` terminal drop 结束。
+  该逻辑不得直接
   调用会写 `memory_poisoning_injection_drops` 的 legacy
   `drop_unacknowledged_poisoned_context`/preference renderer；pattern match、ack lookup 与
   audit projection 可共享纯 read-only helper，但 snapshot path 不写 DB。
@@ -189,7 +232,14 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 - gate 是现有 runtime config 的显式字段，初始默认 `legacy`；doctor 同时报告 configured/effective
   path。兼容 fixture 通过后才可另行批准默认切换。
 - parity 比较可见 semantic items、order、drop reasons、budget 和 empty/error behavior；
-  允许新 Bundle header/audit envelope 的 versioned 差异，不允许遗漏当前可见 canonical data。
+  commit-only、summary-only、workstream-only fixture 必须保持 same-snapshot selection；
+  summary-only fixture 必须在 `session_context`/最终正文可见。允许新 Bundle header/audit
+  envelope 的 versioned 差异，不允许遗漏当前可见 canonical data。
+- injection gate/delta、debug trace 与 hook-integrity warning 全部应用后，唯一
+  `finalize_injection_body` 重新执行 versioned estimate 与
+  `final_injection_sha256`，并把 final evidence 交给 injection audit/coding-bench。此后禁止
+  mutation；若 optional diagnostic segments 按固定顺序移除后仍超限，返回
+  `render_budget_invariant_failed` 且不发布 stdout。
 - rollback 只把 selector 改回 `legacy`，不删 schema/data/audit；严格 injection gate 继续阻止
   同 session 双重注入。
 
@@ -202,10 +252,12 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
   - `POST /api/v1/context/plan`
   - `POST /api/v1/context/bundle`
 - 两个 transport 复用 domain DTO/validation 与 error code mapping。REST response envelope 增加
-  `experimental: true`；capabilities 暴露 schema/policy/tool/endpoint 名称。
+  `experimental: true`；capabilities 暴露 schema/policy/render-contract/tool/endpoint 名称。
+- REST/MCP request lifetime 构造同一 `ExecutionControl` 并传播到 `execute_db`；caller
+  cancellation 与 absolute deadline 必须通过 SQLite progress/interrupt 在执行中生效。
 - HTTP mapping：invalid schema/request/hash=`400`，unauthorized=`401`，scope/safety
   blocked=`409`，DB/internal invariant=`500`，cancel/deadline=`503`。MCP 使用同名稳定
-  `code` 字段。
+  `code` 字段：`cancelled` / `deadline_exceeded` 不得合并为 generic internal error。
 - REST auth middleware 在 handler 前运行；测试以一个“DB read sentinel”证明未授权请求没有
   打开/查询 payload。
 
@@ -217,9 +269,11 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 - `doctor --json` 增加 typed `context_compiler` root object并提升
   `REPORT_SCHEMA_VERSION`；text/JSON 使用同一 snapshot，不依赖颜色。
 - coding-bench 的每个 remem-backed `RunReport` 增加
-  `ContextBundleEvidence { schema_version, policy_version, estimator_version, plan_hash,
-  audit_hash, degraded_mode, rendered_token_estimate, token_budget, rendered_sha256,
-  source_head_sha, fixture_sha256 }`。
+  `ContextBundleEvidence { schema_version, policy_version, render_contract_version,
+  estimator_version, plan_hash, audit_hash, snapshot_fingerprint, degraded_mode,
+  rendered_token_estimate, token_budget, rendered_sha256,
+  final_injection_token_estimate, final_injection_sha256, source_head_sha,
+  fixture_sha256 }`。
 - remem condition 必须从实际 production SessionStart/Bundle bridge 捕获 evidence；validator
   重算格式/hash/预算并绑定同 run head + fixture。control conditions 明确 `null/not_applicable`。
   不能从固定字符串或另一次 synthetic plan 填充。
@@ -228,11 +282,11 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| `B-001` | domain schema、serde、transport DTO | schema v1 rejection、unknown enum、schema v2 snapshots |
-| `B-002` | planner canonicalization/hash | repeated plan、env/clock/order independence、request mutation matrix |
-| `B-003` | DB snapshot executor、stable ordering、audit hash | same snapshot byte equality、reverse insertion、hash mutation tests |
-| `B-004` | planner/executor boundary | plan-only DB read sentinel；tampered plan rejected before DB read |
-| `B-005` | schema v2 semantic sections | full/empty JSON snapshots；legacy presentation-source classification matrix |
+| `B-001` | domain schema、serde、transport DTO | schema v1 rejection、unknown enum、render-contract version tamper、schema v2 snapshots |
+| `B-002` | planner canonicalization/hash | repeated plan、closed relevance derivation、env/clock/order independence、request mutation matrix |
+| `B-003` | DB snapshot executor、stable ordering、audit hash | same-content cross-connection equality、reverse insertion、snapshot/render-version hash mutation tests |
+| `B-004` | planner/executor boundary | plan-only DB read sentinel；implicit effective-query audit binding；tampered plan rejected before DB read |
+| `B-005` | schema v2 semantic sections | full/empty/summary-only JSON snapshots；legacy presentation-source classification matrix |
 | `B-006` | candidate mapper/provenance policy | canonical/generated/graph-derived positive/negative matrix |
 | `B-007` | audit terminal-state ledger | selected/dropped/abstained/conflict exactly-once property tests |
 | `B-008` | conflict resolver、freshness summary | unique winner、two-active conflict、unknown provenance、summary recomputation |
@@ -242,17 +296,17 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 | `B-012` | as-of query/eligibility | before-created、valid interval boundary、expired/invalidated/current clock independence |
 | `B-013` | supersession policy | default exclusion、explicit history inclusion、never-current assertions |
 | `B-014` | risk policy table | all risk variants；high-risk derived/quarantined/unknown provenance rejected |
-| `B-015` | segmented renderer + estimator | multibyte/title/ref/header/footer all counted；property budget never exceeded |
+| `B-015` | segmented renderer + final injection finalizer | multibyte/title/ref/header/footer/gate/debug/hook warning all counted；property budget never exceeded |
 | `B-016` | renderer truncation/audit | section/total/tiny-budget、UTF-8/item-boundary、audit/body parity |
 | `B-017` | degraded/blocked state machine | enrichment unavailable、schema/DB/scope/hash failures、error-level capture |
-| `B-018` | execute atomic publish | empty success、each loader failure、render failure、cancel/deadline no-partial |
-| `B-019` | SQLite read transaction | concurrent writer barrier proves one snapshot；parallel hash isolation |
+| `B-018` | execute atomic publish + ExecutionControl | empty success、each loader failure、real long-query cancel/deadline、handler cleanup/no-partial |
+| `B-019` | SQLite read transaction | concurrent writer barrier、different connection history same-content hash、content-change fingerprint、parallel hash isolation |
 | `B-020` | deny-network/auth boundary | network sentinel；REST unauthorized pre-DB-read；MCP local-only |
-| `B-021` | SessionStart bundle bridge | legacy/bundle semantic parity、single load/single injection、audit persistence |
+| `B-021` | SessionStart bundle bridge | signal-only implicit parity、summary render、workstream always-drop、single load/single injection、post-gate final hash/audit persistence |
 | `B-022` | runtime config selector | default legacy、explicit bundle、invalid config fail-visible、rollback fixture |
-| `B-023` | MCP/REST handlers | cross-transport golden equality、schema/error/auth/backward-compat tests |
+| `B-023` | MCP/REST handlers | cross-connection/transport golden equality、real cancellation/deadline、schema/error/auth/backward-compat tests |
 | `B-024` | doctor check/report | text/JSON states、no query/title/content/secret leakage sentinel |
-| `B-025` | coding-bench run evidence/validator | required remem fields、tampered hash/budget/head/fixture negative fixtures |
+| `B-025` | coding-bench run evidence/validator | render-contract version、Bundle/final hashes、tampered hash/budget/head/fixture negative fixtures |
 | `B-026` | planner/executor/surfaces | deny all network/LLM hooks；no downloaded files/jobs |
 | `B-027` | compatibility/presentation | gate-off baseline parity、experimental marker、ASCII/JSON state labels |
 
@@ -265,7 +319,9 @@ ContextRequest
   -> canonical plan JSON -> plan_hash
   -> execute_db:
        verify schema/policy/hash before payload read
-       begin one read transaction / freeze data version
+       bind ExecutionControl / install SQLite progress-interrupt
+       begin one read transaction / compute content-derived snapshot_fingerprint
+       derive explicit or snapshot-session-signals effective relevance
        strict DB adapter (memories/current state/lessons/workstreams/sessions)
        provenance + temporal + owner/project/branch/worktree eligibility
        semantic classification
@@ -275,14 +331,14 @@ ContextRequest
        exactly-once audit -> audit_hash
        commit read transaction / publish immutable Bundle
   -> one of:
-       SessionStart injection gate
+       SessionStart injection gate -> debug/hook additions -> final_injection_body finalizer
        MCP context_bundle
        REST POST /api/v1/context/bundle
        coding-bench evidence
 
-any validation/query/render/cancel failure
+any validation/query/render/cancel/deadline/finalizer failure
   -> discard temporary candidates/body/audit
-  -> error-level diagnostic + stable transport outcome
+  -> clear progress handler + error-level diagnostic + stable transport outcome
   -> no partial Bundle, no DB write, no silent legacy fallback
 ```
 
@@ -321,12 +377,15 @@ any validation/query/render/cancel failure
 ## 测试计划
 
 - [ ] Unit: schema/hash/role/risk/scope/as-of/supersession/provenance/conflict/audit/budget。
-- [ ] DB integration: real migrations + one read transaction + concurrent writer + every loader
-      failure/cancellation fixture。
-- [ ] SessionStart: legacy/bundle parity、single injection、当前 pattern/version poisoning
-      rescan、只读连接 write sentinel、gate/rollback、empty/error/tiny budget。
-- [ ] MCP/REST: cross-transport golden、tool/schema metadata、auth pre-read、stable error codes、
-      capabilities。
+- [ ] DB integration: real migrations + one read transaction + concurrent writer +
+      cross-connection snapshot fingerprint + implicit-signal derivation + every loader
+      failure/real cancellation/deadline fixture。
+- [ ] SessionStart: legacy/bundle signal-only parity、summary-only visible section、single
+      injection、当前 pattern/version poisoning rescan、workstream unacknowledgeable drop、
+      post-gate final body budget/hash、只读连接 write sentinel、gate/rollback、
+      empty/error/tiny budget。
+- [ ] MCP/REST: cross-connection/transport golden、real cancellation/deadline、tool/schema
+      metadata、auth pre-read、stable error codes、capabilities。
 - [ ] Doctor: text/JSON states、schema bump、payload/secret leak sentinel。
 - [ ] Coding bench: same-run evidence capture、hash/head/fixture/budget tamper negatives。
 - [ ] Offline: deny network/LLM/download/jobs for planner/executor/SessionStart/doctor/benchmark。
@@ -358,6 +417,7 @@ any validation/query/render/cancel failure
     "specs/GH932/tasks.md",
     "docs/specs/GH932/PRODUCT.md",
     "docs/specs/GH932/TECH.md",
+    "docs/specs/SPEC-web-api.md",
     "docs/specs/README.md",
     "README.md",
     "docs/ARCHITECTURE.md",
@@ -428,7 +488,8 @@ any validation/query/render/cancel failure
     "specs/GH932/tech.md",
     "specs/GH932/tasks.md",
     "docs/specs/GH932/PRODUCT.md",
-    "docs/specs/GH932/TECH.md"
+    "docs/specs/GH932/TECH.md",
+    "docs/specs/SPEC-web-api.md"
   ]
 }
 -->

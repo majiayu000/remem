@@ -29,7 +29,7 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 - 让 project、branch、worktree、role、`as_of_epoch`、risk 和 supersession policy 在
   planner 与 executor 两层都真实生效，而不只是出现在 DTO 中。
 - 输出完整的 current truth、decisions、constraints、failure lessons、workstreams、
-  conflicts、abstentions、evidence refs、freshness 与 audit。
+  session context、conflicts、abstentions、evidence refs、freshness 与 audit。
 - 对最终可注入 rendered context 执行严格总预算和 section budget，并审计全部截断。
 - 让 SessionStart、实验性 MCP/REST、doctor 和 coding-bench 使用同一 compiler 事实源。
 - 保留旧 SessionStart 路径作为显式、可测试的 rollback，直到兼容性门通过。
@@ -53,20 +53,28 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
    约束；未知 version/enum 必须显式拒绝，不能 alias、猜测或静默降级。
 2. **B-002 — Deterministic plan。** 相同的 normalized request 与 compiled policy
    必须产生 byte-identical plan JSON 和相同 `plan_hash`；时钟、随机数、环境遍历顺序和
-   DB 行顺序不得进入 plan。
+   DB 行顺序不得进入 plan。relevance derivation 是封闭的 `explicit_task` 或
+   `snapshot_session_signals`；plan hash 绑定 derivation mode 与 policy version，但 planner
+   不得为 implicit mode 预读 DB payload。
 3. **B-003 — Deterministic execution。** 相同 DB snapshot、plan 和 policy 必须产生
    相同 Bundle、rendered context、`audit_hash` 与 machine-readable reason；排序必须有
-   完整稳定 tie-breaker。
+   完整稳定 tie-breaker。不同 SQLite connection history 只要 canonical 内容相同，内容派生的
+   `snapshot_fingerprint` 与全部 canonical hash 也必须相同；`render_contract_version`
+   必须进入 plan/audit/evidence hash projection。
 4. **B-004 — Plan/execute separation。** 调用方可只生成 plan 而不读取 memory payload；
    execute 必须验证收到的 exact plan（含 hash、schema、policy、scope），不能在执行时静默
-   重写计划。
+   重写计划。implicit relevance 由 plan 绑定算法、由 execute 在同一 snapshot 读取 signals
+   后派生；effective query 只进入 audit hash，不能伪装成 pre-read plan input。
 
 ### 完整 Bundle 与 provenance
 
 5. **B-005 — Complete semantic sections。** Bundle 必须稳定输出
    `current_truth`、`decisions`、`constraints`、`failure_lessons`、`workstreams`、
-   `conflicts`、`abstentions`、`evidence_refs`、`freshness` 和 `audit`；无数据时对应数组
-   为空、summary 明确为 empty，禁止填 placeholder 或虚构内容。
+   `session_context`、`conflicts`、`abstentions`、`evidence_refs`、`freshness` 和
+   `audit`；recent session summary 的 model-visible request/completed preview 必须进入
+   独立、低优先级且受预算约束的 `session_context`，不能只留下不可渲染引用，也不能冒充
+   canonical current truth。无数据时对应数组为空、summary 明确为 empty，禁止填 placeholder
+   或虚构内容。
 6. **B-006 — Canonical/derived separation。** 每个 item 都必须带 `source_kind`、
    `canonical_ref`、可选 `projection_ref`、`evidence_refs`、validity 与 trust；
    generated/graph-derived item 没有 canonical back-reference 时必须 abstain/drop，
@@ -106,9 +114,11 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 ### 预算、降级与失败
 
 15. **B-015 — Strict rendered budget。** 总 `token_budget` 与各 section budget 作用于
-    最终 rendered context 的全部可注入字符（含标题、分隔、引用和固定前缀），使用 versioned、
-    deterministic estimator 计数；最终 audit 中的 rendered estimate 必须不超过总预算，
-    每个 section 也不得超限。只计算 `ContextItem.text` 不算满足。
+    Bundle `rendered_context` 的全部 segment，以及 SessionStart 经 gate/delta、debug trace、
+    hook-integrity warning 后的最终 model-visible injection body（含标题、分隔、引用和固定前缀），
+    使用 versioned、deterministic estimator 计数；最终 injection evidence 中的 estimate
+    必须不超过总预算，每个 section 也不得超限。只计算 `ContextItem.text` 或只 hash gate 前
+    body 不算满足。
 16. **B-016 — Audited truncation。** 超预算时只按固定优先级和稳定 item 边界删除/截断，
     每个被影响 item 都记录 `section_budget`、`total_budget` 或固定细分 reason；
     禁止产生半个 UTF-8 字符、截断 canonical/evidence identity 或让 audit 与正文不一致。
@@ -117,11 +127,15 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
     或 plan validation 无法保证时只能 `blocked`。任何 degraded/blocked 原因都必须进入
     audit、error-level diagnostic 和对应 transport 状态，不能 warning + fallback。
 18. **B-018 — Empty/error/cancellation atomicity。** 合法但无候选时返回成功的 empty
-    Bundle；DB/query/render error、deadline 或 cancellation 不得返回部分 Bundle。执行要么
-    发布一个已验证的完整结果，要么返回明确 error/blocked outcome。
+   Bundle；DB/query/render error、deadline 或 cancellation 不得返回部分 Bundle。执行要么
+   发布一个已验证的完整结果，要么返回明确 error/blocked outcome。REST/MCP request
+   lifetime 必须通过非序列化 execution control 传播到 DB executor，并能在 query 执行中
+   使用 SQLite progress/interrupt 真实中止工作；不能用测试注入的假错误代替。
 19. **B-019 — Snapshot concurrency。** 一次 execute 的所有 channel 从同一只读数据库
-    snapshot 读取；并发 capture/promotion 不得造成一半旧、一半新结果。并发相同请求不得写
-    runtime DB，也不得互相污染 plan/audit hash。
+   snapshot 读取；并发 capture/promotion 不得造成一半旧、一半新结果。并发相同请求不得写
+   runtime DB，也不得互相污染 plan/audit hash。canonical snapshot identity 必须由该
+   snapshot 内影响 candidate、eligibility、acknowledgement 和 pattern policy 的稳定内容派生；
+   connection-local `PRAGMA data_version` 只能作为非 canonical diagnostic，禁止进入 hash。
 20. **B-020 — Offline and permission behavior。** plan、execute、render、doctor 与
     benchmark hash 路径不需要网络。REST 继续使用现有 localhost bearer auth，MCP 继续使用
     现有本地进程边界；缺 token/未授权请求必须在读取 memory payload 前拒绝。
@@ -129,26 +143,33 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 ### 入口、兼容与可观测性
 
 21. **B-021 — SessionStart single source。** 启用新路径时，SessionStart 从 DB-backed
-    Bundle renderer 产生上下文，不能再独立执行另一套 selection/budget。兼容 fixture 在同一
-    snapshot 下证明旧路径可见语义等价；切换失败不得双重注入或静默回退。Bundle 在最终
-    render 前必须按当前 pattern-set version 对所有可注入候选重新执行 acknowledgement-aware
-    poisoning scan；未确认命中项只能进入可审计 terminal drop，不能因换 renderer 而重新注入，
-    scan 与 audit 也不得写入只读 snapshot connection。
+   Bundle renderer 产生上下文，不能再独立执行另一套 selection/budget。兼容 fixture 在同一
+   snapshot 下证明旧路径可见语义等价：没有显式 task 时，必须在 snapshot 内从 recent commit
+   messages、session summaries 和 workstreams 派生 implicit relevance，且 summary-only
+   context 仍可见；切换失败不得双重注入或静默回退。Bundle 在最终
+   render 前必须按当前 pattern-set version 对所有可注入候选重新执行 acknowledgement-aware
+   poisoning scan；只有已具备持久 acknowledgement contract 的 source 才能以 exact
+   pattern/version acknowledgement 保留。workstream 没有该 persistence surface，命中后必须
+   以 `poisoning_unacknowledgeable_source` 终态 drop。未确认命中项不能因换 renderer 而重新
+   注入，scan 与 audit 也不得写入只读 snapshot connection。gate/delta、debug 与 hook warning
+   添加完后必须经过唯一 finalizer 重算预算与 `final_injection_sha256`，此后禁止再次修改正文。
 22. **B-022 — Explicit rollback。** 新 SessionStart 路径先以显式 feature/config gate
     上线；rollback 只切回已测试旧 renderer，不改变 DB/schema，不删除 audit evidence。
     gate 状态与实际路径必须在 diagnostics/doctor 可见。
 23. **B-023 — MCP/REST parity。** 提供 versioned experimental plan 与 bundle surface；
-    MCP 与 REST 接受同一语义 request、返回同一 schema/hash/reason。REST 使用 POST body，
-    不能把 task 或 payload 放入 URL；invalid、blocked、unauthorized 与 internal error 有稳定
-    区分，且 schema/backward-compatibility tests 固定。
+   MCP 与 REST 接受同一语义 request、返回同一 schema/hash/reason。REST 使用 POST body，
+   不能把 task 或 payload 放入 URL；invalid、blocked、unauthorized 与 internal error 有稳定
+   区分，transport cancellation/deadline 必须传播到同一 executor 并返回稳定
+   `cancelled` / `deadline_exceeded` code，且 schema/backward-compatibility tests 固定。
 24. **B-024 — Doctor without payload。** `remem doctor` 文本和 JSON 报告 compiler
     schema/policy、DB executor readiness、SessionStart selected path、MCP/REST capability
     与 degraded/blocked reason；只输出 plan summary/hash 和状态，不输出 memory text、
     query、evidence 内容或 secret。
 25. **B-025 — Benchmark provenance。** 每个 remem-backed coding-bench run artifact
-    保存 context schema version、policy version、`plan_hash`、`audit_hash`、degraded mode
-    与 rendered budget evidence；缺失、hash 不匹配、非同 head/fixture 的证据使该 run 的
-    context contract 失败。
+   保存 context schema version、policy version、`render_contract_version`、`plan_hash`、
+   `audit_hash`、degraded mode、Bundle `rendered_sha256` 与最终
+   `final_injection_sha256`/budget evidence；缺失、hash 不匹配、非同 head/fixture 的证据
+   使该 run 的 context contract 失败。
 26. **B-026 — No foreground LLM/network。** 所有入口使用 deterministic local logic
     和现有本地 DB；不得为 plan/execute/render 自动调用 LLM、下载模型或访问网络。
 27. **B-027 — Compatibility and accessibility。** 未启用新 SessionStart gate 时现有
@@ -160,19 +181,22 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 - [ ] `B-001` 至 `B-027` 全部在 `tech.md` 与 `tasks.md` 中有实现区域和确定性验证映射。
 - [ ] DB-backed executor 从同一 read transaction 读取真实 remem 数据，不接受公共调用方伪造
       candidate 列表作为生产路径。
-- [ ] 完整 Bundle sections、provenance、conflict/abstention、freshness 和 audit schema snapshot
-      通过。
+- [ ] 完整 Bundle sections（含可渲染 `session_context`）、provenance、
+      conflict/abstention、freshness 和 audit schema snapshot 通过。
 - [ ] 相同 snapshot/request/policy 的 plan、Bundle、rendered context、`plan_hash` 和
-      `audit_hash` byte-stable。
+      `audit_hash` byte-stable；不同 connection history 的相同内容也得到相同
+      `snapshot_fingerprint`/hash。
 - [ ] project/branch/worktree/role/as-of/risk/supersession 的正反矩阵通过，未知值 fail closed。
-- [ ] 最终 rendered context 与每个 section 的 versioned estimate 严格不超预算，所有截断理由
-      可从 audit 复现。
-- [ ] `full`、`canonical_only`、`blocked`、empty、DB error、cancellation 和并发 snapshot
-      fixtures 全部通过，且没有 partial output。
+- [ ] Bundle rendered context 与 post-gate 最终 injection body 的 versioned estimate
+      严格不超预算；两个明确命名的 hash 与所有截断理由都可从对应 evidence 复现。
+- [ ] `full`、`canonical_only`、`blocked`、empty、DB error、transport-originated
+      cancellation/deadline 和并发 snapshot fixtures 全部通过，且没有 partial output。
 - [ ] SessionStart compatibility、single-path injection、当前 pattern-set poisoning rescan、
-      gate 与 rollback tests 通过；只读 execute 不产生 poisoning-drop runtime write。
+      implicit signal-only selection、summary-only render、post-gate finalizer、gate 与 rollback
+      tests 通过；只读 execute 不产生 poisoning-drop runtime write。
 - [ ] MCP/REST schema/parity/auth/error tests 通过；doctor 文本/JSON 不泄露 payload。
-- [ ] coding-bench artifact 保存并校验 schema/policy/plan/audit hash 与预算 evidence。
+- [ ] coding-bench artifact 保存并校验 schema/policy/render-contract、plan/audit、
+      Bundle render 与 final injection hash 及预算 evidence。
 - [ ] deny-network fixture 证明 plan/execute/SessionStart/doctor/benchmark 路径无 foreground
       LLM 或网络调用。
 
@@ -185,7 +209,7 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 | Invalid schema/policy/hash | 在读 payload 或发布结果前显式拒绝；`blocked`/transport error 可区分 |
 | DB open/query/schema error | error-level diagnostic；无 partial Bundle，无 silent empty fallback |
 | Loading/intermediate state | 同步 surface 不发布中间态；只有完整终态或明确 error |
-| Cancellation/deadline | 丢弃临时结果；无部分正文、无半份 audit、无 DB 写 |
+| Cancellation/deadline | REST/MCP lifetime 传播到 SQLite progress/interrupt；丢弃临时结果、清理 handler，连接可复用；无部分正文、无半份 audit、无 DB 写 |
 | Permission/auth | REST 未授权在 DB payload read 前拒绝；MCP 不扩大现有本地权限边界 |
 | Offline/network failure | 正常工作且零网络；若现有 optional enrichment 不可用则按 policy 明确降级 |
 | Concurrency/race | 同一 execute 固定 snapshot；并发写只影响下一次执行 |
@@ -196,8 +220,11 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 | Superseded conflict | 按显式历史 policy 返回或进入 conflict/abstention，不任意择一 |
 | Derived source unavailable | `canonical_only`，所有 derived item 有 drop reason |
 | Strict budget too small | 返回可验证的最小 empty/metadata outcome；不得超预算或切半 identity |
-| MCP/REST compatibility | 相同 request/snapshot 得到相同 schema/hash/reason；transport wrapper 除外 |
+| MCP/REST compatibility | 不同 connection history 的相同 request/content 得到相同 schema/hash/reason；transport wrapper 除外 |
 | SessionStart rollback | 单次只走一个 renderer；rollback 不改 DB、不重复注入 |
+| SessionStart implicit query | commit-only、summary-only、workstream-only signal 在同一 snapshot 派生 relevance；planner 不预读 payload |
+| Workstream poisoning | non-match 可保留；任何 match 都以 `poisoning_unacknowledgeable_source` drop，不查询不存在的 acknowledgement |
+| Post-gate additions | full/suppressed/delta gate × debug × hook warning 后统一 finalizer；超预算不发布 stdout |
 | Accessibility | JSON/text 有稳定字段/标签；颜色和图标不是唯一状态载体 |
 
 ## 发布说明
