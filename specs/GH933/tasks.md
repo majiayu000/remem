@@ -27,11 +27,13 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
   `ready_to_implement` 或 human `spec_approval`。
 - Phase A 待补/待证：cross-project/explicit-branch-scope relation 隔离、
   `branch=None` branch-agnostic 兼容语义、future captured evidence 的
-  `as_of` filter、dangling/malformed provenance、focused Supports relation、
-  SELECT-only/no-write、bounded relation lookup、v1 contract-valid golden
-  parity、representative query-plan/performance evidence，以及完整 current-head
-  verification；这些都是下一份 Phase A hardening follow-up 的 merge 前置项，
-  不得推迟到 Phase B。
+  source/knowledge-time `as_of` filter、foreign-project/dangling/malformed
+  provenance、typed memory subject v2、unknown claim status diagnostic、
+  decision-vs-cross-subject-provenance relation split、focused
+  Supports/DerivedFrom、SELECT-only/no-write、bounded relation lookup、
+  v1-to-v2 intentional golden diff、representative query-plan/performance
+  evidence，以及 final-rebase 后绑定 candidate SHA 的完整验证；这些都是下一份
+  Phase A hardening follow-up 的 merge 前置项，不得推迟到 Phase B。
 - Phase B 的 Context Bundle、worktree/task selector、rollback 与 historical
   explanation，以及 Phase C writer decision/收敛均为后续任务。
 
@@ -39,13 +41,13 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
 
 - [ ] `SP933-T1` Owner: coordinator + human maintainer; Dependencies: committed revised `product.md`/`tech.md`/`tasks.md`, existing `ready_to_spec`, human approval of the exact revised packet; Done when: maintainer records `spec_approval`, transitions GH-933 to `ready_to_implement`, and coordinator provides trusted live `origin/main`, approved-spec, duplicate-work, planned-path and `enforcement_sensitive` evidence; duplicate evidence classifies #939 and its retained branch as merged historical baseline, the authorized follow-up is the only writable lane, and the fresh implement route gate returns `decision=allowed`; Verify: `python3 checks/route_gate.py --repo . --route implement --issue 933 --state ready_to_implement <approved-evidence-args> --json`, exact packet commit/hash, human approval evidence and live base SHA.
 
-- [ ] `SP933-T2` Owner: Phase A verification agent; Dependencies: `SP933-T1`; Done when: 在从 fresh `origin/main` 创建的新 follow-up branch 上逐项核对 #939 baseline 的 `CT-001`–`CT-012`、`CT-015`，全量记录 mismatch，确认 adapter 当前 `branch=None` 是 all-branches/branch-agnostic 而 `Some(B)` 是 neutral-plus-exact，并记录所有 contract-valid v1 golden bytes 作为不可改 baseline；Verify: `cargo test truth -- --nocapture`、branch selector/source inspection、serialized golden byte hashes、`git diff --check origin/main...HEAD` 和绑定 current follow-up head 的 invariant review notes。
+- [ ] `SP933-T2` Owner: Phase A verification agent; Dependencies: `SP933-T1`; Done when: 在从 fresh `origin/main` 创建的新 follow-up branch 上逐项核对 #939 baseline 的 `CT-001`–`CT-012`、`CT-015`，全量记录 mismatch，确认 adapter 当前 `branch=None` 是 all-branches/branch-agnostic 而 `Some(B)` 是 neutral-plus-exact，核对 canonical writer 的 `(project, scope, memory_type, topic_key)` slot、captured-event project/source/inserted fields、raw status allowlists 与 relation kinds，并记录 v1 golden bytes/hash 作为 v2 intentional-diff baseline；Verify: `cargo test truth -- --nocapture`、writer/schema/selector/source inspection、serialized v1 golden byte hashes、`git diff --check origin/main...HEAD` 和绑定 current follow-up head 的 invariant review notes。
 
-- [ ] `SP933-T3` Owner: Phase A hardening implementation agent; Dependencies: `SP933-T1`, findings from `SP933-T2`; Done when: writable source files are exactly `src/truth/adapter.rs`, `src/truth/projection.rs` and `src/truth/tests.rs`；本 owner 负责实际实现 scoped-ID bounded SQL（不是把实现留给 verifier），relation 只有两个 endpoint 同时属于 scoped claim set 且属于 resolver 当前 subject group 时才参与 resolution，cross-project/explicit-branch-scope 外/cross-subject relation 不影响 scope 内 truth；`branch=None` 保持 all-branches，`Some(B)` 保持 neutral-plus-exact；projection/adapter 共享一个 reference epoch，future captured-event evidence 在 trust 前排除，missing captured-event ID 与 malformed `evidence_event_ids`/`source_refs_json` 返回含 claim/ref context 的错误；`ClaimRelationKind::Supports` 有真实 adapter/output fixture，SQLite authorizer 或等价 `total_changes` regression 证明 SELECT-only，contract-valid v1 golden bytes 不变；不得修改 writer/schema/context 或通过改 golden 掩盖 policy drift，若确需 `src/truth/types.rs`、`src/truth.rs`、v2 或新 index/migration 则停止并重新请求 planned-path/spec approval；Verify: focused branch-none/explicit-branch、cross-scope、future-evidence before/equal/after、dangling/malformed、bounded SQL、Supports、golden-parity/no-write tests、`cargo test truth -- --nocapture`、`cargo fmt --check`、`cargo check`、`git diff --check`。
+- [ ] `SP933-T3` Owner: Phase A hardening implementation agent; Dependencies: `SP933-T1`, findings from `SP933-T2`; Done when: writable source files are exactly `src/truth.rs`、`src/truth/adapter.rs`、`src/truth/projection.rs`、`src/truth/tests.rs`、`src/truth/types.rs`；本 owner 实际实现 scoped-ID bounded SQL；升级 `projection_version=2` 与无拼接歧义的 structured `SubjectIdentity/selector`，memory 以 `(Memory,memory_type,topic_key-or-singleton)`、user claim 以 `(UserContextClaim,claim_type,claim_key)` 分组；Supersedes/Refutes 仅同 typed subject 决策，scoped cross-subject Supports/DerivedFrom 连接 winner 时保留但 decision-neutral；`branch=None`/`Some(B)` 语义不变；captured evidence exact project-bound，source epoch 与 inserted knowledge epoch 都不晚于 shared reference epoch，late-ingest/foreign/missing/malformed 均按规格过滤或 contextual-error；unknown memory/user-claim status contextual-error；Supports/DerivedFrom、SELECT-only 与 v1-to-v2 restricted golden diff 有 regressions；不得修改 writer/schema/context 或整份重录 golden 掩盖 drift，若需新 index/migration/额外 public behavior 必须停止并重新请求 approval；Verify: focused typed-subject/v2、branch、decision/provenance、project binding、source/knowledge/late-ingest、unknown/dangling/malformed、bounded SQL、Supports/DerivedFrom、intentional-golden-diff/no-write tests、`cargo test truth -- --nocapture`、`cargo fmt --check`、`cargo check`、`git diff --check`。
 
-- [ ] `SP933-T4` Owner: read-only Phase A performance verifier; Dependencies: `SP933-T3`; Done when: 独立验证 T3 已实现的 relation SQL 不扫描无关 project 全部 `memory_edges`/trusted `graph_edges`，scoped ID membership 与 evidence lookup 有 bounded argument/row behavior，query plan 使用现有 indexes，contract-valid projection v1 bytes 与 T2 hashes 完全相同，并记录 representative corpus、`EXPLAIN QUERY PLAN`、p50/p95、rows examined/returned 与 memory bound；T4 不拥有源码且不得补实现，发现 SQL/正确性 gap 必须退回 T3；新增 migration/index 不在批准范围内，若现有 index 不足必须停止并回到 spec approval；Verify: query-plan/benchmark artifact、golden hash diff、`cargo test truth -- --nocapture`、`cargo fmt --check`、`cargo check`。
+- [ ] `SP933-T4` Owner: read-only Phase A performance verifier; Dependencies: `SP933-T3`; Done when: 在 pre-rebase implementation head 独立验证 relation SQL 不扫描无关 project 全部 `memory_edges`/trusted `graph_edges`，project-bound evidence/scoped ID membership 有 bounded argument/row behavior，query plan 使用现有 indexes，v2 bytes 对 T2 v1 hashes 只有批准的 intentional diff，并记录 representative corpus、`EXPLAIN QUERY PLAN`、p50/p95、rows examined/returned、memory bound、head SHA 与 migration/index/truth/dependency fingerprints；T4 不拥有源码且不得补实现，发现 gap 必须退回 T3；这是 rebase 前反馈 gate，不是最终 merge evidence；Verify: query-plan/benchmark artifact、restricted golden diff、`cargo test truth -- --nocapture`、`cargo fmt --check`、`cargo check`。
 
-- [ ] `SP933-T5` Owner: Phase A coordinator; Dependencies: `SP933-T2`, `SP933-T3`, `SP933-T4`; Done when: coordinator rebases the new follow-up on live `origin/main`, updates `docs/specs/GH933/PRODUCT.md` and `docs/specs/GH933/TECH.md` to match the verified hardening behavior、remove outdated completion claims，并准确保留 staged/unreleased 状态直到实际 release artifact 发布，stages one patch version strictly above that base across `CHANGELOG.md` and Cargo/plugin/npm/server/release metadata, and opens one implementation PR using `Refs #933`；PR 只声明 Phase A hardening，不声称 Context Bundle/worktree-task/writer convergence，不把 merged/staged 写成 released，不关闭 GH-933，并在 human merge 前具备 current-head focused/full checks、preflight、independent review、review threads 与 PR-gate evidence；Verify: current-contract/release-state diff review、`cargo fmt --check`、`cargo check`、`cargo test truth -- --nocapture`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、plugin version sync、version bump、SpecRail check、full preflight 和 current-head read-only `pr_gate`。
+- [ ] `SP933-T5` Owner: Phase A coordinator + read-only T4 verifier; Dependencies: `SP933-T2`, `SP933-T3`, pre-rebase `SP933-T4`; Done when: coordinator rebases on live `origin/main`, resolves without force-push shortcuts，updates `docs/specs/GH933/PRODUCT.md`/`TECH.md` 与 staged/unreleased release metadata，选择高于 final base 的 patch version；在所有 rebase/docs/version edits 完成后，read-only verifier 在 final candidate SHA 从零重跑完整 T4 query-plan/corpus/p50/p95/rows/memory/restricted-golden gate，并重算 migration/index/truth/SQLite-dependency fingerprints；任何后续 commit/rebase（包括只改 version/docs）都使 final T4 artifact 与 full preflight/PR-gate evidence 失效并必须再次重跑；随后 PR 使用 `Refs #933`，不声称 Phase B/C 或 released，不关闭 GH-933，且具备 exact-head full checks、independent review、threads 与 human merge authorization；Verify: final-SHA T4 artifact/fingerprints、current-contract/release-state diff、`cargo fmt --check`、`cargo check`、`cargo test truth -- --nocapture`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、plugin sync/version bump、SpecRail、full preflight、CI 与 current-head `pr_gate`。
 
 - [ ] `SP933-T6` Owner: Phase B spec owner + human maintainer; Dependencies: `SP933-T5`, `SP933-T4`; Done when: Phase A 已有真实运行/性能 evidence，product/tech contract 被更新为可实施的 Phase B closed design，明确 shared render reference epoch、Context Bundle current truth/decisions/conflicts、worktree/task selectors、historical explanation、policy/sensitivity、cache/budget、error-visible behavior、rollout/rollback gate 和 owned files，human 批准 exact spec head，新的 implement route gate 为 allowed; Verify: updated CT mapping、deterministic commands、SpecRail packet check、human `spec_approval`、fresh duplicate evidence 和 allowed route-gate JSON。
 
@@ -63,14 +65,14 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
 
 - `SP933-T1` 是所有 implementation 的串行前置 gate；blocked 时只能继续只读
   review/spec planning，禁止写代码。
-- 新 Phase A hardening lane 独占 `src/truth/adapter.rs`、
-  `src/truth/projection.rs`、`src/truth/tests.rs`；`SP933-T2`–`SP933-T5`
+- 新 Phase A hardening lane 独占 `src/truth.rs`、`src/truth/adapter.rs`、
+  `src/truth/projection.rs`、`src/truth/tests.rs`、`src/truth/types.rs`；
+  `SP933-T2`–`SP933-T5`
   默认串行，read-only reviewer 可并行，但不得共享 writable files。
 - Current contract `docs/specs/GH933/{PRODUCT,TECH}.md`、version/changelog
   metadata 与 PR body 由 coordinator 在 implementation agent 停止写入后
-  单独拥有；spec packet 由 spec owner 独占。不得把
-  `src/truth/types.rs`、`src/truth.rs`、migration、context 或 writer 路径
-  静默加入 lane。
+  单独拥有；spec packet 由 spec owner 独占。不得把 migration、context 或
+  writer 路径静默加入 lane。
 - Phase B 在 Phase A evidence 与 `SP933-T4` 性能 gate 后串行开始；Phase C
   在 Phase B 验证后开始。不得并行修改 `src/context/*` 与 writers 来提前实现
   未批准 Phase C。
@@ -87,6 +89,8 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
 - Spec packet 运行 `python3 checks/check_workflow.py --repo . --spec-dir specs/GH933`。
 - Distribution changes 运行 plugin version sync、version bump 和 full PR preflight。
 - Merge readiness 需要独立 reviewer、fresh CI、current-head review threads、merge state、human authorization 和 read-only `pr_gate`。
+- Final T4 performance/query-plan/golden artifact 必须晚于最后一次 rebase/commit，
+  与 merge candidate exact SHA 相同；SHA 不同即视为 stale。
 - GH-933 只在 `SP933-T11` closure audit 无 gap 后由 human 决定关闭。
 
 ## Handoff Notes

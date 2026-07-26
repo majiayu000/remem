@@ -18,7 +18,7 @@ human `spec_approval` 才能进入 implementation。
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
 | Public module boundary | `src/lib.rs`, `src/truth.rs` | 已合并的 PR #939 新增 public `remem_ai::truth` module，导出 DTO、lifecycle mapper、adapter 和 projection API | Phase A 的唯一新调用面；没有 CLI/HTTP/Context Bundle wiring |
-| Versioned DTO | `src/truth/types.rs` | `TRUTH_PROJECTION_VERSION = 1`；完整 `CurrentTruthProjection` 携带版本、scope、selector 与 truth rows | 锁定序列化 shape、canonical refs、relations 和 selection reason |
+| Versioned DTO | `src/truth/types.rs`, `src/truth.rs` | baseline `TRUTH_PROJECTION_VERSION = 1` 且以裸 `subject_key` 表示 subject | hardening 必须因 typed subject identity 显式升级 v2，并更新 public exports/golden；不能无 version boundary 改合法输入结果 |
 | Lifecycle mapping | `src/truth/lifecycle.rs` | 将 memories、observations、user-context claims、memory candidates 的已知状态映射为 publication/validity/retention/visibility；未知状态 fail closed | 防止把 retention 或 suppression 误当 truth；observations/candidates 在 Phase A 只共享状态语言，不成为 claim source |
 | Read adapter | `src/truth/adapter.rs` | 读取 memories、captured events、memory/graph edges 和 user-context claims；生成 `ClaimView`、`EvidenceView`、`RelationView` | 负责 scope、canonical ref、relation direction 和 evidence trust 的边界 |
 | Resolution policy | `src/truth/projection.rs` | 按 eligibility、显式 supersedes、refutes、evidence trust、recency 的固定顺序解析；冲突与 abstention 均显式返回 | `CT-003`–`CT-009` 的核心决策路径 |
@@ -37,9 +37,9 @@ human `spec_approval` 才能进入 implementation。
    `branch=Some(B)` 时只接受 branch-neutral 或 exact `B` rows；
    `branch=None` 保持当前 public adapter 的 branch-agnostic 语义，接受该
    project 的全部 branch rows，不解释为 branch-neutral-only。
-2. `load_memory_claim_groups` 把 memory 映射为 `ClaimView`。`topic_key`
-   相同的 rows 竞争同一 subject；缺少 `topic_key` 时以 `memory:<id>`
-   形成 singleton subject。
+2. `load_memory_claim_groups` 把 memory 映射为 `ClaimView`。baseline 仅以
+   `topic_key` 分组，和 canonical writer 使用的 `(memory_type, topic_key)`
+   slot 不一致；缺少 `topic_key` 时以 `memory:<id>` 形成 singleton subject。
 3. evidence 只保存稳定引用和 trust：
    - captured user/tool event 为 `Verified`；
    - 其它 captured event 为 `ModelGenerated`；
@@ -75,6 +75,11 @@ human `spec_approval` 才能进入 implementation。
   explicit-branch-scope 外与 cross-subject fixtures，不能让 scope 外 relation
   使 scope 内 claim 被拒绝；另以独立 fixture 锁定 `branch=None` 全分支视图，
   防止调用方把它误解成 neutral-only。
+- hardening 将 decision relation 与 provenance relation 分开：
+  `Supersedes`/`Refutes` 只有两端属于同一 typed subject 才进入 survivor/conflict
+  计算；`Supports`/`DerivedFrom`（及未来明确 allowlist 的 provenance-only kind）
+  在两端属于整体 scoped claim set 且一端是 winner 时可跨 typed subject 附加到
+  `supporting_relations`，但绝不参与 survivor、evidence tier 或 recency。
 - 当前 relation loader 扫描全部 `memory_edges` 和 trusted memory graph
   edges 后在 Rust 中用 `Vec::contains` 过滤。下一份 Phase A hardening
   follow-up 必须把 scope/id 约束下推到 SQL，或实现等价 bounded lookup，
@@ -85,19 +90,40 @@ human `spec_approval` 才能进入 implementation。
   `ClaimRelationKind::Supports` 的 adapter/delivery。Phase A 验证应补一个
   focused Supports relation fixture。
 - projection 与 adapter 必须共享一次计算的 reference epoch。对 explicit
-  `as_of`，`captured_events.created_at_epoch > as_of` 的 row 在 evidence trust
-  计算与 output materialization 前排除；`created_at_epoch == as_of` 可用。
-  before/equal/after fixtures 必须证明 future verified evidence 不改变历史
-  winner。`as_of=None` 也必须共享一次 “now”，避免 claim/relation/evidence
-  各自取时造成同次 projection 漂移。
+  `as_of`，captured evidence 只有 source epoch
+  `COALESCE(reference_time_epoch, created_at_epoch)` 与 knowledge epoch
+  `inserted_at_epoch` 都 `<= reference_epoch` 时才能进入 trust/output；
+  equality 可用。source-before 但 inserted-after 的 late ingestion 必须排除。
+  replay 把 `inserted_at_epoch` 后移时允许保守排除（可能少用 evidence），但
+  绝不允许回溯抬高历史 truth。before/equal/after 与 late-ingestion fixtures
+  必须证明 historical winner 不变。`as_of=None` 也必须共享一次 “now”，避免
+  claim/relation/evidence 各自取时造成同次 projection 漂移。
+- 每个 captured-event evidence lookup 必须同时 SELECT `project_id` 并 join
+  `projects.project_path`，与来源 memory 的 exact `project` path 比较。missing
+  project identity、join failure 或 foreign-project event 均沿 `Result` 返回含
+  memory canonical ref、event ID、expected/actual project 的 contextual error；
+  不能把 foreign verified evidence 当作低 trust 或普通缺失。
 - malformed `evidence_event_ids`、malformed user `source_refs_json` 当前会静默
   变为“无 verified evidence/默认 source evidence”，有效 JSON 内不存在的
   captured-event ID 也会被 `continue`。follow-up 必须让三类 provenance
   failure 都沿现有 `Result` path fail closed，并返回包含 claim canonical ref
   与坏 ref/field 的 contextual error；不得把损坏或 dangling provenance 包装成
   较低 trust 的正常成功。future-but-existing event 是按时间排除，不是
-  dangling error。若确需扩展 public DTO 或 module boundary，必须停止并重新
-  批准 planned paths，不能静默加入 `src/truth/types.rs` 或 `src/truth.rs`。
+  dangling error。若确需扩展已批准范围，必须停止并重新批准 planned paths。
+- canonical writer 以 `(project, scope, memory_type, topic_key)` 查找 direct
+  upsert slot，因此 hardening v2 引入结构化 `SubjectIdentity { source, kind,
+  key }`：memory 映射为 `(Memory, memory_type, topic_key-or-memory:<id>)`，
+  user-context claim 映射为
+  `(UserContextClaim, claim_type, claim_key)`。`ClaimView`、
+  `CurrentTruthView` 与 selector 使用同一 identity，禁止字符串拼接歧义。
+  `TRUTH_PROJECTION_VERSION` bump 为 2，`src/truth.rs` 导出新 identity/selector
+  类型；v1 没有 release artifact，仍需 changelog/current-contract 明示
+  source-level breaking boundary。
+- `memory_lifecycle`/`user_claim_lifecycle` 的 total mapping 可继续对未知值
+  fail-closed，但实际 adapter 在构建 claim 前必须校验 raw status allowlist；
+  unknown memory/user-claim status 返回 table/canonical-ref/raw-value error。
+  observations/candidates 在 Phase A 不是 claim source，保持 lifecycle-only
+  fail-closed mapping，不能被宣称已有 adapter diagnostic。
 - `as_of` 只能依据现存 row 的 created/validity/relation timestamps；对后来
   hard-delete 或原地 status rewrite 无法完整重建。Phase A 通过规格公开此
   限制，不伪造历史；完整 historical explanation 需要后续持久化契约。
@@ -128,21 +154,21 @@ human `spec_approval` 才能进入 implementation。
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| CT-001 | `src/truth/types.rs`, `src/truth.rs` | `golden_projection_shape_is_versioned_and_stable`; `cargo test truth` |
+| CT-001 | v2 `SubjectIdentity`/selector、`src/truth/types.rs`, `src/truth.rs` | same-topic/different-memory-type isolation、singleton/user-claim identity、v1-to-v2 intentional golden diff、`projection_version=2` |
 | CT-002 | `src/truth/lifecycle.rs` | 四组 `*_statuses_map_deterministically` tests；assert 四个正交维度 |
-| CT-003 | `adapter::load_memory_claim_groups`, `projection::resolve_group`, `TruthQuery` | baseline + explicit `branch=Some(B)` neutral-plus-exact、`branch=None` all-branches、cross-project/explicit-branch-scope/cross-subject relation fixtures；worktree/task 属 Phase B |
-| CT-004 | shared reference epoch、`projection::eligible`、`relation_effective`、`captured_event_evidence` | existing as-of/expiry fixtures + future evidence before/equal/after boundary and historical-winner regression；hard-delete/status-history limitation仅文档化 |
+| CT-003 | typed subject grouping、decision/provenance relation split、branch scope | explicit/none branch、cross-project/scope decision negatives + scoped cross-subject provenance positive/decision-neutral fixtures；worktree/task 属 Phase B |
+| CT-004 | shared reference epoch、source/knowledge evidence epochs、eligibility | existing as-of/expiry + source/inserted before/equal/after + late-ingestion historical-winner regression；hard-delete/status-history limitation仅文档化 |
 | CT-005 | `adapter::replacement_relation`, `projection::resolve_group` | `explicit_supersedes_beats_recency`, `user_claim_supersedes_link_resolves_deterministically` |
-| CT-006 | `captured_event_evidence`, `trust_class_evidence`, `user_claim_evidence`, `claim_trust_tier` | `verified_evidence_beats_newer_model_generated_claim`, `two_sources_supporting_one_claim_keep_both_evidence_refs`; stored confidence 不在决策输入 |
+| CT-006 | project-bound `captured_event_evidence`, trust adapters | existing trust fixtures + same-project positive, foreign/missing-project contextual-error negatives；stored confidence 不在决策输入 |
 | CT-007 | `resolve_group` 的 refutes/tie branches | `unresolved_conflict_returns_contradicted_not_a_silent_pick`, `same_tier_same_timestamp_is_contradicted` |
 | CT-008 | `eligible`, `abstention`, adapter provenance parsing | baseline abstention + malformed `evidence_event_ids`/`source_refs_json` and dangling captured-event ID contextual-error regressions |
-| CT-009 | `CurrentTruthView`, relation/evidence adapter | golden shape、dual-evidence、supersedes、conflict fixtures + focused Supports adapter/output fixture |
+| CT-009 | decision relation set vs provenance-only relation set | same-subject Supersedes/Refutes decision fixtures + same/cross-subject scoped Supports/DerivedFrom retention and decision-neutrality |
 | CT-010 | `ClaimSource`, adapter exports, lifecycle-only observation/candidate mapping | code review confirms Phase A claim sources only Memory/UserContextClaim；writer-side firewall 属 Phase C，PR #939 无完成测试 |
-| CT-011 | `src/truth/lifecycle.rs`, `eligible` | status mapping、unknown fail-closed、expiry tests；`archived_and_deleted_rows_never_become_current_truth`; suppressed path covered by user-claim supersedes fixture |
+| CT-011 | lifecycle mapping + memory/user-claim adapter raw-status validators | known status total mapping + unknown memory/user-claim table/ref/raw contextual-error regressions；observation/candidate limitation documented |
 | CT-012 | `eligible` excludes non-Live rows | `archived_and_deleted_rows_never_become_current_truth`; historical explanation consumer 属 Phase B/C |
 | CT-013 | future `src/context/*` integration | PR #939 无实现/测试；Phase B 需 context load/render/error/rollback fixtures |
 | CT-014 | future writer evaluation in memory/candidate/user-context/graph areas | PR #939 无实现/测试；Phase C 需 benchmark、migration compatibility 和 rollback evidence |
-| CT-015 | SELECT-only `src/truth/adapter.rs`, `TRUTH_PROJECTION_VERSION`, contextual `anyhow` errors | `cargo test truth` + unchanged v1 contract-valid golden bytes + SQLite authorizer/`total_changes` no-write + malformed/dangling provenance contextual-error tests |
+| CT-015 | SELECT-only adapter、v2 version boundary、contextual errors | restricted v1-to-v2 golden diff + SQLite authorizer/`total_changes` no-write + malformed/dangling/foreign-project/unknown-status contextual-error tests |
 
 ## 数据流
 
@@ -152,14 +178,16 @@ human `spec_approval` 才能进入 implementation。
 TruthQuery(project, branch, as_of, subject)
   -> compute one reference_epoch for the entire projection
   -> SELECT scoped memories ordered by (updated_at_epoch, id)
-  -> resolve every captured_event ref; missing ref => contextual error
-  -> exclude captured_event.created_at_epoch > reference_epoch
+  -> resolve every captured_event ref + canonical project path
+  -> missing/foreign-project ref => contextual error
+  -> require source_epoch <= reference_epoch AND inserted_at_epoch <= reference_epoch
   -> bounded SELECT of allowlisted memory_edges + trusted memory graph_edges
   -> ClaimView[] + EvidenceView[] + RelationView[]
-  -> BTreeMap subject grouping
+  -> structured SubjectIdentity(source, kind, key) grouping
   -> lifecycle/as_of eligibility
-  -> supersedes -> refutes -> evidence trust -> recency
-  -> CurrentTruthProjection(version=1, truths[])
+  -> same-subject supersedes/refutes -> evidence trust -> recency
+  -> attach scoped winner provenance-only relations
+  -> CurrentTruthProjection(version=2, truths[])
 ```
 
 ### Phase A user-context projection
@@ -168,8 +196,9 @@ TruthQuery(project, branch, as_of, subject)
 (owner_scope, owner_key, as_of)
   -> SELECT exact-owner user_context_claims
   -> source refs + row supersedes links
+  -> typed user-claim subject identity
   -> shared resolver
-  -> CurrentTruthProjection(version=1, truths[])
+  -> CurrentTruthProjection(version=2, truths[])
 ```
 
 Phase A 不产生 persistence，不调用 LLM/network，不改变 context。Phase B 才将
@@ -177,23 +206,20 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 
 ## 兼容性与版本
 
-- `pub mod truth` 是 additive Rust API；现有 CLI、HTTP、MCP、hook 和 context
-  output 不变。
-- `CurrentTruthProjection.projection_version=1` 锁定 observable JSON shape 与
-  已声明的 selector/resolution contract。本 hardening 的 relation endpoint
-  scope、shared-as-of evidence filter 与 malformed/dangling provenance error
-  都是兑现 `CT-003`/`CT-004`/`CT-015` 的 compatible correction：不新增/删除/
-  改名字段或 enum，不改变 current `branch=None` all-branches 语义，且既有
-  contract-valid golden bytes 必须完全相同。这里的 contract-valid input
-  指 provenance JSON 可解析且 ledger refs 均存在、所有参与 relation endpoint
-  都在所选 scope/subject 内、所有被使用 evidence 都不晚于 reference epoch；
-  只有违反这些 invariant 的 adversarial input 才允许从错误 winner/静默降级
-  变为排除或 error。
-- 如果实现发现必须改变 public DTO、enum、`branch=None` 语义、其它合法输入的
-  resolution result 或 contract-valid golden bytes，必须停止 T3；不得改写 v1
-  golden 来过 CI，而应先把 `src/truth/types.rs`/`src/truth.rs` 加入新 manifest，
-  设计 `projection_version=2` compatibility/migration 并取得 exact-spec human
-  approval。
+- #939 baseline 的 `pub mod truth` 对当时 crate 是 additive；本 hardening v2
+  对直接使用 v1 truth DTO/selector 的 source caller 是显式迁移边界。现有
+  CLI、HTTP、MCP、hook 和 context output 仍不变，因为它们尚未接入 projection。
+- v1 baseline 的 scope/as-of/malformed/dangling 修复本可视为 adversarial-input
+  compatible corrections；但 same-topic/different-`memory_type` 是合法 canonical
+  writer input，typed subject 会改变 observable grouping。因此本 exact packet
+  执行上一轮约定的 stop/reapproval 路径：把 `src/truth/types.rs`、
+  `src/truth.rs` 纳入 manifest，规定 `projection_version=2` 与结构化
+  `SubjectIdentity`/selector，并要求 human 批准 exact spec head 后才能实现。
+- v2 intentional golden diff 只允许：projection version、结构化 typed subject
+  fields/selector，以及本 packet 明定的 adversarial fail-closed/filtered output。
+  `branch=None` all-branches、Some(B) neutral-plus-exact、trust ordering 和其它
+  contract-valid resolution 不变。review 必须逐字段对照 v1 fixture，禁止用整份
+  golden 重录掩盖额外 drift。
 - Phase A 读取当前 schema，不新增 migration；旧数据库仍需先由现有 migration
   path 升到当前 schema，projection 自身不得迁移。
 - `target_project` fallthrough、global/project ownership convergence、
@@ -216,6 +242,10 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
   rows examined/returned 与 memory bound，并证明 relation 查询受 scoped IDs
   约束。Phase B 仍需另行量测 allocated rows、rendered budget，且同一次
   render 只运行一次 projection，但不得承担 Phase A 遗留的 bounded lookup。
+- pre-rebase T4 只提供实现反馈。final rebase、current-contract 与 version
+  metadata 全部落定后，必须在 merge candidate exact SHA 从零重跑完整 T4，
+  并将 SHA、migration/index/truth sources 与 SQLite/Rusqlite dependency
+  fingerprints 写入 artifact；其后任何 commit 或 rebase 都使 artifact stale。
 - 没有数据时返回空/abstention，不应启动 LLM 或 background work。
 
 ## 安全
@@ -230,9 +260,9 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
   和 policy review，不能直接序列化到网络。
 - cross-project relation 必须要求两个 endpoint 都在 scoped set；否则虽不泄露
   scope 外 statement，也可能让 scope 外数据影响 scope 内 truth。
-- provenance malformed/dangling 必须在 Phase A hardening 中 fail closed；
-  future evidence 必须在 trust 计算前按 shared reference epoch 排除，防止历史
-  查询被未来 provenance 改写。
+- provenance malformed/dangling/foreign-project 必须在 Phase A hardening 中
+  fail closed；source 与 knowledge epochs 都必须在 trust 前检查，防止未来或
+  late-ingested provenance 改写历史查询。
 
 ## 备选方案
 
@@ -249,15 +279,16 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 
 - Security: scope 外 relation 影响、未来网络暴露完整 statement、suppression
   绕过和 provenance trust 错分。
-- Compatibility: version 1 shape/policy 被调用方固化；hardening 必须维持
-  contract-valid golden bytes，超出 compatible correction 时转 v2 approval；
+- Compatibility: typed subject 触发明确 v2 source-level boundary；v1 未发布但
+  source callers 仍需迁移 selector/DTO，intentional golden diff 必须受限；
   Phase B 误把 partial Phase A 当完整 GH-933；旧 schema 缺 column 时查询失败。
 - Performance: relation 全表扫描、逐 evidence lookup 和内存 membership 在大库
   上放大；进入 SessionStart hot path 前必须优化并量测。
-- Data fidelity: `as_of` 无法重建 hard-delete/status rewrite；inline
-  `source_refs_json` 没有独立历史时间，最多受 claim row 的可见时间约束；
-  malformed/dangling refs 与 future captured evidence 必须由本 hardening
-  fail closed/过滤并有 regression。
+- Data fidelity: `as_of` 无法重建 hard-delete/status rewrite；captured-event
+  replay 会把 `inserted_at_epoch` 后移，历史查询会保守少用 evidence 但不会
+  反向抬高；inline `source_refs_json` 没有独立知识时间，最多受 claim row 的
+  可见时间约束；malformed/dangling/foreign refs 与 late evidence 必须由本
+  hardening fail closed/过滤并有 regression。
 - Maintenance: status writer 新增值时 mapper 默认 fail closed，但需要同步测试
   和版本说明；relation allowlist 与 graph contract 必须同步。
 
@@ -267,9 +298,10 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 - [ ] Phase A quality: `cargo fmt --check`
 - [ ] Phase A lint: `cargo clippy --all-targets -- -D warnings`
 - [ ] Phase A regression: `cargo test`
-- [ ] 补 explicit-branch/branch-none 与 cross-scope relation、future evidence
-      as-of boundary、dangling/malformed provenance、focused Supports relation、
-      v1 golden parity 和 SELECT-only/no-write regression。
+- [ ] 补 typed subject/v2 intentional diff、explicit-branch/branch-none、
+      decision-vs-provenance relation、same/foreign project evidence、
+      source/knowledge-time/late-ingest boundary、dangling/malformed provenance、
+      unknown claim status、Supports/DerivedFrom、SELECT-only/no-write regression。
 - [ ] Version sync:
       `python3 scripts/ci/check_plugin_version_sync.py`
 - [ ] Version bump:
@@ -283,9 +315,10 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 ## 回滚方案
 
 Phase A hardening 没有 schema 或 data mutation。若 follow-up 有问题，可回滚
-其 `src/truth/adapter.rs`、`src/truth/projection.rs`、`src/truth/tests.rs`
-修改，并同步回滚该 PR 的 changelog/version metadata；已合并的 #939 baseline、
-现有 writer、CLI/HTTP/MCP/hook/context path 无需数据恢复。
+其 `src/truth.rs`、`src/truth/adapter.rs`、`src/truth/projection.rs`、
+`src/truth/tests.rs`、`src/truth/types.rs` 修改，并同步回滚该 PR 的
+changelog/version metadata；已合并的 #939 baseline、现有 writer、
+CLI/HTTP/MCP/hook/context path 无需数据恢复。
 
 Phase B 必须通过单独批准的 rollout gate 保留旧 context path；projection
 加载失败时记录 error 并按批准的 rollback policy 切回旧 path，而不是静默输出
@@ -310,9 +343,11 @@ Phase B 必须通过单独批准的 rollout gate 保留旧 context path；projec
     "plugins/remem/.codex-plugin/plugin.json",
     "plugins/remem/runtimes/remem-releases.json",
     "server.json",
+    "src/truth.rs",
     "src/truth/adapter.rs",
     "src/truth/projection.rs",
-    "src/truth/tests.rs"
+    "src/truth/tests.rs",
+    "src/truth/types.rs"
   ],
   "spec_refs": [
     "specs/GH933/product.md",
