@@ -1,0 +1,211 @@
+# Product Spec
+
+## Linked Issue
+
+GH-931
+
+complexity: large
+
+Locale: zh-CN
+
+## 当前事实
+
+PR #936 已把 GH-931 的 scaffold 合入 default branch。本 packet 在
+`origin/main@5627a74942a41f51bdc03518fce726dbf1b46098` 核对到：
+
+- `eval/coding-bench/conditions.json` 已声明 primary
+  `no_memory`、`curated_file_budgeted`、`remem_e2e`，并固定 6-stage /
+  12-enum failure taxonomy；
+- budgeted curator protocol/schema 与 `eval/claims/registry.json` wording
+  gate 已存在，当前三个 claim 均为 `INSUFFICIENT` 且
+  `supporting_report: null`；
+- Rust `BenchCondition` 和 CLI 仍只接受旧 ID
+  `no_memory`、`remem`、`curated_file`；当前 dry-run 是 16 tasks × 3 旧条件
+  × 3 runs = 144 个 diagnostic/legacy 计划项；
+- `remem_e2e` 仍为 `pending_src_support`，
+  `curated_file_budgeted` 仍为 `artifact_schema_only`；没有真正的
+  capture→extraction→promotion→retrieval 运行、paired report 或可公开引用的
+  flagship outcome。
+
+因此 scaffold/schema 通过不等于产品 claim 已被验证。
+
+## 用户问题
+
+用户需要一个可复验的旗舰证据，回答 remem 在持续变化的 coding project 中，
+能否通过真实自动记忆链路，以显著低于人工维护的成本，达到不弱于
+target-blind、限时维护的 `MEMORY.md` 的 coding outcome，并且不增加不可接受的
+stale/irrelevant memory harm。
+
+当前 near-oracle preload 与 target-aware curated file 只能帮助诊断，不能回答
+这个问题。
+
+## 目标
+
+- 把现有 16-task deterministic fixture 接入三个 primary conditions 的真实、
+  隔离、可重复运行路径。
+- 让 `remem_e2e` 只通过自动 capture、LLM extraction、正常
+  review/promotion policy 和 production retrieval 提供记忆。
+- 让 `curated_file_budgeted` 遵守 target-blind 人工维护协议并完整计量维护
+  成本。
+- 生成 task-level paired、condition-order randomized 的 144-run v1
+  primary matrix，以及分母、失败阶段、成本、记忆伤害和 citation evidence
+  完整的报告。
+- 用预注册阈值、task-cluster paired bootstrap、stop-loss 和 report hash
+  决定允许公开的 wording。
+- live agent/LLM 运行保持显式、限额、可中断恢复；普通 CI 和 dry-run 不得
+  隐式发起付费或需要 auth 的调用。
+
+## 非目标
+
+- 不在本 Issue 中扩展到 96 个真实 repo tasks；v1 只完成现有 16-task 基础。
+- 不新增 retrieval channel，也不为了 benchmark 调整 production ranking。
+- 不把 LLM judge 作为 primary outcome；hidden deterministic score commands
+  决定 `resolved_rate`。
+- 不继续支持旧 runner ID `remem` / `curated_file` 的兼容 alias；旧 artifact
+  只作为明确标注的历史 schema evidence。
+- 不把 gold memory、完整 expected evidence、手工 `save_memory` 或 target
+  prompt 可见 hidden files 用于 `remem_e2e`。
+- 不把 diagnostic conditions 混入 primary denominator 或 public claim。
+- 不在本 spec lane 执行 live run、使用宿主 auth、修改 source 或发布结论。
+
+## Behavior Invariants
+
+### 状态、条件与矩阵
+
+1. **B-001** 在三个 primary condition 都可执行、144 个 tuple 完整、report
+   验证和 claim gate 完成前，suite 必须显示 `INSUFFICIENT`；缺失数据不得填
+   0、PASS 或“已完成”。
+2. **B-002** primary condition 闭集必须恰好是
+   `no_memory`、`curated_file_budgeted`、`remem_e2e`；旧
+   `remem_preloaded`、`curated_file_expert` 与其他 oracle/ablation 只能作为
+   diagnostic。
+3. **B-003** runner/CLI/machine artifacts 使用新 stable ID；裸
+   `remem`、`curated_file` 不得作为 alias 被接受。已有旧 report 必须标注
+   legacy schema 并禁止进入新 claim denominator。
+4. **B-004** v1 primary plan 必须是
+   `16 tasks × 3 conditions × 3 runs = 144` 个唯一 tuple；少一个、重复一个、
+   或以失败重试覆盖原 tuple 都不得产生 complete verdict。
+5. **B-005** 同一 `(task_id, run_index)` 的三条件必须共享 fixture revision、
+   target prompt、hidden score、model/reasoning、timeout 和 sandbox policy；
+   condition memory surface 是唯一允许差异。
+6. **B-006** condition 执行顺序按记录的 seed 随机化，统计单位为 task；
+   三次 run 不得被当成三个独立 task 增大显著性。
+
+### Condition 边界
+
+7. **B-007** `no_memory` 必须关闭 remem hooks/MCP/SessionStart、repo memory
+   file 和 host-native memory，只暴露当前代码与 target task。
+8. **B-008** `remem_e2e` 的历史证据必须以原始 session/tool event 进入
+   `captured_events`，再经真实 `extraction_tasks`、自动 extraction、
+   review/promotion policy、memories/projections 和 production
+   SessionStart/MCP retrieval 到达 agent。
+9. **B-009** `remem_e2e` 必须拒绝直接 DB seed gold memory、手工
+   `save_memory`、`render_seeded_remem_context`、完整 gold-evidence preload
+   或把 expected answer 写入 prompt。
+10. **B-010** extraction/provider 缺失、worker drain 未完成、candidate 未按
+    policy 处理或 retrieval evidence 不完整时，该 run 必须明确失败并保留
+    stage evidence；不得降级到 preload 或手工补记忆。
+11. **B-011** `curated_file_budgeted` 的 curator 只能按时间顺序看到历史
+    episodes，必须在 target task 揭示前完成并冻结 `MEMORY.md`；运行时不得
+    暴露其他 memory surface。
+12. **B-012** 每个 budgeted run 必须验证 frozen file hash，并记录人工维护
+    minutes、更新/删除/冲突处理次数、字符/token 大小和 budget exceed 状态；
+    缺 log、hash 不同或超预算均使该 run 无效。
+13. **B-013** `remem_preloaded` 与 `curated_file_expert` 保留为 diagnostic
+    upper bounds 时必须使用新名称并明显标记 shortcut；其 outcome 不得被写成
+    primary evidence。
+
+### 隔离、失败与恢复
+
+14. **B-014** 每个 condition/run 使用新的 HOME、CODEX_HOME、DB、repo 和 host
+    state；不得读取真实用户 HOME、其他 condition/run 的数据或旧 host session。
+15. **B-015** auth/config 只能通过显式 live-run bootstrap 进入 run-private
+    root，credential bytes 不得写入 report、stdout/stderr artifact 或 git。
+16. **B-016** hidden files 只在 agent 结束后 materialize 供 deterministic
+    scorer 使用；agent 读取或记忆面泄漏 hidden content 必须 fail closed。
+17. **B-017** auth/provider 不可用、capture/extraction/promotion/retrieval
+    失败、agent timeout/crash、score/cleanup/scanner 失败都必须形成 typed
+    artifact 或显式 suite error，不能静默丢弃。
+18. **B-018** 每次尝试有唯一 `attempt_id`；重试保留此前失败 artifact，
+    target 已启动后的 outcome failure 仍留在预注册分母，不允许挑成功重跑。
+19. **B-019** resume 只补缺失 tuple；duplicate tuple、hash drift、partial
+    artifact 或已完成 artifact overwrite 必须被拒绝。
+20. **B-020** dry-run、schema validation、report verify 和普通 CI 不读取
+    provider key、不启动 agent、不访问网络；live run 必须有新的人工限额授权。
+
+### Attribution、失败分解与 claim
+
+21. **B-021** 每个 `remem_e2e` run 必须记录 captured event、extraction task、
+    candidate/review/promotion、memory/projection、selected/injected、cited/used
+    refs；ref 必须属于同一 run/project 且能回溯。
+22. **B-022** 每个 memory failure 必须恰好归因到预注册六阶段之一，并使用
+    12-enum 闭集；无法判定时输出明确 `unclassified` suite error，不能猜测或
+    多重归因。
+23. **B-023** report 必须公开每个 condition/task 的成功、失败、缺失分母，
+    `resolved_rate`、compile/timeout/wrong-file、tokens、wall time、人工维护
+    成本、memory helped/hurt、stale/irrelevant/missing 和 citation 指标；无数据
+    用 `null` + missing count。
+24. **B-024** `remem_e2e` 与两个 controls 的比较必须使用 fixed-seed
+    task-cluster paired bootstrap，报告 absolute pp difference 与 95% CI；
+    pair/hash 缺失时 verdict 为 `INSUFFICIENT`。
+25. **B-025** `remem_e2e` vs `no_memory` 的正向 claim 需要 resolved rate
+    提升至少 10pp 且 95% CI 下界 > 0。
+26. **B-026** `remem_e2e` vs `curated_file_budgeted` 的 claim 需要
+    non-inferiority margin ≤ 3pp 且人工维护时间下降至少 70%。
+27. **B-027** stop-loss 固定为 `memory_hurt <= 2%`、
+    `stale_memory_followed <= 1%`；任一超阈值优先使正向 claim FAIL。
+28. **B-028** claim registry 必须在首个 official run 前锁定 dataset、model、
+    timeout、runs、metric、exclusion、bootstrap seed/algorithm 和 threshold；
+    首次运行后不得追溯修改门槛。
+29. **B-029** public wording 必须绑定 committed report hash 和 gate verdict；
+    CI 包含 0、matrix 不完整或 report 缺失时只能使用预注册的
+    directional/insufficient wording。
+30. **B-030** readiness、spec approval、live-run auth/cost、security、
+    final review、merge、public wording 和 release 均保持独立人工门禁。
+
+## 验收标准
+
+- [ ] Rust/CLI 只使用新 condition ID，旧 reports 被明确隔离为 legacy。
+- [ ] 16-task × 3 primary × 3 runs 的 offline plan 精确为 144，dry-run 零
+  agent/network/provider access。
+- [ ] `remem_e2e` 真实自动链路通过正向与禁止 shortcut 的负向测试。
+- [ ] `curated_file_budgeted` protocol、freeze hash、人工成本和超预算负例通过。
+- [ ] condition/run 隔离、timeout、cleanup、resume、attempt integrity 和
+  hidden-test 边界有 deterministic tests。
+- [ ] 6-stage / 12-enum failure attribution 与完整 source-to-use refs 可验证。
+- [ ] 144-run official artifacts、paired report、成本与 stop-loss 可复算。
+- [ ] claim registry 在 official run 前锁定，wording 只引用 hash-bound verdict。
+- [ ] 没有 official runs 时保持 `INSUFFICIENT`，不产生 public outcome claim。
+
+## Boundary Checklist
+
+| Boundary | Verdict |
+| --- | --- |
+| Empty / missing input | covered: B-001, B-004, B-010, B-012, B-017, B-023, B-024 |
+| Error / provider / auth | covered: B-010, B-015, B-017, B-020 |
+| Concurrency / ordering | covered: B-005, B-006, B-011, B-014, B-019 |
+| Retry / idempotency | covered: B-018, B-019 |
+| Compatibility | covered: B-003, B-013 |
+| Security / privacy | covered: B-014, B-015, B-016 |
+| Silent degradation | covered: B-001, B-010, B-017, B-022, B-023 |
+| Evidence integrity | covered: B-004-B-006, B-021-B-029 |
+| Human gates | covered: B-020, B-028-B-030 |
+
+## 边界情况
+
+- provider key 缺失时，offline plan 仍可验证；live `remem_e2e` 明确失败且不
+  改跑 `remem_preloaded`。
+- curator 超时或 target 提前泄漏时，budgeted artifact 无效且不能用 expert
+  file 替代。
+- 一个 task 三次都失败时仍保留全部 outcome；不得从分母删除。
+- matrix 已执行但 claim registry 未锁定时，只能产生 invalid/insufficient
+  report，不得事后锁阈值。
+- 旧 baseline report 保持历史可读，但不能因为字段名称相近而进入 v1 flagship
+  report。
+
+## 发布说明
+
+先交付可执行 runner、artifact 和 offline gates；再由 maintainer 单独批准
+限额 live run。只有 144-run report、paired bootstrap、maintenance cost、
+stop-loss 和 wording gate 全部通过后，README/release surface 才能引用经批准
+的具体结论。
