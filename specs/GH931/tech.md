@@ -153,6 +153,14 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   repo，不继承 service env，也不能读 coordinator 的 auth、REMEM_DATA_DIR、
   ledger、artifact 或 private-root path；SessionStart/MCP 只通过最小权限 broker
   返回已审计 context，不暴露 DB/file socket。
+- target agent/tool namespace 使用 deny-all egress policy，显式覆盖 DNS、
+  loopback、RFC1918/cloud metadata 和 public Git hosts；它只可连接本地
+  service-side model protocol broker。broker 只转发固定 provider RPC schema，
+  拒绝 URL、socket、fetch 与 tool-tunneling payload。task repo 从 approved
+  fixture materialize 为 detached tree，删除 remotes，且不含主仓库的
+  `eval/coding-bench`、target prompts、gold memories 或 hidden scorer files。
+  network canary 与尝试 fetch public repository 的 negative test 必须在 agent
+  和每类 tool subprocess 都失败。
 - supervisor 从 client/agent/provider pipes 读取 bounded frames，先以 exact
   secret fingerprints + structured credential patterns 做 streaming
   detect/redact，确认 sanitized 后才允许写 artifact。命中 secret 时原 frame
@@ -167,20 +175,27 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   auth/provider/agent spawn 前结束。普通 CI 只跑 dry-run、schema 和 synthetic
   tests。
 - artifact 采用 temp-write + fsync + atomic rename；`attempt_id` 唯一，完成
-  文件不覆盖。resume 只接受 hash 验证后的完成 tuple。
+  文件不覆盖。target spawn 前，runner 先将 budget reservation receipt 与
+  `target_started` transition 作为新 commit CAS append 到同一 anchored
+  protected remote ledger；remote ref update 成功后才可 spawn，process 启动
+  失败也视为 started failure。recovery 对 remote started 且无 terminal record
+  的 attempt 以 compare-and-swap 追加唯一
+  `abandoned_after_target_start` terminal record（`resolved=0`）并封闭 matrix
+  key；不得再 spawn。resume 只接受 hash 验证后的 terminal tuple。
 - live `run` 的唯一 policy 源是 `origin` default branch 上的
   `eval/coding-bench/live-run-approvals.json`，调用方不得传任意 registry path。
   entry 的 canonical policy preimage 明确排除 `approval_key`、review node、
-  merge commit 和 mutable usage；`approval_key =
-  sha256(repo_id || approval_pr_number || approved_head_tree_oid ||
-  canonical_policy_digest)`，全部字段在 review 前可知且不自引用。policy 绑定
+  merge commit、承载它的 blob/tree/commit OID 和 mutable usage；
+  `approval_key = sha256(repo_id || approval_pr_number ||
+  canonical_policy_digest)`，字段在 review 前可知且不自引用。policy 绑定
   approved/expires 时间、exact executable/profile/fixture/
   `registration_projection`/timeout/sandbox hashes、allowed tuples、
   credential-bootstrap ref（无 secret bytes）和累计 agent/LLM/cost hard caps。
 - verifier 先启动一个隔离的 authority-only phase：仅该 phase 可读取
   repo-scoped GitHub credential并访问 GitHub API；它不得读取 provider/host
   credential、启动 agent 或执行 benchmark。它 fresh 验证 approval PR 的
-  approved head tree/blob 就是 policy preimage、PR 已 merge 到 default branch、
+  approved head tree 中 registry blob 的 canonical policy digest 与 key 匹配、
+  PR 已 merge 到 default branch、
   APPROVED review 未 dismissed 且 reviewer association 符合 maintainer。
   authority phase 结束并清除 credential 后才能 bootstrap provider/host auth；
   GitHub unavailable、过期、drift、hash/tuple/cap mismatch 均 fail closed。
@@ -195,8 +210,13 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   计入累计值。ledger ref 缺失、non-FF/force history、reconciliation drift、
   reservation reuse 或预算耗尽均 fail closed。resume、新 clone/
   `execution_id`、并发和拆单共享同一 remote total；只有新的 independently
-  reviewed policy 可增加预算。ledger credential 只在 authority/reservation
-  broker 中可见，agent 永远不可见。
+  reviewed policy 可增加预算。approval policy 固定 `ledger_genesis_oid` 与
+  expected GitHub ruleset ID/hash；每次 authority phase 必须通过 GitHub API
+  fresh 验证 ruleset active、禁止 ref deletion/force push、无 bypass actors、
+  覆盖 admins/apps/automation，并验证 current tip 是 genesis 的完整后代。
+  ruleset/audit evidence 缺失、曾被禁用或 protection hash 漂移均 fail closed，
+  从而使 fresh clone 不能只信任一个被回退的当前 tip。ledger credential 只在
+  authority/reservation broker 中可见，agent 永远不可见。
 
 ### 3. `remem_e2e` production adapter（B-008-B-010、B-017、B-021-B-022）
 
@@ -225,8 +245,12 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 
 ### 4. `curated_file_budgeted` adapter（B-011-B-012）
 
-- curator session 只接收按 `reference_time_epoch` 排序的 history episodes 和
-  budget，target prompt/hidden score/gold facts 不进入其输入。
+- fixture schema 定义 closed `curator_input_projection` allowlist，只允许每个
+  history `raw_event` 的 timestamp、role、sanitized content、tool name/input/
+  output 与 host boundary；明确拒绝 `expected_memory_facts`、`memories`、
+  gold refs、target prompt、hidden score/oracle 和 scorer metadata。runner 在
+  curator 启动前 canonicalize/hash 并把 projection 作为唯一输入；artifact
+  保存 projection/hash，verifier 从 fixture 独立重建 byte-identical projection。
 - curator 结束后 validator 检查 elapsed minutes、字符/token 上限、操作计数
   与冲突记录，计算并冻结 `MEMORY.md` SHA-256。
 - target run 只挂载 frozen `MEMORY.md`，再次计算 hash 与 curator log 比对。
@@ -318,9 +342,9 @@ remem bench coding-report --input <artifact-root> \
 | B-005-B-006 pair/randomization | run identity、planner | same-pair executable + target/extraction/enrichment/promotion/retrieval profile hash equality；fixed seed 可复现；任一 binary/profile/prompt drift 失败。 |
 | B-007 no-memory | condition/isolation | hooks/MCP/SessionStart/file/native surfaces 全无；额外 surface 负例失败。 |
 | B-008-B-010 E2E path | raw-event fixture schema、capture/extraction adapter、worker drain、context render | answer-bearing raw event→capture→use DAG；gold-only fixture 与 seed/save/preload shortcut 失败；provider/drain failure 不降级。 |
-| B-011-B-013 curator/diagnostics | curator adapter、condition registry | target-blind/freeze/hash/budget 正负例；diagnostic 不进入 primary。 |
-| B-014-B-016 isolation/security | service/agent privilege split、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root path；secret-before-write fault 不落盘；symlink/hardlink/import bootstrap tamper 全失败。 |
-| B-017-B-020 failure/retry/dry-run | artifact store、approval verifier、remote CAS reservation ledger、runner | non-self-referential approval、authority-only GitHub phase、cross-clone race、pre-call reservation/crash/abandon settlement、rollback/超额 negatives；dry-run 零 spawn/network/auth。 |
+| B-011-B-013 curator/diagnostics | curator projection/schema、adapter、condition registry | allowlisted projection 可从 fixture byte-identical 重建；gold/target/hidden/scorer 注入、freeze/hash/budget 负例失败；diagnostic 不进入 primary。 |
+| B-014-B-016 isolation/security | service/agent privilege split、deny-egress broker、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root/network/public-repo access；provider broker 拒绝 fetch/tunnel；secret-before-write、symlink/hardlink/import bootstrap tamper 全失败。 |
+| B-017-B-020 failure/retry/dry-run | remote attempt transitions、approval verifier、anchored remote CAS reservation ledger、runner | key preimage 不含 containing tree；target_started-before-spawn/crash recovery 固定为 0；ruleset/genesis rollback anchor、cross-clone race、pre-call reservation/crash/超额 negatives；dry-run 零 spawn/network/auth。 |
 | B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；overlapping failures 按 earliest causal root 稳定，downstream consequences 单列。 |
 | B-023-B-024 report/bootstrap | sanitized evidence bundle/source manifest、report builder | 144 records；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden；从 bundle 独立重算同 hash。 |
 | B-025-B-029 claim gates | registration projection、result bindings、gate/public CI | superiority/non-inferiority lower bounds、48-run stop-loss denominators、treatment review cost、post-smoke projection mutation、PASS-era exact wording/report link negatives。 |

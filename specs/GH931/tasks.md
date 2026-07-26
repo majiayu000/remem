@@ -13,7 +13,7 @@ GH-931
 
 ## Human Gates First
 
-- [ ] `SP931-T1` Owner: maintainer/security owner; Done when: exact packet 获得 spec approval、GH-931 转为 `ready_to_implement`，enforcement-sensitive 路径与当时 exact implementation head 通过 route gate； Verify: fresh implement route gate 返回 `allowed`； Covers: B-030。
+- [ ] `SP931-T1` Owner: maintainer/security owner; Done when: exact packet 获得 spec approval 且 GH-931 转为 `ready_to_implement`； Verify: approval/state evidence 可供 post-registry gate 使用； Covers: B-030。
   - Owner: maintainer/security owner
   - Dependencies: none
   - Covers: B-030
@@ -22,14 +22,12 @@ GH-931
     - issue 从已满足的 `ready_to_spec` 转为 `ready_to_implement`；
     - security owner 批准 `scripts/ci/check_public_claims.py` 与 public-claim
       boundary 的 planned-path classification；
-    - implementation coordinator 对当时 default base/head 收集 fresh evidence；
-    - implement route gate 为 `allowed`。
+    - 不把尚未落地的 T1A sensitive registry 当成 implement-gate baseline；
+      implement route 必须由 T1B 在 T1A merge 后重新收集。
   - Verify:
 
     ```bash
-    python3 checks/route_gate.py --repo . --route implement \
-      --issue 931 --state ready_to_implement \
-      <fresh-exact-head-evidence-arguments-required-by-current-workflow> --json
+    test -n "$SPEC_APPROVAL_EVIDENCE"
     ```
 
 - [ ] `SP931-T1A` Owner: governance-security lane; Done when: machine-sensitive registry prerequisite 经独立 security review 合入 default branch，future approved-tech classification 为 `enforcement_sensitive=true`； Verify: workflow check 与 planned-tech classifier 通过； Covers: B-020, B-030。
@@ -54,11 +52,28 @@ GH-931
     python3 scripts/ci/check_pr_tier.py --self-test
     ```
 
+- [ ] `SP931-T1B` Owner: implementation coordinator; Done when: T1A merge 后针对 post-registry default base 与 exact implementation head 收集 fresh route evidence，implement gate 返回 `allowed`； Verify: fresh post-governance implement route gate； Covers: B-030。
+  - Owner: implementation coordinator
+  - Dependencies: SP931-T1A
+  - Covers: B-030
+  - Done when:
+    - fresh evidence 的 trusted base 含已 merge 的 T1A registry/rules；
+    - evidence 绑定准备启动 T2/T3 的 exact implementation head；
+    - 不复用 T1 或 spec PR 的 pre-registry route output；
+    - `implement` route gate 返回 `allowed` 后才可启动任何 implementation lane。
+  - Verify:
+
+    ```bash
+    python3 checks/route_gate.py --repo . --route implement \
+      --issue 931 --state ready_to_implement \
+      <fresh-post-T1A-exact-head-evidence-arguments> --json
+    ```
+
 ## 实现任务
 
 - [ ] `SP931-T2` Owner: condition-contract lane; Done when: condition registry、Rust IDs、schemas 与 legacy artifact policy 收敛且无 alias； Verify: validator、ID parse tests 与 primary 144-plan tests 通过； Covers: B-001-B-006, B-013。
   - Owner: condition-contract lane
-  - Dependencies: SP931-T1A
+  - Dependencies: SP931-T1B
   - Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-013
   - File ownership:
     - `eval/coding-bench/{benchmark-charter.json,conditions.json,validate_schemas.py}`
@@ -74,6 +89,8 @@ GH-931
     - fixed-seed primary dry plan 精确 144，pair hashes 完整；
     - 每个 required history episode 有 answer-bearing sanitized `raw_events`；
       validator 拒绝只在 summary/gold `memories` 中存在答案的 fixture；
+    - closed `curator_input_projection` schema 只允许 chronological raw-event
+      字段；validator 拒绝 gold/expected/target/hidden/scorer 字段；
     - pair identity 分别绑定 actual remem/agent executables 与 target/extraction/
       enrichment/promotion/retrieval profiles，不用单个 `model` hash 代替；
     - schema 对 missing/duplicate/hash drift/extra keys fail closed。
@@ -90,7 +107,7 @@ GH-931
 
 - [ ] `SP931-T3` Owner: isolation-artifact lane; Done when: 每 run 私有边界、immutable attempts、resume、hidden scoring 与 dry-run 零外部调用完整； Verify: isolation/artifact/score fault tests 通过； Covers: B-014-B-020。
   - Owner: isolation-artifact lane
-  - Dependencies: SP931-T1A
+  - Dependencies: SP931-T1B
   - Covers: B-014, B-015, B-016, B-017, B-018, B-019, B-020
   - File ownership:
     - `.gitignore`
@@ -99,6 +116,9 @@ GH-931
     - HOME/CODEX_HOME/DB/repo/artifact roots 对每 run/condition 唯一，service/
       coordinator 使用独立 OS principal；agent/tool sandbox 只看 task repo，
       看不到 auth/DB/ledger/artifact/private roots，只经 broker 获取 context；
+    - agent 与所有 tool subprocess deny outbound network；只能通过不支持任意
+      fetch/URL/tool tunneling 的 service-side provider broker，public repo/
+      DNS/loopback/metadata canary 均不可达；
     - streaming redactor 在任何 local/bundle write 前检测 credential，命中即
       fail closed 且原 bytes 不落盘；
     - scorer 从 clean fixture + validated patch 建立 agent 不可访问的独立 tree，
@@ -106,12 +126,19 @@ GH-931
       read-only，score command 使用 argument array；
     - temp-write/fsync/atomic rename、unique attempt、resume-only-missing 生效；
     - timeout/crash/cleanup/scanner/partial/duplicate/hash drift 都有负例；
-    - non-self-referential `approval_key` 只由 pre-merge policy digest、PR
-      number/head tree 派生；隔离 authority-only GitHub phase 完成 merge/review/
-      blob attestation 后，才允许读取 provider/host auth；
+    - non-self-referential `approval_key` 只由 repo identity、pre-merge policy
+      digest 与 PR number 派生，明确排除承载 key 的 blob/tree/commit；隔离
+      authority-only GitHub phase 完成 merge/review/blob attestation 后，才允许
+      读取 provider/host auth；
     - protected remote ledger ref 以 non-force fast-forward CAS 做跨 clone
       reservation；每次 billable call 前 durable reserve worst-case budget，
       settlement 后追加，crash/abandoned reservation 仍计费；
+    - approval 绑定 ledger genesis + ruleset ID/hash；fresh 验证 active
+      non-bypassable no-delete/no-force/no-bypass protection 及完整 genesis
+      ancestry，保护/audit drift fail closed；
+    - target spawn 前将 reservation-bound `target_started` CAS append 到同一
+      anchored remote ledger；recovery 将无 terminal 的 started attempt CAS 封为
+      `abandoned_after_target_start`/resolved=0，禁止重跑；
     - forged/expired/dismissed/drift/hash/tuple/cap approval，sibling reservation
       race、forced/rollback ledger、resume/new clone/execution ID replay 与累计
       超额均在 provider/agent call 前失败；
@@ -144,6 +171,9 @@ GH-931
     - capture→use refs 同 run/project 可追溯；
     - budgeted condition 验证 blind curator log/freeze hash/budget/actor type，
       target 只看到冻结后的 MEMORY.md；
+    - curator 唯一输入是 schema-allowlisted、hashed
+      `curator_input_projection`；artifact 保存 projection，verifier 可从
+      fixture 重建，gold/expected/target/hidden/scorer 字段注入均失败；
     - remem-side manual review/promotion 与 curator 使用同一 task/session cost
       denominator；缺 treatment log 时 maintenance claim insufficient；
     - overlapping failures 按 earliest causal stage 选唯一 root，downstream
@@ -166,7 +196,8 @@ GH-931
     - `eval/coding-bench/schemas/curator-log.schema.json`
     - `eval/coding-bench/examples/curator-log.example.json`
   - Done when:
-    - curator 输入无 target/hidden/gold；
+    - curator 输入是可从 fixture 重建且 byte-identical 的 allowlisted
+      `curator_input_projection`，无 target/hidden/gold/expected/scorer 字段；
     - frozen MEMORY.md hash 与 log 一致；
     - elapsed/characters/tokens/edits/deletes/conflicts 完整；
     - human 与 automated curator actor 分开，后者不进入 human-cost claim；
@@ -296,8 +327,9 @@ GH-931
       `eval/coding-bench/schemas/live-run-approval.schema.json`，经独立
       maintainer APPROVED review 的 PR merge 到 default branch；entry 绑定
       exact hashes/tuple selectors/有效期/caps 且不含 credential bytes；
-      `approval_key` 由 policy digest + approval PR number + approved head tree
-      派生，review/merge attestation 不进入 preimage；
+      `approval_key` 只由 repo identity + policy digest + approval PR number
+      派生，承载 key 的 blob/tree/commit 与 review/merge attestation 均不进入
+      preimage；approval 另绑定 ledger genesis/ruleset；
     - runner 的 negative suite 已证明 caller 自选 key、未 merge/未 APPROVED/
       过期 registry、authority credential scope 扩大、跨 clone/`execution_id`
       replay、pre-call crash、abandoned reservation、ledger rollback 与拆单超额
@@ -312,6 +344,8 @@ GH-931
     cargo test eval::coding_bench::approval
     cargo test eval::coding_bench::tests::cumulative_usage_ledger
     cargo test eval::coding_bench::tests::pre_call_reservation_crash
+    cargo test eval::coding_bench::tests::started_attempt_recovery
+    cargo test eval::coding_bench::tests::ledger_protection_anchor
     ```
 
 - [ ] `SP931-T10` Owner: authorized benchmark operator; Done when: 144 个 primary tuple 都有 immutable verified artifacts； Verify: final verifier 报告 `valid_primary_runs == 144`； Covers: B-004-B-006, B-014-B-024。
@@ -383,8 +417,9 @@ GH-931
 
 ## 并行拆分
 
-- SP931-T1A 必须在 T1 后独立落地；它 merge 前不得启动 T2-T11。
-- SP931-T2 与 SP931-T3 在 T1A 后可并行，文件所有权不重叠。
+- SP931-T1A 必须在 T1 后独立落地；T1B 必须在 T1A merge 后用 post-registry
+  base/exact head 重新通过 implement gate；T1B 前不得启动 T2-T11。
+- SP931-T2 与 SP931-T3 在 T1B 后可并行，文件所有权不重叠。
 - SP931-T5 必须等待 T2/T3 完成，再独占 curator contract 文件；T4 等待 T5
   完成后独占 `condition.rs`/`failure.rs` 与指定 test sections。
 - T6 等待 T4/T5 后独占 runner/report/claim integration。

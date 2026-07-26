@@ -109,9 +109,13 @@ stale/irrelevant memory harm。
 10. **B-010** extraction/provider 缺失、worker drain 未完成、candidate 未按
     policy 处理或 retrieval evidence 不完整时，该 run 必须明确失败并保留
     stage evidence；不得降级到 preload 或手工补记忆。
-11. **B-011** `curated_file_budgeted` 的 curator 只能按时间顺序看到历史
-    episodes，必须在 target task 揭示前完成并冻结 `MEMORY.md`；运行时不得
-    暴露其他 memory surface。
+11. **B-011** `curated_file_budgeted` 的 curator 只能看到由 schema allowlist
+    从历史 `raw_events` 投影出的 chronological `curator_input_projection`；
+    projection 必须排除 `expected_memory_facts`、gold `memories`/refs、target
+    prompt、hidden score/oracle 与 scorer metadata，并在 curator 启动前
+    canonicalize/hash。committed artifact 必须保存该 projection/hash，使
+    verifier 可从 fixture 独立重建并证明 gold-free。curator 必须在 target
+    task 揭示前完成并冻结 `MEMORY.md`，运行时不得暴露其他 memory surface。
 12. **B-012** 每个 budgeted run 必须验证 frozen file hash，并记录人工维护
     minutes、更新/删除/冲突处理次数、字符/token 大小和 budget exceed 状态；
     缺 log、hash 不同或超预算均使该 run 无效。
@@ -125,7 +129,12 @@ stale/irrelevant memory harm。
     state；不得读取真实用户 HOME、其他 condition/run 的数据或旧 host session。
     target agent 及其 tool subprocess 只能访问 task repo，不得获得 service/
     coordinator 的 auth、DB、artifact、ledger 或 private-root 路径；允许的
-    SessionStart/MCP 内容只能经受控 broker 提供。
+    SessionStart/MCP 内容只能经受控 broker 提供。target agent 与 tool
+    subprocess 必须 deny-all outbound network（含 DNS、loopback、cloud metadata
+    与 public Git host）；模型/provider 流量只能经 service-side protocol broker
+    发送，broker 不接受任意 URL/fetch/tool tunneling。task repo 必须是仅含
+    approved fixture 的 detached tree，不含 benchmark/gold/hidden files或
+    可用 remote URL。
 15. **B-015** auth/config 只能通过显式 live-run bootstrap 进入 service-private
     root；stdout/stderr 必须在任何 disk/artifact write 前流式检测与脱敏，
     credential bytes 不得以 raw、ignored、temporary、report 或 git artifact
@@ -139,20 +148,30 @@ stale/irrelevant memory harm。
 17. **B-017** auth/provider 不可用、capture/extraction/promotion/retrieval
     失败、agent timeout/crash、score/cleanup/scanner 失败都必须形成 typed
     artifact 或显式 suite error，不能静默丢弃。
-18. **B-018** 每次尝试有唯一 `attempt_id`；重试保留此前失败 artifact，
-    target 已启动后的 outcome failure 仍留在预注册分母，不允许挑成功重跑。
+18. **B-018** 每次尝试有唯一 `attempt_id`；在 target process spawn 前，必须
+    把绑定 budget reservation receipt 的 `target_started` transition 以 CAS
+    append 到同一 anchored authoritative remote ledger；remote commit durable
+    后才可 spawn。重试保留此前失败 artifact；
+    recovery 发现 started 但无 terminal artifact 时，必须一次性生成 immutable
+    `abandoned_after_target_start` failure（`resolved=0`）并封闭该 run index，
+    不得重试或永久留作“缺失”。target 已启动后的其他 outcome failure 同样
+    留在预注册分母，不允许挑成功重跑。
 19. **B-019** resume 只补缺失 tuple；duplicate tuple、hash drift、partial
     artifact 或已完成 artifact overwrite 必须被拒绝。
 20. **B-020** dry-run、schema validation、report verify 和普通 CI 不读取
     provider key、不启动 agent、不访问网络；live run 必须引用 default branch
     上经 maintainer review/merge 的 immutable approval policy。其 stable
     `approval_key` 只能由 pre-merge 可知且不包含自身的 canonical policy
-    digest、approval PR number 和 approved head tree OID 派生；merge/review
-    attestation 由 verifier 另行查询，不能写入 ID preimage。approval 必须绑定
+    digest、approval PR number 与 repository identity 派生；不得包含承载该
+    key 的 Git blob/tree/commit OID。merge/review/head-tree attestation 由
+    verifier 对 registry blob 另行查询，不能写入 key preimage。approval 必须绑定
     exact executable/profile/fixture/registration hashes、允许 tuple 和累计
     calls/cost 上限；每次 billable call 前必须在 authoritative shared ledger
     durably reserve worst-case budget，crash/abandoned reservation 仍按上限计费。
-    resume、换 clone/`execution_id`、并发或拆单都不得重复领取预算。
+    ledger 必须从 policy 中固定的 genesis OID 延伸，且 authority phase fresh
+    验证保护该 ref 的 active non-bypassable ruleset：禁止 delete/force push、
+    bypass actor 为空并覆盖管理员与 automation；任一保护/audit drift 都
+    fail closed。resume、换 clone/`execution_id`、并发或拆单都不得重复领取预算。
 
 ### Attribution、失败分解与 claim
 
@@ -216,7 +235,7 @@ stale/irrelevant memory harm。
 - [ ] `remem_e2e` 真实自动链路通过正向与禁止 shortcut 的负向测试。
 - [ ] `curated_file_budgeted` protocol、freeze hash、人工成本和超预算负例通过。
 - [ ] condition/run 隔离、timeout、cleanup、resume、attempt integrity 和
-  hidden-test 边界有 deterministic tests。
+  hidden-test/deny-network 边界有 deterministic tests。
 - [ ] 6-stage / 12-enum failure attribution 与完整 source-to-use refs 可验证。
 - [ ] 144-run official artifacts 有 committed sanitized run-record bundle 与
   source manifest；paired report、成本、attribution 与 stop-loss 可独立复算。
