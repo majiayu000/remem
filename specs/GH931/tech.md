@@ -141,46 +141,72 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 ### 2. Isolation、fixture 和 live boundary（B-005-B-006、B-014-B-020）
 
 - `CodingBenchRunIdentity` 绑定 task、condition、run index、attempt、
-  fixture/prompt/score/model/timeout/sandbox hash 和 randomization seed。
+  fixture/prompt/score/timeout/sandbox hash、randomization seed、从 approved
+  commit reproducibly build 后以 absolute path 调用的 remem binary digest、
+  target agent executable/version/profile digest，以及分别 canonicalized 的
+  extraction provider/model/prompt/reasoning、enrichment、review/promotion 和
+  retrieval config/policy hashes；这些 pair fields 不得折叠为一个 `model`。
 - 每次 run 创建新的 repo、HOME、CODEX_HOME、REMEM_DATA_DIR 和 artifact
   root；env 从 allowlist 构造。真实 HOME/session/config/memory path 不挂载。
-- provider/host auth 只由 live coordinator 在显式授权后复制最小必要 material
-  到 private root；报告只记录 bootstrap ref/digest，不记录 secret bytes。
-- hidden score files 在 agent 进程退出、sandbox 卸载后才写入；score command
-  继续使用 argument array，不经过 shell 拼接。
+- provider/host/GitHub authority auth 只由 coordinator/service 的独立 OS
+  principal 持有。target agent 及其 tool subprocess 的 sandbox 只挂载 task
+  repo，不继承 service env，也不能读 coordinator 的 auth、REMEM_DATA_DIR、
+  ledger、artifact 或 private-root path；SessionStart/MCP 只通过最小权限 broker
+  返回已审计 context，不暴露 DB/file socket。
+- supervisor 从 client/agent/provider pipes 读取 bounded frames，先以 exact
+  secret fingerprints + structured credential patterns 做 streaming
+  detect/redact，确认 sanitized 后才允许写 artifact。命中 secret 时原 frame
+  只留在内存并立即清零/丢弃，run fail closed；禁用 core dump，任何 raw/
+  ignored/temp stdout/stderr 都不得落盘。
+- agent 退出并卸载 sandbox 后，harness 从 clean fixture 建立 scorer-only
+  tree，只应用经过 allowed-path 校验的 patch；copy/apply 前后拒绝 symlink、
+  hardlink、device、path traversal/collision。hidden oracle 与 read-only
+  bootstrap/import files 只存在于 scorer tree，score command 使用 argument
+  array且不经过 agent-modifiable import path。
 - dry-run 构造并验证完整 plan、paths 和 capability declaration，调用图在
   auth/provider/agent spawn 前结束。普通 CI 只跑 dry-run、schema 和 synthetic
   tests。
 - artifact 采用 temp-write + fsync + atomic rename；`attempt_id` 唯一，完成
   文件不覆盖。resume 只接受 hash 验证后的完成 tuple。
-- live `run` 的唯一授权源是 `origin` default branch 上的
-  `eval/coding-bench/live-run-approvals.json`，调用方不得传任意 registry path
-  或自己选择 approval 内容。每个 entry 通过
-  `live-run-approval.schema.json`，绑定 merged approval PR、APPROVED maintainer
-  review node/reviewer association、merge commit、approved/expires 时间、
-  canonical entry digest、exact code/fixture/claim-registry/model/timeout/
-  sandbox hashes、允许的 matrix/tuple selectors、credential bootstrap ref
-  （不含 secret bytes）以及累计 agent/LLM/cost hard caps；`approval_id` 由
-  canonical digest + review node + merge commit 派生。
-- `approval.rs` 必须在任何 auth read、network/provider/agent spawn 前通过
-  GitHub API fresh 验证 approval PR 已 merge 到 default branch、reviewer 具备
-  maintainer association、remote registry blob/digest 与本地 entry 完全一致。
-  离线、过期、review 被 dismiss、registry drift、hash/tuple/cap 不匹配都
-  fail closed；CLI 传入的 cap 只能进一步收紧，不能扩大授权。
-- 每条命令生成独立 `execution_id`，但 canonical owner/repo +
-  derived `approval_id` 唯一定位 append-only usage ledger；CLI/env/output root
-  不得覆盖 ledger identity/location。ledger 使用跨进程锁、hash chain、
-  temp-write/fsync/atomic rename，并与同 approval 的 immutable attempt/run
-  artifacts 取累计消耗的最大一致值。resume、新 `execution_id`、并发命令和
-  拆单都继承已消费 calls/cost；ledger missing/rollback、artifact reconciliation
-  不一致或累计上限耗尽均在外部调用前失败。只有新的 maintainer-approved、
-  default-branch-merged approval entry 能增加预算。
+- live `run` 的唯一 policy 源是 `origin` default branch 上的
+  `eval/coding-bench/live-run-approvals.json`，调用方不得传任意 registry path。
+  entry 的 canonical policy preimage 明确排除 `approval_key`、review node、
+  merge commit 和 mutable usage；`approval_key =
+  sha256(repo_id || approval_pr_number || approved_head_tree_oid ||
+  canonical_policy_digest)`，全部字段在 review 前可知且不自引用。policy 绑定
+  approved/expires 时间、exact executable/profile/fixture/
+  `registration_projection`/timeout/sandbox hashes、allowed tuples、
+  credential-bootstrap ref（无 secret bytes）和累计 agent/LLM/cost hard caps。
+- verifier 先启动一个隔离的 authority-only phase：仅该 phase 可读取
+  repo-scoped GitHub credential并访问 GitHub API；它不得读取 provider/host
+  credential、启动 agent 或执行 benchmark。它 fresh 验证 approval PR 的
+  approved head tree/blob 就是 policy preimage、PR 已 merge 到 default branch、
+  APPROVED review 未 dismissed 且 reviewer association 符合 maintainer。
+  authority phase 结束并清除 credential 后才能 bootstrap provider/host auth；
+  GitHub unavailable、过期、drift、hash/tuple/cap mismatch 均 fail closed。
+- cumulative budget 的 trust root 是 repo-scoped protected
+  `refs/heads/remem-live-ledger`，不是 clone-local git common dir。每次 billable
+  host/LLM call 前，runner 以当前 remote ledger tip 为 parent 创建包含
+  `(approval_key,reservation_id,call_kind,worst_case_calls,worst_case_cost,
+  execution_id,tuple,attempt)` 的 append-only reservation commit，并以
+  non-force fast-forward ref update 作为 compare-and-swap；并发 sibling update
+  失败后必须 refetch/recompute。reservation durable 后才允许 call；完成后追加
+  settlement commit，crash/timeout/abandoned reservation 永久按 worst-case
+  计入累计值。ledger ref 缺失、non-FF/force history、reconciliation drift、
+  reservation reuse 或预算耗尽均 fail closed。resume、新 clone/
+  `execution_id`、并发和拆单共享同一 remote total；只有新的 independently
+  reviewed policy 可增加预算。ledger credential 只在 authority/reservation
+  broker 中可见，agent 永远不可见。
 
 ### 3. `remem_e2e` production adapter（B-008-B-010、B-017、B-021-B-022）
 
-- fixture history episode 转为 production `CaptureEventInput`，使用
-  `record_captured_event*` 写 isolated project/session 的真实
-  `captured_events`。gold fields只供 post-run verifier，不作为写入内容。
+- `fixtures/tasks.json` 的每个 required history episode 必须新增 bounded、
+  answer-bearing `raw_events`：真实 role/content/tool name/tool input/tool output/
+  timestamp/host boundary 的 sanitized payload，以及独立 gold refs。adapter
+  只能把 `raw_events` 转为 production `CaptureEventInput` 并使用
+  `record_captured_event*` 写 isolated project/session；summary 与
+  `memories[].text` 只供 post-run verifier，缺 raw answer evidence 的 task
+  schema invalid。
 - 按 production Stop/rollup contract enqueue `extraction_tasks`，使用真实 worker
   processing path和配置的 LLM provider做 extraction、candidate 与
   review/promotion policy。bounded drain 超时或任务失败即记录对应 stage，不
@@ -208,12 +234,20 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   diagnostic。
 - human maintenance claim 只接受人工 curator log；若为自动 curator，artifact
   必须标记不同 actor 类型且不得用于 70% human-maintenance comparison。
+- `remem_e2e` 也记录同一 task/session 时间轴上的人工 candidate review、
+  rejection、editing 与 manual promotion minutes/actions。official run 可以使用
+  正常人工 review policy，但任何 intervention 都进入 treatment cost；缺 log
+  时 maintenance comparison `INSUFFICIENT`。若声明 zero-touch tranche，则
+  任一 manual intervention 直接使该 tranche invalid，不能记为 0 minutes。
 
 ### 5. Failure taxonomy、report 与 claims（B-017-B-029）
 
-- `failure.rs` 将 execution outcome 与 memory-stage diagnosis分开：每个 memory
-  failure 恰好一个 stage/code，使用 registry 的 6-stage / 12-enum。
-  无足够 evidence 时 suite error 显式为 unclassified，不推测。
+- `failure.rs` 将 execution outcome、root memory failure 与 downstream
+  consequences 分开。先按
+  Capture→Extraction→Consolidation→Retrieval→Context compilation→Reader/use
+  搜索最早有充分 causal evidence 的 stage，恰好输出一个 root 6-stage/
+  12-enum code；后续 missing/ignored signals 放入 `consequences`，不改变 root。
+  无充分 root evidence 时 suite error 为 `unclassified`，不得按检查顺序猜测。
 - flagship run schema 固定 run identity、attempt history、condition surface、
   runtime/score result、stage failure、tokens/wall time、curator cost、
   memory-harm 和 attribution DAG/hash。
@@ -221,22 +255,36 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   `eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl`，并生成
   `source-manifest.json`：记录 144 个 matrix keys、全部 attempt hashes、schema/
   code/fixture/registry hashes、scanner verdict、denominator policy、bundle hash
-  和 report input hash。manifest 通过独立 schema；raw stdout/stderr/auth/
-  private roots 只留在 ignored local artifacts，不能进入 bundle。
+  和 report input hash。manifest 通过独立 schema；只有 streaming-redacted
+  stdout/stderr 可进入 local/bundle artifacts，raw credential-bearing frames
+  必须在落盘前丢弃。auth/private roots 永不进入任何 artifact。
 - report builder 先验证 144 tuple completeness、attempt policy、同 pair hashes
   、source manifest 与 bundle hash，再汇总 task-level denominator。缺失
   metric 使用 `null` 与 `missing_count`。aggregate-only report 或只位于
   `/tmp` 的 run output 不允许成为 public claim supporting evidence。
-- paired bootstrap 以 task 为 resampling cluster，固定 algorithm/version/seed，
-  分别计算 E2E vs no-memory superiority 与 E2E vs budgeted non-inferiority；
-  run repetition 只在 task cluster 内聚合。
-- 首个 official run 前把 registry 的 dataset/model/timeout/runs/exclusions/
-  thresholds/bootstrap 固定并设 `locked=true`。任何 official artifact 的
-  pre-registration digest 不匹配都 invalid。
+- 对每个 task/condition，先计算三个预注册 run 的 binary resolved arithmetic
+  mean；target-started failure 记 0，pre-target missing/integrity invalid 使
+  matrix insufficient。bootstrap 固定算法/version/seed，每个 replicate 从 16
+  个 task IDs 有放回抽 16 个 cluster，并对每个抽中 task 重算 treatment-control
+  三-run mean difference。superiority 要求 point estimate >=10pp 且 percentile
+  95% lower bound >0；non-inferiority 要求 lower bound >=-3pp 且同 denominator
+  的 treatment human-maintenance reduction >=70%。
+- registry 分为 immutable `registration_projection` 与 mutable
+  `result_bindings`。projection 在任何使用 official fixture 的 live smoke 前
+  锁定 dataset、所有 executable/profile hashes、timeout/runs、estimand、
+  failure/missing/stop-loss denominator、exclusions、bootstrap、threshold 和
+  wording templates；run 只绑定 projection digest。gate 后只更新
+  result bindings 的 PASS/FAIL/INSUFFICIENT、report hash 和 exact
+  maintainer-approved wording，不改变 projection digest。
+- stop-loss verifier 固定扫描 48 个 `remem_e2e` tuples；按 product B-027 的
+  paired causal predicates计算 numerator，denominator 恒为 48。任何 required
+  attribution missing 都使 gate insufficient，不能删除 tuple 或当 0。
 - claim gate 先检查 matrix/artifact/stop-loss，再检查 effect/CI/cost。report
   hash、registry supporting report 与 Markdown/JSON 必须一致。
-- `check_public_claims.py` 在原 baseline policy基础上读取 GH-931 registry；
-  非 hash-bound PASS 时拒绝 public surface 上的 flagship superiority wording。
+- `check_public_claims.py` 在原 baseline policy基础上读取 GH-931 result
+  bindings。非 hash-bound PASS 时拒绝正向 wording；PASS 时也必须逐条验证
+  claim ID、report hash/link 与 maintainer-approved exact UTF-8 text 一致，
+  任意未登记数字、范围扩大、条件省略或改写都失败。
 
 ### 6. CLI、文档与版本
 
@@ -246,7 +294,7 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 remem bench coding --suite issue385-v1 --matrix primary --dry-run \
   --json-out <path>
 remem bench coding --suite issue385-v1 --matrix primary \
-  --approval-id <id> --confirm-live-run --max-agent-calls <n> \
+  --approval-key <key> --confirm-live-run --max-agent-calls <n> \
   --max-llm-calls <n> --max-estimated-cost-usd <usd> --json-out <path>
 remem bench coding --suite issue385-v1 --condition remem_preloaded ...
 remem bench coding-report --input <artifact-root> \
@@ -267,15 +315,15 @@ remem bench coding-report --input <artifact-root> \
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001-B-004 state/IDs/matrix | types、run plan、registry validator | 新 ID parse 正例；旧 ID 负例；primary dry-run `planned_runs == 144`；缺/重 tuple 被拒绝。 |
-| B-005-B-006 pair/randomization | run identity、planner | same-pair hash equality；fixed seed 可复现；模型/prompt drift 失败。 |
+| B-005-B-006 pair/randomization | run identity、planner | same-pair executable + target/extraction/enrichment/promotion/retrieval profile hash equality；fixed seed 可复现；任一 binary/profile/prompt drift 失败。 |
 | B-007 no-memory | condition/isolation | hooks/MCP/SessionStart/file/native surfaces 全无；额外 surface 负例失败。 |
-| B-008-B-010 E2E path | capture/extraction adapter、worker drain、context render | isolated integration test 证明 capture→use DAG；seed/save/preload shortcut 测试失败；provider/drain failure 不降级。 |
+| B-008-B-010 E2E path | raw-event fixture schema、capture/extraction adapter、worker drain、context render | answer-bearing raw event→capture→use DAG；gold-only fixture 与 seed/save/preload shortcut 失败；provider/drain failure 不降级。 |
 | B-011-B-013 curator/diagnostics | curator adapter、condition registry | target-blind/freeze/hash/budget 正负例；diagnostic 不进入 primary。 |
-| B-014-B-016 isolation/security | isolation、score | unique private roots；host path/secret/hidden leak scanner；hidden file agent phase 不存在。 |
-| B-017-B-020 failure/retry/dry-run | artifact store、approval verifier/ledger、runner | fault injection、immutable attempt、resume、duplicate/partial/hash drift negatives；伪造/未 merge/未 APPROVED/过期/drift approval 与 ledger rollback/并发超额/新 execution ID negatives；dry-run mock 零 spawn/network/auth。 |
-| B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；每 failure 恰好一个 stage/code。 |
-| B-023-B-024 report/bootstrap | sanitized evidence bundle/source manifest、report builder | 144 records/hash/referential completeness；failure 留分母、null missing、task-cluster golden CI、unpaired/hash drift insufficient；从 bundle 独立重算得到相同 report input hash。 |
-| B-025-B-029 claim gates | claim registry/gate/public CI | effect/CI/non-inferiority/cost/stop-loss 边界、自报 PASS、hash drift、非 PASS 正向 wording 全部覆盖。 |
+| B-014-B-016 isolation/security | service/agent privilege split、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root path；secret-before-write fault 不落盘；symlink/hardlink/import bootstrap tamper 全失败。 |
+| B-017-B-020 failure/retry/dry-run | artifact store、approval verifier、remote CAS reservation ledger、runner | non-self-referential approval、authority-only GitHub phase、cross-clone race、pre-call reservation/crash/abandon settlement、rollback/超额 negatives；dry-run 零 spawn/network/auth。 |
+| B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；overlapping failures 按 earliest causal root 稳定，downstream consequences 单列。 |
+| B-023-B-024 report/bootstrap | sanitized evidence bundle/source manifest、report builder | 144 records；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden；从 bundle 独立重算同 hash。 |
+| B-025-B-029 claim gates | registration projection、result bindings、gate/public CI | superiority/non-inferiority lower bounds、48-run stop-loss denominators、treatment review cost、post-smoke projection mutation、PASS-era exact wording/report link negatives。 |
 | B-030 human gates | CLI/live authorization/handoff | 缺 approval/confirm/hard caps 在 agent/provider 调用前失败；spec 不自批。 |
 
 ## 数据流

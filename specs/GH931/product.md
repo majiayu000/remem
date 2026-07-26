@@ -86,8 +86,10 @@ stale/irrelevant memory harm。
    `16 tasks × 3 conditions × 3 runs = 144` 个唯一 tuple；少一个、重复一个、
    或以失败重试覆盖原 tuple 都不得产生 complete verdict。
 5. **B-005** 同一 `(task_id, run_index)` 的三条件必须共享 fixture revision、
-   target prompt、hidden score、model/reasoning、timeout 和 sandbox policy；
-   condition memory surface 是唯一允许差异。
+   target prompt、hidden score、timeout、sandbox policy、实际执行的 remem/
+   agent-runner binary digest，以及分别记录的 target-agent、extraction、
+   enrichment、review/promotion、retrieval runtime/profile hashes；condition
+   memory surface 是唯一允许差异。
 6. **B-006** condition 执行顺序按记录的 seed 随机化，统计单位为 task；
    三次 run 不得被当成三个独立 task 增大显著性。
 
@@ -95,10 +97,12 @@ stale/irrelevant memory harm。
 
 7. **B-007** `no_memory` 必须关闭 remem hooks/MCP/SessionStart、repo memory
    file 和 host-native memory，只暴露当前代码与 target task。
-8. **B-008** `remem_e2e` 的历史证据必须以原始 session/tool event 进入
-   `captured_events`，再经真实 `extraction_tasks`、自动 extraction、
+8. **B-008** `remem_e2e` 的 fixture 必须提供 answer-bearing、sanitized、
+   schema-valid 原始 session/tool-event payload；历史证据只能从这些 payload
+   进入 `captured_events`，再经真实 `extraction_tasks`、自动 extraction、
    review/promotion policy、memories/projections 和 production
-   SessionStart/MCP retrieval 到达 agent。
+   SessionStart/MCP retrieval 到达 agent。gold `memories`/expected answer 只能
+   进入 scorer，不得伪装为 captured input。
 9. **B-009** `remem_e2e` 必须拒绝直接 DB seed gold memory、手工
    `save_memory`、`render_seeded_remem_context`、完整 gold-evidence preload
    或把 expected answer 写入 prompt。
@@ -119,10 +123,19 @@ stale/irrelevant memory harm。
 
 14. **B-014** 每个 condition/run 使用新的 HOME、CODEX_HOME、DB、repo 和 host
     state；不得读取真实用户 HOME、其他 condition/run 的数据或旧 host session。
-15. **B-015** auth/config 只能通过显式 live-run bootstrap 进入 run-private
-    root，credential bytes 不得写入 report、stdout/stderr artifact 或 git。
-16. **B-016** hidden files 只在 agent 结束后 materialize 供 deterministic
-    scorer 使用；agent 读取或记忆面泄漏 hidden content 必须 fail closed。
+    target agent 及其 tool subprocess 只能访问 task repo，不得获得 service/
+    coordinator 的 auth、DB、artifact、ledger 或 private-root 路径；允许的
+    SessionStart/MCP 内容只能经受控 broker 提供。
+15. **B-015** auth/config 只能通过显式 live-run bootstrap 进入 service-private
+    root；stdout/stderr 必须在任何 disk/artifact write 前流式检测与脱敏，
+    credential bytes 不得以 raw、ignored、temporary、report 或 git artifact
+    形式落盘。检测到 secret 时必须 fail closed、丢弃原 bytes 并记录无 secret
+    的 reason code。
+16. **B-016** hidden oracle 只在 agent 结束后，于与 agent repo 分离的
+    scorer-only clean tree 中 materialize；harness 只能把经校验的 patch 应用到
+    该 tree，必须拒绝 symlink/hardlink/device/path collision，并保持 scorer
+    bootstrap/import files read-only。agent 读取、修改或影响 hidden content/
+    bootstrap 必须 fail closed。
 17. **B-017** auth/provider 不可用、capture/extraction/promotion/retrieval
     失败、agent timeout/crash、score/cleanup/scanner 失败都必须形成 typed
     artifact 或显式 suite error，不能静默丢弃。
@@ -132,19 +145,25 @@ stale/irrelevant memory harm。
     artifact 或已完成 artifact overwrite 必须被拒绝。
 20. **B-020** dry-run、schema validation、report verify 和普通 CI 不读取
     provider key、不启动 agent、不访问网络；live run 必须引用 default branch
-    上经 maintainer review/merge 的 immutable approval entry。approval 必须绑定
-    exact code/fixture/registry/model/timeout、允许 tuple 和累计 calls/cost 上限；
-    resume、换 `execution_id` 或拆成多条命令都不得重置同一 `approval_id` 的
-    已消费预算。
+    上经 maintainer review/merge 的 immutable approval policy。其 stable
+    `approval_key` 只能由 pre-merge 可知且不包含自身的 canonical policy
+    digest、approval PR number 和 approved head tree OID 派生；merge/review
+    attestation 由 verifier 另行查询，不能写入 ID preimage。approval 必须绑定
+    exact executable/profile/fixture/registration hashes、允许 tuple 和累计
+    calls/cost 上限；每次 billable call 前必须在 authoritative shared ledger
+    durably reserve worst-case budget，crash/abandoned reservation 仍按上限计费。
+    resume、换 clone/`execution_id`、并发或拆单都不得重复领取预算。
 
 ### Attribution、失败分解与 claim
 
 21. **B-021** 每个 `remem_e2e` run 必须记录 captured event、extraction task、
     candidate/review/promotion、memory/projection、selected/injected、cited/used
     refs；ref 必须属于同一 run/project 且能回溯。
-22. **B-022** 每个 memory failure 必须恰好归因到预注册六阶段之一，并使用
-    12-enum 闭集；无法判定时输出明确 `unclassified` suite error，不能猜测或
-    多重归因。
+22. **B-022** 每个 memory failure 必须按
+    Capture→Extraction→Consolidation→Retrieval→Context compilation→Reader/use
+    的 earliest-proven-causal-stage 顺序选择恰好一个 root stage/code，并可另列
+    downstream consequences；无法证明 root 时输出明确 `unclassified` suite
+    error，不能按实现顺序猜测或把多个 consequence 当多个 root。
 23. **B-023** report 必须公开每个 condition/task 的成功、失败、缺失分母，
     `resolved_rate`、compile/timeout/wrong-file、tokens、wall time、人工维护
     成本、memory helped/hurt、stale/irrelevant/missing 和 citation 指标；无数据
@@ -152,21 +171,40 @@ stale/irrelevant memory harm。
     run records 与 source manifest 必须作为 committed release evidence 保留，
     并足以独立重算分母、失败、成本、attribution、report hash 和 gate input；
     `/tmp` 或 aggregate-only report 不构成可复验证据。
-24. **B-024** `remem_e2e` 与两个 controls 的比较必须使用 fixed-seed
-    task-cluster paired bootstrap，报告 absolute pp difference 与 95% CI；
-    pair/hash 缺失时 verdict 为 `INSUFFICIENT`。
+24. **B-024** 每个 task/condition 的 outcome 固定为三次预注册 run 的二元
+    `resolved` 均值；target-started timeout/crash/score failure 计 0，pre-target
+    缺失或 integrity-invalid tuple 使 matrix `INSUFFICIENT`、不得插补。bootstrap
+    每次以 16 个 task cluster 有放回抽样，并在每个抽中 task 上重算 treatment
+    与 control 三-run 均值差；使用固定 seed/算法的 percentile 95% CI，报告
+    absolute pp difference。pair/hash 缺失时 verdict 为 `INSUFFICIENT`。
 25. **B-025** `remem_e2e` vs `no_memory` 的正向 claim 需要 resolved rate
     提升至少 10pp 且 95% CI 下界 > 0。
-26. **B-026** `remem_e2e` vs `curated_file_budgeted` 的 claim 需要
-    non-inferiority margin ≤ 3pp 且人工维护时间下降至少 70%。
-27. **B-027** stop-loss 固定为 `memory_hurt <= 2%`、
-    `stale_memory_followed <= 1%`；任一超阈值优先使正向 claim FAIL。
-28. **B-028** claim registry 必须在首个 official run 前锁定 dataset、model、
-    timeout、runs、metric、exclusion、bootstrap seed/algorithm 和 threshold；
-    首次运行后不得追溯修改门槛。
-29. **B-029** public wording 必须绑定 committed report hash 和 gate verdict；
-    CI 包含 0、matrix 不完整或 report 缺失时只能使用预注册的
-    directional/insufficient wording。
+26. **B-026** `remem_e2e` vs `curated_file_budgeted` 的 claim 需要预注册
+    margin 恰为 3pp、treatment-minus-control 的 paired 95% CI 下界
+    `>= -3pp`，且同一 task/session denominator 上的总人工维护时间下降至少
+    70%。`remem_e2e` 的 manual candidate review/promotion minutes 必须计入
+    treatment；缺 treatment log 或 control 总分钟为 0 时 verdict 为
+    `INSUFFICIENT`。
+27. **B-027** stop-loss 只对 48 个预注册 `remem_e2e` primary tuples 计算。
+    `memory_hurt` numerator 是 paired `no_memory` resolved=1、`remem_e2e`
+    resolved=0 且 attribution 证明 injected/cited/used memory 导致错误动作的
+    tuple；`stale_memory_followed` numerator 是 agent cited/used stale/
+    superseded item 并据此采取错误动作的 tuple；两者 denominator 都是 48。
+    任一 tuple 的 required attribution 缺失使 gate `INSUFFICIENT`，不得从分母
+    删除或填 0；任一 rate 超过 2%/1% 优先使正向 claim FAIL。
+28. **B-028** registry 的 immutable `registration_projection` 必须在任何使用
+    official 16-task fixture 的 live smoke/official run 前锁定 dataset、所有
+    executable/profile hashes、timeout、runs、metric、failure/missing rules、
+    exclusions、bootstrap seed/algorithm、threshold 和 wording templates。
+    run artifact 只绑定该 projection digest；后续 mutable
+    `result_bindings`（status/report hash/approved wording）不得改变该 digest。
+    若要在看到 live outcome 后改 projection，必须创建新的 benchmark version
+    和 disjoint fixture，旧 runs 永久不得进入新 claim。
+29. **B-029** public wording 必须绑定 committed report hash、gate verdict、
+    claim ID 与独立 maintainer-approved exact UTF-8 wording。非 PASS 时只能使用
+    预注册 directional/insufficient wording；PASS 时 CI 也必须逐条要求 public
+    text 与 `result_bindings.allowed_wording` 精确匹配并携带对应 report link，
+    不得仅因存在某个 PASS 就放行任意幅度或范围的 superiority claim。
 30. **B-030** readiness、spec approval、live-run auth/cost、security、
     final review、merge、public wording 和 release 均保持独立人工门禁。
 
