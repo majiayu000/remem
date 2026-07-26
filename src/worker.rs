@@ -18,6 +18,7 @@ const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
 const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
 const RULE_COMPILATION_SWEEP_INTERVAL_SECS: u64 = 60;
+const LEGACY_PENDING_MIGRATION_BATCH: i64 = 25;
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
@@ -302,6 +303,26 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             );
         }
         db::maintain_failure_lifecycle(&conn)?;
+        match db::pending::admin::auto_migrate_actionable_legacy_pending(
+            &mut conn,
+            LEGACY_PENDING_MIGRATION_BATCH,
+        ) {
+            Ok(outcome) => {
+                if outcome.migrated > 0 || outcome.quarantined > 0 {
+                    crate::log::info(
+                        "worker",
+                        &format!(
+                            "auto-migrated {} legacy pending observation(s) into capture pipeline, quarantined {}",
+                            outcome.migrated, outcome.quarantined
+                        ),
+                    );
+                }
+            }
+            Err(error) => crate::log::error(
+                "worker",
+                &format!("legacy pending auto-migration failed: {error}"),
+            ),
+        }
         if crate::extraction_worker::run_next(
             &lease_owner,
             JOB_LEASE_SECS,

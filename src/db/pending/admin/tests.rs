@@ -506,3 +506,145 @@ fn migrate_legacy_pending_replays_expired_processing_rows() {
         ]
     );
 }
+
+#[test]
+fn auto_migrate_replays_transient_failed_rows_into_capture_pipeline() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let failed_id = insert_failed_row(&conn, "s-auto-1", "alpha", now - 100, "worker died");
+
+    let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("auto migration should succeed");
+
+    assert_eq!(outcome.migrated, 1);
+    assert_eq!(outcome.quarantined, 0);
+    let (status, failure_class): (String, Option<String>) = conn
+        .query_row(
+            "SELECT status, failure_class FROM pending_observations WHERE id = ?1",
+            params![failed_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("row should exist");
+    assert_eq!(status, "migrated");
+    assert_eq!(failure_class, None);
+    let event_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM captured_events WHERE event_id = ?1",
+            params![format!("legacy-pending-{failed_id}")],
+            |row| row.get(0),
+        )
+        .expect("captured event should be countable");
+    assert_eq!(event_count, 1);
+    let task_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM extraction_tasks WHERE status = 'pending'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("extraction tasks should be countable");
+    assert!(task_count >= 1);
+}
+
+#[test]
+fn auto_migrate_skips_permanent_archived_and_unknown_host_rows() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let permanent_id = insert_failed_row(&conn, "s-perm", "alpha", now - 100, "bad schema");
+    conn.execute(
+        "UPDATE pending_observations SET failure_class = 'permanent' WHERE id = ?1",
+        params![permanent_id],
+    )
+    .expect("permanent class should update");
+    let archived_id = insert_failed_row(&conn, "s-arch", "alpha", now - 100, "old");
+    conn.execute(
+        "UPDATE pending_observations SET archived_at_epoch = ?2 WHERE id = ?1",
+        params![archived_id, now - 50],
+    )
+    .expect("archived marker should update");
+    conn.execute(
+        "INSERT INTO pending_observations
+         (host, session_id, project, tool_name, created_at_epoch, updated_at_epoch, status, attempt_count)
+         VALUES ('unknown', 's-unk', 'alpha', 'tool', ?1, ?1, 'failed', 1)",
+        params![now - 100],
+    )
+    .expect("unknown host row should insert");
+
+    let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("auto migration should succeed");
+
+    assert_eq!(outcome.migrated, 0);
+    assert_eq!(outcome.quarantined, 0);
+    let migrated_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pending_observations WHERE status = 'migrated'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("statuses should be countable");
+    assert_eq!(migrated_count, 0);
+}
+
+#[test]
+fn auto_migrate_respects_limit_oldest_first() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let oldest = insert_failed_row(&conn, "s-1", "alpha", now - 100, "err");
+    let middle = insert_failed_row(&conn, "s-2", "alpha", now - 100, "err");
+    let newest = insert_failed_row(&conn, "s-3", "alpha", now - 100, "err");
+    for (id, created) in [
+        (oldest, now - 300),
+        (middle, now - 200),
+        (newest, now - 100),
+    ] {
+        conn.execute(
+            "UPDATE pending_observations SET created_at_epoch = ?2 WHERE id = ?1",
+            params![id, created],
+        )
+        .expect("created_at should update");
+    }
+
+    let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 2)
+        .expect("auto migration should succeed");
+
+    assert_eq!(outcome.migrated, 2);
+    let remaining_failed: Vec<i64> = conn
+        .prepare("SELECT id FROM pending_observations WHERE status = 'failed'")
+        .expect("select should prepare")
+        .query_map([], |row| row.get(0))
+        .expect("rows should query")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("rows should collect");
+    assert_eq!(remaining_failed, vec![newest]);
+}
+
+#[test]
+fn auto_migrate_quarantines_rows_that_fail_replay() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let failed_id = insert_failed_row(&conn, "s-poison", "alpha", now - 100, "err");
+    conn.execute_batch("DROP TABLE captured_events;")
+        .expect("captured_events should drop for fault injection");
+
+    let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("auto migration should not abort on poison rows");
+
+    assert_eq!(outcome.migrated, 0);
+    assert_eq!(outcome.quarantined, 1);
+    let (status, failure_class, last_error): (String, Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT status, failure_class, last_error FROM pending_observations WHERE id = ?1",
+            params![failed_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("row should exist");
+    assert_eq!(status, "failed");
+    assert_eq!(failure_class.as_deref(), Some("permanent"));
+    assert!(last_error
+        .unwrap_or_default()
+        .contains("[auto_migration_quarantined]"));
+
+    let second = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("second pass should succeed");
+    assert_eq!(second.migrated, 0);
+    assert_eq!(second.quarantined, 0);
+}

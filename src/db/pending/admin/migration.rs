@@ -78,58 +78,181 @@ pub fn migrate_legacy_pending(
 
     for row in rows {
         let host = capture_host_for_row(&row.host, fallback_host)?;
-        let event_id = legacy_event_id(row.id);
-        let content = legacy_capture_content(&row);
-        let outcome = db::record_captured_event_with_id_and_created_at(
+        migrated.push(replay_legacy_row_into_capture(
             &tx,
-            &CaptureEventInput {
-                host,
-                session_id: &row.session_id,
-                project: &row.project,
-                cwd: row.cwd.as_deref(),
-                event_type: "tool_result",
-                role: None,
-                tool_name: Some(&row.tool_name),
-                content: &content,
-                task_kind: Some(ExtractionTaskKind::ObservationExtract),
-            },
-            Some(&event_id),
-            row.created_at_epoch,
-        )?;
-        let extraction_task_id = outcome.extraction_task_id.ok_or_else(|| {
-            anyhow::anyhow!("legacy pending migration did not enqueue extraction")
-        })?;
-        let now = chrono::Utc::now().timestamp();
-        let changed = tx.execute(
-            "UPDATE pending_observations
-             SET status = 'migrated',
-                 lease_owner = NULL,
-                 lease_expires_epoch = NULL,
-                 next_retry_epoch = NULL,
-                 last_error = NULL,
-                 updated_at_epoch = ?2
-             WHERE id = ?1
-               AND (status = 'pending'
-                    OR (status = 'processing'
-                        AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))",
-            params![row.id, now, now],
-        )?;
-        if changed != 1 {
-            bail!("legacy pending row {} changed while migrating", row.id);
-        }
-        migrated.push(LegacyPendingMigration {
-            pending_id: row.id,
-            event_id,
-            captured_event_id: outcome.event_row_id,
-            extraction_task_id,
-            host: host.to_string(),
-            project: row.project,
-            session_id: row.session_id,
-        });
+            &row,
+            host,
+            MARK_MIGRATED_PENDING_SQL,
+        )?);
     }
 
     tx.commit()?;
     Ok(migrated)
+}
+
+const MARK_MIGRATED_PENDING_SQL: &str = "UPDATE pending_observations
+     SET status = 'migrated',
+         lease_owner = NULL,
+         lease_expires_epoch = NULL,
+         next_retry_epoch = NULL,
+         last_error = NULL,
+         updated_at_epoch = ?2
+     WHERE id = ?1
+       AND (status = 'pending'
+            OR (status = 'processing'
+                AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))";
+
+const MARK_MIGRATED_ACTIONABLE_SQL: &str = "UPDATE pending_observations
+     SET status = 'migrated',
+         lease_owner = NULL,
+         lease_expires_epoch = NULL,
+         next_retry_epoch = NULL,
+         last_error = NULL,
+         failure_class = NULL,
+         failed_at_epoch = NULL,
+         updated_at_epoch = ?2
+     WHERE id = ?1
+       AND (status = 'pending'
+            OR (status = 'processing'
+                AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3))
+            OR (status = 'failed'
+                AND archived_at_epoch IS NULL
+                AND COALESCE(failure_class, 'transient') = 'transient'))";
+
+fn replay_legacy_row_into_capture(
+    conn: &Connection,
+    row: &LegacyPendingRow,
+    host: &str,
+    mark_sql: &str,
+) -> Result<LegacyPendingMigration> {
+    let event_id = legacy_event_id(row.id);
+    let content = legacy_capture_content(row);
+    let outcome = db::record_captured_event_with_id_and_created_at(
+        conn,
+        &CaptureEventInput {
+            host,
+            session_id: &row.session_id,
+            project: &row.project,
+            cwd: row.cwd.as_deref(),
+            event_type: "tool_result",
+            role: None,
+            tool_name: Some(&row.tool_name),
+            content: &content,
+            task_kind: Some(ExtractionTaskKind::ObservationExtract),
+        },
+        Some(&event_id),
+        row.created_at_epoch,
+    )?;
+    let extraction_task_id = outcome
+        .extraction_task_id
+        .ok_or_else(|| anyhow::anyhow!("legacy pending migration did not enqueue extraction"))?;
+    let now = chrono::Utc::now().timestamp();
+    let changed = conn.execute(mark_sql, params![row.id, now, now])?;
+    if changed != 1 {
+        bail!("legacy pending row {} changed while migrating", row.id);
+    }
+    Ok(LegacyPendingMigration {
+        pending_id: row.id,
+        event_id,
+        captured_event_id: outcome.event_row_id,
+        extraction_task_id,
+        host: host.to_string(),
+        project: row.project.clone(),
+        session_id: row.session_id.clone(),
+    })
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct AutoLegacyMigrationOutcome {
+    pub migrated: usize,
+    pub quarantined: usize,
+}
+
+/// Worker-driven self-healing for the legacy `pending_observations` queue.
+///
+/// Replays actionable rows — `pending`, expired `processing`, and transient
+/// `failed` — with a known capture host into the live
+/// `captured_events`/`extraction_tasks` pipeline. Each row commits in its own
+/// transaction; a row whose replay errors is quarantined as
+/// `failure_class = 'permanent'` so it cannot wedge the queue.
+pub fn auto_migrate_actionable_legacy_pending(
+    conn: &mut Connection,
+    limit: i64,
+) -> Result<AutoLegacyMigrationOutcome> {
+    let rows = select_auto_actionable_rows(conn, limit)?;
+    let mut outcome = AutoLegacyMigrationOutcome::default();
+    for row in rows {
+        let Ok(host) = normalize_capture_host(&row.host).map(str::to_string) else {
+            continue;
+        };
+        let row_id = row.id;
+        let replay = (|| -> Result<()> {
+            let tx = conn.transaction()?;
+            replay_legacy_row_into_capture(&tx, &row, &host, MARK_MIGRATED_ACTIONABLE_SQL)?;
+            tx.commit()?;
+            Ok(())
+        })();
+        match replay {
+            Ok(()) => outcome.migrated += 1,
+            Err(error) => {
+                crate::log::error(
+                    "failure_lifecycle",
+                    &format!("legacy pending auto-migration quarantined id={row_id}: {error}"),
+                );
+                quarantine_legacy_row(conn, row_id, &error.to_string())?;
+                outcome.quarantined += 1;
+            }
+        }
+    }
+    Ok(outcome)
+}
+
+fn select_auto_actionable_rows(conn: &Connection, limit: i64) -> Result<Vec<LegacyPendingRow>> {
+    let limit = limit.max(1);
+    let now = chrono::Utc::now().timestamp();
+    let mut stmt = conn.prepare(
+        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
+         FROM pending_observations
+         WHERE host IN (?2, ?3)
+           AND (status = 'pending'
+                OR (status = 'processing'
+                    AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?1))
+                OR (status = 'failed'
+                    AND archived_at_epoch IS NULL
+                    AND COALESCE(failure_class, 'transient') = 'transient'))
+         ORDER BY created_at_epoch ASC, id ASC
+         LIMIT ?4",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            now,
+            crate::runtime_config::CLAUDE_HOST,
+            crate::runtime_config::CODEX_HOST,
+            limit
+        ],
+        row_from_db,
+    )?;
+    rows.collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
+}
+
+fn quarantine_legacy_row(conn: &Connection, id: i64, error: &str) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let marker = format!(
+        "[auto_migration_quarantined] {}",
+        crate::db::truncate_str(error, 1000)
+    );
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'failed',
+             failure_class = 'permanent',
+             failed_at_epoch = COALESCE(failed_at_epoch, ?2),
+             last_error = ?3,
+             updated_at_epoch = ?2
+         WHERE id = ?1",
+        params![id, now, marker],
+    )?;
+    Ok(())
 }
 
 fn select_legacy_pending_rows(

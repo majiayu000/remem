@@ -52,7 +52,7 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
             .unwrap_or_default();
         let mut recovery = Vec::new();
         if stats.failed_pending_observations > 0 {
-            recovery.push("run `remem pending list-failed --limit 20`; preview and apply migration prep with `remem pending retry-failed --dry-run` then `remem pending retry-failed`; replay with `remem pending migrate-legacy --dry-run` then `remem pending migrate-legacy`; if replay reports host='unknown', rerun with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`");
+            recovery.push("a running `remem worker` auto-migrates transient failed rows into the capture pipeline in batches; to drain manually, run `remem pending list-failed --limit 20`; preview and apply migration prep with `remem pending retry-failed --dry-run` then `remem pending retry-failed`; replay with `remem pending migrate-legacy --dry-run` then `remem pending migrate-legacy`; if replay reports host='unknown', rerun with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`");
         }
         if stats.failed_extraction_tasks > 0 {
             recovery.push("run `remem worker --once` for failed extraction tasks");
