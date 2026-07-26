@@ -67,17 +67,32 @@ human `spec_approval` 才能进入 implementation。
 
 ### Phase A hardening follow-up：批准范围
 
-- relation 只有在两个 endpoint 都属于同一 query 的 scoped claim set，且属于
-  resolver 当前 subject group 时才能参与选择。当前 adapter 以“任一 endpoint
+- relation 只有在两个 endpoint 都属于同一 query 的 scoped claim set 时才可
+  进入 projection。当前 adapter 以“任一 endpoint
   命中”纳入 relation，resolver 也使用 endpoint OR；现有
   `scope_mismatch_never_leaks_other_projects` 未覆盖 cross-project/cross-subject
   edge 影响。follow-up 必须修正并增加 cross-project、
   explicit-branch-scope 外与 cross-subject fixtures，不能让 scope 外 relation
   使 scope 内 claim 被拒绝；另以独立 fixture 锁定 `branch=None` 全分支视图，
   防止调用方把它误解成 neutral-only。
-- hardening 将 decision relation 与 provenance relation 分开：
-  `Supersedes`/`Refutes` 只有两端属于同一 typed subject 才进入 survivor/conflict
-  计算；`Supports`/`DerivedFrom`（及未来明确 allowlist 的 provenance-only kind）
+- hardening 将 identity slot、decision relation 与 provenance relation 分开。
+  serialized identity slot 是完整 `SubjectIdentity`，不因 relation 自动合并；
+  `Supersedes` 和普通 `Refutes` 只有两端 identity 完全相同才进入该 slot 的
+  survivor/conflict 计算。唯一 cross-slot decision exception 是 canonical
+  writer 产生的 `memory_edges.edge_type='conflicts'`：edge 必须有可 join 的
+  `source_operation_id`，operation 为 `conflict`，其 owner/type 与 endpoints
+  一致，且 provenance 必须是 replacement shape（`result_memory_id` 为一端、
+  另一端在 `conflicting_ids`）或 pairwise shape（两端都在
+  `conflicting_ids`）；两端还必须都是同 canonical
+  owner、同 normalized memory scope、相同 normalized branch
+  (`COALESCE(branch, '')`) 且符合查询 branch visibility 的
+  `memory_type='preference'`。resolver 先分别完成每个 identity slot 的
+  supersedes/trust/recency，再做 cross-topic conflict post-pass；只有两个
+  edge endpoints 都是各自 slot survivor 时，两个对应 `CurrentTruthView`
+  都输出 `Contradicted`、双方 claims 与该 relation。identity 不合并，
+  cross-topic edge 不参与 supersedes/trust/recency；partial/mismatched/unbacked
+  conflict edge decision-neutral。`Supports`/`DerivedFrom`（及未来明确
+  allowlist 的 provenance-only kind）
   在两端属于整体 scoped claim set 且一端是 winner 时可跨 typed subject 附加到
   `supporting_relations`，但绝不参与 survivor、evidence tier 或 recency。
 - 当前 relation loader 扫描全部 `memory_edges` 和 trusted memory graph
@@ -90,7 +105,14 @@ human `spec_approval` 才能进入 implementation。
   `ClaimRelationKind::Supports` 的 adapter/delivery。Phase A 验证应补一个
   focused Supports relation fixture。
 - projection 与 adapter 必须共享一次计算的 reference epoch。对 explicit
-  `as_of`，captured evidence 只有 source epoch
+  `as_of`，memory row 只有 source epoch
+  `COALESCE(reference_time_epoch, created_at_epoch)` 与 canonical
+  write/last-mutation knowledge epoch `updated_at_epoch` 都
+  `<= reference_epoch` 时才可成为 claim；`created_at_override`/
+  `reference_time_epoch` 不是 ingest time，不能单独证明当时已知。late-import
+  row（old source, new `updated_at_epoch`）必须排除；既有 row 在 cutoff 后原地
+  更新也保守排除，因为 Phase A 无历史版本可重建，允许少返回/`Unknown`，禁止
+  用 current bytes 伪造过去。captured evidence 只有 source epoch
   `COALESCE(reference_time_epoch, created_at_epoch)` 与 knowledge epoch
   `inserted_at_epoch` 都 `<= reference_epoch` 时才能进入 trust/output；
   equality 可用。source-before 但 inserted-after 的 late ingestion 必须排除。
@@ -99,10 +121,16 @@ human `spec_approval` 才能进入 implementation。
   必须证明 historical winner 不变。`as_of=None` 也必须共享一次 “now”，避免
   claim/relation/evidence 各自取时造成同次 projection 漂移。
 - 每个 captured-event evidence lookup 必须同时 SELECT `project_id` 并 join
-  `projects.project_path`，与来源 memory 的 exact `project` path 比较。missing
-  project identity、join failure 或 foreign-project event 均沿 `Result` 返回含
-  memory canonical ref、event ID、expected/actual project 的 contextual error；
-  不能把 foreign verified evidence 当作低 trust 或普通缺失。
+  `projects.project_path`。expected evidence project 优先取 trim 后非空的
+  `memory.source_project`，而不是可能表示 routed target/synthetic placement 的
+  `memory.project`。仅当 `source_project` 为 NULL/blank、owner pair 同时缺失或
+  完全符合 v019/default ownership legacy derivation、且 `target_project` 未声明
+  与 `memory.project` 不同的 routing 时，才可 exact fallback 到
+  `memory.project`；partial owner、routed-but-source-missing 或字段互相矛盾均
+  fail closed。missing project identity、join failure 或 actual project 不等于
+  expected source project 均沿 `Result` 返回含 memory canonical ref、event ID、
+  expected/actual/source/target project 的 contextual error；不能把 foreign
+  verified evidence 当作低 trust 或普通缺失。
 - malformed `evidence_event_ids`、malformed user `source_refs_json` 当前会静默
   变为“无 verified evidence/默认 source evidence”，有效 JSON 内不存在的
   captured-event ID 也会被 `continue`。follow-up 必须让三类 provenance
@@ -111,10 +139,20 @@ human `spec_approval` 才能进入 implementation。
   较低 trust 的正常成功。future-but-existing event 是按时间排除，不是
   dangling error。若确需扩展已批准范围，必须停止并重新批准 planned paths。
 - canonical writer 以 `(project, scope, memory_type, topic_key)` 查找 direct
-  upsert slot，因此 hardening v2 引入结构化 `SubjectIdentity { source, kind,
-  key }`：memory 映射为 `(Memory, memory_type, topic_key-or-memory:<id>)`，
+  upsert slot，ownership/routing writer 另持久化 `owner_scope`/`owner_key`；
+  因此 hardening v2 引入结构化
+  `SubjectIdentity { source, owner_scope, owner_key, memory_scope, kind, key }`。
+  normalized memory scope 为
+  `COALESCE(NULLIF(TRIM(scope), ''), 'project')`，是 identity 的独立 dimension，
+  不能由 owner pair 猜回；
+  memory 映射为 `(Memory, canonical owner_scope, canonical owner_key,
+  Some(normalized scope), memory_type, topic_key-or-memory:<id>)`；
   user-context claim 映射为
-  `(UserContextClaim, claim_type, claim_key)`。`ClaimView`、
+  `(UserContextClaim, exact owner_scope, exact owner_key, None, claim_type,
+  claim_key)`。memory owner pair 必须两者都有值；两者同时 NULL/blank 时才按
+  v019/default writer 的原子规则 fallback（global => `user/user:default`，
+  otherwise => `repo/memory.project`），partial pair 或与 routing/scope 矛盾
+  fail closed。`ClaimView`、
   `CurrentTruthView` 与 selector 使用同一 identity，禁止字符串拼接歧义。
   `TRUTH_PROJECTION_VERSION` bump 为 2，`src/truth.rs` 导出新 identity/selector
   类型；v1 没有 release artifact，仍需 changelog/current-contract 明示
@@ -124,9 +162,12 @@ human `spec_approval` 才能进入 implementation。
   unknown memory/user-claim status 返回 table/canonical-ref/raw-value error。
   observations/candidates 在 Phase A 不是 claim source，保持 lifecycle-only
   fail-closed mapping，不能被宣称已有 adapter diagnostic。
-- `as_of` 只能依据现存 row 的 created/validity/relation timestamps；对后来
-  hard-delete 或原地 status rewrite 无法完整重建。Phase A 通过规格公开此
-  限制，不伪造历史；完整 historical explanation 需要后续持久化契约。
+- `as_of` 只能依据现存 row 的 source/reference、`updated_at_epoch`、
+  validity/relation timestamps；对后来 hard-delete 或原地 status/content
+  rewrite 无法完整重建。`updated_at_epoch > as_of` 的 current memory row
+  必须保守排除/`Unknown`，而不是把 source time 当 knowledge time。Phase A
+  通过规格公开此限制，不伪造历史；完整 historical explanation 需要后续
+  持久化契约。
 
 ### Phase B：Context Bundle（后续，不属于 Phase A hardening）
 
@@ -154,15 +195,15 @@ human `spec_approval` 才能进入 implementation。
 
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
-| CT-001 | v2 `SubjectIdentity`/selector、`src/truth/types.rs`, `src/truth.rs` | same-topic/different-memory-type isolation、singleton/user-claim identity、v1-to-v2 intentional golden diff、`projection_version=2` |
+| CT-001 | v2 ownership/scope-aware `SubjectIdentity`/selector、`src/truth/types.rs`, `src/truth.rs` | same-topic/different-owner/scope/type isolation、legacy owner fallback/partial-owner error、singleton/user-claim identity、v1-to-v2 intentional golden diff、`projection_version=2` |
 | CT-002 | `src/truth/lifecycle.rs` | 四组 `*_statuses_map_deterministically` tests；assert 四个正交维度 |
-| CT-003 | typed subject grouping、decision/provenance relation split、branch scope | explicit/none branch、cross-project/scope decision negatives + scoped cross-subject provenance positive/decision-neutral fixtures；worktree/task 属 Phase B |
-| CT-004 | shared reference epoch、source/knowledge evidence epochs、eligibility | existing as-of/expiry + source/inserted before/equal/after + late-ingestion historical-winner regression；hard-delete/status-history limitation仅文档化 |
+| CT-003 | owner/scope-aware subject slots、decision/provenance relation split、branch scope | explicit/none branch、cross-project/owner/scope decision negatives、operation-backed cross-topic preference conflict positive/unbacked negative + scoped cross-subject provenance positive/decision-neutral fixtures；worktree/task 属 Phase B |
+| CT-004 | shared reference epoch、memory/evidence source+knowledge epochs、eligibility | existing as-of/expiry + memory `updated_at` and evidence `inserted_at` before/equal/after + both late-ingestion historical-winner regressions；hard-delete/status-history limitation仅文档化 |
 | CT-005 | `adapter::replacement_relation`, `projection::resolve_group` | `explicit_supersedes_beats_recency`, `user_claim_supersedes_link_resolves_deterministically` |
-| CT-006 | project-bound `captured_event_evidence`, trust adapters | existing trust fixtures + same-project positive, foreign/missing-project contextual-error negatives；stored confidence 不在决策输入 |
-| CT-007 | `resolve_group` 的 refutes/tie branches | `unresolved_conflict_returns_contradicted_not_a_silent_pick`, `same_tier_same_timestamp_is_contradicted` |
+| CT-006 | source-project-bound `captured_event_evidence`, trust adapters | existing trust fixtures + routed source-project positive、legacy fallback positive、foreign/missing/ambiguous-source contextual-error negatives；stored confidence 不在决策输入 |
+| CT-007 | `resolve_group` + cross-slot preference conflict post-pass | existing same-slot refutes/tie tests + operation-backed cross-topic preference survivors both contradicted、non-preference/cross-owner/cross-scope/unbacked edge negatives |
 | CT-008 | `eligible`, `abstention`, adapter provenance parsing | baseline abstention + malformed `evidence_event_ids`/`source_refs_json` and dangling captured-event ID contextual-error regressions |
-| CT-009 | decision relation set vs provenance-only relation set | same-subject Supersedes/Refutes decision fixtures + same/cross-subject scoped Supports/DerivedFrom retention and decision-neutrality |
+| CT-009 | identity slot、decision relation set vs provenance-only relation set | exact-identity Supersedes/Refutes + narrow cross-topic preference conflict exception + same/cross-subject scoped Supports/DerivedFrom retention and decision-neutrality |
 | CT-010 | `ClaimSource`, adapter exports, lifecycle-only observation/candidate mapping | code review confirms Phase A claim sources only Memory/UserContextClaim；writer-side firewall 属 Phase C，PR #939 无完成测试 |
 | CT-011 | lifecycle mapping + memory/user-claim adapter raw-status validators | known status total mapping + unknown memory/user-claim table/ref/raw contextual-error regressions；observation/candidate limitation documented |
 | CT-012 | `eligible` excludes non-Live rows | `archived_and_deleted_rows_never_become_current_truth`; historical explanation consumer 属 Phase B/C |
@@ -178,14 +219,19 @@ human `spec_approval` 才能进入 implementation。
 TruthQuery(project, branch, as_of, subject)
   -> compute one reference_epoch for the entire projection
   -> SELECT scoped memories ordered by (updated_at_epoch, id)
-  -> resolve every captured_event ref + canonical project path
-  -> missing/foreign-project ref => contextual error
-  -> require source_epoch <= reference_epoch AND inserted_at_epoch <= reference_epoch
+  -> require memory source/reference_epoch <= reference_epoch
+     AND memory updated_at_epoch <= reference_epoch
+  -> resolve every captured_event ref + canonical source_project path
+  -> missing/foreign/ambiguous-source ref => contextual error
+  -> require event source_epoch <= reference_epoch
+     AND event inserted_at_epoch <= reference_epoch
   -> bounded SELECT of allowlisted memory_edges + trusted memory graph_edges
   -> ClaimView[] + EvidenceView[] + RelationView[]
-  -> structured SubjectIdentity(source, kind, key) grouping
+  -> structured SubjectIdentity(source, owner_scope, owner_key,
+                                memory_scope, kind, key) grouping
   -> lifecycle/as_of eligibility
-  -> same-subject supersedes/refutes -> evidence trust -> recency
+  -> exact-identity supersedes/refutes -> evidence trust -> recency
+  -> operation-backed cross-topic preference conflict survivor post-pass
   -> attach scoped winner provenance-only relations
   -> CurrentTruthProjection(version=2, truths[])
 ```
@@ -210,21 +256,25 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
   对直接使用 v1 truth DTO/selector 的 source caller 是显式迁移边界。现有
   CLI、HTTP、MCP、hook 和 context output 仍不变，因为它们尚未接入 projection。
 - v1 baseline 的 scope/as-of/malformed/dangling 修复本可视为 adversarial-input
-  compatible corrections；但 same-topic/different-`memory_type` 是合法 canonical
-  writer input，typed subject 会改变 observable grouping。因此本 exact packet
+  compatible corrections；但 same-topic/different-owner/scope/`memory_type`
+  都是合法 canonical writer input，ownership/scope-aware typed subject 会改变
+  observable grouping。因此本 exact packet
   执行上一轮约定的 stop/reapproval 路径：把 `src/truth/types.rs`、
   `src/truth.rs` 纳入 manifest，规定 `projection_version=2` 与结构化
   `SubjectIdentity`/selector，并要求 human 批准 exact spec head 后才能实现。
-- v2 intentional golden diff 只允许：projection version、结构化 typed subject
-  fields/selector，以及本 packet 明定的 adversarial fail-closed/filtered output。
+- v2 intentional golden diff 只允许：projection version、结构化
+  ownership/scope-aware typed subject fields/selector、cross-topic preference
+  conflict 的 `Contradicted` output，以及本 packet 明定的 adversarial
+  fail-closed/filtered output。
   `branch=None` all-branches、Some(B) neutral-plus-exact、trust ordering 和其它
   contract-valid resolution 不变。review 必须逐字段对照 v1 fixture，禁止用整份
   golden 重录掩盖额外 drift。
 - Phase A 读取当前 schema，不新增 migration；旧数据库仍需先由现有 migration
   path 升到当前 schema，projection 自身不得迁移。
-- `target_project` fallthrough、global/project ownership convergence、
-  worktree/task selector 和 Context Bundle compatibility 均未由 Phase A
-  交付，调用方不得据此推断能力。
+- Phase A 只消费现有 canonical ownership/routing fields 并执行上述 legacy
+  fallback/fail-closed validation；它不实现新的 `target_project` routing、
+  global/project ownership convergence、worktree/task selector 或 Context
+  Bundle compatibility，调用方不得据此推断能力。
 - hardening follow-up 必须在创建/更新 PR 前 rebase live `origin/main`，选择
   严格高于 live base 的 patch version，并通过 plugin/npm/server/Cargo
   version-sync 与 version-bump checks；本 spec 不预占具体版本号。
@@ -260,9 +310,12 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
   和 policy review，不能直接序列化到网络。
 - cross-project relation 必须要求两个 endpoint 都在 scoped set；否则虽不泄露
   scope 外 statement，也可能让 scope 外数据影响 scope 内 truth。
-- provenance malformed/dangling/foreign-project 必须在 Phase A hardening 中
-  fail closed；source 与 knowledge epochs 都必须在 trust 前检查，防止未来或
-  late-ingested provenance 改写历史查询。
+- provenance malformed/dangling/foreign-source-project 必须在 Phase A
+  hardening 中 fail closed；memory row 与 evidence 的 source/knowledge epochs
+  都必须在 trust 前检查，防止 future/late-ingested rows 改写历史查询。
+- cross-topic `Refutes` 必须验证 operation-backed preference exception 的全部
+  owner/scope/branch/type/survivor predicates；不得把任意 memory/graph conflict
+  edge 当成扩大 decision domain 的授权。
 
 ## 备选方案
 
@@ -279,16 +332,18 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 
 - Security: scope 外 relation 影响、未来网络暴露完整 statement、suppression
   绕过和 provenance trust 错分。
-- Compatibility: typed subject 触发明确 v2 source-level boundary；v1 未发布但
-  source callers 仍需迁移 selector/DTO，intentional golden diff 必须受限；
+- Compatibility: ownership/scope-aware typed subject 触发明确 v2 source-level
+  boundary；v1 未发布但 source callers 仍需迁移 selector/DTO，intentional
+  golden diff 必须受限；
   Phase B 误把 partial Phase A 当完整 GH-933；旧 schema 缺 column 时查询失败。
 - Performance: relation 全表扫描、逐 evidence lookup 和内存 membership 在大库
   上放大；进入 SessionStart hot path 前必须优化并量测。
-- Data fidelity: `as_of` 无法重建 hard-delete/status rewrite；captured-event
-  replay 会把 `inserted_at_epoch` 后移，历史查询会保守少用 evidence 但不会
-  反向抬高；inline `source_refs_json` 没有独立知识时间，最多受 claim row 的
-  可见时间约束；malformed/dangling/foreign refs 与 late evidence 必须由本
-  hardening fail closed/过滤并有 regression。
+- Data fidelity: `as_of` 无法重建 hard-delete/status/content rewrite；
+  memory `updated_at_epoch` 或 captured-event replay 的 `inserted_at_epoch`
+  晚于 cutoff 时，历史查询会保守少用 claim/evidence 但不会反向抬高；inline
+  `source_refs_json` 没有独立知识时间，最多受 claim row 的可见时间约束；
+  malformed/dangling/foreign refs、ambiguous source routing 与 late
+  memory/evidence 必须由本 hardening fail closed/过滤并有 regression。
 - Maintenance: status writer 新增值时 mapper 默认 fail closed，但需要同步测试
   和版本说明；relation allowlist 与 graph contract 必须同步。
 
@@ -298,10 +353,12 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 - [ ] Phase A quality: `cargo fmt --check`
 - [ ] Phase A lint: `cargo clippy --all-targets -- -D warnings`
 - [ ] Phase A regression: `cargo test`
-- [ ] 补 typed subject/v2 intentional diff、explicit-branch/branch-none、
-      decision-vs-provenance relation、same/foreign project evidence、
-      source/knowledge-time/late-ingest boundary、dangling/malformed provenance、
-      unknown claim status、Supports/DerivedFrom、SELECT-only/no-write regression。
+- [ ] 补 ownership/scope-aware typed subject/v2 intentional diff、
+      explicit-branch/branch-none、same-slot decision/cross-topic preference
+      conflict post-pass、decision-vs-provenance relation、routed/legacy/
+      foreign source-project evidence、memory/evidence source/knowledge-time/
+      late-ingest boundary、dangling/malformed provenance、unknown claim status、
+      Supports/DerivedFrom、SELECT-only/no-write regression。
 - [ ] Version sync:
       `python3 scripts/ci/check_plugin_version_sync.py`
 - [ ] Version bump:

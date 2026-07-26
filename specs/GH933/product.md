@@ -50,9 +50,12 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 1. CT-001 projection 必须返回带版本的 `EvidenceView`、`ClaimView`、
    `RelationView` 和 `CurrentTruthView`；同一版本对同一可见输入和同一查询
    必须产生确定性相同的结果。Phase A hardening 的 v2 subject identity 必须
-   显式区分 source、kind 与 key；memory subject 至少由
-   `(ClaimSource::Memory, memory_type, topic_key-or-singleton)` 构成，不能让不同
-   `memory_type` 仅因 `topic_key` 相同而竞争。
+   显式区分 source、canonical owner、memory scope、kind 与 key；memory subject
+   由 `(ClaimSource::Memory, owner_scope, owner_key, normalized scope,
+   memory_type, topic_key-or-singleton)` 构成，不能让不同 owner、global/workspace/
+   project scope 或 `memory_type` 仅因 `topic_key` 相同而竞争。user-context
+   subject 也必须携带其 exact `owner_scope`/`owner_key`，memory-only scope
+   dimension 对它为 `None`。
 2. CT-002 lifecycle 必须分别表达 publication、validity、retention，并将
    visibility/policy suppression 独立表达；`Archived` 不等于无效，
    `Compressed` 不等于 false，`Suppressed` 不得自动改写 claim 的真假。
@@ -61,14 +64,26 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    查询，只能看到 branch-neutral 与 exact `B` rows；`branch=None` 明确表示
    branch-agnostic 查询，可以看到该 project 的全部 branch rows，而不是
    branch-neutral-only 的隐式默认。relation 的两个 endpoint 也必须同时属于
-   该查询的 scoped claim set。会改变 winner 的 `Supersedes`/`Refutes` 两端还
-   必须属于同一 typed subject；scope 外 relation 不得改变 scope 内结果。
+   该查询的 scoped claim set。`Supersedes` 只有两端属于同一完整 subject
+   identity 才能改变 winner；普通 `Refutes` 同样只在同一 identity 内裁决。
+   唯一 cross-identity decision exception 是 canonical writer 记录且可验证的
+   同 owner、同 normalized scope、同 normalized branch
+   (`COALESCE(branch, '')` exact equal) 的 preference conflict：
+   它可以连接两个不同 topic keys，但只能在各 identity 内部 resolution 完成后
+   将仍 surviving 的两个 endpoint 都标为 `Contradicted`，不得合并 identity，
+   也不得参与 supersedes、trust 或 recency。scope 外 relation 不得改变 scope
+   内结果。
    `Supports`/`DerivedFrom` 等 provenance-only relation 可以连接同一 scope
    内的不同 typed subject，但只能作为 winner 的 provenance 输出，不能参与
    survivor、trust 或 recency 决策。worktree/task selector 属于 GH-933
    后续阶段，不是 Phase A hardening 的完成项。
 4. CT-004 指定 `as_of` 时，projection 只能使用该时点已存在且在有效时间窗内
-   的 claim、relation 和 evidence。captured evidence 必须同时满足 source time
+   的 claim、relation 和 evidence。memory claim row 的 source/reference time
+   与 canonical write/last-mutation knowledge time `updated_at_epoch` 都必须
+   `<= as_of`；source-created time 虽早、但在 `as_of` 后才写入的 imported
+   memory 不得回溯进入 historical truth。因为现有 row 会原地更新，若
+   `updated_at_epoch > as_of`，Phase A 必须保守排除该 current row 或返回
+   `Unknown`，不得推测其旧版本。captured evidence 必须同时满足 source time
    `COALESCE(reference_time_epoch, created_at_epoch) <= as_of` 与 remem knowledge
    time `inserted_at_epoch <= as_of`；source event 虽早、但在 `as_of` 后才被
    ingest 的 late evidence 不得回溯改变历史 winner。若底层数据没有足够历史
@@ -79,10 +94,18 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 6. CT-006 verified evidence 必须优先于 model-generated 或 untrusted
    evidence；任何 stored confidence 都不得替代这条可解释的 trust 规则。
    memory 引用的 captured event 必须通过 canonical project identity 证明属于
-   与该 memory 相同的 exact project；foreign-project evidence 不得被降级后
-   继续，也不得抬高本项目 claim。
+   该 memory 的 provenance source：优先使用非空 `memory.source_project`，
+   只有未声明 source/routing 的 legacy row 才可按明确 fallback 使用
+   `memory.project`；已路由但 source 缺失或不一致必须 fail closed。captured
+   event project 与该 expected source project exact match；foreign-project
+   evidence 不得被降级后继续，也不得抬高本项目 claim。
 7. CT-007 当有效的 `Refutes` 或等价冲突无法安全裁决时，结果必须是
    `Contradicted`，并保留冲突双方及相关 relation；不得静默折叠成单一 truth。
+   canonical writer 通过 operation-backed `memory_edges.conflicts` 记录的
+   cross-topic preference conflict 属于有效冲突，但仅当两端都是同 owner、
+   同 normalized scope、同 normalized branch 的 `memory_type=preference`
+   claim，且两端在各自 subject slot 内仍 surviving；任一条件不满足都不得扩张
+   decision domain。
 8. CT-008 无匹配 claim、所有 claim 均无 current standing、证据不足或未知
    状态无法安全解释时，必须返回 abstention/`Unknown` 或明确空结果，不得
    发明 claim，也不得把失败伪装为正常空数据。
@@ -124,9 +147,13 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 ### 下一份 Phase A hardening follow-up
 
 - [ ] relation 两端都必须属于本次 query 的 scoped claim set。
-      `Supersedes`/`Refutes` 只有同一 typed subject 才能改变 resolution；
-      cross-project、explicit-branch-scope 外与 cross-subject decision relation
-      不影响 winner。连接 winner 的 scoped cross-subject
+      `Supersedes` 与普通 `Refutes` 只有同一完整 subject identity 才能改变
+      resolution；cross-project、cross-owner、cross-scope、
+      explicit-branch-scope 外与未授权 cross-subject decision relation 不影响
+      winner。唯一例外是 operation-backed canonical `memory_edges.conflicts`
+      对同 owner/scope/normalized-branch preference survivors 的 cross-topic
+      `Refutes` post-pass：两个 subject outputs 都必须为 `Contradicted` 并保留
+      双方与 relation，但各自 identity 不合并。连接 winner 的 scoped cross-subject
       `Supports`/`DerivedFrom` 作为 provenance 输出保留但不参与选择，并有正反
       fixtures。`branch=None` 的 branch-agnostic 全分支语义和
       `branch=Some(B)` 的 neutral-plus-exact 语义都有独立 regression。
@@ -135,13 +162,18 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       `EXPLAIN QUERY PLAN` 与 representative p50/p95/row-bound evidence。
 - [ ] `ClaimRelationKind::Supports` 有真实 adapter/output fixture。
 - [ ] 每个 memory evidence ref 通过 `captured_events.project_id` join canonical
-      `projects.project_path`，必须与 `memory.project` exact match；无法解析
-      project identity 或 foreign-project ref 都返回含 memory/event/project
-      context 的错误，不能静默降级 trust。
+      `projects.project_path`，必须与非空 `memory.source_project` exact match；
+      仅无 routing assertion 的 legacy row 可 fallback 到 `memory.project`，
+      routed/partial ownership row 缺 source、无法解析 project identity 或
+      foreign-project ref 都返回含 memory/event/expected/actual project context
+      的错误，不能静默降级 trust。
 - [ ] explicit `as_of` 查询只使用 source time 与 knowledge time 都不晚于
-      `as_of` 的 captured evidence；覆盖 source-before/knowledge-after 的 late
-      ingestion、两种时间的 before/equal/after boundary 与 historical winner。
-      `as_of=None` 仍共享一次 reference epoch。
+      `as_of` 的 memory claim row 和 captured evidence；memory row 使用
+      `updated_at_epoch` 作为保守的 canonical write/last-mutation knowledge
+      epoch。覆盖 old-source/new-ingest memory、source-before/knowledge-after
+      evidence、各时间的 before/equal/after boundary 与 historical winner；
+      row 后来原地更新且无法重建旧版本时必须排除/`Unknown`。`as_of=None` 仍
+      共享一次 reference epoch。
 - [ ] malformed `evidence_event_ids`、malformed `source_refs_json`，以及
       syntactically valid 但指向不存在 `captured_events` row 的 dangling event
       ref 均 fail closed，并返回包含 claim/ref context 的可诊断错误；不得静默
@@ -149,11 +181,15 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - [ ] SQLite authorizer、`total_changes` 或等价 regression 证明 projection
       SELECT-only。
 - [ ] memory subject identity 与 canonical writer 对齐为
-      `(source, memory_type, topic_key-or-singleton)`；相同 topic、不同
-      `memory_type` 绝不竞争或 supersede。该合法输入变化触发上一轮既定 version
-      boundary：hardening 输出必须为 `projection_version=2`，DTO/module paths、
-      v1-to-v2 intentional golden diff 与 staged/unreleased compatibility note
-      都在 exact packet 中批准；不得继续标 v1 或无审核改写 golden。
+      `(source, owner_scope, owner_key, normalized memory scope, memory_type,
+      topic_key-or-singleton)`；相同 topic、不同 owner/scope/`memory_type` 绝不
+      竞争或 supersede。owner pair 必须来自完整 canonical fields；仅两者同时
+      缺失的 legacy row 可按 v019/default writer rules 一起 fallback，partial
+      pair 或与 routing 矛盾的 row fail closed。该合法输入变化触发上一轮既定
+      version boundary：hardening 输出必须为 `projection_version=2`，
+      DTO/module paths、v1-to-v2 intentional golden diff 与 staged/unreleased
+      compatibility note 都在 exact packet 中批准；不得继续标 v1 或无审核改写
+      golden。
 - [ ] unknown memory/user-claim raw status 返回包含 table/canonical-ref/raw-value
       的 contextual error，并覆盖每个实际 claim-source adapter；已知 status
       的 total mapping 不回归。
@@ -190,8 +226,18 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - claim 在 `as_of` 前存在，但其 verified captured-event evidence 在 `as_of`
   后才被 remem ingest，source time 可能仍早于 `as_of`；或引用的 ledger event
   已不存在/属于另一个 project。
+- imported memory 的 source-created/reference time 早于 `as_of`，但 canonical
+  write `updated_at_epoch` 晚于 `as_of`；或既有 row 在 `as_of` 后原地更新。
 - 两个不同 `memory_type` 使用相同 `topic_key`；它们必须形成不同 typed
   subjects。
+- global、workspace 与 project memory 使用相同 type/topic，但 owner/scope
+  不同；它们必须形成不同 subject identities。
+- routed memory 的 `memory.project` 是 target/synthetic project，而 captured
+  event 属于非空 canonical `source_project`；它是合法 provenance。缺失 source
+  的 routed/partial row 则 fail closed，不能 fallback 到 target。
+- canonical writer 记录两个不同 topic keys 的同-owner/scope preference
+  conflict；两个 endpoint 在各自 slot surviving 时两个 outputs 都必须
+  `Contradicted`，但一个任意 cross-topic conflict edge不得扩大 decision domain。
 - scoped `Supports`/`DerivedFrom` 连接 winner 与另一个 typed subject；该
   provenance 保留，但不能改变 winner。
 - memory 或 user-context claim 存有未识别 raw status。
