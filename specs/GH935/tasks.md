@@ -95,6 +95,11 @@ GH-935
     - 24 个 task 逐个包含 deterministic repo fixture、至少两个 chronological
       source episodes、source-seal contract、
       hidden tests、score commands、gold facts、allowed/forbidden paths；
+    - 每 task 有 distinct authorized/decoy user IDs 与同-project target-blind
+      canary memory；schema 拒绝 identity 相同、canary 泄入 target/gold/hidden；
+    - source-seal schema 强制 quiesced `REMEM_DATA_DIR` sorted file manifest、
+      archive/Merkle hash、schema/migration/project/user IDs 和 terminal queue
+      state，拒绝 symlink/device/path traversal；
     - 每个 task 为 `ready` 且 `todo: []`；
     - 两个方向各覆盖 12 个必需 category，无 fabricated placeholder；
     - v1 skeleton/old artifacts 被明确拒绝或由测试覆盖的 converter 转换。
@@ -130,6 +135,8 @@ GH-935
     - source/target 严格串行复用同一 run-scoped canonical absolute workspace
       path，target 前从 approved fixture 重置并保持 project ID；same-name decoy
       使用不同 canonical path/project ID；
+    - target identity 固定为 authorized user；same-project decoy user root/session
+      隔离且不能被 host/native/remem/export surface 选中；
     - credential bootstrap 最小化且 credential bytes 不进入 artifacts；
     - 非 macOS 在没有等价 deny-host-read 证明时 fail closed；
     - dry-run/verify call graph 不 spawn 宿主或网络。
@@ -154,6 +161,9 @@ GH-935
       retrieval，测试证明未调用 direct seed/save/preload shortcut；
     - surface manifest 证明 `remem_shared` 唯一共同路径是 run-scoped transfer
       store，source session/phase-private/cross-run path 的负例全部拒绝；
+    - `remem_shared` 每次 fanout 从 reviewed immutable store archive 建 fresh
+      private clone，启动前重验完整 root/project/user hashes；missing/drift/
+      substitution/resume mismatch 均失败；
     - `target_host_native` 在 prompt 揭示前通过目标宿主真实 preparation/import
       protocol 产生可读 native state 并记录成本；空/不可读 native state
       fail closed，不能退化成 `no_memory`；
@@ -164,11 +174,15 @@ GH-935
       独立 review/promotion 后激活，保留 `host_native_import` origin 与
       non-canonical trust；without control 走相同 reviewer schedule；
     - diagnostic data 不进入 primary denominator。
+    - 每个 memory-bearing condition 都携带 same-project decoy-user canary 的
+      negative scope fixture；authorized target 选择/注入/cite decoy ref 失败。
   - Verify:
 
     ```bash
     cargo test eval::cross_host::tests::conditions
     cargo test eval::cross_host::tests::real_capture_pipeline
+    cargo test eval::cross_host::tests::source_store_seal
+    cargo test eval::cross_host::tests::wrong_user_scope
     cargo test eval::cross_host::tests::exported_file_cost
     cargo test eval::cross_host::tests::native_import_ablation
     ```
@@ -189,6 +203,9 @@ GH-935
     - 72 个 `(direction,task,run_index)` 各只执行一次 source episode sequence；
       source terminate/drain/immutable seal 先于 fanout 和 target launch，全部
       conditions 绑定同一 seal；
+    - source drain 后 checkpoint WAL、close DB/worker，再 seal完整
+      `REMEM_DATA_DIR` archive/root/file manifest；target approval、artifact 和
+      resume 全部绑定该 store hash，不能只绑定 transcript/tool events；
     - runner 强制两阶段 authorization：source approval 不能启动 target，
       target approval 必须绑定 reviewed source-seal manifest；不存在
       source-seal preauthorization cycle；
@@ -200,6 +217,8 @@ GH-935
     - attribution 每阶段必须是可解析 `present(ref)` 或 typed
       `absent_due_to(failure)`；合法上游 failure 的下游 absence 保留 failed run
       于 denominator，无 failure 的缺 ref 被拒绝，origin/scope/validity 一致；
+    - attribution ref 含 user ID；scanner/score 对 decoy-user canary 做负向
+      selection assertion，任何 hit 产生 `wrong_user_injection` breach；
     - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏；scanner
       完成后输出 sanitized `clean` 或 typed `security_breach` record，breach
       bytes 不落盘但 failure record 保留给 denominator/gate；scanner 自身失败
@@ -223,6 +242,8 @@ GH-935
     cargo test eval::cross_host::tests::attempt_history
     cargo test eval::cross_host::tests::resume
     cargo test eval::cross_host::tests::attribution
+    cargo test eval::cross_host::tests::source_store_seal
+    cargo test eval::cross_host::tests::wrong_user_scope
     python3 eval/cross-host/scripts/scan_artifacts.py --self-test
     cargo run -- bench cross-host run --root eval/cross-host \
       --runs-per-task 3 --phase source --matrix source --dry-run \
@@ -249,7 +270,6 @@ GH-935
     - `eval/cross-host/schemas/cross-host-claim-verdict.schema.json`
     - `eval/cross-host/schemas/evidence-source-manifest.schema.json`
     - `eval/cross-host/claims-registry.json`
-    - `eval/cross-host/reports/{cross-host-v1.json,cross-host-v1.md,cross-host-v1-gate.json}`
     - `scripts/ci/check_public_claims.py`
   - Done when:
     - report builder 先验证 source-seal→primary→final immutable manifest
@@ -278,6 +298,11 @@ GH-935
     - claim gate 另写并保留 PASS/FAIL/INSUFFICIENT gate result；
       `bench cross-host gate` 是唯一 result-writer，registry/JSON/Markdown/
       gate hash/wording 全部绑定；
+    - pre-live verification 由 Rust test 在 `TempDir` 生成 synthetic registry、
+      manifest、candidate JSON 与 deterministic Markdown，覆盖 PASS/FAIL/
+      INSUFFICIENT、breach early-FAIL 和 Markdown drift；T6 不读取或写入
+      canonical `eval/cross-host/reports/cross-host-v1*`，这些路径只在 T11
+      获得 live/partial evidence 后生成；
     - FAIL/INSUFFICIENT 不删除或改写 candidate report/evidence；
     - public claim checker 在非 PASS 时拒绝正向 README wording。
   - Verify:
@@ -287,11 +312,7 @@ GH-935
     cargo test eval::cross_host::tests::evidence_bundle
     cargo test eval::cross_host::tests::paired_bootstrap
     cargo test eval::cross_host::tests::claim_gate
-    cargo run -- bench cross-host gate --root eval/cross-host \
-      --registry eval/cross-host/claims-registry.json \
-      --report eval/cross-host/reports/cross-host-v1.json \
-      --markdown eval/cross-host/reports/cross-host-v1.md \
-      --json-out /tmp/remem-cross-host-gate.json
+    cargo test eval::cross_host::tests::claim_gate_synthetic_temp_fixtures
     python3 eval/claims/claim_gate.py check \
       eval/cross-host/claims-registry.json
     python3 scripts/ci/check_public_claims.py --self-test
@@ -385,6 +406,8 @@ GH-935
       `remem_without_host_native_import`、`remem_with_host_native_import`，总计
       12 个 target smoke tuples。少测任一 preparation/export/update/import
       review surface 都不得批准 full source matrix；
+    - smoke seal/targets 重验 extracted store root，且至少一个 same-project
+      decoy-user canary negative assertion 证明 authorized identity 不会选错用户；
     - source/target smoke policies 均经独立 maintainer APPROVED PR merge 到
       default branch；`approval_key` 只由 repo identity、approval PR number 与
       canonical policy digest 派生，排除 containing Git OID/attestation；
@@ -436,6 +459,8 @@ GH-935
     - 72 个 source-stage keys 各形成 sanitized immutable clean seal 或 typed
       security-breach record，写入 source-seal manifest 后停止写入；manifest
       由独立 maintainer PR review/merge；
+    - 每个 clean seal 绑定实际可消费的 quiesced `REMEM_DATA_DIR` archive/root/
+      file manifest；reviewer 抽查 archive 重算与 project/user identity；
     - 全部 clean 时 maintainer 再分别 review/merge `stage=target` primary 与
       ablation policies，绑定 exact source-seal manifest/hash、target tuples 与
       独立 budgets；若已有 breach，则禁止 target calls，直接把 sealed partial
@@ -473,6 +498,8 @@ GH-935
     - clean branch verifier 证明 288 个唯一 recorded tuples；ordinary failure 与 typed
       `security_breach` 都留在分母，breach record 推进 T11 gate FAIL，不阻断
       candidate report lifecycle；
+    - 每个 remem/shared resume/fanout 的 pre-launch store root 与 reviewed seal
+      相同；wrong-user decoy canary hit 按 security breach 进入 early FAIL；
     - 若 source/primary 任一 verified breach 触发 early stop，primary manifest
       明确 planned/recorded/not-started counts 与 breach record hash；无需等待
       288 target calls，也不得把该路径改报 INSUFFICIENT；

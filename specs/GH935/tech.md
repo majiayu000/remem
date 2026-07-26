@@ -170,14 +170,21 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   report 自报。
 - task v2 在每个现有 task 文件内增加确定性 `fixture_repo`（初始 branch、
   repo files、必要的同名 decoy repos）、可执行 source episode prompt 与
-  source assertions。`history_episodes.memories` 只作为 expected/gold
+  source assertions，以及 distinct `authorized_user_id`/`decoy_user_id`。
+  decoy user 在同一 project 下拥有 target-blind、canary-tagged conflicting
+  memory，fixture validator 要求两 identity 不同且 canary 不出现在 target/
+  gold/hidden。`history_episodes.memories` 只作为 expected/gold
   evidence，不作为任何 condition 的 DB seed 输入。
 - 24 个 task 逐个人工填充确定性代码 fixture、source episode、target prompt、
   hidden files、score commands、required/forbidden patch patterns 和 gold
   facts；每 task 至少两个 chronological source episodes，以支持 exporter
   generation + update maintenance cycle。完成后才清空 `todo` 并设为 `ready`。
 - source-seal schema 固定 source host transcript、tool events、git patch、
-  episode boundaries、binary/model/profile hashes 和 content hash；同一
+  episode boundaries、binary/model/profile hashes、authorized/decoy user IDs，
+  以及 extraction/review drain 后 quiesced `REMEM_DATA_DIR` snapshot。snapshot
+  先 checkpoint WAL、关闭 DB/worker，再生成拒绝 symlink/device/path traversal
+  的 sorted file manifest（relative path、mode、length、SHA-256）、archive hash/
+  Merkle root、schema/migration version、project ID 与 terminal queue state。同一
   `(direction,task,run_index)` 只生成一次 seal，conditions 只能消费 seal，
   不得各自重新运行 nondeterministic source episode。
 - v1 skeleton 和旧 run schema 不做 silent migration。validator 可给出明确
@@ -201,6 +208,10 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   artifact。`remem_shared` 另建一个位于两侧 private roots 之外、按 run 唯一命名
   的 transfer store；source/target 只能串行把它挂载为 `REMEM_DATA_DIR`，其他
   condition、其他 run、session/config roots 都不能访问它。
+  immutable sealed snapshot 永不直接挂载为可写目录；每个 `remem_shared`
+  target/fanout 从 archive 建 fresh private clone，启动前重算 file manifest/
+  root/project/user identities，结束后丢弃 clone。resume 只能复用 exact reviewed
+  snapshot hash，store missing/substitution/drift fail closed。
 - macOS 使用 host-read sandbox；其他平台在获得等价 deny-host-read 证据前
   fail closed。adapter 启动前记录宿主 binary/version/model/reasoning 和
   executable hash；未知 alias 或版本探测失败即停止。
@@ -304,6 +315,11 @@ fixture/prompt/scorer/source-seal/executable/model/profile hash：
   attribution stage refs。每个 stage 必须是 `present(ref)` 或 typed
   `absent_due_to(failure)`；pipeline failure 的下游 absence 不排除 run，target
   started outcome 仍以 failure 留在 primary denominator。
+  attribution refs 必须携带 `user_id`；所有 memory-bearing surfaces 在同一
+  project 下提供 authorized 与 decoy-user scope，scanner 查找 decoy canary。
+  authorized target 选择/注入/cite decoy ref 立即生成
+  `wrong_user_injection` security-breach record；no-memory 保持无 surface，
+  但同样扫描 canary。
 - raw stdout/stderr/auth/private roots 留在 `.gitignore` 的本地 artifact
   目录。scanner 成功完成后，每个 tuple 都输出不含泄漏 bytes 的 sanitized
   record：`scanner_status=clean` 或
@@ -446,9 +462,9 @@ remem bench cross-host gate --root eval/cross-host \
 | B-003, B-004 ready lifecycle/empty fields | task schema、schema self-tests | 24 files 为 `ready` 且 todo/score/fixture 完整；ready+empty-score 与 missing-key negative fixtures 失败。 |
 | B-006 primary 288 | run plan、primary/final manifests、report completeness | dry-run 精确打印 288；clean/ordinary failure/security-breach 都是 recorded tuple；删一个、复制一个、unverified 一个或 bundle hash drift 均 insufficient。 |
 | B-007 native paired ablation | 144-tuple diagnostic plan、report | dry-run 精确输出 144；with/without import 同 hash 配对通过；缺侧、重复或 config drift negative tests 失败。 |
-| B-008 comparability | one-source seal、source-seal manifest、matrix/config hashing | 每个 direction/task/run 只执行一次 source 并 fan out 同一 reviewed seal；source 重跑或 prompt/fixture/executable/model/profile 任一 drift 被 verifier 拒绝。 |
+| B-008 comparability | one-source seal、quiesced store snapshot、source-seal manifest、matrix/config hashing | 每个 direction/task/run 只执行一次 source；seal 绑定实际 `REMEM_DATA_DIR` archive/root、逐文件 manifest、schema/project/user/terminal state，再向每个 remem fanout 提供 fresh clone；source 重跑、store missing/drift/substitution/resume mismatch 或 prompt/fixture/executable/model/profile drift 均被 verifier 拒绝。 |
 | B-009, B-032 explicit/human authorization | staged CLI、source/target approval registry/schema、remote usage ledger、route/handoff | source policy 不含 future seal 且不能 target；target policy 绑定 reviewed seal manifest；containing-tree key、自引用、伪造/未 merge/未 APPROVED/过期/mismatch、换 clone/execution ID、reservation race/超额均在 billable call 前失败；smoke 验证 2 source + 12 target surfaces。 |
-| B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session/phase roots 全异；source/target 串行复用同一 canonical workspace 并保持 project ID；decoy 为不同 ID；`remem_shared` 仅允许当前 run transfer store；target 先启动、其他 shared path 和 source cleanup failure tests 均失败。 |
+| B-010, B-015 phase isolation/order | shared isolation、runner state machine、user-scope fixtures | temp HOME/config/session/phase roots 全异；source/target 串行复用同一 canonical workspace 并保持 project ID；same-name repo 使用不同 project ID，同-project decoy 使用 distinct user ID + target-blind canary；authorized target 选择/注入/cite decoy ref 产生 `wrong_user_injection`；`remem_shared` 仅允许当前 run transfer store；target 先启动、其他 shared path 和 source cleanup failure tests 均失败。 |
 | B-011, B-016 leakage/hidden tests | sandbox、scanner、sanitized breach record、score timing | scanner self-test 覆盖 HOME/session/auth/private/hidden；泄漏 bytes 被丢弃但 typed breach record 保留并使 gate FAIL；scanner crash 才 insufficient。 |
 | B-012 condition surfaces | condition engine | target-native preparation 产生可读 native state、exported handoff 经共同 host-neutral envelope 被消费；任一条件退化成 no-memory 或出现额外 surface 的负例失败。 |
 | B-013 real remem pipeline | remem_shared condition、capture attribution | integration test 从 hook event 到 selected context refs；production code test 断言未调用 seed/save/preload shortcut。 |
@@ -458,10 +474,10 @@ remem bench cross-host gate --root eval/cross-host \
 | B-020, B-021 attribution integrity | run schema、score/ref resolver | present ref 可解析；合法 typed downstream absence 保留 pipeline failure 于分母；无 failure 的缺 ref、跨 run ref、unknown/conflicting origin、native-as-canonical negative fixtures 均被拒绝。 |
 | B-022, B-023 denominators/directions | sanitized bundles、source-seal/primary/final manifest chain、report builder | primary manifest 封存后不变，final 引用其 hash + ablation hash；failure/leak 在分母；缺值为 null；从 committed chain 独立重算相同 candidate input hash。 |
 | B-025, B-026 paired bootstrap/CI wording | bootstrap、claim gate | fixed seed golden CI 可重现；unpaired/config drift/CI includes 0 只能得 directional/insufficient。 |
-| B-027, B-028 stop-loss precedence | report/claim gate | leak 分母固定 288，hurt/stale 每方向 36/aggregate 72；精确 causal predicate 与阈值边界正负例；缺 attribution 为 INSUFFICIENT，resolved gain + 任一 leak 仍为 FAIL。 |
+| B-027, B-028 stop-loss precedence | report/claim gate、decoy-user canary scanner | leak 分母固定 288，hurt/stale 每方向 36/aggregate 72；`wrong_project_injection`/`wrong_user_injection` 等零容忍边界含 canary 命中正负例；精确 causal predicate 与阈值边界正负例；缺 attribution 为 INSUFFICIENT，resolved gain + 任一 leak 仍为 FAIL。 |
 | B-029 native import trust | condition/attribution/report | 完整 144 with/without report 分开；import candidate 未经独立 review/promotion、origin/trust 被篡改或混入 primary 时失败。 |
 | B-030 compatibility | versioned loaders | v1 skeleton/old artifact 被明确拒绝或转换后重新验证，不能直接 complete。 |
-| B-031 public claim surface | deterministic JSON→Markdown renderer、Rust gate、CI、post-live docs | gate 重生成 Markdown 并绑定 JSON/Markdown hashes + renderer version；任一 drift、非 PASS + positive wording 失败；任一 verdict 后 current contract/status/link 更新。 |
+| B-031 public claim surface | deterministic JSON→Markdown renderer、Rust gate、CI、post-live docs | pre-live Rust test 在 `TempDir` 生成 synthetic registry/manifest/candidate JSON/Markdown，覆盖 PASS/FAIL/INSUFFICIENT/breach/drift 且不依赖 canonical live report；gate 重生成 Markdown并绑定 JSON/Markdown hashes + renderer version；任一 drift、非 PASS + positive wording 失败；任一 verdict 后 current contract/status/link 更新。 |
 
 ## 数据流
 
@@ -470,7 +486,8 @@ versioned charter + 24 ready tasks
   -> dry-run / complete randomized matrix plan
   -> reviewed source-stage policy (plan hashes, no future seals)
   -> one source host isolated phase per direction/task/run
-  -> source termination + bounded pipeline drain + immutable source-seal manifest
+  -> source termination + bounded pipeline drain + quiesced REMEM_DATA_DIR
+     archive/root/file manifest in the immutable source-seal manifest
   -> reviewed target-stage policies bound to exact seals
   -> fan out the same seal to target-native preparation / exported generation+updates /
      remem transfer / no-memory surface
@@ -537,6 +554,9 @@ sanitized report paths。真实 user HOME、默认 remem DB、来源宿主 sessi
   ```bash
   cargo test eval::host_isolation
   cargo test eval::cross_host
+  cargo test eval::cross_host::tests::source_store_seal
+  cargo test eval::cross_host::tests::wrong_user_scope
+  cargo test eval::cross_host::tests::claim_gate_synthetic_temp_fixtures
   cargo test eval::coding_bench
   ```
 
@@ -582,9 +602,12 @@ sanitized report paths。真实 user HOME、默认 remem DB、来源宿主 sessi
 1. 在任何 live run 前，可移除 `bench cross-host` executable surface，并保留
    schema/task/history contract；状态回到 `executable_no_runs` 或
    `infrastructure_only_no_runs`，不得伪造结果。
-2. 若 adapter/sandbox 有 leak，立即停止后续 tuple，将已产生 artifact 标记
-   invalid 并保留审计，不发布 report；修复必须提升 policy/version 后重跑受
-   影响完整矩阵。
+2. 若 adapter/sandbox 有 leak，立即停止新的 billable tuple、在 streaming
+   redaction 后丢弃 leaked bytes，并封存 schema-valid sanitized
+   `security_breach` record、partial manifest。必须继续生成 immutable candidate
+   JSON/Markdown、security-precedence FAIL gate result，并更新 current status/
+   links；禁止把 breach artifact 标记 invalid 后删除、禁止 suppress report。
+   修复必须提升 policy/version，旧 FAIL evidence 永久保留；新版本另行重跑。
 3. 若 report/bootstrap/claim gate 有缺陷，撤回 README/CHANGELOG 结果 wording，
    保留原始 immutable artifacts 和旧 report hash，生成新版本报告而不是覆盖。
 4. 版本回滚需同步所有 Cargo/plugin/npm/server surface；已提交的失败/泄漏

@@ -97,8 +97,14 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
    index 和相同非 ablation 配置必须成对。少一个、重复一个、hash drift 或
    unverified artifact 都使 contribution verdict `INSUFFICIENT`。
 8. **B-008** 每个 `(direction, task_id, run_index)` 只执行一次 source
-   episode，先封存 immutable source transcript/tool-event/git patch/hash，再将
-   同一 seal fan out 给全部 primary/native-ablation conditions。它们必须共享
+   episode；extraction/review drain 后必须 quiesce worker、checkpoint/close DB，
+   把 source transcript/tool-event/git patch 与 `remem_shared` 实际消费的完整
+   `REMEM_DATA_DIR` 做 immutable content-addressed snapshot。seal 必须绑定
+   snapshot archive/root hash、逐文件 manifest、schema/migration version、
+   project/user identity 与 terminal extraction state，再将同一 reviewed seal
+   fan out 给全部 primary/native-ablation conditions。每个 remem target 使用
+   该 snapshot 的 fresh byte-identical private clone，并在启动前重验 root hash；
+   store 缺失、漂移、替换或 resume hash 不同均无效。所有 conditions 必须共享
    fixture revision、target prompt、hidden scoring、source seal 和全部
    executable/model/profile 配置；只允许 condition memory surface 不同。重新
    执行 source episode 或 seal/hash 不同的 pair 无效。
@@ -125,7 +131,11 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     cleanup/immutable seal 后将该 path 重置到 approved fixture，再启动 target，
     从而保持 remem 的 canonical Git-root project identity。目标不得读取来源
     session/private roots。`remem_shared` 仅额外挂载 run-scoped transfer store；
-    same-name decoy repo 必须保持不同 canonical path/project ID。
+    same-name decoy repo 必须保持不同 canonical path/project ID。每个 task
+    还必须定义 distinct `authorized_user_id`/`decoy_user_id`；同 project 的
+    decoy user 有 target-blind、canary-tagged conflicting memory。target 只以
+    authorized identity 运行，任一 condition 的 selection/injection/citation
+    出现 decoy canary 即为 `wrong_user_injection`。
 11. **B-011** 任何 host HOME、auth/config、session、hidden test、
     private-root 或跨 project/user 泄漏都会使对应 run 无效并触发 suite
     stop-loss；scanner 必须丢弃泄漏 bytes，但保留不含敏感内容、schema-valid
@@ -262,6 +272,13 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
   144-tuple paired evidence。
 - [ ] 每个 remem run 有完整 capture→memory→selection→use attribution，
   每个 exported-file run 有生成/维护成本。
+- [ ] source seal 绑定 extraction/review drain 后 quiesced
+  `REMEM_DATA_DIR` 的 archive/root hash、逐文件 manifest 与 project/user
+  identity；每个 remem target 从 reviewed seal 建 fresh clone，store
+  missing/drift/substitution/resume mismatch 的负例全部失败。
+- [ ] 每个 task 的 authorized/decoy user identity 不同；同 project decoy
+  canary 不得被任何 memory-bearing condition 选择、注入或引用，命中即形成
+  `wrong_user_injection` breach 并使 gate FAIL。
 - [ ] 288+ablation sanitized evidence bundle/source manifest 可独立复算；
   direction-specific 与 aggregate candidate report 均通过 schema，缺失值不
   被填 0，PASS/FAIL/INSUFFICIENT gate result 均保留。
