@@ -33,7 +33,8 @@ GH-935
     "eval/cross-host/schemas/cross-host-task.schema.json",
     "eval/cross-host/schemas/cross-host-run.schema.json",
     "eval/cross-host/schemas/cross-host-report.schema.json",
-    "eval/cross-host/schemas/live-run-authorization.schema.json",
+    "eval/cross-host/schemas/live-run-approval.schema.json",
+    "eval/cross-host/live-run-approvals.json",
     "eval/cross-host/examples/run-artifact-valid.json",
     "eval/cross-host/examples/run-artifact-invalid.json",
     "eval/cross-host/scripts/schema_validate.py",
@@ -75,6 +76,7 @@ GH-935
     "src/eval/cross_host/fixture.rs",
     "src/eval/cross_host/isolation.rs",
     "src/eval/cross_host/condition.rs",
+    "src/eval/cross_host/approval.rs",
     "src/eval/cross_host/runner.rs",
     "src/eval/cross_host/score.rs",
     "src/eval/cross_host/report.rs",
@@ -169,15 +171,29 @@ spec/security review，再修改新增路径。报告文件只有在真实运行
 - macOS 使用 host-read sandbox；其他平台在获得等价 deny-host-read 证据前
   fail closed。adapter 启动前记录宿主 binary/version/model/reasoning 和
   executable hash；未知 alias 或版本探测失败即停止。
-- live `run` 必须同时带显式确认参数与 schema-valid authorization artifact。
-  artifact 至少绑定 `authorization_id`、actor、approved/expires timestamps、
+- live `run` 必须同时带显式确认参数与 `--approval-id`。唯一信任源是
+  `origin` 默认分支上的 `eval/cross-host/live-run-approvals.json`；调用方不能
+  传任意 approval 文件或 root。每个 append-only registry entry 通过
+  `live-run-approval.schema.json`，绑定 maintainer approval PR、APPROVED review
+  node、reviewer login/association、merge commit、approved/expires timestamps、
   exact code/fixture/config/model/host-version hashes、允许的 matrix/tuple selectors、
-  credential-bootstrap reference（不得含 credential bytes）、artifact root、
-  `max_host_calls`、`max_llm_calls`、`max_estimated_cost_usd` 与 `decision=allow`。
-  CLI 还要求调用方显式传入不高于 artifact 的三项 hard caps；过期、hash/tuple
-  不匹配或预算耗尽均在 spawn/network 前 fail closed。artifact root 内的
-  append-only usage ledger 以 `authorization_id` 聚合所有命令的 host/LLM calls
-  与估算/实际成本，并以锁 + atomic write 防止并发或分拆调用重置预算。
+  credential-bootstrap reference（不得含 credential bytes）、
+  `max_host_calls`、`max_llm_calls`、`max_estimated_cost_usd` 与
+  `decision=allow`。`approval_id` 由 canonical entry digest + approval review
+  node + merge commit 派生，不接受调用方自选值。
+- runner 在 spawn/network 前从 GitHub API fresh 验证 approval PR 已 merge 到
+  default branch、review 为 APPROVED 且 reviewer association 符合 maintainer
+  role、远端 registry blob/digest 与本地 entry 完全一致；离线、远端漂移、过期、
+  hash/tuple 不匹配均 fail closed。每次命令另生成 `execution_id`，它不能改变
+  `approval_id` 或增加预算。
+- CLI 还要求调用方显式传入不高于 registry entry 的三项 hard caps。
+  append-only usage ledger 的位置由 canonical GitHub owner/repo +
+  `approval_id` 在 git common dir 下确定，不接受 CLI/env/root override；启动时
+  以 ledger 与该 approval 所有 immutable run artifacts 的最大累计值为准。
+  ledger 使用锁、hash chain 与 atomic write。相同 approval/scope 的新
+  `execution_id` 必须继承已消费预算；只有新的独立 maintainer-approved、
+  default-branch-merged registry entry 才能增加预算。ledger 缺失、回退、
+  artifact/ledger 不一致或预算耗尽均在 spawn/network 前 fail closed。
   `--dry-run`、verify、schema self-test 和普通 CI 的 call graph 不得读取 auth
   或进入 adapter spawn。
 - source phase 完成后先终止进程、flush hook/capture、等待 bounded extraction
@@ -274,7 +290,7 @@ remem bench cross-host run --root eval/cross-host --runs-per-condition 3 \
   --matrix native-import-ablation --json-out <path> [--dry-run]
 remem bench cross-host run --root eval/cross-host --matrix smoke \
   --direction <direction> --task-id <task-id> --condition <condition> \
-  --run-index <index> --authorization <path> --confirm-live-run \
+  --run-index <index> --approval-id <id> --confirm-live-run \
   --max-host-calls <n> --max-llm-calls <n> \
   --max-estimated-cost-usd <usd> --json-out <path>
 remem bench cross-host report --root eval/cross-host \
@@ -283,11 +299,12 @@ remem bench cross-host report --root eval/cross-host \
 
 - 所有写 report 的命令要求显式 output path。
 - 任意非 dry-run `primary`/`native-import-ablation` 也必须提供
-  `--authorization`、`--confirm-live-run` 和三项 hard caps；authorization 的
-  allowed tuple set 必须覆盖实际 plan，且 runtime counter 不能超过任何 cap。
+  `--approval-id`、`--confirm-live-run` 和三项 hard caps；approval registry
+  entry 的 allowed tuple set 必须覆盖实际 plan，且 runtime counter 不能超过
+  任何 cap。
 - `--matrix smoke` 强制 direction/task/condition/run-index 各恰好一个，只产生
   一个 tuple，并在 schema/report 中永久标记 `excluded_from_public_denominator`。
-  `verify --input <run-artifact> --authorization <path> --expected-matrix smoke`
+  `verify --input <run-artifact> --approval-id <id> --expected-matrix smoke`
   重新校验 exact head/fixture/model、授权期限、调用/成本计数、sandbox、cleanup
   与 exclusion marker。
 - `run --dry-run` 只验证 tasks、matrix、adapter availability declaration 和
@@ -310,7 +327,7 @@ remem bench cross-host report --root eval/cross-host \
 | B-006 primary 288 | run plan、report completeness | dry-run 精确打印 288；删一个、复制一个、unverified 一个的 report tests 均 insufficient。 |
 | B-007 native paired ablation | diagnostic plan、report | with/without import 同 hash 配对通过；缺侧或 config drift negative tests 失败。 |
 | B-008 comparability | matrix/config hashing | target prompt/fixture/model 任一 drift 的 paired fixture 被 verifier 拒绝。 |
-| B-009, B-032 explicit/human authorization | CLI、authorization schema、route/handoff | `--dry-run` mock 证明零 spawn/network；缺/过期/mismatched authorization、缺 confirm 或超 hard cap 的 live command 在 spawn 前失败；human gate tasks 未勾选。 |
+| B-009, B-032 explicit/human authorization | CLI、default-branch approval registry/schema、route/handoff | `--dry-run` mock 证明零 spawn/network；伪造/未 merge/未 APPROVED/过期/mismatched approval、换 execution ID/root、缺 confirm 或超累计 hard cap 的 live command 在 spawn 前失败；human gate tasks 未勾选。 |
 | B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session/phase roots 全异；`remem_shared` 仅允许当前 run transfer store；target 先启动、其他 shared path 和 source cleanup failure tests 均失败。 |
 | B-011, B-016 leakage/hidden tests | sandbox、scanner、score timing | scanner self-test 覆盖真实 HOME/session/auth/private/hidden paths；agent 读取 hidden file 的 fixture 判 breach。 |
 | B-012 condition surfaces | condition engine | 每个 primary condition 的正例 + 任一额外 surface 的负例；surface manifest 必须闭集相等。 |

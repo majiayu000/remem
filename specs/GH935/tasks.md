@@ -49,7 +49,10 @@ GH-935
     - `eval/cross-host/scripts/{schema_validate.py,run_dry.py}`
     - `eval/cross-host/tasks/`
   - Done when:
-    - task/run/report/live-run-authorization schemas versioned 且 fail closed；
+    - task/run/report/live-run-approval schemas versioned 且 fail closed；
+    - `eval/cross-host/live-run-approvals.json` 是 append-only、默认分支可信
+      registry；entry 的 ID 由 canonical digest + approval review node + merge
+      commit 派生，不能由执行者自选。
     - 24 个 task 逐个包含 deterministic repo fixture、source episode、
       hidden tests、score commands、gold facts、allowed/forbidden paths；
     - 每个 task 为 `ready` 且 `todo: []`；
@@ -123,7 +126,7 @@ GH-935
   - Dependencies: SP935-T2, SP935-T3, SP935-T4
   - Covers: B-006, B-007, B-008, B-017, B-018, B-019, B-020, B-021
   - File ownership:
-    - `src/eval/cross_host/{runner.rs,score.rs,types.rs,tests.rs}`
+    - `src/eval/cross_host/{approval.rs,runner.rs,score.rs,types.rs,tests.rs}`
     - `src/eval/cross_host.rs`
     - `src/eval.rs`
     - `.gitignore`
@@ -138,11 +141,14 @@ GH-935
     - hidden tests 只在 agent 退出后注入；
     - attribution refs 全部可解析且 origin/scope/validity 一致；
     - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏。
-    - runner 在任何 live spawn 前验证未过期 authorization 的 exact
-      code/fixture/config/model/host hashes、allowed tuple set 与
+    - runner 在任何 live spawn 前通过 GitHub API 验证 default-branch approval
+      registry、merged approval PR、APPROVED maintainer review、canonical digest、
+      exact code/fixture/config/model/host hashes、allowed tuple set 与
       host/LLM/cost hard caps；smoke plan 恰好一个 tuple 且永久排除公开分母。
-    - 同一 `authorization_id` 的 append-only usage ledger 跨命令累计
-      host/LLM/cost，并用锁与 atomic write 拒绝并发超额或拆单重置。
+    - 每条命令生成独立 `execution_id`，但由 canonical owner/repo +
+      derived `approval_id` 固定定位的 append-only usage ledger 跨命令累计
+      host/LLM/cost；CLI/env 不可覆盖 root/ID，锁、hash chain、atomic write 与
+      immutable artifact reconciliation 拒绝并发超额、ledger rollback 或拆单重置。
   - Verify:
 
     ```bash
@@ -249,7 +255,7 @@ GH-935
     python3 scripts/ci/check_public_claims.py
     ```
 
-- [ ] `SP935-T9` Owner: maintainer/security owner; Done when: smoke 与 full live-run 的 auth/network/cost/security 授权分别记录； Verify: human authorization artifact 与 smoke dry-run plan； Covers: B-009, B-032。
+- [ ] `SP935-T9` Owner: maintainer/security owner; Done when: smoke 与 full live-run 的 auth/network/cost/security 授权分别记录； Verify: trusted approval registry 与真实 smoke execution/verification； Covers: B-009, B-032。
   - Owner: maintainer/security owner
   - Dependencies: SP935-T8
   - Covers: B-009, B-032
@@ -259,22 +265,23 @@ GH-935
     - 先批准每方向一个 smoke tuple；smoke 通过隔离/attribution/cleanup 人工
       审查后，再单独批准完整 primary/native-ablation 执行；
     - smoke artifacts 明确不进入 public denominator。
-    - smoke authorization artifact 通过
-      `eval/cross-host/schemas/live-run-authorization.schema.json`，绑定 exact
+    - smoke approval entry 通过
+      `eval/cross-host/schemas/live-run-approval.schema.json`，经独立 maintainer
+      APPROVED review 的 PR merge 到 default branch，绑定 exact
       head/fixture/config/model/host versions、两个允许 tuple、有效期、credential
-      bootstrap reference、artifact root 与 host/LLM/cost hard caps；artifact
-      不含 credential bytes。
+      bootstrap reference 与 host/LLM/cost hard caps；entry 不含 credential
+      bytes，`approval_id` 由 review node/merge commit/canonical digest 派生。
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_SMOKE_AUTHORIZATION"
+    test -n "$CROSS_HOST_SMOKE_APPROVAL_ID"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --matrix smoke --direction claude_to_codex \
       --task-id cc2cx-architecture-decision --condition remem_shared \
-      --run-index 0 --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --run-index 0 --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
@@ -282,19 +289,19 @@ GH-935
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --matrix smoke --direction codex_to_claude \
       --task-id cx2cc-architecture-decision --condition remem_shared \
-      --run-index 0 --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --run-index 0 --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
       --json-out /tmp/remem-cross-host-smoke-cx2cc.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --input /tmp/remem-cross-host-smoke-cc2cx.json \
-      --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
       --expected-matrix smoke --expected-valid-runs 1 \
       --json-out /tmp/remem-cross-host-smoke-cc2cx-verify.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --input /tmp/remem-cross-host-smoke-cx2cc.json \
-      --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --approval-id "$CROSS_HOST_SMOKE_APPROVAL_ID" \
       --expected-matrix smoke --expected-valid-runs 1 \
       --json-out /tmp/remem-cross-host-smoke-cx2cc-verify.json
     ```
@@ -314,13 +321,13 @@ GH-935
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_PRIMARY_AUTHORIZATION"
+    test -n "$CROSS_HOST_PRIMARY_APPROVAL_ID"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --runs-per-condition 3 --matrix primary \
-      --authorization "$CROSS_HOST_PRIMARY_AUTHORIZATION" --confirm-live-run \
+      --approval-id "$CROSS_HOST_PRIMARY_APPROVAL_ID" --confirm-live-run \
       --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
@@ -346,13 +353,13 @@ GH-935
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_ABLATION_AUTHORIZATION"
+    test -n "$CROSS_HOST_ABLATION_APPROVAL_ID"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --runs-per-condition 3 --matrix native-import-ablation \
-      --authorization "$CROSS_HOST_ABLATION_AUTHORIZATION" --confirm-live-run \
+      --approval-id "$CROSS_HOST_ABLATION_APPROVAL_ID" --confirm-live-run \
       --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
