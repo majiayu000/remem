@@ -27,8 +27,8 @@ python3 checks/route_gate.py --repo . --route implement \
   --issue 932 --state ready_to_implement --json
 ```
 
-结果为 `blocked`：缺少 trusted default-base/path evidence、
-`duplicate_evidence` 与 `sensitive_enforcement`，并仍要求 `readiness_label` 与
+结果为 `blocked`：缺少 trusted default-base/path classification evidence、
+`duplicate_evidence`，并仍要求 `readiness_label` 与
 `spec_approval`。该命令只是本地 planning 诊断；调用方自报 `--state` 不能替代 live human
 readiness/spec approval，也不授权 production edit。
 
@@ -40,18 +40,24 @@ readiness/spec approval，也不授权 production edit。
   - Done when:
     1. maintainer 审查并批准 `product.md` / `tech.md` exact diff；
     2. GH-932 获得 trusted `ready_to_implement` readiness state；
-    3. live issue/duplicate/PR/head/default-base/sensitive evidence 完整、fresh、同仓库，原 PR/
+    3. live issue/duplicate/PR/head/default-base/path-classification evidence 完整、fresh、同仓库，原 PR/
        remote branch ownership 冲突已有人工决定；
-    4. repo-local prospective sensitive implementation wrapper 在 implementation 开始前返回
-       schema-valid `allowed`，并绑定 approved spec revision、current implementation PR、
-       exact head 与完整 planned paths。
+    4. repo-local ordinary `implement` route gate 在 implementation 开始前返回
+       schema-valid `allowed`，并绑定 approved spec revision、trusted default base 与完整
+       planned paths；GH932 当前 planned manifest 分类为
+       `enforcement_sensitive=false`，禁止调用只接受 sensitive diff 的
+       `run_sensitive_implement_gate.py`。只有实际 implementation diff 命中
+       `workflow.yaml` sensitive registry 时才切换到该 wrapper 和对应人工安全门。
   - Verify:
     - `python3 checks/check_workflow.py --repo . --spec-dir=specs/GH932`
     - `python3 checks/github_issue_evidence.py --repo . --github-repo majiayu000/remem --issue 932 --json > /tmp/gh932-issue-evidence.json`
     - `python3 checks/github_duplicate_evidence.py --github-repo majiayu000/remem --issue 932 --remote origin --json > /tmp/gh932-duplicate-evidence.json`
-    - `python3 scripts/ci/run_sensitive_implement_gate.py --repo . --github-repo majiayu000/remem --issue 932 --pr <IMPLEMENTATION_PR> --head-sha <EXACT_HEAD_SHA> --output /tmp/gh932-sensitive-implement-gate.json`
-    - 检查 output 的 repository/PR/head/base/readiness/spec/duplicate/path evidence 均绑定且
-      `decision=allowed`、`missing=[]`。
+    - `GH932_BASE_SHA=$(git rev-parse origin/main)`
+    - `jq --arg base_sha "$GH932_BASE_SHA" '. + {default_base_ref:"origin/main", default_base_sha:$base_sha, base_ref:"origin/main", base_sha:$base_sha, enforcement_sensitive:false}' /tmp/gh932-issue-evidence.json > /tmp/gh932-route-evidence.json`
+    - `python3 checks/route_gate.py --repo . --route implement --issue 932 --evidence /tmp/gh932-route-evidence.json --duplicate-evidence /tmp/gh932-duplicate-evidence.json --mode required --json`
+    - 检查 route output 的 repository/base/readiness/spec/duplicate/planned-path classification
+      均绑定且 `decision=allowed`、`missing=[]`，并明确
+      `enforcement_sensitive=false`。
   - Blocking rule: T0 未完成时，`SP932-T1` 至 `SP932-T11` 全部 blocked；只能继续
     spec/task review，不能预写 production 或以 feature flag 隐藏实现。
 
@@ -76,12 +82,19 @@ readiness/spec approval，也不授权 production edit。
     共享写入这两个 registry 文件。
   - Done when: production path 只从同一 read transaction 读取真实 remem candidates；所有
     loader error 原子失败；project/worktree/branch/role/risk/as-of/supersession 在 query 和
-    executor 双层执行；caller-provided seam 仅测试可见；无 runtime DB write。
+    executor 双层执行；caller-provided seam 仅测试可见；candidate loader 只复用 read-only
+    SELECT/typed mapping，不调用会写 poisoning-drop row 的 SessionStart preference renderer；
+    全部 channel load 完成后只运行一次纯只读 current-pattern scanner，未确认 poisoning
+    candidate 只产生 error-level diagnostic 与唯一 audit terminal state，ack/state query error
+    原子 fail closed；无 runtime DB write。
   - Verify:
     - `cargo test context_bundle::tests::executor -- --nocapture`
     - `cargo test context_bundle::tests::db_executor -- --nocapture`
-    - real migration fixtures；same-snapshot concurrent writer；future/expired/invalidated/
-      branch/worktree mismatch；loader error/cancel no-partial 矩阵全绿。
+    - real migration fixtures；same-snapshot concurrent writer；read-only connection write
+      sentinel；future/expired/invalidated/branch/worktree mismatch；当前 pattern 新命中、
+      exact-version acknowledgement、旧/错误 acknowledgement、preference/summary/workstream
+      poisoning；ack/state/loader error 与 cancel no-partial 矩阵全绿，并断言 poisoning-drop
+      row counts、`PRAGMA data_version` 与其他 runtime tables 均不变。
 
 - [ ] `SP932-T3` — semantic classification、conflict/abstention、provenance/freshness — Owner: bundle policy agent；Dependencies: `SP932-T2`；Covers: `B-005`–`B-008`, `B-012`–`B-014`, `B-017`, `B-018`；Done when: 见下；Verify: 见下
   - Writable ownership: T2 完成后接收
@@ -89,11 +102,12 @@ readiness/spec approval，也不授权 production edit。
     与 T1/T2 并行写 shared files。
   - Done when: memory/current-state/lesson/session/workstream 进入正确 semantic section；
     generated/graph-derived attribution 不冒充 canonical；每个 candidate exactly-once
-    selected/dropped/abstained/conflict；freshness rollup 可重算。
+    selected/dropped/abstained/conflict；poisoning scan 的 terminal drop 不被后续
+    classification 重复计数或重新选入；freshness rollup 可重算。
   - Verify:
     - `cargo test context_bundle -- --nocapture`
     - unique-winner/two-active conflict、missing backing ref、high-risk、unknown temporal
-      provenance、audit terminal-state property tests 全绿。
+      provenance、poisoned candidate exactly-once terminal-state property tests 全绿。
 
 - [ ] `SP932-T4` — segmented renderer 与 strict rendered budget — Owner: rendering agent；Dependencies: `SP932-T1` frozen DTO（原型）, `SP932-T3` frozen shared registries（最终 wiring）；Covers: `B-003`, `B-015`, `B-016`, `B-018`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context_bundle/render.rs`,
@@ -114,14 +128,20 @@ readiness/spec approval，也不授权 production edit。
     `src/context/{render,audit}.rs`, `src/context/tests/{mod,bundle_bridge,gate_pipeline,render,truncation}.rs`,
     `src/runtime_config.rs`。
   - Done when: selector 默认 legacy、显式 bundle_v2；单次只 load/render/inject 一条路径；
-    semantic parity、strict gate、audit persistence、error visibility 与 rollback 都通过；
+    `execute_db` 在最终 render 前按当前 pattern-set version 对全部可注入字段执行唯一一次
+    acknowledgement-aware poisoning rescan；bridge 只接收已通过 scan 的 immutable Bundle，
+    不能跳过或重复扫描；未确认命中项只产生 error-level diagnostic 与唯一 audit terminal
+    drop，且不写 snapshot connection；semantic parity、strict gate、audit persistence、
+    error visibility 与 rollback 都通过；
     `src/context/render.rs` 不因集成超过 800 行。
   - Verify:
     - `cargo test context::tests::bundle_bridge -- --nocapture`
     - `cargo test context::tests::gate_pipeline -- --nocapture`
     - `cargo test context::tests::render -- --nocapture`
-    - legacy/bundle same-snapshot golden、double-injection sentinel、invalid config、rollback、
-      empty/error/tiny-budget fixtures 全绿。
+    - legacy/bundle same-snapshot golden、pattern-set version 升级后新命中、acknowledged
+      same-version allow、preference/workstream/summary poisoning drop、read-only write
+      sentinel、double-injection sentinel、invalid config、rollback、empty/error/tiny-budget
+      fixtures全绿。
 
 - [ ] `SP932-T6` — MCP/REST experimental surfaces 与 parity/auth — Owner: transport agent；Dependencies: `SP932-T2`, `SP932-T4` frozen API；Covers: `B-001`, `B-004`, `B-009`–`B-020`, `B-023`, `B-026`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/mcp/server.rs`,

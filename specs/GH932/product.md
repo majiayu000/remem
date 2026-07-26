@@ -130,7 +130,10 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
 
 21. **B-021 — SessionStart single source。** 启用新路径时，SessionStart 从 DB-backed
     Bundle renderer 产生上下文，不能再独立执行另一套 selection/budget。兼容 fixture 在同一
-    snapshot 下证明旧路径可见语义等价；切换失败不得双重注入或静默回退。
+    snapshot 下证明旧路径可见语义等价；切换失败不得双重注入或静默回退。Bundle 在最终
+    render 前必须按当前 pattern-set version 对所有可注入候选重新执行 acknowledgement-aware
+    poisoning scan；未确认命中项只能进入可审计 terminal drop，不能因换 renderer 而重新注入，
+    scan 与 audit 也不得写入只读 snapshot connection。
 22. **B-022 — Explicit rollback。** 新 SessionStart 路径先以显式 feature/config gate
     上线；rollback 只切回已测试旧 renderer，不改变 DB/schema，不删除 audit evidence。
     gate 状态与实际路径必须在 diagnostics/doctor 可见。
@@ -166,7 +169,8 @@ graph-derived projection 冒充 canonical truth，也不能静默丢失数据。
       可从 audit 复现。
 - [ ] `full`、`canonical_only`、`blocked`、empty、DB error、cancellation 和并发 snapshot
       fixtures 全部通过，且没有 partial output。
-- [ ] SessionStart compatibility、single-path injection、gate 与 rollback tests 通过。
+- [ ] SessionStart compatibility、single-path injection、当前 pattern-set poisoning rescan、
+      gate 与 rollback tests 通过；只读 execute 不产生 poisoning-drop runtime write。
 - [ ] MCP/REST schema/parity/auth/error tests 通过；doctor 文本/JSON 不泄露 payload。
 - [ ] coding-bench artifact 保存并校验 schema/policy/plan/audit hash 与预算 evidence。
 - [ ] deny-network fixture 证明 plan/execute/SessionStart/doctor/benchmark 路径无 foreground

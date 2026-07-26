@@ -26,7 +26,7 @@ benchmark hashes 留给 #932。后续实现必须增量完成这些边界，不�
 | Executor/scope | `src/context_bundle/executor.rs` | 只处理调用方传入 candidates；scope 只查 project/branch/trust/superseded；as-of/worktree/role/risk 未执行 | 需要 strict DB adapter、snapshot 与完整 eligibility；公开生产入口不能信任外部 candidate |
 | Budget/audit | `src/context_bundle/policy.rs`, `audit.rs` | `chars/4` 只估算 `item.text`；title/heading/ref/fixed render text 不计；validate_plan 只要求非空 hash；audit 无 hash/conflict/abstention | 不满足 strict rendered budget、exact-plan verification 与完整 audit |
 | Schema tests | `src/context_bundle/tests/{planner,executor,schema}.rs` | 固定 Phase A plan/bundle JSON 和基础 drop reasons | 作为 schema upgrade、determinism 与 backward-rejection regression 起点 |
-| SessionStart loader | `src/context/render_inputs.rs`, `src/context/query.rs`, `src/context/types.rs` | `load_context_render_inputs` 只在 `context` 内可见；各 query error 被记录进 `LoadedContext.errors` 后继续，reference epoch 使用 wall clock | DB adapter 可复用成熟选择，但 Bundle execute 必须把任何 load error 原子提升为 error/blocked，并注入 request as-of |
+| SessionStart loader | `src/context/render_inputs.rs`, `src/context/query.rs`, `src/context/types.rs` | `load_context_render_inputs` 只在 `context` 内可见；各 query error 被记录进 `LoadedContext.errors` 后继续，reference epoch 使用 wall clock；preference render 还会为未确认 poisoning 命中写 `memory_poisoning_injection_drops` | Bundle 需要独立的只读 typed candidate loader；可复用底层 SELECT/typed mapping，禁止直接复用这个会写入的 render helper；任何 load error 必须原子提升为 error/blocked，并注入 request as-of |
 | SessionStart renderer | `src/context/render.rs`, `src/context/render/{finalize,truncation}.rs`, `src/context/sections/` | 独立 load→select→render→char-limit 路径，最后记录 injection audit；尚未调用 Context Bundle | 新 gate 只能选择 legacy 或 Bundle 单一路径；共享 renderer/identity boundary，避免双选与双注入 |
 | Current context audit | `src/context/audit.rs` | injection audit 已有 injected/dropped/abstained、provenance 和 render boundaries | 可映射到 ContextAudit，但必须保证每个 candidate 唯一终态和 hash 一致 |
 | MCP | `src/mcp/server.rs`, `src/mcp/server/context_tools.rs`, `src/mcp/types.rs` | tool router 有 recall/timeline/get_observations 等，无 Context Bundle tool | 新建独立 router 文件，避免继续扩大 context_tools；复用 `McpToolError` 稳定错误语义 |
@@ -121,13 +121,22 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 1. 重算/验证 plan、schema/policy/estimator/scope。
 2. 在现有 connection 上开启一个 deferred read transaction，并在第一次 read 后固定 SQLite
    snapshot/data version。
-3. 通过一个严格 adapter 复用 `load_context_render_inputs`、current-state、lesson、
-   workstream、session 与 staleness/temporal helpers，将行映射为 typed candidates。
+3. 通过独立的只读 typed candidate loader 复用底层 SELECT、current-state、lesson、
+   workstream、session 与 staleness/temporal mapping，将行映射为 typed candidates。禁止直接
+   调用 `load_context_render_inputs` / `render_preferences_to_buffer`：其 preference poisoning
+   路径会调用 `record_preference_injection_drop` 并写入带 wall-clock 的 row。新 loader 在同一
+   snapshot 内只读 candidates 与 acknowledgement/pattern state，不 render、不 drop、不写
+   telemetry；所有 channel 都加载完成后只调用一次第 6 步的统一 scanner。MCP read-only
+   connection 与 writable SessionStart connection 都不得因 candidate load 产生 runtime write。
 4. 将 request `as_of_epoch` 传入所有 temporal/staleness/current-state 查询；禁止在 adapter
    内调用 `Utc::now()` 代替。
 5. 任一 loader error 都立即取消整个 result，并生成 error-level evidence；不把
    `LoadedContext.errors + partial rows` 发布为 Bundle。
-6. 运行统一 eligibility、conflict/abstention、role order、budget/render/audit。
+6. 在最终 render 前只运行一次统一的纯函数式 poisoning scanner：按当前 pattern-set version
+   检查所有可注入 typed candidates，exact-version acknowledgement 才可保留；未确认命中生成
+   error-level diagnostic 与 exactly-once `ContextAudit` terminal drop。ack/state query error
+   原子 fail closed；scanner 不调用 legacy drop/quarantine/telemetry writer。随后运行其余
+   eligibility、conflict/abstention、role order、budget/render/audit。
 7. 在 transaction 内完成 hash；只在全部验证通过后发布 immutable result。
 
 现有 `execute(plan, ExecutorInputs)` 改为 crate-private fixture seam，或显式命名为
@@ -166,6 +175,15 @@ Phase A 的 presentation sections 按 canonical type 重新分类：
 - 新增小型 `context::bundle_bridge`：从现有 invocation 构造 schema v2 request，调用
   `plan` + `execute_db`，再把 `rendered_context` 与 Bundle audit 映射到现有 injection gate/
   persistence。
+- `execute_db` 在最终 render 前必须执行第 6 步唯一的纯函数式、deterministic、
+  acknowledgement-aware injection-time rescan；`bundle_v2` bridge 只能接收已通过该 scan
+  的 immutable Bundle，不能跳过或重复扫描。scanner 使用当前 pattern-set version 检查
+  current truth、decision、constraint/preference、failure lesson、workstream、session summary
+  与其他所有可注入文本字段。已确认的同 pattern/version 可继续；新增/升级 pattern 命中的
+  未确认项以 error-level diagnostic 和唯一 `ContextAudit` terminal drop 结束。该逻辑不得直接
+  调用会写 `memory_poisoning_injection_drops` 的 legacy
+  `drop_unacknowledged_poisoned_context`/preference renderer；pattern match、ack lookup 与
+  audit projection 可共享纯 read-only helper，但 snapshot path 不写 DB。
 - `src/context/render.rs` 只保留一个早期 path selector：
   `legacy` 或 `bundle_v2`。选择后只执行该路径，禁止先 legacy load 再 bundle load。
 - gate 是现有 runtime config 的显式字段，初始默认 `legacy`；doctor 同时报告 configured/effective
@@ -305,7 +323,8 @@ any validation/query/render/cancel failure
 - [ ] Unit: schema/hash/role/risk/scope/as-of/supersession/provenance/conflict/audit/budget。
 - [ ] DB integration: real migrations + one read transaction + concurrent writer + every loader
       failure/cancellation fixture。
-- [ ] SessionStart: legacy/bundle parity、single injection、gate/rollback、empty/error/tiny budget。
+- [ ] SessionStart: legacy/bundle parity、single injection、当前 pattern/version poisoning
+      rescan、只读连接 write sentinel、gate/rollback、empty/error/tiny budget。
 - [ ] MCP/REST: cross-transport golden、tool/schema metadata、auth pre-read、stable error codes、
       capabilities。
 - [ ] Doctor: text/JSON states、schema bump、payload/secret leak sentinel。
