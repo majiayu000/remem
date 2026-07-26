@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.28` for the GH-934 post-merge corrective:
+  Retrieval Router plans now preserve the caller's `include_superseded`
+  temporal scope across explicit, keyword-fallback, and default-fallback
+  intents. Filters, freshness policy, and history-channel validity share the
+  same caller-controlled value, so intent classification cannot silently
+  expand access to superseded evidence.
 - Staged source version `0.6.27` for GH-934: Retrieval Router v1
   deterministic plan compilation. New `src/retrieval_router/` module with
   a versioned `RetrievalPlan` (per-channel enabled/limit/weight/max
