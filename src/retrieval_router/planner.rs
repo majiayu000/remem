@@ -181,13 +181,9 @@ fn rerank_policy_for(intent: ContextIntent) -> RerankPolicy {
 }
 
 fn freshness_policy_for(intent: ContextIntent, request: &ContextRequest) -> FreshnessPolicy {
-    let history_intent = matches!(
-        intent,
-        ContextIntent::ExplainDecision | ContextIntent::ExploreHistory
-    );
     FreshnessPolicy {
         prefer_current: true,
-        include_superseded: request.include_superseded || history_intent,
+        include_superseded: request.include_superseded,
         max_age_days: match intent {
             ContextIntent::ResumeWork => Some(30),
             _ => None,
