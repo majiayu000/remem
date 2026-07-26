@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://majiayu000.github.io/remem/schemas/cross-host-task.schema.json",
+  "title": "remem cross-host continuity task definition",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "suite",
+    "id",
+    "direction",
+    "category",
+    "status",
+    "source_host",
+    "target_host",
+    "history_episodes",
+    "target_task",
+    "score",
+    "gold_memory",
+    "todo"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "suite": { "const": "cross-host-v1" },
+    "id": { "type": "string", "minLength": 1, "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "direction": { "enum": ["claude_to_codex", "codex_to_claude"] },
+    "category": {
+      "enum": [
+        "architecture_decision",
+        "prior_bug_root_cause",
+        "failed_attempt_lesson",
+        "negative_constraint",
+        "workstream_next_action",
+        "stale_superseded_decision",
+        "branch_specific_truth",
+        "multi_hop_relation",
+        "user_project_preference",
+        "unresolved_conflict_abstention",
+        "git_evidence",
+        "same_name_repo_isolation"
+      ]
+    },
+    "status": { "enum": ["skeleton_todo", "ready"] },
+    "source_host": { "enum": ["claude_code", "codex"] },
+    "target_host": { "enum": ["claude_code", "codex"] },
+    "history_episodes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["episode_id", "host", "summary", "expected_memory_facts", "memories"],
+        "additionalProperties": false,
+        "properties": {
+          "episode_id": { "type": "string", "minLength": 1 },
+          "host": { "enum": ["claude_code", "codex"] },
+          "summary": { "type": "string", "minLength": 1 },
+          "expected_memory_facts": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "uniqueItems": true
+          },
+          "memories": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["title", "text", "memory_type", "topic_key"],
+              "additionalProperties": false,
+              "properties": {
+                "title": { "type": "string", "minLength": 1 },
+                "text": { "type": "string", "minLength": 1 },
+                "memory_type": {
+                  "enum": ["decision", "discovery", "procedure", "lesson", "preference"]
+                },
+                "topic_key": { "type": "string", "minLength": 1 },
+                "branch": { "type": "string", "minLength": 1 },
+                "scope": { "type": "string", "minLength": 1 },
+                "status": { "type": "string", "minLength": 1 },
+                "files": {
+                  "type": "array",
+                  "items": { "type": "string", "minLength": 1 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "target_task": {
+      "type": "object",
+      "required": ["prompt", "allowed_paths", "forbidden_paths", "timeout_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "prompt": { "type": "string", "minLength": 1 },
+        "allowed_paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "forbidden_paths": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "timeout_ms": { "type": "integer", "minimum": 1000 }
+      }
+    },
+    "score": {
+      "type": "object",
+      "required": [
+        "commands",
+        "hidden_files",
+        "required_patch_patterns",
+        "forbidden_patch_patterns"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          }
+        },
+        "hidden_files": { "type": "object" },
+        "required_patch_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "forbidden_patch_patterns": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "gold_memory": {
+      "type": "object",
+      "required": ["required_facts", "forbidden_facts", "supporting_event_ids"],
+      "additionalProperties": false,
+      "properties": {
+        "required_facts": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "forbidden_facts": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        },
+        "supporting_event_ids": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true
+        }
+      }
+    },
+    "todo": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

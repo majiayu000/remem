@@ -17,8 +17,11 @@ remem needs public proof for two different claims that are easy to confuse:
    than when they run with no memory or a maintained context file.
 
 The existing `issue385-coding-agent-ab` spec owns the second claim. It compares
-`no_memory`, `remem`, and `curated_file` on real coding tasks and records
-resolution, tokens, turns, wall time, artifacts, and failure reasons.
+`no_memory`, `remem` (now the diagnostic `remem_preloaded`), and `curated_file`
+(now the diagnostic `curated_file_expert`) on real coding tasks and records
+resolution, tokens, turns, wall time, artifacts, and failure reasons. Under
+#931 the claim-bearing primary matrix is `no_memory` /
+`curated_file_budgeted` / `remem_e2e` (`docs/specs/GH931/`).
 
 The missing layer is a public memory-system benchmark that can explain why a
 memory run succeeds or fails before the agent outcome benchmark is considered.
