@@ -70,7 +70,10 @@ readiness/spec approval，也不授权 production edit。
 - [ ] `SP932-T2` — strict DB snapshot executor 与 scope/temporal eligibility — Owner: DB/context adapter agent；Dependencies: `SP932-T1` frozen domain interface；Covers: `B-003`, `B-004`, `B-006`, `B-009`–`B-014`, `B-017`–`B-020`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context_bundle/{executor,db_executor}.rs`,
     `src/context_bundle/tests/{executor,db_executor}.rs`,
-    `src/context/{render_inputs,query,types}.rs`。
+    `src/context/{render_inputs,query,types}.rs`；T1 停止写入并记录 frozen handoff 后，T2
+    还独占接收 `src/context_bundle.rs` 与 `src/context_bundle/tests/mod.rs`，仅用于注册
+    executor/db_executor 模块和 focused tests。T2 完成后再次冻结并移交，禁止与 T1/T3/T4
+    共享写入这两个 registry 文件。
   - Done when: production path 只从同一 read transaction 读取真实 remem candidates；所有
     loader error 原子失败；project/worktree/branch/role/risk/as-of/supersession 在 query 和
     executor 双层执行；caller-provided seam 仅测试可见；无 runtime DB write。
@@ -92,9 +95,12 @@ readiness/spec approval，也不授权 production edit。
     - unique-winner/two-active conflict、missing backing ref、high-risk、unknown temporal
       provenance、audit terminal-state property tests 全绿。
 
-- [ ] `SP932-T4` — segmented renderer 与 strict rendered budget — Owner: rendering agent；Dependencies: `SP932-T3`；Covers: `B-003`, `B-015`, `B-016`, `B-018`, `B-027`；Done when: 见下；Verify: 见下
+- [ ] `SP932-T4` — segmented renderer 与 strict rendered budget — Owner: rendering agent；Dependencies: `SP932-T1` frozen DTO（原型）, `SP932-T3` frozen shared registries（最终 wiring）；Covers: `B-003`, `B-015`, `B-016`, `B-018`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/context_bundle/render.rs`,
-    `src/context_bundle/tests/render.rs`；不修改 legacy SessionStart renderer。
+    `src/context_bundle/tests/render.rs`；不修改 legacy SessionStart renderer。原型阶段不得
+    修改 shared registry；T3 停止写入并记录 frozen handoff 后，T4 独占接收
+    `src/context_bundle.rs` 与 `src/context_bundle/tests/mod.rs`，仅完成 render module/test
+    wiring，随后冻结移交给 T5/T6。
   - Done when: versioned UTF-8 upper-bound estimator 计算 header/title/body/ref/separator 的完整
     rendered segments；section/total budget 永不超限；tiny budget、multibyte、item-boundary、
     rendered hash 与 audit/body parity 全部固定。
@@ -120,9 +126,11 @@ readiness/spec approval，也不授权 production edit。
 - [ ] `SP932-T6` — MCP/REST experimental surfaces 与 parity/auth — Owner: transport agent；Dependencies: `SP932-T2`, `SP932-T4` frozen API；Covers: `B-001`, `B-004`, `B-009`–`B-020`, `B-023`, `B-026`, `B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `src/mcp/server.rs`,
     `src/mcp/server/context_bundle_tools.rs`,
+    `src/mcp/server/tests.rs`,
     `src/mcp/server/tests/{context_bundle,tool_metadata}.rs`, `src/mcp/types.rs`,
     `src/api/{server,handlers,types}.rs`, `src/api/handlers/{context_bundle,capabilities}.rs`,
-    `src/api/tests/context_bundle.rs`, `tests/api_public.rs`。
+    `src/api/tests.rs`, `src/api/tests/context_bundle.rs`, `tests/api_public.rs`。这些 transport
+    registry 与 focused test files 由 T6 单一 owner 串行写入，不与其他 lane 共享。
   - Done when: MCP `context_plan`/`context_bundle` 与 REST POST plan/bundle 使用同一 DTO/
     executor；capability 标 experimental/schema/policy；stable errors 一致；REST unauthorized
     在 DB read 前拒绝。
@@ -154,7 +162,7 @@ readiness/spec approval，也不授权 production edit。
     - `cargo test eval::coding_bench -- --nocapture`
     - tampered plan/audit/render hash、budget overflow、wrong head/fixture、missing evidence、
       synthetic-other-run evidence 负例全绿。
-    - `cargo run -- eval-coding-bench --fixture eval/coding-bench/fixtures/tasks.json --dry-run --json-out /tmp/gh932-coding-bench.json`
+    - `cargo run -- eval-coding-bench --fixture eval/coding-bench/fixtures/tasks.json --runs-per-condition 1 --dry-run --json-out /tmp/gh932-coding-bench.json`
 
 - [ ] `SP932-T9` — current contracts、user docs、changelog 与 version sync — Owner: docs/version agent；Dependencies: `SP932-T5`, `SP932-T6`, `SP932-T7`, `SP932-T8`；Covers: `B-001`, `B-021`–`B-027`；Done when: 见下；Verify: 见下
   - Writable ownership: `docs/specs/GH932/{PRODUCT,TECH}.md`, `docs/specs/README.md`,
@@ -195,10 +203,14 @@ readiness/spec approval，也不授权 production edit。
 ## 并行拆分
 
 - T1 完成并冻结 domain/hash interface 后，T2（DB adapter）与 T4 的 estimator/renderer
-  原型可在 disjoint files 并行；T4 只能使用 frozen DTO，不能反向改 T1 文件。
-- T3 需要接收 T1/T2 shared-file ownership，因此默认串行。
+  原型可在 disjoint files 并行；T4 只能使用 frozen DTO，不能反向改 T1 文件。shared
+  `src/context_bundle.rs` / `src/context_bundle/tests/mod.rs` 先由 T2 在 T1 handoff 后独占
+  完成 executor wiring，再移交 T3；T4 原型阶段不写这两个文件。
+- T3 需要接收 T1/T2 shared-file ownership，因此默认串行；T3 冻结后再把两个 shared
+  registry 独占移交 T4 完成 render wiring，禁止 T2/T3/T4 并发写。
 - T6 transport、T7 doctor、T8 eval 可在 T5 bridge frozen 后并行，文件 ownership 如各任务所列，
-  不得同时写 `src/context_bundle.rs`、`src/context.rs` 或 shared test modules。
+  不得同时写 `src/context_bundle.rs`、`src/context.rs` 或 shared test modules；T6 独占
+  `src/mcp/server/tests.rs` 与 `src/api/tests.rs` 作为 transport test registries。
 - T9 docs/version 在功能行为稳定后串行；T10/T11 必须最后执行。
 - 任一 shared file 需要跨任务修改时，先停止原 owner、记录 handoff，再由单一 lane 写；禁止两个
   agent 共享 writable file。
