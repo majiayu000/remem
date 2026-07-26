@@ -13,7 +13,7 @@ GH-935
 
 ## Human Gates First
 
-- [ ] `SP935-T1` Owner: maintainer; Done when: exact packet 获得 spec approval、GH-935 转为 `ready_to_implement`，且实现 coordinator 对当时 exact head 完成 fresh route evidence； Verify: exact-head implement route gate 返回 `allowed`； Covers: none（人工治理门禁）。
+- [ ] `SP935-T1` Owner: maintainer; Done when: exact packet 获得 spec approval 且 GH-935 转为 `ready_to_implement`； Verify: approval/state evidence 可供 post-registry gate 使用； Covers: none（人工治理门禁）。
   - Owner: maintainer
   - Dependencies: none
   - Covers: none — 这是实施前的人工治理门禁，不实现产品行为。
@@ -21,18 +21,14 @@ GH-935
     - maintainer 审阅 canonical product/tech exact diff；
     - 已满足的 `ready_to_spec` 只证明可写 spec；maintainer 另行记录
       `spec_approval` 并把 issue 置为 `ready_to_implement`；
-    - implementation coordinator 针对准备实现的 exact head 和当时 default
-      base 收集 route gate 所要求的 fresh evidence；不复用本 spec lane 的
-      历史输出；
-    - `implement` route gate 对 exact head 返回 `allowed`；
+    - 不在 T1 使用尚未落地的 T1A registry baseline；fresh implement route
+      evidence 由 T1B 在 T1A merge 后收集；
     - security reviewer 明确接受宿主 auth、host-read sandbox、hidden tests
       和 public-claim 边界。
   - Verify:
 
     ```bash
-    python3 checks/route_gate.py --repo . --route implement \
-      --issue 935 --state ready_to_implement \
-      <fresh-exact-head-evidence-arguments-required-by-current-workflow> --json
+    test -n "$SPEC_APPROVAL_EVIDENCE"
     ```
 
 - [ ] `SP935-T1A` Owner: governance-security lane; Done when: machine-sensitive registry prerequisite 经独立 security review 合入 default branch，future approved-tech classification 为 `enforcement_sensitive=true`； Verify: workflow check 与 planned-tech classifier 通过； Covers: B-009, B-031, B-032。
@@ -56,25 +52,46 @@ GH-935
     python3 scripts/ci/check_pr_tier.py --self-test
     ```
 
+- [ ] `SP935-T1B` Owner: implementation coordinator; Done when: T1A merge 后针对 post-registry default base/exact implementation head 的 fresh route gate 为 `allowed`； Verify: fresh post-governance implement route evidence； Covers: B-032。
+  - Owner: implementation coordinator
+  - Dependencies: SP935-T1A
+  - Covers: B-032
+  - Done when:
+    - trusted base 包含已 merge 的 T1A registry；
+    - evidence 绑定准备启动 T2/T3 的 exact implementation head；
+    - 不复用 T1/spec PR 的 pre-registry evidence；
+    - implement gate allowed 后才允许 implementation lanes。
+  - Verify:
+
+    ```bash
+    python3 checks/route_gate.py --repo . --route implement \
+      --issue 935 --state ready_to_implement \
+      <fresh-post-T1A-exact-head-evidence-arguments> --json
+    ```
+
 ## 实现任务
 
 - [ ] `SP935-T2` Owner: fixture-contract lane; Done when: versioned schemas 与 24 个 deterministic tasks 全部 `ready`； Verify: schema self-test 与 `run_dry.py` 通过； Covers: B-001, B-002, B-003, B-004, B-005, B-030。
   - Owner: fixture-contract lane
-  - Dependencies: SP935-T1A
+  - Dependencies: SP935-T1B
   - Covers: B-001, B-002, B-003, B-004, B-005, B-030
   - File ownership:
     - `eval/cross-host/benchmark-charter.json`
     - `eval/cross-host/live-run-approvals.json`
-    - `eval/cross-host/schemas/`
+    - `eval/cross-host/schemas/{cross-host-task.schema.json,cross-host-run.schema.json,cross-host-source-seal.schema.json,live-run-approval.schema.json}`
     - `eval/cross-host/examples/`
     - `eval/cross-host/scripts/{schema_validate.py,run_dry.py}`
     - `eval/cross-host/tasks/`
   - Done when:
-    - task/run/report/live-run-approval/source-seal schemas versioned 且 fail closed；
+    - task/run/live-run-approval/source-seal schemas versioned 且 fail closed；
+      report/verdict/evidence-manifest schemas 明确由 T6 独占，T2 不写；
     - `eval/cross-host/live-run-approvals.json` 是 append-only、默认分支可信
-      registry；entry 的 stable `approval_key` 由不含自身、review node 或 merge
-      commit 的 canonical policy digest、approval PR number 与 approved head
-      tree OID 派生，不能由执行者自选；
+      registry；entry 的 stable `approval_key` 由 repository identity、
+      approval PR number 与不含自身、attestation 或 containing Git OID 的
+      canonical policy digest 派生，不能由执行者自选；
+    - approval schema 区分 `stage=source|target`：source policy 只绑定
+      source-plan/keys，禁止未来 seal hash/target；target policy 必须绑定已
+      review/merge 的 immutable source-seal manifest/hash；
     - 24 个 task 逐个包含 deterministic repo fixture、至少两个 chronological
       source episodes、source-seal contract、
       hidden tests、score commands、gold facts、allowed/forbidden paths；
@@ -95,7 +112,7 @@ GH-935
 
 - [ ] `SP935-T3` Owner: host-isolation lane; Done when: Claude/Codex 共用 fail-closed host isolation 且 dry-run 零 spawn； Verify: host-isolation/coding-bench/cross-host isolation tests 通过； Covers: B-009, B-010, B-011, B-015, B-016, B-017, B-032。
   - Owner: host-isolation lane
-  - Dependencies: SP935-T1A
+  - Dependencies: SP935-T1B
   - Covers: B-009, B-010, B-011, B-015, B-016, B-017, B-032
   - File ownership:
     - `src/eval/host_isolation.rs`
@@ -166,13 +183,15 @@ GH-935
     - `src/eval.rs`
     - `.gitignore`
     - `eval/cross-host/scripts/scan_artifacts.py`
-    - `eval/cross-host/evidence/cross-host-v1/{primary-run-records.jsonl,native-ablation-run-records.jsonl,source-manifest.json}`
   - Done when:
     - primary dry-run 精确产生 288 个唯一 tuple，native ablation dry-run
       精确产生 144 个唯一 tuple；
     - 72 个 `(direction,task,run_index)` 各只执行一次 source episode sequence；
       source terminate/drain/immutable seal 先于 fanout 和 target launch，全部
       conditions 绑定同一 seal；
+    - runner 强制两阶段 authorization：source approval 不能启动 target，
+      target approval 必须绑定 reviewed source-seal manifest；不存在
+      source-seal preauthorization cycle；
     - artifact 使用 atomic write、stable `matrix_key`、unique `attempt_id`
       和 content hash；
     - pre-target retry 保留失败，target-started outcome 不可被成功重跑替换；
@@ -181,15 +200,17 @@ GH-935
     - attribution 每阶段必须是可解析 `present(ref)` 或 typed
       `absent_due_to(failure)`；合法上游 failure 的下游 absence 保留 failed run
       于 denominator，无 failure 的缺 ref 被拒绝，origin/scope/validity 一致；
-    - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏。
-    - evidence writer 输出 scanner-passed primary/native-ablation JSONL bundles
-      与 schema-valid source manifest，绑定全部 attempt/matrix/scanner/code/
-      fixture/config/approval hashes及 candidate-report input hash；raw/private/
-      secret paths 不进入 git。
+    - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏；scanner
+      完成后输出 sanitized `clean` 或 typed `security_breach` record，breach
+      bytes 不落盘但 failure record 保留给 denominator/gate；scanner 自身失败
+      才使 suite insufficient；
+    - evidence writer 支持 immutable source-seal、primary 与 final manifest
+      引用链；不得改写 primary manifest 来追加 ablation；
     - runner 在任何 live spawn 前通过 GitHub API 验证 default-branch approval
       registry、merged approval PR、APPROVED maintainer review、canonical digest、
       exact code/fixture/config/model/host hashes、allowed tuple set 与
-      host/LLM/cost hard caps；smoke plan 恰好一个 tuple 且永久排除公开分母。
+      host/LLM/cost hard caps；smoke 支持精确 2 个 source anchors 与 12 个
+      target claim-surface tuples，全部永久排除公开分母。
     - 每条命令生成独立 `execution_id`，但 stable `approval_key` 对应
       protected remote ledger 在每个 billable call 前以 non-force fast-forward
       CAS durable reserve worst-case host/LLM/cost，完成后 settlement；crash/
@@ -204,11 +225,16 @@ GH-935
     cargo test eval::cross_host::tests::attribution
     python3 eval/cross-host/scripts/scan_artifacts.py --self-test
     cargo run -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 3 --matrix primary --dry-run \
+      --runs-per-task 3 --phase source --matrix source --dry-run \
+      --json-out /tmp/remem-cross-host-source-plan.json
+    jq -e '.planned_source_stages == 72' /tmp/remem-cross-host-source-plan.json
+    cargo run -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --phase target --matrix primary --dry-run \
       --json-out /tmp/remem-cross-host-plan.json
     jq -e '.planned_runs == 288' /tmp/remem-cross-host-plan.json
     cargo run -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 3 --matrix native-import-ablation --dry-run \
+      --runs-per-condition 3 --phase target \
+      --matrix native-import-ablation --dry-run \
       --json-out /tmp/remem-cross-host-ablation-plan.json
     jq -e '.planned_runs == 144' /tmp/remem-cross-host-ablation-plan.json
     ```
@@ -217,7 +243,7 @@ GH-935
   - Owner: report-claim lane
   - Dependencies: SP935-T5
   - Covers: B-022, B-023, B-024, B-025, B-026, B-027, B-028, B-029, B-031
-  - File ownership:
+  - File ownership（implementation/schema phase；T7 后 live outputs 顺序移交 T11）:
     - `src/eval/cross_host/{report.rs,bootstrap.rs,claim_gate.rs}`
     - `eval/cross-host/schemas/cross-host-report.schema.json`
     - `eval/cross-host/schemas/cross-host-claim-verdict.schema.json`
@@ -226,20 +252,32 @@ GH-935
     - `eval/cross-host/reports/{cross-host-v1.json,cross-host-v1.md,cross-host-v1-gate.json}`
     - `scripts/ci/check_public_claims.py`
   - Done when:
-    - report builder 先从 verified source manifest/bundles 生成 immutable
+    - report builder 先验证 source-seal→primary→final immutable manifest
+      引用链与 bundles，再生成 immutable
       direction-first candidate report，公开分子、分母、missing_count 和
       aggregate，且 candidate 不含自引用 verdict；
+    - evidence manifest schema 用 closed `manifest_kind` 区分
+      `source_seal|primary|final`，并显式支持 verified-security-breach partial
+      counts/ref；各 kind 不能覆盖或伪装另一个；
     - exported cost 与 native-import ablation 分开报告；
-    - native-import ablation completeness 固定为 144；
+    - 无 breach complete path 的 native-import ablation completeness 固定为
+      144；verified breach early-stop path 明确记录 not-started；
     - fixed-seed task-cluster paired bootstrap 可重复；
     - CI 含 0 只输出 directional/insufficient；
-    - leak stop-loss 分母固定为 288；`memory_hurt`/`stale_memory_followed`
-      分母固定为每方向 36、aggregate 72，并按 B-027 的 attribution-causal
-      predicates 计算；缺 required attribution 为 INSUFFICIENT；
+    - 无 breach complete path 的 leak 分母固定为 288；
+      `memory_hurt`/`stale_memory_followed` 分母固定为每方向 36、aggregate
+      72，并按 B-027 的 attribution-causal predicates 计算；缺 required
+      attribution 为 INSUFFICIENT；
+    - typed `security_breach` record 留在已执行 denominator，并在 completeness
+      前使 gate FAIL；clean path 才强制完整 288，scanner 自身无法形成
+      sanitized record 才是 INSUFFICIENT；
     - 五项 stop-loss 边界和“gain + leak = FAIL”负例通过；
-    - claim gate 消费 candidate report hash，另写并保留 PASS/FAIL/INSUFFICIENT
-      gate result；`bench cross-host gate` 是唯一 result-writer，registry/
-      report/gate hash/wording 四者绑定；
+    - candidate Markdown 由 versioned deterministic renderer 从 JSON
+      byte-for-byte 生成；claim gate 重生成并同时绑定 JSON hash、Markdown
+      hash、renderer version，任一 drift 失败；
+    - claim gate 另写并保留 PASS/FAIL/INSUFFICIENT gate result；
+      `bench cross-host gate` 是唯一 result-writer，registry/JSON/Markdown/
+      gate hash/wording 全部绑定；
     - FAIL/INSUFFICIENT 不删除或改写 candidate report/evidence；
     - public claim checker 在非 PASS 时拒绝正向 README wording。
   - Verify:
@@ -252,6 +290,7 @@ GH-935
     cargo run -- bench cross-host gate --root eval/cross-host \
       --registry eval/cross-host/claims-registry.json \
       --report eval/cross-host/reports/cross-host-v1.json \
+      --markdown eval/cross-host/reports/cross-host-v1.md \
       --json-out /tmp/remem-cross-host-gate.json
     python3 eval/claims/claim_gate.py check \
       eval/cross-host/claims-registry.json
@@ -286,7 +325,10 @@ GH-935
 
     ```bash
     cargo run -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 3 --matrix primary --dry-run \
+      --runs-per-task 3 --phase source --matrix source --dry-run \
+      --json-out /tmp/remem-cross-host-source-plan.json
+    cargo run -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --phase target --matrix primary --dry-run \
       --json-out /tmp/remem-cross-host-plan.json
     cargo run -- bench cross-host verify --root eval/cross-host \
       --json-out /tmp/remem-cross-host-verify.json
@@ -329,60 +371,96 @@ GH-935
   - Owner: maintainer/security owner
   - Dependencies: SP935-T8
   - Covers: B-009, B-032
+  - File ownership:
+    - `eval/cross-host/evidence/cross-host-v1/smoke-source-seal-manifest.json`
   - Done when:
     - maintainer 明确批准 live Claude/Codex、auth bootstrap、network/LLM cost、
       运行预算、模型/version locks 和 artifact 存放位置；
-    - 先批准每方向一个 smoke tuple；smoke 通过隔离/attribution/cleanup 人工
-      审查后，再单独批准完整 primary/native-ablation 执行；
-    - smoke artifacts 明确不进入 public denominator。
-    - smoke approval entry 通过
-      `eval/cross-host/schemas/live-run-approval.schema.json`，经独立 maintainer
-      APPROVED review 的 PR merge 到 default branch，绑定 exact
-      head/fixture/config/model/host versions、两个允许 tuple、有效期、credential
-      bootstrap reference 与 host/LLM/cost hard caps；entry 不含 credential
-      bytes；pre-merge `approval_key` 只由 approval PR number、approved head
-      tree OID 与不含自身/review/merge 字段的 canonical policy digest 派生。
-      runner 必须先完成 authority-only remote validation，再清除 GitHub
-      credential；每个 billable call 前 remote ledger reservation 已 durable，
-      crash/跨 clone/并发预算测试均通过。
+    - 第一份 reviewed `stage=source` smoke approval 绑定两个 direction-specific
+      anchor source-stage keys、source plan 与 caps，但不含未来 seal hash；执行
+      后生成两个 immutable seals/source-seal manifest；
+    - 第二份独立 reviewed `stage=target` smoke approval 绑定该 exact seal
+      manifest，覆盖每方向六个 surfaces：
+      `no_memory`、`target_host_native`、`exported_file`、`remem_shared`、
+      `remem_without_host_native_import`、`remem_with_host_native_import`，总计
+      12 个 target smoke tuples。少测任一 preparation/export/update/import
+      review surface 都不得批准 full source matrix；
+    - source/target smoke policies 均经独立 maintainer APPROVED PR merge 到
+      default branch；`approval_key` 只由 repo identity、approval PR number 与
+      canonical policy digest 派生，排除 containing Git OID/attestation；
+    - smoke 通过隔离/attribution/cleanup 与各 surface 人工审查后，才可批准
+      T9A 的完整 72-source plan；全部 smoke artifacts 永久排除公开分母；
+    - runner 先完成 authority-only validation再清除 GitHub credential；每个
+      billable call 前 remote ledger reservation durable，crash/跨 clone/并发
+      预算测试通过。
   - Verify:
 
     ```bash
-    test -n "$CROSS_HOST_SMOKE_APPROVAL_KEY"
+    test -n "$CROSS_HOST_SMOKE_SOURCE_APPROVAL_KEY"
+    test -n "$CROSS_HOST_SMOKE_TARGET_APPROVAL_KEY"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
-      --matrix smoke --direction claude_to_codex \
-      --task-id cc2cx-architecture-decision --condition remem_shared \
-      --run-index 0 --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
+      --matrix smoke --phase source --direction all --task-set smoke-anchor \
+      --run-index 0 --approval-key "$CROSS_HOST_SMOKE_SOURCE_APPROVAL_KEY" \
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
-      --json-out /tmp/remem-cross-host-smoke-cc2cx.json
+      --json-out eval/cross-host/evidence/cross-host-v1/smoke-source-seal-manifest.json
     cargo run --release -- bench cross-host run --root eval/cross-host \
-      --matrix smoke --direction codex_to_claude \
-      --task-id cx2cc-architecture-decision --condition remem_shared \
-      --run-index 0 --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
+      --matrix smoke --phase target --direction all \
+      --condition-set claim-surfaces \
+      --source-seal-manifest eval/cross-host/evidence/cross-host-v1/smoke-source-seal-manifest.json \
+      --run-index 0 --approval-key "$CROSS_HOST_SMOKE_TARGET_APPROVAL_KEY" \
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
-      --json-out /tmp/remem-cross-host-smoke-cx2cc.json
+      --json-out /tmp/remem-cross-host-smoke-targets.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
-      --input /tmp/remem-cross-host-smoke-cc2cx.json \
-      --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
-      --expected-matrix smoke --expected-valid-runs 1 \
-      --json-out /tmp/remem-cross-host-smoke-cc2cx-verify.json
-    cargo run --release -- bench cross-host verify --root eval/cross-host \
-      --input /tmp/remem-cross-host-smoke-cx2cc.json \
-      --approval-key "$CROSS_HOST_SMOKE_APPROVAL_KEY" \
-      --expected-matrix smoke --expected-valid-runs 1 \
-      --json-out /tmp/remem-cross-host-smoke-cx2cc-verify.json
+      --input /tmp/remem-cross-host-smoke-targets.json \
+      --approval-key "$CROSS_HOST_SMOKE_TARGET_APPROVAL_KEY" \
+      --expected-matrix smoke --expected-records 12 \
+      --json-out /tmp/remem-cross-host-smoke-verify.json
     ```
 
-- [ ] `SP935-T10` Owner: authorized benchmark operator; Done when: 288 个 primary tuples 均有 immutable scanner-passed artifact； Verify: final verifier 报告 `valid_runs == 288`； Covers: B-006, B-008…B-024, B-027, B-028。
-  - Owner: authorized benchmark operator
+- [ ] `SP935-T9A` Owner: authorized benchmark operator + maintainer/security owner; Done when: 完整 source stage 经独立授权执行、seal manifest review/merge，且 primary/ablation target approvals 绑定 exact seals； Verify: 72 seals 与两份 target policy 均通过 authority verifier； Covers: B-008, B-009, B-032。
+  - Owner: authorized benchmark operator + maintainer/security owner
   - Dependencies: SP935-T9
+  - Covers: B-008, B-009, B-032
+  - File ownership:
+    - `eval/cross-host/evidence/cross-host-v1/source-seal-manifest.json`
+  - Done when:
+    - maintainer 先 review/merge 只绑定 72 source-stage keys/plan/caps 的
+      `stage=source` policy；operator 据此各执行一次 source sequence；
+    - 72 个 source-stage keys 各形成 sanitized immutable clean seal 或 typed
+      security-breach record，写入 source-seal manifest 后停止写入；manifest
+      由独立 maintainer PR review/merge；
+    - 全部 clean 时 maintainer 再分别 review/merge `stage=target` primary 与
+      ablation policies，绑定 exact source-seal manifest/hash、target tuples 与
+      独立 budgets；若已有 breach，则禁止 target calls，直接把 sealed partial
+      evidence 移交 T10/T11 early-FAIL path；
+    - approval/manifest handoff 顺序有 fresh authority evidence。
+  - Verify:
+
+    ```bash
+    cargo run --release -- bench cross-host run --root eval/cross-host \
+      --runs-per-task 3 --phase source --matrix source \
+      --approval-key "$CROSS_HOST_SOURCE_APPROVAL_KEY" --confirm-live-run \
+      --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
+      --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
+      --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
+      --json-out eval/cross-host/evidence/cross-host-v1/source-seal-manifest.json
+    jq -e '(.source_stage_records == 72) or (.terminal_security_breach == true)' \
+      eval/cross-host/evidence/cross-host-v1/source-seal-manifest.json
+    ```
+
+- [ ] `SP935-T10` Owner: authorized benchmark operator; Done when: clean path 有 288 个 primary records，或 verified breach path 封存 immutable partial manifest 并停止计费； Verify: verifier 报告完整 288 或 terminal security breach； Covers: B-006, B-008…B-024, B-027, B-028。
+  - Owner: authorized benchmark operator
+  - Dependencies: SP935-T9A
+  - File ownership:
+    - `eval/cross-host/evidence/cross-host-v1/primary-run-records.jsonl`
+    - `eval/cross-host/evidence/cross-host-v1/primary-source-manifest.json`
   - Covers: B-006, B-008, B-009, B-010, B-011, B-012, B-013, B-014,
     B-015, B-016, B-017, B-018, B-019, B-020, B-021, B-022, B-023,
     B-024, B-027, B-028
@@ -390,23 +468,33 @@ GH-935
     - report-claim lane 先 handoff immutable 288-tuple plan/source-seal/approved
       binary+fixture+profile hashes；operator 只拥有 live execution outputs，
       不修改 runner/report code 或 approved inputs；
-    - 两个方向、24 tasks、四 primary conditions、每 tuple 3 runs 均产生
-      scanner-passed immutable artifact；
-    - verifier 证明 288 个唯一有效 tuple，失败 run 留在分母；
-    - 无真实 HOME/session/auth/hidden/private leak；
+    - clean branch 中，两个方向、24 tasks、四 primary conditions、每 tuple
+      3 runs 均产生 scanner-completed immutable sanitized record；
+    - clean branch verifier 证明 288 个唯一 recorded tuples；ordinary failure 与 typed
+      `security_breach` 都留在分母，breach record 推进 T11 gate FAIL，不阻断
+      candidate report lifecycle；
+    - 若 source/primary 任一 verified breach 触发 early stop，primary manifest
+      明确 planned/recorded/not-started counts 与 breach record hash；无需等待
+      288 target calls，也不得把该路径改报 INSUFFICIENT；
+    - source breach branch 由 offline verifier 生成 no-call primary partial
+      manifest；clean branch 才要求 target approval/key 并执行下列 live command；
+    - leaked bytes 不进入 evidence；scanner 本身无法安全完成时 suite
+      insufficient；
     - execution checkpoint 支持 resume 且记录所有失败 attempt。
-    - scanner-passed primary records 写入 committed bundle，source manifest
-      绑定 288 matrix keys、全部 attempts 与 report input hash；raw/private/
-      credential evidence 不进入 git。
+    - primary records 写入 committed bundle，immutable primary manifest 绑定
+      288 matrix keys/attempts/scanner verdicts；它不含未来 ablation hash，也
+      不在 T11 被改写。raw/private/credential evidence 不进入 git。
   - Verify:
 
     ```bash
+    # 以下 approval/live run 仅用于 source manifest 全 clean 的分支。
     test -n "$CROSS_HOST_PRIMARY_APPROVAL_KEY"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 3 --matrix primary \
+      --runs-per-condition 3 --phase target --matrix primary \
+      --source-seal-manifest eval/cross-host/evidence/cross-host-v1/source-seal-manifest.json \
       --approval-key "$CROSS_HOST_PRIMARY_APPROVAL_KEY" --confirm-live-run \
       --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
@@ -414,10 +502,10 @@ GH-935
       --json-out /tmp/remem-cross-host-primary.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --json-out /tmp/remem-cross-host-primary-verify.json
-    jq -e '.passed == true and .matrix.primary.valid_runs == 288' \
+    jq -e '(.matrix.primary.recorded_tuples == 288) or (.terminal_security_breach == true)' \
       /tmp/remem-cross-host-primary-verify.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
-      --evidence-manifest eval/cross-host/evidence/cross-host-v1/source-manifest.json \
+      --evidence-manifest eval/cross-host/evidence/cross-host-v1/primary-source-manifest.json \
       --json-out /tmp/remem-cross-host-evidence-verify.json
     ```
 
@@ -426,14 +514,27 @@ GH-935
   - Dependencies: SP935-T10
   - Covers: B-007, B-022, B-023, B-024, B-025, B-026, B-027, B-028,
     B-029, B-031
+  - File ownership（operator 完成 ablation bundle 后顺序移交 report-claim lane）:
+    - operator:
+      - `eval/cross-host/evidence/cross-host-v1/native-ablation-run-records.jsonl`
+    - report-claim lane:
+      - `eval/cross-host/evidence/cross-host-v1/final-source-manifest.json`
+      - `eval/cross-host/reports/{cross-host-v1.json,cross-host-v1.md,cross-host-v1-gate.json}`
   - Done when:
     - report-claim lane handoff immutable 144-tuple ablation plan、approved inputs
       与 report/gate schemas；operator 仅生成 live ablation outputs，随后
       report-claim lane 独占 candidate report、gate 和 current-doc updates；
-    - with/without native import 在两个方向形成完整 144-tuple paired evidence；
-    - native-ablation sanitized records 追加到独立 committed bundle，完成
-      source manifest 后，先生成 immutable direction-specific candidate
-      JSON/Markdown report 与 hash；
+    - clean branch 的 with/without native import 在两个方向形成完整
+      144-tuple paired evidence；若 T9A/T10 已有 verified security breach，
+      则不再发起 ablation calls，
+      final early-stop manifest 引用 partial manifest/breach hash，并直接进入
+      deterministic FAIL gate；
+    - native-ablation sanitized records 写入独立 committed bundle；report lane
+      新建 immutable final manifest，引用 T10 primary manifest hash 与 ablation
+      bundle hash，不修改 primary manifest；
+    - 先生成 immutable direction-specific candidate JSON，再以 versioned
+      renderer byte-for-byte 生成 Markdown；gate 绑定 JSON hash、Markdown hash
+      与 renderer version；
     - exported cost、native contribution、bootstrap CI、全部 stop-loss 和
       claim verdict 可复算；
     - claim gate 消费 candidate report 后另写
@@ -448,12 +549,14 @@ GH-935
   - Verify:
 
     ```bash
+    # 以下 approval/live ablation 仅用于无 verified breach 的分支。
     test -n "$CROSS_HOST_ABLATION_APPROVAL_KEY"
     test -n "$CROSS_HOST_MAX_HOST_CALLS"
     test -n "$CROSS_HOST_MAX_LLM_CALLS"
     test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 3 --matrix native-import-ablation \
+      --runs-per-condition 3 --phase target --matrix native-import-ablation \
+      --source-seal-manifest eval/cross-host/evidence/cross-host-v1/source-seal-manifest.json \
       --approval-key "$CROSS_HOST_ABLATION_APPROVAL_KEY" --confirm-live-run \
       --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
@@ -467,6 +570,7 @@ GH-935
     cargo run --release -- bench cross-host gate --root eval/cross-host \
       --registry eval/cross-host/claims-registry.json \
       --report eval/cross-host/reports/cross-host-v1.json \
+      --markdown eval/cross-host/reports/cross-host-v1.md \
       --json-out eval/cross-host/reports/cross-host-v1-gate.json
     python3 scripts/ci/check_public_claims.py
     ```
@@ -499,9 +603,10 @@ GH-935
 
 ## 并行拆分
 
-仅在 SP935-T1A 解除后允许：
+仅在 SP935-T1B 解除后允许：
 
-- SP935-T1A 必须在 T1 后以独立 sensitive-registry PR 落地；它 merge 前不得
+- SP935-T1A 必须在 T1 后以独立 sensitive-registry PR 落地；T1B 必须在其
+  merge 后以 post-registry base/exact head 重跑 implement gate；T1B 前不得
   启动 T2-T12。
 - `fixture-contract lane`（SP935-T2）与 `host-isolation lane`（SP935-T3）
   可并行；前者只写 `eval/cross-host` contract/tasks，后者只写列明的 Rust
@@ -510,8 +615,9 @@ GH-935
 - SP935-T5 在 T4 后串行，独占 runner/artifact/scanner 文件。
 - SP935-T6 在 T5 后串行，独占 report/bootstrap/claim 文件。
 - SP935-T7 在所有实现 lane 完成后串行处理共享 CLI/docs/version 文件。
-- live execution（T10/T11）不得与任何可改变 code/fixture/config hash 的 lane
-  并行。
+- live execution（T9A/T10/T11）不得与任何可改变 code/fixture/config hash
+  的 lane 并行；T9A seal manifest→T10 primary manifest→T11 final manifest
+  顺序移交，已封存 manifest 不得被后置 lane 改写。
 
 任何 agent 不得写其他 lane 的文件；共享文件需要由依赖图中的后置单一 owner
 处理，禁止两个 agent 同时修改。

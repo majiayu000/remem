@@ -83,9 +83,13 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
 ### 矩阵与可比性
 
 6. **B-006** primary evidence 的最小完整矩阵必须是
-   `24 tasks × 4 primary conditions × 3 runs = 288` 个有效 run artifact，
-   两个方向各 144 个；少一个、重复顶替一个或存在未验证 artifact 都不得
-   生成 complete verdict。
+   `24 tasks × 4 primary conditions × 3 runs = 288` 个 schema-valid、
+   evidence-sanitized tuple records，两个方向各 144 个。record 的 outcome
+   可以是 success、ordinary failure 或 typed security leak；“valid record”
+   不等于任务成功或 leak-free。少一个、重复顶替一个或存在未验证 record
+   都不得生成 PASS/complete comparative verdict。唯一 early terminal 例外是
+   已验证的 security breach：允许立即停止后续 billable runs，并从 immutable
+   partial manifest 生成安全优先的 FAIL，不得把它降为 INSUFFICIENT。
 7. **B-007** native-memory contribution 必须使用完整
    `24 tasks × 2 conditions × 3 runs = 144` tuple 的
    `remem_without_host_native_import` /
@@ -98,10 +102,16 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
    fixture revision、target prompt、hidden scoring、source seal 和全部
    executable/model/profile 配置；只允许 condition memory surface 不同。重新
    执行 source episode 或 seal/hash 不同的 pair 无效。
-9. **B-009** live host/network/LLM runs 只能由明确的人工命令启动。stable
-   `approval_key` 只由 pre-merge 可知且不包含自身的 canonical policy digest、
-   approval PR number 与 approved head tree OID 派生；merge/review attestation
-   不进入 ID preimage。每次 billable call 前必须在 authoritative protected
+9. **B-009** live host/network/LLM runs 只能由明确的人工命令启动，并使用
+   两阶段授权。source-stage approval 绑定 code/fixture/source-plan/
+   executable/profile hashes 与允许的 source-stage keys，但不得绑定尚未生成的
+   seal；它只能生成 immutable source seals，不能启动 target。seals 生成并形成
+   reviewed immutable source-seal manifest 后，独立 target-stage approval
+   必须绑定该 manifest/hash 与精确 target tuples，才能 fan out primary/
+   ablation targets。stable `approval_key` 只由 repository identity、
+   approval PR number 与排除 key/attestation/containing Git OID 的 canonical
+   policy digest 派生；merge/review/head-tree attestation 不进入 key preimage。
+   每次 billable call 前必须在 authoritative protected
    remote ledger 以 atomic non-force compare-and-swap durable reserve
    worst-case calls/cost；crash/abandoned reservation 仍计费。同一 approval
    跨 clone、resume、execution ID、并发或拆单都共享累计上限。普通 CI、
@@ -118,7 +128,13 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     same-name decoy repo 必须保持不同 canonical path/project ID。
 11. **B-011** 任何 host HOME、auth/config、session、hidden test、
     private-root 或跨 project/user 泄漏都会使对应 run 无效并触发 suite
-    stop-loss；泄漏 run 不得以“任务成功”掩盖，也不得从分母删除。
+    stop-loss；scanner 必须丢弃泄漏 bytes，但保留不含敏感内容、schema-valid
+    的 `security_breach` failure record。该 record 必须进入完整矩阵、分母与
+    claim gate 并产生 FAIL；runner 可在 breach 后停止尚未执行的 tuples，但
+    partial manifest 必须公开 planned/recorded/not-started counts，gate 仍以该
+    breach 优先输出 FAIL。只有 scanner 本身未完成或无法安全生成 breach record
+    时才是 suite `INSUFFICIENT`。泄漏 run 不得以“任务成功”掩盖，也不得从
+    已执行分母删除。
 12. **B-012** 四个 primary condition 的可见 memory surface 是闭集：
     `no_memory` 无记忆面；`target_host_native` 必须在 target prompt 揭示前把
     同一 source seal 通过目标宿主真实 native-memory preparation protocol
@@ -170,10 +186,15 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     memory-hurt、tokens、wall time、turns、失败动作和 attribution 指标必须
     包含所有适用的有效/失败 run，并公开分子、分母和缺失值；无数据必须为空
     或 insufficient，不得填 0。288 个 primary runs 与完整 native-import
-    ablation 的 scanner-passed sanitized records/source manifest 必须作为
-    committed release evidence 保留，并足以独立重算分母、attribution、失败、
-    成本、candidate report 和 gate input；aggregate-only report 或 `/tmp`
-    artifacts 不构成可复验证据。
+    ablation 的 scanner-completed sanitized records 必须作为 committed release
+    evidence 保留；每条 record 明确 `clean` 或 typed `security_breach`。
+    source-seal manifest、immutable primary manifest 和新建的 immutable final
+    manifest 必须使用不同路径/hash：clean path 的 final 引用 primary manifest
+    hash 与 ablation bundle hash；security early-stop path 的 final 引用
+    partial primary/source manifest、breach record hash 与 explicit
+    not-started counts。两者都不能修改 earlier manifest。三者须
+    足以独立重算分母、attribution、失败、成本、candidate report 和 gate
+    input；aggregate-only report 或 `/tmp` artifacts 不构成可复验证据。
 23. **B-023** 报告必须分别展示 `claude_to_codex` 与
     `codex_to_claude`，再展示 aggregate；任一方向缺失、失败或退化不得被
     aggregate 平均数隐藏。
@@ -193,8 +214,11 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     `wrong_project_injection = 0`、`wrong_user_injection = 0`、
     `source_private_session_leak = 0`、
     `stale_memory_followed <= 1%`、`memory_hurt <= 2%`；分母必须来自完整、
-    可审计的适用 run 集。前三项扫描全部 288 primary tuples；后二项分别在每个
-    direction 的 36 个 `remem_shared` tuples 及 aggregate 72 tuples 上计算。
+    可审计的适用 run 集。无 security breach 的 complete path 中，前三项扫描
+    全部 288 primary tuples；verified breach early-stop path 以单个非零 breach
+    已足以违反零容忍阈值并 FAIL，公开尚未执行 counts，不要求为证明 FAIL
+    继续花费。后二项在 complete path 分别按每个 direction 的 36 个
+    `remem_shared` tuples 及 aggregate 72 tuples 计算。
     `memory_hurt` numerator 是 paired `no_memory` resolved=1、
     `remem_shared` resolved=0 且 attribution 证明 injected/cited/used memory
     导致错误动作的 tuple；`stale_memory_followed` numerator 是 cited/used
@@ -213,8 +237,10 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     executable/complete，兼容迁移必须显式转换并重新验证，否则拒绝。
 31. **B-031** verified evidence 必须先生成并保留 immutable candidate
     JSON/Markdown report，不论后续 verdict 为 `PASS`、`FAIL` 或
-    `INSUFFICIENT`；claim gate 以该 candidate report hash 为输入，另写不可变
-    gate result。README、README.zh-CN、CHANGELOG 或 release surface 只有在
+    `INSUFFICIENT`；Markdown 必须由 JSON 通过 versioned deterministic renderer
+    byte-for-byte 生成。claim gate 同时绑定 JSON hash、Markdown hash 与 renderer
+    version，并在 gate 前重生成比较；任一 drift 都失败。README、
+    README.zh-CN、CHANGELOG 或 release surface 只有在
     gate result 为 hash-bound `PASS`、完整矩阵、paired bootstrap、
     direction-specific 结果和 stop-loss 全部通过后才能引用正向跨宿主结论；
     `FAIL`/`INSUFFICIENT` report 与 evidence 仍须保留，公开面只能保持政策或
