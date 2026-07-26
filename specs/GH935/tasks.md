@@ -1,0 +1,357 @@
+# Task Plan
+
+## Linked Issue
+
+GH-935
+
+## Spec Packet
+
+- Product: `specs/GH935/product.md`
+- Tech: `specs/GH935/tech.md`
+- Locale: zh-CN
+- Status: Draft；所有任务均未开始。
+
+## Human Gates First
+
+- [ ] `SP935-T1` Owner: maintainer; Done when: readiness、spec approval、trusted evidence 与 implement route 全部通过； Verify: exact-head route gate 返回 `allowed`； Covers: none（人工治理门禁）。
+  - Owner: maintainer
+  - Dependencies: none
+  - Covers: none — 这是实施前的人工治理门禁，不实现产品行为。
+  - Done when:
+    - maintainer 审阅 canonical product/tech exact diff；
+    - issue 具有有效 readiness state，并记录 `spec_approval`；
+    - fresh duplicate-work evidence、trusted default-base/path evidence 和
+      `sensitive_enforcement` 完整；
+    - `implement` route gate 对 exact head 返回 `allowed`；
+    - security reviewer 明确接受宿主 auth、host-read sandbox、hidden tests
+      和 public-claim 边界。
+  - Verify:
+
+    ```bash
+    python3 checks/github_duplicate_evidence.py \
+      --github-repo majiayu000/remem --issue 935 --json
+    python3 checks/route_gate.py --repo . --route implement \
+      --issue 935 --state ready_to_implement \
+      --duplicate-evidence <trusted-duplicate-evidence.json> \
+      --evidence <trusted-implement-evidence.json> --json
+    ```
+
+## 实现任务
+
+- [ ] `SP935-T2` Owner: fixture-contract lane; Done when: versioned schemas 与 24 个 deterministic tasks 全部 `ready`； Verify: schema self-test 与 `run_dry.py` 通过； Covers: B-001, B-002, B-003, B-004, B-005, B-030。
+  - Owner: fixture-contract lane
+  - Dependencies: SP935-T1
+  - Covers: B-001, B-002, B-003, B-004, B-005, B-030
+  - File ownership:
+    - `eval/cross-host/benchmark-charter.json`
+    - `eval/cross-host/schemas/`
+    - `eval/cross-host/examples/`
+    - `eval/cross-host/scripts/{schema_validate.py,run_dry.py}`
+    - `eval/cross-host/tasks/`
+  - Done when:
+    - task/run/report schemas versioned 且 fail closed；
+    - 24 个 task 逐个包含 deterministic repo fixture、source episode、
+      hidden tests、score commands、gold facts、allowed/forbidden paths；
+    - 每个 task 为 `ready` 且 `todo: []`；
+    - 两个方向各覆盖 12 个必需 category，无 fabricated placeholder；
+    - v1 skeleton/old artifacts 被明确拒绝或由测试覆盖的 converter 转换。
+  - Verify:
+
+    ```bash
+    python3 eval/cross-host/scripts/schema_validate.py --self-test
+    python3 eval/cross-host/scripts/run_dry.py
+    jq -e '.status == "executable_no_runs"' \
+      eval/cross-host/benchmark-charter.json
+    test "$(jq -r '.status' eval/cross-host/tasks/*/*.json | \
+      awk '$0 != "ready" {bad++} END {print bad+0}')" = 0
+    test "$(find eval/cross-host/tasks -type f -name '*.json' | wc -l | tr -d ' ')" = 24
+    ```
+
+- [ ] `SP935-T3` Owner: host-isolation lane; Done when: Claude/Codex 共用 fail-closed host isolation 且 dry-run 零 spawn； Verify: host-isolation/coding-bench/cross-host isolation tests 通过； Covers: B-009, B-010, B-011, B-015, B-016, B-017, B-032。
+  - Owner: host-isolation lane
+  - Dependencies: SP935-T1
+  - Covers: B-009, B-010, B-011, B-015, B-016, B-017, B-032
+  - File ownership:
+    - `src/eval/host_isolation.rs`
+    - `src/eval/coding_bench/{isolation.rs,runner.rs,tests.rs}`
+    - `src/eval/cross_host/isolation.rs`
+  - Done when:
+    - coding bench 与 cross-host 共用一个 env allowlist、private-root、
+      host-read sandbox、timeout/process cleanup primitive；
+    - Claude Code/Codex adapters 使用独立 HOME/config/session roots；
+    - credential bootstrap 最小化且 credential bytes 不进入 artifacts；
+    - 非 macOS 在没有等价 deny-host-read 证明时 fail closed；
+    - dry-run/verify call graph 不 spawn 宿主或网络。
+  - Verify:
+
+    ```bash
+    cargo test eval::host_isolation
+    cargo test eval::coding_bench
+    cargo test eval::cross_host::tests::isolation
+    ```
+
+- [ ] `SP935-T4` Owner: condition lane; Done when: primary conditions 与 native ablation 边界闭集且 remem 走真实 pipeline； Verify: condition/pipeline/export/native focused tests 通过； Covers: B-008, B-012, B-013, B-014, B-015, B-016, B-029。
+  - Owner: condition lane
+  - Dependencies: SP935-T2, SP935-T3
+  - Covers: B-008, B-012, B-013, B-014, B-015, B-016, B-029
+  - File ownership:
+    - `src/eval/cross_host/condition.rs`
+    - `src/eval/cross_host/fixture.rs`
+  - Done when:
+    - condition surface 是闭集并由 manifest/hash 审计；
+    - `remem_shared` 走 automatic capture→extraction→promotion→normal
+      retrieval，测试证明未调用 direct seed/save/preload shortcut；
+    - `exported_file` target-blind 冻结并记录 generation/maintenance cost；
+    - native import with/without 除 import switch 外 config hash 完全相同；
+    - diagnostic data 不进入 primary denominator。
+  - Verify:
+
+    ```bash
+    cargo test eval::cross_host::tests::conditions
+    cargo test eval::cross_host::tests::real_capture_pipeline
+    cargo test eval::cross_host::tests::exported_file_cost
+    cargo test eval::cross_host::tests::native_import_ablation
+    ```
+
+- [ ] `SP935-T5` Owner: runner lane; Done when: 288-tuple plan、immutable artifacts、resume、hidden scoring 与 attribution 完整； Verify: runner focused tests、scanner self-test 与 288 dry-run 通过； Covers: B-006, B-007, B-008, B-017, B-018, B-019, B-020, B-021。
+  - Owner: runner lane
+  - Dependencies: SP935-T2, SP935-T3, SP935-T4
+  - Covers: B-006, B-007, B-008, B-017, B-018, B-019, B-020, B-021
+  - File ownership:
+    - `src/eval/cross_host/{runner.rs,score.rs,types.rs,tests.rs}`
+    - `src/eval/cross_host.rs`
+    - `src/eval.rs`
+    - `.gitignore`
+    - `eval/cross-host/scripts/scan_artifacts.py`
+  - Done when:
+    - primary dry-run 精确产生 288 个唯一 tuple；
+    - source terminate/drain/evidence seal 先于 target launch；
+    - artifact 使用 atomic write、stable `matrix_key`、unique `attempt_id`
+      和 content hash；
+    - pre-target retry 保留失败，target-started outcome 不可被成功重跑替换；
+    - resume 只补缺失 tuple，并拒绝 duplicate/hash drift/partial artifacts；
+    - hidden tests 只在 agent 退出后注入；
+    - attribution refs 全部可解析且 origin/scope/validity 一致；
+    - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏。
+  - Verify:
+
+    ```bash
+    cargo test eval::cross_host::tests::run_plan
+    cargo test eval::cross_host::tests::attempt_history
+    cargo test eval::cross_host::tests::resume
+    cargo test eval::cross_host::tests::attribution
+    python3 eval/cross-host/scripts/scan_artifacts.py --self-test
+    cargo run -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --matrix primary --dry-run \
+      --json-out /tmp/remem-cross-host-plan.json
+    jq -e '.planned_runs == 288' /tmp/remem-cross-host-plan.json
+    ```
+
+- [ ] `SP935-T6` Owner: report-claim lane; Done when: direction report、paired bootstrap、cost、stop-loss 与 hash-bound claim gate 完整； Verify: report/bootstrap/claim tests 与 public claim self-test 通过； Covers: B-022, B-023, B-024, B-025, B-026, B-027, B-028, B-029, B-031。
+  - Owner: report-claim lane
+  - Dependencies: SP935-T5
+  - Covers: B-022, B-023, B-024, B-025, B-026, B-027, B-028, B-029, B-031
+  - File ownership:
+    - `src/eval/cross_host/{report.rs,bootstrap.rs,claim_gate.rs}`
+    - `eval/cross-host/schemas/cross-host-report.schema.json`
+    - `eval/cross-host/claims-registry.json`
+    - `scripts/ci/check_public_claims.py`
+  - Done when:
+    - direction-first 报告公开分子、分母、missing_count 和 aggregate；
+    - exported cost 与 native-import ablation 分开报告；
+    - fixed-seed task-cluster paired bootstrap 可重复；
+    - CI 含 0 只输出 directional/insufficient；
+    - 五项 stop-loss 边界和“gain + leak = FAIL”负例通过；
+    - registry/report hash/wording 三者绑定；
+    - public claim checker 在非 PASS 时拒绝正向 README wording。
+  - Verify:
+
+    ```bash
+    cargo test eval::cross_host::tests::report
+    cargo test eval::cross_host::tests::paired_bootstrap
+    cargo test eval::cross_host::tests::claim_gate
+    python3 eval/claims/claim_gate.py check \
+      eval/cross-host/claims-registry.json
+    python3 scripts/ci/check_public_claims.py --self-test
+    ```
+
+- [ ] `SP935-T7` Owner: integration-doc lane; Done when: CLI/docs/version 接线且仍准确声明无 run/无公开结论； Verify: CLI dry-run/verify、version sync 与 public claim check 通过； Covers: B-001, B-030, B-031。
+  - Owner: integration-doc lane
+  - Dependencies: SP935-T2, SP935-T3, SP935-T4, SP935-T5, SP935-T6
+  - Covers: B-001, B-030, B-031
+  - File ownership:
+    - `src/cli/eval_types.rs`
+    - `src/cli/actions/eval.rs`
+    - `eval/cross-host/README.md`
+    - `docs/ARCHITECTURE.md`
+    - `docs/specs/README.md`
+    - `docs/specs/GH935/{PRODUCT.md,TECH.md}`
+    - `docs/specs/public-memory-benchmark/{PRODUCT.md,TECH.md}`
+    - `README.md`
+    - `README.zh-CN.md`
+    - `CHANGELOG.md`
+    - version-sync files declared in `tech.md`
+  - Done when:
+    - `bench cross-host run|verify|report` 接线且所有 output path 显式；
+    - docs 保持 `executable_no_runs`/“无公开结论”，不引用 dry-run 数字为结果；
+    - version-sync 文件使用同一新版本；
+    - planned-path manifest 与实际实现 diff 完全一致。
+  - Verify:
+
+    ```bash
+    cargo run -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --matrix primary --dry-run \
+      --json-out /tmp/remem-cross-host-plan.json
+    cargo run -- bench cross-host verify --root eval/cross-host \
+      --json-out /tmp/remem-cross-host-verify.json
+    python3 scripts/ci/check_plugin_version_sync.py
+    python3 scripts/ci/check_public_claims.py
+    ```
+
+## 验证与执行
+
+- [ ] `SP935-T8` Owner: independent reviewer lane; Done when: 全部 invariants、security boundaries 与 repository gates 有 fresh 证据； Verify: schema/scanner/dry-run、fmt/check/clippy/test 全通过； Covers: B-001…B-032。
+  - Owner: independent reviewer lane
+  - Dependencies: SP935-T7
+  - Covers: B-001, B-002, B-003, B-004, B-005, B-006, B-007, B-008,
+    B-009, B-010, B-011, B-012, B-013, B-014, B-015, B-016, B-017,
+    B-018, B-019, B-020, B-021, B-022, B-023, B-024, B-025, B-026,
+    B-027, B-028, B-029, B-030, B-031, B-032
+  - Done when:
+    - independent reviewer 检查 auth/sandbox/process cleanup、OS command
+      array arguments、secret redaction、hidden fixture 与 claim gate；
+    - focused tests、full Rust gates 和 preflight 使用本 session fresh 输出；
+    - 没有实现任务或测试被弱化来通过 gate。
+  - Verify:
+
+    ```bash
+    python3 eval/cross-host/scripts/schema_validate.py --self-test
+    python3 eval/cross-host/scripts/scan_artifacts.py --self-test
+    python3 eval/cross-host/scripts/run_dry.py
+    cargo fmt --check
+    cargo check
+    cargo clippy --all-targets -- -D warnings
+    cargo test
+    python3 scripts/ci/check_plugin_version_sync.py
+    python3 scripts/ci/check_public_claims.py
+    ```
+
+- [ ] `SP935-T9` Owner: maintainer/security owner; Done when: smoke 与 full live-run 的 auth/network/cost/security 授权分别记录； Verify: human authorization artifact 与 smoke dry-run plan； Covers: B-009, B-032。
+  - Owner: maintainer/security owner
+  - Dependencies: SP935-T8
+  - Covers: B-009, B-032
+  - Done when:
+    - maintainer 明确批准 live Claude/Codex、auth bootstrap、network/LLM cost、
+      运行预算、模型/version locks 和 artifact 存放位置；
+    - 先批准每方向一个 smoke tuple；smoke 通过隔离/attribution/cleanup 人工
+      审查后，再单独批准完整 primary/native-ablation 执行；
+    - smoke artifacts 明确不进入 public denominator。
+  - Verify:
+
+    ```bash
+    cargo run --release -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 1 --matrix primary --dry-run \
+      --json-out /tmp/remem-cross-host-smoke-plan.json
+    ```
+
+- [ ] `SP935-T10` Owner: authorized benchmark operator; Done when: 288 个 primary tuples 均有 immutable scanner-passed artifact； Verify: final verifier 报告 `valid_runs == 288`； Covers: B-006, B-008…B-024, B-027, B-028。
+  - Owner: authorized benchmark operator
+  - Dependencies: SP935-T9
+  - Covers: B-006, B-008, B-009, B-010, B-011, B-012, B-013, B-014,
+    B-015, B-016, B-017, B-018, B-019, B-020, B-021, B-022, B-023,
+    B-024, B-027, B-028
+  - Done when:
+    - 两个方向、24 tasks、四 primary conditions、每 tuple 3 runs 均产生
+      scanner-passed immutable artifact；
+    - verifier 证明 288 个唯一有效 tuple，失败 run 留在分母；
+    - 无真实 HOME/session/auth/hidden/private leak；
+    - execution checkpoint 支持 resume 且记录所有失败 attempt。
+  - Verify:
+
+    ```bash
+    cargo run --release -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --matrix primary --confirm-live-run \
+      --json-out /tmp/remem-cross-host-primary.json
+    cargo run --release -- bench cross-host verify --root eval/cross-host \
+      --json-out /tmp/remem-cross-host-primary-verify.json
+    jq -e '.passed == true and .matrix.primary.valid_runs == 288' \
+      /tmp/remem-cross-host-primary-verify.json
+    ```
+
+- [ ] `SP935-T11` Owner: authorized benchmark operator + report-claim lane; Done when: native ablation、direction reports、bootstrap、stop-loss 与 claim verdict 可复算； Verify: report verifier、claim gate 与 public claim check 通过； Covers: B-007, B-022…B-031。
+  - Owner: authorized benchmark operator + report-claim lane
+  - Dependencies: SP935-T10
+  - Covers: B-007, B-022, B-023, B-024, B-025, B-026, B-027, B-028,
+    B-029, B-031
+  - Done when:
+    - with/without native import 在两个方向形成完整 paired evidence；
+    - 生成 direction-specific JSON/Markdown report、source manifest 和 hash；
+    - exported cost、native contribution、bootstrap CI、全部 stop-loss 和
+      claim verdict 可复算；
+    - 只有 gate PASS 时才由独立 human wording review 更新 README；否则保持
+      无公开正向结论。
+  - Verify:
+
+    ```bash
+    cargo run --release -- bench cross-host run --root eval/cross-host \
+      --runs-per-condition 3 --matrix native-import-ablation \
+      --confirm-live-run \
+      --json-out /tmp/remem-cross-host-native-ablation.json
+    cargo run --release -- bench cross-host report --root eval/cross-host \
+      --json-out eval/cross-host/reports/cross-host-v1.json \
+      --markdown-out eval/cross-host/reports/cross-host-v1.md
+    cargo run --release -- bench cross-host verify --root eval/cross-host \
+      --json-out /tmp/remem-cross-host-final-verify.json
+    python3 eval/claims/claim_gate.py check \
+      eval/cross-host/claims-registry.json
+    python3 scripts/ci/check_public_claims.py
+    ```
+
+- [ ] `SP935-T12` Owner: maintainer; Done when: final review、CI、threads、PR gate 与 issue/merge/release 决策完成； Verify: exact-head GitHub evidence 与 `pr_gate.py`； Covers: B-031, B-032。
+  - Owner: maintainer
+  - Dependencies: SP935-T11
+  - Covers: B-031, B-032
+  - Done when:
+    - exact-head independent review、CI、review threads 和 `pr_gate` 全部满足；
+    - maintainer 单独决定 README wording、merge、是否关闭 #935 与 release；
+    - 若 matrix、ablation、stop-loss 或 claim 任一不完整，#935 保持 open，
+      不以 infrastructure/partial PR 关闭。
+  - Verify:
+
+    ```bash
+    test -n "$PR_NUMBER"
+    gh pr view "$PR_NUMBER" --json headRefOid,mergeable,mergeStateStatus,reviewDecision,statusCheckRollup
+    python3 checks/pr_gate.py --repo . --pr "$PR_NUMBER" --json
+    ```
+
+## 并行拆分
+
+仅在 SP935-T1 解除后允许：
+
+- `fixture-contract lane`（SP935-T2）与 `host-isolation lane`（SP935-T3）
+  可并行；前者只写 `eval/cross-host` contract/tasks，后者只写列明的 Rust
+  isolation 文件。
+- SP935-T4 必须等待 T2/T3，并独占 `condition.rs`/`fixture.rs`。
+- SP935-T5 在 T4 后串行，独占 runner/artifact/scanner 文件。
+- SP935-T6 在 T5 后串行，独占 report/bootstrap/claim 文件。
+- SP935-T7 在所有实现 lane 完成后串行处理共享 CLI/docs/version 文件。
+- live execution（T10/T11）不得与任何可改变 code/fixture/config hash 的 lane
+  并行。
+
+任何 agent 不得写其他 lane 的文件；共享文件需要由依赖图中的后置单一 owner
+处理，禁止两个 agent 同时修改。
+
+## Handoff Notes
+
+- 当前 write_spec gate：`allowed`，human gate 为 `readiness_label`。
+- 当前 implement gate：`blocked`；缺
+  `duplicate_work:duplicate_evidence`、trusted default-base/path evidence、
+  `sensitive_enforcement`，并仍需 `readiness_label` 与 `spec_approval`。
+- 本 packet 只规划未来实现；没有运行 benchmark、没有生成 report、没有修改
+  issue/PR/label，也没有授予 live-run/merge/release 权限。
+- Product invariant set：
+  `B-001`…`B-032`。
+- Task coverage union：
+  `B-001`…`B-032`；无遗漏。
+- PR #937/merge `60c228ceaf02d881da1de2bacf6d13433e18dccb`
+  是基础设施历史证据，不是 outcome evidence。

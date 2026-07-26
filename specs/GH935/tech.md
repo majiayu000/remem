@@ -1,0 +1,420 @@
+# Tech Spec
+
+## Linked Issue
+
+GH-935
+
+## Product Spec
+
+`specs/GH935/product.md`
+
+<!-- specrail-planned-changes
+{
+  "version": 1,
+  "issue": 935,
+  "complete": true,
+  "paths": [
+    "specs/GH935/product.md",
+    "specs/GH935/tech.md",
+    "specs/GH935/tasks.md",
+    ".gitignore",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "docs/ARCHITECTURE.md",
+    "docs/specs/README.md",
+    "docs/specs/GH935/PRODUCT.md",
+    "docs/specs/GH935/TECH.md",
+    "docs/specs/public-memory-benchmark/PRODUCT.md",
+    "docs/specs/public-memory-benchmark/TECH.md",
+    "eval/cross-host/README.md",
+    "eval/cross-host/benchmark-charter.json",
+    "eval/cross-host/claims-registry.json",
+    "eval/cross-host/schemas/cross-host-task.schema.json",
+    "eval/cross-host/schemas/cross-host-run.schema.json",
+    "eval/cross-host/schemas/cross-host-report.schema.json",
+    "eval/cross-host/examples/run-artifact-valid.json",
+    "eval/cross-host/examples/run-artifact-invalid.json",
+    "eval/cross-host/scripts/schema_validate.py",
+    "eval/cross-host/scripts/scan_artifacts.py",
+    "eval/cross-host/scripts/run_dry.py",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-architecture-decision.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-branch-specific-truth.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-failed-attempt-lesson.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-git-evidence.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-multi-hop-relation.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-negative-constraint.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-prior-bug-root-cause.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-same-name-repo-isolation.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-stale-superseded-decision.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-unresolved-conflict-abstention.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-user-project-preference.json",
+    "eval/cross-host/tasks/claude-to-codex/cc2cx-workstream-next-action.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-architecture-decision.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-branch-specific-truth.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-failed-attempt-lesson.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-git-evidence.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-multi-hop-relation.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-negative-constraint.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-prior-bug-root-cause.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-same-name-repo-isolation.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-stale-superseded-decision.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-unresolved-conflict-abstention.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-user-project-preference.json",
+    "eval/cross-host/tasks/codex-to-claude/cx2cc-workstream-next-action.json",
+    "eval/cross-host/reports/cross-host-v1.json",
+    "eval/cross-host/reports/cross-host-v1.md",
+    "src/eval.rs",
+    "src/eval/host_isolation.rs",
+    "src/eval/coding_bench/isolation.rs",
+    "src/eval/coding_bench/runner.rs",
+    "src/eval/coding_bench/tests.rs",
+    "src/eval/cross_host.rs",
+    "src/eval/cross_host/types.rs",
+    "src/eval/cross_host/fixture.rs",
+    "src/eval/cross_host/isolation.rs",
+    "src/eval/cross_host/condition.rs",
+    "src/eval/cross_host/runner.rs",
+    "src/eval/cross_host/score.rs",
+    "src/eval/cross_host/report.rs",
+    "src/eval/cross_host/bootstrap.rs",
+    "src/eval/cross_host/claim_gate.rs",
+    "src/eval/cross_host/tests.rs",
+    "src/cli/eval_types.rs",
+    "src/cli/actions/eval.rs",
+    "scripts/ci/check_public_claims.py",
+    "Cargo.toml",
+    "Cargo.lock",
+    "npm/remem/package.json",
+    "plugins/remem/.codex-plugin/plugin.json",
+    "plugins/remem/runtimes/remem-releases.json",
+    "server.json"
+  ],
+  "spec_refs": [
+    "specs/GH935/product.md",
+    "specs/GH935/tech.md",
+    "docs/specs/GH935/PRODUCT.md",
+    "docs/specs/GH935/TECH.md",
+    "docs/specs/public-memory-benchmark/PRODUCT.md",
+    "docs/specs/public-memory-benchmark/TECH.md"
+  ]
+}
+-->
+
+该 manifest 是 GH-935 完整实现、执行证据与公开 claim handoff 的预期文件
+边界。若真实宿主 CLI 探测、fixture 设计或实现证明需要其他路径，必须先用
+准确路径更新本 manifest、重新取得 human spec/security review，再修改
+新增路径。报告文件只有在真实运行和 gate 通过后才生成；本 spec lane 不创建
+或伪造报告。
+
+## Codebase Context
+
+以下 anchors 已在 `origin/main`
+`284cdf94406dbbe2583e6ee31f23e2a48af561bf` 核对：
+
+| Area | Files | Current behavior | Why relevant |
+| --- | --- | --- | --- |
+| 当前 suite 状态 | `eval/cross-host/README.md:7-9` | 明确为 `infrastructure_only_no_runs`，禁止引用结果。 | B-001 的当前 truth；实现不能把 dry-run 当 outcome。 |
+| Charter/matrix | `eval/cross-host/benchmark-charter.json:20-37`, `91-104` | 固定四个 primary conditions、每 tuple 3 runs、stop-loss 和 paired report 要求。 | 保持 `cross-host-v1` 产品边界，并升级 executable/report contract。 |
+| Task lifecycle | `eval/cross-host/schemas/cross-host-task.schema.json:43-46`, `99-153` | task 只有 `skeleton_todo/ready`，已有 score/gold/todo 结构；24 个文件当前均为 skeleton。 | 增强 fixture/source episode 合同并把 24 个 task 逐个变为真实可执行。 |
+| Run artifact | `eval/cross-host/schemas/cross-host-run.schema.json:68-97`, `99-165` | 已有基础 metrics、isolation 和 attribution 字段，但 environment/artifacts 仍是松散 object，缺 matrix completeness、attempt、hash 和 report linkage。 | B-006、B-017-B-021 需要严格 schema 与 referential checks。 |
+| 离线验证 | `eval/cross-host/scripts/run_dry.py:42`, `84`, `107`, `125` | 校验 task/artifact 并打印计划矩阵，从不启动宿主。 | 保持 CI/dry-run 无网络，并扩充 v2 lifecycle/matrix negatives。 |
+| Leak scanner | `eval/cross-host/scripts/scan_artifacts.py:57`, `75`, `102`, `168` | 扫描 HOME/session/auth/private-root markers，并有 self-test。 | 扩充 hidden fixture、cross-run、source/target store 泄漏负例。 |
+| 可复用隔离 | `src/eval/coding_bench/isolation.rs:8-14`, `33-79`, `81-100` | `CodexIsolation` 在 macOS 创建临时 HOME/CODEX_HOME、host-read sandbox 并检查 private markers；非 macOS fail closed。 | 抽取共享隔离 primitive，再增加 Claude Code adapter；不得复制一套更弱的隔离。 |
+| Coding runner | `src/eval/coding_bench/runner.rs:142-187`, `363-397` | 每 run 创建临时 repo/data，调用 Codex，保存 stdout/stderr/diff，timeout 后评分。 | 复用 process-group timeout、artifact、hidden-test-after-agent 模式。 |
+| 禁止的 primary shortcut | `src/eval/coding_bench/condition.rs:48-66`, `71-105` | 当前 diagnostic `Remem` 直接 seed memory 并追加完整 benchmark details。 | GH-935 `remem_shared` 必须另建真实 capture/extraction path，不能复用该 shortcut。 |
+| 现有 CLI | `src/cli/eval_types.rs:3-13`, `45-91`; `src/cli/actions/eval.rs:12-34` | `bench` 只有 verify/memory/coding/report，无 cross-host 子命令。 | 增加明确 `bench cross-host` run/verify/report surface，不另造隐藏脚本入口。 |
+| Eval module | `src/eval.rs:1-18` | 公开现有 eval modules，无 cross_host 或共享 host isolation module。 | 新模块从这里接线。 |
+| 通用 claim registry | `eval/claims/claim_gate.py:101-149` | 校验 wording、status、supporting report existence/hash，但不计算 paired bootstrap/stop-loss。 | 可复用 registry/hash/wording contract；GH-935 仍需专用 deterministic result gate。 |
+| Public claim surface | `scripts/ci/check_public_claims.py:16-21`, `66-87`, `98-135` | CI 扫 README/CHANGELOG，但只读取现有 public baseline gate。 | 接入 hash-bound cross-host gate，避免未经批准的跨宿主结论。 |
+| Public benchmark contract | `docs/specs/public-memory-benchmark/TECH.md:96-120` | 允许 Rust eval 实现；要求显式 report path，dry-run 不调用 agent。 | GH-935 作为第三类 cross-host outcome evidence 扩展该 current contract。 |
+| GH935 current contract | `docs/specs/GH935/PRODUCT.md:36-47`; `TECH.md:36-42` | 明确基础设施-only，列出 executable fixtures、host harness、bootstrap/claim 和 export cost follow-ups。 | canonical packet 把这些 follow-ups 变为 gated tasks，不改写已完成历史。 |
+
+## 设计方案
+
+### 1. Contract 与 task v2（B-001-B-005、B-030）
+
+- `benchmark-charter.json` 保持 suite id `cross-host-v1`，提升结构
+  `schema_version`，状态按闭集
+  `infrastructure_only_no_runs → executable_no_runs → partial_evidence →
+  complete_evidence` 单向推进。状态由 verifier 从 artifact 计算，不能由
+  report 自报。
+- task v2 在每个现有 task 文件内增加确定性 `fixture_repo`（初始 branch、
+  repo files、必要的同名 decoy repos）、可执行 source episode prompt 与
+  source assertions。`history_episodes.memories` 只作为 expected/gold
+  evidence，不作为任何 condition 的 DB seed 输入。
+- 24 个 task 逐个人工填充确定性代码 fixture、source episode、target prompt、
+  hidden files、score commands、required/forbidden patch patterns 和 gold
+  facts；完成后才清空 `todo` 并设为 `ready`。
+- v1 skeleton 和旧 run schema 不做 silent migration。validator 可给出明确
+  `schema_version unsupported` 或通过一次性、可审阅的 converter 产生新文件；
+  原文件和 hash 保留。
+
+### 2. 共享宿主隔离与 adapter（B-009-B-011、B-015-B-017、B-032）
+
+- 从 `coding_bench/isolation.rs` 抽取 `src/eval/host_isolation.rs`：
+  `PreparedHostIsolation`、env allowlist、host-read sandbox、private-root
+  lifecycle、process-group cleanup 和 marker scan。现有 coding bench 迁移到
+  同一 primitive，确保没有隔离回归。
+- `cross_host/isolation.rs` 定义闭集 `HostKind::{ClaudeCode,Codex}` 和各自
+  adapter。每个 phase 建立独立 HOME、host config/session root、repo worktree
+  和 condition data root；只有 condition 明确允许的 sanitized credential
+  bootstrap 可以复制到 private root，credential bytes 永不进入 artifact。
+- macOS 使用 host-read sandbox；其他平台在获得等价 deny-host-read 证据前
+  fail closed。adapter 启动前记录宿主 binary/version/model/reasoning 和
+  executable hash；未知 alias 或版本探测失败即停止。
+- live `run` 必须带显式确认参数并在 report command 中记录；`--dry-run`、
+  verify、schema self-test 和普通 CI 的 call graph 不得进入 adapter spawn。
+- source phase 完成后先终止进程、flush hook/capture、等待 bounded extraction
+  drain、记录 evidence refs，再销毁 source session runtime；target phase
+  只能随后启动。cleanup 失败产生 artifact 并阻止该 tuple 继续。
+
+### 3. Condition engine（B-008、B-012-B-016、B-029）
+
+`cross_host/condition.rs` 以闭集实现 memory surface，所有 condition 共享
+fixture/prompt/scorer/model hash：
+
+- `no_memory`：hooks/MCP/remem/native/export 全部关闭。
+- `target_host_native`：使用全新目标 HOME 中仅由目标宿主自己产生的 baseline
+  native memory；不得导入来源宿主内容。
+- `exported_file`：在 target prompt 揭示前，对 source history 运行固定、
+  target-blind exporter；冻结 repo-local handoff 的 content hash，并记录
+  generation/maintenance tokens、wall time、turns、bytes 和 diff size。
+- `remem_shared`：source adapter 使用生产 hooks/automatic capture 写入临时
+  `REMEM_DATA_DIR`，bounded worker drain 后由 target adapter 通过正常
+  SessionStart/MCP/Context Bundle 读取同一 store。禁止调用
+  `coding_bench::condition::render_seeded_remem_context` 或
+  `save_memory` shortcut。
+- `remem_without_host_native_import` /
+  `remem_with_host_native_import` 仅改变 #852 import switch，其余 config hash
+  必须一致。imported items 保留 origin/trust，不能转成 canonical。
+- oracle/full transcript/preloaded 等 diagnostic surfaces 有独立 condition id，
+  report 层永不把它们加入 primary denominator 或 public comparison。
+
+### 4. Runner、状态机与 artifact（B-006-B-008、B-017-B-021）
+
+- `cross_host/runner.rs` 构造随机化但完整的 tuple plan：
+  `direction × task × condition × run_index`。primary 固定 288 tuple；
+  native ablation 另建 paired diagnostic plan。
+- 每个 tuple 具有稳定 `matrix_key` 和不可复用 `attempt_id`。artifact 先写临时
+  文件，flush/fsync 后 atomic rename；完成 artifact 不可覆盖。
+- pre-target infrastructure failure 可使用新 attempt 重试同一 tuple，历史
+  artifact 保留；target 已启动后的 outcome failure 是该 run index 的最终
+  outcome，不允许用“再跑一次成功”替换。report 采用预注册的 first-started-
+  target attempt policy。
+- resume 读取已验证 artifact hash，只补缺失 tuple。重复 matrix key、完成
+  artifact hash 变化、半写文件或 run/config hash 不一致均 fail closed。
+- `cross_host/score.rs` 在 target agent 退出后才 materialize hidden files，
+  运行 array-argument score commands，验证 changed paths/patch patterns，
+  并生成 failure taxonomy、metrics 与 attribution linkage。
+- run schema 将 environment/artifacts 改为 closed object，并要求 suite/
+  code/fixture/config hash、phase status、attempt history、scanner result、
+  scoring provenance、export cost 和 attribution refs。scanner 同时扫描 raw
+  local artifacts 与待提交 sanitized artifact。
+- raw stdout/stderr/auth/private roots 留在 `.gitignore` 的本地 artifact
+  目录；committed report 只引用 scanner-passed sanitized run records/hash。
+
+### 5. Report、paired bootstrap 与 claim gate（B-022-B-031）
+
+- `cross_host/report.rs` 先验证 matrix completeness 和每个 run schema/hash，
+  再按方向/condition/task 汇总。所有适用失败进入分母；缺失 metric 输出
+  `null` 加 `missing_count`，不写 0。
+- `bootstrap.rs` 用固定算法版本、显式 seed、95% CI 和 task-cluster
+  resampling，对 `remem_shared` 分别配对 `target_host_native` 和
+  `exported_file`。配对单位是同方向、同 task、相同 run-index config 的
+  outcome cluster；方向分别计算，aggregate 只作为补充。
+- `claim_gate.rs` 依次检查：
+  1. 288 primary completeness；
+  2. native import ablation completeness；
+  3. artifact/scanner/attribution integrity；
+  4. direction-specific paired CI；
+  5. exported-file cost presence；
+  6. 五项 stop-loss。
+  任一安全 leak/stop-loss 失败优先于 effect；CI 含 0 只生成预注册
+  directional/insufficient wording。
+- `claims-registry.json` 预注册两个方向的 remem-vs-native、
+  remem-vs-exported 和 stop-loss claim，初始均为 `INSUFFICIENT`。gate 复用
+  `eval/claims/claim_gate.py` 的 report-hash/wording contract，同时要求专用
+  cross-host verdict 与 report hash 一致。
+- `cross-host-report.schema.json` 固定 matrix counts、direction results、
+  denominator、bootstrap config/CI、cost、ablation、stop-loss、claim verdict、
+  code/fixture hashes 和 source artifact manifest。
+- `scripts/ci/check_public_claims.py` 读取 committed cross-host report/registry；
+  没有 hash-bound PASS 时，README/README.zh-CN/CHANGELOG 中的正向跨宿主
+  superiority wording 失败。普通 CI 只验证已提交 evidence，绝不执行 live
+  benchmark。
+
+### 6. CLI 与文档
+
+新增稳定命令：
+
+```text
+remem bench cross-host verify --root eval/cross-host --json-out <path>
+remem bench cross-host run --root eval/cross-host --runs-per-condition 3 \
+  --matrix primary --json-out <path> [--dry-run] [--confirm-live-run]
+remem bench cross-host run --root eval/cross-host --runs-per-condition 3 \
+  --matrix native-import-ablation --json-out <path> \
+  [--dry-run] [--confirm-live-run]
+remem bench cross-host report --root eval/cross-host \
+  --json-out <path> --markdown-out <path>
+```
+
+- 所有写 report 的命令要求显式 output path。
+- `run --dry-run` 只验证 tasks、matrix、adapter availability declaration 和
+  paths，不读取 auth、不启动宿主。
+- `verify` 对 committed report、sanitized artifacts、hash、claim registry
+  做离线验证。
+- README 结果段落依赖最后一个人工 task：只有 report + gate PASS 后才加入
+  direction-specific 数字与直接链接；否则仅保留“无公开结论”政策。
+- 代码引入用户可见 CLI，按 repo version-sync contract 在一个实现 PR 中同步
+  Cargo/plugin/npm/server 版本和 CHANGELOG；真实 run/report evidence 可在后续
+  非版本 PR 中提交。
+
+## Product-to-Test Mapping
+
+| Product invariant | Implementation area | Verification |
+| --- | --- | --- |
+| B-001 infrastructure/insufficient truth | charter state derivation、report gate | synthetic empty suite：`bench cross-host verify` 输出 `insufficient` 且非 PASS；README 无结果。 |
+| B-002, B-005 task directions/categories | task schema、`fixture.rs` | `python3 eval/cross-host/scripts/run_dry.py` 证明两个方向各 12 类；wrong-host fixture 被拒绝。 |
+| B-003, B-004 ready lifecycle/empty fields | task schema、schema self-tests | 24 files 为 `ready` 且 todo/score/fixture 完整；ready+empty-score 与 missing-key negative fixtures 失败。 |
+| B-006 primary 288 | run plan、report completeness | dry-run 精确打印 288；删一个、复制一个、unverified 一个的 report tests 均 insufficient。 |
+| B-007 native paired ablation | diagnostic plan、report | with/without import 同 hash 配对通过；缺侧或 config drift negative tests 失败。 |
+| B-008 comparability | matrix/config hashing | target prompt/fixture/model 任一 drift 的 paired fixture 被 verifier 拒绝。 |
+| B-009, B-032 explicit/human authorization | CLI、route/handoff | `--dry-run` mock 证明零 spawn/network；缺 `--confirm-live-run` 的 live command 非零；human gate tasks 未勾选。 |
+| B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session roots 全异；target 先启动、共享 store（非允许项）和 source cleanup failure tests 均失败。 |
+| B-011, B-016 leakage/hidden tests | sandbox、scanner、score timing | scanner self-test 覆盖真实 HOME/session/auth/private/hidden paths；agent 读取 hidden file 的 fixture 判 breach。 |
+| B-012 condition surfaces | condition engine | 每个 primary condition 的正例 + 任一额外 surface 的负例；surface manifest 必须闭集相等。 |
+| B-013 real remem pipeline | remem_shared condition、capture attribution | integration test 从 hook event 到 selected context refs；production code test 断言未调用 seed/save/preload shortcut。 |
+| B-014, B-024 export freeze/cost | exported-file protocol、report | target-prompt-before-freeze 与缺 cost artifact 被拒绝；report 列出 per-task/aggregate 四类成本。 |
+| B-017 failure completeness | runner/artifact schema | auth/crash/timeout/extraction/score/scanner/cleanup fault injection 均产生 typed failure 或 suite error。 |
+| B-018, B-019 retry/resume | artifact store、attempt policy | retry 保留旧 artifact；overwrite、duplicate matrix key、partial file、changed hash tests 全部失败。 |
+| B-020, B-021 attribution integrity | run schema、score/ref resolver | 缺每种 ref、跨 run ref、unknown/conflicting origin、native-as-canonical negative fixtures 均被拒绝。 |
+| B-022, B-023 denominators/directions | report builder | failure run 在分母；缺值为 null；单方向缺失时 aggregate 不得 PASS。 |
+| B-025, B-026 paired bootstrap/CI wording | bootstrap、claim gate | fixed seed golden CI 可重现；unpaired/config drift/CI includes 0 只能得 directional/insufficient。 |
+| B-027, B-028 stop-loss precedence | report/claim gate | 每项阈值边界正负例；resolved gain + 任一 leak 仍为 FAIL。 |
+| B-029 native import trust | condition/attribution/report | with/without report 分开；import origin/trust 被篡改或混入 primary 时失败。 |
+| B-030 compatibility | versioned loaders | v1 skeleton/old artifact 被明确拒绝或转换后重新验证，不能直接 complete。 |
+| B-031 public claim surface | dedicated claim gate、CI check | report hash mismatch、INSUFFICIENT/FAIL + positive README wording 均使 `check_public_claims.py` 失败；PASS+link 正例通过。 |
+
+## 数据流
+
+```text
+versioned charter + 24 ready tasks
+  -> dry-run / complete randomized matrix plan
+  -> source host isolated phase
+  -> condition-specific handoff materialization
+  -> source termination + bounded pipeline drain + evidence seal
+  -> target host isolated phase
+  -> hidden-test scoring
+  -> leak scan + attribution resolution
+  -> immutable sanitized run artifact + hash manifest
+  -> direction-specific aggregation
+  -> paired task-cluster bootstrap
+  -> native-import ablation + exported-file cost + stop-loss
+  -> claim verdict + hash-bound JSON/Markdown report
+  -> offline public-claim CI
+  -> optional human-approved README wording
+```
+
+持久化仅发生在 benchmark 指定的 temp/private roots、显式 output path 和最终
+sanitized report paths。真实 user HOME、默认 remem DB、来源宿主 session store
+与 hidden fixtures 永不进入可提交 artifact。
+
+## 备选方案
+
+- **只扩展 Python dry-run**：无法安全复用现有 Rust process-group timeout、
+  host-read sandbox、hidden-test scoring 和 CLI/report contracts，拒绝。
+- **复用 coding bench 的 `Remem` condition**：该路径直接 seed memory 并追加
+  gold details，只能作为 diagnostic upper bound，违反 B-013，拒绝。
+- **只执行一个方向**：无法证明跨宿主对称性，也会掩盖单向失败，拒绝。
+- **把 native import 混入 `remem_shared`**：无法归因其增益/伤害，拒绝；必须
+  单独 paired ablation。
+- **在 CI 自动执行 288+ live runs**：会隐式使用 auth/network/LLM，违反人工
+  授权和 workflow maturity，拒绝。
+
+## 风险
+
+- **Security**：宿主 auth、真实 HOME/session、hidden tests 和 private fixtures
+  是最高风险边界。使用 allowlist env、host-read sandbox、private root、
+  post-run scanner、sanitized artifacts；任一 leak fail closed。
+- **Logic**：condition contamination、重试 cherry-pick、缺失分母和 aggregate
+  掩盖方向失败会制造虚假结论。用 matrix/config hash、immutable attempt
+  history、direction-first report 和 completeness gate 防止。
+- **Compatibility**：schema v2 不 silent-accept v1 skeleton/artifact；旧文件
+  保留历史，显式转换后才可计数。
+- **Performance/Cost**：primary 至少 288 runs，native ablation 还会增加 paired
+  runs。支持中断恢复和 tuple filter，但完整 claim 不能以抽样 smoke 替代。
+- **Maintenance**：双宿主 CLI 可能漂移。adapter 记录 binary/version/hash，
+  未识别版本 fail closed；更新 adapter 时必须提升 policy/version 并重跑。
+- **Statistical validity**：12 task clusters/方向仍较小；报告完整 CI 和 task
+  分布，CI 含 0 时不作正向 claim。
+
+## 测试计划
+
+- [ ] Offline schema/scanner：
+
+  ```bash
+  python3 eval/cross-host/scripts/schema_validate.py --self-test
+  python3 eval/cross-host/scripts/scan_artifacts.py --self-test
+  python3 eval/cross-host/scripts/run_dry.py
+  ```
+
+- [ ] Rust focused tests：
+
+  ```bash
+  cargo test eval::host_isolation
+  cargo test eval::cross_host
+  cargo test eval::coding_bench
+  ```
+
+- [ ] CLI dry-run/verify（不得启动宿主）：
+
+  ```bash
+  cargo run -- bench cross-host run --root eval/cross-host \
+    --runs-per-condition 3 --matrix primary --dry-run \
+    --json-out /tmp/remem-cross-host-plan.json
+  cargo run -- bench cross-host verify --root eval/cross-host \
+    --json-out /tmp/remem-cross-host-verify.json
+  ```
+
+- [ ] Public claim negatives：
+
+  ```bash
+  python3 scripts/ci/check_public_claims.py --self-test
+  python3 eval/claims/claim_gate.py check eval/cross-host/claims-registry.json
+  ```
+
+- [ ] Repository gates：
+
+  ```bash
+  cargo fmt --check
+  cargo check
+  cargo clippy --all-targets -- -D warnings
+  cargo test
+  python3 scripts/ci/check_plugin_version_sync.py
+  ```
+
+- [ ] Manual live verification（仅在 SP935-T8 人工授权后）：先做每方向一个
+  smoke tuple，核对 auth/sandbox/capture/cleanup/artifact；再执行完整 288
+  primary 与 native ablation。smoke 不能进入公开分母。
+
+## 回滚方案
+
+1. 在任何 live run 前，可移除 `bench cross-host` executable surface，并保留
+   schema/task/history contract；状态回到 `executable_no_runs` 或
+   `infrastructure_only_no_runs`，不得伪造结果。
+2. 若 adapter/sandbox 有 leak，立即停止后续 tuple，将已产生 artifact 标记
+   invalid 并保留审计，不发布 report；修复必须提升 policy/version 后重跑受
+   影响完整矩阵。
+3. 若 report/bootstrap/claim gate 有缺陷，撤回 README/CHANGELOG 结果 wording，
+   保留原始 immutable artifacts 和旧 report hash，生成新版本报告而不是覆盖。
+4. 版本回滚需同步所有 Cargo/plugin/npm/server surface；已提交的失败/泄漏
+   evidence 不得因代码回滚删除。
+
+## Human Gates
+
+本文件不构成 `spec_approval`。只有 maintainer 批准 product/tech exact diff、
+确认宿主 auth/sandbox 与 public-claim security 边界、把 GH-935 置为
+`ready_to_implement`，并使 fresh duplicate evidence 与 implement route gate
+通过后，才能开始实现。live 288+ run、最终 claim wording、PR review、merge 和
+release 还需各自人工门禁。
