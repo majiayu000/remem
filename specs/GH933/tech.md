@@ -72,9 +72,11 @@ human `spec_approval` 才能进入 implementation。
   edge 影响。follow-up 必须修正并增加 cross-project、cross-branch 与
   cross-subject fixtures，不能让 scope 外 relation 使 scope 内 claim 被拒绝。
 - 当前 relation loader 扫描全部 `memory_edges` 和 trusted memory graph
-  edges 后在 Rust 中用 `Vec::contains` 过滤。Phase A library-only 可以先保留，
-  但进入 Phase B hot path 前必须把 scope/id 约束下推到 SQL，或用等价 bounded
-  lookup，并用 representative corpus 证明延迟和内存上限。
+  edges 后在 Rust 中用 `Vec::contains` 过滤。下一份 Phase A hardening
+  follow-up 必须把 scope/id 约束下推到 SQL，或实现等价 bounded lookup，
+  并在该 follow-up merge-ready 前用 representative corpus、
+  `EXPLAIN QUERY PLAN`、p50/p95、rows examined/returned 与 memory bound
+  证明不会扫描无关 project 全表；不得推迟到 Phase B。
 - 当前 dual-evidence fixture 验证一个 claim 的两个 evidence refs，不验证
   `ClaimRelationKind::Supports` 的 adapter/delivery。Phase A 验证应补一个
   focused Supports relation fixture。
@@ -180,11 +182,14 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
 - scoped memories 使用现有 project/topic/branch indexes；owner claims 使用
   owner-active index。
 - 当前 evidence lookup 为逐 claim/逐 event 查询，relation lookup 为全表扫描
-  后内存过滤，`memory_ids.contains` 还会带来线性 membership cost。Phase A
-  不在 context hot path，风险暂时隔离，但不能直接带入 Phase B。
-- Phase B gate 前应记录 representative project 的 claim/edge 数量、SQL
-  query plan、p50/p95 latency、allocated rows 和 rendered budget；relation
-  查询必须 bounded，且同一次 render 只运行一次 projection。
+  后内存过滤，`memory_ids.contains` 还会带来线性 membership cost。即使
+  library-only projection 尚未进入 context hot path，relation 全表扫描也必须
+  在下一份 Phase A hardening follow-up 中消除。
+- `SP933-T4` 必须在该 Phase A follow-up merge-ready 前记录 representative
+  project 的 claim/edge 数量、SQL query plan、p50/p95 latency、
+  rows examined/returned 与 memory bound，并证明 relation 查询受 scoped IDs
+  约束。Phase B 仍需另行量测 allocated rows、rendered budget，且同一次
+  render 只运行一次 projection，但不得承担 Phase A 遗留的 bounded lookup。
 - 没有数据时返回空/abstention，不应启动 LLM 或 background work。
 
 ## 安全
@@ -268,6 +273,8 @@ Phase B 必须通过单独批准的 rollout gate 保留旧 context path；projec
     "CHANGELOG.md",
     "Cargo.lock",
     "Cargo.toml",
+    "docs/specs/GH933/PRODUCT.md",
+    "docs/specs/GH933/TECH.md",
     "npm/remem/package.json",
     "plugins/remem/.codex-plugin/plugin.json",
     "plugins/remem/runtimes/remem-releases.json",

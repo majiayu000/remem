@@ -113,8 +113,10 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       可诊断错误或明确 diagnostic；不得静默形成较低 trust 的“正常成功”。
 - [ ] SQLite authorizer、`total_changes` 或等价 regression 证明 projection
       SELECT-only；projection v1 golden output 的变更必须显式审核。
-- [ ] follow-up PR 使用 `Refs #933`，只修改批准的 Phase A hardening 与必要的
-      release metadata，不接入 Context Bundle/writers/schema，不关闭 GH-933。
+- [ ] follow-up PR 使用 `Refs #933`，只修改批准的 Phase A hardening、当前
+      `docs/specs/GH933/{PRODUCT,TECH}.md` 契约与必要的 release metadata；
+      current contract 必须移除已被 hardening 纠正的过时完成声明，不接入
+      Context Bundle/writers/schema，不关闭 GH-933。
 
 ### GH-933：后续整体完成条件
 

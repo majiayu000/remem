@@ -25,9 +25,10 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
   返回 `decision=allowed`。该结果只授权写 spec，不等于
   `ready_to_implement` 或 human `spec_approval`。
 - Phase A 待补/待证：cross-project relation 隔离、focused Supports relation、
-  malformed provenance、SELECT-only/no-write，以及完整 current-head verification。
-- relation bounded query 与 representative performance evidence 必须在 Phase B
-  hot-path 接入前完成；不因 Phase A library-only 暂不在 hot path 而静默忽略。
+  malformed provenance、SELECT-only/no-write、bounded relation lookup、
+  representative query-plan/performance evidence，以及完整 current-head
+  verification；这些都是下一份 Phase A hardening follow-up 的 merge 前置项，
+  不得推迟到 Phase B。
 - Phase B 的 Context Bundle、worktree/task selector、rollback 与 historical
   explanation，以及 Phase C writer decision/收敛均为后续任务。
 
@@ -41,7 +42,7 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
 
 - [ ] `SP933-T4` Owner: Phase A performance verifier; Dependencies: `SP933-T3`; Done when: relation lookup 不再扫描无关 project 的全部 `memory_edges`/trusted `graph_edges`，scoped ID membership 与 evidence lookup 有 bounded argument/row behavior，query plan 使用现有 indexes，结果 bytes 与 projection version 1 fixtures 保持 intentional，并记录 representative corpus、`EXPLAIN QUERY PLAN`、p50/p95、rows examined/returned 与 memory bound；新增 migration/index 不在批准范围内，若现有 index 不足必须停止并回到 spec approval；Verify: query-plan/benchmark artifact、`cargo test truth -- --nocapture`、full projection golden parity、`cargo fmt --check`、`cargo check`。
 
-- [ ] `SP933-T5` Owner: Phase A coordinator; Dependencies: `SP933-T2`, `SP933-T3`, `SP933-T4`; Done when: coordinator rebases the new follow-up on live `origin/main`, stages one patch version strictly above that base across `CHANGELOG.md` and Cargo/plugin/npm/server/release metadata, and opens one implementation PR using `Refs #933`；PR 只声明 Phase A hardening，不声称 Context Bundle/worktree-task/writer convergence，不关闭 GH-933，并在 human merge 前具备 current-head focused/full checks、preflight、independent review、review threads 与 PR-gate evidence；Verify: `cargo fmt --check`、`cargo check`、`cargo test truth -- --nocapture`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、plugin version sync、version bump、SpecRail check、full preflight 和 current-head read-only `pr_gate`。
+- [ ] `SP933-T5` Owner: Phase A coordinator; Dependencies: `SP933-T2`, `SP933-T3`, `SP933-T4`; Done when: coordinator rebases the new follow-up on live `origin/main`, updates `docs/specs/GH933/PRODUCT.md` and `docs/specs/GH933/TECH.md` to match the verified hardening behavior and remove outdated completion claims, stages one patch version strictly above that base across `CHANGELOG.md` and Cargo/plugin/npm/server/release metadata, and opens one implementation PR using `Refs #933`；PR 只声明 Phase A hardening，不声称 Context Bundle/worktree-task/writer convergence，不关闭 GH-933，并在 human merge 前具备 current-head focused/full checks、preflight、independent review、review threads 与 PR-gate evidence；Verify: current-contract diff review、`cargo fmt --check`、`cargo check`、`cargo test truth -- --nocapture`、`cargo test`、`cargo clippy --all-targets -- -D warnings`、plugin version sync、version bump、SpecRail check、full preflight 和 current-head read-only `pr_gate`。
 
 - [ ] `SP933-T6` Owner: Phase B spec owner + human maintainer; Dependencies: `SP933-T5`, `SP933-T4`; Done when: Phase A 已有真实运行/性能 evidence，product/tech contract 被更新为可实施的 Phase B closed design，明确 shared render reference epoch、Context Bundle current truth/decisions/conflicts、worktree/task selectors、historical explanation、policy/sensitivity、cache/budget、error-visible behavior、rollout/rollback gate 和 owned files，human 批准 exact spec head，新的 implement route gate 为 allowed; Verify: updated CT mapping、deterministic commands、SpecRail packet check、human `spec_approval`、fresh duplicate evidence 和 allowed route-gate JSON。
 
@@ -62,8 +63,9 @@ packet 仍需 human `spec_approval`，本计划不表示 Phase A 已 fresh verif
 - 新 Phase A hardening lane 独占 `src/truth/adapter.rs`、
   `src/truth/projection.rs`、`src/truth/tests.rs`；`SP933-T2`–`SP933-T5`
   默认串行，read-only reviewer 可并行，但不得共享 writable files。
-- Version/changelog metadata 与 PR body 由 coordinator 在 implementation
-  agent 停止写入后单独拥有；spec packet 由 spec owner 独占。不得把
+- Current contract `docs/specs/GH933/{PRODUCT,TECH}.md`、version/changelog
+  metadata 与 PR body 由 coordinator 在 implementation agent 停止写入后
+  单独拥有；spec packet 由 spec owner 独占。不得把
   `src/truth/types.rs`、`src/truth.rs`、migration、context 或 writer 路径
   静默加入 lane。
 - Phase B 在 Phase A evidence 与 `SP933-T4` 性能 gate 后串行开始；Phase C
