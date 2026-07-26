@@ -21,6 +21,7 @@ use super::mcp_processes::check_mcp_processes;
 use super::memory_poisoning::check_memory_poisoning_defense;
 use super::native_memory::check_native_memory_sync;
 use super::pack_imports::check_pack_imports;
+use super::plaintext_artifacts::check_plaintext_artifacts;
 use super::procedure_exports::check_procedure_exports;
 use super::reranker::check_reranker;
 use super::retrieval_enrichment::check_retrieval_enrichment;
@@ -90,6 +91,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
         check_schema_migration(shared_db.conn(), shared_db.open_error())
     })?;
     push_check(&mut checks, &mut on_check, check_key_format)?;
+    push_check(&mut checks, &mut on_check, check_plaintext_artifacts)?;
     push_check(&mut checks, &mut on_check, || {
         check_database(shared_db.conn(), shared_db.open_error())
     })?;
