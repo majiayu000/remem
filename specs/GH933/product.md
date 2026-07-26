@@ -54,13 +54,18 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    visibility/policy suppression 独立表达；`Archived` 不等于无效，
    `Compressed` 不等于 false，`Suppressed` 不得自动改写 claim 的真假。
 3. CT-003 查询必须先应用 scope 隔离。Phase A 至少支持 project 和 branch；
-   project 不匹配的 claim 不得泄露，带 branch 的 claim 只在对应 branch
-   中可见；relation 的两个 endpoint 也必须同时属于同一 scoped claim set，
-   scope 外 relation 不得改变 scope 内结果。worktree/task selector 属于
-   GH-933 后续阶段，不是 Phase A hardening 的完成项。
+   project 不匹配的 claim 不得泄露。`branch=Some(B)` 明确表示 branch-scoped
+   查询，只能看到 branch-neutral 与 exact `B` rows；`branch=None` 明确表示
+   branch-agnostic 查询，可以看到该 project 的全部 branch rows，而不是
+   branch-neutral-only 的隐式默认。relation 的两个 endpoint 也必须同时属于
+   该查询的 scoped claim set 与同一 subject group，scope 外 relation 不得改变
+   scope 内结果。worktree/task selector 属于 GH-933 后续阶段，不是 Phase A
+   hardening 的完成项。
 4. CT-004 指定 `as_of` 时，projection 只能使用该时点已存在且在有效时间窗内
-   的 claim、relation 和 evidence。若底层数据没有足够历史信息恢复过去状态，
-   必须暴露限制或返回 `Unknown`，不得根据当前值伪造历史 truth。
+   的 claim、relation 和 evidence；`captured_events.created_at_epoch > as_of`
+   的 future evidence 必须在计算 evidence trust 前排除。若底层数据没有足够
+   历史信息恢复过去状态，必须暴露限制或返回 `Unknown`，不得根据当前值伪造
+   历史 truth。
 5. CT-005 在同一 subject 的候选 claim 中，时间上生效的显式
    `Supersedes` 必须优先于纯 recency，并在结果中记录被替代项和选择原因。
 6. CT-006 verified evidence 必须优先于 model-generated 或 untrusted
@@ -104,15 +109,26 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 
 - [ ] relation 只有在两个 endpoint 同时属于本次 query 的 scoped claim set
       且属于相关 subject group 时才参与 resolution；cross-project、
-      cross-branch 与 cross-subject relation 不泄露也不影响 scope 内 truth。
+      explicit-branch-scope 外与 cross-subject relation 不泄露也不影响 scope
+      内 truth。`branch=None` 的 branch-agnostic 全分支语义和
+      `branch=Some(B)` 的 neutral-plus-exact 语义都有独立 regression。
 - [ ] `memory_edges` 与 trusted memory-to-memory `graph_edges` lookup 在 SQL
       或等价 bounded lookup 中受 scoped IDs 约束，不扫描无关项目全表；提供
       `EXPLAIN QUERY PLAN` 与 representative p50/p95/row-bound evidence。
 - [ ] `ClaimRelationKind::Supports` 有真实 adapter/output fixture。
-- [ ] malformed `evidence_event_ids` 与 `source_refs_json` fail closed，并返回
-      可诊断错误或明确 diagnostic；不得静默形成较低 trust 的“正常成功”。
+- [ ] explicit `as_of` 查询在 trust 比较与 projection output 中排除
+      `created_at_epoch > as_of` 的 captured-event evidence；future verified
+      evidence 不得改变历史 winner，并覆盖 before/equal/after boundary。
+- [ ] malformed `evidence_event_ids`、malformed `source_refs_json`，以及
+      syntactically valid 但指向不存在 `captured_events` row 的 dangling event
+      ref 均 fail closed，并返回包含 claim/ref context 的可诊断错误；不得静默
+      形成较低 trust 的“正常成功”。
 - [ ] SQLite authorizer、`total_changes` 或等价 regression 证明 projection
-      SELECT-only；projection v1 golden output 的变更必须显式审核。
+      SELECT-only。上述 scope/as-of/provenance 修复被定义为兑现
+      `CT-003`/`CT-004`/`CT-015` 的 v1 compatible correction：public JSON
+      shape、enum 与既有 contract-valid golden bytes 必须保持不变；若实现需要
+      改这些 surface 或改变其它合法输入的 resolution policy，必须停止并以 v2
+      spec/planned paths 重新取得 human approval。
 - [ ] follow-up PR 使用 `Refs #933`，只修改批准的 Phase A hardening、当前
       `docs/specs/GH933/{PRODUCT,TECH}.md` 契约与必要的 release metadata；
       current contract 必须移除已被 hardening 纠正的过时完成声明，不接入
@@ -137,7 +153,10 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - 两个 claim 时间相同、evidence trust 相同，且没有可裁决的关系。
 - 新 decision 在 `as_of` 之后 supersede 旧 decision。
 - user-authored evidence、tool output 与 model-generated enrichment 冲突。
-- branch A 与 branch B 对同一 subject 有不同 current truth。
+- branch A 与 branch B 对同一 subject 有不同 current truth；显式 branch 查询
+  只消费 neutral+exact rows，而 `branch=None` 明确形成 branch-agnostic 竞争。
+- claim 在 `as_of` 前存在，但其 verified captured-event evidence 在 `as_of`
+  后才创建，或引用的 ledger event 已不存在。
 - claim 被 suppressed 但仍可能在政策允许的历史审计中存在。
 - archived evidence 仍有历史价值，但当前查询不应把它当作 active truth。
 - 底层状态被原地改写或数据已删除，无法完整重建过去时点。
@@ -145,9 +164,11 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 
 ## 发布说明
 
-PR #939 已发布 Phase A library-level read projection baseline，不新增 CLI/HTTP
-或 Context Bundle 用户界面。下一份 Phase A hardening follow-up 仍以
-`Refs #933` 关联开放 issue，并按实现时 `main` 的版本顺序做一次必要的 patch
-version 同步；不在本规格中预占具体版本号。Phase B/C 必须独立经过
-spec approval、实现验证和发布说明；在这些阶段完成前，不得将 GH-933 或完整
-CurrentTruth 能力标记为已交付。
+PR #939 已合并 Phase A library-level read projection baseline，但对应 source
+version/release manifest 仍是 staged/unreleased，不能声称已向 installed-binary
+用户发布；它也没有新增 CLI/HTTP 或 Context Bundle 用户界面。下一份 Phase A
+hardening follow-up 仍以 `Refs #933` 关联开放 issue，并按实现时 `main` 的版本
+顺序做一次必要的 patch version 同步；不在本规格中预占具体版本号。只有实际
+release artifact 发布并经验证后才能使用 “released/published” 表述。Phase B/C
+必须独立经过 spec approval、实现验证和发布说明；在这些阶段完成前，不得将
+GH-933 或完整 CurrentTruth 能力标记为已交付。
