@@ -68,6 +68,15 @@ pub enum TrustClass {
 #[serde(rename_all = "snake_case")]
 pub enum ContextIntent {
     SessionStart,
+    // GH-934 retrieval-router intents. The router compiles a
+    // `RetrievalPlan` for these; `SessionStart` stays the bundle-planner
+    // intent and is not routable (see `crate::retrieval_router`).
+    ResumeWork,
+    ExplainDecision,
+    DebugFailure,
+    ApplyPreference,
+    ReviewChange,
+    ExploreHistory,
 }
 
 /// The retrieval channels the v1 planner knows about; they mirror the

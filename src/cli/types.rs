@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
+pub(in crate::cli) use super::context_types::{ContextGateAction, ContextPlanArgs};
 pub(in crate::cli) use super::embedding_types::EmbeddingAction;
 pub(in crate::cli) use super::memory_types::{
     MemoryAction, MemoryCleanupType, MemorySuppressionsAction,
@@ -64,6 +65,8 @@ pub(super) enum Commands {
         #[command(subcommand)]
         action: ContextGateAction,
     },
+    /// Compile a deterministic task-aware retrieval plan (GH-934).
+    ContextPlan(ContextPlanArgs),
     /// Inspect or edit remem runtime configuration.
     Config {
         #[command(subcommand)]
@@ -584,24 +587,6 @@ pub(super) enum Commands {
     },
     /// Export curated memories to a human-editable mirror.
     Export(ExportArgs),
-}
-#[derive(Subcommand)]
-pub(in crate::cli) enum ContextGateAction {
-    /// Show recent read-only context injection rows.
-    Status {
-        /// Restrict rows to one project path.
-        #[arg(long, short)]
-        project: Option<String>,
-        /// Restrict rows to one host session ID.
-        #[arg(long)]
-        session: Option<String>,
-        /// Maximum recent rows to show.
-        #[arg(long, short = 'n', default_value = "20")]
-        limit: i64,
-        /// Emit a single JSON object with stable fields for scripts.
-        #[arg(long)]
-        json: bool,
-    },
 }
 #[derive(Subcommand)]
 pub(in crate::cli) enum ModelAction {

@@ -1,6 +1,7 @@
 mod actions;
 mod archive_types;
 mod config_types;
+mod context_types;
 mod cwd;
 mod dispatch;
 mod embedding_types;

@@ -38,6 +38,7 @@ pub mod observe;
 pub mod perf;
 pub mod project_id;
 pub mod retrieval;
+pub mod retrieval_router;
 pub mod rules;
 pub mod runtime_config;
 mod session_rollup;

@@ -37,7 +37,7 @@ pub(super) fn estimate_tokens(text: &str) -> u32 {
 
 /// Planner-side scope validation. Executors re-validate the plan; both
 /// layers must agree before any candidate is considered.
-pub(super) fn validate_request(request: &ContextRequest) -> Result<()> {
+pub(crate) fn validate_request(request: &ContextRequest) -> Result<()> {
     if request.schema_version != CONTEXT_BUNDLE_SCHEMA_VERSION {
         bail!(
             "unsupported ContextRequest schema_version {} (expected {})",
