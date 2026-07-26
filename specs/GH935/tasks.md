@@ -49,7 +49,7 @@ GH-935
     - `eval/cross-host/scripts/{schema_validate.py,run_dry.py}`
     - `eval/cross-host/tasks/`
   - Done when:
-    - task/run/report schemas versioned 且 fail closed；
+    - task/run/report/live-run-authorization schemas versioned 且 fail closed；
     - 24 个 task 逐个包含 deterministic repo fixture、source episode、
       hidden tests、score commands、gold facts、allowed/forbidden paths；
     - 每个 task 为 `ready` 且 `todo: []`；
@@ -79,6 +79,9 @@ GH-935
     - coding bench 与 cross-host 共用一个 env allowlist、private-root、
       host-read sandbox、timeout/process cleanup primitive；
     - Claude Code/Codex adapters 使用独立 HOME/config/session roots；
+    - source/target 的 phase-private condition roots 保持不同；只有
+      `remem_shared` 可串行挂载当前 run 独有且位于两侧 private roots 之外的
+      transfer store，任何其他 shared/cross-run path 都 fail closed；
     - credential bootstrap 最小化且 credential bytes 不进入 artifacts；
     - 非 macOS 在没有等价 deny-host-read 证明时 fail closed；
     - dry-run/verify call graph 不 spawn 宿主或网络。
@@ -101,6 +104,8 @@ GH-935
     - condition surface 是闭集并由 manifest/hash 审计；
     - `remem_shared` 走 automatic capture→extraction→promotion→normal
       retrieval，测试证明未调用 direct seed/save/preload shortcut；
+    - surface manifest 证明 `remem_shared` 唯一共同路径是 run-scoped transfer
+      store，source session/phase-private/cross-run path 的负例全部拒绝；
     - `exported_file` target-blind 冻结并记录 generation/maintenance cost；
     - native import with/without 除 import switch 外 config hash 完全相同；
     - diagnostic data 不进入 primary denominator。
@@ -133,6 +138,11 @@ GH-935
     - hidden tests 只在 agent 退出后注入；
     - attribution refs 全部可解析且 origin/scope/validity 一致；
     - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏。
+    - runner 在任何 live spawn 前验证未过期 authorization 的 exact
+      code/fixture/config/model/host hashes、allowed tuple set 与
+      host/LLM/cost hard caps；smoke plan 恰好一个 tuple 且永久排除公开分母。
+    - 同一 `authorization_id` 的 append-only usage ledger 跨命令累计
+      host/LLM/cost，并用锁与 atomic write 拒绝并发超额或拆单重置。
   - Verify:
 
     ```bash
@@ -195,7 +205,10 @@ GH-935
     - `bench cross-host run|verify|report` 接线且所有 output path 显式；
     - docs 保持 `executable_no_runs`/“无公开结论”，不引用 dry-run 数字为结果；
     - version-sync 文件使用同一新版本；
-    - planned-path manifest 与实际实现 diff 完全一致。
+    - 当前 integration/version PR 的 touched paths 全部属于 planned-path
+      manifest，且截至 T7 应完成的 implementation paths 已由 linked PR file
+      lists 覆盖；只允许把 report/live-evidence paths 明确 defer 到 T10/T11，
+      不在 T7 要求单个 PR diff 等于累计 manifest。
   - Verify:
 
     ```bash
@@ -246,12 +259,44 @@ GH-935
     - 先批准每方向一个 smoke tuple；smoke 通过隔离/attribution/cleanup 人工
       审查后，再单独批准完整 primary/native-ablation 执行；
     - smoke artifacts 明确不进入 public denominator。
+    - smoke authorization artifact 通过
+      `eval/cross-host/schemas/live-run-authorization.schema.json`，绑定 exact
+      head/fixture/config/model/host versions、两个允许 tuple、有效期、credential
+      bootstrap reference、artifact root 与 host/LLM/cost hard caps；artifact
+      不含 credential bytes。
   - Verify:
 
     ```bash
+    test -n "$CROSS_HOST_SMOKE_AUTHORIZATION"
+    test -n "$CROSS_HOST_MAX_HOST_CALLS"
+    test -n "$CROSS_HOST_MAX_LLM_CALLS"
+    test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 1 --matrix primary --dry-run \
-      --json-out /tmp/remem-cross-host-smoke-plan.json
+      --matrix smoke --direction claude_to_codex \
+      --task-id cc2cx-architecture-decision --condition remem_shared \
+      --run-index 0 --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
+      --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
+      --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
+      --json-out /tmp/remem-cross-host-smoke-cc2cx.json
+    cargo run --release -- bench cross-host run --root eval/cross-host \
+      --matrix smoke --direction codex_to_claude \
+      --task-id cx2cc-architecture-decision --condition remem_shared \
+      --run-index 0 --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
+      --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
+      --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
+      --json-out /tmp/remem-cross-host-smoke-cx2cc.json
+    cargo run --release -- bench cross-host verify --root eval/cross-host \
+      --input /tmp/remem-cross-host-smoke-cc2cx.json \
+      --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --expected-matrix smoke --expected-valid-runs 1 \
+      --json-out /tmp/remem-cross-host-smoke-cc2cx-verify.json
+    cargo run --release -- bench cross-host verify --root eval/cross-host \
+      --input /tmp/remem-cross-host-smoke-cx2cc.json \
+      --authorization "$CROSS_HOST_SMOKE_AUTHORIZATION" \
+      --expected-matrix smoke --expected-valid-runs 1 \
+      --json-out /tmp/remem-cross-host-smoke-cx2cc-verify.json
     ```
 
 - [ ] `SP935-T10` Owner: authorized benchmark operator; Done when: 288 个 primary tuples 均有 immutable scanner-passed artifact； Verify: final verifier 报告 `valid_runs == 288`； Covers: B-006, B-008…B-024, B-027, B-028。
@@ -269,8 +314,16 @@ GH-935
   - Verify:
 
     ```bash
+    test -n "$CROSS_HOST_PRIMARY_AUTHORIZATION"
+    test -n "$CROSS_HOST_MAX_HOST_CALLS"
+    test -n "$CROSS_HOST_MAX_LLM_CALLS"
+    test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
-      --runs-per-condition 3 --matrix primary --confirm-live-run \
+      --runs-per-condition 3 --matrix primary \
+      --authorization "$CROSS_HOST_PRIMARY_AUTHORIZATION" --confirm-live-run \
+      --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
+      --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
+      --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
       --json-out /tmp/remem-cross-host-primary.json
     cargo run --release -- bench cross-host verify --root eval/cross-host \
       --json-out /tmp/remem-cross-host-primary-verify.json
@@ -293,9 +346,16 @@ GH-935
   - Verify:
 
     ```bash
+    test -n "$CROSS_HOST_ABLATION_AUTHORIZATION"
+    test -n "$CROSS_HOST_MAX_HOST_CALLS"
+    test -n "$CROSS_HOST_MAX_LLM_CALLS"
+    test -n "$CROSS_HOST_MAX_ESTIMATED_COST_USD"
     cargo run --release -- bench cross-host run --root eval/cross-host \
       --runs-per-condition 3 --matrix native-import-ablation \
-      --confirm-live-run \
+      --authorization "$CROSS_HOST_ABLATION_AUTHORIZATION" --confirm-live-run \
+      --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
+      --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
+      --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
       --json-out /tmp/remem-cross-host-native-ablation.json
     cargo run --release -- bench cross-host report --root eval/cross-host \
       --json-out eval/cross-host/reports/cross-host-v1.json \
@@ -316,6 +376,9 @@ GH-935
     - maintainer 单独决定 README wording、merge、是否关闭 #935 与 release；
     - 若 matrix、ablation、stop-loss 或 claim 任一不完整，#935 保持 open，
       不以 infrastructure/partial PR 关闭。
+    - closure audit 从固定 baseline 收集 #937、spec PR、implementation PR 和
+      report/evidence PR 的 touched-file union；该 union 与 complete planned-path
+      manifest 精确相等，任一遗漏/额外路径都阻止关闭并要求先更新 spec。
   - Verify:
 
     ```bash

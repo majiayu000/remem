@@ -33,6 +33,7 @@ GH-935
     "eval/cross-host/schemas/cross-host-task.schema.json",
     "eval/cross-host/schemas/cross-host-run.schema.json",
     "eval/cross-host/schemas/cross-host-report.schema.json",
+    "eval/cross-host/schemas/live-run-authorization.schema.json",
     "eval/cross-host/examples/run-artifact-valid.json",
     "eval/cross-host/examples/run-artifact-invalid.json",
     "eval/cross-host/scripts/schema_validate.py",
@@ -101,11 +102,13 @@ GH-935
 }
 -->
 
-该 manifest 是 GH-935 完整实现、执行证据与公开 claim handoff 的预期文件
-边界。若真实宿主 CLI 探测、fixture 设计或实现证明需要其他路径，必须先用
-准确路径更新本 manifest、重新取得 human spec/security review，再修改
-新增路径。报告文件只有在真实运行和 gate 通过后才生成；本 spec lane 不创建
-或伪造报告。
+该 manifest 是 GH-935 所有 linked PR 的累计预期文件边界，不要求任一单独
+spec/implementation/report PR 的 diff 等于全集。每个 PR 的 touched-path subset
+必须属于该 manifest；T12 closure audit 从固定 baseline 起收集全部 linked PR 的
+file lists，并对 union 做最终精确相等检查。若真实宿主 CLI 探测、fixture 设计或
+实现证明需要其他路径，必须先用准确路径更新本 manifest、重新取得 human
+spec/security review，再修改新增路径。报告文件只有在真实运行和 gate 通过后
+才生成；本 spec lane 不创建或伪造报告。
 
 ## Codebase Context
 
@@ -158,13 +161,25 @@ GH-935
   同一 primitive，确保没有隔离回归。
 - `cross_host/isolation.rs` 定义闭集 `HostKind::{ClaudeCode,Codex}` 和各自
   adapter。每个 phase 建立独立 HOME、host config/session root、repo worktree
-  和 condition data root；只有 condition 明确允许的 sanitized credential
-  bootstrap 可以复制到 private root，credential bytes 永不进入 artifact。
+  和 phase-private condition data root；只有 condition 明确允许的 sanitized
+  credential bootstrap 可以复制到 private root，credential bytes 永不进入
+  artifact。`remem_shared` 另建一个位于两侧 private roots 之外、按 run 唯一命名
+  的 transfer store；source/target 只能串行把它挂载为 `REMEM_DATA_DIR`，其他
+  condition、其他 run、session/config roots 都不能访问它。
 - macOS 使用 host-read sandbox；其他平台在获得等价 deny-host-read 证据前
   fail closed。adapter 启动前记录宿主 binary/version/model/reasoning 和
   executable hash；未知 alias 或版本探测失败即停止。
-- live `run` 必须带显式确认参数并在 report command 中记录；`--dry-run`、
-  verify、schema self-test 和普通 CI 的 call graph 不得进入 adapter spawn。
+- live `run` 必须同时带显式确认参数与 schema-valid authorization artifact。
+  artifact 至少绑定 `authorization_id`、actor、approved/expires timestamps、
+  exact code/fixture/config/model/host-version hashes、允许的 matrix/tuple selectors、
+  credential-bootstrap reference（不得含 credential bytes）、artifact root、
+  `max_host_calls`、`max_llm_calls`、`max_estimated_cost_usd` 与 `decision=allow`。
+  CLI 还要求调用方显式传入不高于 artifact 的三项 hard caps；过期、hash/tuple
+  不匹配或预算耗尽均在 spawn/network 前 fail closed。artifact root 内的
+  append-only usage ledger 以 `authorization_id` 聚合所有命令的 host/LLM calls
+  与估算/实际成本，并以锁 + atomic write 防止并发或分拆调用重置预算。
+  `--dry-run`、verify、schema self-test 和普通 CI 的 call graph 不得读取 auth
+  或进入 adapter spawn。
 - source phase 完成后先终止进程、flush hook/capture、等待 bounded extraction
   drain、记录 evidence refs，再销毁 source session runtime；target phase
   只能随后启动。cleanup 失败产生 artifact 并阻止该 tuple 继续。
@@ -181,8 +196,11 @@ fixture/prompt/scorer/model hash：
   target-blind exporter；冻结 repo-local handoff 的 content hash，并记录
   generation/maintenance tokens、wall time、turns、bytes 和 diff size。
 - `remem_shared`：source adapter 使用生产 hooks/automatic capture 写入临时
-  `REMEM_DATA_DIR`，bounded worker drain 后由 target adapter 通过正常
-  SessionStart/MCP/Context Bundle 读取同一 store。禁止调用
+  run-scoped transfer store，bounded worker drain 后先销毁 source 的
+  HOME/config/session/condition roots，再由 target adapter 将同一 transfer store
+  挂载为 `REMEM_DATA_DIR`，通过正常 SessionStart/MCP/Context Bundle 读取。
+  surface manifest/hash 必须证明唯一共同路径就是该 transfer store，并拒绝任何
+  source session root、phase-private condition root 或 cross-run path。禁止调用
   `coding_bench::condition::render_seeded_remem_context` 或
   `save_memory` shortcut。
 - `remem_without_host_native_import` /
@@ -251,15 +269,27 @@ fixture/prompt/scorer/model hash：
 ```text
 remem bench cross-host verify --root eval/cross-host --json-out <path>
 remem bench cross-host run --root eval/cross-host --runs-per-condition 3 \
-  --matrix primary --json-out <path> [--dry-run] [--confirm-live-run]
+  --matrix primary --json-out <path> [--dry-run]
 remem bench cross-host run --root eval/cross-host --runs-per-condition 3 \
-  --matrix native-import-ablation --json-out <path> \
-  [--dry-run] [--confirm-live-run]
+  --matrix native-import-ablation --json-out <path> [--dry-run]
+remem bench cross-host run --root eval/cross-host --matrix smoke \
+  --direction <direction> --task-id <task-id> --condition <condition> \
+  --run-index <index> --authorization <path> --confirm-live-run \
+  --max-host-calls <n> --max-llm-calls <n> \
+  --max-estimated-cost-usd <usd> --json-out <path>
 remem bench cross-host report --root eval/cross-host \
   --json-out <path> --markdown-out <path>
 ```
 
 - 所有写 report 的命令要求显式 output path。
+- 任意非 dry-run `primary`/`native-import-ablation` 也必须提供
+  `--authorization`、`--confirm-live-run` 和三项 hard caps；authorization 的
+  allowed tuple set 必须覆盖实际 plan，且 runtime counter 不能超过任何 cap。
+- `--matrix smoke` 强制 direction/task/condition/run-index 各恰好一个，只产生
+  一个 tuple，并在 schema/report 中永久标记 `excluded_from_public_denominator`。
+  `verify --input <run-artifact> --authorization <path> --expected-matrix smoke`
+  重新校验 exact head/fixture/model、授权期限、调用/成本计数、sandbox、cleanup
+  与 exclusion marker。
 - `run --dry-run` 只验证 tasks、matrix、adapter availability declaration 和
   paths，不读取 auth、不启动宿主。
 - `verify` 对 committed report、sanitized artifacts、hash、claim registry
@@ -280,8 +310,8 @@ remem bench cross-host report --root eval/cross-host \
 | B-006 primary 288 | run plan、report completeness | dry-run 精确打印 288；删一个、复制一个、unverified 一个的 report tests 均 insufficient。 |
 | B-007 native paired ablation | diagnostic plan、report | with/without import 同 hash 配对通过；缺侧或 config drift negative tests 失败。 |
 | B-008 comparability | matrix/config hashing | target prompt/fixture/model 任一 drift 的 paired fixture 被 verifier 拒绝。 |
-| B-009, B-032 explicit/human authorization | CLI、route/handoff | `--dry-run` mock 证明零 spawn/network；缺 `--confirm-live-run` 的 live command 非零；human gate tasks 未勾选。 |
-| B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session roots 全异；target 先启动、共享 store（非允许项）和 source cleanup failure tests 均失败。 |
+| B-009, B-032 explicit/human authorization | CLI、authorization schema、route/handoff | `--dry-run` mock 证明零 spawn/network；缺/过期/mismatched authorization、缺 confirm 或超 hard cap 的 live command 在 spawn 前失败；human gate tasks 未勾选。 |
+| B-010, B-015 phase isolation/order | shared isolation、runner state machine | temp HOME/config/session/phase roots 全异；`remem_shared` 仅允许当前 run transfer store；target 先启动、其他 shared path 和 source cleanup failure tests 均失败。 |
 | B-011, B-016 leakage/hidden tests | sandbox、scanner、score timing | scanner self-test 覆盖真实 HOME/session/auth/private/hidden paths；agent 读取 hidden file 的 fixture 判 breach。 |
 | B-012 condition surfaces | condition engine | 每个 primary condition 的正例 + 任一额外 surface 的负例；surface manifest 必须闭集相等。 |
 | B-013 real remem pipeline | remem_shared condition、capture attribution | integration test 从 hook event 到 selected context refs；production code test 断言未调用 seed/save/preload shortcut。 |
@@ -394,7 +424,7 @@ sanitized report paths。真实 user HOME、默认 remem DB、来源宿主 sessi
   python3 scripts/ci/check_plugin_version_sync.py
   ```
 
-- [ ] Manual live verification（仅在 SP935-T8 人工授权后）：先做每方向一个
+- [ ] Manual live verification（仅在 SP935-T9 人工授权后）：先做每方向一个
   smoke tuple，核对 auth/sandbox/capture/cleanup/artifact；再执行完整 288
   primary 与 native ablation。smoke 不能进入公开分母。
 

@@ -90,15 +90,19 @@ infrastructure readiness 表述为 outcome evidence。
    reasoning 配置；只允许 condition memory surface 不同，避免用输入漂移
    制造效果差异。
 9. **B-009** live host/network/LLM runs 只能由明确的人工命令启动，并记录
-   操作者确认、宿主版本、模型和代码/fixture revision；普通 CI、schema
-   check、dry-run 和 report verify 不得启动宿主或网络调用。
+   操作者确认、宿主版本、模型和代码/fixture revision；每次 live smoke/full
+   run 还必须绑定未过期的授权 artifact、exact allowed tuples、累计最大
+   host/LLM calls 与累计最大估算成本；同一授权拆成多条命令也不能重置预算。
+   普通 CI、schema check、dry-run 和 report verify 不得启动宿主或网络调用。
 
 ### 隔离与 condition 边界
 
 10. **B-010** 每个 run 的来源阶段与目标阶段必须使用互不相同的新建
-    HOME、config、session store 和 condition data root；目标阶段不得读取
-    来源 session store、真实用户 HOME、其他 run 的数据或 benchmark-private
-    paths。
+    HOME、config、session store 和 phase-private condition data root；目标阶段
+    不得读取来源 session store、真实用户 HOME、其他 run 的数据或
+    benchmark-private paths。唯一例外是 `remem_shared` 可让两阶段依次挂载一个
+    与两侧 private roots 分离、仅属于当前 run 的 remem transfer store；该
+    store 不是 session/condition root，且不得承载其他 surface。
 11. **B-011** 任何 host HOME、auth/config、session、hidden test、
     private-root 或跨 project/user 泄漏都会使对应 run 无效并触发 suite
     stop-loss；泄漏 run 不得以“任务成功”掩盖，也不得从分母删除。
@@ -106,7 +110,9 @@ infrastructure readiness 表述为 outcome evidence。
     `no_memory` 无记忆面；`target_host_native` 仅有目标宿主自己的 native
     memory；`exported_file` 仅有按固定协议冻结的 repo-local handoff；
     `remem_shared` 仅通过真实 remem pipeline 写入并通过正常
-    SessionStart/MCP/Context Bundle 读取。出现额外 surface 时 run 无效。
+    SessionStart/MCP/Context Bundle 读取。`remem_shared` 的 run-scoped transfer
+    store 是唯一允许的跨阶段共同存储面；出现其他 shared path 或额外 surface
+    时 run 无效。
 13. **B-013** `remem_shared` 的来源证据必须经过自动 capture、extraction、
     review/promotion policy 和 production retrieval；直接写入 gold memory、
     调用手工 save、预载完整 evidence 或把 expected answer 写入 prompt
