@@ -101,10 +101,15 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
    把 source transcript/tool-event/git patch 与 `remem_shared` 实际消费的完整
    `REMEM_DATA_DIR` 做 immutable content-addressed snapshot。seal 必须绑定
    snapshot archive/root hash、逐文件 manifest、schema/migration version、
-   project/user identity 与 terminal extraction state，再将同一 reviewed seal
-   fan out 给全部 primary/native-ablation conditions。每个 remem target 使用
-   该 snapshot 的 fresh byte-identical private clone，并在启动前重验 root hash；
-   store 缺失、漂移、替换或 resume hash 不同均无效。所有 conditions 必须共享
+   project/user identity 与 terminal extraction state。archive 必须上传到
+   immutable、content-addressed、访问受控的 governed evidence store；seal
+   记录可跨 clone 解析的 object locator/version、保留策略、访问策略和内容
+   hash。该对象至少保留至所有依赖它的 report/claim/release evidence 失效或经
+   人工 security review 撤销，且 target fanout 前必须实际取回并重验，不能只
+   检查 manifest。再将同一 reviewed seal fan out 给全部 primary/native-ablation
+   conditions。每个 remem target 使用该 archive 的 fresh byte-identical
+   private clone，并在启动前重验 root hash；locator 不可解析、对象缺失/过期/
+   无权限、store 漂移/替换或 resume hash 不同均无效。所有 conditions 必须共享
    fixture revision、target prompt、hidden scoring、source seal 和全部
    executable/model/profile 配置；只允许 condition memory surface 不同。重新
    执行 source episode 或 seal/hash 不同的 pair 无效。
@@ -121,7 +126,12 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
    remote ledger 以 atomic non-force compare-and-swap durable reserve
    worst-case calls/cost；crash/abandoned reservation 仍计费。同一 approval
    跨 clone、resume、execution ID、并发或拆单都共享累计上限。普通 CI、
-   schema check、dry-run 和 report verify 不得启动宿主或网络调用。
+   schema check、dry-run 和 report verify 不得启动宿主或网络调用。清理
+   authority-phase 的 repo credential 后，只有隔离、最小权限的 remote-ledger
+   writer 可持有独立短期凭据；它只能读取/非 force CAS 更新 ledger ref，
+   不得访问仓库内容、approval/review API、宿主或 provider，并在最终 settlement
+   后销毁凭据。缺少该 writer、凭据权限过宽或凭据回流 runner 均必须在调用前
+   fail closed。
 
 ### 隔离与 condition 边界
 
@@ -131,11 +141,18 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     cleanup/immutable seal 后将该 path 重置到 approved fixture，再启动 target，
     从而保持 remem 的 canonical Git-root project identity。目标不得读取来源
     session/private roots。`remem_shared` 仅额外挂载 run-scoped transfer store；
-    same-name decoy repo 必须保持不同 canonical path/project ID。每个 task
-    还必须定义 distinct `authorized_user_id`/`decoy_user_id`；同 project 的
-    decoy user 有 target-blind、canary-tagged conflicting memory。target 只以
-    authorized identity 运行，任一 condition 的 selection/injection/citation
-    出现 decoy canary 即为 `wrong_user_injection`。
+    每个 task 都必须有不同 canonical path/project ID 的 foreign-project decoy
+    repo，并提供不会出现在 target/gold/hidden 内容中的 target-blind、
+    canary-tagged conflicting memory；每个 memory-bearing tuple（四个 primary
+    conditions 中除 `no_memory` 外的三个，以及 native-import ablation 两臂）
+    都必须在其实际候选 store/import/export preparation surface 中携带该 decoy
+    负例。target 只能使用 authorized project，任一 selection/injection/citation
+    命中 foreign-project canary 即为 `wrong_project_injection`。每个 task 还
+    必须定义 distinct `authorized_user_id`/`decoy_user_id`；同 project 的
+    decoy user 有独立的 target-blind、canary-tagged conflicting memory。
+    target 只以 authorized identity 运行，任一 memory-bearing tuple 的
+    selection/injection/citation 出现 decoy-user canary 即为
+    `wrong_user_injection`。
 11. **B-011** 任何 host HOME、auth/config、session、hidden test、
     private-root 或跨 project/user 泄漏都会使对应 run 无效并触发 suite
     stop-loss；scanner 必须丢弃泄漏 bytes，但保留不含敏感内容、schema-valid
@@ -259,7 +276,11 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
     report/gate links，不得继续声称 `executable_no_runs`。
 32. **B-032** readiness、spec approval、live-run authorization、最终 PR
     review、merge 与 release 均保持人工门禁；`implx auto` 或 benchmark
-    执行授权不能替代 security、claim wording 或 release 决策。
+    执行授权不能替代 security、claim wording 或 release 决策。full source/
+    target matrix 的人工授权还必须引用已 merge、immutable 的 smoke source
+    seal、12 条 sanitized target records 与 verifier result；只存在 `/tmp`
+    输出、缺任一 condition/cleanup/store/decoy assertion，或 verifier 未绑定
+    exact records hash 时均不得授权完整矩阵。
 
 ## 验收标准
 
@@ -274,11 +295,23 @@ report artifact，charter 状态仍为 `infrastructure_only_no_runs`。本次授
   每个 exported-file run 有生成/维护成本。
 - [ ] source seal 绑定 extraction/review drain 后 quiesced
   `REMEM_DATA_DIR` 的 archive/root hash、逐文件 manifest 与 project/user
-  identity；每个 remem target 从 reviewed seal 建 fresh clone，store
-  missing/drift/substitution/resume mismatch 的负例全部失败。
+  identity，以及 governed evidence store 的 immutable locator/version、
+  retention/access policy；每个 remem target 必须跨 clone 取回 archive 后建
+  fresh clone，locator/object missing、expired、unauthorized、drift/
+  substitution/resume mismatch 的负例全部失败。
+- [ ] authority credential 清理后，remote ledger 只由隔离的 narrow-scope
+  writer 使用独立短期凭据做 non-force CAS；该凭据不能访问 repo contents、
+  approval/review API、host/provider，且不会进入 runner 环境或 artifact。
 - [ ] 每个 task 的 authorized/decoy user identity 不同；同 project decoy
   canary 不得被任何 memory-bearing condition 选择、注入或引用，命中即形成
   `wrong_user_injection` breach 并使 gate FAIL。
+- [ ] 每个 task 都有 foreign-project conflicting canary，且每个
+  memory-bearing primary/native-ablation tuple 在实际候选 surface 中执行
+  target-blind negative assertion；命中即形成 `wrong_project_injection`
+  breach 并使 gate FAIL。
+- [ ] 两阶段 smoke 的 source seals、12 条 target records 与 verifier result
+  作为 immutable governed evidence 保留并经人工 review/merge，exact hashes
+  共同授权 full matrix；`/tmp` smoke 输出不能充当授权证据。
 - [ ] 288+ablation sanitized evidence bundle/source manifest 可独立复算；
   direction-specific 与 aggregate candidate report 均通过 schema，缺失值不
   被填 0，PASS/FAIL/INSUFFICIENT gate result 均保留。

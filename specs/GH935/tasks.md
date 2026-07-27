@@ -92,14 +92,28 @@ GH-935
     - approval schema 区分 `stage=source|target`：source policy 只绑定
       source-plan/keys，禁止未来 seal hash/target；target policy 必须绑定已
       review/merge 的 immutable source-seal manifest/hash；
+    - full-run source/target approval 都必须绑定已 merge 的 smoke source
+      manifest、target record bundle 与 verifier result exact hashes；临时或
+      hash 不一致的 smoke output 不能满足 prerequisite；
+    - approval schema 固定 isolated ledger-writer capability：独立短期
+      credential 只能 read ledger tip / non-force CAS
+      `refs/heads/remem-live-ledger`，禁止 repo contents、其他 refs、
+      approval/review API 和 host/provider access；
     - 24 个 task 逐个包含 deterministic repo fixture、至少两个 chronological
       source episodes、source-seal contract、
       hidden tests、score commands、gold facts、allowed/forbidden paths；
+    - 每 task 有 authorized/foreign-decoy project IDs、不同 canonical paths
+      与 target-blind conflicting project canary；schema 要求每个
+      memory-bearing primary/native-ablation tuple 声明其真实 candidate
+      surface negative，拒绝 decoy 缺失或 canary 泄入 target/gold/hidden；
     - 每 task 有 distinct authorized/decoy user IDs 与同-project target-blind
       canary memory；schema 拒绝 identity 相同、canary 泄入 target/gold/hidden；
     - source-seal schema 强制 quiesced `REMEM_DATA_DIR` sorted file manifest、
       archive/Merkle hash、schema/migration/project/user IDs 和 terminal queue
-      state，拒绝 symlink/device/path traversal；
+      state，以及 closed `archive_ref`（content-addressed URI、immutable
+      version、hash/length、retention/access policy、non-secret key ref）；
+      拒绝 symlink/device/path traversal、mutable/unversioned locator 和
+      retention 不足；
     - 每个 task 为 `ready` 且 `todo: []`；
     - 两个方向各覆盖 12 个必需 category，无 fabricated placeholder；
     - v1 skeleton/old artifacts 被明确拒绝或由测试覆盖的 converter 转换。
@@ -138,6 +152,9 @@ GH-935
     - target identity 固定为 authorized user；same-project decoy user root/session
       隔离且不能被 host/native/remem/export surface 选中；
     - credential bootstrap 最小化且 credential bytes 不进入 artifacts；
+    - ledger writer 使用独立 sandbox/process 与 secret FD/OS handle；runner/
+      host child 看不到 writer credential，writer 网络/文件权限仅覆盖
+      ledger tip 与单 ref CAS，scope 扩大或 cleanup 失败 fail closed；
     - 非 macOS 在没有等价 deny-host-read 证明时 fail closed；
     - dry-run/verify call graph 不 spawn 宿主或网络。
   - Verify:
@@ -174,6 +191,10 @@ GH-935
       独立 review/promotion 后激活，保留 `host_native_import` origin 与
       non-canonical trust；without control 走相同 reviewer schedule；
     - diagnostic data 不进入 primary denominator。
+    - 每个 memory-bearing primary/native-ablation tuple 都在实际 native
+      preparation/import、export generation/update 或 remem retrieval candidate
+      surface 中携带 foreign-project conflicting canary，target-blind scope
+      filter 必须排除它；选择/注入/cite decoy project 失败；
     - 每个 memory-bearing condition 都携带 same-project decoy-user canary 的
       negative scope fixture；authorized target 选择/注入/cite decoy ref 失败。
   - Verify:
@@ -182,6 +203,8 @@ GH-935
     cargo test eval::cross_host::tests::conditions
     cargo test eval::cross_host::tests::real_capture_pipeline
     cargo test eval::cross_host::tests::source_store_seal
+    cargo test eval::cross_host::tests::source_store_archive_retrieval
+    cargo test eval::cross_host::tests::wrong_project_scope
     cargo test eval::cross_host::tests::wrong_user_scope
     cargo test eval::cross_host::tests::exported_file_cost
     cargo test eval::cross_host::tests::native_import_ablation
@@ -203,9 +226,16 @@ GH-935
     - 72 个 `(direction,task,run_index)` 各只执行一次 source episode sequence；
       source terminate/drain/immutable seal 先于 fanout 和 target launch，全部
       conditions 绑定同一 seal；
-    - source drain 后 checkpoint WAL、close DB/worker，再 seal完整
+    - source drain 后 checkpoint WAL、close DB/worker，再 seal 完整
       `REMEM_DATA_DIR` archive/root/file manifest；target approval、artifact 和
-      resume 全部绑定该 store hash，不能只绑定 transcript/tool events；
+      resume 全部绑定该 store hash 与 governed immutable locator/version/
+      retention/access policy，不能只绑定 transcript/tool events；
+    - archive 上传到 object-locked governed evidence store 后必须经独立 read
+      path 取回重算，source seal 才能封存；cross-clone target/resume 使用
+      sandboxed fetch helper + tuple-bound read-only credential 从 locator
+      取回，helper 不能 enumerate/write/delete，credential 不进入 runner/host
+      env/artifact 并在校验后销毁；missing/expired/unauthorized/hash/length/
+      policy drift 全部 fail closed；
     - runner 强制两阶段 authorization：source approval 不能启动 target，
       target approval 必须绑定 reviewed source-seal manifest；不存在
       source-seal preauthorization cycle；
@@ -219,6 +249,10 @@ GH-935
       于 denominator，无 failure 的缺 ref 被拒绝，origin/scope/validity 一致；
     - attribution ref 含 user ID；scanner/score 对 decoy-user canary 做负向
       selection assertion，任何 hit 产生 `wrong_user_injection` breach；
+    - attribution ref 含 project ID；每个 memory-bearing tuple 的 input
+      manifest 证明 foreign-project canary 已进入真实 upstream candidate
+      surface 并在 target prompt 前被 scope filter 排除；缺负例使 tuple invalid，
+      任一 hit 产生 `wrong_project_injection` breach；
     - scanner 覆盖 HOME/session/auth/private/hidden/cross-run 泄漏；scanner
       完成后输出 sanitized `clean` 或 typed `security_breach` record，breach
       bytes 不落盘但 failure record 保留给 denominator/gate；scanner 自身失败
@@ -235,6 +269,10 @@ GH-935
       CAS durable reserve worst-case host/LLM/cost，完成后 settlement；crash/
       abandon 仍计费，跨 clone/resume/execution ID/并发共享累计预算，拒绝
       rollback、replay、non-FF history、reconciliation drift 或拆单重置。
+    - GitHub authority credential 清理后，reservation/settlement 只经
+      sandboxed one-shot ledger writer 完成；writer 使用独立 narrow-scope
+      短期 credential 和 payload-bound IPC receipt，不能访问 repo contents、
+      approval API、host/provider，credential 不进入 env/artifact/checkpoint。
   - Verify:
 
     ```bash
@@ -243,6 +281,9 @@ GH-935
     cargo test eval::cross_host::tests::resume
     cargo test eval::cross_host::tests::attribution
     cargo test eval::cross_host::tests::source_store_seal
+    cargo test eval::cross_host::tests::source_store_archive_retrieval
+    cargo test eval::cross_host::tests::ledger_writer_capability
+    cargo test eval::cross_host::tests::wrong_project_scope
     cargo test eval::cross_host::tests::wrong_user_scope
     python3 eval/cross-host/scripts/scan_artifacts.py --self-test
     cargo run -- bench cross-host run --root eval/cross-host \
@@ -279,6 +320,10 @@ GH-935
     - evidence manifest schema 用 closed `manifest_kind` 区分
       `source_seal|primary|final`，并显式支持 verified-security-breach partial
       counts/ref；各 kind 不能覆盖或伪装另一个；
+    - smoke verifier schema/result 绑定 source-seal、12-record bundle、
+      approvals、cleanup/store/project/user-decoy assertions 与 exact hashes；
+      只接受 governed immutable evidence path，不接受 `/tmp` locator 来授权
+      full matrix；
     - exported cost 与 native-import ablation 分开报告；
     - 无 breach complete path 的 native-import ablation completeness 固定为
       144；verified breach early-stop path 明确记录 not-started；
@@ -313,6 +358,7 @@ GH-935
     cargo test eval::cross_host::tests::paired_bootstrap
     cargo test eval::cross_host::tests::claim_gate
     cargo test eval::cross_host::tests::claim_gate_synthetic_temp_fixtures
+    cargo test eval::cross_host::tests::smoke_evidence_authorization
     python3 eval/claims/claim_gate.py check \
       eval/cross-host/claims-registry.json
     python3 scripts/ci/check_public_claims.py --self-test
@@ -394,6 +440,8 @@ GH-935
   - Covers: B-009, B-032
   - File ownership:
     - `eval/cross-host/evidence/cross-host-v1/smoke-source-seal-manifest.json`
+    - `eval/cross-host/evidence/cross-host-v1/smoke-target-run-records.jsonl`
+    - `eval/cross-host/evidence/cross-host-v1/smoke-verification.json`
   - Done when:
     - maintainer 明确批准 live Claude/Codex、auth bootstrap、network/LLM cost、
       运行预算、模型/version locks 和 artifact 存放位置；
@@ -406,16 +454,24 @@ GH-935
       `remem_without_host_native_import`、`remem_with_host_native_import`，总计
       12 个 target smoke tuples。少测任一 preparation/export/update/import
       review surface 都不得批准 full source matrix；
-    - smoke seal/targets 重验 extracted store root，且至少一个 same-project
-      decoy-user canary negative assertion 证明 authorized identity 不会选错用户；
+    - smoke seal/targets 从 governed archive locator 实际取回并重验 extracted
+      store root；每个 memory-bearing smoke tuple 执行 foreign-project
+      conflicting canary negative，且至少一个 same-project decoy-user canary
+      negative 证明 authorized identity 不会选错 project/user；
     - source/target smoke policies 均经独立 maintainer APPROVED PR merge 到
       default branch；`approval_key` 只由 repo identity、approval PR number 与
       canonical policy digest 派生，排除 containing Git OID/attestation；
-    - smoke 通过隔离/attribution/cleanup 与各 surface 人工审查后，才可批准
-      T9A 的完整 72-source plan；全部 smoke artifacts 永久排除公开分母；
-    - runner 先完成 authority-only validation再清除 GitHub credential；每个
-      billable call 前 remote ledger reservation durable，crash/跨 clone/并发
-      预算测试通过。
+    - 12 条 scanner-completed sanitized target records 持久化到
+      `smoke-target-run-records.jsonl`，offline verifier 将 source-seal/
+      approval/record-bundle hashes、2/12 completeness、isolation/cleanup/
+      store/project/user-decoy assertions 写入 immutable
+      `smoke-verification.json`；两者经独立 maintainer review/merge 后才可批准
+      T9A 的完整 72-source plan，`/tmp` 不构成授权证据；全部 smoke artifacts
+      永久排除公开分母；
+    - runner 先完成 authority-only validation再清除 GitHub credential；后续
+      每个 billable call 前只由 isolated narrow-scope ledger writer 使用独立
+      短期 credential 做 durable reservation/settlement，crash/跨 clone/并发
+      预算与 credential scope/leak/cleanup 测试通过。
   - Verify:
 
     ```bash
@@ -439,12 +495,16 @@ GH-935
       --confirm-live-run --max-host-calls "$CROSS_HOST_MAX_HOST_CALLS" \
       --max-llm-calls "$CROSS_HOST_MAX_LLM_CALLS" \
       --max-estimated-cost-usd "$CROSS_HOST_MAX_ESTIMATED_COST_USD" \
-      --json-out /tmp/remem-cross-host-smoke-targets.json
+      --json-out eval/cross-host/evidence/cross-host-v1/smoke-target-run-records.jsonl
     cargo run --release -- bench cross-host verify --root eval/cross-host \
-      --input /tmp/remem-cross-host-smoke-targets.json \
+      --input eval/cross-host/evidence/cross-host-v1/smoke-target-run-records.jsonl \
       --approval-key "$CROSS_HOST_SMOKE_TARGET_APPROVAL_KEY" \
       --expected-matrix smoke --expected-records 12 \
-      --json-out /tmp/remem-cross-host-smoke-verify.json
+      --json-out eval/cross-host/evidence/cross-host-v1/smoke-verification.json
+    jq -e '.source_seals == 2 and .target_records == 12 and
+      .all_cleanup_passed == true and .all_store_retrievals_verified == true and
+      .all_project_decoys_rejected == true and .all_user_decoys_rejected == true' \
+      eval/cross-host/evidence/cross-host-v1/smoke-verification.json
     ```
 
 - [ ] `SP935-T9A` Owner: authorized benchmark operator + maintainer/security owner; Done when: 完整 source stage 经独立授权执行、seal manifest review/merge，且 primary/ablation target approvals 绑定 exact seals； Verify: 72 seals 与两份 target policy 均通过 authority verifier； Covers: B-008, B-009, B-032。
@@ -454,17 +514,20 @@ GH-935
   - File ownership:
     - `eval/cross-host/evidence/cross-host-v1/source-seal-manifest.json`
   - Done when:
-    - maintainer 先 review/merge 只绑定 72 source-stage keys/plan/caps 的
-      `stage=source` policy；operator 据此各执行一次 source sequence；
+    - maintainer 先 review/merge 绑定 exact merged smoke source/target/
+      verifier hashes 与 72 source-stage keys/plan/caps 的 `stage=source`
+      policy；operator 据此各执行一次 source sequence；
     - 72 个 source-stage keys 各形成 sanitized immutable clean seal 或 typed
       security-breach record，写入 source-seal manifest 后停止写入；manifest
       由独立 maintainer PR review/merge；
     - 每个 clean seal 绑定实际可消费的 quiesced `REMEM_DATA_DIR` archive/root/
-      file manifest；reviewer 抽查 archive 重算与 project/user identity；
+      file manifest，以及 object-locked governed locator/version/retention/
+      access policy；reviewer 必须从独立 read path 抽查 archive 取回重算与
+      project/user identity，不能只检查 locator/manifest；
     - 全部 clean 时 maintainer 再分别 review/merge `stage=target` primary 与
-      ablation policies，绑定 exact source-seal manifest/hash、target tuples 与
-      独立 budgets；若已有 breach，则禁止 target calls，直接把 sealed partial
-      evidence 移交 T10/T11 early-FAIL path；
+      ablation policies，绑定 exact smoke evidence hashes、source-seal
+      manifest/hash、target tuples 与独立 budgets；若已有 breach，则禁止
+      target calls，直接把 sealed partial evidence 移交 T10/T11 early-FAIL path；
     - approval/manifest handoff 顺序有 fresh authority evidence。
   - Verify:
 
@@ -499,7 +562,9 @@ GH-935
       `security_breach` 都留在分母，breach record 推进 T11 gate FAIL，不阻断
       candidate report lifecycle；
     - 每个 remem/shared resume/fanout 的 pre-launch store root 与 reviewed seal
-      相同；wrong-user decoy canary hit 按 security breach 进入 early FAIL；
+      相同；每个 memory-bearing primary tuple 都执行 foreign-project canary
+      negative，wrong-project 或 wrong-user decoy canary hit 均按 security
+      breach 进入 early FAIL；
     - 若 source/primary 任一 verified breach 触发 early stop，primary manifest
       明确 planned/recorded/not-started counts 与 breach record hash；无需等待
       288 target calls，也不得把该路径改报 INSUFFICIENT；
