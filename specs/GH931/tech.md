@@ -44,6 +44,7 @@ GH-931
     "eval/coding-bench/examples/curator-log.example.json",
     "eval/coding-bench/validate_schemas.py",
     "eval/coding-bench/live-run-approvals.json",
+    "eval/coding-bench/evidence/flagship-e2e-v1/frozen-control-content.jsonl",
     "eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl",
     "eval/coding-bench/evidence/flagship-e2e-v1/source-manifest.json",
     "eval/coding-bench/reports/flagship-e2e-v1.json",
@@ -146,11 +147,15 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   `approval.rs` 同时位于 complete planned manifest/single-writer ownership，
   禁止通过未声明 parent edit 或平行 duplicate module 绕过 wiring。
 - `CodingBenchRunIdentity` 绑定 task、condition、run index、attempt、
-  fixture/prompt/score/timeout/sandbox hash、randomization seed、从 approved
+  fixture/prompt/score/timeout/sandbox hash、registered condition-order position、
+  seed/PRNG/version/permutation digest，以及从 approved
   commit reproducibly build 后以 absolute path 调用的 remem binary digest、
   target agent executable/version/profile digest，以及分别 canonicalized 的
   extraction provider/model/prompt/reasoning、enrichment、review/promotion 和
   retrieval config/policy hashes；这些 pair fields 不得折叠为一个 `model`。
+  identity 还绑定 registration 的 UTC `evaluation_as_of` 与 virtual-clock policy
+  hash；harness 将同一时钟注入 production temporal parser、age/staleness、
+  retrieval/rendering 与 target environment，禁止读取 wall-clock “now”。
 - 每次 run 创建新的 repo、HOME、CODEX_HOME、REMEM_DATA_DIR 和 artifact
   root；env 从 allowlist 构造。真实 HOME/session/config/memory path 不挂载。
 - provider/host/GitHub authority auth 只由 coordinator/service 的独立 OS
@@ -180,13 +185,22 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   auth/provider/agent spawn 前结束。普通 CI 只跑 dry-run、schema 和 synthetic
   tests。
 - artifact 采用 temp-write + fsync + atomic rename；`attempt_id` 唯一，完成
-  文件不覆盖。target spawn 前，runner 先将 budget reservation receipt 与
-  `target_started` transition 作为新 commit CAS append 到同一 anchored
-  protected remote ledger；remote ref update 成功后才可 spawn，process 启动
-  失败也视为 started failure。recovery 对 remote started 且无 terminal record
-  的 attempt 以 compare-and-swap 追加唯一
+  文件不覆盖。任何 human curator/reviewer、billable preparation 或 target work
+  前，supervisor 先将 `(matrix_key,attempt_id,projection_hash,budget_receipt,
+  timing_policy)` 的 `pre_target_work_started` CAS append 到 anchored protected
+  remote ledger。human interaction 的 supervisor-owned `CLOCK_MONOTONIC`
+  start/end、actor assignment、input/output digest 与 frozen surface digest
+  继续 append；caller/curator 不能提交 elapsed。crash/abandon recovery 追加
+  `abandoned_before_target`，按已观察 duration 或 reviewed interaction ceiling
+  中较保守者计费并封闭 run index，禁止 fresh-clone 重做。target spawn 前再将
+  reservation receipt 与 `target_started` durable append；process 启动失败也
+  视为 started failure。recovery 对 remote started 且无 terminal record 的
+  attempt 以 compare-and-swap 追加唯一
   `abandoned_after_target_start` terminal record（`resolved=0`）并封闭 matrix
-  key；不得再 spawn。resume 只接受 hash 验证后的 terminal tuple。
+  key；不得再 spawn。terminal artifact 通过 scanner 后，trusted supervisor
+  必须将 `(matrix_key,attempt_id,artifact_sha256,outcome,cost/timing hashes,
+  frozen_control/treatment hashes)` 作为 terminal attestation CAS append；
+  resume/report 只接受 ledger attested 且 hash 验证后的 terminal tuple。
 - live `run` 的唯一 policy 源是 `origin` default branch 上的
   `eval/coding-bench/live-run-approvals.json`，调用方不得传任意 registry path。
   entry 的 canonical policy preimage 明确排除 `approval_key`、review node、
@@ -200,38 +214,47 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   model SKU、effective timestamp、input/output/cache/tool-token 单价、每个
   call-kind 的最大 input/output/cache/tool tokens 与 decimal 向上取整 scale。
   currency conversion 不允许；SKU/price 变化必须新建 reviewed policy。
-- verifier 先启动一个隔离的 authority-only phase：仅该 phase 可读取
-  repo-scoped GitHub credential并访问 GitHub API；它不得读取 provider/host
+- verifier 启动一个隔离的 authority broker：仅该 broker 可读取最小
+  repo-scoped GitHub credential 并访问 approval/ruleset/ledger APIs；它不得读取 provider/host
   credential、启动 agent 或执行 benchmark。它 fresh 验证 approval PR 的
   approved head tree 中 registry blob 的 canonical policy digest 与 key 匹配、
   PR 已 merge 到 default branch、
   APPROVED review 未 dismissed 且 reviewer association 符合 maintainer。
-  authority phase 结束并清除 credential 后才能 bootstrap provider/host auth；
-  GitHub unavailable、过期、drift、hash/tuple/cap mismatch 均 fail closed。
+  provider/host auth 由另一个 principal 独立 bootstrap；authority broker 的
+  credential 不进入该 principal、agent 或 artifact，但 broker 保持隔离存活，
+  并在每个 reservation/transition/terminal seal 前重新验证 approval expiry、
+  merge/review、registry blob、ruleset/audit 与 ledger ancestry。GitHub
+  unavailable、过期、drift、hash/tuple/cap mismatch 均 fail closed。
 - cumulative budget 的 trust root 是 repo-scoped protected
   `refs/heads/remem-live-ledger`，不是 clone-local git common dir。每次 billable
   host/LLM call 前，service broker 不接受 caller cost，而以 reviewed
   call-kind token ceilings × pinned rates 做 checked-decimal conservative
   calculation，并按 policy scale 向上取整。unknown SKU/rate、token ceiling
-  缺失、overflow 或 price snapshot drift 均 fail closed。runner 随后以当前
+  缺失、overflow 或 price snapshot drift 均 fail closed。broker 在 dispatch
+  前用 canonical provider tokenizer 验证 serialized input/cache/tool payload，
+  并把 output/reasoning/tool/cache ceiling 写入 provider 的 hard-limit fields；
+  API/SKU 不支持硬限制或无法在超限前中断时 fail closed。runner 随后要求
+  authority broker fresh 重验 approval/ruleset/audit/genesis ancestry，并以当前
   remote ledger tip 为 parent 创建包含
   `(approval_key,reservation_id,call_kind,token_ceilings,pricing_snapshot_hash,
   computed_worst_case_cost,
   execution_id,tuple,attempt)` 的 append-only reservation commit，并以
   non-force fast-forward ref update 作为 compare-and-swap；并发 sibling update
   失败后必须 refetch/recompute。reservation durable 后才允许 call；完成后追加
-  settlement commit；settlement 记录 broker-metered actual tokens/cost，但
+  settlement commit；settlement 记录 broker-metered actual tokens/cost 并验证
+  每类 usage 不超过 ceiling；超限为 security/cost breach，停止后续 calls，但
   crash/timeout/abandoned reservation 永久按 computed worst-case 计入累计值。
   ledger ref 缺失、non-FF/force history、reconciliation drift、
   reservation reuse 或预算耗尽均 fail closed。resume、新 clone/
   `execution_id`、并发和拆单共享同一 remote total；只有新的 independently
   reviewed policy 可增加预算。approval policy 固定 `ledger_genesis_oid` 与
-  expected GitHub ruleset ID/hash；每次 authority phase 必须通过 GitHub API
+  expected GitHub ruleset ID/hash；每次 reservation/attempt transition/terminal
+  seal 必须通过 GitHub API
   fresh 验证 ruleset active、禁止 ref deletion/force push、无 bypass actors、
   覆盖 admins/apps/automation，并验证 current tip 是 genesis 的完整后代。
   ruleset/audit evidence 缺失、曾被禁用或 protection hash 漂移均 fail closed，
   从而使 fresh clone 不能只信任一个被回退的当前 tip。ledger credential 只在
-  authority/reservation broker 中可见，agent 永远不可见。
+  authority broker 中可见，provider principal、agent 与 tool 永远不可见。
 
 ### 3. `remem_e2e` production adapter（B-008-B-010、B-017、B-021-B-022）
 
@@ -266,8 +289,21 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   gold refs、target prompt、hidden score/oracle 和 scorer metadata。runner 在
   curator 启动前 canonicalize/hash 并把 projection 作为唯一输入；artifact
   保存 projection/hash，verifier 从 fixture 独立重建 byte-identical projection。
-- curator 结束后 validator 检查 elapsed minutes、字符/token 上限、操作计数
-  与冲突记录，计算并冻结 `MEMORY.md` SHA-256。
+- planner 以 task 为 blindness batch：三个 run index 的 control curator 与
+  treatment reviewer assignment/projection 必须全部在该 task 首个 target reveal
+  前完成并冻结。默认要求 batch freeze；若使用不同 actor，authority ledger
+  必须证明 stable actor identity/assignment，且该 actor 从未接触该 task 的
+  target/outcome。暴露 actor 不得参与后续 repetition preparation。
+- curator/reviewer interaction 必须在 durable `pre_target_work_started` 后开始。
+  trusted supervisor 用 `CLOCK_MONOTONIC` 记录 start/end 和 interaction ID，
+  receipts 绑定 projection、actor assignment、operations 与 frozen output；
+  schema 拒绝 actor-entered elapsed。crash/abandon 按 observed/approved ceiling
+  保守计费并封闭 run index。
+- curator 结束后 validator 检查 supervisor timing receipt、字符/token 上限、
+  操作计数与冲突记录，计算并冻结 `MEMORY.md` SHA-256。sanitized exact UTF-8
+  bytes 写入 append-only content-addressed
+  `frozen-control-content.jsonl`（digest、length、canonical bytes）；run record
+  只引用 digest，verifier 从 committed bytes 重算并检查 target 实际 mount。
 - target run 只挂载 frozen `MEMORY.md`，再次计算 hash 与 curator log 比对。
   `CuratedFileExpert` 继续使用现有 target-aware `curated_context`，但只能作为
   diagnostic。
@@ -280,7 +316,9 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   rubric；明确排除 target prompt、gold/expected refs、hidden/scorer data 和
   任何 target outcome。runner 在 target reveal 前 canonicalize/hash 该
   projection，review/promotion 全部完成后 freeze promoted projection 与 log；
-  committed artifact 保存输入/输出 hashes，verifier 可重建。target reveal 后
+  committed artifact 保存输入/输出 hashes、supervisor timing receipt 与 ledger
+  interaction attestation，verifier 可重建。与 control 相同，同 task 三个
+  repetition 必须 batch-freeze，或由 ledger 证明后续 actor 完全未暴露。target reveal 后
   的 review/edit/promotion 或 projection drift 使 run invalid。official run
   可以使用正常人工 review policy，但任何 intervention 都进入 treatment cost；
   缺 log 时 maintenance comparison `INSUFFICIENT`。若声明 zero-touch tranche，
@@ -294,14 +332,24 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   搜索最早有充分 causal evidence 的 stage，恰好输出一个 root 6-stage/
   12-enum code；后续 missing/ignored signals 放入 `consequences`，不改变 root。
   无充分 root evidence 时 suite error 为 `unclassified`，不得按检查顺序猜测。
-- flagship run schema 固定 run identity、attempt history、condition surface、
-  runtime/score result、stage failure、tokens/wall time、curator cost、
-  memory-harm 和 attribution DAG/hash。
+- flagship run schema 固定 run identity、registered clock/order fields、
+  `pre_target_work_started`/human interaction/target/terminal ledger receipts、
+  condition surface、runtime/score result、stage failure、tokens/wall time、
+  supervisor-timed curator/treatment cost、closed
+  `treatment_review_input_projection` + input/output/freeze hashes、
+  frozen-control content digest、memory-harm 和 attribution DAG/hash；unknown
+  fields fail closed。T2 独占 schema ownership，T4 只实现 condition producer，
+  T6 验证/汇总，不得靠未授权 schema edit 接线。
 - official evidence writer 将每个 scanner-passed sanitized attempt/run 追加到
   `eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl`，并生成
   `source-manifest.json`：记录 144 个 matrix keys、全部 attempt hashes、schema/
-  code/fixture/registry hashes、scanner verdict、denominator policy、bundle hash
-  和 report input hash。manifest 通过独立 schema；只有 streaming-redacted
+  code/fixture/binary/profile/registration hashes、scanner verdict、denominator
+  policy、bundle hash、report input hash，以及每个 matrix key 对应的
+  authoritative terminal ledger attestation OID/digest。manifest 通过独立
+  schema；control refs 必须解析到 committed
+  `frozen-control-content.jsonl` 的 exact sanitized bytes。verifier fresh 验证
+  ledger ancestry/terminal seal，再重算 bundle/control digests；仅在 mutable
+  evidence tree 内 self-hash 一致不构成可信。只有 streaming-redacted
   stdout/stderr 可进入 local/bundle artifacts，raw credential-bearing frames
   必须在落盘前丢弃。auth/private roots 永不进入任何 artifact。
 - report builder 先验证 144 tuple completeness、attempt policy、同 pair hashes
@@ -316,10 +364,16 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   95% lower bound >0；non-inferiority 要求 lower bound >=-3pp 且同 denominator
   的 treatment human-maintenance reduction >=70%。
 - registry 分为 immutable `registration_projection` 与 mutable
-  `result_bindings`。projection 在任何使用 official fixture 的 live smoke 前
-  锁定 dataset、所有 executable/profile hashes、timeout/runs、estimand、
-  failure/missing/stop-loss denominator、exclusions、bootstrap、threshold 和
-  wording templates；run 只绑定 projection digest。gate 后只更新
+  `result_bindings`。T6 只实现 schema/gate 并用 synthetic projection 测试；
+  T7 完成 CLI、docs、version sync 且从 exact final implementation head
+  reproducibly build/记录最终 remem 与 agent executable hashes 后，才独占
+  `registry.json` 并在任何 official-fixture live smoke 前锁定
+  dataset/version/hash、condition IDs、pair fields、timeout/runs、estimand、
+  failure/missing/stop-loss denominator、exclusions、UTC
+  `evaluation_as_of`/virtual-clock policy、condition-order seed/PRNG algorithm+
+  version/完整 canonical tuple permutation+digest、bootstrap algorithm/version/
+  seed、threshold 和 wording templates。planner 必须从 registration 重算相同
+  order；run 只绑定 projection digest。gate 后只更新
   result bindings 的 PASS/FAIL/INSUFFICIENT、report hash 和 exact
   maintainer-approved wording，不改变 projection digest。
 - stop-loss verifier 固定扫描 48 个 `remem_e2e` tuples；按 product B-027 的
@@ -361,33 +415,37 @@ remem bench coding-report --input <artifact-root> \
 | Product invariant | Implementation area | Verification |
 | --- | --- | --- |
 | B-001-B-004 state/IDs/matrix | types、run plan、registry validator | 新 ID parse 正例；旧 ID 负例；primary dry-run `planned_runs == 144`；缺/重 tuple 被拒绝。 |
-| B-005-B-006 pair/randomization | run identity、planner | same-pair executable + target/extraction/enrichment/promotion/retrieval profile hash equality；fixed seed 可复现；任一 binary/profile/prompt drift 失败。 |
+| B-005-B-006 pair/randomization | run identity、registered clock、planner | same-pair executable/profile + `evaluation_as_of` equality；registration 预先固定 order seed/PRNG version/完整 tuple permutation，planner 重算 byte-identical；真实 clock、order/seed/binary/profile drift 均失败。 |
 | B-007 no-memory | condition/isolation | hooks/MCP/SessionStart/file/native surfaces 全无；额外 surface 负例失败。 |
-| B-008-B-010 E2E path | raw-event fixture、capture/extraction adapter、treatment-review projection、worker drain、context render | answer-bearing raw event→capture→use DAG；review input gold-free 且 pre-target frozen；target/outcome注入、post-reveal review、seed/save/preload 与 drain failure 均失败。 |
-| B-011-B-013 curator/diagnostics | curator projection/schema、adapter、condition registry | allowlisted projection 可从 fixture byte-identical 重建；gold/target/hidden/scorer 注入、freeze/hash/budget 负例失败；diagnostic 不进入 primary。 |
+| B-008-B-010 E2E path | raw-event fixture、capture/extraction adapter、run schema、treatment-review projection、worker drain、context render | answer-bearing raw event→capture→use DAG；T2 schema 强制 closed review projection/input-output/timing/ledger fields；同 task 三 repetition 在首个 target 前 batch-freeze；target/outcome 注入、暴露 actor 复用、post-reveal review、seed/save/preload 与 drain failure 均失败。 |
+| B-011-B-013 curator/diagnostics | curator projection/schema、supervisor timing、content-addressed control bundle | allowlisted projection 可重建；elapsed 只能来自 supervisor monotonic receipts；committed frozen bytes 可重算 mounted hash；跨-run target exposure、gold/target/hidden/scorer 注入、missing bytes/receipt、freeze/hash/budget 负例失败；diagnostic 不进入 primary。 |
 | B-014-B-016 isolation/security | service/agent privilege split、deny-egress broker、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root/network/public-repo access；provider broker 拒绝 fetch/tunnel；secret-before-write、symlink/hardlink/import bootstrap tamper 全失败。 |
-| B-017-B-020 failure/retry/dry-run | parent-wired approval module、remote attempt transitions、pricing broker、anchored CAS ledger、runner | `coding_bench.rs` module wiring；key preimage 不含 containing tree；broker 以 pinned USD rates/token ceilings 向上计算；caller underquote、unknown SKU/overflow、target_started crash、rollback/race/超额 negatives；dry-run 零 spawn/network/auth。 |
+| B-017-B-020 failure/retry/dry-run | parent-wired approval module、pre-target/target/terminal transitions、pricing broker、per-call authority、anchored CAS ledger | human/prep 前 durable attempt；abandoned pre-target work 保留/保守计时且不可重做；dispatch 前验证 actual input 并硬设 output/reasoning/cache/tool caps；每个 reservation fresh 重验 expiry/ruleset/audit/ancestry；terminal artifact digest 由 supervisor seal；drift/crash/rollback/race/超额 negatives 均失败，dry-run 零 spawn/network/auth。 |
 | B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；overlapping failures 按 earliest causal root 稳定，downstream consequences 单列。 |
-| B-023-B-024 report/bootstrap | sanitized evidence bundle/source manifest、report builder | 144 records；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden；从 bundle 独立重算同 hash。 |
-| B-025-B-029 claim gates | registration projection、result bindings、gate/public CI | superiority/non-inferiority lower bounds、48-run stop-loss denominators、treatment review cost、post-smoke projection mutation、PASS-era exact wording/report link negatives。 |
+| B-023-B-024 report/bootstrap | sanitized evidence/control bundles、terminal ledger attestations、source manifest、report builder | 144 records；每个 record/manifest digest 与 authoritative terminal seal 一致，control bytes 可独立检查；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden。 |
+| B-025-B-029 claim gates | post-final-binary registration projection、result bindings、gate/public CI | T6 synthetic registry 后 T7 才以 final binary/clock/order permutation 冻结 live registration；superiority/non-inferiority、48-run stop-loss、trusted treatment review cost、post-smoke mutation 与 PASS wording/report-link negatives。 |
 | B-030 human gates | CLI/live authorization/handoff | 缺 approval/confirm/hard caps 在 agent/provider 调用前失败；spec 不自批。 |
 
 ## 数据流
 
 ```text
-16 versioned tasks + locked registry
-  -> isolated randomized 144-tuple plan
+16 versioned tasks + post-final-binary locked registry
+  -> pinned evaluation clock + preregistered PRNG/permutation
+  -> isolated 144-tuple plan
+  -> durable pre-target attempt + task-wide blind preparation batch
   -> condition setup
        no_memory: no memory surface
-       curated_file_budgeted: blind curator -> frozen MEMORY.md + cost log
+       curated_file_budgeted: blind curator -> supervisor timing
+                                -> content-addressed frozen MEMORY.md bytes
        remem_e2e: captured_events -> extraction_tasks -> worker
                   -> candidate/review/promotion -> memory/projection
                   -> production SessionStart/MCP retrieval
+  -> per-call authority/ruleset/ledger revalidation + token hard limits
   -> target coding agent
   -> hidden deterministic scoring
   -> failure-stage + attribution resolution
-  -> immutable run artifact/hash
-  -> scanner-passed sanitized run-record bundle + source manifest
+  -> immutable run artifact/hash -> authoritative terminal ledger seal
+  -> scanner-passed sanitized run/control bundles + source manifest
   -> task-level paired aggregation/bootstrap
   -> stop-loss + claim gate
   -> hash-bound JSON/Markdown report

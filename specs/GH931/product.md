@@ -89,9 +89,15 @@ stale/irrelevant memory harm。
    target prompt、hidden score、timeout、sandbox policy、实际执行的 remem/
    agent-runner binary digest，以及分别记录的 target-agent、extraction、
    enrichment、review/promotion、retrieval runtime/profile hashes；condition
-   memory surface 是唯一允许差异。
-6. **B-006** condition 执行顺序按记录的 seed 随机化，统计单位为 task；
-   三次 run 不得被当成三个独立 task 增大显著性。
+   memory surface 是唯一允许差异。registration 还必须固定一个 UTC
+   `evaluation_as_of` 与 virtual-clock policy；所有 paired condition 的 temporal
+   parsing、age/staleness、retrieval/rendering 必须使用该时钟，读取真实当前时间
+   或 clock drift 使 pair 无效。
+6. **B-006** condition 执行顺序必须由 live outcome 前锁定在
+   `registration_projection` 的 condition-order seed、PRNG algorithm/version
+   和完整 canonical tuple permutation 派生；planner 重算的顺序/digest 必须
+   byte-identical，不能在 plan/run 后才记录 seed。统计单位为 task；三次 run
+   不得被当成三个独立 task 增大显著性。
 
 ### Condition 边界
 
@@ -113,18 +119,26 @@ stale/irrelevant memory harm。
     gold-free 的 `treatment_review_input_projection`，其中只含 pre-target
     candidate/source provenance/conflict/quality/rubric；必须排除 target
     prompt、gold/expected、hidden/scorer 与 target outcome。全部 review/
-    promotion 在 target reveal 前完成并冻结；post-reveal intervention 使 run
-    invalid。
+    promotion 必须按 task 跨三个 run index 批量完成并冻结，且在该 task 任一
+    target reveal/outcome 前完成；否则必须证明每个后续 reviewer/curator 的
+    identity 与不可篡改 assignment 从未接触该 task 的 target/outcome。
+    post-reveal intervention 或已暴露 actor 的后续 preparation 使 run invalid。
 11. **B-011** `curated_file_budgeted` 的 curator 只能看到由 schema allowlist
     从历史 `raw_events` 投影出的 chronological `curator_input_projection`；
     projection 必须排除 `expected_memory_facts`、gold `memories`/refs、target
     prompt、hidden score/oracle 与 scorer metadata，并在 curator 启动前
     canonicalize/hash。committed artifact 必须保存该 projection/hash，使
-    verifier 可从 fixture 独立重建并证明 gold-free。curator 必须在 target
-    task 揭示前完成并冻结 `MEMORY.md`，运行时不得暴露其他 memory surface。
+    verifier 可从 fixture 独立重建并证明 gold-free。同一 task 的三个 run
+    projection/output 必须在任何 target task 揭示前由未暴露 curator 完成并
+    冻结 `MEMORY.md`；运行时不得暴露其他 memory surface。
 12. **B-012** 每个 budgeted run 必须验证 frozen file hash，并记录人工维护
     minutes、更新/删除/冲突处理次数、字符/token 大小和 budget exceed 状态；
-    缺 log、hash 不同或超预算均使该 run 无效。
+    人工 minutes 只能来自 trusted supervisor 对 exact interaction/projection/
+    frozen output 记录的 monotonic start/end receipt，不能接受 curator/reviewer
+    自报 elapsed。committed release evidence 必须保存 sanitized frozen
+    `MEMORY.md` exact bytes 的 content-addressed record，使 verifier 可重算 hash
+    并检查实际 control surface；缺 log/receipt/bytes、hash 不同或超预算均使
+    该 run 无效。
 13. **B-013** `remem_preloaded` 与 `curated_file_expert` 保留为 diagnostic
     upper bounds 时必须使用新名称并明显标记 shortcut；其 outcome 不得被写成
     primary evidence。
@@ -154,14 +168,22 @@ stale/irrelevant memory harm。
 17. **B-017** auth/provider 不可用、capture/extraction/promotion/retrieval
     失败、agent timeout/crash、score/cleanup/scanner 失败都必须形成 typed
     artifact 或显式 suite error，不能静默丢弃。
-18. **B-018** 每次尝试有唯一 `attempt_id`；在 target process spawn 前，必须
-    把绑定 budget reservation receipt 的 `target_started` transition 以 CAS
-    append 到同一 anchored authoritative remote ledger；remote commit durable
-    后才可 spawn。重试保留此前失败 artifact；
+18. **B-018** 每次尝试有唯一 `attempt_id`；任何 curator/treatment reviewer
+    interaction、billable preparation 或 target work 开始前，trusted supervisor
+    必须先把绑定 matrix key、projection hash、budget reservation 与 timing
+    policy 的 `pre_target_work_started` transition 以 CAS append 到 anchored
+    authoritative remote ledger。human interaction start/end、frozen output
+    digest 与消耗由 supervisor 继续 append；abandon/crash 必须封为
+    `abandoned_before_target`、保留或按批准上限保守计入人工成本并封闭该
+    run index，不能从 fresh clone 重做。target process spawn 前还必须 durable
+    append `target_started`。重试保留此前失败 artifact；
     recovery 发现 started 但无 terminal artifact 时，必须一次性生成 immutable
     `abandoned_after_target_start` failure（`resolved=0`）并封闭该 run index，
-    不得重试或永久留作“缺失”。target 已启动后的其他 outcome failure 同样
-    留在预注册分母，不允许挑成功重跑。
+    不得重试或永久留作“缺失”。每个 terminal outcome 的 sanitized artifact
+    digest、matrix key、cost/timing/frozen-surface digests 必须由 supervisor
+    CAS seal 到同一 ledger；没有匹配 terminal attestation 的本地 artifact/
+    manifest 不可信。target 已启动后的其他 outcome failure同样留在预注册
+    分母，不允许挑成功重跑。
 19. **B-019** resume 只补缺失 tuple；duplicate tuple、hash drift、partial
     artifact 或已完成 artifact overwrite 必须被拒绝。
 20. **B-020** dry-run、schema validation、report verify 和普通 CI 不读取
@@ -178,12 +200,17 @@ stale/irrelevant memory harm。
     取整规则。调用方不得提交 `worst_case_cost`；service broker 必须从 reviewed
     rates × per-call ceilings 保守计算 reservation，计算溢出、未知 SKU、价格
     漂移或 currency/rounding mismatch 均在调用前 fail closed。每次 billable
-    call 前必须在 authoritative shared ledger durably reserve该计算值，
+    call 前，broker 必须以实际序列化 request 验证 input/cache/tool token
+    counts 不超过 reservation，并通过 provider 强制参数设置 output/reasoning/
+    tool/cache ceilings；provider/API 不能硬性执行或 broker 无法在超限前终止时
+    禁止 dispatch。随后在 authoritative shared ledger durably reserve 该计算值，
     crash/abandoned reservation 仍按上限计费。
-    ledger 必须从 policy 中固定的 genesis OID 延伸，且 authority phase fresh
-    验证保护该 ref 的 active non-bypassable ruleset：禁止 delete/force push、
-    bypass actor 为空并覆盖管理员与 automation；任一保护/audit drift 都
-    fail closed。resume、换 clone/`execution_id`、并发或拆单都不得重复领取预算。
+    每个 reservation 前，隔离 authority broker 必须 fresh 重验 approval 未过期、
+    merge/review 仍有效、ledger 从 genesis 的 authenticated ancestry 和保护该
+    ref 的 active non-bypassable ruleset：禁止 delete/force push、bypass actor
+    为空并覆盖管理员与 automation；任一 approval/protection/audit/history drift
+    都 fail closed。resume、换 clone/`execution_id`、并发或拆单都不得重复领取
+    预算。
 
 ### Attribution、失败分解与 claim
 
@@ -201,7 +228,10 @@ stale/irrelevant memory harm。
     用 `null` + missing count。144 个 primary tuple 的 scanner-passed sanitized
     run records 与 source manifest 必须作为 committed release evidence 保留，
     并足以独立重算分母、失败、成本、attribution、report hash 和 gate input；
-    `/tmp` 或 aggregate-only report 不构成可复验证据。
+    每个 record/manifest 还必须匹配 authoritative ledger 中 supervisor-sealed
+    terminal matrix-key/artifact digest；control 必须解析到 committed
+    content-addressed sanitized frozen bytes。`/tmp`、self-rehashed mutable tree
+    或 aggregate-only report 不构成可复验证据。
 24. **B-024** 每个 task/condition 的 outcome 固定为三次预注册 run 的二元
     `resolved` 均值；target-started timeout/crash/score failure 计 0，pre-target
     缺失或 integrity-invalid tuple 使 matrix `INSUFFICIENT`、不得插补。bootstrap
@@ -226,7 +256,11 @@ stale/irrelevant memory harm。
 28. **B-028** registry 的 immutable `registration_projection` 必须在任何使用
     official 16-task fixture 的 live smoke/official run 前锁定 dataset、所有
     executable/profile hashes、timeout、runs、metric、failure/missing rules、
-    exclusions、bootstrap seed/algorithm、threshold 和 wording templates。
+    exclusions、`evaluation_as_of`/virtual-clock policy、condition-order seed/
+    PRNG version/完整 tuple permutation、bootstrap seed/algorithm、threshold 和
+    wording templates。它只能在 CLI/docs/version-sync 完成并从 exact final
+    implementation head reproducibly build、记录最终 remem/agent binary hashes
+    后冻结；实现期 synthetic registry 不能冒充 final registration。
     run artifact 只绑定该 projection digest；后续 mutable
     `result_bindings`（status/report hash/approved wording）不得改变该 digest。
     若要在看到 live outcome 后改 projection，必须创建新的 benchmark version
@@ -246,12 +280,21 @@ stale/irrelevant memory harm。
   agent/network/provider access。
 - [ ] `remem_e2e` 真实自动链路通过正向与禁止 shortcut 的负向测试。
 - [ ] `curated_file_budgeted` protocol、freeze hash、人工成本和超预算负例通过。
+- [ ] 同 task 三 repetitions 的 control/treatment preparation 在任一 target
+  reveal 前 batch-freeze；人工成本由 supervisor monotonic receipts 产生，
+  frozen control exact bytes 可从 committed content-addressed evidence 重算。
 - [ ] condition/run 隔离、timeout、cleanup、resume、attempt integrity 和
   hidden-test/deny-network 边界有 deterministic tests。
+- [ ] pre-target work、target start 与 terminal artifact digest 都由 authoritative
+  ledger CAS seal；每个 billable dispatch 前重验 authority/ruleset/ancestry 并
+  硬性执行 input/output/reasoning/cache/tool token ceilings。
 - [ ] 6-stage / 12-enum failure attribution 与完整 source-to-use refs 可验证。
 - [ ] 144-run official artifacts 有 committed sanitized run-record bundle 与
   source manifest；paired report、成本、attribution 与 stop-loss 可独立复算。
 - [ ] claim registry 在 official run 前锁定，wording 只引用 hash-bound verdict。
+- [ ] registration 在 final binary/version 完成后锁定 executable hashes、
+  `evaluation_as_of`、PRNG/version 与完整 condition permutation；clock/order
+  drift 的 pair 被拒绝。
 - [ ] 没有 official runs 时保持 `INSUFFICIENT`，不产生 public outcome claim。
 
 ## Boundary Checklist

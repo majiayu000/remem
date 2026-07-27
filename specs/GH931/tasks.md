@@ -86,13 +86,20 @@ GH-931
     - primary/diagnostic ID 闭集与 Rust/JSON 一致；
     - old bare IDs parse fail，无 compatibility alias；
     - old committed reports 被明确识别为 legacy 且不能进入 flagship report；
-    - fixed-seed primary dry plan 精确 144，pair hashes 完整；
+    - primary dry plan 精确 144；schema 要求 registered `evaluation_as_of`/
+      virtual-clock policy、condition-order seed/PRNG version、完整 tuple
+      permutation/digest，planner 重算不一致或读取真实 clock 均失败；
     - 每个 required history episode 有 answer-bearing sanitized `raw_events`；
       validator 拒绝只在 summary/gold `memories` 中存在答案的 fixture；
     - closed `curator_input_projection` schema 只允许 chronological raw-event
       字段；validator 拒绝 gold/expected/target/hidden/scorer 字段；
+    - T2 独占的 `flagship-run.schema.json` 要求 closed
+      `treatment_review_input_projection`、input/output/freeze hashes、
+      supervisor timing、pre-target/target/terminal ledger receipts 与
+      frozen-control content digest；T4/T6 不修改该 schema；
     - live approval schema 要求 canonical USD pricing snapshot、SKU/rates、
-      per-call token ceilings/rounding fields，拒绝 caller-supplied cost；
+      per-call token ceilings/rounding/provider hard-limit capability fields，
+      拒绝 caller-supplied cost；
     - pair identity 分别绑定 actual remem/agent executables 与 target/extraction/
       enrichment/promotion/retrieval profiles，不用单个 `model` hash 代替；
     - schema 对 missing/duplicate/hash drift/extra keys fail closed。
@@ -101,6 +108,7 @@ GH-931
     ```bash
     python3 eval/coding-bench/validate_schemas.py
     cargo test eval::coding_bench::run_plan
+    cargo test eval::coding_bench::tests::registered_clock_and_order
     cargo test eval::coding_bench::fixture
     cargo run -- bench coding --suite issue385-v1 --matrix primary \
       --dry-run --json-out /tmp/gh931-plan.json
@@ -131,8 +139,8 @@ GH-931
     - timeout/crash/cleanup/scanner/partial/duplicate/hash drift 都有负例；
     - non-self-referential `approval_key` 只由 repo identity、pre-merge policy
       digest 与 PR number 派生，明确排除承载 key 的 blob/tree/commit；隔离
-      authority-only GitHub phase 完成 merge/review/blob attestation 后，才允许
-      读取 provider/host auth；
+      authority broker 与 provider/host principal 分开，GitHub credential 不向
+      后者暴露；
     - parent `src/eval/coding_bench.rs` 显式 `mod approval;` 并将 runner/tests
       接到同一 module；planned manifest 与 T3 single-writer ownership 包含该
       parent，不靠未授权文件改动完成 wiring；
@@ -140,15 +148,25 @@ GH-931
       effective timestamp、input/output/cache/tool rates、每 call-kind token
       ceilings 与向上取整；broker 忽略/拒绝 caller cost，使用 checked arithmetic
       计算 conservative reservation，unknown/drift/overflow fail closed；
+    - dispatch 前用 canonical tokenizer 验证 serialized input/cache/tool tokens，
+      provider hard-limit 强制 output/reasoning/cache/tool ceilings；SKU/API
+      不能强制或无法超限前终止则不 dispatch；
     - protected remote ledger ref 以 non-force fast-forward CAS 做跨 clone
       reservation；每次 billable call 前 durable reserve worst-case budget，
       settlement 后追加，crash/abandoned reservation 仍计费；
-    - approval 绑定 ledger genesis + ruleset ID/hash；fresh 验证 active
-      non-bypassable no-delete/no-force/no-bypass protection 及完整 genesis
-      ancestry，保护/audit drift fail closed；
+    - approval 绑定 ledger genesis + ruleset ID/hash；每个 reservation/
+      transition/terminal seal 前 fresh 验证 approval expiry、merge/review、
+      active non-bypassable no-delete/no-force/no-bypass protection及完整 genesis
+      ancestry，保护/audit/history drift fail closed；
+    - curator/reviewer/preparation 前将 `pre_target_work_started` CAS append；
+      supervisor monotonic timing/output digests durable，abandon/crash 形成
+      `abandoned_before_target`、保守计时并封闭 run index，禁止 fresh-clone 重做；
     - target spawn 前将 reservation-bound `target_started` CAS append 到同一
       anchored remote ledger；recovery 将无 terminal 的 started attempt CAS 封为
       `abandoned_after_target_start`/resolved=0，禁止重跑；
+    - scanner 后 supervisor 把 matrix key + terminal artifact/cost/timing/frozen
+      digests CAS seal 到 ledger；无匹配 terminal attestation 的 artifact 不可
+      resume/report；
     - forged/expired/dismissed/drift/hash/tuple/cap approval，sibling reservation
       race、forced/rollback ledger、resume/new clone/execution ID replay 与累计
       超额均在 provider/agent call 前失败；
@@ -180,15 +198,18 @@ GH-931
     - provider/drain/promotion/retrieval failure typed 且无降级；
     - capture→use refs 同 run/project 可追溯；
     - budgeted condition 验证 blind curator log/freeze hash/budget/actor type，
-      target 只看到冻结后的 MEMORY.md；
+      target 只看到 committed content-addressed record 中 hash 匹配的 frozen
+      `MEMORY.md` exact bytes；
     - curator 唯一输入是 schema-allowlisted、hashed
       `curator_input_projection`；artifact 保存 projection，verifier 可从
       fixture 重建，gold/expected/target/hidden/scorer 字段注入均失败；
     - remem-side manual review/promotion 与 curator 使用同一 task/session cost
       denominator；缺 treatment log 时 maintenance claim insufficient；
     - treatment reviewer 只看到可重建、hashed、gold-free 的
-      `treatment_review_input_projection`，review/promotion 在 target reveal 前
-      freeze；target/gold/hidden/scorer/outcome 注入或 post-reveal edit 失败；
+      `treatment_review_input_projection`；同 task 三个 run 的 control/treatment
+      preparation 在首个 target reveal 前 batch-freeze，或 ledger 证明后续 actor
+      未暴露；target/gold/hidden/scorer/outcome 注入、暴露 actor 复用或
+      post-reveal edit 失败；
     - overlapping failures 按 earliest causal stage 选唯一 root，downstream
       consequences 单列；无法判定时显式 suite error。
   - Verify:
@@ -197,6 +218,9 @@ GH-931
     cargo test eval::coding_bench::tests::no_memory_isolation
     cargo test eval::coding_bench::tests::remem_e2e
     cargo test eval::coding_bench::tests::curated_file_budgeted
+    cargo test eval::coding_bench::tests::cross_run_blindness
+    cargo test eval::coding_bench::tests::supervisor_maintenance_timing
+    cargo test eval::coding_bench::tests::frozen_control_content
     cargo test eval::coding_bench::tests::failure_stage
     ```
 
@@ -211,8 +235,13 @@ GH-931
   - Done when:
     - curator 输入是可从 fixture 重建且 byte-identical 的 allowlisted
       `curator_input_projection`，无 target/hidden/gold/expected/scorer 字段；
-    - frozen MEMORY.md hash 与 log 一致；
-    - elapsed/characters/tokens/edits/deletes/conflicts 完整；
+    - protocol 要求同 task 三 repetitions 在任何 target reveal 前 batch-freeze，
+      或由 ledger-bound stable actor assignment 证明 curator 未暴露；
+    - frozen `MEMORY.md` sanitized exact bytes 写入 content-addressed evidence，
+      digest 与 log/target mount 一致；
+    - elapsed 只能来自 trusted supervisor monotonic start/end receipt，绑定
+      interaction/projection/output；actor 自报 elapsed 被拒绝，characters/
+      tokens/edits/deletes/conflicts 完整；
     - human 与 automated curator actor 分开，后者不进入 human-cost claim；
     - validator 对 target leak、missing log、hash mismatch、over budget 均
       invalid；T4 按此 contract 在其独占 `condition.rs` 中接线。
@@ -229,9 +258,9 @@ GH-931
     B-022, B-023, B-024, B-025, B-026, B-027, B-028, B-029
   - File ownership:
     - `src/eval/coding_bench/runner.rs`
-    - `eval/claims/{registry.json,claims-registry.schema.json,claim_gate.py}`
+    - `eval/claims/{claims-registry.schema.json,claim_gate.py}`
     - `eval/coding-bench/reports/{flagship-e2e-v1.json,flagship-e2e-v1.md}`
-    - `eval/coding-bench/evidence/flagship-e2e-v1/{run-records.jsonl,source-manifest.json}`
+    - `eval/coding-bench/evidence/flagship-e2e-v1/{frozen-control-content.jsonl,run-records.jsonl,source-manifest.json}`
     - `eval/coding-bench/schemas/evidence-source-manifest.schema.json`
     - report/bootstrap implementation must remain in an existing planned
       coding-bench file or update manifest/spec before adding a module
@@ -240,15 +269,17 @@ GH-931
     - 每 task 三-run binary mean、target-started failure=0、pre-target missing=
       insufficient 与 fixed-seed 16-task percentile bootstrap 可复现；
     - cost、failure denominator、null missing 和 attribution 完整；
-    - immutable registration projection 在任何 official-fixture smoke 前锁定；
-      mutable result bindings 不改变 run digest，outcome 后改 projection invalid；
-    - treatment review input/output hashes、pre-target freeze timestamp 与
-      target-reveal ordering 在 report 前验证；
+    - registry schema/gate 使用 synthetic projection 验证 clock/order/binary
+      fields 与 immutable/mutable split；T6 不写 final `registry.json`、不在 T7
+      final binary 产生前锁定 live registration；
+    - treatment review input/output hashes、supervisor timing、task-batch freeze
+      与 target-reveal ordering 在 report 前验证；
     - superiority lower bound、non-inferiority lower bound >=-3pp、treatment-side
       review cost、固定 48-run stop-loss denominator 与 attribution-missing
       insufficient 全有边界测试；
-    - 144 个 scanner-passed sanitized run records 和 source manifest 完整，
-      report 可仅从该 bundle 重算且 input hash 一致；
+    - 144 个 scanner-passed sanitized run records、content-addressed frozen
+      control bytes 和 source manifest 完整；每个 terminal digest 匹配
+      authoritative ledger attestation，report 可仅从 governed evidence 重算；
     - 未执行 live matrix 时 report/registry 保持 `INSUFFICIENT`。
   - Verify:
 
@@ -266,6 +297,8 @@ GH-931
   - Dependencies: SP931-T6
   - Covers: B-001, B-002, B-003, B-020, B-028, B-029, B-030
   - File ownership:
+    - `eval/claims/registry.json`（仅 final `registration_projection` freeze；
+      T6 schema/gate 完成且 final binary build 后顺序移交）
     - `src/cli/{eval_types.rs,tests_eval.rs}`
     - `src/cli/actions/eval.rs`
     - `scripts/ci/check_public_claims.py`
@@ -283,7 +316,12 @@ GH-931
     - docs 保持 scaffold/implementation/official evidence 状态分离；
     - non-PASS + positive public wording 被 CI 拒绝；PASS 时任何不等于
       maintainer-approved exact wording/report link 的幅度、范围或改写也被拒绝；
-    - version surfaces 同步。
+    - version surfaces 同步，并从 exact final implementation head reproducibly
+      build/记录 remem 与 agent binary hashes；
+    - 完成上述 build 后才冻结 final `registration_projection`，绑定
+      executable/profile digests、`evaluation_as_of`/virtual clock、
+      condition-order seed/PRNG version/完整 tuple permutation+digest 与 bootstrap
+      policy；任何 official-fixture smoke 前保持 immutable。
   - Verify:
 
     ```bash
@@ -301,7 +339,9 @@ GH-931
   - Covers: B-001-B-030
   - Done when:
     - 独立 reviewer 检查 E2E 未 seed/preload、curator blind、auth/hidden isolation、
-      attempt denominator、statistics 和 public wording；
+      cross-run blind batch、supervisor timing、pre-target/terminal ledger、
+      dispatch token caps、per-call authority freshness、pinned clock/order、
+      final-binary registration、attempt denominator、statistics 和 public wording；
     - fresh offline/focused/full commands 全绿；
     - review artifact 绑定 exact head，findings 全部闭环；
     - 不弱化测试或门禁。
@@ -336,7 +376,8 @@ GH-931
     - approval 绑定 exact code/fixture/registration、actual remem/agent binaries、
       target/extraction/enrichment/promotion/retrieval profiles、timeout、tuple
       selectors、expiry、max agent/LLM calls、max estimated cost、USD pricing
-      snapshot/SKU/token ceilings/rounding policy；
+      snapshot/SKU/token ceilings/rounding/provider hard-limit policy、pinned
+      evaluation clock 与 preregistered order digest；
     - credential bytes 不进入 approval/artifact；
     - smoke 永久排除于 official denominator。
     - smoke/full approval entry 通过
@@ -347,9 +388,10 @@ GH-931
       派生，承载 key 的 blob/tree/commit 与 review/merge attestation 均不进入
       preimage；approval 另绑定 ledger genesis/ruleset；
     - runner 的 negative suite 已证明 caller 自选 key、未 merge/未 APPROVED/
-      过期 registry、authority credential scope 扩大、跨 clone/`execution_id`
-      replay、pre-call crash、abandoned reservation、ledger rollback 与拆单超额
-      均在 provider/host/agent call 前失败。
+      过期 registry、每-call approval/ruleset/audit/ancestry drift、authority
+      credential scope 扩大、token hard-limit unsupported/超限、跨 clone/
+      `execution_id` replay、pre-target/pre-call crash、abandoned reservation、
+      ledger rollback 与拆单超额均在 provider/host/agent call 前失败。
   - Verify:
 
     ```bash
@@ -363,6 +405,10 @@ GH-931
     cargo test eval::coding_bench::tests::started_attempt_recovery
     cargo test eval::coding_bench::tests::ledger_protection_anchor
     cargo test eval::coding_bench::tests::pricing_reservation
+    cargo test eval::coding_bench::tests::dispatch_token_ceilings
+    cargo test eval::coding_bench::tests::per_call_authority_revalidation
+    cargo test eval::coding_bench::tests::pre_target_attempt_recovery
+    cargo test eval::coding_bench::tests::terminal_ledger_attestation
     ```
 
 - [ ] `SP931-T10` Owner: authorized benchmark operator; Done when: 144 个 primary tuple 都有 immutable verified artifacts； Verify: final verifier 报告 `valid_primary_runs == 144`； Covers: B-004-B-006, B-014-B-024。
@@ -371,6 +417,7 @@ GH-931
   - Covers: B-004, B-005, B-006, B-014, B-015, B-016, B-017, B-018,
     B-019, B-020, B-021, B-022, B-023, B-024
   - File ownership（T6 implementation 完成后顺序移交）:
+    - `eval/coding-bench/evidence/flagship-e2e-v1/frozen-control-content.jsonl`
     - `eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl`
     - `eval/coding-bench/evidence/flagship-e2e-v1/source-manifest.json`
   - Done when:
@@ -379,11 +426,14 @@ GH-931
     - no secret/HOME/hidden/cross-run leak；
     - run 使用 locked registration projection、actual approved executable/profile
       digests 和 protected remote reservation ledger；
-    - report 可从 artifacts 重建。
+    - 每个 tuple 的 terminal artifact digest 由 supervisor seal 到 authoritative
+      ledger；control exact bytes 可从 committed content-addressed bundle 重建；
+    - report 可从 artifacts + terminal ledger attestations 重建。
     - scanner-passed sanitized attempts/runs 写入 committed
       `run-records.jsonl`，`source-manifest.json` 绑定全部 attempt、matrix、
-      scanner、code/fixture/registry 与 report-input hashes；raw/private/secret
-      evidence 不进入 git。
+      scanner、code/fixture/registry、terminal ledger attestations 与 report-input
+      hashes；frozen control content bundle 绑定 exact sanitized bytes；
+      raw/private/secret evidence 不进入 git。
   - Verify:
 
     ```bash
@@ -439,8 +489,11 @@ GH-931
 - SP931-T2 与 SP931-T3 在 T1B 后可并行，文件所有权不重叠。
 - SP931-T5 必须等待 T2/T3 完成，再独占 curator contract 文件；T4 等待 T5
   完成后独占 `condition.rs`/`failure.rs` 与指定 test sections。
-- T6 等待 T4/T5 后独占 runner/report/claim integration。
-- T7 串行处理共享 CLI/docs/version/enforcement-sensitive 文件。
+- T6 等待 T4/T5 后独占 runner/report/claim schema integration，只用 synthetic
+  registration 测试，不写 final `registry.json`。
+- T7 串行处理共享 CLI/docs/version/enforcement-sensitive 文件，完成 exact
+  final binary build 后接收 `registry.json` ownership 并冻结 registration；
+  T8/T9 均不得早于该 freeze。
 - live T10 不得与任何改变 code/fixture/registration/executable/profile hash
   的 lane 并行；T10 seal evidence 后才把 result-path write ownership 移交 T11。
 - 每个 agent 只能写任务列明的文件；新增路径先更新 tech manifest/spec approval。
