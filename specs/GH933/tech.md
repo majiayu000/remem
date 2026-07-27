@@ -90,8 +90,16 @@ human `spec_approval` 才能进入 implementation。
   supersedes/trust/recency，再做 cross-topic conflict post-pass；只有两个
   edge endpoints 都是各自 slot survivor 时，两个对应 `CurrentTruthView`
   都输出 `Contradicted`、双方 claims 与该 relation。identity 不合并，
-  cross-topic edge 不参与 supersedes/trust/recency；partial/mismatched/unbacked
-  conflict edge decision-neutral。`Supports`/`DerivedFrom`（及未来明确
+  cross-topic edge 不参与 supersedes/trust/recency。没有
+  `source_operation_id`、完全不声称 canonical operation backing 的 external
+  conflict edge decision-neutral；一旦 edge 提供 `source_operation_id`，adapter
+  必须解析并验证对应 `memory_operation_log`：row missing、operation kind 非
+  `conflict`、`conflicting_ids` 非合法 JSON integer-ID array、duplicate/invalid
+  ID、replacement/pairwise shape 的 result/conflicting endpoint membership
+  不成立，或 operation owner/type 与 edge/endpoints 矛盾，都沿现有 `Result`
+  返回包含 edge ID、operation ID、endpoint IDs 与坏 field/value 的 contextual
+  error。不得把 malformed/partial/mismatched operation provenance 降级为
+  decision-neutral。`Supports`/`DerivedFrom`（及未来明确
   allowlist 的 provenance-only kind）
   在两端属于整体 scoped claim set 且一端是 winner 时可跨 typed subject 附加到
   `supporting_relations`，但绝不参与 survivor、evidence tier 或 recency。
@@ -100,7 +108,6 @@ human `spec_approval` 才能进入 implementation。
   follow-up 必须把 scope/id 约束下推到 SQL，或实现等价 bounded lookup，
   并在该 follow-up merge-ready 前用 representative corpus、
   `EXPLAIN QUERY PLAN`、p50/p95、rows examined/returned 与 memory bound
-  证明不会扫描无关 project 全表；不得推迟到 Phase B。
 - 当前 dual-evidence fixture 验证一个 claim 的两个 evidence refs，不验证
   `ClaimRelationKind::Supports` 的 adapter/delivery。Phase A 验证应补一个
   focused Supports relation fixture。
@@ -117,9 +124,15 @@ human `spec_approval` 才能进入 implementation。
   `inserted_at_epoch` 都 `<= reference_epoch` 时才能进入 trust/output；
   equality 可用。source-before 但 inserted-after 的 late ingestion 必须排除。
   replay 把 `inserted_at_epoch` 后移时允许保守排除（可能少用 evidence），但
-  绝不允许回溯抬高历史 truth。before/equal/after 与 late-ingestion fixtures
-  必须证明 historical winner 不变。`as_of=None` 也必须共享一次 “now”，避免
-  claim/relation/evidence 各自取时造成同次 projection 漂移。
+  绝不允许回溯抬高历史 truth。user-context claim row 只有
+  `created_at_epoch <= reference_epoch` 且 last-mutation knowledge epoch
+  `updated_at_epoch <= reference_epoch` 时才可进入 projection；post-cutoff
+  edit/suppress/unsuppress/delete 会原地改写 current bytes/status，Phase A
+  无历史版本时必须保守排除/`Unknown`，不能把新状态应用到旧查询或恢复不存在
+  的旧 bytes。为 memory/user claim/evidence 分别覆盖 before/equal/after，
+  并锁定 post-cutoff 四种 user operation 的 historical regression。
+  `as_of=None` 也必须共享一次 “now”，避免 claim/relation/evidence 各自取时
+  造成同次 projection 漂移。
 - 每个 captured-event evidence lookup 必须同时 SELECT `project_id` 并 join
   `projects.project_path`。expected evidence project 优先取 trim 后非空的
   `memory.source_project`，而不是可能表示 routed target/synthetic placement 的
@@ -164,8 +177,9 @@ human `spec_approval` 才能进入 implementation。
   fail-closed mapping，不能被宣称已有 adapter diagnostic。
 - `as_of` 只能依据现存 row 的 source/reference、`updated_at_epoch`、
   validity/relation timestamps；对后来 hard-delete 或原地 status/content
-  rewrite 无法完整重建。`updated_at_epoch > as_of` 的 current memory row
-  必须保守排除/`Unknown`，而不是把 source time 当 knowledge time。Phase A
+  rewrite 无法完整重建。`updated_at_epoch > as_of` 的 current memory 或
+  user-context row 必须保守排除/`Unknown`，而不是把 source time 当 knowledge
+  time 或把 post-cutoff edit/suppress/unsuppress/delete 状态回灌历史。Phase A
   通过规格公开此限制，不伪造历史；完整 historical explanation 需要后续
   持久化契约。
 
@@ -197,19 +211,19 @@ human `spec_approval` 才能进入 implementation。
 | --- | --- | --- |
 | CT-001 | v2 ownership/scope-aware `SubjectIdentity`/selector、`src/truth/types.rs`, `src/truth.rs` | same-topic/different-owner/scope/type isolation、legacy owner fallback/partial-owner error、singleton/user-claim identity、v1-to-v2 intentional golden diff、`projection_version=2` |
 | CT-002 | `src/truth/lifecycle.rs` | 四组 `*_statuses_map_deterministically` tests；assert 四个正交维度 |
-| CT-003 | owner/scope-aware subject slots、decision/provenance relation split、branch scope | explicit/none branch、cross-project/owner/scope decision negatives、operation-backed cross-topic preference conflict positive/unbacked negative + scoped cross-subject provenance positive/decision-neutral fixtures；worktree/task 属 Phase B |
-| CT-004 | shared reference epoch、memory/evidence source+knowledge epochs、eligibility | existing as-of/expiry + memory `updated_at` and evidence `inserted_at` before/equal/after + both late-ingestion historical-winner regressions；hard-delete/status-history limitation仅文档化 |
+| CT-003 | owner/scope-aware subject slots、decision/provenance relation split、branch scope | explicit/none branch、cross-project/owner/scope decision negatives、operation-backed cross-topic preference conflict positive、wholly-unbacked decision-neutral negative、malformed/inconsistent operation contextual-error fixtures + scoped cross-subject provenance positive/decision-neutral fixtures；worktree/task 属 Phase B |
+| CT-004 | shared reference epoch、memory/user-claim/evidence source+knowledge epochs、eligibility | existing as-of/expiry + memory/user `updated_at` and evidence `inserted_at` before/equal/after；late memory/evidence 与 user post-cutoff edit/suppress/unsuppress/delete historical-winner regressions；hard-delete/status-history limitation仅文档化 |
 | CT-005 | `adapter::replacement_relation`, `projection::resolve_group` | `explicit_supersedes_beats_recency`, `user_claim_supersedes_link_resolves_deterministically` |
 | CT-006 | source-project-bound `captured_event_evidence`, trust adapters | existing trust fixtures + routed source-project positive、legacy fallback positive、foreign/missing/ambiguous-source contextual-error negatives；stored confidence 不在决策输入 |
-| CT-007 | `resolve_group` + cross-slot preference conflict post-pass | existing same-slot refutes/tie tests + operation-backed cross-topic preference survivors both contradicted、non-preference/cross-owner/cross-scope/unbacked edge negatives |
-| CT-008 | `eligible`, `abstention`, adapter provenance parsing | baseline abstention + malformed `evidence_event_ids`/`source_refs_json` and dangling captured-event ID contextual-error regressions |
+| CT-007 | `resolve_group` + cross-slot preference conflict post-pass + operation provenance parser | existing same-slot refutes/tie tests + valid operation-backed survivors both contradicted；no-source-operation edge neutral；missing/wrong operation、malformed/wrong-type `conflicting_ids`、endpoint membership/owner/type inconsistency contextual errors |
+| CT-008 | `eligible`, `abstention`, adapter provenance parsing | baseline abstention + malformed `evidence_event_ids`/`source_refs_json`、dangling captured-event ID 与 malformed/inconsistent operation-log contextual-error regressions |
 | CT-009 | identity slot、decision relation set vs provenance-only relation set | exact-identity Supersedes/Refutes + narrow cross-topic preference conflict exception + same/cross-subject scoped Supports/DerivedFrom retention and decision-neutrality |
 | CT-010 | `ClaimSource`, adapter exports, lifecycle-only observation/candidate mapping | code review confirms Phase A claim sources only Memory/UserContextClaim；writer-side firewall 属 Phase C，PR #939 无完成测试 |
 | CT-011 | lifecycle mapping + memory/user-claim adapter raw-status validators | known status total mapping + unknown memory/user-claim table/ref/raw contextual-error regressions；observation/candidate limitation documented |
 | CT-012 | `eligible` excludes non-Live rows | `archived_and_deleted_rows_never_become_current_truth`; historical explanation consumer 属 Phase B/C |
 | CT-013 | future `src/context/*` integration | PR #939 无实现/测试；Phase B 需 context load/render/error/rollback fixtures |
 | CT-014 | future writer evaluation in memory/candidate/user-context/graph areas | PR #939 无实现/测试；Phase C 需 benchmark、migration compatibility 和 rollback evidence |
-| CT-015 | SELECT-only adapter、v2 version boundary、contextual errors | restricted v1-to-v2 golden diff + SQLite authorizer/`total_changes` no-write + malformed/dangling/foreign-project/unknown-status contextual-error tests |
+| CT-015 | SELECT-only adapter、v2 version boundary、contextual errors | restricted v1-to-v2 golden diff + SQLite authorizer/`total_changes` no-write + malformed/dangling/foreign-project/unknown-status/operation-provenance contextual-error tests |
 
 ## 数据流
 
@@ -240,7 +254,11 @@ TruthQuery(project, branch, as_of, subject)
 
 ```text
 (owner_scope, owner_key, as_of)
+  -> compute/reuse the projection reference_epoch
   -> SELECT exact-owner user_context_claims
+  -> require created_at_epoch <= reference_epoch
+     AND updated_at_epoch <= reference_epoch
+  -> post-cutoff in-place mutation => conservative exclusion/Unknown
   -> source refs + row supersedes links
   -> typed user-claim subject identity
   -> shared resolver
@@ -312,10 +330,13 @@ projection 作为 context loader 的 typed input；Phase C 才可能改变 write
   scope 外 statement，也可能让 scope 外数据影响 scope 内 truth。
 - provenance malformed/dangling/foreign-source-project 必须在 Phase A
   hardening 中 fail closed；memory row 与 evidence 的 source/knowledge epochs
-  都必须在 trust 前检查，防止 future/late-ingested rows 改写历史查询。
+  及 user-context row 的 created/updated knowledge epochs 都必须在 trust 前
+  检查，防止 future/late-ingested/post-cutoff-mutated rows 改写历史查询。
 - cross-topic `Refutes` 必须验证 operation-backed preference exception 的全部
   owner/scope/branch/type/survivor predicates；不得把任意 memory/graph conflict
-  edge 当成扩大 decision domain 的授权。
+  edge 当成扩大 decision domain 的授权。声称 operation backing 的 edge 若
+  operation payload malformed 或 endpoint/owner/type 自相矛盾必须 contextual
+  error；只有无 `source_operation_id` 的普通 edge 可 decision-neutral。
 
 ## 备选方案
 

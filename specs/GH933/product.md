@@ -83,7 +83,12 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    `<= as_of`；source-created time 虽早、但在 `as_of` 后才写入的 imported
    memory 不得回溯进入 historical truth。因为现有 row 会原地更新，若
    `updated_at_epoch > as_of`，Phase A 必须保守排除该 current row 或返回
-   `Unknown`，不得推测其旧版本。captured evidence 必须同时满足 source time
+   `Unknown`，不得推测其旧版本。user-context claim 同样只能在
+   `created_at_epoch <= as_of` 且 canonical last-mutation knowledge time
+   `updated_at_epoch <= as_of` 时进入 historical projection；edit、suppress、
+   unsuppress 或 delete 在 cutoff 后原地改变 current row 时，Phase A 必须保守
+   排除/`Unknown`，不得把 post-cutoff status/content 应用到历史查询，也不得
+   假装恢复已被覆盖的旧 claim。captured evidence 必须同时满足 source time
    `COALESCE(reference_time_epoch, created_at_epoch) <= as_of` 与 remem knowledge
    time `inserted_at_epoch <= as_of`；source event 虽早、但在 `as_of` 后才被
    ingest 的 late evidence 不得回溯改变历史 winner。若底层数据没有足够历史
@@ -105,7 +110,12 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    cross-topic preference conflict 属于有效冲突，但仅当两端都是同 owner、
    同 normalized scope、同 normalized branch 的 `memory_type=preference`
    claim，且两端在各自 subject slot 内仍 surviving；任一条件不满足都不得扩张
-   decision domain。
+   decision domain。完全没有 `source_operation_id` 的 external/unbacked edge
+   可以 decision-neutral；但 edge 声称由 `memory_operation_log` 支持后，
+   missing/wrong operation、malformed `conflicting_ids` JSON、非整数 element、
+   result/conflicting endpoint membership 不成立或 operation/edge owner/type
+   自相矛盾必须返回含 operation/edge/endpoints/field 的 contextual error，
+   不得静默降级为 decision-neutral 并抹去 durable conflict。
 8. CT-008 无匹配 claim、所有 claim 均无 current standing、证据不足或未知
    状态无法安全解释时，必须返回 abstention/`Unknown` 或明确空结果，不得
    发明 claim，也不得把失败伪装为正常空数据。
@@ -168,12 +178,18 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       foreign-project ref 都返回含 memory/event/expected/actual project context
       的错误，不能静默降级 trust。
 - [ ] explicit `as_of` 查询只使用 source time 与 knowledge time 都不晚于
-      `as_of` 的 memory claim row 和 captured evidence；memory row 使用
+      `as_of` 的 memory claim row、user-context claim row 和 captured evidence；
+      memory/user claim row 使用
       `updated_at_epoch` 作为保守的 canonical write/last-mutation knowledge
       epoch。覆盖 old-source/new-ingest memory、source-before/knowledge-after
-      evidence、各时间的 before/equal/after boundary 与 historical winner；
-      row 后来原地更新且无法重建旧版本时必须排除/`Unknown`。`as_of=None` 仍
-      共享一次 reference epoch。
+      evidence、user claim post-cutoff edit/suppress/unsuppress/delete、各时间的
+      before/equal/after boundary 与 historical winner；row 后来原地更新且无法
+      重建旧版本时必须排除/`Unknown`。`as_of=None` 仍共享一次 reference epoch。
+- [ ] operation-backed cross-topic conflict provenance 必须解析并验证
+      `memory_operation_log`；malformed `conflicting_ids` JSON、wrong element
+      types、missing/wrong operation、replacement/pairwise endpoint membership
+      或 owner/type inconsistency 均返回 contextual error。只有完全不声称
+      operation backing 的 edge 可保持 decision-neutral。
 - [ ] malformed `evidence_event_ids`、malformed `source_refs_json`，以及
       syntactically valid 但指向不存在 `captured_events` row 的 dangling event
       ref 均 fail closed，并返回包含 claim/ref context 的可诊断错误；不得静默
@@ -228,6 +244,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
   已不存在/属于另一个 project。
 - imported memory 的 source-created/reference time 早于 `as_of`，但 canonical
   write `updated_at_epoch` 晚于 `as_of`；或既有 row 在 `as_of` 后原地更新。
+- user-context claim 在 `as_of` 前创建，但其 content/status 在 cutoff 后经
+  edit/suppress/unsuppress/delete 原地更新，旧 row bytes 无法重建。
 - 两个不同 `memory_type` 使用相同 `topic_key`；它们必须形成不同 typed
   subjects。
 - global、workspace 与 project memory 使用相同 type/topic，但 owner/scope
@@ -238,6 +256,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - canonical writer 记录两个不同 topic keys 的同-owner/scope preference
   conflict；两个 endpoint 在各自 slot surviving 时两个 outputs 都必须
   `Contradicted`，但一个任意 cross-topic conflict edge不得扩大 decision domain。
+- conflict edge 带 `source_operation_id`，但 operation 的 `conflicting_ids`
+  不是合法 integer-ID array，或 result/conflicting endpoint membership 与 edge
+  不一致；查询必须 contextual error，不能当作普通 unbacked edge 忽略。
 - scoped `Supports`/`DerivedFrom` 连接 winner 与另一个 typed subject；该
   provenance 保留，但不能改变 winner。
 - memory 或 user-context claim 存有未识别 raw status。
