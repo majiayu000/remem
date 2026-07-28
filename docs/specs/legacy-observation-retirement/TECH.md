@@ -1,11 +1,12 @@
 # Legacy Observation Retirement Technical Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-28
 
 Tracking:
 - Epic issue: #684
 - Related contracts: `current-memory-contracts/`
+- Related drain implementation: #943
 
 ## Existing Implementation Facts
 
@@ -13,7 +14,7 @@ Verified inventory (2026-07-02): static writer/reader classification of every
 production reference (tests and migrations excluded), cross-checked against a
 production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 
-### `pending_observations` (legacy queue) — verdict: pure legacy
+### `pending_observations` (legacy queue) — verdict: frozen, drain-only
 
 - Writers on the default runtime path: none. GH684-T6 deleted the former
   `enqueue_pending` API, pending claim/lease helpers, and the legacy
@@ -21,15 +22,20 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
   `captured_events` +
   `ObservationExtract` tasks, not this queue; the Stop hook only reads a
   count to log an "ignored N legacy pending" warning.
-- Remaining writers are manual admin: `remem pending migrate-legacy`
-  (`src/db/pending/admin/migration.rs`, re-records rows as `captured_events`
-  and marks them `migrated`), `retry-failed` / `purge-failed`
-  (`src/db/pending/admin/mutate.rs`). Tests seed historical rows through
-  `db::test_support::insert_legacy_pending_fixture`.
-- Readers: status/stats counters, doctor capture-liveness and queue-health,
-  observability metrics, `remem pending` listings.
-- Dogfood evidence: queue fully empty — ready/delayed/processing/expired/
-  failed all 0.
+- #943 adds a production drain consumer, not a legacy queue writer. When no
+  current extraction task is ready, ordinary workers may atomically re-record
+  eligible residual rows as `captured_events`, enqueue `ObservationExtract`,
+  and mark the source migrated. The bridge cannot enqueue or claim new legacy
+  work.
+- Other mutators remain admin commands: `remem pending migrate-legacy`,
+  `retry-failed`, exact `recover-archived`, and `purge-failed`. Tests seed
+  historical rows through `db::test_support::insert_legacy_pending_fixture`.
+- Readers/consumers: the bounded worker drain, status/stats counters, doctor
+  capture-liveness and queue-health, observability metrics, and `remem
+  pending` listings.
+- The 2026-07-02 dogfood snapshot was empty, but #943 found non-empty
+  long-running stores. The transitional drain exists for those stragglers
+  without changing the frozen disposition.
 
 ### `observations` — verdict: reclassify-current (NOT legacy)
 
@@ -153,7 +159,7 @@ Existing Implementation Facts above):
 
 | Surface | Disposition |
 |---|---|
-| `pending_observations` | `retire` — no default-path writer, dogfood queue empty; drop table + claim/queue machinery after window |
+| `pending_observations` | `retire` — no default-path writer; bounded drain-only bridge migrates residual value, then the table can drop after the window |
 | `observations` | `reclassify-current` — live intermediate of the extraction pipeline; GH684-T8 fixed the "legacy" MCP wording |
 | `observations_fts` | `reclassify-current` — trigger-maintained; follows `observations` |
 | `session_summaries` (table) | `keep` — load-bearing for context/timeline/user-context readers |
@@ -165,14 +171,17 @@ Remaining Phase 1 analysis before freeze decisions execute:
   `finalize_summarize` produce fields or quality the `SessionRollup` path
   does not (compare row shape and content on dogfood data)? If yes, port the
   delta into the rollup before removing the legacy chain.
-- Confirm `pending_observations` has zero rows across other real databases,
-  not only the primary dogfood one; `remem pending migrate-legacy` remains
-  the escape hatch for stragglers.
+- Drain `pending_observations` across real databases, not only the primary
+  dogfood one. The bounded worker bridge handles eligible known-host rows;
+  non-archived stragglers retain the migration-prep/admin path, while archived
+  failed rows use exact `remem pending recover-archived --id`.
 
 ## Phase 2: Doctor Visibility
 
 - New doctor section: per-surface row count, last-write epoch, current
   state (live/frozen/...), and the planned next transition.
+- Archived permanent or unknown-host pending rows are `admin-required`; doctor
+  prints `list-failed` plus the exact `recover-archived` dry-run/apply sequence.
 - After a surface is frozen, any new write raises a doctor error finding
   (and the write path itself is removed or guarded — a frozen surface with
   active writers is a bug, not a warning).
@@ -390,28 +399,51 @@ extraction tasks.
 
 ### `pending_observations`
 
-Readers are counters and admin listings only, so no reader migration is
-needed. GH684-T6 completed the freeze by deleting the dead claim/lease
-machinery and the test-only `enqueue_pending` write path; status/doctor keep
-reporting row counts until the drop ships.
+GH684-T6 completed the writer freeze by deleting claim/lease machinery and the
+test-only `enqueue_pending` path. #943 adds one transitional reader/mutator:
+the drain bridge converts existing rows into current-pipeline work.
+Status/doctor and admin listings remain until the guarded drop ships.
 
 GH684-T5 confirmed the real local databases on 2026-07-08. The default store
 (`/Users/apple/.remem/remem.db`) and the dated backup stores under
 `/Users/apple/Backups/remem/20260704-094200` through
 `/Users/apple/Backups/remem/20260708-033004` all had zero ready, delayed,
 processing, expired, and failed `pending_observations` rows. The default store
-also returned zero rows from `remem pending list-failed --json`. No
-`remem pending migrate-legacy` run was needed for any checked store.
+also returned zero rows from `remem pending list-failed --json`. Later #943
+evidence found residual rows in another long-running store, so an automatic
+bounded drain is required in addition to the admin command.
 
-GH684-T6 freezes the dead queue writer/claim surface by deleting
+GH684-T6 freezes the queue writer/claim surface by deleting
 `enqueue_pending`, claim/lease helpers, and the legacy `PendingObservation`
 claim DTO from the crate. Production builds keep the read/reporting surfaces
-and admin commands (`pending migrate-legacy`, `retry-failed`, `purge-failed`,
-`list-failed`) but no longer export a runtime API that can enqueue, claim,
-fail, or delete claimed legacy pending rows. `retry-failed` remains only as a
-migration-prep admin step: it moves failed rows back to `pending` so
-`pending migrate-legacy` can replay them into `captured_events`, and CLI,
-doctor, status, and README guidance point users to that follow-up migration.
+and admin commands (`pending migrate-legacy`, `retry-failed`,
+`recover-archived`, `purge-failed`, `list-failed`) but no longer export a
+runtime API that can enqueue, claim, fail, or delete claimed legacy pending
+rows.
+
+The #943 drain runs only after the current extraction worker finds no ready
+task. A once worker runs at most one 25-row batch per process; a daemon runs at
+most one batch every 60 seconds. It selects oldest known-host pending,
+expired-processing, due transient failed, and controlled historical archived
+transient rows. Success atomically records the idempotent captured event,
+enqueues current extraction, marks the source migrated, and clears old
+failure/archive state. Shared/transient errors record exponential backoff and
+abort the batch; every other replay error takes the same conservative path
+because the bridge cannot safely infer row-local permanence from shared
+pipeline failures. Rows already classified permanent and unknown-host rows
+stay outside automatic recovery. The bridge never deletes rows or restores a
+legacy enqueue/claim API.
+
+Archived failed rows outside automatic recovery use only the exact command
+`remem pending recover-archived --id <positive-id>
+[--host claude-code|codex-cli] --dry-run`; apply removes `--dry-run`.
+It rejects non-failed/non-archived targets and requires `--host` for stored
+unknown identity. The mutating form revalidates and replays that ID in one
+transaction, clearing failure/archive state only on success and preserving the
+source on every failure. Doctor reports archived permanent and unknown-host
+rows as `admin-required` with `list-failed` plus the exact command sequence.
+`retry-failed` and `pending migrate-legacy` remain the non-archived migration
+prep path.
 Tests that need historical rows seed them through
 `db::test_support::insert_legacy_pending_fixture` instead of a
 production-style queue API.
@@ -424,9 +456,12 @@ not described as legacy.
 
 ## Phase 4: Value Migration + Drop
 
-1. `remem pending migrate-legacy` (already exists) is the migration path for
-   any non-empty `pending_observations` in the wild; extend its report to
-   print migrated/skipped/valueless counts if it does not already.
+1. The bounded #943 worker bridge is the default migration path for eligible
+   residual `pending_observations`; non-archived admin preparation retains
+   `retry-failed` plus `migrate-legacy`, while archived failed rows use exact
+   `recover-archived`. Reports expose migrated batch counts and deferred
+   attempt/backoff logs without payload secrets; doctor exposes archived
+   permanent and unknown-host rows as `admin-required`.
 2. Deprecation window: remem 0.6.0 must announce the upcoming drop in doctor
    output and release notes. The guarded drop cannot ship before remem 0.7.0.
 3. Guarded drop migration for `pending_observations` (pre-check refuses when
@@ -447,8 +482,9 @@ tests (`src/migrate/schema_drift.rs`) updated in the same PR as the drop.
   gate already refuses old binaries on new schemas, which covers this.
 - Encrypted databases: migration commands go through the normal open path;
   no special casing.
-- `db/pending/admin/migration.rs` (`migrate_legacy_pending`) becomes the
-  seed for the Phase 4 command rather than a parallel mechanism.
+- `db/pending/admin/migration.rs` supplies the shared atomic replay primitive
+  for the bounded worker bridge and the Phase 4 admin command; neither path is
+  a second legacy consumer pipeline.
 
 ## Verification
 
@@ -461,6 +497,19 @@ cargo test
 Plus per-phase: equivalence fixtures (Phase 3), migration idempotency +
 guarded-drop tests (Phase 4), and a dogfood-database dry run recorded in the
 epic before each drop ships.
+
+Pending-drain verification seeds known-host pending, expired-processing, due
+transient, and archived transient rows alongside permanent and unknown-host
+controls. It proves current extraction priority, oldest-first selection, the
+25-row cap, one batch per once-worker process, one batch per 60-second daemon
+interval, atomic idempotent migration, successful failure/archive clearing,
+replay-error backoff with batch abort, preserved failed-row timestamps, and
+zero automatic deletion. Exact recovery fixtures cover dry-run, wrong-state
+rejection, mandatory unknown-host override, one-ID atomic success, and full
+rollback on failure. A process-level fault injection starts and kills a worker
+after persisting failed backlog, restarts it, and proves the backlog reaches
+zero after singleton reacquisition, without exposing a legacy enqueue or claim
+API.
 
 The #794 prompt-evidence follow-up is covered by
 `session_rollup_prompt_includes_only_bounded_transcript_text`,

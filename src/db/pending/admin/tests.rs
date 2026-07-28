@@ -2,8 +2,8 @@ use rusqlite::{params, Connection};
 
 use super::{
     count_failed_purge_candidates, count_failed_retry_candidates,
-    count_legacy_migration_candidates, list_failed, migrate_legacy_pending, purge_failed,
-    retry_failed,
+    count_legacy_migration_candidates, count_recoverable_archived_legacy_pending, list_failed,
+    migrate_legacy_pending, purge_failed, retry_failed,
 };
 use crate::{db, migrate::MIGRATIONS};
 
@@ -517,16 +517,51 @@ fn auto_migrate_replays_transient_failed_rows_into_capture_pipeline() {
         .expect("auto migration should succeed");
 
     assert_eq!(outcome.migrated, 1);
-    assert_eq!(outcome.quarantined, 0);
-    let (status, failure_class): (String, Option<String>) = conn
+    let state: (
+        String,
+        i64,
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        Option<i64>,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+    ) = conn
         .query_row(
-            "SELECT status, failure_class FROM pending_observations WHERE id = ?1",
+            "SELECT status, attempt_count, failure_class, last_error, next_retry_epoch,
+                    failed_at_epoch, archived_at_epoch, lease_owner, lease_expires_epoch
+             FROM pending_observations WHERE id = ?1",
             params![failed_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                ))
+            },
         )
         .expect("row should exist");
-    assert_eq!(status, "migrated");
-    assert_eq!(failure_class, None);
+    assert_eq!(
+        state,
+        (
+            "migrated".to_string(),
+            0,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+    );
     let event_count: i64 = conn
         .query_row(
             "SELECT COUNT(*) FROM captured_events WHERE event_id = ?1",
@@ -546,7 +581,7 @@ fn auto_migrate_replays_transient_failed_rows_into_capture_pipeline() {
 }
 
 #[test]
-fn auto_migrate_skips_permanent_archived_and_unknown_host_rows() {
+fn auto_migrate_recovers_archived_transient_rows_when_retry_is_due() {
     let mut conn = setup_conn();
     let now = chrono::Utc::now().timestamp();
     let permanent_id = insert_failed_row(&conn, "s-perm", "alpha", now - 100, "bad schema");
@@ -561,27 +596,79 @@ fn auto_migrate_skips_permanent_archived_and_unknown_host_rows() {
         params![archived_id, now - 50],
     )
     .expect("archived marker should update");
+    let future_id = insert_failed_row(&conn, "s-future", "alpha", now - 90, "later");
     conn.execute(
-        "INSERT INTO pending_observations
-         (host, session_id, project, tool_name, created_at_epoch, updated_at_epoch, status, attempt_count)
-         VALUES ('unknown', 's-unk', 'alpha', 'tool', ?1, ?1, 'failed', 1)",
-        params![now - 100],
+        "UPDATE pending_observations
+         SET archived_at_epoch = ?2, next_retry_epoch = ?3
+         WHERE id = ?1",
+        params![future_id, now - 40, now + 3_600],
     )
-    .expect("unknown host row should insert");
+    .expect("future archived row should update");
+    let unknown_id = insert_failed_row(&conn, "s-unk", "alpha", now - 80, "unknown");
+    conn.execute(
+        "UPDATE pending_observations
+         SET host = 'unknown', archived_at_epoch = ?2
+         WHERE id = ?1",
+        params![unknown_id, now - 30],
+    )
+    .expect("unknown host row should update");
 
+    assert_eq!(
+        count_recoverable_archived_legacy_pending(&conn)
+            .expect("recoverable archived count should query"),
+        2
+    );
     let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
         .expect("auto migration should succeed");
 
-    assert_eq!(outcome.migrated, 0);
-    assert_eq!(outcome.quarantined, 0);
-    let migrated_count: i64 = conn
+    assert_eq!(outcome.migrated, 1);
+    let archived_state: (String, Option<String>, Option<i64>, Option<i64>) = conn
         .query_row(
-            "SELECT COUNT(*) FROM pending_observations WHERE status = 'migrated'",
-            [],
-            |row| row.get(0),
+            "SELECT status, failure_class, next_retry_epoch, archived_at_epoch
+             FROM pending_observations WHERE id = ?1",
+            params![archived_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
-        .expect("statuses should be countable");
-    assert_eq!(migrated_count, 0);
+        .expect("archived row should exist");
+    assert_eq!(archived_state, ("migrated".to_string(), None, None, None));
+    let skipped_states: Vec<(i64, String)> = conn
+        .prepare(
+            "SELECT id, status FROM pending_observations
+             WHERE id IN (?1, ?2, ?3) ORDER BY id",
+        )
+        .expect("skipped select should prepare")
+        .query_map(params![permanent_id, future_id, unknown_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("skipped rows should query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("skipped rows should collect");
+    assert_eq!(
+        skipped_states,
+        vec![
+            (permanent_id, "failed".to_string()),
+            (future_id, "failed".to_string()),
+            (unknown_id, "failed".to_string()),
+        ]
+    );
+    assert_eq!(
+        count_recoverable_archived_legacy_pending(&conn)
+            .expect("remaining archived count should query"),
+        1
+    );
+    conn.execute(
+        "UPDATE pending_observations SET next_retry_epoch = ?2 WHERE id = ?1",
+        params![future_id, now - 1],
+    )
+    .expect("future retry should become due");
+    let second = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("due archived retry should migrate");
+    assert_eq!(second.migrated, 1);
+    assert_eq!(
+        count_recoverable_archived_legacy_pending(&conn)
+            .expect("recoverable archived count should clear"),
+        0
+    );
 }
 
 #[test]
@@ -618,33 +705,86 @@ fn auto_migrate_respects_limit_oldest_first() {
 }
 
 #[test]
-fn auto_migrate_quarantines_rows_that_fail_replay() {
+fn auto_migrate_shared_sqlite_failure_schedules_bounded_retry() {
     let mut conn = setup_conn();
     let now = chrono::Utc::now().timestamp();
     let failed_id = insert_failed_row(&conn, "s-poison", "alpha", now - 100, "err");
-    conn.execute_batch("DROP TABLE captured_events;")
-        .expect("captured_events should drop for fault injection");
+    conn.execute(
+        "UPDATE pending_observations
+         SET failed_at_epoch = ?2, archived_at_epoch = ?3
+         WHERE id = ?1",
+        params![failed_id, now - 100, now - 50],
+    )
+    .expect("failure timestamps should update");
+    conn.execute_batch(
+        "CREATE TRIGGER fail_legacy_capture
+         BEFORE INSERT ON captured_events
+         BEGIN
+             SELECT RAISE(ABORT, 'injected shared migration failure');
+         END;",
+    )
+    .expect("capture fault trigger should install");
 
-    let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
-        .expect("auto migration should not abort on poison rows");
+    let error = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect_err("shared SQLite failure should abort the batch");
 
-    assert_eq!(outcome.migrated, 0);
-    assert_eq!(outcome.quarantined, 1);
-    let (status, failure_class, last_error): (String, Option<String>, Option<String>) = conn
+    assert!(format!("{error:#}").contains("scheduled retry"));
+    let state: (
+        String,
+        Option<String>,
+        i64,
+        i64,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<i64>,
+        Option<String>,
+        i64,
+    ) = conn
         .query_row(
-            "SELECT status, failure_class, last_error FROM pending_observations WHERE id = ?1",
+            "SELECT status, failure_class, attempt_count, next_retry_epoch,
+                    failed_at_epoch, archived_at_epoch, lease_owner,
+                    lease_expires_epoch, last_error, updated_at_epoch
+             FROM pending_observations WHERE id = ?1",
             params![failed_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
+                    row.get(8)?,
+                    row.get(9)?,
+                ))
+            },
         )
         .expect("row should exist");
-    assert_eq!(status, "failed");
-    assert_eq!(failure_class.as_deref(), Some("permanent"));
-    assert!(last_error
+    assert_eq!(state.0, "failed");
+    assert_eq!(state.1.as_deref(), Some("transient"));
+    assert_eq!(state.2, 4);
+    assert_eq!(state.3 - state.9, 40);
+    assert_eq!(state.4, now - 100);
+    assert_eq!((state.5, state.6, state.7), (Some(now - 50), None, None));
+    assert!(state
+        .8
         .unwrap_or_default()
-        .contains("[auto_migration_quarantined]"));
+        .contains("[auto_migration_retry]"));
 
     let second = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
-        .expect("second pass should succeed");
+        .expect("backoff should prevent immediate retry");
     assert_eq!(second.migrated, 0);
-    assert_eq!(second.quarantined, 0);
+    conn.execute_batch("DROP TRIGGER fail_legacy_capture;")
+        .expect("capture fault trigger should drop");
+    conn.execute(
+        "UPDATE pending_observations SET next_retry_epoch = ?2 WHERE id = ?1",
+        params![failed_id, now - 1],
+    )
+    .expect("retry should become due");
+    let recovered = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("retry should recover after the SQLite fault clears");
+    assert_eq!(recovered.migrated, 1);
 }

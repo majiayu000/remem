@@ -1,8 +1,24 @@
-use anyhow::{bail, Result};
-use rusqlite::{params, Connection};
+use anyhow::{bail, Context, Result};
+use rusqlite::{named_params, params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 
 use crate::db::{self, CaptureEventInput, ExtractionTaskKind};
+
+const AUTO_MIGRATION_RETRY_BASE_SECS: i64 = 5;
+const AUTO_MIGRATION_RETRY_MAX_SECS: i64 = 900;
+const AUTO_MIGRATION_RETRY_MAX_SHIFT: i64 = 8;
+
+const AUTO_ACTIONABLE_PREDICATE: &str = "
+    host IN (:claude_host, :codex_host)
+    AND (
+        (status = 'pending'
+         AND (next_retry_epoch IS NULL OR next_retry_epoch <= :now))
+        OR (status = 'processing'
+            AND (lease_expires_epoch IS NULL OR lease_expires_epoch < :now))
+        OR (status = 'failed'
+            AND COALESCE(failure_class, 'transient') = 'transient'
+            AND (next_retry_epoch IS NULL OR next_retry_epoch <= :now))
+    )";
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LegacyPendingMigration {
@@ -15,16 +31,16 @@ pub struct LegacyPendingMigration {
     pub session_id: String,
 }
 
-struct LegacyPendingRow {
-    id: i64,
-    host: String,
-    session_id: String,
-    project: String,
-    tool_name: String,
-    tool_input: Option<String>,
-    tool_response: Option<String>,
-    cwd: Option<String>,
-    created_at_epoch: i64,
+pub(super) struct LegacyPendingRow {
+    pub(super) id: i64,
+    pub(super) host: String,
+    pub(super) session_id: String,
+    pub(super) project: String,
+    pub(super) tool_name: String,
+    pub(super) tool_input: Option<String>,
+    pub(super) tool_response: Option<String>,
+    pub(super) cwd: Option<String>,
+    pub(super) created_at_epoch: i64,
 }
 
 pub fn count_legacy_migration_candidates(
@@ -65,6 +81,42 @@ pub fn count_legacy_migration_candidates(
     Ok(count.max(0) as usize)
 }
 
+pub fn count_recoverable_archived_legacy_pending(conn: &Connection) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM pending_observations
+         WHERE host IN (?1, ?2)
+           AND status = 'failed'
+           AND COALESCE(failure_class, 'transient') = 'transient'
+           AND archived_at_epoch IS NOT NULL",
+        params![
+            crate::runtime_config::CLAUDE_HOST,
+            crate::runtime_config::CODEX_HOST
+        ],
+        |row| row.get(0),
+    )?;
+    Ok(count.max(0) as usize)
+}
+
+pub fn count_admin_required_archived_legacy_pending(conn: &Connection) -> Result<usize> {
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*)
+         FROM pending_observations
+         WHERE status = 'failed'
+           AND archived_at_epoch IS NOT NULL
+           AND NOT (
+               host IN (?1, ?2)
+               AND COALESCE(failure_class, 'transient') = 'transient'
+           )",
+        params![
+            crate::runtime_config::CLAUDE_HOST,
+            crate::runtime_config::CODEX_HOST
+        ],
+        |row| row.get(0),
+    )?;
+    Ok(count.max(0) as usize)
+}
+
 pub fn migrate_legacy_pending(
     conn: &mut Connection,
     project: Option<&str>,
@@ -78,12 +130,13 @@ pub fn migrate_legacy_pending(
 
     for row in rows {
         let host = capture_host_for_row(&row.host, fallback_host)?;
-        migrated.push(replay_legacy_row_into_capture(
-            &tx,
-            &row,
-            host,
-            MARK_MIGRATED_PENDING_SQL,
-        )?);
+        let migration = replay_legacy_row_into_capture(&tx, &row, host)?;
+        let now = chrono::Utc::now().timestamp();
+        let changed = tx.execute(MARK_MIGRATED_PENDING_SQL, params![row.id, now, now])?;
+        if changed != 1 {
+            bail!("legacy pending row {} changed while migrating", row.id);
+        }
+        migrated.push(migration);
     }
 
     tx.commit()?;
@@ -102,28 +155,10 @@ const MARK_MIGRATED_PENDING_SQL: &str = "UPDATE pending_observations
             OR (status = 'processing'
                 AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))";
 
-const MARK_MIGRATED_ACTIONABLE_SQL: &str = "UPDATE pending_observations
-     SET status = 'migrated',
-         lease_owner = NULL,
-         lease_expires_epoch = NULL,
-         next_retry_epoch = NULL,
-         last_error = NULL,
-         failure_class = NULL,
-         failed_at_epoch = NULL,
-         updated_at_epoch = ?2
-     WHERE id = ?1
-       AND (status = 'pending'
-            OR (status = 'processing'
-                AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3))
-            OR (status = 'failed'
-                AND archived_at_epoch IS NULL
-                AND COALESCE(failure_class, 'transient') = 'transient'))";
-
-fn replay_legacy_row_into_capture(
+pub(super) fn replay_legacy_row_into_capture(
     conn: &Connection,
     row: &LegacyPendingRow,
     host: &str,
-    mark_sql: &str,
 ) -> Result<LegacyPendingMigration> {
     let event_id = legacy_event_id(row.id);
     let content = legacy_capture_content(row);
@@ -146,11 +181,6 @@ fn replay_legacy_row_into_capture(
     let extraction_task_id = outcome
         .extraction_task_id
         .ok_or_else(|| anyhow::anyhow!("legacy pending migration did not enqueue extraction"))?;
-    let now = chrono::Utc::now().timestamp();
-    let changed = conn.execute(mark_sql, params![row.id, now, now])?;
-    if changed != 1 {
-        bail!("legacy pending row {} changed while migrating", row.id);
-    }
     Ok(LegacyPendingMigration {
         pending_id: row.id,
         event_id,
@@ -165,7 +195,19 @@ fn replay_legacy_row_into_capture(
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct AutoLegacyMigrationOutcome {
     pub migrated: usize,
-    pub quarantined: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AutoCandidateOutcome {
+    Migrated,
+    Skipped,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct AutoMigrationRetry {
+    attempt_count: i64,
+    next_retry_epoch: i64,
+    backoff_secs: i64,
 }
 
 /// Worker-driven self-healing for the legacy `pending_observations` queue.
@@ -173,86 +215,245 @@ pub struct AutoLegacyMigrationOutcome {
 /// Replays actionable rows — `pending`, expired `processing`, and transient
 /// `failed` — with a known capture host into the live
 /// `captured_events`/`extraction_tasks` pipeline. Each row commits in its own
-/// transaction; a row whose replay errors is quarantined as
-/// `failure_class = 'permanent'` so it cannot wedge the queue.
+/// immediate transaction. Any replay failure rolls back current-pipeline
+/// writes, records capped exponential backoff on the source row, and aborts the
+/// batch. Automatic recovery never guesses that a shared replay error is a
+/// row-local permanent failure.
 pub fn auto_migrate_actionable_legacy_pending(
     conn: &mut Connection,
     limit: i64,
 ) -> Result<AutoLegacyMigrationOutcome> {
-    let rows = select_auto_actionable_rows(conn, limit)?;
+    let candidate_ids = select_auto_actionable_ids(conn, limit)?;
     let mut outcome = AutoLegacyMigrationOutcome::default();
-    for row in rows {
-        let Ok(host) = normalize_capture_host(&row.host).map(str::to_string) else {
-            continue;
-        };
-        let row_id = row.id;
-        let replay = (|| -> Result<()> {
-            let tx = conn.transaction()?;
-            replay_legacy_row_into_capture(&tx, &row, &host, MARK_MIGRATED_ACTIONABLE_SQL)?;
-            tx.commit()?;
-            Ok(())
-        })();
-        match replay {
-            Ok(()) => outcome.migrated += 1,
+    for row_id in candidate_ids {
+        match auto_migrate_candidate(conn, row_id) {
+            Ok(AutoCandidateOutcome::Migrated) => outcome.migrated += 1,
+            Ok(AutoCandidateOutcome::Skipped) => {}
             Err(error) => {
-                crate::log::error(
-                    "failure_lifecycle",
-                    &format!("legacy pending auto-migration quarantined id={row_id}: {error}"),
-                );
-                quarantine_legacy_row(conn, row_id, &error.to_string())?;
-                outcome.quarantined += 1;
+                return Err(error).with_context(|| {
+                    format!(
+                        "legacy pending auto-migration aborted batch id={row_id} migrated_before_error={}",
+                        outcome.migrated
+                    )
+                })
             }
         }
     }
     Ok(outcome)
 }
 
-fn select_auto_actionable_rows(conn: &Connection, limit: i64) -> Result<Vec<LegacyPendingRow>> {
+fn select_auto_actionable_ids(conn: &Connection, limit: i64) -> Result<Vec<i64>> {
     let limit = limit.max(1);
     let now = chrono::Utc::now().timestamp();
-    let mut stmt = conn.prepare(
-        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
+    let sql = format!(
+        "SELECT id
          FROM pending_observations
-         WHERE host IN (?2, ?3)
-           AND (status = 'pending'
-                OR (status = 'processing'
-                    AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?1))
-                OR (status = 'failed'
-                    AND archived_at_epoch IS NULL
-                    AND COALESCE(failure_class, 'transient') = 'transient'))
+         WHERE {AUTO_ACTIONABLE_PREDICATE}
          ORDER BY created_at_epoch ASC, id ASC
-         LIMIT ?4",
-    )?;
+         LIMIT :limit"
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(
-        params![
-            now,
-            crate::runtime_config::CLAUDE_HOST,
-            crate::runtime_config::CODEX_HOST,
-            limit
-        ],
-        row_from_db,
+        named_params! {
+            ":now": now,
+            ":claude_host": crate::runtime_config::CLAUDE_HOST,
+            ":codex_host": crate::runtime_config::CODEX_HOST,
+            ":limit": limit,
+        },
+        |row| row.get(0),
     )?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
 }
 
-fn quarantine_legacy_row(conn: &Connection, id: i64, error: &str) -> Result<()> {
-    let now = chrono::Utc::now().timestamp();
+fn auto_migrate_candidate(conn: &mut Connection, row_id: i64) -> Result<AutoCandidateOutcome> {
+    let mut tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin legacy pending auto-migration transaction")?;
+    let eligibility_now = chrono::Utc::now().timestamp();
+    let Some(row) = load_auto_actionable_row(&tx, row_id, eligibility_now)? else {
+        tx.commit()?;
+        return Ok(AutoCandidateOutcome::Skipped);
+    };
+    let host = normalize_capture_host(&row.host)?;
+    let replay = {
+        let savepoint = tx
+            .savepoint_with_name("legacy_pending_auto_replay")
+            .context("begin legacy pending replay savepoint")?;
+        let replay = replay_legacy_row_into_capture(&savepoint, &row, host);
+        match replay {
+            Ok(migration) => {
+                savepoint
+                    .commit()
+                    .context("commit legacy pending replay savepoint")?;
+                Ok(migration)
+            }
+            Err(error) => {
+                savepoint
+                    .finish()
+                    .context("roll back legacy pending replay savepoint")?;
+                Err(error)
+            }
+        }
+    };
+    if let Err(error) = replay {
+        let retry = mark_legacy_row_for_transient_retry(
+            &tx,
+            row_id,
+            eligibility_now,
+            &format!("{error:#}"),
+        )
+        .with_context(|| format!("record legacy pending retry state id={row_id}"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!("legacy pending row changed inside immediate transaction id={row_id}")
+        })?;
+        tx.commit()
+            .context("commit legacy pending retry transition")?;
+        crate::log::error(
+            "failure_lifecycle",
+            &format!(
+                "surface=pending_observation class=transient outcome=deferred id={row_id} attempt={} backoff_secs={} next_retry_epoch={}",
+                retry.attempt_count, retry.backoff_secs, retry.next_retry_epoch
+            ),
+        );
+        return Err(error).with_context(|| {
+            format!(
+                "legacy pending auto-migration scheduled retry id={row_id} attempt={} backoff_secs={}",
+                retry.attempt_count, retry.backoff_secs
+            )
+        });
+    }
+
+    let completed_at = chrono::Utc::now().timestamp();
+    let changed = mark_auto_migrated(&tx, row_id, eligibility_now, completed_at)?;
+    match changed {
+        0 => {
+            tx.rollback()?;
+            Ok(AutoCandidateOutcome::Skipped)
+        }
+        1 => {
+            tx.commit()?;
+            Ok(AutoCandidateOutcome::Migrated)
+        }
+        changed => bail!(
+            "legacy pending auto-migration invariant violated: id={row_id} affected_rows={changed}"
+        ),
+    }
+}
+
+fn load_auto_actionable_row(
+    conn: &Connection,
+    row_id: i64,
+    now: i64,
+) -> Result<Option<LegacyPendingRow>> {
+    let sql = format!(
+        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
+         FROM pending_observations
+         WHERE id = :id
+           AND {AUTO_ACTIONABLE_PREDICATE}"
+    );
+    conn.query_row(
+        &sql,
+        named_params! {
+            ":id": row_id,
+            ":now": now,
+            ":claude_host": crate::runtime_config::CLAUDE_HOST,
+            ":codex_host": crate::runtime_config::CODEX_HOST,
+        },
+        row_from_db,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn mark_auto_migrated(
+    conn: &Connection,
+    row_id: i64,
+    eligibility_now: i64,
+    completed_at: i64,
+) -> Result<usize> {
+    let sql = format!(
+        "UPDATE pending_observations
+         SET status = 'migrated',
+             attempt_count = 0,
+             lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             next_retry_epoch = NULL,
+             last_error = NULL,
+             failure_class = NULL,
+             failed_at_epoch = NULL,
+             archived_at_epoch = NULL,
+             updated_at_epoch = :completed_at
+         WHERE id = :id
+           AND {AUTO_ACTIONABLE_PREDICATE}"
+    );
+    Ok(conn.execute(
+        &sql,
+        named_params! {
+            ":id": row_id,
+            ":now": eligibility_now,
+            ":completed_at": completed_at,
+            ":claude_host": crate::runtime_config::CLAUDE_HOST,
+            ":codex_host": crate::runtime_config::CODEX_HOST,
+        },
+    )?)
+}
+
+fn mark_legacy_row_for_transient_retry(
+    conn: &Connection,
+    row_id: i64,
+    now: i64,
+    error: &str,
+) -> Result<Option<AutoMigrationRetry>> {
     let marker = format!(
-        "[auto_migration_quarantined] {}",
+        "[auto_migration_retry] {}",
         crate::db::truncate_str(error, 1000)
     );
-    conn.execute(
+    let sql = format!(
         "UPDATE pending_observations
          SET status = 'failed',
-             failure_class = 'permanent',
-             failed_at_epoch = COALESCE(failed_at_epoch, ?2),
-             last_error = ?3,
-             updated_at_epoch = ?2
-         WHERE id = ?1",
-        params![id, now, marker],
+             attempt_count = attempt_count + 1,
+             next_retry_epoch = :now + MIN(
+                 :max_retry_secs,
+                 :base_retry_secs * (1 << MIN(MAX(COALESCE(attempt_count, 0), 0), :max_shift))
+             ),
+             lease_owner = NULL,
+             lease_expires_epoch = NULL,
+             failure_class = 'transient',
+             failed_at_epoch = COALESCE(failed_at_epoch, :now),
+             last_error = :error,
+             updated_at_epoch = :now
+         WHERE id = :id
+           AND {AUTO_ACTIONABLE_PREDICATE}"
+    );
+    let changed = conn.execute(
+        &sql,
+        named_params! {
+            ":id": row_id,
+            ":now": now,
+            ":claude_host": crate::runtime_config::CLAUDE_HOST,
+            ":codex_host": crate::runtime_config::CODEX_HOST,
+            ":base_retry_secs": AUTO_MIGRATION_RETRY_BASE_SECS,
+            ":max_retry_secs": AUTO_MIGRATION_RETRY_MAX_SECS,
+            ":max_shift": AUTO_MIGRATION_RETRY_MAX_SHIFT,
+            ":error": marker,
+        },
     )?;
-    Ok(())
+    if changed == 0 {
+        return Ok(None);
+    }
+    let (attempt_count, next_retry_epoch): (i64, i64) = conn.query_row(
+        "SELECT attempt_count, next_retry_epoch
+         FROM pending_observations
+         WHERE id = ?1",
+        params![row_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    Ok(Some(AutoMigrationRetry {
+        attempt_count,
+        next_retry_epoch,
+        backoff_secs: next_retry_epoch.saturating_sub(now),
+    }))
 }
 
 fn select_legacy_pending_rows(
@@ -351,49 +552,4 @@ fn parse_jsonish(value: Option<&str>) -> serde_json::Value {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn unknown_host_count_is_queryable() -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        conn.execute_batch(
-            "CREATE TABLE pending_observations (
-                id INTEGER PRIMARY KEY,
-                host TEXT NOT NULL,
-                session_id TEXT NOT NULL,
-                project TEXT NOT NULL,
-                tool_name TEXT NOT NULL,
-                tool_input TEXT,
-                tool_response TEXT,
-                cwd TEXT,
-                created_at_epoch INTEGER NOT NULL,
-                updated_at_epoch INTEGER NOT NULL,
-                status TEXT NOT NULL,
-                attempt_count INTEGER NOT NULL,
-                next_retry_epoch INTEGER,
-                last_error TEXT,
-                lease_owner TEXT,
-                lease_expires_epoch INTEGER
-            );",
-        )?;
-        conn.execute(
-            "INSERT INTO pending_observations
-             (host, session_id, project, tool_name, created_at_epoch, updated_at_epoch, status, attempt_count)
-             VALUES ('unknown', 's', 'p', 'Edit', 1, 1, 'pending', 0)",
-            [],
-        )?;
-
-        assert_eq!(count_legacy_migration_candidates(&conn, Some("p"), 10)?, 1);
-        assert_eq!(
-            count_legacy_migration_candidates(&conn, Some("other"), 10)?,
-            0
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn legacy_event_id_is_stable() {
-        assert_eq!(legacy_event_id(42), "legacy-pending-42");
-    }
-}
+mod tests;

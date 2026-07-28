@@ -45,21 +45,64 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
             return Check::new("Capture liveness", Status::Fail, failures.join("; "));
         }
     };
+    let recoverable_archived_pending =
+        match db::pending::admin::count_recoverable_archived_legacy_pending(conn) {
+            Ok(count) => count,
+            Err(err) => {
+                if failures.is_empty() {
+                    return Check::new(
+                        "Capture liveness",
+                        Status::Warn,
+                        format!("cannot count recoverable archived pending observations: {err}"),
+                    );
+                }
+                failures.push(format!(
+                    "cannot count recoverable archived pending observations: {err}"
+                ));
+                return Check::new("Capture liveness", Status::Fail, failures.join("; "));
+            }
+        };
+    let admin_required_archived_pending =
+        match db::pending::admin::count_admin_required_archived_legacy_pending(conn) {
+            Ok(count) => count,
+            Err(err) => {
+                if failures.is_empty() {
+                    return Check::new(
+                        "Capture liveness",
+                        Status::Warn,
+                        format!("cannot count admin-required archived pending observations: {err}"),
+                    );
+                }
+                failures.push(format!(
+                    "cannot count admin-required archived pending observations: {err}"
+                ));
+                return Check::new("Capture liveness", Status::Fail, failures.join("; "));
+            }
+        };
 
-    if stats.failed_pending_observations > 0 || stats.failed_extraction_tasks > 0 {
+    if stats.failed_pending_observations > 0
+        || recoverable_archived_pending > 0
+        || admin_required_archived_pending > 0
+        || stats.failed_extraction_tasks > 0
+    {
         let oldest_age = oldest_actionable_failure_age(&stats.failure_lifecycle)
             .map(|age| format!("; oldest actionable failure age={}s", age))
             .unwrap_or_default();
         let mut recovery = Vec::new();
-        if stats.failed_pending_observations > 0 {
-            recovery.push("a running `remem worker` auto-migrates transient failed rows into the capture pipeline in batches; to drain manually, run `remem pending list-failed --limit 20`; preview and apply migration prep with `remem pending retry-failed --dry-run` then `remem pending retry-failed`; replay with `remem pending migrate-legacy --dry-run` then `remem pending migrate-legacy`; if replay reports host='unknown', rerun with `remem pending migrate-legacy --host claude-code` or `remem pending migrate-legacy --host codex-cli`");
+        if stats.failed_pending_observations > 0 || recoverable_archived_pending > 0 {
+            recovery.push("a running `remem worker` auto-migrates eligible transient rows into the capture pipeline; run `remem worker --once` to drain one known-host batch now, including archived transient rows; for non-archived or unknown-host repair, run `remem pending list-failed --limit 20`, then preview/apply `remem pending retry-failed --dry-run` and `remem pending retry-failed`, followed by `remem pending migrate-legacy --dry-run --host claude-code` and `remem pending migrate-legacy --host claude-code` (or the corresponding `remem pending migrate-legacy --dry-run --host codex-cli` and `remem pending migrate-legacy --host codex-cli` commands)");
+        }
+        if admin_required_archived_pending > 0 {
+            recovery.push("inspect exact archived rows with `remem pending list-failed --limit 20`, then preview `remem pending recover-archived --id <id> --dry-run` (add `--host claude-code` or `--host codex-cli` when host is unknown) and apply the same command without `--dry-run`");
         }
         if stats.failed_extraction_tasks > 0 {
             recovery.push("run `remem worker --once` for failed extraction tasks");
         }
         failures.push(format!(
-            "failed-observation backlog: {} actionable failed pending observations, {} actionable failed extraction tasks{}; {}",
+            "failed-observation backlog: {} actionable failed pending observations, {} recoverable archived transient pending observations, {} admin-required archived pending observations, {} actionable failed extraction tasks{}; {}",
             stats.failed_pending_observations,
+            recoverable_archived_pending,
+            admin_required_archived_pending,
             stats.failed_extraction_tasks,
             oldest_age,
             recovery.join("; ")
@@ -360,14 +403,93 @@ mod tests {
         assert!(matches!(check.status, Status::Fail));
         assert!(check.detail.contains("failed-observation backlog"));
         assert!(check.detail.contains("failed pending observations"));
+        assert!(check.detail.contains("`remem worker --once`"));
         assert!(check.detail.contains("`remem pending retry-failed`"));
-        assert!(check.detail.contains("`remem pending migrate-legacy`"));
         assert!(check
             .detail
             .contains("`remem pending migrate-legacy --host claude-code`"));
         assert!(check
             .detail
             .contains("`remem pending migrate-legacy --host codex-cli`"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_liveness_fails_on_recoverable_archived_observation_backlog() -> anyhow::Result<()> {
+        let conn = setup_liveness_conn()?;
+        let id = crate::db::test_support::insert_legacy_pending_fixture(
+            &conn,
+            "codex-cli",
+            "sess-archived-transient",
+            "/tmp/remem",
+            "Bash",
+            Some("{}"),
+            Some("{}"),
+            Some("/tmp/remem"),
+        )?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE pending_observations
+             SET status = 'failed',
+                 failure_class = 'transient',
+                 failed_at_epoch = ?1,
+                 archived_at_epoch = ?2
+             WHERE id = ?3",
+            params![now - 20 * 86_400, now - 86_400, id],
+        )?;
+
+        let check = check_capture_liveness(Some(&conn), &[]);
+
+        assert!(matches!(check.status, Status::Fail));
+        assert!(check.detail.contains("failed-observation backlog"));
+        assert!(check
+            .detail
+            .contains("0 actionable failed pending observations"));
+        assert!(check
+            .detail
+            .contains("1 recoverable archived transient pending observations"));
+        assert!(check
+            .detail
+            .contains("a running `remem worker` auto-migrates"));
+        assert!(check.detail.contains("run `remem worker --once`"));
+        Ok(())
+    }
+
+    #[test]
+    fn capture_liveness_fails_on_admin_required_archived_observation() -> anyhow::Result<()> {
+        let conn = setup_liveness_conn()?;
+        let id = crate::db::test_support::insert_legacy_pending_fixture(
+            &conn,
+            "unknown",
+            "sess-archived-admin",
+            "/tmp/remem",
+            "Bash",
+            Some("{}"),
+            Some("{}"),
+            Some("/tmp/remem"),
+        )?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE pending_observations
+             SET status = 'failed',
+                 failure_class = 'permanent',
+                 failed_at_epoch = ?1,
+                 archived_at_epoch = ?2
+             WHERE id = ?3",
+            params![now - 20 * 86_400, now - 86_400, id],
+        )?;
+
+        let check = check_capture_liveness(Some(&conn), &[]);
+
+        assert!(matches!(check.status, Status::Fail));
+        assert!(check
+            .detail
+            .contains("1 admin-required archived pending observations"));
+        assert!(check
+            .detail
+            .contains("`remem pending recover-archived --id <id> --dry-run`"));
+        assert!(check.detail.contains("`--host claude-code`"));
+        assert!(check.detail.contains("`--host codex-cli`"));
         Ok(())
     }
 

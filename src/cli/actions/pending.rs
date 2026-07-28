@@ -4,7 +4,9 @@ use serde::Serialize;
 use crate::cli::types::PendingAction;
 use crate::db::{
     self,
-    pending::admin::{FailedPendingRow, LegacyPendingMigration},
+    pending::admin::{
+        ArchivedLegacyPendingRecoveryPreview, FailedPendingRow, LegacyPendingMigration,
+    },
     ExtractionReplayRange, ExtractionReplayRangeEvidence,
 };
 
@@ -161,6 +163,58 @@ pub(in crate::cli) fn run_pending(action: PendingAction) -> Result<()> {
                     println!(
                         "Migrated {} legacy pending row(s) into captured_events.",
                         migrated.len()
+                    );
+                }
+            }
+        }
+        PendingAction::RecoverArchived {
+            id,
+            host,
+            dry_run,
+            json,
+        } => {
+            if dry_run {
+                let conn = db::open_db_read_only()?;
+                let candidate = db::pending::admin::preview_archived_legacy_pending_recovery(
+                    &conn,
+                    id,
+                    host.as_deref(),
+                )?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&PendingRecoverArchivedJson {
+                            dry_run: true,
+                            candidate,
+                            migrated: None,
+                        })?
+                    );
+                } else {
+                    println!(
+                        "Would recover archived legacy pending row {} with host {}.",
+                        id, candidate.resolved_host
+                    );
+                }
+            } else {
+                let mut conn = db::open_db()?;
+                let outcome = db::pending::admin::recover_archived_legacy_pending(
+                    &mut conn,
+                    id,
+                    host.as_deref(),
+                )?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&PendingRecoverArchivedJson {
+                            dry_run: false,
+                            candidate: outcome.candidate,
+                            migrated: Some(outcome.migrated),
+                        })?
+                    );
+                } else {
+                    println!(
+                        "Recovered archived legacy pending row {} into captured event {} with host {}.",
+                        id, outcome.migrated.event_id, outcome.migrated.host
                     );
                 }
             }
@@ -344,6 +398,13 @@ struct PendingMigrateLegacyJson {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct PendingRecoverArchivedJson {
+    dry_run: bool,
+    candidate: ArchivedLegacyPendingRecoveryPreview,
+    migrated: Option<LegacyPendingMigration>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct PendingExtractionRangesJson {
     project: Option<String>,
     limit: i64,
@@ -408,6 +469,35 @@ mod tests {
         assert_eq!(parsed["count"], 1);
         assert_eq!(parsed["migrated"][0]["event_id"], "legacy-pending-7");
         assert_eq!(parsed["migrated"][0]["host"], "codex-cli");
+        Ok(())
+    }
+
+    #[test]
+    fn cli_pending_recover_archived_json_is_machine_parseable(
+    ) -> std::result::Result<(), serde_json::Error> {
+        let output = PendingRecoverArchivedJson {
+            dry_run: true,
+            candidate: ArchivedLegacyPendingRecoveryPreview {
+                pending_id: 7,
+                stored_host: "unknown".to_string(),
+                resolved_host: "codex-cli".to_string(),
+                requires_host: true,
+                project: "proj".to_string(),
+                session_id: "session-1".to_string(),
+                failure_class: Some("permanent".to_string()),
+                archived_at_epoch: 10,
+            },
+            migrated: None,
+        };
+
+        let text = serde_json::to_string(&output)?;
+        let parsed: Value = serde_json::from_str(&text)?;
+
+        assert_eq!(parsed["dry_run"], true);
+        assert_eq!(parsed["candidate"]["pending_id"], 7);
+        assert_eq!(parsed["candidate"]["requires_host"], true);
+        assert_eq!(parsed["candidate"]["resolved_host"], "codex-cli");
+        assert!(parsed["migrated"].is_null());
         Ok(())
     }
 

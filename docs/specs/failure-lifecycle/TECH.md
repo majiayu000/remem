@@ -1,10 +1,11 @@
 # Failure Lifecycle Technical Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-28
 
 Tracking:
 - Spec/tracking issue: #681
+- Related implementation issue: #943
 
 ## Existing Implementation Facts
 
@@ -16,13 +17,16 @@ Tracking:
   pending-queue WARN, #374) but with no age dimension and no 7-day split for
   jobs.
 - #365 fixed compression AI failures being mis-marked successful; failure
-  marking is honest today, and nothing consumes the failures afterward.
+  marking is honest today. Current extraction, replay, and job failures have
+  bounded recovery, and #943 adds a drain-only bridge from eligible legacy
+  pending rows into the current capture/extraction pipeline.
 - Four failure-bearing surfaces are currently visible to status/doctor:
   `pending_observations` (legacy extraction queue, including
   `status='failed'`), `extraction_tasks` (2919 failed on the reference
   install), `extraction_replay_ranges` (27 retryable ranges on the reference
-  install), and the background job queue (`jobs`, 2470 failed). All
-  accumulate without a lifecycle split.
+  install), and the background job queue (`jobs`, 2470 failed). They share the
+  lifecycle split below; `pending_observations` remains a retired input surface
+  whose residual rows are drained rather than claimed as live queue work.
 
 ## Design
 
@@ -71,17 +75,55 @@ source surface, and outcome. On cap exhaustion the row is marked exhausted
 (attempts = cap) and becomes eligible for archiving. Permanent-class rows
 are archive-eligible immediately.
 
+The retired `pending_observations` drain below is a deliberate exception to
+attempt exhaustion: it increments the source attempt counter for diagnosis but
+caps backoff at 900 seconds and does not silently archive transient residual
+evidence. Known-host rows keep retrying at the bounded rate; non-archived
+unknown-host rows remain actionable for explicit host repair. Archived rows
+excluded by host or class are `admin-required` and use the exact recovery path
+below.
+
 Recovery paths are surface-specific. Any retry/requeue path that targets an
 archived row must either clear `archived_at_epoch` in the same transaction
 before making work pending again, or create a fresh retry row linked to the
 archived source; no pending work may retain an archived marker.
 
-- `pending_observations`: no automatic retry in v1 because the current runtime
-  no longer has a production worker consumer for this legacy queue. Failed
-  legacy rows are classified, reported, and archived so they stop polluting
-  headline counts, while manual inspection remains available. If a production
-  consumer is reintroduced later, this spec must be updated before automatic
-  pending-observation retry is enabled.
+- `pending_observations`: use a drain-only bridge; do not restore the deleted
+  legacy enqueue, claim, lease-worker, or DTO APIs. An ordinary worker considers
+  the bridge only after the current extraction worker reports no ready work.
+  `worker --once` may run at most one legacy batch in its process lifetime; a
+  daemon may run at most one batch every 60 seconds. Each batch selects at most
+  25 oldest rows with a known `claude-code` or `codex-cli` host and one of
+  these states: `pending`, expired `processing`, a due non-archived transient
+  `failed` row, or a historical archived transient row admitted through the
+  same controlled recovery predicate. Permanent and unknown-host rows are not
+  automatic candidates; doctor reports archived rows in those classes as
+  `admin-required`.
+
+  Selection is revalidated per row in the write transaction. Success records
+  the deterministic legacy event in `captured_events`, enqueues its
+  `ObservationExtract` task, marks the source `migrated`, and clears legacy
+  lease, retry, failure, and archive fields atomically. Idempotency converges a
+  repeated attempt on the same current-pipeline event/task rather than creating
+  duplicate work. The bridge never deletes a source row.
+
+  Any replay failure rolls back the current-pipeline savepoint, increments the
+  diagnostic attempt counter, records an exponential `next_retry_epoch` capped
+  at 900 seconds, logs class/attempt/outcome/backoff without payload secrets,
+  and aborts the remaining batch. The bridge cannot safely infer row-local
+  permanence from a shared replay error, so it never changes the source to
+  permanent. Archived transient state is cleared only on successful migration,
+  never on selection or a failed attempt.
+
+  Archived failed rows excluded from automatic recovery use `remem pending
+  recover-archived --id <positive-id> [--host claude-code|codex-cli]
+  --dry-run`; apply repeats the exact command without `--dry-run`. It accepts
+  no project/batch selector and rejects a missing, non-failed, or non-archived
+  target. A known stored host is reused; `host='unknown'` requires the explicit
+  host option. Apply revalidates and replays only that ID in one transaction,
+  clearing failure/archive state only after the captured event, extraction
+  task, and migrated source commit. Replay or commit failure leaves the source
+  and current pipeline unchanged.
 - `extraction_replay_ranges`: invoke the existing
   `retry_extraction_replay_ranges` machinery for retryable ranges.
 - `extraction_tasks` with a replay range: route through that range.
@@ -193,7 +235,11 @@ purge only). Cleanup must be FK-safe for replay ranges:
   per-class counts, and `archived: <n>` as a secondary line.
 - Severity: FAIL/WARN thresholds evaluate actionable total only; a store with
   thousands of archived and zero actionable-total failures reports ok. An
-  8-14 day failure continues to affect severity until it archives.
+  8-14 day failure continues to affect severity until it archives. Archived
+  failed legacy rows that automatic recovery excludes by permanent class or
+  unknown host produce a separate doctor `admin-required` finding with
+  `list-failed` plus exact `recover-archived` guidance; ordinary archived
+  history does not.
 - `remem status --json` adds `failures: {actionable_7d, actionable_total,
   transient, permanent, exhausted, archived, historical_archived,
   historical_purged, oldest_actionable_epoch}` per surface.
@@ -202,14 +248,23 @@ purge only). Cleanup must be FK-safe for replay ranges:
 
 The schema migration back-fills existing failed rows on all four surfaces:
 classify by error string where it matches the mapping; unmatched rows become
-`transient`. All pre-existing failed/retryable rows, including historical
-rows that match transient patterns, are initialized exhausted by setting the
-table-native attempt counter to `MAX_FAILURE_RETRIES`. They have already
-been failing without bounded lifecycle management for weeks; auto-retrying
-thousands of ancient rows on upgrade would stampede the AI budget. They then
-age into archived via the normal retention step. This converges long-running
-installs within one retention window with zero manual surgery and zero retry
-storms.
+`transient`. Pre-existing failed/retryable rows are initialized exhausted by
+setting the table-native attempt counter to `MAX_FAILURE_RETRIES`, so the
+ordinary extraction/replay/job recovery paths do not stampede on upgrade.
+
+Historical known-host transient `pending_observations`, including rows already
+archived by retention, are the deliberate exception. They remain archived
+until the drain bridge can admit them while current extraction is idle.
+Admission is bounded to 25 rows, once per once-worker process or once per
+60-second daemon interval, and transient/shared failures re-enter exponential
+backoff. The successful atomic migration clears the legacy attempt,
+failure, and archive state; selection or a rolled-back attempt does not.
+Permanent and unknown-host historical rows remain unchanged for admin review;
+if archived, doctor routes them to exact `recover-archived`.
+Non-archived transient rows remain actionable rather than aging into silent
+history; known-host rows drain automatically and unknown-host rows require
+explicit host repair. This exception drains unique legacy evidence without
+reviving the old queue or creating an upgrade-time retry storm.
 
 ## Compatibility
 
@@ -256,32 +311,28 @@ storms.
   latter can validate an archived extraction range only by exact ID with
   `--include-archived --dry-run`; the locked exact worker is the sole mutating
   archived-range escape hatch.
-- Add an explicit legacy observation replay path:
-  `remem pending retry-failed-observations --include-archived --id <id>
-  [--host claude-code|codex-cli]` (or `--project <p> --limit <n>
-  [--host claude-code|codex-cli]`). The `--id`
-  form must run an id-constrained migration/replay path so the selected row is
-  the one consumed, not an older pending row from the same project. For
-  archived rows it clears `archived_at_epoch`, resets the row to
-  `status='pending'`, supplies the explicit `--host` fallback when the row has
-  legacy/unknown host identity, and then invokes the legacy pending
-  migration/replay flow. Project-wide forms require an explicit or default
-  bounded `--limit` and support dry-run preview. This is manual only; it does
-  not re-enable automatic pending-observation retries.
-- Add extraction-task escape hatches for no-range archived failures:
-  `remem pending list-failed-extraction-tasks --include-archived` and
-  `remem pending retry-extraction-task --id <id> --include-archived`. The
-  retry command reuses the no-range direct requeue path and either clears
-  `archived_at_epoch` plus resets the table-native retry counter to 0 before
-  work is made pending, or creates a fresh linked retry row for exhausted
-  historical rows.
-- Add job-specific escape hatches:
-  `remem pending list-failed-jobs --include-archived` and
-  `remem pending retry-jobs --include-archived --id <id>|--project <p>
-  [--limit <n>] [--dry-run]` so an archived job that was misclassified as
-  permanent remains explicitly replayable. Project-wide retry has a safe
-  default limit, requires dry-run preview for large result sets, and must not
-  re-enqueue an unbounded project backlog in one command.
+- Add one exact archived legacy observation replay path:
+  `remem pending recover-archived --id <positive-id>
+  [--host claude-code|codex-cli] --dry-run`; apply removes `--dry-run`.
+  The command accepts only one archived failed `pending_observations` row and
+  never falls back to an older row, project, or batch selection. A row stored
+  with `host='unknown'` requires the explicit host on preview and apply. The
+  mutating form revalidates the same ID and atomically records its current
+  captured event/extraction task, marks the source migrated, and only then
+  clears failure/archive state. Any error rolls back all current-pipeline
+  writes and preserves every source field. Doctor labels archived permanent or
+  unknown-host rows `admin-required` and provides `list-failed` plus these exact
+  commands. This supplements the automatic drain without restoring a legacy
+  enqueue or claim API.
+- Current limitation: no public pending subcommand recovers an archived
+  no-range extraction task. Such rows remain inspectable in status/doctor and
+  retained history, but the CLI must not advertise a recovery command until an
+  exact-ID implementation and its active-task revalidation land.
+- Current limitation: no public pending subcommand recovers archived jobs.
+  They remain inspectable in status/doctor and retained history. Any future
+  recovery command must use exact or bounded selection, dry-run for a project
+  batch, and the ordinary active-identity/coalescing rules before it is
+  documented as executable.
 - No change to failure-marking semantics (#365 invariant); W-12 applies to
   the pinned tests around honest marking.
 
@@ -292,11 +343,25 @@ back-classification migration across all four surfaces (`cargo test
 failure`); migration drift test extends the existing migration test suite.
 Phase 2: bounded auto-recovery in the worker + backoff/exhaustion tests with
 seeded transient/permanent fixtures, including an extraction task with no
-replay range.
+replay range. Legacy drain fixtures cover current-work priority, oldest-first
+selection, the 25-row cap, one batch per once-worker process, one batch per
+60-second daemon interval, and known-host pending/expired-processing/due
+transient rows.
 Phase 3: archiving step, reporting split in status/doctor/JSON, cleanup
 flag, FK-safe replay-range purge, and failure history rollup; doctor fixture
-asserting the 1000-archived/2-actionable scenario.
+asserting the 1000-archived/2-actionable scenario. Historical archived
+transient pending fixtures prove controlled admission without clearing archive
+state before an atomic success. Permanent and unknown-host fixtures remain
+admin-visible; archived controls produce `admin-required` exact-recovery
+guidance. Exact recovery tests cover dry-run, wrong state, missing ID, required
+unknown-host override, atomic success, and failure rollback. Fault injection
+proves capped backoff, preserved first-failure and archive timestamps,
+partial-batch commit, remaining-batch abort, and no captured event or extraction
+task leakage for the failing row.
 
 Verify per phase: `cargo fmt --check && cargo check && cargo test`; end-to-
-end smoke on a copy of a real long-running store confirming headline counts
-drop to actionable-only after one retention window simulation.
+drop to actionable-only after one retention window simulation. A process-level
+fault-injection test starts a worker, kills it after a failed legacy backlog is
+durable, restarts the worker, proves singleton reacquisition, and proves
+backlog zero. Adjacent tests prove current extraction drains first, daemon and
+once-worker rate limits, idempotent migration, and zero automatic deletion.

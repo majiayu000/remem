@@ -273,7 +273,7 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 Claude Code 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
-        |- UserPromptSubmit  -> 注册会话、刷新旧队列
+        |- UserPromptSubmit  -> 注册会话、记录 prompt 并注入上下文
         |- PostToolUse       -> 捕获工具操作（入队，<1ms）
         '- Stop              -> 后台总结（返回约 6ms）
 
@@ -503,7 +503,14 @@ remem model test [--live]
 remem model rollback
 remem usage --days 14 --weeks 8
 remem pending list-failed
+remem pending list-failed --json
 remem pending retry-failed --dry-run
+remem pending migrate-legacy --dry-run
+remem pending migrate-legacy
+remem pending recover-archived --id 42 --dry-run
+remem pending recover-archived --id 42
+remem pending recover-archived --id 42 --host claude-code --dry-run
+remem pending recover-archived --id 42 --host claude-code
 remem pending purge-failed --dry-run --older-than-days 7
 remem review list
 remem review approve <id>
@@ -520,6 +527,31 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+### 旧 pending 队列恢复
+
+当前采集路径不再写入或 claim 已退役的 `pending_observations` 队列。当前
+extraction 没有 ready 任务时，普通 worker 可以把残留行迁入当前
+capture/extraction 管线。`remem worker --once` 每个进程最多投喂一批；
+daemon 每 60 秒最多投喂一批；每批最多选择 25 条最老的合格记录。
+
+自动候选必须带有已知的 Claude Code 或 Codex host，且状态为 pending、租约已
+过期的 processing、已到重试时间的 transient failure，或受控恢复的历史
+archived transient failure。成功时会在同一事务中记录当前 captured event 和
+extraction task、将旧行标记为 migrated，并清除旧的 failure/archive 状态。
+任何 replay 错误都会回滚当前管线写入，记录最长 900 秒的指数退避，并中止
+本批。bridge 不会把共享 replay 故障猜成单行 permanent。已经被分类为
+permanent 的行或 unknown-host 行继续通过 `remem pending` 供用户检查和显式
+管理恢复；unknown host 必须先在 replay 时补全。该桥不会恢复旧 enqueue/claim
+API，也绝不会自动删除记录。
+
+不符合自动 bridge 条件的 archived failed 旧行会由 doctor 报告为
+`admin-required`。先用 `remem pending list-failed --json` 查到精确 ID，再用
+`remem pending recover-archived --id <id> --dry-run` 预览，并去掉
+`--dry-run` 执行。同一行若保存为 `host = unknown`，预览和执行都必须再传
+`--host claude-code` 或 `--host codex-cli`。`recover-archived` 只接受精确的
+archived failed 行，在一个事务中 replay；只有当前 event 和 extraction task
+成功提交后才清理 failure/archive 状态，任何失败都会保持源行不变。
 
 ## REST API
 
