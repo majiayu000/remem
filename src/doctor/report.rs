@@ -92,7 +92,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
     })?;
     push_check(&mut checks, &mut on_check, check_key_format)?;
     push_check(&mut checks, &mut on_check, || {
-        check_plaintext_artifacts(shared_db.conn().is_some())
+        check_plaintext_artifacts(shared_db.schema_readable())
     })?;
     push_check(&mut checks, &mut on_check, || {
         check_database(shared_db.conn(), shared_db.open_error())
@@ -250,6 +250,10 @@ impl SharedDoctorDb {
     fn open_error(&self) -> Option<&str> {
         self.open_error.as_deref()
     }
+
+    fn schema_readable(&self) -> bool {
+        self.conn.as_ref().is_some_and(crate::db::can_read_schema)
+    }
 }
 
 fn tally(checks: &[Check]) -> DoctorOutcome {
@@ -374,6 +378,7 @@ fn build_observability_report() -> crate::db::ObservabilityReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::test_support::{cleanup_temp_db_files, unique_temp_db_path};
 
     fn make(name: &'static str, status: Status, detail: &str) -> Check {
         Check::new(name, status, detail)
@@ -395,6 +400,25 @@ mod tests {
         assert_eq!(outcome.fails, 2);
         assert_eq!(outcome.warns, 1);
         assert_eq!(outcome.exit_code(), 2);
+    }
+
+    #[test]
+    fn shared_doctor_db_does_not_equate_connection_presence_with_readability() -> anyhow::Result<()>
+    {
+        let path = unique_temp_db_path("doctor-unreadable-db");
+        std::fs::write(&path, [0xAB_u8; 64])?;
+        let conn = Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let shared_db = SharedDoctorDb {
+            conn: Some(conn),
+            open_error: None,
+        };
+
+        assert!(shared_db.conn().is_some());
+        assert!(!shared_db.schema_readable());
+
+        drop(shared_db);
+        cleanup_temp_db_files(&path);
+        Ok(())
     }
 
     #[test]
