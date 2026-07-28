@@ -476,43 +476,34 @@ class SensitiveImplementGateTests(unittest.TestCase):
         result = gate.execute(config(), runner=comments, now=lambda: NOW)
         self.assertEqual(result["branch_ownership_decision"]["comment_id"], 12345)
 
-    def test_ci_invokes_wrapper_and_never_bare_route_gate(self) -> None:
+    def test_ci_keeps_sensitive_wrapper_offline(self) -> None:
         workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        self.assertIn("scripts/ci/test_run_sensitive_implement_gate.py", workflow)
-        self.assertIn("scripts/ci/run_sensitive_implement_gate.py", workflow)
-        self.assertIn("scripts/ci/extract_nonclosing_issue.py", workflow)
-        self.assertIn("steps.linked_issue.outputs.number", workflow)
+        self.assertTrue((REPO / "scripts/ci/run_sensitive_implement_gate.py").is_file())
+        self.assertTrue((REPO / "scripts/ci/extract_nonclosing_issue.py").is_file())
+        self.assertNotIn("scripts/ci/test_run_sensitive_implement_gate.py", workflow)
+        self.assertNotIn("scripts/ci/run_sensitive_implement_gate.py", workflow)
+        self.assertNotIn("scripts/ci/extract_nonclosing_issue.py", workflow)
+        self.assertNotIn("steps.linked_issue.outputs.number", workflow)
         self.assertNotIn("sensitive implementation PR must close exactly one issue", workflow)
         self.assertNotIn("python3 checks/route_gate.py", workflow)
-        self.assertIn("1f67531098f8a3fb96a34153593f427280a7e5be", workflow)
-        self.assertNotIn("e4867a0517df0d0e8487ac20d702d7a5444c321a", workflow)
-        self.assertNotIn("bbc762b6cf6c323e8ea1996e8c7ca44bc41ca9e5", workflow)
 
-    def test_ci_reuses_the_closing_aware_issue_for_sensitive_wrapper(self) -> None:
+    def test_ci_does_not_resolve_an_issue_for_the_offline_wrapper(self) -> None:
         workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        resolve = workflow.index("- name: Resolve linked issue for classification")
-        gate = workflow.index("- name: Run advisory sensitive implementation gate")
-        resolve_block = workflow[resolve:gate]
-        gate_block = workflow[gate:]
-        self.assertIn("--allow-closing", resolve_block)
-        self.assertIn('ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}', gate_block)
-        self.assertNotIn("strict_issue", gate_block)
+        self.assertNotIn("- name: Resolve linked issue for classification", workflow)
+        self.assertNotIn("- name: Run advisory sensitive implementation gate", workflow)
+        self.assertNotIn("--allow-closing", workflow)
+        self.assertNotIn('ISSUE_NUMBER: ${{ steps.linked_issue.outputs.number }}', workflow)
 
-    def test_ci_pins_trusted_default_branch_before_wrapper(self) -> None:
+    def test_ci_does_not_pin_a_branch_for_the_offline_wrapper(self) -> None:
         workflow = (REPO / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-        pin = workflow.index("- name: Pin trusted default branch")
-        gate = workflow.index("- name: Run advisory sensitive implementation gate")
-        self.assertLess(pin, gate)
-        trusted_block = workflow[pin:gate]
-        self.assertIn(
+        self.assertNotIn("- name: Pin trusted default branch", workflow)
+        self.assertNotIn(
             "DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}",
-            trusted_block,
+            workflow,
         )
-        self.assertIn("git check-ref-format --branch", trusted_block)
-        self.assertIn("refs/remotes/origin/HEAD", trusted_block)
-        self.assertIn("refs/remotes/origin/$DEFAULT_BRANCH", trusted_block)
+        self.assertNotIn("refs/remotes/origin/$DEFAULT_BRANCH", workflow)
         self.assertNotIn("contains(github.event.pull_request.body", workflow)
-        self.assertIn("steps.pr_tier.outputs.enforcement_sensitive == 'true'", workflow)
+        self.assertNotIn("steps.pr_tier.outputs.enforcement_sensitive == 'true'", workflow)
 
     def test_gate_input_hash_drift_fails(self) -> None:
         runner = FakeRunner()

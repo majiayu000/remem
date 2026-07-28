@@ -21,14 +21,16 @@ Specs are contracts, not proof that implementation is done.
 
 ## SpecRail Issue Packets
 
-This repository also carries a repo-local SpecRail workflow. New
-issue-first/spec-first SpecRail packets use `specs/GH<issue-number>/product.md`,
-`tech.md`, and `tasks.md` as declared in `workflow.yaml`.
+This repository retains a repo-local SpecRail pack as optional offline
+reference material. When a user explicitly requests SpecRail,
+issue-first/spec-first packets use `specs/GH<issue-number>/product.md`,
+`tech.md`, and `tasks.md` as declared in `workflow.yaml`. These packets are not
+wired into CI and do not authorize or block repository actions.
 
 Keep this `docs/specs/` directory as the remem implementation-contract index
-and historical spec archive. When a SpecRail issue changes behavior already
-covered by a current contract below, update the relevant `docs/specs/` contract
-as part of the implementation or spec handoff.
+and historical spec archive. When requested SpecRail work changes behavior
+already covered by a current contract below, update the relevant
+`docs/specs/` contract as part of the implementation or spec handoff.
 
 Use this handoff for substantial behavior, API, DB, hook, plugin, or
 cross-module architecture work:

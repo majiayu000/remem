@@ -1,16 +1,16 @@
 # Agent Usage
 
-## SpecRail
+## Optional SpecRail Reference
 
-This repository carries SpecRail as a repo-local workflow contract. Use it for
-GitHub issue triage, spec writing, task planning, implementation, PR review, CI
-diagnosis, PR gates, and release-note drafting when the work is issue-backed or
-changes workflow policy, public behavior, cross-module architecture, hooks,
-plugins, APIs, or migrations.
+This repository retains SpecRail as an optional, offline workflow reference.
+Its skills and checks can help with issue triage, spec writing, task planning,
+implementation review, CI diagnosis, and release-note drafting, but they are
+not connected to CI and do not authorize or block repository actions.
 
-Start with `skills/specrail-workflow/SKILL.md`. After the route is known, load
-exactly one focused skill from `skills/specrail-*/SKILL.md`; do not load every
-SpecRail skill up front.
+When the user requests SpecRail, start with
+`skills/specrail-workflow/SKILL.md`. After the route is known, load exactly one
+focused skill from `skills/specrail-*/SKILL.md`; do not load every SpecRail
+skill up front.
 
 ## Artifacts
 
@@ -29,20 +29,27 @@ Do not replace the existing `docs/specs/` index with SpecRail packets. Use
 `docs/specs/` for current remem contracts and history, and use
 `specs/GH<issue-number>/` for new issue-first SpecRail work.
 
-## Gates
+## Authority and Safety
 
-Agents may draft, implement, diagnose, and review. Agents must not provide
-final approval, merge, force-push, publish private security details, or bypass
-readiness, spec approval, final review, merge, security, or release gates.
+Agents may draft, implement, diagnose, and review. Normal CI and code review
+remain required by project policy. Agents must not merge, force-push, publish
+private security details, change repository permissions, make security
+decisions, or release without explicit human authorization.
 
-Run route gates from the repo root when enough evidence exists:
+SpecRail readiness, spec-approval, final-review, PR-gate, and closure results
+are not repository gates. The retained checks may be run for optional offline
+diagnostics:
 
 ```sh
 python3 checks/route_gate.py --repo . --route <route> --issue <issue-number> --state <state> --json
 ```
 
-For workflow asset changes, run:
+For changes to the retained offline workflow pack, its consistency checker is
+also available:
 
 ```sh
 python3 checks/check_workflow.py --repo .
 ```
+
+Neither command replaces CI, human review, security review, merge
+authorization, or release authorization.

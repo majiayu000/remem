@@ -27,32 +27,28 @@ remem 的目标是做最强的 Claude Code / Codex 记忆系统，不是最便�
 
 Use specs as contracts only after checking their status in `docs/specs/README.md`.
 
-## SpecRail Workflow
+## Optional SpecRail Reference
 
-This repository adopts SpecRail when `skills-lock.json` and
-`skills/specrail-workflow/SKILL.md` are present.
+The repository retains the SpecRail skills, checks, schemas, workflow data, and
+issue packets as offline reference material. They are not wired into CI and do
+not decide whether an issue or pull request may proceed or merge.
 
-For SpecRail-governed issue, PR, CI, and release work:
+Use a focused `skills/specrail-*/SKILL.md` only when the user explicitly asks
+for SpecRail or when an offline diagnostic would be useful. In that case, read
+`AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`, `labels.yaml`, and the
+relevant template before writing SpecRail artifacts. Outputs from
+`checks/route_gate.py`, `checks/pr_gate.py`, and related checks are advisory
+diagnostics, not authoritative approvals or blockers.
 
-1. Start with `skills/specrail-workflow/SKILL.md` only.
-2. After the route is known, load exactly one focused SpecRail skill such as
-   `specrail-triage-issue`, `specrail-write-product-spec`,
-   `specrail-write-tech-spec`, `specrail-plan-tasks`, `specrail-implement`,
-   `specrail-review-pr`, `specrail-diagnose-ci`, `specrail-pr-gate`, or
-   `specrail-release-note`.
-3. Read `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`, `labels.yaml`, and
-   the relevant template before writing SpecRail artifacts.
-4. Run `python3 checks/route_gate.py --repo . --route <route> ... --json` when
-   the route has enough issue or PR evidence.
-
-SpecRail's new issue packets live under `specs/GH<issue-number>/` with
+Historical SpecRail issue packets live under `specs/GH<issue-number>/` with
 `product.md`, `tech.md`, and `tasks.md`. Existing remem implementation
 contracts stay under `docs/specs/`; update those current contracts when a
 change modifies the behavior they already govern. Do not copy old
 `docs/specs/` files into SpecRail packets unless the linked issue requires it.
 
-SpecRail never removes the human gates for readiness labels, spec approval,
-final PR review, security decisions, merge, or release.
+Readiness labels, SpecRail spec approval, and SpecRail final-review states are
+not mechanical prerequisites. Normal code review and CI still apply. Security
+decisions, merge, and release require explicit human authorization.
 
 | Change | Required path |
 |---|---|
@@ -82,15 +78,15 @@ checks land. See `docs/specs/spec-lifecycle-governance/`.
 
 ## Commands
 
-Before opening or updating a PR, run the local preflight so CI gate failures are
+Before opening or updating a PR, run the local preflight so CI failures are
 reported together instead of one push at a time:
 
 ```bash
 python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file /tmp/pr-body.md
 ```
 
-Use `--fast` for the mechanical subset while iterating, then run the full
-preflight before merge readiness. If the PR already exists, copy the intended
+Use `--fast` for the smaller subset while iterating, then run the full
+preflight before submission. If the PR already exists, copy the intended
 PR body to the file passed with `--pr-body-file` so spec-lifecycle and version
 bump checks see the same metadata as CI.
 
@@ -118,7 +114,7 @@ cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 cargo clippy --all-targets -- -D warnings
 ```
 
-Use focused tests first for narrow fixes, then the broader gate when practical. Do not claim completion from earlier or unrelated output.
+Use focused tests first for narrow fixes, then the broader suite when practical. Do not claim completion from earlier or unrelated output.
 
 ## Documentation Rules
 

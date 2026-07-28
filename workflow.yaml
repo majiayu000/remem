@@ -1,6 +1,6 @@
-name: specrail
+name: specrail-reference
 version: 0.2.1
-description: Issue-first, spec-first, AI-assisted repository workflow pack.
+description: Optional offline issue-first workflow and diagnostic reference; not a CI or merge authority.
 
 durable_state:
   provider: github
@@ -31,13 +31,12 @@ automation_policy:
     - permission_change
 
 required_human_gates:
-  - readiness_label
-  - spec_approval
-  - final_pr_review
   - security_decision
   - merge
   - release
 
+# Retained only for optional offline classification and historical compatibility.
+# This registry is not connected to CI and does not impose a PR declaration.
 enforcement:
   sensitive_registry:
     paths:
@@ -97,8 +96,7 @@ action_policy:
       creates_artifacts:
         - product_spec
         - tech_spec
-      human_gates:
-        - readiness_label
+      human_gates: []
 
     implement:
       allowed_from:
@@ -109,9 +107,7 @@ action_policy:
         - tech_spec
       creates_artifacts:
         - task_plan
-      human_gates:
-        - readiness_label
-        - spec_approval
+      human_gates: []
 
     review_pr:
       allowed_from:
@@ -124,8 +120,7 @@ action_policy:
         - verification
       creates_artifacts:
         - agent_review
-      human_gates:
-        - final_pr_review
+      human_gates: []
 
     fix_ci:
       allowed_from:
