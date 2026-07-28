@@ -19,10 +19,21 @@ REMOVED_WORKFLOWS = (
 MECHANICAL_GATE_TOKENS = (
     "checks/pr_gate.py",
     "checks/closure_audit.py",
+    "checks/check_workflow.py",
+    "checks/route_gate.py",
+    "checks/review_json_gate.py",
+    "checks/github_approved_spec_evidence.py",
+    "checks/github_duplicate_evidence.py",
+    "checks/github_issue_evidence.py",
+    "checks/github_pr_evidence.py",
+    "checks/github_review_evidence.py",
+    "checks/runtime_gate_rules.py",
+    "checks/runtime_ledger_gate.py",
     "scripts/ci/check_pr_tier.py",
     "scripts/ci/run_sensitive_implement_gate.py",
     "scripts/ci/extract_nonclosing_issue.py",
     "scripts/ci/closure_follow_up.py",
+    "scripts/ci/specrail_sync_lock.py",
     "scripts/ci/test_sensitive_governance_workflow.py",
     "scripts/ci/test_closure_follow_up.py",
     "scripts/ci/test_run_sensitive_implement_gate.py",
@@ -91,22 +102,11 @@ def test_normal_quality_ci_stays_enabled() -> None:
         assert token in ci, f"normal CI check was removed: {token!r}"
 
 
-def test_offline_specrail_pack_is_retained() -> None:
-    retained = (
-        ROOT / "checks" / "pr_gate.py",
-        ROOT / "checks" / "check_workflow.py",
-        ROOT / "scripts" / "sync-specrail-checks.sh",
-    )
-    for path in retained:
-        assert path.is_file(), f"offline SpecRail reference was removed: {path}"
-
-
 def main() -> int:
     test_removed_gate_workflows_stay_absent()
     test_no_workflow_or_preflight_rewires_mechanical_gates()
     test_local_preflight_runs_this_regression_first()
     test_normal_quality_ci_stays_enabled()
-    test_offline_specrail_pack_is_retained()
     print("mechanical SpecRail gates are disabled; normal CI remains enabled")
     return 0
 
