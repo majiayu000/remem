@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.28` for GH-948: indexed source-anchor staleness
+  lookup. Schema v074 adds a commit-epoch expression index and a
+  trigger-maintained commit-file relation; link-first and split epoch/ID
+  queries preserve branch, path-overlap, and equal-timestamp semantics without
+  scanning pre-anchor project history. SessionStart now reports a dedicated
+  `load_staleness_labels` phase and includes a 50,376-commit ignored benchmark.
 - Staged source version `0.6.27` for GH-934: Retrieval Router v1
   deterministic plan compilation. New `src/retrieval_router/` module with
   a versioned `RetrievalPlan` (per-channel enabled/limit/weight/max
