@@ -167,34 +167,33 @@ fn migration_backfills_commit_files_and_adds_epoch_index() -> Result<()> {
 
 #[test]
 fn malformed_history_rolls_back_the_entire_migration() -> Result<()> {
-    let (_data_dir, conn) = pre_v074("staleness-index-malformed")?;
-    let bad_id = insert_git_commit_fixture(
-        &conn,
-        "dddddddddddddddddddddddddddddddddddddddd",
-        Some(300),
-        r#"["src/lib.rs""#,
-        100,
-        200,
-    )?;
+    for (label, payload) in [
+        ("malformed", r#"["src/lib.rs""#),
+        ("object", r#"{"path":"src/lib.rs"}"#),
+        ("non-string", r#"["src/lib.rs",7]"#),
+    ] {
+        let (_data_dir, conn) = pre_v074(&format!("staleness-index-{label}"))?;
+        let sha = format!("{label:-<40}");
+        let bad_id = insert_git_commit_fixture(&conn, &sha, Some(300), payload, 100, 200)?;
 
-    let error = run_migrations(&conn).expect_err("non-string changed_files must fail migration");
-    let message = format!("{error:#}");
-    assert!(
-        message.contains(&format!("git_commits.id={bad_id}"))
-            && message.contains("dddddddddddddddddddddddddddddddddddddddd"),
-        "migration error must identify the malformed commit: {message}"
-    );
-    assert!(
-        !applied_versions(&conn)?.contains(&V074),
-        "failed migration must not be marked applied"
-    );
-    let table_exists: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master
-         WHERE type = 'table' AND name = 'git_commit_files'",
-        [],
-        |row| row.get(0),
-    )?;
-    assert_eq!(table_exists, 0, "failed migration must roll back its DDL");
+        let error = run_migrations(&conn).expect_err("invalid changed_files must fail migration");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains(&format!("git_commits.id={bad_id}")) && message.contains(&sha),
+            "migration error must identify the invalid {label} commit: {message}"
+        );
+        assert!(
+            !applied_versions(&conn)?.contains(&V074),
+            "failed migration must not be marked applied"
+        );
+        let table_exists: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master
+             WHERE type = 'table' AND name = 'git_commit_files'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(table_exists, 0, "failed migration must roll back its DDL");
+    }
     Ok(())
 }
 
@@ -255,6 +254,38 @@ fn changed_files_triggers_reject_invalid_new_payloads() -> Result<()> {
                 .to_string()
                 .contains("git_commits.changed_files must be a JSON array of strings"),
             "unexpected trigger error for {suffix}: {error:#}"
+        );
+    }
+
+    let valid_id = insert_git_commit_fixture(
+        &conn,
+        "valid-update-payload--------------------",
+        Some(300),
+        r#"["src/original.rs"]"#,
+        100,
+        200,
+    )?;
+    for (suffix, payload) in [
+        ("object", r#"{"path":"src/lib.rs"}"#),
+        ("number", r#"["src/lib.rs", 7]"#),
+        ("malformed", r#"["src/lib.rs""#),
+    ] {
+        let error = conn
+            .execute(
+                "UPDATE git_commits SET changed_files = ?1 WHERE id = ?2",
+                params![payload, valid_id],
+            )
+            .expect_err("invalid changed_files update must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("git_commits.changed_files must be a JSON array of strings"),
+            "unexpected update trigger error for {suffix}: {error:#}"
+        );
+        assert_eq!(
+            commit_files(&conn, valid_id)?,
+            vec!["src/original.rs"],
+            "rejected update must preserve derived paths"
         );
     }
     Ok(())

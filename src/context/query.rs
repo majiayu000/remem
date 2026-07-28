@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::time::Instant;
 
 use anyhow::Result;
 use rusqlite::Connection;
@@ -106,12 +107,17 @@ pub(super) fn load_context_data_with_policy(
         .chain(lessons.iter().map(|lesson| &lesson.memory))
         .cloned()
         .collect::<Vec<_>>();
+    let staleness_start = Instant::now();
     let staleness_labels = load_staleness_labels(
         conn,
         &staleness_memories,
         render_reference_epoch,
         &mut errors,
     );
+    let load_phase_timings = vec![crate::perf::PhaseTiming::elapsed(
+        "load_staleness_labels",
+        staleness_start,
+    )];
 
     // Shared final rerank stage (GH-851): runs after the complete baseline
     // assembly (union, dedupe, eligibility, branch policy) so no later sort
@@ -153,6 +159,7 @@ pub(super) fn load_context_data_with_policy(
         owner_counts: memory_selection.owner_counts,
         diagnostics: memory_selection.diagnostics,
         rerank,
+        load_phase_timings,
     }
 }
 

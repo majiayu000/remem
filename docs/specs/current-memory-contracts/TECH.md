@@ -119,15 +119,23 @@ Required invariants:
 
 - Migration backfill and database triggers keep every valid string entry in
   `changed_files` synchronized with `git_commit_files`.
-- Invalid JSON, non-array payloads, and non-string paths fail visibly with the
-  offending commit identity instead of producing partial lookup data.
+- Invalid JSON, non-array payloads, and non-string paths never produce partial
+  lookup data. Historical backfill failures identify the offending commit ID
+  and SHA; post-migration writes are rejected atomically by validation
+  triggers before derived paths change.
 - Deleting or updating a commit removes obsolete derived paths atomically.
 - The range expression
   `COALESCE(authored_at_epoch, updated_at_epoch, created_at_epoch)` is backed by
   an exact `(project, expression, id)` index. The query and index expressions
   must remain identical so SQLite can use the range term.
 - Later-commit ordering uses `(commit_epoch, id)` as a stable tuple. Equal
-  timestamps must not make later inserted commits invisible.
+  timestamps must not make later inserted commits invisible. Indexed lookup
+  uses disjoint `commit_epoch > anchor_epoch` and
+  `commit_epoch = anchor_epoch AND id > anchor_id` branches so either boundary
+  is a database seek rather than a post-scan filter.
+- Source-anchor lookup starts from the indexed session-link rows and resolves
+  their commit primary keys. Commit-epoch ordering must not turn it into a scan
+  of unlinked project history.
 - File overlap preserves both directions: a touched ancestor invalidates a
   remembered descendant, and a touched descendant invalidates a remembered
   ancestor.
@@ -321,7 +329,11 @@ Staleness performance coverage must also include:
 - an `EXPLAIN QUERY PLAN` assertion that the later-commit lookup uses the
   commit-epoch range index;
 - a deterministic SQLite VM-step comparison showing that adding a large
-  pre-anchor history does not materially increase later-commit lookup work;
+  pre-anchor history, including same-epoch rows below the anchor ID, does not
+  materially increase later-commit lookup work;
+- a deterministic SQLite VM-step comparison showing that adding a large
+  unlinked project history does not materially increase source-anchor lookup
+  work for either the normalized relation or legacy JSON fallback;
 - migration tests for backfill, trigger synchronization, invalid payload
   rollback, and schema convergence;
 - an ignored, manually runnable large-dataset SessionStart benchmark that

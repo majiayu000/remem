@@ -90,6 +90,15 @@ fn load_context_data_marks_source_anchor_failures_as_errors() {
     assert!(loaded.errors.iter().any(|error| {
         error.section == "staleness" && error.message.contains("source-anchor staleness")
     }));
+    assert_eq!(
+        loaded
+            .load_phase_timings
+            .iter()
+            .filter(|timing| timing.phase == "load_staleness_labels")
+            .count(),
+        1,
+        "context load must report source-anchor work as one distinct phase"
+    );
 }
 
 #[test]
