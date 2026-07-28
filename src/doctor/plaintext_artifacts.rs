@@ -1,85 +1,149 @@
-use std::io::Read;
-use std::path::Path;
+use std::ffi::OsStr;
+use std::fs::{self, DirEntry, File, Metadata};
+use std::io::{self, Read};
+use std::path::{Path, PathBuf};
 
 use super::types::{Check, Status};
 use crate::db;
 
 const SQLITE_PLAINTEXT_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
-/// Detect plaintext SQLite residue next to the (normally encrypted) database.
+#[derive(Debug)]
+struct PlaintextArtifact {
+    path: PathBuf,
+    size_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FileHeader {
+    Plaintext,
+    NonPlaintext,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LiveDatabaseState {
+    Encrypted,
+    Plaintext,
+    Missing,
+    Unverified,
+}
+
+impl LiveDatabaseState {
+    fn description(self) -> &'static str {
+        match self {
+            Self::Encrypted => "encrypted and readable",
+            Self::Plaintext => "plaintext",
+            Self::Missing => "missing",
+            Self::Unverified => "unverified",
+        }
+    }
+
+    fn remediation(self) -> &'static str {
+        match self {
+            Self::Encrypted => {
+                "remem doctor did not delete any files. Run `remem status` to confirm the \
+encrypted live database still opens, then run `remem admin backup` to create a new encrypted \
+backup. After the new backup succeeds, manually delete the listed plaintext copies or retain \
+them only in encrypted storage. Moving them outside the remem data dir alone does not protect them"
+            }
+            Self::Plaintext => {
+                "remem doctor did not delete any files. First run `remem encrypt`, then rerun \
+`remem doctor` until it reports the live database as encrypted and readable. Before that \
+confirmation, do not treat any `remem admin backup` output as encrypted. After confirmation, run \
+`remem admin backup` to create a new encrypted backup, then manually delete the listed plaintext \
+copies or retain them only in encrypted storage. Moving them outside the remem data dir alone \
+does not protect them"
+            }
+            Self::Missing => {
+                "remem doctor did not delete any files. Do not create a new backup or delete any \
+listed copy yet. First restore the missing live database, resolve any key mismatch, and make the \
+database readable. After `remem status` succeeds and `remem doctor` reports the live database as \
+encrypted and readable, run `remem admin backup` to create a new encrypted backup; only after \
+that succeeds should you manually delete the listed plaintext copies or retain them only in \
+encrypted storage. Moving them outside the remem data dir alone does not protect them"
+            }
+            Self::Unverified => {
+                "remem doctor did not delete any files. Do not create a new backup or delete any \
+listed copy yet. First repair the live database and resolve any key or readability problem. After \
+`remem status` succeeds and `remem doctor` reports the live database as encrypted and readable, \
+run `remem admin backup` to create a new encrypted backup; only after that succeeds should you \
+manually delete the listed plaintext copies or retain them only in encrypted storage. Moving them \
+outside the remem data dir alone does not protect them"
+            }
+        }
+    }
+}
+
+/// Detect plaintext SQLite residue next to the live database and in the first
+/// level of the managed backup directory.
 ///
-/// Older remem versions could leave `remem.db.bak` / `remem.db.bak-<ts>` /
-/// `remem.db.enc` artifacts behind after encryption or repair flows. A
-/// plaintext copy beside an encrypted database defeats SQLCipher entirely, so
-/// this surfaces as a failure with manual disposal guidance — doctor never
-/// deletes user data itself.
-pub(super) fn check_plaintext_artifacts() -> Check {
+/// The shared doctor connection is the source of truth for live-database
+/// readability. A non-plaintext header alone is not proof of encryption: a
+/// corrupt or inaccessible database can have the same bytes.
+pub(super) fn check_plaintext_artifacts(live_db_readable: bool) -> Check {
     let db_path = db::db_path();
     let Some(data_dir) = db_path.parent().map(Path::to_path_buf) else {
         return Check::new(
             "Plaintext residue",
-            Status::Ok,
-            "database path has no parent directory to scan",
+            Status::Warn,
+            "cannot scan plaintext residue because the database path has no parent directory",
         );
     };
-    check_plaintext_artifacts_in(&data_dir, &db_path)
+    check_plaintext_artifacts_in(&data_dir, &db_path, live_db_readable)
 }
 
-fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path) -> Check {
-    let db_file_name = db_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or_default()
-        .to_string();
-    let entries = match std::fs::read_dir(data_dir) {
-        Ok(entries) => entries,
-        Err(error) => {
-            return Check::new(
-                "Plaintext residue",
-                Status::Warn,
-                format!("cannot scan data dir {}: {error}", data_dir.display()),
-            );
-        }
-    };
-
+fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readable: bool) -> Check {
     let mut plaintext = Vec::new();
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else { continue };
-        if !is_database_artifact_name(name, &db_file_name) {
-            continue;
-        }
-        let path = entry.path();
-        if !path.is_file() {
-            continue;
-        }
-        if file_has_plaintext_sqlite_header(&path) {
-            let size_mb = std::fs::metadata(&path)
-                .map(|meta| meta.len() as f64 / 1_048_576.0)
-                .unwrap_or(0.0);
-            plaintext.push(format!("{} ({size_mb:.1} MB)", path.display()));
-        }
-    }
+    let mut issues = Vec::new();
+
+    scan_sibling_artifacts(data_dir, db_path, &mut plaintext, &mut issues);
+    scan_backup_artifacts(data_dir, &mut plaintext, &mut issues);
+    let live_state = inspect_live_database(db_path, live_db_readable, &mut issues);
+
+    plaintext.sort_by(|left, right| left.path.cmp(&right.path));
+    issues.sort();
+    issues.dedup();
 
     if plaintext.is_empty() {
+        if issues.is_empty() {
+            return Check::new(
+                "Plaintext residue",
+                Status::Ok,
+                "no plaintext database artifacts found beside the live database or in the first level of the backups directory",
+            );
+        }
         return Check::new(
             "Plaintext residue",
-            Status::Ok,
-            "no plaintext database artifacts in the data dir",
+            Status::Warn,
+            format!(
+                "no plaintext database artifact was confirmed, but inspection was incomplete: {}",
+                issues.join("; ")
+            ),
         );
     }
 
-    let main_db_encrypted = db_path.exists() && !file_has_plaintext_sqlite_header(db_path);
+    let artifacts = plaintext
+        .iter()
+        .map(|artifact| {
+            format!(
+                "{} ({:.1} MB)",
+                artifact.path.display(),
+                artifact.size_bytes as f64 / 1_048_576.0
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let inspection_issues = if issues.is_empty() {
+        String::new()
+    } else {
+        format!(" Inspection issue(s): {}.", issues.join("; "))
+    };
     let detail = format!(
-        "plaintext database artifact(s) beside the {} database: {}; verify the live database opens (`remem status`), then delete these files or move them outside the data dir",
-        if main_db_encrypted {
-            "encrypted"
-        } else {
-            "plaintext"
-        },
-        plaintext.join(", ")
+        "confirmed plaintext database artifact(s): {artifacts}. Live database is {}.{inspection_issues} {}",
+        live_state.description(),
+        live_state.remediation()
     );
-    let status = if main_db_encrypted {
+    let status = if live_state == LiveDatabaseState::Encrypted {
         Status::Fail
     } else {
         Status::Warn
@@ -87,34 +151,282 @@ fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path) -> Check {
     Check::new("Plaintext residue", status, detail)
 }
 
-/// Sibling artifacts of the database file (`remem.db.bak`, `remem.db.bak-<ts>`,
-/// `remem.db.enc`, …) — everything that starts with the database file name
-/// except the database itself and its live SQLite sidecars.
-fn is_database_artifact_name(name: &str, db_file_name: &str) -> bool {
-    if db_file_name.is_empty() || name == db_file_name {
-        return false;
-    }
-    let Some(suffix) = name.strip_prefix(db_file_name) else {
-        return false;
+fn scan_sibling_artifacts(
+    data_dir: &Path,
+    db_path: &Path,
+    plaintext: &mut Vec<PlaintextArtifact>,
+    issues: &mut Vec<String>,
+) {
+    let Some(db_file_name) = db_path.file_name().and_then(OsStr::to_str) else {
+        issues.push(format!(
+            "cannot derive a UTF-8 database filename from {}",
+            db_path.display()
+        ));
+        return;
     };
-    !matches!(suffix, "-wal" | "-shm" | "-journal")
+    let bak_name = format!("{db_file_name}.bak");
+    let bak_prefix = format!("{db_file_name}.bak-");
+    let enc_name = format!("{db_file_name}.enc");
+    scan_directory(
+        data_dir,
+        false,
+        false,
+        |name| {
+            name.to_str().is_some_and(|name| {
+                name == bak_name || name == enc_name || name.starts_with(&bak_prefix)
+            })
+        },
+        plaintext,
+        issues,
+    );
 }
 
-fn file_has_plaintext_sqlite_header(path: &Path) -> bool {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
+fn scan_backup_artifacts(
+    data_dir: &Path,
+    plaintext: &mut Vec<PlaintextArtifact>,
+    issues: &mut Vec<String>,
+) {
+    scan_directory(
+        &data_dir.join("backups"),
+        true,
+        true,
+        |_| true,
+        plaintext,
+        issues,
+    );
+}
+
+fn scan_directory(
+    directory: &Path,
+    missing_ok: bool,
+    ignore_child_directories: bool,
+    is_candidate: impl Fn(&OsStr) -> bool,
+    plaintext: &mut Vec<PlaintextArtifact>,
+    issues: &mut Vec<String>,
+) {
+    let directory_metadata = match fs::symlink_metadata(directory) {
+        Ok(metadata) => metadata,
+        Err(error) if missing_ok && error.kind() == io::ErrorKind::NotFound => return,
+        Err(error) => {
+            issues.push(format!(
+                "cannot inspect directory {}: {error}",
+                directory.display()
+            ));
+            return;
+        }
     };
-    let mut header = [0_u8; 16];
-    match file.read_exact(&mut header) {
-        Ok(()) => &header == SQLITE_PLAINTEXT_HEADER,
-        Err(_) => false,
+    if directory_metadata.file_type().is_symlink() {
+        issues.push(format!(
+            "refusing to scan symbolic-link directory {}",
+            directory.display()
+        ));
+        return;
     }
+    if !directory_metadata.is_dir() {
+        issues.push(format!(
+            "scan path {} is not a directory",
+            directory.display()
+        ));
+        return;
+    }
+
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) => {
+            issues.push(format!(
+                "cannot enumerate directory {}: {error}",
+                directory.display()
+            ));
+            return;
+        }
+    };
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                issues.push(format!(
+                    "cannot enumerate an entry in {}: {error}",
+                    directory.display()
+                ));
+                continue;
+            }
+        };
+        if !is_candidate(&entry.file_name()) {
+            continue;
+        }
+        inspect_candidate(&entry, ignore_child_directories, plaintext, issues);
+    }
+}
+
+fn inspect_candidate(
+    entry: &DirEntry,
+    ignore_directories: bool,
+    plaintext: &mut Vec<PlaintextArtifact>,
+    issues: &mut Vec<String>,
+) {
+    let path = entry.path();
+    let entry_type = match entry.file_type() {
+        Ok(file_type) => file_type,
+        Err(error) => {
+            issues.push(format!(
+                "cannot determine file type for {}: {error}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    if entry_type.is_symlink() {
+        issues.push(format!(
+            "refusing to inspect symbolic-link artifact {}",
+            path.display()
+        ));
+        return;
+    }
+    if entry_type.is_dir() && ignore_directories {
+        return;
+    }
+    if !entry_type.is_file() {
+        issues.push(format!(
+            "artifact candidate {} is not a regular file",
+            path.display()
+        ));
+        return;
+    }
+
+    let path_metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            issues.push(format!(
+                "cannot inspect metadata for {}: {error}",
+                path.display()
+            ));
+            return;
+        }
+    };
+    if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
+        issues.push(format!(
+            "artifact candidate {} changed before it could be inspected safely",
+            path.display()
+        ));
+        return;
+    }
+
+    match inspect_regular_file(&path, &path_metadata) {
+        Ok((FileHeader::Plaintext, size_bytes)) => {
+            plaintext.push(PlaintextArtifact { path, size_bytes });
+        }
+        Ok((FileHeader::NonPlaintext, _)) => {}
+        Err(error) => issues.push(error),
+    }
+}
+
+fn inspect_live_database(
+    db_path: &Path,
+    live_db_readable: bool,
+    issues: &mut Vec<String>,
+) -> LiveDatabaseState {
+    let path_metadata = match fs::symlink_metadata(db_path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return LiveDatabaseState::Missing;
+        }
+        Err(error) => {
+            issues.push(format!(
+                "cannot inspect live database metadata {}: {error}",
+                db_path.display()
+            ));
+            return LiveDatabaseState::Unverified;
+        }
+    };
+    if path_metadata.file_type().is_symlink() {
+        issues.push(format!(
+            "refusing to inspect symbolic-link live database {}",
+            db_path.display()
+        ));
+        return LiveDatabaseState::Unverified;
+    }
+    if !path_metadata.is_file() {
+        issues.push(format!(
+            "live database {} is not a regular file",
+            db_path.display()
+        ));
+        return LiveDatabaseState::Unverified;
+    }
+
+    match inspect_regular_file(db_path, &path_metadata) {
+        Ok((FileHeader::Plaintext, _)) => LiveDatabaseState::Plaintext,
+        Ok((FileHeader::NonPlaintext, _)) if live_db_readable => LiveDatabaseState::Encrypted,
+        Ok((FileHeader::NonPlaintext, _)) => LiveDatabaseState::Unverified,
+        Err(error) => {
+            issues.push(error);
+            LiveDatabaseState::Unverified
+        }
+    }
+}
+
+fn inspect_regular_file(
+    path: &Path,
+    path_metadata: &Metadata,
+) -> Result<(FileHeader, u64), String> {
+    let mut file =
+        File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let opened_metadata = file
+        .metadata()
+        .map_err(|error| format!("cannot inspect opened file {}: {error}", path.display()))?;
+    if !opened_metadata.is_file() || !same_file(path_metadata, &opened_metadata) {
+        return Err(format!(
+            "file {} changed before it could be inspected safely",
+            path.display()
+        ));
+    }
+
+    let mut header = [0_u8; SQLITE_PLAINTEXT_HEADER.len()];
+    file.read_exact(&mut header).map_err(|error| {
+        if error.kind() == io::ErrorKind::UnexpectedEof {
+            format!(
+                "cannot confirm {} because it is shorter than the SQLite header",
+                path.display()
+            )
+        } else {
+            format!("cannot read header from {}: {error}", path.display())
+        }
+    })?;
+
+    let current_metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("cannot recheck metadata for {}: {error}", path.display()))?;
+    if current_metadata.file_type().is_symlink()
+        || !current_metadata.is_file()
+        || !same_file(&opened_metadata, &current_metadata)
+    {
+        return Err(format!(
+            "file {} changed while it was being inspected",
+            path.display()
+        ));
+    }
+
+    let header = if &header == SQLITE_PLAINTEXT_HEADER {
+        FileHeader::Plaintext
+    } else {
+        FileHeader::NonPlaintext
+    };
+    Ok((header, opened_metadata.len()))
+}
+
+#[cfg(unix)]
+fn same_file(left: &Metadata, right: &Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    left.dev() == right.dev() && left.ino() == right.ino()
+}
+
+#[cfg(not(unix))]
+fn same_file(left: &Metadata, right: &Metadata) -> bool {
+    let _ = (left, right);
+    true
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -122,78 +434,315 @@ mod tests {
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        std::fs::create_dir_all(&dir).expect("temp dir should create");
+        fs::create_dir_all(&dir).expect("temp dir should create");
         dir
     }
 
     fn write_plaintext_db(path: &Path) {
         let mut content = SQLITE_PLAINTEXT_HEADER.to_vec();
         content.extend_from_slice(&[0_u8; 32]);
-        std::fs::write(path, content).expect("plaintext fixture should write");
+        fs::write(path, content).expect("plaintext fixture should write");
     }
 
-    fn write_encrypted_db(path: &Path) {
-        std::fs::write(path, [0xAB_u8; 64]).expect("encrypted fixture should write");
+    fn write_non_plaintext_db(path: &Path) {
+        fs::write(path, [0xAB_u8; 64]).expect("non-plaintext fixture should write");
+    }
+
+    fn check(dir: &Path, live_db_readable: bool) -> Check {
+        check_plaintext_artifacts_in(dir, &dir.join("remem.db"), live_db_readable)
+    }
+
+    fn cleanup(dir: &Path) {
+        fs::remove_dir_all(dir).ok();
     }
 
     #[test]
-    fn reports_ok_without_artifacts() {
+    fn reports_ok_without_artifacts_and_excludes_sidecars_and_near_matches() {
         let dir = temp_dir("ok");
-        let db_path = dir.join("remem.db");
-        write_encrypted_db(&db_path);
-        std::fs::write(dir.join("remem.db-wal"), b"SQLite format 3\0wal")
-            .expect("wal fixture should write");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        for name in [
+            "remem.db-wal",
+            "remem.db-shm",
+            "remem.db-journal",
+            "remem.db.bakcopy",
+            "remem.db.enc-old",
+            "unrelated.txt",
+        ] {
+            write_plaintext_db(&dir.join(name));
+        }
 
-        let check = check_plaintext_artifacts_in(&dir, &db_path);
+        let result = check(&dir, true);
 
-        assert_eq!(check.status, Status::Ok);
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(result.status, Status::Ok);
+        cleanup(&dir);
     }
 
     #[test]
-    fn fails_on_plaintext_bak_beside_encrypted_db() {
-        let dir = temp_dir("fail");
+    fn missing_data_directory_is_an_incomplete_inspection_warning() {
+        let dir = temp_dir("missing-data-dir");
         let db_path = dir.join("remem.db");
-        write_encrypted_db(&db_path);
+        cleanup(&dir);
+
+        let result = check_plaintext_artifacts_in(&dir, &db_path, false);
+
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("cannot inspect directory"));
+        assert!(result.detail.contains(&dir.display().to_string()));
+    }
+
+    #[test]
+    fn encrypted_sibling_and_backup_artifacts_are_ok() {
+        let dir = temp_dir("encrypted-artifacts");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        write_non_plaintext_db(&dir.join("remem.db.bak"));
+        write_non_plaintext_db(&dir.join("remem.db.bak-"));
+        write_non_plaintext_db(&dir.join("remem.db.enc"));
+        fs::create_dir(dir.join("backups")).unwrap();
+        write_non_plaintext_db(&dir.join("backups").join("backup.sqlite"));
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Ok);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn scans_only_exact_sibling_artifact_names_in_stable_order() {
+        let dir = temp_dir("siblings");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        for name in [
+            "remem.db.enc",
+            "remem.db.bak-z",
+            "remem.db.bak",
+            "remem.db.bak-a",
+        ] {
+            write_plaintext_db(&dir.join(name));
+        }
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Fail);
+        let positions = [
+            "remem.db.bak (",
+            "remem.db.bak-a (",
+            "remem.db.bak-z (",
+            "remem.db.enc (",
+        ]
+        .map(|needle| result.detail.find(needle).expect("artifact should appear"));
+        assert!(positions.windows(2).all(|pair| pair[0] < pair[1]));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn scans_default_and_custom_files_in_backups_but_ignores_encrypted_backup() {
+        let dir = temp_dir("backups");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        let backups = dir.join("backups");
+        fs::create_dir(&backups).unwrap();
+        write_plaintext_db(&backups.join("remem-backup-20260728-120000.sqlite"));
+        write_plaintext_db(&backups.join("custom-name.sqlite"));
+        write_non_plaintext_db(&backups.join("encrypted.sqlite"));
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.detail.contains("custom-name.sqlite"));
+        assert!(result
+            .detail
+            .contains("remem-backup-20260728-120000.sqlite"));
+        assert!(!result.detail.contains("encrypted.sqlite"));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn backup_scan_is_not_recursive() {
+        let dir = temp_dir("nonrecursive");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        let nested = dir.join("backups").join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        write_plaintext_db(&nested.join("plaintext.sqlite"));
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Ok);
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn plaintext_artifact_fails_only_for_readable_non_plaintext_live_db() {
+        let dir = temp_dir("live-encrypted");
+        write_non_plaintext_db(&dir.join("remem.db"));
         write_plaintext_db(&dir.join("remem.db.bak"));
-        write_plaintext_db(&dir.join("remem.db.bak-20260324160017"));
 
-        let check = check_plaintext_artifacts_in(&dir, &db_path);
+        let result = check(&dir, true);
 
-        assert_eq!(check.status, Status::Fail);
-        assert!(check.detail.contains("remem.db.bak"));
-        assert!(check.detail.contains("remem.db.bak-20260324160017"));
-        assert!(check.detail.contains("`remem status`"));
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.detail.contains("encrypted and readable"));
+        assert!(result.detail.contains("`remem status`"));
+        assert!(result.detail.contains("`remem admin backup`"));
+        assert!(result.detail.contains("create a new encrypted backup"));
+        assert!(result.detail.contains("After the new backup succeeds"));
+        assert!(result.detail.contains("did not delete any files"));
+        assert!(result.detail.contains("alone does not protect"));
+        assert!(!result.detail.contains("`remem encrypt`"));
+        cleanup(&dir);
     }
 
     #[test]
-    fn warns_when_main_db_is_also_plaintext() {
-        let dir = temp_dir("warn");
-        let db_path = dir.join("remem.db");
-        write_plaintext_db(&db_path);
+    fn artifact_with_plaintext_live_db_warns_even_if_connection_is_readable() {
+        let dir = temp_dir("live-plaintext");
+        write_plaintext_db(&dir.join("remem.db"));
+        write_plaintext_db(&dir.join("remem.db.enc"));
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("Live database is plaintext"));
+        assert!(result.detail.contains("First run `remem encrypt`"));
+        assert!(result.detail.contains("rerun `remem doctor`"));
+        assert!(result
+            .detail
+            .contains("do not treat any `remem admin backup` output as encrypted"));
+        assert!(result
+            .detail
+            .contains("After confirmation, run `remem admin backup`"));
+        assert!(result.detail.contains("did not delete any files"));
+        assert!(result.detail.contains("alone does not protect"));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn artifact_with_missing_live_db_warns() {
+        let dir = temp_dir("live-missing");
         write_plaintext_db(&dir.join("remem.db.bak"));
 
-        let check = check_plaintext_artifacts_in(&dir, &db_path);
+        let result = check(&dir, false);
 
-        assert_eq!(check.status, Status::Warn);
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("Live database is missing"));
+        assert!(result
+            .detail
+            .contains("Do not create a new backup or delete any listed copy yet"));
+        assert!(result.detail.contains("restore the missing live database"));
+        assert!(result.detail.contains("After `remem status` succeeds"));
+        assert!(result
+            .detail
+            .contains("`remem doctor` reports the live database as encrypted and readable"));
+        assert!(result.detail.contains("did not delete any files"));
+        assert!(result.detail.contains("alone does not protect"));
+        cleanup(&dir);
     }
 
     #[test]
-    fn ignores_encrypted_artifacts_and_live_sidecars() {
-        let dir = temp_dir("ignore");
-        let db_path = dir.join("remem.db");
-        write_encrypted_db(&db_path);
-        write_encrypted_db(&dir.join("remem.db.bak"));
-        std::fs::write(dir.join("remem.db-shm"), b"SQLite format 3\0shm")
-            .expect("shm fixture should write");
-        std::fs::write(dir.join("unrelated.txt"), b"SQLite format 3\0nope")
-            .expect("unrelated fixture should write");
+    fn artifact_with_unreadable_non_plaintext_live_db_warns() {
+        let dir = temp_dir("live-unverified");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        write_plaintext_db(&dir.join("remem.db.bak"));
 
-        let check = check_plaintext_artifacts_in(&dir, &db_path);
+        let result = check(&dir, false);
 
-        assert_eq!(check.status, Status::Ok);
-        std::fs::remove_dir_all(&dir).ok();
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("Live database is unverified"));
+        assert!(result
+            .detail
+            .contains("Do not create a new backup or delete any listed copy yet"));
+        assert!(result
+            .detail
+            .contains("repair the live database and resolve any key or readability problem"));
+        assert!(result.detail.contains("After `remem status` succeeds"));
+        assert!(result
+            .detail
+            .contains("`remem doctor` reports the live database as encrypted and readable"));
+        assert!(result.detail.contains("did not delete any files"));
+        assert!(result.detail.contains("alone does not protect"));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn short_artifact_is_an_incomplete_inspection_warning() {
+        let dir = temp_dir("short-artifact");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        fs::write(dir.join("remem.db.bak"), b"short").unwrap();
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("shorter than the SQLite header"));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn short_live_db_is_unverified_and_errors_are_aggregated_with_plaintext() {
+        let dir = temp_dir("short-live");
+        fs::write(dir.join("remem.db"), b"short").unwrap();
+        write_plaintext_db(&dir.join("remem.db.bak"));
+        fs::write(dir.join("remem.db.enc"), b"also short").unwrap();
+
+        let result = check(&dir, false);
+
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("remem.db.bak"));
+        assert!(result.detail.contains("remem.db.enc"));
+        assert!(result.detail.contains("remem.db"));
+        assert!(result.detail.contains("Inspection issue(s)"));
+        cleanup(&dir);
+    }
+
+    #[test]
+    fn non_directory_backups_path_warns_without_hiding_plaintext() {
+        let dir = temp_dir("bad-backups");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        write_plaintext_db(&dir.join("remem.db.bak"));
+        fs::write(dir.join("backups"), b"not a directory").unwrap();
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.detail.contains("remem.db.bak"));
+        assert!(result.detail.contains("is not a directory"));
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_link_artifact_is_not_followed_and_warns() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_dir("symlink");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        let target = dir.join("target.sqlite");
+        write_plaintext_db(&target);
+        fs::create_dir(dir.join("backups")).unwrap();
+        symlink(&target, dir.join("backups").join("linked.sqlite")).unwrap();
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("symbolic-link artifact"));
+        assert!(!result
+            .detail
+            .contains("confirmed plaintext database artifact(s)"));
+        cleanup(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symbolic_link_error_is_reported_alongside_confirmed_plaintext() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_dir("symlink-and-plaintext");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        write_plaintext_db(&dir.join("remem.db.bak"));
+        let target = dir.join("target.sqlite");
+        write_plaintext_db(&target);
+        fs::create_dir(dir.join("backups")).unwrap();
+        symlink(&target, dir.join("backups").join("linked.sqlite")).unwrap();
+
+        let result = check(&dir, true);
+
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.detail.contains("remem.db.bak"));
+        assert!(result.detail.contains("symbolic-link artifact"));
+        cleanup(&dir);
     }
 }

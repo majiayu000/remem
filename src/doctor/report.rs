@@ -91,7 +91,9 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
         check_schema_migration(shared_db.conn(), shared_db.open_error())
     })?;
     push_check(&mut checks, &mut on_check, check_key_format)?;
-    push_check(&mut checks, &mut on_check, check_plaintext_artifacts)?;
+    push_check(&mut checks, &mut on_check, || {
+        check_plaintext_artifacts(shared_db.conn().is_some())
+    })?;
     push_check(&mut checks, &mut on_check, || {
         check_database(shared_db.conn(), shared_db.open_error())
     })?;

@@ -187,6 +187,12 @@
   hook `--host` aliases and arbitrary values now fail closed.
 
 ### Fixed
+- Staged source version `0.6.29` for GH-944: `remem doctor` now detects
+  plaintext SQLite residue across the active data and backup locations,
+  reports inspection failures instead of silently skipping them, and bases
+  cleanup guidance on the live database state. Release metadata remains
+  `unreleased`; this change follows the `0.6.28` source version staged by
+  GH-934 in PR #962.
 - Staged source version `0.6.17`: AI HTTP calls now reuse one process-wide
   `reqwest::Client` (connection pool + TLS config) via a `OnceLock` instead of
   rebuilding a client on every call. The timeout is a compile-time constant, so

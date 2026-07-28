@@ -1131,6 +1131,37 @@ scripts/smoke_native_web_api.sh
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token file permissions (`0600`)
 
+### Plaintext residue diagnostics
+
+The `Plaintext residue` check in `remem doctor` scans database artifacts beside
+the root `REMEM_DATA_DIR/remem.db` and backup files one level under
+`REMEM_DATA_DIR/backups/`. The check is read-only and never deletes data. When
+it finds a plaintext copy while the live database is confirmed encrypted, it
+reports `Fail` and `remem doctor` exits with code 2. If the live database is
+plaintext or its encryption state cannot be confirmed, the finding is `Warn`.
+An entry or file that cannot be inspected because of an I/O error is reported
+and prevents the check from reporting `Ok`.
+
+Handle a finding according to its status:
+
+- `Fail` means doctor has confirmed that the live database is encrypted and a
+  plaintext copy exists. Run `remem status` to verify that the live database
+  opens, run `remem admin backup` to create a new encrypted backup, and only
+  then manually delete the listed plaintext copies or retain them solely in
+  encrypted storage.
+- For `Warn` with a plaintext live database, first run `remem encrypt`. Then
+  rerun `remem status` and `remem doctor` until the database opens and doctor
+  confirms that it is encrypted. Do not create a backup or describe one as
+  encrypted before both checks succeed; then follow the `Fail` disposal steps.
+- For `Warn` caused by a missing or unverified live database, key problems, or
+  I/O errors, do not back up or delete anything. First repair the live database,
+  key, or readability problem. Continue with backup and disposal only after
+  `remem status` succeeds and `remem doctor` confirms encryption.
+
+Moving a copy outside `REMEM_DATA_DIR` only removes it from this scan; it does
+not protect the data. Remem does not promise secure erasure of manually deleted
+files.
+
 ## Architecture Docs
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full internals and data flow.
