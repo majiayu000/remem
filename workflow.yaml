@@ -1,6 +1,6 @@
 name: specrail-reference
 version: 0.2.1
-description: Optional offline issue-first workflow and diagnostic reference; not a CI or merge authority.
+description: Optional offline issue-first workflow and diagnostic reference; not an execution, CI, review, or merge authority.
 
 durable_state:
   provider: github
@@ -75,6 +75,8 @@ artifacts:
   agent_review: artifacts/review/pr-{pr_number}.json
   triage_result: artifacts/triage/issue-{issue_number}.json
 
+# Retained as advisory route vocabulary for offline diagnostics and historical
+# compatibility. These states and artifacts neither authorize nor block work.
 action_policy:
   actions:
     triage_issue:

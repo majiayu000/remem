@@ -1,6 +1,6 @@
 ---
 name: specrail-plan-tasks
-description: Use when turning an approved SpecRail product and technical spec into the numbered `tasks.md` plan. Creates stable task IDs, owners, done-when conditions, verification commands, dependencies, and handoff notes without implementing the tasks.
+description: Use when turning a SpecRail product and technical spec into the numbered `tasks.md` plan. Creates stable task IDs, owners, done-when conditions, verification commands, dependencies, and handoff notes without implementing the tasks.
 ---
 
 # SpecRail Plan Tasks
@@ -12,7 +12,8 @@ Use this skill to create or update the task plan before implementation.
 1. Read `specs/GH<issue-number>/product.md` and
    `specs/GH<issue-number>/tech.md`.
 2. Read `templates/<locale>/tasks.md` or `templates/tasks.md`.
-3. Run the implementation route gate when available:
+3. Optionally collect the implementation route advisory when available; its
+   result does not block planning or implementation:
 
 ```sh
 python3 checks/route_gate.py --repo . --route implement --issue <issue-number> --state ready_to_implement --json
@@ -27,6 +28,8 @@ python3 checks/route_gate.py --repo . --route implement --issue <issue-number> -
 ## Boundaries
 
 - Do not implement while planning tasks.
-- Do not remove human gates for readiness, spec approval, final review, merge,
-  release, or security decisions.
+- Treat SpecRail readiness and spec-approval findings as advisory; they do not
+  block planning, implementation, review, or merge.
+- Preserve normal CI and code review, security decisions, and explicit human
+  authorization for merge and release.
 - Keep the plan small enough for one agent or a clearly partitioned thread lane.

@@ -1,6 +1,6 @@
 ---
 name: specrail-triage-issue
-description: Use when triaging a GitHub issue or issue-like request in a SpecRail-governed repository. Handles search-first duplicate checks, issue classification, readiness label proposals, security-private routing, and triage handoffs without bypassing human gates.
+description: Use when triaging a GitHub issue or issue-like request in a SpecRail-governed repository. Handles search-first duplicate checks, issue classification, advisory readiness observations, security-private routing, and triage handoffs without treating SpecRail diagnostics as authority.
 ---
 
 # SpecRail Triage Issue
@@ -15,7 +15,9 @@ Use this skill for the `triage_issue` route.
    recommending new workflow artifacts.
 3. Identify the current state: `new_issue`, `needs_info`, `triaged`,
    `duplicate`, `security_private`, or another configured state.
-4. Run the local gate when available:
+4. Optionally collect the local route advisory when available. Its decisions
+   are diagnostic only and do not block user-authorized triage, planning,
+   implementation, review, or PR updates:
 
 ```sh
 python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issue-number> --json > issue-evidence.json
@@ -35,7 +37,12 @@ python3 checks/route_gate.py --repo . --route triage_issue --issue <issue-number
 ## Boundaries
 
 - Do not close disputed issues.
-- Do not grant readiness, final approval, merge, or security-disclosure
-  authority.
+- Treat SpecRail readiness, spec-approval, and final-review states as advisory;
+  they neither authorize nor block work within the user's approved scope.
+- Keep normal CI, code review and review-thread requirements, applicable
+  security decisions, and explicit human authorization for merge and release
+  separate and intact.
+- Do not use a SpecRail diagnostic to grant merge, release, or
+  security-disclosure authority.
 - Do not invent missing fields; report missing evidence as missing evidence.
 - Keep human-facing triage text in the selected locale.

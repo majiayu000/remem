@@ -20,9 +20,13 @@ focused SpecRail skill after the route is known.
    - `review_pr`
    - `fix_ci`
    - `draft_release_note`
-5. Run `checks/route_gate.py` for the selected route when the repository includes
-   it. Treat `allowed` as permission to proceed, `warn` as proceed-with-caution,
-   `needs_human` as a maintainer gate, and `blocked` as a stop condition.
+5. Optionally run `checks/route_gate.py` for the selected route when the
+   repository includes it and an offline diagnostic would help. Treat
+   `allowed`, `warn`, `needs_human`, and `blocked` only as diagnostic signals
+   about the local SpecRail policy. None grants repository-level permission or
+   mechanically stops work. Whether work continues is determined by the user's
+   authorized scope, normal CI and review, applicable security requirements,
+   and separate explicit merge authorization.
 6. When GitHub issue evidence is needed and the repository includes the adapter,
    collect it read-only:
 
@@ -40,14 +44,15 @@ python3 checks/github_issue_evidence.py --github-repo <owner/repo> --issue <issu
   `specs/GH<issue-number>/tech.md`.
 - Use `skills/specrail-plan-tasks/SKILL.md` for
   `specs/GH<issue-number>/tasks.md`.
-- Use `skills/specrail-implement/SKILL.md` for code or workflow-asset changes
-  after the implementation gate.
+- Use `skills/specrail-implement/SKILL.md` for user-authorized code or
+  workflow-asset changes; its route-gate output remains advisory.
 - Use `skills/specrail-check-impl-against-spec/SKILL.md` to compare a diff or PR
   with the linked product spec, tech spec, and task plan.
 - Use `skills/specrail-review-pr/SKILL.md` for advisory PR review.
 - Use `skills/specrail-diagnose-ci/SKILL.md` for CI failure investigation and
   focused fixes.
-- Use `skills/specrail-pr-gate/SKILL.md` before reporting merge readiness.
+- Use `skills/specrail-pr-gate/SKILL.md` when adding advisory SpecRail evidence
+  to a merge-readiness evaluation.
 - Use `skills/specrail-release-note/SKILL.md` after merge when drafting release
   notes.
 
@@ -56,6 +61,8 @@ cross-module, public API, workflow-policy, or ambiguous behavior changes.
 Choose direct `implement` only when the change is already covered by an
 approved spec, is a small mechanical fix, is a test-only/doc-only correction, is
 a focused CI fix, or the user explicitly asks to skip spec creation.
+This is a SpecRail artifact-order recommendation, not an execution prerequisite
+or repository-level permission boundary.
 
 If `write_spec` is selected and no GitHub issue number is available, search for
 an existing issue first. If none exists and GitHub workflow is in scope, create
@@ -100,8 +107,9 @@ skill for orchestration.
 
 Keep the boundary clear:
 
-- SpecRail owns policy, locale, required artifacts, human gates, and
-  deterministic verification.
+- SpecRail describes reference policy, locale, artifacts, diagnostic signals,
+  and deterministic verification; it does not grant execution or merge
+  authority.
 - Threads owns lane maps, queue gates, remote truth refresh, review-thread
   handling, and closure audit.
 - If no threads skill or native subagent capability is available, continue with
@@ -119,7 +127,7 @@ Agents must not:
 - force push without explicit user authorization
 - publish secrets or private security details
 - change repository permissions
-- bypass human gates
+- bypass security decisions or explicit human merge and release authorization
 
 Do not install repo-distributed SpecRail skills into `$HOME` unless a human
 explicitly requests installation. Treat `skills-lock.json`, when present, as the
@@ -136,4 +144,4 @@ When reporting completion, include:
 - selected locale
 - stable IDs kept in English
 - verification commands and results
-- PR gate decision when merge readiness was evaluated
+- PR diagnostic decision, clearly labeled advisory, when it was evaluated

@@ -104,9 +104,10 @@ REQUIRED_TOKENS = {
     ],
     "templates/pull_request.md": [
         "## Linked Work",
-        "## Readiness Gate",
-        "## Review Gate",
-        "## Merge Gate",
+        "## Optional SpecRail Context",
+        "## Review and Security Requirements",
+        "## Merge Requirements",
+        "results are advisory",
         "## Verification",
     ],
 }

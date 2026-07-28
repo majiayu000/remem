@@ -12,7 +12,8 @@ Use this skill for the technical half of the `write_spec` route.
 1. Read the linked issue and `specs/GH<issue-number>/product.md`.
 2. Read the relevant tech spec template from
    `templates/<locale>/tech_spec.md` or `templates/tech_spec.md`.
-3. Run the local gate when available:
+3. Optionally collect the local route advisory when available; its result does
+   not block writing the technical spec:
 
 ```sh
 python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> --state ready_to_spec --json
@@ -29,6 +30,6 @@ python3 checks/route_gate.py --repo . --route write_spec --issue <issue-number> 
 ## Boundaries
 
 - Do not start implementation from the tech spec step.
-- Do not claim spec approval; report missing approval as a human gate.
+- Do not claim spec approval; report missing approval as an advisory finding.
 - Preserve dry-run and advisory defaults for automation.
 - Keep stable machine-facing IDs in English.

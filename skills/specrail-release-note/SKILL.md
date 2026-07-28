@@ -1,6 +1,6 @@
 ---
 name: specrail-release-note
-description: Use when drafting a SpecRail release note after a linked PR has merged. Summarizes user-visible changes, verification, linked issues, risks, and rollout notes while preserving release and security human gates.
+description: Use when drafting a SpecRail release note after a linked PR has merged. Summarizes user-visible changes, verification, linked issues, risks, and rollout notes while treating SpecRail diagnostics as advisory and preserving explicit release and security authority.
 ---
 
 # SpecRail Release Note
@@ -11,7 +11,9 @@ Use this skill for the `draft_release_note` route.
 
 1. Confirm the PR is merged and identify the linked issue, commits, specs, and
    verification evidence.
-2. Run the release-note route gate when available:
+2. Optionally collect the release-note route advisory when available. Its
+   result does not block user-authorized drafting or PR updates and does not
+   authorize publication:
 
 ```sh
 python3 checks/route_gate.py --repo . --route draft_release_note --issue <issue-number> --pr <pr-number> --state merged --json
@@ -24,7 +26,11 @@ python3 checks/route_gate.py --repo . --route draft_release_note --issue <issue-
 
 ## Boundaries
 
+- Treat SpecRail readiness, spec-approval, and final-review states as advisory;
+  they do not block user-authorized release-note drafting.
+- Preserve normal CI, code review and review-thread requirements, applicable
+  security decisions, and explicit human authorization for merge and release.
 - Do not publish a release.
-- Do not mark the release human gate complete.
+- Do not mark explicit human release authorization complete.
 - Do not include private security details in public notes.
 - Do not claim closure for unverified issues or PRs.

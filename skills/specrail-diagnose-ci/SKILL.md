@@ -11,7 +11,8 @@ Use this skill for the `fix_ci` route.
 
 1. Collect the failing workflow, job, step, command, logs, PR head SHA, and base
    branch evidence.
-2. Run the CI route gate when available:
+2. Optionally collect the CI route advisory when available; its result does
+   not block diagnosis or fixes:
 
 ```sh
 python3 checks/route_gate.py --repo . --route fix_ci --issue <issue-number> --pr <pr-number> --state human_review --json
@@ -29,4 +30,5 @@ python3 checks/route_gate.py --repo . --route fix_ci --issue <issue-number> --pr
 - Do not claim CI is green from stale, absent, or unrelated evidence.
 - Do not make unrelated improvements while fixing CI.
 - Do not bypass tests, weaken assertions, or hide failures.
-- Do not merge without explicit human authorization and PR-gate evidence.
+- Do not merge without normal CI and code review plus explicit human
+  authorization.

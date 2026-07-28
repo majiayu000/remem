@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Regression contract keeping mechanical SpecRail gates disabled."""
 
+import importlib.util
+import sys
 from pathlib import Path
 
 
@@ -65,6 +67,24 @@ def test_no_workflow_or_preflight_rewires_mechanical_gates() -> None:
             assert token not in text, f"{path} rewires mechanical gate token {token!r}"
 
 
+def test_local_preflight_runs_this_regression_first() -> None:
+    module_name = "_remem_check_pr_preflight_contract"
+    spec = importlib.util.spec_from_file_location(module_name, PREFLIGHT)
+    assert spec is not None and spec.loader is not None, f"cannot load {PREFLIGHT}"
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(module_name, None)
+
+    steps = module.fast_steps("origin/main", "HEAD")
+    expected = ["python3", "scripts/ci/test_specrail_gate_wiring.py"]
+    assert steps and steps[0][1] == expected, (
+        "local fast/full preflight must run this regression before other gates"
+    )
+
+
 def test_normal_quality_ci_stays_enabled() -> None:
     ci = CI_WORKFLOW.read_text(encoding="utf-8")
     for token in RETAINED_CI_TOKENS:
@@ -84,6 +104,7 @@ def test_offline_specrail_pack_is_retained() -> None:
 def main() -> int:
     test_removed_gate_workflows_stay_absent()
     test_no_workflow_or_preflight_rewires_mechanical_gates()
+    test_local_preflight_runs_this_regression_first()
     test_normal_quality_ci_stays_enabled()
     test_offline_specrail_pack_is_retained()
     print("mechanical SpecRail gates are disabled; normal CI remains enabled")
