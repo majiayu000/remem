@@ -1,5 +1,6 @@
 mod content_identity;
 mod dry_run;
+mod git_commit_files;
 mod run;
 mod schema_drift;
 mod state;
@@ -35,6 +36,8 @@ mod tests_schema;
 mod tests_schema_drift;
 #[cfg(test)]
 mod tests_session_summary_poisoning;
+#[cfg(test)]
+mod tests_staleness_index;
 #[cfg(test)]
 mod tests_user_context;
 #[cfg(test)]

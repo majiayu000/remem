@@ -355,6 +355,16 @@ pub(super) fn run_post_migration_hook(conn: &Connection, version: i64, name: &st
             format!("migration v{version:03}_{name} failed to log reconciliation counts")
         })?;
     }
+    if version == 74 {
+        let inserted =
+            super::git_commit_files::backfill_git_commit_files(conn).with_context(|| {
+                format!("migration v{version:03}_{name} failed to backfill git commit files")
+            })?;
+        crate::log::info(
+            "migrate",
+            &format!("backfilled {inserted} git commit file path(s)"),
+        );
+    }
     Ok(())
 }
 
