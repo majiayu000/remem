@@ -2,7 +2,9 @@ use anyhow::{bail, Result};
 use rusqlite::{params, Connection};
 
 use crate::retrieval::embedding::{
-    embedding_provider_status, EmbeddingBackfillTarget, EmbeddingProviderStatus,
+    configured_backfill_target_with_fallback_cache, embedding_provider_status,
+    embedding_provider_status_without_probe, resolve_embedding_config, EmbeddingBackfillTarget,
+    EmbeddingFallbackCache, EmbeddingProviderStatus,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +114,7 @@ pub fn prune_inactive_memory_embeddings(
     conn: &Connection,
     target: &EmbeddingBackfillTarget,
 ) -> Result<InactiveEmbeddingPruneReport> {
+    ensure_current_prune_target(target)?;
     if !super::table_exists(conn, "memories")? || !super::table_exists(conn, "memory_embeddings")? {
         return Ok(InactiveEmbeddingPruneReport {
             pruned: 0,
@@ -125,7 +128,7 @@ pub fn prune_inactive_memory_embeddings(
             },
         });
     }
-    let coverage = embedding_coverage_for_target(conn, target)?;
+    let coverage = active_embedding_coverage_for_target(conn, target)?;
     if coverage.embedded < coverage.total {
         bail!(
             "refusing to prune inactive embedding profiles before active coverage reaches 100%: {}/{} ({:.1}%)",
@@ -134,7 +137,7 @@ pub fn prune_inactive_memory_embeddings(
             coverage.percent
         );
     }
-    let stale_or_missing = pending_reindex_count_for_target(conn, target)?;
+    let stale_or_missing = super::pending_memory_embedding_reindex_count_for_target(conn, target)?;
     if stale_or_missing > 0 {
         bail!(
             "refusing to prune inactive embedding profiles while active profile has {stale_or_missing} missing or stale rows; run embedding backfill without --limit before pruning"
@@ -159,11 +162,27 @@ pub fn prune_inactive_memory_embeddings(
     })
 }
 
-fn embedding_coverage_for_target(
+pub fn active_embedding_coverage_for_target(
     conn: &Connection,
     target: &EmbeddingBackfillTarget,
 ) -> Result<ActiveEmbeddingCoverage> {
+    if !super::table_exists(conn, "memories")? {
+        return Ok(ActiveEmbeddingCoverage {
+            embedded: 0,
+            total: 0,
+            percent: 0.0,
+            mixed_profile_count: 0,
+        });
+    }
     let total = searchable_memory_count(conn)?;
+    if target.dimensions == 0 || !super::table_exists(conn, "memory_embeddings")? {
+        return Ok(ActiveEmbeddingCoverage {
+            embedded: 0,
+            total,
+            percent: percent(0, total),
+            mixed_profile_count: embedding_profile_count(conn)?,
+        });
+    }
     let embedded = conn.query_row(
         "SELECT COUNT(DISTINCT m.id)
          FROM memories m
@@ -182,23 +201,49 @@ fn embedding_coverage_for_target(
     })
 }
 
-fn pending_reindex_count_for_target(
-    conn: &Connection,
-    target: &EmbeddingBackfillTarget,
-) -> Result<i64> {
-    Ok(conn.query_row(
-        "SELECT COUNT(*)
-         FROM memories m
-         LEFT JOIN memory_embeddings e
-           ON e.memory_id = m.id
-          AND e.model = ?1
-          AND e.dimensions = ?2
-         WHERE (e.memory_id IS NULL
-                OR e.updated_at_epoch < m.updated_at_epoch)
-           AND m.status IN ('active', 'stale', 'archived')",
-        params![target.model.as_str(), target.dimensions as i64],
-        |row| row.get(0),
-    )?)
+fn ensure_current_prune_target(target: &EmbeddingBackfillTarget) -> Result<()> {
+    let config_before = resolve_embedding_config()?;
+    let status_before = embedding_provider_status_without_probe()?;
+    if status_before.disabled {
+        bail!("cannot prune embedding profiles while embedding provider is off");
+    }
+    if status_before.degraded {
+        bail!(
+            "refusing to prune embedding profiles while the current provider is degraded: {}",
+            status_before
+                .degradation_reason
+                .as_deref()
+                .or(status_before.unavailable_reason.as_deref())
+                .unwrap_or("unknown provider degradation")
+        );
+    }
+
+    let mut fallback_cache = EmbeddingFallbackCache::default();
+    let current = configured_backfill_target_with_fallback_cache(&mut fallback_cache)?;
+    let config_after = resolve_embedding_config()?;
+    let status_after = embedding_provider_status_without_probe()?;
+    if config_after != config_before || status_after != status_before {
+        bail!(
+            "refusing to prune embedding profiles because the embedding configuration or active profile changed while resolving the current target"
+        );
+    }
+    if let Some(fallback_target) = fallback_cache.call_failure_fallback_target() {
+        bail!(
+            "refusing to prune embedding profiles after typed provider fallback selected model={} dimensions={}",
+            fallback_target.model,
+            fallback_target.dimensions
+        );
+    }
+    if &current != target {
+        bail!(
+            "refusing to prune stale target model={} dimensions={}; current embedding profile is model={} dimensions={}",
+            target.model,
+            target.dimensions,
+            current.model,
+            current.dimensions
+        );
+    }
+    Ok(())
 }
 
 fn percent(numerator: i64, denominator: i64) -> f64 {

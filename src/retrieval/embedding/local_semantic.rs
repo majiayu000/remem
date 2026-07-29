@@ -1,7 +1,3 @@
-#[cfg(feature = "local-onnx")]
-use std::cell::RefCell;
-#[cfg(feature = "local-onnx")]
-use std::collections::{hash_map::Entry, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
@@ -10,14 +6,62 @@ use sha2::{Digest, Sha256};
 
 use super::{EmbeddingConfig, TextEmbedding};
 
+#[cfg(feature = "local-onnx")]
+mod download;
+#[cfg(feature = "local-onnx")]
+mod fs_cleanup;
+#[cfg(test)]
+mod hash_counter;
+mod manifest;
+#[cfg(feature = "local-onnx")]
+mod runtime;
+#[cfg(test)]
+mod test_support;
+#[cfg(all(windows, feature = "local-onnx"))]
+mod windows_cleanup;
+#[cfg(windows)]
+mod windows_model_root;
+#[cfg(windows)]
+mod windows_security;
+
+#[cfg(test)]
+use hash_counter::ModelFileHashCounter;
+use manifest::read_verified_manifest_compatible;
+#[cfg(feature = "local-onnx")]
+use manifest::with_model_read_lock;
+#[cfg(test)]
+use manifest::{collect_model_artifacts, write_manifest};
+#[cfg(feature = "local-onnx")]
+use manifest::{open_or_create_model_lock, read_verified_manifest_unlocked};
+#[cfg(test)]
+pub(crate) use test_support::install_test_model;
+#[cfg(all(test, feature = "local-onnx"))]
+pub(crate) use test_support::{
+    fail_next_test_model_embed_generic, fail_next_test_model_embed_unavailable,
+    fail_test_model_runtime_readiness, install_test_model_v1, install_untrusted_test_model,
+    test_model_runtime_file,
+};
+
 pub(super) const DEFAULT_LOCAL_SEMANTIC_DIMENSIONS: usize = 384;
 pub(super) const DEFAULT_LOCAL_SEMANTIC_MODEL: &str = "fastembed-intfloat-multilingual-e5-small-v1";
 
 const MANIFEST_FILE: &str = "remem-model-manifest.json";
-const MANIFEST_SCHEMA_VERSION: u32 = 1;
+const MANIFEST_SCHEMA_VERSION: u32 = 2;
 const FASTEMBED_RUNTIME: &str = "fastembed-rs/onnxruntime";
 const HUGGING_FACE_BASE_URL: &str = "https://huggingface.co";
-
+#[cfg(feature = "local-onnx")]
+const HUGGING_FACE_ENDPOINT_ENV: &str = "HF_ENDPOINT";
+#[cfg(feature = "local-onnx")]
+pub(super) const AUTO_EVALUATED_DEFAULT_ARTIFACT_SHA256: &str =
+    "3970612d6f31b81d1dc30ddac0099da273b5753d1a07412e8390cf799e7836a6";
+const MODEL_DOWNLOAD_LOCK_FILE: &str = ".remem-model-download.lock";
+const MODEL_STATE_LOCK_FILE: &str = ".remem-model-state.lock";
+const TOKENIZER_RUNTIME_FILES: &[&str] = &[
+    "tokenizer.json",
+    "config.json",
+    "special_tokens_map.json",
+    "tokenizer_config.json",
+];
 #[derive(Debug)]
 struct LocalEmbeddingModelUnavailableError(String);
 
@@ -50,19 +94,6 @@ pub(super) enum LocalEmbeddingInputKind {
 pub(super) enum LocalEmbeddingPreset {
     MultilingualE5Small,
     BgeM3,
-}
-
-#[cfg(feature = "local-onnx")]
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct LocalModelCacheKey {
-    preset: LocalEmbeddingPreset,
-    install_dir: PathBuf,
-}
-
-#[cfg(feature = "local-onnx")]
-thread_local! {
-    static LOCAL_MODEL_CACHE: RefCell<HashMap<LocalModelCacheKey, fastembed::TextEmbedding>> =
-        RefCell::new(HashMap::new());
 }
 
 impl LocalEmbeddingPreset {
@@ -119,6 +150,27 @@ impl LocalEmbeddingPreset {
         }
     }
 
+    fn cache_repo_dir(self) -> String {
+        format!("models--{}", self.upstream_model()).replace('/', "--")
+    }
+
+    fn model_file(self) -> &'static str {
+        "onnx/model.onnx"
+    }
+
+    fn additional_model_files(self) -> &'static [&'static str] {
+        match self {
+            Self::MultilingualE5Small => &[],
+            Self::BgeM3 => &["onnx/model.onnx_data", "onnx/Constant_7_attr__value"],
+        }
+    }
+
+    fn required_runtime_files(self) -> impl Iterator<Item = &'static str> {
+        std::iter::once(self.model_file())
+            .chain(self.additional_model_files().iter().copied())
+            .chain(TOKENIZER_RUNTIME_FILES.iter().copied())
+    }
+
     #[cfg(feature = "local-onnx")]
     fn prefix_input(self, text: &str, kind: LocalEmbeddingInputKind) -> String {
         match (self, kind) {
@@ -146,6 +198,7 @@ pub(super) struct LocalModelProfile {
     pub(super) model: String,
     pub(super) dimensions: usize,
     pub(super) install_dir: PathBuf,
+    pub(super) artifact_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -156,6 +209,7 @@ pub struct LocalEmbeddingDownloadReport {
     pub dimensions: usize,
     pub install_dir: String,
     pub files_verified: usize,
+    pub artifact_sha256: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -188,6 +242,8 @@ struct LocalModelManifest {
     source_url: Option<String>,
     downloaded_at_epoch: i64,
     files: Vec<LocalModelFile>,
+    #[serde(default)]
+    symlinks: Vec<LocalModelSymlink>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -199,6 +255,13 @@ struct LocalModelFile {
     bytes: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LocalModelSymlink {
+    path: String,
+    link_target: String,
+    resolved_path: String,
+}
+
 pub(super) fn model_root(config: &EmbeddingConfig) -> PathBuf {
     config
         .model_dir
@@ -207,9 +270,54 @@ pub(super) fn model_root(config: &EmbeddingConfig) -> PathBuf {
         .unwrap_or_else(|| crate::db::data_dir().join("models"))
 }
 
+#[cfg(feature = "local-onnx")]
 pub(super) fn installed_model_profile(config: &EmbeddingConfig) -> Result<LocalModelProfile> {
-    let preset = configured_preset(config)?;
+    let preset = configured_local_preset_or_default(config)?;
     verified_profile_for_preset(config, preset)
+}
+
+#[cfg(not(feature = "local-onnx"))]
+pub(super) fn installed_model_profile(config: &EmbeddingConfig) -> Result<LocalModelProfile> {
+    let preset = configured_local_preset_or_default(config)?;
+    #[cfg(windows)]
+    windows_model_root::checked_model_root(config)?;
+    Err(model_unavailable_error(format!(
+        "local semantic embedding runtime is not built; rebuild remem with the local-onnx feature to use {}",
+        preset.label()
+    )))
+}
+
+pub(super) fn auto_installed_model_profile(
+    config: &EmbeddingConfig,
+) -> Result<Option<LocalModelProfile>> {
+    let preset = configured_local_preset_or_default(config)?;
+    #[cfg(windows)]
+    let _windows_install = match windows_model_root::open_managed_install(config, preset, true)? {
+        Some(install) => install,
+        None => return Ok(None),
+    };
+    #[cfg(windows)]
+    return auto_verified_model_profile(config, preset).map(Some);
+    #[cfg(not(windows))]
+    let install_dir = install_dir_for_preset(config, preset);
+    #[cfg(not(windows))]
+    match std::fs::symlink_metadata(&install_dir) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(model_unavailable_error(format!(
+            "local embedding model install path is a symlink: {}",
+            install_dir.display()
+        ))),
+        Ok(metadata) if !metadata.file_type().is_dir() => Err(model_unavailable_error(format!(
+            "local embedding model install path is not a directory: {}",
+            install_dir.display()
+        ))),
+        Ok(_) => auto_verified_model_profile(config, preset).map(Some),
+        Err(error) => Err(model_unavailable_error(format!(
+            "inspect local embedding model {} in {}: {error:#}",
+            preset.label(),
+            install_dir.display()
+        ))),
+    }
 }
 
 pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownloadReport> {
@@ -218,42 +326,93 @@ pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownlo
         Some(raw) => LocalEmbeddingPreset::parse(raw)?,
         None => configured_local_preset_or_default(&config)?,
     };
-    let install_dir = install_dir_for_preset(&config, preset);
-    std::fs::create_dir_all(&install_dir)
-        .with_context(|| format!("create local embedding model dir {}", install_dir.display()))?;
-    materialize_fastembed_model(preset, &install_dir)?;
-    let files = collect_model_files(&install_dir)?;
-    if files.is_empty() {
+
+    #[cfg(not(feature = "local-onnx"))]
+    {
+        #[cfg(windows)]
+        windows_model_root::checked_model_root(&config)?;
         bail!(
-            "local embedding download did not materialize model files in {}",
-            install_dir.display()
+            "local semantic embedding runtime is not built; rebuild remem with the local-onnx feature to download {}",
+            preset.label()
         );
     }
-    let manifest = LocalModelManifest {
-        schema_version: MANIFEST_SCHEMA_VERSION,
-        preset: preset.label().to_string(),
-        model_id: preset.model_id().to_string(),
-        upstream_model: preset.upstream_model().to_string(),
-        dimensions: preset.dimensions(),
-        runtime: FASTEMBED_RUNTIME.to_string(),
-        source_url: Some(preset.source_url()),
-        downloaded_at_epoch: chrono::Utc::now().timestamp(),
-        files,
-    };
-    write_manifest(&install_dir, &manifest)?;
-    let verified = read_verified_manifest(&install_dir, Some(preset))?;
-    Ok(LocalEmbeddingDownloadReport {
-        preset: verified.preset,
-        model_id: verified.model_id,
-        upstream_model: verified.upstream_model,
-        dimensions: verified.dimensions,
-        install_dir: install_dir.display().to_string(),
-        files_verified: verified.files.len(),
-    })
+
+    #[cfg(feature = "local-onnx")]
+    {
+        #[cfg(windows)]
+        let _windows_install = windows_model_root::create_managed_install(&config, preset)?;
+        #[cfg(windows)]
+        let install_dir = _windows_install.install_dir().to_path_buf();
+        #[cfg(not(windows))]
+        let install_dir = install_dir_for_preset(&config, preset);
+        #[cfg(not(windows))]
+        std::fs::create_dir_all(&install_dir).with_context(|| {
+            format!("create local embedding model dir {}", install_dir.display())
+        })?;
+        let (lock_path, download_lock) =
+            open_or_create_model_lock(&install_dir, MODEL_DOWNLOAD_LOCK_FILE)
+                .context("open local model download serialization lock")?;
+        fs2::FileExt::lock_exclusive(&download_lock)
+            .with_context(|| format!("lock local model download {}", lock_path.display()))?;
+        let (_state_lock_path, state_lock_file) =
+            open_or_create_model_lock(&install_dir, MODEL_STATE_LOCK_FILE)
+                .context("initialize local model state lock")?;
+        drop(state_lock_file);
+        let staging = download::materialize_hugging_face_artifacts(preset, &install_dir)?;
+        let candidate = (|| {
+            let prepared = download::prepare_downloaded_model(
+                preset,
+                staging.path(),
+                chrono::Utc::now().timestamp(),
+            )?;
+            let imported = download::import_immutable_candidate(
+                staging.path(),
+                &install_dir,
+                preset,
+                &prepared.manifest,
+            )?;
+            Ok((prepared, imported))
+        })();
+        let (prepared, imported) = match candidate {
+            Ok(candidate) => candidate,
+            Err(error) => return download::cleanup_staging_after_error(staging, error),
+        };
+        staging.cleanup()?;
+        let (state_lock_path, state_lock) =
+            open_or_create_model_lock(&install_dir, MODEL_STATE_LOCK_FILE)
+                .context("open local model state lock for publish")?;
+        fs2::FileExt::lock_exclusive(&state_lock).with_context(|| {
+            format!(
+                "lock local model state for publish {}",
+                state_lock_path.display()
+            )
+        })?;
+        let verified = download::activate_candidate_manifest(
+            &install_dir,
+            preset,
+            prepared.manifest,
+            prepared.artifact_sha256,
+            imported,
+        )?;
+        let artifact_sha256 = verified.artifact_sha256;
+        let manifest = verified.manifest;
+        Ok(LocalEmbeddingDownloadReport {
+            preset: manifest.preset,
+            model_id: manifest.model_id,
+            upstream_model: manifest.upstream_model,
+            dimensions: manifest.dimensions,
+            install_dir: install_dir.display().to_string(),
+            files_verified: manifest.files.len(),
+            artifact_sha256,
+        })
+    }
 }
 
 pub(super) fn inventory() -> Result<LocalEmbeddingInventoryReport> {
     let config = super::resolve_embedding_config()?;
+    #[cfg(windows)]
+    let root = windows_model_root::checked_model_root(&config)?;
+    #[cfg(not(windows))]
     let root = model_root(&config);
     let configured = configured_local_preset_or_default(&config)?;
     let models = LocalEmbeddingPreset::all()
@@ -268,23 +427,82 @@ pub(super) fn inventory() -> Result<LocalEmbeddingInventoryReport> {
     })
 }
 
+#[cfg(feature = "local-onnx")]
 pub(super) fn embed_text(
     text: &str,
     config: &EmbeddingConfig,
     kind: LocalEmbeddingInputKind,
 ) -> Result<TextEmbedding> {
-    let preset = configured_preset(config)?;
-    let profile = verified_profile_for_preset(config, preset)?;
-    let values = embed_with_fastembed(preset, &profile.install_dir, text, kind)?;
-    if values.len() != profile.dimensions {
-        bail!(
-            "local embedding model {} returned {} dimensions, expected {}",
-            profile.model,
-            values.len(),
-            profile.dimensions
-        );
+    let preset = configured_local_preset_or_default(config)?;
+    #[cfg(windows)]
+    let _windows_install = windows_model_root::open_managed_install(config, preset, false)?
+        .ok_or_else(|| windows_model_root::missing_install_error())?;
+    #[cfg(windows)]
+    let install_dir = _windows_install.install_dir().to_path_buf();
+    #[cfg(not(windows))]
+    let install_dir = install_dir_for_preset(config, preset);
+    #[cfg(test)]
+    if let Some(failure) = test_support::take_next_embed_failure(&install_dir)? {
+        return match failure {
+            test_support::TestEmbedFailure::ModelUnavailable(reason) => {
+                Err(model_unavailable_error(reason))
+            }
+            test_support::TestEmbedFailure::Generic(reason) => Err(anyhow::anyhow!(reason)),
+        };
     }
-    TextEmbedding::new(profile.model, values)
+    read_verified_manifest_compatible(&install_dir, Some(preset)).map_err(|error| {
+        model_unavailable_error(format!(
+            "local embedding model {} is not ready in {}: {error:#}",
+            preset.label(),
+            install_dir.display()
+        ))
+    })?;
+    with_model_read_lock(&install_dir, || {
+        let verified =
+            read_verified_manifest_unlocked(&install_dir, Some(preset)).map_err(|error| {
+                model_unavailable_error(format!(
+                    "local embedding model {} is not ready in {}: {error:#}",
+                    preset.label(),
+                    install_dir.display()
+                ))
+            })?;
+        if config.provider == super::EmbeddingProvider::Auto {
+            require_auto_evaluated_artifact(&install_dir, preset, &verified.artifact_sha256)?;
+        }
+        let profile = profile_from_verified_manifest(&install_dir, &verified);
+        let values = runtime::embed_with_verified_model(
+            preset,
+            &install_dir,
+            &verified.manifest,
+            &profile.artifact_sha256,
+            text,
+            kind,
+        )?;
+        if values.len() != profile.dimensions {
+            bail!(
+                "local embedding model {} returned {} dimensions, expected {}",
+                profile.model,
+                values.len(),
+                profile.dimensions
+            );
+        }
+        TextEmbedding::new(profile.model, values)
+    })
+}
+
+#[cfg(not(feature = "local-onnx"))]
+pub(super) fn embed_text(
+    _text: &str,
+    config: &EmbeddingConfig,
+    _kind: LocalEmbeddingInputKind,
+) -> Result<TextEmbedding> {
+    let preset = configured_local_preset_or_default(config)?;
+    #[cfg(windows)]
+    windows_model_root::checked_model_root(config)?;
+    Err(model_unavailable_error(format!(
+        "local semantic embedding runtime is not built; rebuild remem with the local-onnx feature to use {}",
+        preset.label()
+    )))
 }
 
 fn configured_preset(config: &EmbeddingConfig) -> Result<LocalEmbeddingPreset> {
@@ -307,39 +525,154 @@ fn configured_local_preset_or_default(config: &EmbeddingConfig) -> Result<LocalE
     }
 }
 
+#[cfg(feature = "local-onnx")]
 fn verified_profile_for_preset(
     config: &EmbeddingConfig,
     preset: LocalEmbeddingPreset,
 ) -> Result<LocalModelProfile> {
+    verified_profile_for_preset_with_policy(config, preset, false)
+}
+
+#[cfg(feature = "local-onnx")]
+fn auto_verified_model_profile(
+    config: &EmbeddingConfig,
+    preset: LocalEmbeddingPreset,
+) -> Result<LocalModelProfile> {
+    verified_profile_for_preset_with_policy(config, preset, true)
+}
+
+#[cfg(not(feature = "local-onnx"))]
+fn auto_verified_model_profile(
+    config: &EmbeddingConfig,
+    _preset: LocalEmbeddingPreset,
+) -> Result<LocalModelProfile> {
+    installed_model_profile(config)
+}
+
+#[cfg(feature = "local-onnx")]
+fn verified_profile_for_preset_with_policy(
+    config: &EmbeddingConfig,
+    preset: LocalEmbeddingPreset,
+    enforce_auto_evaluated_artifact: bool,
+) -> Result<LocalModelProfile> {
+    #[cfg(windows)]
+    let _windows_install = windows_model_root::open_managed_install(config, preset, false)?
+        .ok_or_else(|| windows_model_root::missing_install_error())?;
+    #[cfg(windows)]
+    let install_dir = _windows_install.install_dir().to_path_buf();
+    #[cfg(not(windows))]
     let install_dir = install_dir_for_preset(config, preset);
-    let manifest = read_verified_manifest(&install_dir, Some(preset)).map_err(|error| {
+    read_verified_manifest_compatible(&install_dir, Some(preset)).map_err(|error| {
         model_unavailable_error(format!(
-            "local embedding model {} is not ready in {}: {error}",
+            "local embedding model {} is not ready in {}: {error:#}",
             preset.label(),
             install_dir.display()
         ))
     })?;
-    Ok(LocalModelProfile {
-        model: manifest.model_id,
-        dimensions: manifest.dimensions,
-        install_dir,
+    with_model_read_lock(&install_dir, || {
+        let verified = read_verified_manifest_unlocked(&install_dir, Some(preset))?;
+        if enforce_auto_evaluated_artifact {
+            require_auto_evaluated_artifact(&install_dir, preset, &verified.artifact_sha256)?;
+        }
+        runtime::ensure_verified_model_ready(
+            preset,
+            &install_dir,
+            &verified.manifest,
+            &verified.artifact_sha256,
+        )?;
+        Ok(profile_from_verified_manifest(&install_dir, &verified))
     })
+    .map_err(|error| {
+        model_unavailable_error(format!(
+            "local embedding model {} is not ready in {}: {error:#}",
+            preset.label(),
+            install_dir.display()
+        ))
+    })
+}
+
+#[cfg(feature = "local-onnx")]
+fn auto_artifact_is_trusted(_install_dir: &Path, artifact_sha256: &str) -> Result<bool> {
+    if artifact_sha256 == AUTO_EVALUATED_DEFAULT_ARTIFACT_SHA256 {
+        return Ok(true);
+    }
+    #[cfg(test)]
+    if test_support::is_test_auto_artifact_trusted(_install_dir)? {
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+#[cfg(feature = "local-onnx")]
+fn require_auto_evaluated_artifact(
+    install_dir: &Path,
+    preset: LocalEmbeddingPreset,
+    artifact_sha256: &str,
+) -> Result<()> {
+    if auto_artifact_is_trusted(install_dir, artifact_sha256)? {
+        return Ok(());
+    }
+    Err(model_unavailable_error(format!(
+        "automatic local embedding requires evaluated {} artifact sha256:{}; installed artifact sha256:{} is not trusted for Auto. Upgrade remem or redownload the model from {}",
+        preset.label(),
+        AUTO_EVALUATED_DEFAULT_ARTIFACT_SHA256,
+        artifact_sha256,
+        HUGGING_FACE_BASE_URL
+    )))
+}
+
+#[cfg(feature = "local-onnx")]
+fn profile_from_verified_manifest(
+    install_dir: &Path,
+    verified: &manifest::VerifiedLocalManifest,
+) -> LocalModelProfile {
+    LocalModelProfile {
+        model: format!(
+            "{}@sha256:{}",
+            verified.manifest.model_id, verified.artifact_sha256
+        ),
+        dimensions: verified.manifest.dimensions,
+        install_dir: install_dir.to_path_buf(),
+        artifact_sha256: verified.artifact_sha256.clone(),
+    }
 }
 
 fn inventory_for_preset(
     config: &EmbeddingConfig,
     preset: LocalEmbeddingPreset,
 ) -> Result<LocalEmbeddingModelInventory> {
+    #[cfg(windows)]
+    let _windows_install = match windows_model_root::open_managed_install(config, preset, true)? {
+        Some(install) => install,
+        None => {
+            return Ok(LocalEmbeddingModelInventory {
+                preset: preset.label().to_string(),
+                model_id: preset.model_id().to_string(),
+                upstream_model: preset.upstream_model().to_string(),
+                dimensions: preset.dimensions(),
+                install_dir: model_root(config)
+                    .join(preset.model_id())
+                    .display()
+                    .to_string(),
+                installed: false,
+                checksum_verified: false,
+                unavailable_reason: Some("local embedding model is not installed".to_string()),
+            });
+        }
+    };
+    #[cfg(windows)]
+    let install_dir = _windows_install.install_dir().to_path_buf();
+    #[cfg(not(windows))]
     let install_dir = install_dir_for_preset(config, preset);
-    match read_verified_manifest(&install_dir, Some(preset)) {
-        Ok(_) => Ok(LocalEmbeddingModelInventory {
-            preset: preset.label().to_string(),
-            model_id: preset.model_id().to_string(),
-            upstream_model: preset.upstream_model().to_string(),
-            dimensions: preset.dimensions(),
+    match read_verified_manifest_compatible(&install_dir, Some(preset)) {
+        Ok(verified) => Ok(LocalEmbeddingModelInventory {
+            preset: verified.manifest.preset,
+            model_id: verified.manifest.model_id,
+            upstream_model: verified.manifest.upstream_model,
+            dimensions: verified.manifest.dimensions,
             install_dir: install_dir.display().to_string(),
             installed: true,
-            checksum_verified: true,
+            checksum_verified: is_sha256_hex(&verified.artifact_sha256),
             unavailable_reason: None,
         }),
         Err(error) => Ok(LocalEmbeddingModelInventory {
@@ -355,201 +688,9 @@ fn inventory_for_preset(
     }
 }
 
+#[cfg(not(windows))]
 fn install_dir_for_preset(config: &EmbeddingConfig, preset: LocalEmbeddingPreset) -> PathBuf {
     model_root(config).join(preset.model_id())
-}
-
-#[cfg(feature = "local-onnx")]
-fn materialize_fastembed_model(preset: LocalEmbeddingPreset, install_dir: &Path) -> Result<()> {
-    let options = fastembed::TextInitOptions::new(preset.fastembed_model())
-        .with_cache_dir(install_dir.to_path_buf())
-        .with_show_download_progress(true);
-    let mut model = fastembed::TextEmbedding::try_new(options)
-        .with_context(|| format!("initialize local embedding model {}", preset.label()))?;
-    let probe = preset.prefix_input(
-        "remem local embedding readiness probe",
-        LocalEmbeddingInputKind::Generic,
-    );
-    let embeddings = model
-        .embed([probe.as_str()], Some(1))
-        .with_context(|| format!("probe local embedding model {}", preset.label()))?;
-    if embeddings.len() != 1 {
-        bail!(
-            "local embedding model {} returned {} probe embeddings",
-            preset.label(),
-            embeddings.len()
-        );
-    }
-    Ok(())
-}
-
-#[cfg(not(feature = "local-onnx"))]
-fn materialize_fastembed_model(preset: LocalEmbeddingPreset, _install_dir: &Path) -> Result<()> {
-    bail!(
-        "local semantic embedding runtime is not built; rebuild remem with the local-onnx feature to download {}",
-        preset.label()
-    )
-}
-
-#[cfg(feature = "local-onnx")]
-fn embed_with_fastembed(
-    preset: LocalEmbeddingPreset,
-    install_dir: &Path,
-    text: &str,
-    kind: LocalEmbeddingInputKind,
-) -> Result<Vec<f32>> {
-    let input = preset.prefix_input(text, kind);
-    let key = LocalModelCacheKey {
-        preset,
-        install_dir: install_dir.to_path_buf(),
-    };
-    LOCAL_MODEL_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let model = match cache.entry(key) {
-            Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => {
-                let options = fastembed::TextInitOptions::new(preset.fastembed_model())
-                    .with_cache_dir(install_dir.to_path_buf())
-                    .with_show_download_progress(false);
-                let model = fastembed::TextEmbedding::try_new(options).with_context(|| {
-                    format!("initialize local embedding model {}", preset.label())
-                })?;
-                entry.insert(model)
-            }
-        };
-        let mut embeddings = model
-            .embed([input.as_str()], Some(1))
-            .with_context(|| format!("embed text with local model {}", preset.label()))?;
-        let first = embeddings
-            .pop()
-            .context("local embedding model did not return an embedding")?;
-        if !embeddings.is_empty() {
-            bail!("local embedding model returned multiple embeddings for single input");
-        }
-        Ok(first)
-    })
-}
-
-#[cfg(not(feature = "local-onnx"))]
-fn embed_with_fastembed(
-    preset: LocalEmbeddingPreset,
-    _install_dir: &Path,
-    _text: &str,
-    _kind: LocalEmbeddingInputKind,
-) -> Result<Vec<f32>> {
-    Err(model_unavailable_error(format!(
-        "local semantic embedding runtime is not built; rebuild remem with the local-onnx feature to use {}",
-        preset.label()
-    )))
-}
-
-fn read_verified_manifest(
-    install_dir: &Path,
-    expected_preset: Option<LocalEmbeddingPreset>,
-) -> Result<LocalModelManifest> {
-    let path = install_dir.join(MANIFEST_FILE);
-    let content =
-        std::fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-    let manifest: LocalModelManifest =
-        serde_json::from_str(&content).with_context(|| format!("parse {}", path.display()))?;
-    verify_manifest_header(&manifest, expected_preset)?;
-    for file in &manifest.files {
-        verify_manifest_file(install_dir, file)?;
-    }
-    Ok(manifest)
-}
-
-fn verify_manifest_header(
-    manifest: &LocalModelManifest,
-    expected_preset: Option<LocalEmbeddingPreset>,
-) -> Result<()> {
-    if manifest.schema_version != MANIFEST_SCHEMA_VERSION {
-        bail!(
-            "unsupported manifest schema {}, expected {}",
-            manifest.schema_version,
-            MANIFEST_SCHEMA_VERSION
-        );
-    }
-    let preset = LocalEmbeddingPreset::parse(&manifest.preset)?;
-    if let Some(expected) = expected_preset {
-        if preset != expected {
-            bail!(
-                "manifest preset {} does not match expected {}",
-                manifest.preset,
-                expected.label()
-            );
-        }
-    }
-    if manifest.model_id != preset.model_id() {
-        bail!(
-            "manifest model_id {} does not match preset {}",
-            manifest.model_id,
-            preset.model_id()
-        );
-    }
-    if manifest.dimensions != preset.dimensions() {
-        bail!(
-            "manifest dimensions {} do not match preset {} dimensions {}",
-            manifest.dimensions,
-            preset.label(),
-            preset.dimensions()
-        );
-    }
-    if manifest.runtime != FASTEMBED_RUNTIME {
-        bail!("unsupported local embedding runtime {}", manifest.runtime);
-    }
-    if let Some(source_url) = manifest.source_url.as_deref() {
-        let expected = preset.source_url();
-        if source_url != expected {
-            bail!(
-                "manifest source_url {} does not match preset {} source {}",
-                source_url,
-                preset.label(),
-                expected
-            );
-        }
-    }
-    if manifest.files.is_empty() {
-        bail!("local embedding manifest has no verified files");
-    }
-    Ok(())
-}
-
-fn verify_manifest_file(install_dir: &Path, file: &LocalModelFile) -> Result<()> {
-    let relative = checked_relative_path(&file.path)?;
-    let path = install_dir.join(relative);
-    let metadata = std::fs::metadata(&path).with_context(|| format!("stat {}", path.display()))?;
-    if !metadata.is_file() {
-        bail!("manifest path is not a file: {}", path.display());
-    }
-    if metadata.len() != file.bytes {
-        bail!(
-            "checksum target {} size changed: expected {} bytes, got {}",
-            path.display(),
-            file.bytes,
-            metadata.len()
-        );
-    }
-    let actual = sha256_file(&path)?;
-    if actual != file.sha256 {
-        bail!(
-            "checksum mismatch for {}: expected {}, got {}",
-            path.display(),
-            file.sha256,
-            actual
-        );
-    }
-    if let Some(source_sha256) = file.source_sha256.as_deref() {
-        if actual != source_sha256 {
-            bail!(
-                "source checksum mismatch for {}: expected {}, got {}",
-                path.display(),
-                source_sha256,
-                actual
-            );
-        }
-    }
-    Ok(())
 }
 
 fn checked_relative_path(raw: &str) -> Result<PathBuf> {
@@ -564,69 +705,6 @@ fn checked_relative_path(raw: &str) -> Result<PathBuf> {
         bail!("manifest path must not contain parent/current components: {raw}");
     }
     Ok(path)
-}
-
-fn write_manifest(install_dir: &Path, manifest: &LocalModelManifest) -> Result<()> {
-    let path = install_dir.join(MANIFEST_FILE);
-    let tmp = install_dir.join(format!("{MANIFEST_FILE}.tmp"));
-    let content = serde_json::to_vec_pretty(manifest).context("serialize local model manifest")?;
-    std::fs::write(&tmp, content).with_context(|| format!("write {}", tmp.display()))?;
-    std::fs::rename(&tmp, &path)
-        .with_context(|| format!("replace local model manifest {}", path.display()))?;
-    Ok(())
-}
-
-fn collect_model_files(root: &Path) -> Result<Vec<LocalModelFile>> {
-    let mut files = Vec::new();
-    collect_model_files_inner(root, root, &mut files)?;
-    files.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(files)
-}
-
-fn collect_model_files_inner(
-    root: &Path,
-    current: &Path,
-    files: &mut Vec<LocalModelFile>,
-) -> Result<()> {
-    for entry in
-        std::fs::read_dir(current).with_context(|| format!("read {}", current.display()))?
-    {
-        let entry = entry?;
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let file_name = file_name.to_string_lossy();
-        if file_name == MANIFEST_FILE || file_name == format!("{MANIFEST_FILE}.tmp") {
-            continue;
-        }
-        if file_name == ".locks" || file_name.ends_with(".lock") || file_name.ends_with(".tmp") {
-            continue;
-        }
-        let metadata = entry.metadata()?;
-        if metadata.is_dir() {
-            collect_model_files_inner(root, &path, files)?;
-        } else if metadata.is_file() {
-            let relative = path.strip_prefix(root).with_context(|| {
-                format!("make {} relative to {}", path.display(), root.display())
-            })?;
-            let relative = relative
-                .components()
-                .map(|component| match component {
-                    Component::Normal(value) => Ok(value.to_string_lossy().to_string()),
-                    _ => bail!("unexpected non-normal cache path {}", path.display()),
-                })
-                .collect::<Result<Vec<_>>>()?
-                .join("/");
-            let sha256 = sha256_file(&path)?;
-            let source_sha256 = source_sha256_from_hf_blob_path(&relative, &sha256)?;
-            files.push(LocalModelFile {
-                path: relative,
-                sha256,
-                source_sha256,
-                bytes: metadata.len(),
-            });
-        }
-    }
-    Ok(())
 }
 
 fn source_sha256_from_hf_blob_path(relative: &str, actual_sha256: &str) -> Result<Option<String>> {
@@ -650,6 +728,8 @@ fn is_sha256_hex(value: &str) -> bool {
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
+    #[cfg(test)]
+    let pending_hash = hash_counter::PendingModelFileHash::for_path(path)?;
     let mut file = std::fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -661,36 +741,15 @@ fn sha256_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-    Ok(hasher
+    let sha256 = hasher
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
-        .collect())
+        .collect();
+    #[cfg(test)]
+    pending_hash.record()?;
+    Ok(sha256)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hf_cache_blob_source_sha_is_verified() -> Result<()> {
-        let sha = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-        let verified = source_sha256_from_hf_blob_path(&format!("models--demo/blobs/{sha}"), sha)?;
-
-        assert_eq!(verified.as_deref(), Some(sha));
-        Ok(())
-    }
-
-    #[test]
-    fn hf_cache_blob_source_sha_mismatch_fails() {
-        let source = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-        let actual = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff";
-
-        let error =
-            source_sha256_from_hf_blob_path(&format!("models--demo/blobs/{source}"), actual)
-                .unwrap_err();
-
-        assert!(error.to_string().contains("source checksum mismatch"));
-    }
-}
+mod tests;

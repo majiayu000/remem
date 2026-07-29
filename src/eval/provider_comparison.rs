@@ -16,9 +16,10 @@ use crate::retrieval::embedding::{
 pub const DEFAULT_DATASET_PATH: &str = "eval/golden.json";
 pub const DEFAULT_REPORT_PATH: &str = "eval/provider-comparison/report.json";
 
-const REPORT_VERSION: &str = "2026-07-04";
+const REPORT_VERSION: &str = "2026-07-29";
 const PROVIDER_COMPARISON_SLICE: &str = "provider_comparison";
 const QUERY_EMBEDDING_LATENCY_BUDGET_P95_MS: f64 = 1000.0;
+const COLD_START_EMBEDDING_LATENCY_BUDGET_MS: f64 = 1000.0;
 const EXISTING_REGRESSION_BUDGET: f64 = 0.0;
 const EPSILON: f64 = 0.000_001;
 
@@ -42,6 +43,7 @@ const ENV_API_KEY_ENV: &str = "REMEM_EMBEDDINGS_API_KEY_ENV";
 const ENV_TIMEOUT_SECS: &str = "REMEM_EMBEDDINGS_TIMEOUT_SECS";
 const ENV_FALLBACK: &str = "REMEM_EMBEDDINGS_FALLBACK";
 const ENV_MODEL_DIR: &str = "REMEM_EMBEDDINGS_MODEL_DIR";
+const ENV_HF_HOME: &str = "HF_HOME";
 const DEFAULT_API_KEY_ENV: &str = "OPENAI_API_KEY";
 
 const BASE_ENV_KEYS: &[&str] = &[
@@ -60,6 +62,7 @@ const BASE_ENV_KEYS: &[&str] = &[
     ENV_TIMEOUT_SECS,
     ENV_FALLBACK,
     ENV_MODEL_DIR,
+    ENV_HF_HOME,
     DEFAULT_API_KEY_ENV,
 ];
 
@@ -86,11 +89,15 @@ impl Default for ProviderComparisonOptions {
 pub struct ProviderComparisonReport {
     pub version: &'static str,
     pub generated_at_epoch: i64,
+    pub build_profile: &'static str,
+    pub target_os: &'static str,
+    pub target_arch: &'static str,
     pub dataset_path: String,
     pub k: usize,
     pub required_providers: Vec<&'static str>,
     pub provider_comparison_slice: &'static str,
     pub query_embedding_latency_budget_p95_ms: f64,
+    pub cold_start_embedding_latency_budget_ms: f64,
     pub existing_regression_budget: f64,
     pub providers: Vec<ProviderComparisonRow>,
     pub default_decision: DefaultDecision,
@@ -104,12 +111,14 @@ pub struct ProviderComparisonRow {
     pub active_provider: String,
     pub fallback_provider: Option<String>,
     pub model_id: Option<String>,
+    pub model_artifact_sha256: Option<String>,
     pub dimensions: Option<usize>,
     pub available: bool,
     pub degraded: bool,
     pub disabled: bool,
     pub unavailable_reason: Option<String>,
     pub provider_config: ProviderConfigSummary,
+    pub cold_start_embedding_latency_ms: Option<f64>,
     pub query_embedding_latency_p95_ms: Option<f64>,
     pub query_embedding_latency_samples: usize,
     pub overall: Option<CategoryEvaluation>,
@@ -167,7 +176,9 @@ pub struct DefaultFlipCriteria {
     pub api_reference_available: bool,
     pub provider_comparison_slice_present: bool,
     pub provider_comparison_slice_improves: bool,
+    pub paraphrase_slice_improves: bool,
     pub existing_slices_within_budget: bool,
+    pub cold_start_embedding_latency_within_budget: bool,
     pub query_embedding_latency_within_budget: bool,
 }
 
@@ -229,16 +240,26 @@ fn run_provider_comparison_dataset_locked(
     Ok(ProviderComparisonReport {
         version: REPORT_VERSION,
         generated_at_epoch: chrono::Utc::now().timestamp(),
+        build_profile: if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        },
+        target_os: std::env::consts::OS,
+        target_arch: std::env::consts::ARCH,
         dataset_path: options.dataset_path,
         k,
         required_providers: vec!["feature-hash", "local", "api"],
         provider_comparison_slice: PROVIDER_COMPARISON_SLICE,
         query_embedding_latency_budget_p95_ms: QUERY_EMBEDDING_LATENCY_BUDGET_P95_MS,
+        cold_start_embedding_latency_budget_ms: COLD_START_EMBEDDING_LATENCY_BUDGET_MS,
         existing_regression_budget: EXISTING_REGRESSION_BUDGET,
         providers,
         default_decision,
         notes: vec![
             "Provider rows are forced without fallback so unavailable providers cannot pass by silently using another embedding space.",
+            "Cold-start embedding latency measures provider verification plus the first profile probe before corpus seeding; query-embedding p95 measures subsequent warm-session queries.",
+            "Configured model-directory paths are redacted from committed evidence; model identity is recorded by model id and artifact SHA-256.",
             "Remote API calls are opt-in with --allow-api; the default reference run records API as unavailable instead of spending network/API budget.",
             "This report is evidence for GH-716 and does not change the default provider by itself.",
         ],
@@ -265,7 +286,7 @@ fn evaluate_provider(
     provider: EmbeddingProvider,
     allow_api: bool,
 ) -> Result<ProviderComparisonRow> {
-    let forced_config = forced_provider_config(base_config, provider);
+    let forced_config = forced_provider_config(base_config, provider)?;
     if provider == EmbeddingProvider::OpenAi && !allow_api {
         return Ok(unavailable_row(
             provider,
@@ -276,6 +297,7 @@ fn evaluate_provider(
     }
 
     let _scope = ScopedEmbeddingConfig::activate(&forced_config, provider, allow_api)?;
+    let cold_start_started = Instant::now();
     let status = embedding::embedding_provider_status_without_probe()
         .with_context(|| format!("resolve {} provider status", provider.label()))?;
     if let Some(reason) = status.unavailable_reason.clone() {
@@ -314,17 +336,19 @@ fn evaluate_provider(
             );
         }
     };
+    let cold_start_embedding_latency_ms = cold_start_started.elapsed().as_secs_f64() * 1000.0;
 
     match evaluate_available_provider(dataset, k) {
-        Ok(evaluation) => Ok(row_from_evaluation(
+        Ok(evaluation) => row_from_evaluation(
             provider,
             &forced_config,
             status,
             active_profile.model,
             active_profile.dimensions,
+            cold_start_embedding_latency_ms,
             evaluation,
             allow_api,
-        )),
+        ),
         Err(error) => {
             let reason = format!("provider comparison failed for {dataset_path}: {error}");
             optional_provider_error_row(provider, &forced_config, status, reason, allow_api)
@@ -352,10 +376,10 @@ fn optional_provider_error_row(
     ))
 }
 
-fn forced_provider_config(
+pub(in crate::eval) fn forced_provider_config(
     base_config: &EmbeddingConfig,
     provider: EmbeddingProvider,
-) -> EmbeddingConfig {
+) -> Result<EmbeddingConfig> {
     let defaults = EmbeddingConfig::default();
     let mut config = base_config.clone();
     config.provider = provider;
@@ -369,6 +393,8 @@ fn forced_provider_config(
             if base_config.provider != EmbeddingProvider::Local {
                 config.model = defaults.model.clone();
             }
+            config.model = embedding::configured_local_embedding_model_id(&config)
+                .context("resolve forced local provider model id")?;
             config.dimensions = None;
         }
         EmbeddingProvider::OpenAi => {
@@ -383,7 +409,7 @@ fn forced_provider_config(
         }
         EmbeddingProvider::Auto | EmbeddingProvider::Off => {}
     }
-    config
+    Ok(config)
 }
 
 fn unavailable_row(
@@ -392,18 +418,22 @@ fn unavailable_row(
     reason: impl Into<String>,
     allow_api: bool,
 ) -> ProviderComparisonRow {
+    let reason = reason.into();
+    let reason = redact_provider_reason(config, &reason);
     ProviderComparisonRow {
         provider: provider.label(),
         configured_provider: provider.label().to_string(),
         active_provider: provider.label().to_string(),
         fallback_provider: None,
         model_id: configured_model_id(provider, config),
+        model_artifact_sha256: None,
         dimensions: config.dimensions,
         available: false,
         degraded: false,
         disabled: false,
-        unavailable_reason: Some(reason.into()),
+        unavailable_reason: Some(reason),
         provider_config: ProviderConfigSummary::from_config(config, allow_api),
+        cold_start_embedding_latency_ms: None,
         query_embedding_latency_p95_ms: None,
         query_embedding_latency_samples: 0,
         overall: None,
@@ -421,6 +451,7 @@ fn row_from_status_unavailable(
     reason: String,
     allow_api: bool,
 ) -> ProviderComparisonRow {
+    let reason = redact_provider_reason(config, &reason);
     ProviderComparisonRow {
         provider: provider.label(),
         configured_provider: status.configured_provider,
@@ -429,12 +460,14 @@ fn row_from_status_unavailable(
         model_id: status
             .active_model_id
             .or_else(|| configured_model_id(provider, config)),
+        model_artifact_sha256: None,
         dimensions: status.active_dimensions.or(config.dimensions),
         available: false,
         degraded: status.degraded,
         disabled: status.disabled,
         unavailable_reason: Some(reason),
         provider_config: ProviderConfigSummary::from_config(config, allow_api),
+        cold_start_embedding_latency_ms: None,
         query_embedding_latency_p95_ms: None,
         query_embedding_latency_samples: 0,
         overall: None,
@@ -451,23 +484,33 @@ fn row_from_evaluation(
     status: EmbeddingProviderStatus,
     active_model_id: String,
     active_dimensions: usize,
+    cold_start_embedding_latency_ms: f64,
     evaluation: ProviderRunEvaluation,
     allow_api: bool,
-) -> ProviderComparisonRow {
+) -> Result<ProviderComparisonRow> {
     let query_embedding_latency_p95_ms = (!evaluation.query_embedding_latencies_ms.is_empty())
         .then(|| golden::run::percentile(evaluation.query_embedding_latencies_ms.clone(), 95.0));
-    ProviderComparisonRow {
+    let model_artifact_sha256 = match provider {
+        EmbeddingProvider::Local => Some(
+            embedding::configured_local_embedding_artifact_sha256(config)
+                .context("resolve local embedding model artifact digest")?,
+        ),
+        _ => None,
+    };
+    Ok(ProviderComparisonRow {
         provider: provider.label(),
         configured_provider: status.configured_provider,
         active_provider: status.active_provider,
         fallback_provider: status.fallback_provider,
         model_id: Some(active_model_id),
+        model_artifact_sha256,
         dimensions: Some(active_dimensions),
         available: true,
         degraded: status.degraded,
         disabled: status.disabled,
         unavailable_reason: None,
         provider_config: ProviderConfigSummary::from_config(config, allow_api),
+        cold_start_embedding_latency_ms: Some(cold_start_embedding_latency_ms),
         query_embedding_latency_p95_ms,
         query_embedding_latency_samples: evaluation.query_embedding_latencies_ms.len(),
         overall: Some(evaluation.overall),
@@ -475,7 +518,28 @@ fn row_from_evaluation(
         existing_slice_details: evaluation.existing_slice_details,
         provider_comparison_slice: Some(evaluation.provider_comparison_slice),
         query_summaries: evaluation.query_summaries,
+    })
+}
+
+fn redact_provider_reason(config: &EmbeddingConfig, reason: &str) -> String {
+    let mut redacted = reason.to_string();
+    let model_root = embedding::configured_local_embedding_model_root(config);
+    let mut sensitive_paths = vec![model_root.clone()];
+    if let Ok(canonical_root) = std::fs::canonicalize(&model_root) {
+        sensitive_paths.push(canonical_root);
     }
+    if let Some(configured) = config.model_dir.as_deref() {
+        sensitive_paths.push(PathBuf::from(configured));
+    }
+    sensitive_paths.sort();
+    sensitive_paths.dedup();
+    for path in sensitive_paths {
+        let displayed = path.to_string_lossy();
+        if !displayed.is_empty() {
+            redacted = redacted.replace(displayed.as_ref(), "<model-dir>");
+        }
+    }
+    redacted
 }
 
 fn configured_model_id(provider: EmbeddingProvider, config: &EmbeddingConfig) -> Option<String> {
@@ -496,7 +560,10 @@ impl ProviderConfigSummary {
             base_url: config.base_url.clone(),
             dimensions: config.dimensions,
             api_key_env: config.api_key_env.clone(),
-            model_dir: config.model_dir.clone(),
+            model_dir: config
+                .model_dir
+                .as_ref()
+                .map(|_| "<configured>".to_string()),
             timeout_secs: config.timeout_secs,
             api_calls_allowed: allow_api,
         }
@@ -595,13 +662,13 @@ fn phase_latency_ms(timings: &[crate::perf::PhaseTiming], phase: &str) -> Option
         .map(|timing| timing.elapsed_ms as f64)
 }
 
-struct ScopedEmbeddingConfig {
+pub(in crate::eval) struct ScopedEmbeddingConfig {
     saved: Vec<(String, Option<String>)>,
     config_path: PathBuf,
 }
 
 impl ScopedEmbeddingConfig {
-    fn activate(
+    pub(in crate::eval) fn activate(
         config: &EmbeddingConfig,
         provider: EmbeddingProvider,
         allow_api: bool,

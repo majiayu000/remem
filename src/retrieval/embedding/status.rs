@@ -40,13 +40,17 @@ pub(super) struct ProviderRuntime {
     pub(super) dimensions: Option<usize>,
     pub(super) disabled: bool,
     pub(super) unavailable_reason: Option<String>,
+    pub(super) degradation_reason: Option<String>,
 }
 
 pub(super) fn resolve_provider_status(config: &EmbeddingConfig) -> EmbeddingProviderStatus {
     let configured = config.provider;
     let mut runtime = provider_runtime(config, configured);
-    let mut degraded = false;
-    let mut degradation_reason = None;
+    let mut degraded = runtime.degradation_reason.is_some();
+    let mut degradation_reason = runtime.degradation_reason.clone();
+    if let Some(reason) = degradation_reason.as_deref() {
+        crate::log::error("embedding", reason);
+    }
 
     if let Some(reason) = runtime.unavailable_reason.clone() {
         degraded = true;
@@ -208,7 +212,24 @@ pub(super) fn provider_runtime(
     match provider {
         EmbeddingProvider::Auto => match super::auto_api_key(config) {
             Ok(Some(_)) => provider_runtime(config, EmbeddingProvider::OpenAi),
-            Ok(None) => provider_runtime(config, EmbeddingProvider::FeatureHash),
+            Ok(None) => match super::local_semantic::auto_installed_model_profile(config) {
+                Ok(Some(profile)) => ProviderRuntime {
+                    provider: EmbeddingProvider::Local,
+                    model_id: Some(profile.model),
+                    dimensions: Some(profile.dimensions),
+                    disabled: false,
+                    unavailable_reason: None,
+                    degradation_reason: None,
+                },
+                Ok(None) => provider_runtime(config, EmbeddingProvider::FeatureHash),
+                Err(error) => {
+                    let mut runtime = provider_runtime(config, EmbeddingProvider::FeatureHash);
+                    runtime.degradation_reason = Some(format!(
+                        "automatic local embedding provider unavailable: {error}; using feature-hash"
+                    ));
+                    runtime
+                }
+            },
             Err(error) => unavailable_runtime(provider, error.to_string()),
         },
         EmbeddingProvider::Local => match super::local_semantic::installed_model_profile(config) {
@@ -218,6 +239,7 @@ pub(super) fn provider_runtime(
                 dimensions: Some(profile.dimensions),
                 disabled: false,
                 unavailable_reason: None,
+                degradation_reason: None,
             },
             Err(error) => unavailable_runtime(provider, error.to_string()),
         },
@@ -227,6 +249,7 @@ pub(super) fn provider_runtime(
             dimensions: Some(FEATURE_HASH_EMBEDDING_DIMENSIONS),
             disabled: false,
             unavailable_reason: None,
+            degradation_reason: None,
         },
         EmbeddingProvider::OpenAi => match configured_api_key(config) {
             Ok(Some(_)) => ProviderRuntime {
@@ -235,6 +258,7 @@ pub(super) fn provider_runtime(
                 dimensions: config.dimensions,
                 disabled: false,
                 unavailable_reason: None,
+                degradation_reason: None,
             },
             Ok(None) => unavailable_runtime(
                 provider,
@@ -248,6 +272,7 @@ pub(super) fn provider_runtime(
             dimensions: None,
             disabled: true,
             unavailable_reason: None,
+            degradation_reason: None,
         },
     }
 }
@@ -259,6 +284,7 @@ fn unavailable_runtime(provider: EmbeddingProvider, reason: String) -> ProviderR
         dimensions: None,
         disabled: false,
         unavailable_reason: Some(reason),
+        degradation_reason: None,
     }
 }
 
@@ -269,5 +295,6 @@ fn disabled_runtime() -> ProviderRuntime {
         dimensions: None,
         disabled: true,
         unavailable_reason: None,
+        degradation_reason: None,
     }
 }

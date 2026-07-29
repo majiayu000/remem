@@ -55,3 +55,34 @@ pub fn search_by_entity_filtered(
     }
     Ok(all_ids)
 }
+
+pub(crate) fn search_exact_entity_names_filtered(
+    conn: &Connection,
+    names: &[String],
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    branch: Option<&str>,
+    limit: i64,
+    include_inactive: bool,
+) -> Result<Vec<i64>> {
+    let mut all_ids = Vec::new();
+    for name in names {
+        let ids = query_memory_ids(
+            conn,
+            "e.canonical_name = ?1 COLLATE NOCASE".to_string(),
+            Box::new(name.clone()),
+            project,
+            memory_type,
+            branch,
+            limit,
+            include_inactive,
+        )?;
+        for id in ids {
+            if !all_ids.contains(&id) {
+                all_ids.push(id);
+            }
+        }
+    }
+    all_ids.truncate(limit.max(0) as usize);
+    Ok(all_ids)
+}

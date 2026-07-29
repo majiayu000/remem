@@ -10,6 +10,7 @@ use super::*;
 
 mod filters;
 mod index_snapshot;
+mod profile_pinning;
 mod pruning;
 
 struct ScopedEmbeddingProvider {
@@ -501,7 +502,7 @@ fn reindex_api_failure_fallback_is_cached_for_batch() -> Result<()> {
 }
 
 #[test]
-fn reindex_row_failure_fallback_reselects_fallback_target() -> Result<()> {
+fn reindex_row_failure_fallback_rejects_pinned_target_drift() -> Result<()> {
     let server = FailingEmbeddingServer::success_once_then_fail()?;
     let _provider = ScopedEmbeddingProvider::api_fallback_feature_hash(&server.base_url);
     let conn = Connection::open_in_memory()?;
@@ -523,19 +524,28 @@ fn reindex_row_failure_fallback_reselects_fallback_target() -> Result<()> {
     );
     upsert_embedding(&conn, 1, &existing)?;
 
-    let report = reindex_memory_embeddings_with_report(&conn, 2)?;
-
-    assert_eq!(report.selected, 1);
-    assert_eq!(report.processed, 1);
-    assert_eq!(report.model, DEFAULT_EMBEDDING_MODEL);
-    assert_eq!(report.dimensions, EMBEDDING_DIMENSIONS);
+    let error = reindex_memory_embeddings_with_report(&conn, 2)
+        .expect_err("a row-time fallback must not switch the pinned backfill profile");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("pinned embedding profile changed"),
+        "{message}"
+    );
+    assert!(message.contains("normalized-model"), "{message}");
+    assert!(message.contains(DEFAULT_EMBEDDING_MODEL), "{message}");
     assert_eq!(server.call_count(), 2);
     let fallback_rows: i64 = conn.query_row(
         "SELECT COUNT(*) FROM memory_embeddings WHERE model = ?1 AND dimensions = ?2",
         params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64],
         |row| row.get(0),
     )?;
-    assert_eq!(fallback_rows, 2);
+    assert_eq!(fallback_rows, 1);
+    let pinned_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE model = 'normalized-model'",
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(pinned_rows, 0);
     Ok(())
 }
 

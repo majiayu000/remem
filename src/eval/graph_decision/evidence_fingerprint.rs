@@ -31,11 +31,35 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/eval/golden/run.rs",
     "src/eval/golden/types.rs",
     "src/eval/graph_decision.rs",
+    "src/eval/provider_comparison.rs",
+    "src/memory/store/write.rs",
+    "src/retrieval/embedding.rs",
+    "src/retrieval/embedding/config.rs",
+    "src/retrieval/embedding/fallback.rs",
+    "src/retrieval/embedding/index_text.rs",
+    "src/retrieval/embedding/status.rs",
+    "src/retrieval/entity.rs",
+    "src/retrieval/entity/extract.rs",
+    "src/retrieval/entity/search.rs",
+    "src/retrieval/entity/search/runner.rs",
     "src/retrieval/graph.rs",
     "src/retrieval/graph/query.rs",
     "src/retrieval/graph/traverse.rs",
     "src/retrieval/graph/types.rs",
+    "src/retrieval/query_expand/expand.rs",
+    "src/retrieval/query_expand/tokenize.rs",
+    "src/retrieval/query_expand/translations.rs",
+    "src/retrieval/search/common.rs",
+    "src/retrieval/search/memory/claim.rs",
+    "src/retrieval/search/memory/text.rs",
     "src/retrieval/search/memory/text/graph.rs",
+    "src/retrieval/search/memory/text/support.rs",
+    "src/retrieval/search/memory/text/support/fact.rs",
+    "src/retrieval/search/memory/text/support/graph_claim.rs",
+    "src/retrieval/search/memory/weights.rs",
+    "src/retrieval/temporal/fact_keys.rs",
+    "src/retrieval/vector.rs",
+    "src/retrieval/vector_candidates.rs",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -186,6 +210,37 @@ mod tests {
     }
 
     #[test]
+    fn fingerprint_covers_provider_embedding_vector_and_search_inputs() -> Result<()> {
+        let fingerprint = compute(DEFAULT_DATASET_PATH)?;
+        for required_path in [
+            "src/eval/provider_comparison.rs",
+            "src/memory/store/write.rs",
+            "src/retrieval/embedding.rs",
+            "src/retrieval/embedding/config.rs",
+            "src/retrieval/embedding/fallback.rs",
+            "src/retrieval/embedding/index_text.rs",
+            "src/retrieval/embedding/status.rs",
+            "src/retrieval/query_expand/expand.rs",
+            "src/retrieval/query_expand/tokenize.rs",
+            "src/retrieval/query_expand/translations.rs",
+            "src/retrieval/search/common.rs",
+            "src/retrieval/search/memory/weights.rs",
+            "src/retrieval/temporal/fact_keys.rs",
+            "src/retrieval/vector.rs",
+            "src/retrieval/vector_candidates.rs",
+        ] {
+            assert!(
+                fingerprint
+                    .inputs
+                    .iter()
+                    .any(|input| { input.role == "implementation" && input.path == required_path }),
+                "missing graph-decision fingerprint input {required_path}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn checked_in_graph_decision_report_matches_generated_fingerprint() -> Result<()> {
         // Mirror of the associative baseline guard: regenerate the report from
         // the live source/data and require the committed JSON to match. A stale
@@ -201,6 +256,10 @@ mod tests {
         );
         assert_eq!(committed["version"], report.version);
         assert_eq!(committed["dataset_path"], report.dataset_path);
+        assert_eq!(
+            committed["embedding_profile"],
+            serde_json::to_value(&report.embedding_profile)?
+        );
         assert_eq!(
             committed["decision"],
             serde_json::to_value(report.decision)?

@@ -164,8 +164,6 @@ fn replace_file(temp_path: &Path, path: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn replace_file(temp_path: &Path, path: &Path) -> Result<()> {
-    use std::os::windows::ffi::OsStrExt;
-
     const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
     const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
 
@@ -193,6 +191,8 @@ fn replace_file(temp_path: &Path, path: &Path) -> Result<()> {
 
 #[cfg(windows)]
 fn wide_null(path: &Path) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+
     path.as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))

@@ -277,19 +277,22 @@ mod tests {
             capture_stop_snapshot(Some("/nonexistent/remem-gh825/transcript.jsonl")).reason_code(),
             Some(REASON_READ_FAILED)
         );
-        let target = temp_transcript("symlink-target", VALID);
-        let link = std::env::temp_dir().join(format!(
-            "remem-gh825-symlink-{}-{}.jsonl",
-            std::process::id(),
-            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ));
-        std::os::unix::fs::symlink(&target, &link).expect("create symlink fixture");
-        assert_eq!(
-            capture_stop_snapshot(Some(&link.to_string_lossy())).reason_code(),
-            Some(REASON_PATH_UNTRUSTED)
-        );
-        std::fs::remove_file(&link).expect("remove symlink");
-        std::fs::remove_file(&target).expect("remove target");
+        #[cfg(unix)]
+        {
+            let target = temp_transcript("symlink-target", VALID);
+            let link = std::env::temp_dir().join(format!(
+                "remem-gh825-symlink-{}-{}.jsonl",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ));
+            std::os::unix::fs::symlink(&target, &link).expect("create symlink fixture");
+            assert_eq!(
+                capture_stop_snapshot(Some(&link.to_string_lossy())).reason_code(),
+                Some(REASON_PATH_UNTRUSTED)
+            );
+            std::fs::remove_file(&link).expect("remove symlink");
+            std::fs::remove_file(&target).expect("remove target");
+        }
     }
 
     #[test]

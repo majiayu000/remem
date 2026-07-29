@@ -90,6 +90,7 @@ fn sample_explain() -> SearchExplain {
             enabled: true,
             disabled_reason: None,
             candidates_scanned: None,
+            embedding: None,
             hits: vec![crate::retrieval::search::ChannelHit {
                 memory_id: 1,
                 rank: 1,

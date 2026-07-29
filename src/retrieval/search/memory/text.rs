@@ -22,7 +22,8 @@ mod support;
 use format::fts_normalized_hits;
 use support::{
     apply_confidence_gate, candidate_confidence, contributions_for, log_search_timing,
-    retrieved_candidate_ids, vector_similarity_score, visibility_label, weighted_channel_inputs,
+    resolve_explicit_entity_scope, resolve_graph_claim_support, retrieved_candidate_ids,
+    vector_similarity_score, visibility_label, weighted_channel_inputs,
 };
 
 pub(super) struct QuerySearchWithExplain {
@@ -34,6 +35,14 @@ struct QuerySearchPlan {
     expanded_terms: Vec<String>,
     core_terms: Vec<String>,
     claim_terms: Vec<String>,
+    explicit_entity_terms: Vec<String>,
+    explicit_entity_memory_ids: Vec<i64>,
+    explicit_entity_neighbor_ids: Vec<i64>,
+    fact_supported_memory_ids: Vec<i64>,
+    graph_claim_supported_memory_ids: Vec<i64>,
+    memory_type: Option<String>,
+    branch: Option<String>,
+    include_stale: bool,
     fts_query: Option<String>,
     temporal_range: Option<(i64, i64)>,
     temporal_field: Option<String>,
@@ -49,6 +58,7 @@ struct NamedChannel {
     weight: f64,
     disabled_reason: Option<String>,
     candidates_scanned: Option<usize>,
+    embedding: Option<crate::retrieval::embedding::EmbeddingExecutionMetadata>,
     hits: Vec<WeightedRankedHit>,
 }
 
@@ -71,6 +81,7 @@ impl NamedChannel {
             weight,
             disabled_reason: None,
             candidates_scanned: None,
+            embedding: None,
             hits,
         }
     }
@@ -81,12 +92,21 @@ impl NamedChannel {
             weight,
             disabled_reason: Some(reason.into()),
             candidates_scanned: None,
+            embedding: None,
             hits: vec![],
         }
     }
 
     fn with_candidates_scanned(mut self, candidates_scanned: usize) -> Self {
         self.candidates_scanned = Some(candidates_scanned);
+        self
+    }
+
+    fn with_embedding(
+        mut self,
+        embedding: crate::retrieval::embedding::EmbeddingExecutionMetadata,
+    ) -> Self {
+        self.embedding = Some(embedding);
         self
     }
 
@@ -102,10 +122,11 @@ impl NamedChannel {
 fn load_ordered_memories(
     conn: &Connection,
     ids: &[i64],
+    project: Option<&str>,
     include_suppressed: bool,
 ) -> Result<Vec<Memory>> {
     let loaded =
-        memory::get_memories_by_ids_with_suppressed_policy(conn, ids, None, include_suppressed)?;
+        memory::get_memories_by_ids_with_suppressed_policy(conn, ids, project, include_suppressed)?;
     let id_to_memory: HashMap<i64, Memory> = loaded
         .into_iter()
         .map(|memory| (memory.id, memory))
@@ -121,11 +142,13 @@ fn gate_and_annotate_memories(
     query_text: &str,
     project: Option<&str>,
     fused: &[(i64, f64)],
-    plan: &QuerySearchPlan,
+    plan: &mut QuerySearchPlan,
     ordered: Vec<Memory>,
 ) -> Result<(Vec<Memory>, Vec<(i64, f64)>)> {
     let (ordered, fused) =
         suppression_filter::ordered(conn, ordered, fused, plan.include_suppressed)?;
+    resolve_explicit_entity_scope(conn, query_text, project, &fused, plan, &ordered)?;
+    resolve_graph_claim_support(conn, project, plan)?;
     let gated_fused = apply_confidence_gate(&fused, plan, &ordered);
     let gated_ids: HashSet<i64> = gated_fused.iter().map(|(id, _)| *id).collect();
     let mut ordered = ordered
@@ -203,14 +226,14 @@ pub(super) fn search_with_query_weights(
     });
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
-        load_ordered_memories(conn, &fused_ids, plan.include_suppressed)
+        load_ordered_memories(conn, &fused_ids, project, plan.include_suppressed)
     })?;
     let (ordered, fused) = time_result(&mut plan.timings, "source_anchor_demote", || {
         super::source_anchor::apply_score_demotions(conn, &fused, ordered)
     })?;
     let annotate_start = Instant::now();
     let (ordered, _) =
-        gate_and_annotate_memories(conn, query_text, project, &fused, &plan, ordered)?;
+        gate_and_annotate_memories(conn, query_text, project, &fused, &mut plan, ordered)?;
     push_elapsed(
         &mut plan.timings,
         "confidence_and_fact_labels",
@@ -288,14 +311,14 @@ pub(super) fn search_with_query_explain(
     });
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
-        load_ordered_memories(conn, &fused_ids, plan.include_suppressed)
+        load_ordered_memories(conn, &fused_ids, project, plan.include_suppressed)
     })?;
     let (ordered, fused) = time_result(&mut plan.timings, "source_anchor_demote", || {
         super::source_anchor::apply_score_demotions(conn, &fused, ordered)
     })?;
     let annotate_start = Instant::now();
     let (ordered, gated_fused) =
-        gate_and_annotate_memories(conn, query_text, project, &fused, &plan, ordered)?;
+        gate_and_annotate_memories(conn, query_text, project, &fused, &mut plan, ordered)?;
     push_elapsed(
         &mut plan.timings,
         "confidence_and_fact_labels",
@@ -357,7 +380,21 @@ fn build_query_search_plan(
         .collect();
 
     let core_tokens = crate::retrieval::query_expand::core_tokens(query_text);
-    let claim_terms = super::claim::claim_terms(query_text, &core_tokens, project);
+    let entity_candidates = super::claim::entity_scope_candidates(query_text, project);
+    let (explicit_entity_terms, explicit_entity_ids) =
+        time_result(&mut timings, "explicit_entity_anchor", || {
+            super::claim::select_entity_anchors(
+                conn,
+                &entity_candidates,
+                project,
+                memory_type,
+                branch,
+                fetch,
+                include_stale,
+                include_suppressed,
+            )
+        })?;
+    let claim_terms = super::claim::claim_terms(&core_tokens, project, &explicit_entity_terms);
     let core_refs: Vec<&str> = core_tokens.iter().map(|token| token.as_str()).collect();
     let mut channels: Vec<NamedChannel> = Vec::new();
     let mut fts_query = None;
@@ -453,65 +490,53 @@ fn build_query_search_plan(
         }
     }
 
-    let embedding_status = crate::retrieval::embedding::embedding_provider_status_without_probe()?;
-    if let Some(error) =
-        crate::retrieval::embedding::disabled_provider_status_error(&embedding_status)
-    {
-        if !crate::retrieval::embedding::is_embedding_provider_off_error(&error) {
-            return Err(error.context("query vector embedding provider unavailable"));
-        }
+    let query_embedding = time_result(&mut timings, "query_embedding", || {
+        crate::retrieval::embedding::embed_query_with_execution_if_enabled(query_text)
+    })?;
+    if let Some(query_embedding) = query_embedding {
+        let crate::retrieval::embedding::QueryEmbeddingExecution {
+            embedding,
+            metadata,
+        } = query_embedding;
+        let vector_start = Instant::now();
+        let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
+            conn,
+            &embedding,
+            crate::retrieval::vector::VectorSearchFilters {
+                project,
+                memory_type,
+                branch,
+                include_stale,
+            },
+            fetch as usize,
+        )?;
+        push_elapsed(&mut timings, "vector", vector_start);
+        timings.append(&mut vector_outcome.timings);
+        let channel = if let Some(reason) = vector_outcome.disabled_reason {
+            NamedChannel::disabled("vector", weights.vector, reason)
+                .with_candidates_scanned(vector_outcome.candidates_scanned)
+        } else {
+            let candidates_scanned = vector_outcome.candidates_scanned;
+            let hits = vector_outcome
+                .hits
+                .into_iter()
+                .filter(|hit| hit.distance <= weights.max_vector_distance)
+                .map(|hit| WeightedRankedHit {
+                    id: hit.memory_id,
+                    normalized_score: vector_similarity_score(hit.distance, weights),
+                })
+                .collect::<Vec<_>>();
+            let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
+            NamedChannel::enabled_with_hits("vector", weights.vector, hits)
+                .with_candidates_scanned(candidates_scanned)
+        };
+        channels.push(channel.with_embedding(metadata));
+    } else {
         channels.push(NamedChannel::disabled(
             "vector",
             weights.vector,
             "embedding provider is off",
         ));
-    } else {
-        if let Some(query_embedding) = time_result(&mut timings, "query_embedding", || {
-            crate::retrieval::embedding::embed_query_if_enabled(query_text)
-        })? {
-            let vector_start = Instant::now();
-            let mut vector_outcome = crate::retrieval::vector::vector_search_embedding_filtered(
-                conn,
-                &query_embedding,
-                crate::retrieval::vector::VectorSearchFilters {
-                    project,
-                    memory_type,
-                    branch,
-                    include_stale,
-                },
-                fetch as usize,
-            )?;
-            push_elapsed(&mut timings, "vector", vector_start);
-            timings.append(&mut vector_outcome.timings);
-            if let Some(reason) = vector_outcome.disabled_reason {
-                channels.push(
-                    NamedChannel::disabled("vector", weights.vector, reason)
-                        .with_candidates_scanned(vector_outcome.candidates_scanned),
-                );
-            } else {
-                let candidates_scanned = vector_outcome.candidates_scanned;
-                let hits = vector_outcome
-                    .hits
-                    .into_iter()
-                    .filter(|hit| hit.distance <= weights.max_vector_distance)
-                    .map(|hit| WeightedRankedHit {
-                        id: hit.memory_id,
-                        normalized_score: vector_similarity_score(hit.distance, weights),
-                    })
-                    .collect::<Vec<_>>();
-                let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
-                channels.push(
-                    NamedChannel::enabled_with_hits("vector", weights.vector, hits)
-                        .with_candidates_scanned(candidates_scanned),
-                );
-            }
-        } else {
-            channels.push(NamedChannel::disabled(
-                "vector",
-                weights.vector,
-                "embedding provider is off",
-            ));
-        }
     }
 
     graph::append_graph_channel(
@@ -593,6 +618,14 @@ fn build_query_search_plan(
         expanded_terms: expanded,
         core_terms: core_tokens,
         claim_terms,
+        explicit_entity_terms,
+        explicit_entity_memory_ids: explicit_entity_ids,
+        explicit_entity_neighbor_ids: Vec::new(),
+        fact_supported_memory_ids: Vec::new(),
+        graph_claim_supported_memory_ids: Vec::new(),
+        memory_type: memory_type.map(str::to_string),
+        branch: branch.map(str::to_string),
+        include_stale,
         fts_query,
         temporal_range,
         temporal_field,
@@ -626,6 +659,7 @@ fn build_explain(
             enabled: channel.is_enabled(),
             disabled_reason: channel.disabled_reason.clone(),
             candidates_scanned: channel.candidates_scanned,
+            embedding: channel.embedding.clone(),
             hits: channel
                 .hits
                 .iter()
@@ -708,3 +742,6 @@ fn rerank_explain(
         outcome.disabled_reason() != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
     outcome.to_explain(requested)
 }
+
+#[cfg(test)]
+mod tests;

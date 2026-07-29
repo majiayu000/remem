@@ -144,3 +144,45 @@ fn prune_inactive_profiles_requires_fresh_active_rows() -> Result<()> {
     assert_eq!(old_rows, 2);
     Ok(())
 }
+
+#[test]
+fn prune_rejects_target_that_is_not_currently_active() -> Result<()> {
+    let conn = setup_vector_conn()?;
+    insert_test_memory(&conn, 1)?;
+    ensure_vec_table(&conn)?;
+    let active_blob = vec![0u8; EMBEDDING_DIMENSIONS * std::mem::size_of::<f32>()];
+    let old_blob = vec![0u8; 3 * std::mem::size_of::<f32>()];
+    conn.execute(
+        "INSERT INTO memory_embeddings
+         (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+         VALUES (1, ?1, ?2, ?3, 'active-hash', 1)",
+        params![
+            &active_blob,
+            EMBEDDING_DIMENSIONS as i64,
+            DEFAULT_EMBEDDING_MODEL
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_embeddings
+         (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+         VALUES (1, ?1, 3, 'old-model', 'old-hash', 1)",
+        params![&old_blob],
+    )?;
+    let stale_target = EmbeddingBackfillTarget {
+        model: "old-model".to_string(),
+        dimensions: 3,
+    };
+
+    let error = prune_inactive_memory_embeddings(&conn, &stale_target)
+        .expect_err("prune must re-resolve and preserve the current profile");
+    let message = format!("{error:#}");
+
+    assert!(message.contains("current embedding profile"), "{message}");
+    let active_rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM memory_embeddings WHERE model = ?1 AND dimensions = ?2",
+        params![DEFAULT_EMBEDDING_MODEL, EMBEDDING_DIMENSIONS as i64],
+        |row| row.get(0),
+    )?;
+    assert_eq!(active_rows, 1);
+    Ok(())
+}
