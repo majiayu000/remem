@@ -155,9 +155,10 @@ non-off provider is selected.
   invoking hf-hub or downloading a replacement.
   Unix staging/cache directories and locks use owner-only modes plus
   no-follow identity checks. Windows local-model operations support only the
-  default per-user model root; `embeddings.model_dir` and `REMEM_DATA_DIR`
-  overrides fail closed. Windows creates the root, install, staging/cache, and
-  lock objects with protected current-owner-only DACLs, rejects reparse
+  default per-user model root; `embeddings.model_dir` and non-default
+  `REMEM_DATA_DIR` roots fail closed, while a worker-exported default data
+  directory remains valid. Windows creates the root, install, staging/cache,
+  and lock objects with protected current-owner-only DACLs, rejects reparse
   points, and compares the full volume serial plus 128-bit `FILE_ID_INFO`
   before trusting a reopened path. Stable directories and locks retain
   no-delete-share anchors. Renameable staging uses an identity-bound handle,
@@ -269,7 +270,9 @@ for both providers, and knowledge-update, temporal, and multi-hop precision
 remain within budget. The local row records artifact SHA-256
 `3970612d6f31b81d1dc30ddac0099da273b5753d1a07412e8390cf799e7836a6`,
 derived from the logical runtime files rather than platform-specific cache
-paths or symlink layout.
+paths or symlink layout. Its shared model-state lock pins one verified revision
+from profile probe through corpus seeding, every query, and digest reporting,
+so concurrent activation cannot mix artifact-qualified vector spaces.
 This evidence supports #946's quality-first conditional `Auto` activation
 after an explicit download without mislabeling warm latency as cold startup.
 

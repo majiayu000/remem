@@ -40,11 +40,11 @@ fn provider_comparison_reports_required_rows_without_api_or_local_model() -> Res
             Some(1)
         );
         assert!(!local.available);
-        assert!(local
-            .unavailable_reason
-            .as_deref()
-            .unwrap_or_default()
-            .contains("local embedding model"));
+        let local_reason = local.unavailable_reason.as_deref().unwrap_or_default();
+        #[cfg(feature = "local-onnx")]
+        assert!(local_reason.contains("local embedding model"));
+        #[cfg(not(feature = "local-onnx"))]
+        assert!(local_reason.contains("local semantic embedding runtime"));
         assert_eq!(
             local.model_id.as_deref(),
             Some("fastembed-intfloat-multilingual-e5-small-v1")
@@ -266,11 +266,11 @@ fn available_rows_record_observed_embedding_profile() {
         },
         "observed-model".to_string(),
         3072,
+        None,
         12.0,
         empty_run_evaluation(),
         true,
-    )
-    .expect("api rows do not require a local artifact digest");
+    );
 
     assert_eq!(row.model_id.as_deref(), Some("observed-model"));
     assert_eq!(row.model_artifact_sha256, None);

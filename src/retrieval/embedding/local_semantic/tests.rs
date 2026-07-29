@@ -1,5 +1,6 @@
 use super::*;
 
+mod model_state_pin;
 mod verification_cache;
 
 #[test]

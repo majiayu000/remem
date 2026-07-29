@@ -276,6 +276,22 @@ pub(super) fn installed_model_profile(config: &EmbeddingConfig) -> Result<LocalM
     verified_profile_for_preset(config, preset)
 }
 
+#[cfg(feature = "local-onnx")]
+pub(crate) fn with_configured_model_read_lock<T>(
+    config: &EmbeddingConfig,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let preset = configured_local_preset_or_default(config)?;
+    #[cfg(windows)]
+    let _windows_install = windows_model_root::open_managed_install(config, preset, false)?
+        .ok_or_else(|| windows_model_root::missing_install_error())?;
+    #[cfg(windows)]
+    let install_dir = _windows_install.install_dir().to_path_buf();
+    #[cfg(not(windows))]
+    let install_dir = install_dir_for_preset(config, preset);
+    with_model_read_lock(&install_dir, operation)
+}
+
 #[cfg(not(feature = "local-onnx"))]
 pub(super) fn installed_model_profile(config: &EmbeddingConfig) -> Result<LocalModelProfile> {
     let preset = configured_local_preset_or_default(config)?;
@@ -285,6 +301,17 @@ pub(super) fn installed_model_profile(config: &EmbeddingConfig) -> Result<LocalM
         "local semantic embedding runtime is not built; rebuild remem with the local-onnx feature to use {}",
         preset.label()
     )))
+}
+
+#[cfg(not(feature = "local-onnx"))]
+pub(crate) fn with_configured_model_read_lock<T>(
+    config: &EmbeddingConfig,
+    _operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    let _ = installed_model_profile(config)?;
+    Err(model_unavailable_error(
+        "local semantic embedding runtime is not built",
+    ))
 }
 
 pub(super) fn auto_installed_model_profile(

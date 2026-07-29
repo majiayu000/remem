@@ -25,6 +25,7 @@ const EPSILON: f64 = 0.000_001;
 
 mod decision;
 mod display;
+mod model_pin;
 
 use decision::build_default_decision;
 
@@ -321,34 +322,32 @@ fn evaluate_provider(
         ));
     }
 
-    let active_profile = match embedding::configured_backfill_target()
-        .with_context(|| format!("probe {} embedding profile", provider.label()))
-    {
-        Ok(active_profile) => active_profile,
-        Err(error) => {
-            let reason = format!("provider profile probe failed: {error}");
-            return optional_provider_error_row(
-                provider,
-                &forced_config,
-                status,
-                reason,
-                allow_api,
-            );
-        }
-    };
-    let cold_start_embedding_latency_ms = cold_start_started.elapsed().as_secs_f64() * 1000.0;
-
-    match evaluate_available_provider(dataset, k) {
-        Ok(evaluation) => row_from_evaluation(
+    let evaluated = model_pin::with_provider_model_pin(provider, &forced_config, || {
+        let active_profile = embedding::configured_backfill_target()
+            .with_context(|| format!("probe {} embedding profile", provider.label()))?;
+        let cold_start_embedding_latency_ms = cold_start_started.elapsed().as_secs_f64() * 1000.0;
+        let model_artifact_sha256 = match provider {
+            EmbeddingProvider::Local => Some(
+                embedding::configured_local_embedding_artifact_sha256(&forced_config)
+                    .context("resolve pinned local embedding artifact digest")?,
+            ),
+            _ => None,
+        };
+        let evaluation = evaluate_available_provider(dataset, k)?;
+        Ok(row_from_evaluation(
             provider,
             &forced_config,
-            status,
+            status.clone(),
             active_profile.model,
             active_profile.dimensions,
+            model_artifact_sha256,
             cold_start_embedding_latency_ms,
             evaluation,
             allow_api,
-        ),
+        ))
+    });
+    match evaluated {
+        Ok(row) => Ok(row),
         Err(error) => {
             let reason = format!("provider comparison failed for {dataset_path}: {error}");
             optional_provider_error_row(provider, &forced_config, status, reason, allow_api)
@@ -484,20 +483,14 @@ fn row_from_evaluation(
     status: EmbeddingProviderStatus,
     active_model_id: String,
     active_dimensions: usize,
+    model_artifact_sha256: Option<String>,
     cold_start_embedding_latency_ms: f64,
     evaluation: ProviderRunEvaluation,
     allow_api: bool,
-) -> Result<ProviderComparisonRow> {
+) -> ProviderComparisonRow {
     let query_embedding_latency_p95_ms = (!evaluation.query_embedding_latencies_ms.is_empty())
         .then(|| golden::run::percentile(evaluation.query_embedding_latencies_ms.clone(), 95.0));
-    let model_artifact_sha256 = match provider {
-        EmbeddingProvider::Local => Some(
-            embedding::configured_local_embedding_artifact_sha256(config)
-                .context("resolve local embedding model artifact digest")?,
-        ),
-        _ => None,
-    };
-    Ok(ProviderComparisonRow {
+    ProviderComparisonRow {
         provider: provider.label(),
         configured_provider: status.configured_provider,
         active_provider: status.active_provider,
@@ -518,7 +511,7 @@ fn row_from_evaluation(
         existing_slice_details: evaluation.existing_slice_details,
         provider_comparison_slice: Some(evaluation.provider_comparison_slice),
         query_summaries: evaluation.query_summaries,
-    })
+    }
 }
 
 fn redact_provider_reason(config: &EmbeddingConfig, reason: &str) -> String {

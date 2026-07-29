@@ -503,13 +503,15 @@ platform; embedding falls back to `feature-hash` (or `api` if configured), and
 `remem status` / `remem doctor` report the provider state explicitly.
 
 On Windows, local ONNX model operations accept only remem's default per-user
-model root. `embeddings.model_dir` and `REMEM_DATA_DIR` overrides fail closed:
-a shared/custom ancestor chain cannot provide the same reparse-point and file
-identity guarantees. `auto` reports the local provider as unavailable and uses
-the labeled feature-hash fallback; explicit `local` returns an actionable
-error. An older default model cache with inherited/wide ACLs is not silently
-trusted or chmod-like rewritten; remove or move that cache, then run
-`remem embedding download` again in the default location.
+model root. `embeddings.model_dir` and non-default `REMEM_DATA_DIR` roots fail
+closed: a shared/custom ancestor chain cannot provide the same reparse-point
+and file identity guarantees. A worker-exported `REMEM_DATA_DIR` that resolves
+to the default per-user directory remains supported. `auto` reports any real
+override as unavailable and uses the labeled feature-hash fallback; explicit
+`local` returns an actionable error. An older default model cache with
+inherited/wide ACLs is not silently trusted or chmod-like rewritten; remove or
+move that cache, then run `remem embedding download` again in the default
+location.
 
 Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
 `REMEM_EMBEDDINGS_PROVIDER`, `REMEM_EMBEDDINGS_FALLBACK`,

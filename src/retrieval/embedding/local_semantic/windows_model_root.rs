@@ -23,9 +23,6 @@ impl ManagedInstall {
 
 pub(super) fn checked_model_root(config: &EmbeddingConfig) -> Result<PathBuf> {
     let root = model_root(config);
-    if std::env::var_os("REMEM_DATA_DIR").is_some() {
-        return Err(policy_error("REMEM_DATA_DIR overrides are not supported"));
-    }
     let default = dirs::home_dir().map(|home| home.join(".remem/models"));
     let non_default = config.model_dir.is_some() || default.as_ref() != Some(&root);
     #[cfg(test)]
@@ -34,7 +31,7 @@ pub(super) fn checked_model_root(config: &EmbeddingConfig) -> Result<PathBuf> {
     let registered = false;
     if non_default && !registered {
         return Err(policy_error(
-            "embeddings.model_dir and non-default data roots are not supported",
+            "embeddings.model_dir and non-default REMEM_DATA_DIR roots are not supported",
         ));
     }
     if !root.is_absolute() {
@@ -137,6 +134,24 @@ mod tests {
             .join(".remem/models");
 
         assert_eq!(checked_model_root(&EmbeddingConfig::default())?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn worker_exported_default_data_dir_remains_supported() -> Result<()> {
+        let _guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let _restore = EnvRestore::capture("REMEM_DATA_DIR");
+        let default_data_dir = dirs::home_dir()
+            .context("Windows test requires a per-user home directory")?
+            .join(".remem");
+        unsafe { std::env::set_var("REMEM_DATA_DIR", &default_data_dir) };
+
+        assert_eq!(
+            checked_model_root(&EmbeddingConfig::default())?,
+            default_data_dir.join("models")
+        );
         Ok(())
     }
 

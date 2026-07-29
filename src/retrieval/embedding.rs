@@ -15,6 +15,7 @@ pub(crate) use config::resolve_embedding_config;
 pub use fallback::EmbeddingExecutionMetadata;
 pub(crate) use index_text::embed_memory_index_with_fallback_cache;
 pub use index_text::{embed_memory_index, memory_index_hash};
+pub(crate) use local_semantic::with_configured_model_read_lock;
 use local_semantic::LocalEmbeddingInputKind;
 pub use local_semantic::{
     LocalEmbeddingDownloadReport, LocalEmbeddingInventoryReport, LocalEmbeddingModelInventory,
