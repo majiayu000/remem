@@ -103,7 +103,7 @@ pub fn count_compressed_source_observations_to_delete_at(
     days: i64,
 ) -> Result<usize> {
     let mut count = 0;
-    visit_compressed_source_observations_to_delete_at(conn, now_epoch, days, |_| {
+    visit_compressed_source_observations_to_delete_at(conn, now_epoch, days, false, |_| {
         count += 1;
         Ok(())
     })?;
@@ -136,14 +136,14 @@ fn cleanup_compressed_sources_in_transaction(
     days: i64,
 ) -> Result<usize> {
     let mut deleted = 0;
-    visit_compressed_source_observations_to_delete_at(conn, now_epoch, days, |id| {
+    visit_compressed_source_observations_to_delete_at(conn, now_epoch, days, true, |id| {
         deleted += conn.execute(
             "DELETE FROM observations
-             WHERE id = ?1 AND status = 'compressed'
-               AND NOT EXISTS (
-                 SELECT 1 FROM compressed_observation_sources owned
-                 WHERE owned.compressed_observation_id = observations.id
-             )",
+                 WHERE id = ?1 AND status = 'compressed'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM compressed_observation_sources owned
+                     WHERE owned.compressed_observation_id = observations.id
+                 )",
             params![id],
         )?;
         Ok(())
@@ -157,7 +157,7 @@ pub fn compressed_source_observation_ids_to_delete_at(
     days: i64,
 ) -> Result<Vec<i64>> {
     let mut ids = Vec::new();
-    visit_compressed_source_observations_to_delete_at(conn, now_epoch, days, |id| {
+    visit_compressed_source_observations_to_delete_at(conn, now_epoch, days, false, |id| {
         ids.push(id);
         Ok(())
     })?;
@@ -168,6 +168,7 @@ fn visit_compressed_source_observations_to_delete_at(
     conn: &Connection,
     now_epoch: i64,
     days: i64,
+    upgrade_legacy_links: bool,
     mut visit: impl FnMut(i64) -> Result<()>,
 ) -> Result<()> {
     db::ensure_observation_retention_schema_supported(conn)?;
@@ -214,7 +215,7 @@ fn visit_compressed_source_observations_to_delete_at(
         after_created_at_epoch = last_created_at_epoch;
         after_id = last_id;
         for (id, _) in batch {
-            if compressed_source_is_delete_eligible(conn, id, cutoff)? {
+            if compressed_source_is_delete_eligible(conn, id, cutoff, upgrade_legacy_links)? {
                 visit(id)?;
             }
         }
@@ -226,6 +227,7 @@ fn compressed_source_is_delete_eligible(
     conn: &Connection,
     source_id: i64,
     cutoff_epoch: i64,
+    upgrade_legacy_links: bool,
 ) -> Result<bool> {
     let Some(source) = load_observation(conn, source_id)? else {
         return Ok(false);
@@ -244,7 +246,13 @@ fn compressed_source_is_delete_eligible(
         params![source_id],
         |row| row.get(0),
     )?;
-    Ok(!owned && has_sufficient_compression_provenance(conn, &source, cutoff_epoch)?)
+    Ok(!owned
+        && has_sufficient_compression_provenance(
+            conn,
+            &source,
+            cutoff_epoch,
+            upgrade_legacy_links,
+        )?)
 }
 
 fn load_observation(conn: &Connection, id: i64) -> Result<Option<Observation>> {
@@ -319,6 +327,7 @@ fn has_sufficient_compression_provenance(
     conn: &Connection,
     source: &Observation,
     cutoff_epoch: i64,
+    upgrade_legacy_links: bool,
 ) -> Result<bool> {
     let links = load_links_for_source(conn, source.id)?;
     if links.is_empty() {
@@ -337,7 +346,7 @@ fn has_sufficient_compression_provenance(
         false
     };
     let legacy_expected_hash = has_v1_link.then(|| db::observation_source_hash(source));
-    let current_record = if has_v2_link {
+    let current_record = if has_v2_link || (has_v1_link && legacy_has_unhashed_provenance) {
         Some(db::observation_source_retention_record_on_supported_schema(
             conn, source,
         )?)
@@ -351,17 +360,17 @@ fn has_sufficient_compression_provenance(
         if link.source_created_at_epoch != source.created_at_epoch {
             continue;
         }
+        let is_legacy_link = link.source_hash.starts_with("sha256:observation-v1:");
         let matches_supported_snapshot = if link.source_hash.starts_with("sha256:observation-v2:") {
             snapshot_json_is_valid(&link.source_snapshot_json, source.id, "v2")
                 && current_record.as_ref().is_some_and(|record| {
                     link.source_hash == record.source_hash
                         && link.source_snapshot_json == record.source_snapshot_json
                 })
-        } else if link.source_hash.starts_with("sha256:observation-v1:") {
-            !legacy_has_unhashed_provenance
-                && legacy_expected_hash
-                    .as_ref()
-                    .is_some_and(|expected| link.source_hash == *expected)
+        } else if is_legacy_link {
+            legacy_expected_hash
+                .as_ref()
+                .is_some_and(|expected| link.source_hash == *expected)
                 && snapshot_matches_source(&link.source_snapshot_json, source)?
         } else {
             false
@@ -370,11 +379,47 @@ fn has_sufficient_compression_provenance(
             continue;
         }
         if compressed_observation_exists(conn, link.compressed_observation_id, source.id)? {
+            if is_legacy_link && legacy_has_unhashed_provenance && upgrade_legacy_links {
+                let record = current_record
+                    .as_ref()
+                    .context("build v2 record for legacy compressed source upgrade")?;
+                upgrade_legacy_source_link(conn, &link, record)?;
+            }
             return Ok(true);
         }
     }
 
     Ok(false)
+}
+
+fn upgrade_legacy_source_link(
+    conn: &Connection,
+    link: &CompressedObservationSource,
+    record: &db::ObservationSourceRetentionRecord,
+) -> Result<()> {
+    let changed = conn.execute(
+        "UPDATE compressed_observation_sources
+         SET source_hash = ?1, source_snapshot_json = ?2
+         WHERE compressed_observation_id = ?3
+           AND source_observation_id = ?4
+           AND source_hash = ?5
+           AND source_snapshot_json = ?6",
+        params![
+            record.source_hash,
+            record.source_snapshot_json,
+            link.compressed_observation_id,
+            link.source_observation_id,
+            link.source_hash,
+            link.source_snapshot_json
+        ],
+    )?;
+    if changed != 1 {
+        anyhow::bail!(
+            "legacy compressed source provenance changed during upgrade: source_id={}",
+            link.source_observation_id
+        );
+    }
+    Ok(())
 }
 
 fn load_links_for_source(

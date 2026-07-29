@@ -401,71 +401,6 @@ fn compressed_source_cleanup_blocks_hash_mismatch() {
 }
 
 #[test]
-fn compressed_source_cleanup_preserves_fields_missing_from_v1_snapshot() {
-    let conn = Connection::open_in_memory().unwrap();
-    setup_observation_retention_schema(&conn);
-
-    let now = 2_000_000_000;
-    let old_epoch = now - 400 * 86_400;
-    let old_link_epoch = now - (COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS + 1) * 86_400;
-    let replacement = observation(100, "active", old_epoch, "replacement");
-    insert_observation_row(&conn, &replacement);
-
-    let sources = (1..=5)
-        .map(|id| observation(id, "compressed", old_epoch, &format!("source-{id}")))
-        .collect::<Vec<_>>();
-    for source in &sources {
-        insert_observation_row(&conn, source);
-        link_source(&conn, replacement.id, source, old_link_epoch);
-        rewrite_source_link_as_v1(&conn, source);
-    }
-    conn.execute("UPDATE observations SET prompt_number = 7 WHERE id = 1", [])
-        .unwrap();
-    conn.execute(
-        "UPDATE observations SET last_accessed_epoch = ?1 WHERE id = 2",
-        params![old_epoch + 1],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE observations SET observation_type = 'decision' WHERE id = 3",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE observations SET text = 'unique evidence' WHERE id = 4",
-        [],
-    )
-    .unwrap();
-    conn.execute(
-        "UPDATE observations SET reference_time_epoch = created_at_epoch WHERE id = 5",
-        [],
-    )
-    .unwrap();
-
-    assert_eq!(
-        count_compressed_source_observations_to_delete_at(
-            &conn,
-            now,
-            COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS
-        )
-        .unwrap(),
-        0
-    );
-    assert_eq!(
-        cleanup_compressed_source_observations_at(
-            &conn,
-            now,
-            COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS
-        )
-        .unwrap(),
-        0
-    );
-    for source in sources {
-        assert!(observation_exists(&conn, source.id));
-    }
-}
-
-#[test]
 fn compressed_source_cleanup_preserves_incomplete_or_still_referenced_sources() {
     let conn = Connection::open_in_memory().unwrap();
     setup_observation_retention_schema(&conn);
@@ -758,7 +693,7 @@ pub(super) fn link_source(
     .unwrap();
 }
 
-fn rewrite_source_link_as_v1(conn: &Connection, source: &Observation) {
+pub(super) fn rewrite_source_link_as_v1(conn: &Connection, source: &Observation) {
     conn.execute(
         "UPDATE compressed_observation_sources
          SET source_hash = ?1, source_snapshot_json = ?2

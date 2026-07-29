@@ -9,12 +9,13 @@
   inactive workstreams, removes only explicitly ephemeral old events, archives
   stale memories, and deletes old compressed sources only when their supported
   canonical v2 content/provenance snapshot remains sufficient after
-  compression-time revalidation (legacy v1 data remains fail-closed). Mutable
-  lifecycle/access metadata is checked separately or excluded by contract.
-  Automatic cleanup cannot purge archived failures. A maintenance ledger and
-  doctor check expose success, redacted failure, retry, overdue, and
-  stalled-lease state; bounded SQL batches keep large ID sets below SQLite
-  parameter limits.
+  compression-time revalidation. Exact historical v1 links are upgraded to v2
+  in the deletion transaction before old sources are removed; malformed or
+  changed v1 data remains fail-closed. Mutable lifecycle/access metadata is
+  checked separately or excluded by contract. Automatic cleanup cannot purge
+  archived failures. A maintenance ledger and doctor check expose success,
+  redacted failure, retry, overdue, and stalled-lease state; bounded SQL batches
+  keep large ID sets below SQLite parameter limits.
 - Staged source version `0.6.30` for GH-943: ordinary workers now drain
   eligible residual `pending_observations` into the current capture/extraction
   pipeline only when no current extraction task is ready. The bridge admits at

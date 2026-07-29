@@ -167,9 +167,12 @@ Hard-delete eligibility is fail-closed:
   `content_session_id` is joined runtime context rather than canonical
   observation provenance. The producer captures the record before the AI call
   and revalidates the same record in the write savepoint. Legacy
-  `observation-v1` links remain eligible only when no v1-omitted provenance is
-  populated; any unknown future observation column blocks snapshot production
-  and cleanup; and
+  `observation-v1` links remain eligible when their original core hash and
+  snapshot still match. If v1 omitted current provenance, apply first upgrades
+  that exact link to a canonical v2 snapshot in the same transaction, then
+  deletes the source; malformed or mismatched legacy links remain retained.
+  Any unknown future observation column blocks snapshot production and cleanup;
+  and
 - deletion eligibility is revalidated in the same immediate transaction, with
   bounded statements that do not exceed SQLite's parameter limit. Migration
   v074 adds status/time cleanup indexes so the daily pass does not begin with

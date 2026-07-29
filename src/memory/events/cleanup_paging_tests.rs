@@ -2,7 +2,7 @@ use rusqlite::{params, Connection};
 
 use super::tests::{
     insert_observation_row, link_source, observation, observation_exists,
-    setup_observation_retention_schema,
+    rewrite_source_link_as_v1, setup_observation_retention_schema,
 };
 use super::{
     cleanup_compressed_source_observations_at, count_compressed_source_observations_to_delete_at,
@@ -239,4 +239,102 @@ fn malformed_v2_snapshot_preserves_the_source() {
         0
     );
     assert!(observation_exists(&conn, source.id));
+}
+
+#[test]
+fn exact_legacy_links_upgrade_to_v2_before_historical_sources_are_deleted() {
+    let conn = Connection::open_in_memory().expect("in-memory database should open");
+    setup_observation_retention_schema(&conn);
+    let now = 2_000_000_000;
+    let old_epoch = now - 400 * 86_400;
+    let old_link_epoch = now - (COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS + 1) * 86_400;
+    let replacement = observation(100, "active", old_epoch, "replacement");
+    insert_observation_row(&conn, &replacement);
+    let sources = (1..=5)
+        .map(|id| observation(id, "compressed", old_epoch, &format!("source-{id}")))
+        .collect::<Vec<_>>();
+    for source in &sources {
+        insert_observation_row(&conn, source);
+        link_source(&conn, replacement.id, source, old_link_epoch);
+        rewrite_source_link_as_v1(&conn, source);
+    }
+    conn.execute("UPDATE observations SET prompt_number = 7 WHERE id = 1", [])
+        .expect("prompt provenance should update");
+    conn.execute(
+        "UPDATE observations SET last_accessed_epoch = ?1 WHERE id = 2",
+        params![old_epoch + 1],
+    )
+    .expect("access feedback should update");
+    conn.execute(
+        "UPDATE observations SET observation_type = 'decision' WHERE id = 3",
+        [],
+    )
+    .expect("typed provenance should update");
+    conn.execute(
+        "UPDATE observations SET text = 'unique evidence' WHERE id = 4",
+        [],
+    )
+    .expect("evidence text should update");
+    conn.execute(
+        "UPDATE observations SET reference_time_epoch = created_at_epoch WHERE id = 5",
+        [],
+    )
+    .expect("reference-time provenance should update");
+
+    assert_eq!(
+        count_compressed_source_observations_to_delete_at(
+            &conn,
+            now,
+            COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
+        )
+        .expect("exact v1 links should be safely upgradable"),
+        5
+    );
+    let v1_links_before_apply: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM compressed_observation_sources
+             WHERE source_hash LIKE 'sha256:observation-v1:%'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("preview should remain read-only");
+    assert_eq!(v1_links_before_apply, 5);
+
+    assert_eq!(
+        cleanup_compressed_source_observations_at(
+            &conn,
+            now,
+            COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
+        )
+        .expect("apply should upgrade v1 provenance before deletion"),
+        5
+    );
+    for source in &sources {
+        assert!(!observation_exists(&conn, source.id));
+    }
+    let upgraded_links = conn
+        .prepare(
+            "SELECT source_observation_id, source_hash, source_snapshot_json
+             FROM compressed_observation_sources
+             ORDER BY source_observation_id",
+        )
+        .expect("upgraded links should query")
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })
+        .expect("upgraded links should map")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("upgraded links should collect");
+    assert_eq!(upgraded_links.len(), 5);
+    for (source_id, source_hash, snapshot_json) in upgraded_links {
+        assert!(source_hash.starts_with("sha256:observation-v2:"));
+        let snapshot: serde_json::Value =
+            serde_json::from_str(&snapshot_json).expect("v2 snapshot should remain valid JSON");
+        assert_eq!(snapshot["hash_version"], "observation-v2");
+        assert_eq!(snapshot["id"], source_id);
+    }
 }

@@ -58,9 +58,10 @@ Automatic hard deletion is fail-closed:
   reference. New `observation-v2` links preserve all canonical content and
   provenance fields, revalidated from before the AI call through the atomic
   write. Mutable `status`/`last_accessed_epoch` and noncanonical joined
-  `content_session_id` are not hashed; status is checked independently. Legacy
-  v1 links with omitted provenance and schemas with unknown observation columns
-  are retained; and
+  `content_session_id` are not hashed; status is checked independently. An
+  exact legacy v1 link is upgraded to v2 inside the deletion transaction when
+  current canonical provenance was omitted; malformed/mismatched links and
+  schemas with unknown observation columns are retained; and
 - archived failures are never selected automatically. Their purge requires an
   explicit positive `remem cleanup --archived-failures[=DAYS]` horizon.
 
