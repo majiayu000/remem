@@ -27,8 +27,8 @@ use windows_sys::Win32::Storage::FileSystem::{
     CreateDirectoryW, CreateFileW, FileAttributeTagInfo, FileIdInfo, GetFileInformationByHandleEx,
     CREATE_NEW, DELETE, FILE_ALL_ACCESS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_NORMAL,
     FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, READ_CONTROL,
+    FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING, READ_CONTROL, SYNCHRONIZE,
 };
 use windows_sys::Win32::System::SystemServices::ACCESS_ALLOWED_ACE_TYPE;
 use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
@@ -37,8 +37,8 @@ mod path_fingerprint;
 pub(super) use path_fingerprint::{path_fingerprint, WindowsPathFingerprint};
 
 const DIRECTORY_ACE_FLAGS: u8 = (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) as u8;
-// Omitting FILE_SHARE_DELETE is what turns an open handle into a namespace
-// anchor: another process cannot rename, delete, or replace that object.
+// Directory data access participates in share checks. Omitting FILE_SHARE_DELETE
+// then keeps rename/delete opens incompatible while this anchor remains alive.
 const SAFE_SHARE_MODE: u32 = FILE_SHARE_READ | FILE_SHARE_WRITE;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -126,8 +126,11 @@ impl DirectoryAnchor {
         allow_rename: bool,
         delete_access: bool,
     ) -> io::Result<Self> {
-        let desired_access =
-            FILE_READ_ATTRIBUTES | READ_CONTROL | if delete_access { DELETE } else { 0 };
+        let desired_access = FILE_LIST_DIRECTORY
+            | SYNCHRONIZE
+            | FILE_READ_ATTRIBUTES
+            | READ_CONTROL
+            | if delete_access { DELETE } else { 0 };
         let mut share_mode = SAFE_SHARE_MODE;
         if allow_rename {
             share_mode |= FILE_SHARE_DELETE;

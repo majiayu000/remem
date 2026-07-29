@@ -33,7 +33,12 @@ pub(super) fn try_exclusive_lock(parent: &Path, name: &str) -> Result<Option<Cac
     let file = open_lock_file(parent, name)?;
     match fs2::FileExt::try_lock_exclusive(&file) {
         Ok(()) => Ok(Some(file)),
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::WouldBlock
+                || error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+        {
+            Ok(None)
+        }
         Err(error) => {
             Err(error).with_context(|| format!("try exclusive private runtime cache lock {}", name))
         }

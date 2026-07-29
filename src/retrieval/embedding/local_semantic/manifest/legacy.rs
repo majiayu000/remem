@@ -27,7 +27,10 @@ pub(super) fn upgrade_schema_v1_manifest(
             .context("open local model upgrade serialization lock")?;
     match fs2::FileExt::try_lock_exclusive(&download_lock) {
         Ok(()) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+        Err(error)
+            if error.kind() == std::io::ErrorKind::WouldBlock
+                || error.raw_os_error() == fs2::lock_contended_error().raw_os_error() =>
+        {
             bail!(
                 "local model manifest upgrade deferred while download is active: {}",
                 download_lock_path.display()

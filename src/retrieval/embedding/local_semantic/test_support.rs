@@ -403,12 +403,20 @@ mod windows_security_tests {
         let root = test_root("directory-anchor");
         std::fs::create_dir(&root)?;
         let path = root.join("secure");
+        let parked = root.join("parked");
         let anchor = windows_security::create_owner_only_directory(&path, false)?;
+        let original_identity = anchor.identity();
 
-        assert!(std::fs::remove_dir(&path).is_err());
+        assert!(std::fs::rename(&path, &parked).is_err());
         anchor.verify_path()?;
         drop(anchor);
+
+        std::fs::rename(&path, &parked)?;
+        let replacement = windows_security::create_owner_only_directory(&path, false)?;
+        assert_ne!(replacement.identity(), original_identity);
+        drop(replacement);
         std::fs::remove_dir(&path)?;
+        std::fs::remove_dir(&parked)?;
         std::fs::remove_dir(&root)
     }
 
@@ -432,7 +440,7 @@ mod windows_security_tests {
     }
 
     #[test]
-    fn ordinary_inherited_dacl_is_rejected_without_repair() -> io::Result<()> {
+    fn ordinary_objects_are_rejected_without_repair() -> io::Result<()> {
         let root = test_root("inherited-dacl");
         std::fs::create_dir(&root)?;
         let inherited_dir = root.join("ordinary");
@@ -443,13 +451,21 @@ mod windows_security_tests {
         let directory_error = DirectoryAnchor::open_owner_only(&inherited_dir, false).unwrap_err();
         let lock_error = windows_security::open_owner_only_lock_file(&inherited_lock).unwrap_err();
 
-        assert!(directory_error.to_string().contains("DACL"));
-        assert!(lock_error.to_string().contains("DACL"));
+        assert_owner_only_policy_rejection(&directory_error);
+        assert_owner_only_policy_rejection(&lock_error);
         assert!(inherited_dir.exists());
         assert!(inherited_lock.exists());
         std::fs::remove_file(&inherited_lock)?;
         std::fs::remove_dir(&inherited_dir)?;
         std::fs::remove_dir(&root)
+    }
+
+    fn assert_owner_only_policy_rejection(error: &io::Error) {
+        let message = error.to_string();
+        assert!(
+            message.contains("not owned by the current user") || message.contains("DACL"),
+            "ordinary Windows object failed for an unexpected reason: {message}"
+        );
     }
 
     #[test]
