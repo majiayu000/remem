@@ -19,16 +19,12 @@ For new substantial work, prefer `docs/specs/<id>/PRODUCT.md` and `docs/specs/<i
 
 Specs are contracts, not proof that implementation is done.
 
-## SpecRail Issue Packets
+## Historical Issue Packets
 
-This repository also carries a repo-local SpecRail workflow. New
-issue-first/spec-first SpecRail packets use `specs/GH<issue-number>/product.md`,
-`tech.md`, and `tasks.md` as declared in `workflow.yaml`.
-
-Keep this `docs/specs/` directory as the remem implementation-contract index
-and historical spec archive. When a SpecRail issue changes behavior already
-covered by a current contract below, update the relevant `docs/specs/` contract
-as part of the implementation or spec handoff.
+Root-level `specs/GH<issue-number>/` packets are retained as historical product,
+technical, and task-planning evidence. They are not an active workflow or an
+execution prerequisite. Current Remem contracts live in this `docs/specs/`
+directory and must be updated when the behavior they govern changes.
 
 Use this handoff for substantial behavior, API, DB, hook, plugin, or
 cross-module architecture work:
@@ -61,14 +57,14 @@ The CI lifecycle guard enforces the highest-risk parts of this flow. See
 | `cache-stable-injection/` | Current contract | Product and technical contract for a deterministic, prefix-cache-stable context block: byte-identical renders for unchanged memory state, additive prompt-time injection, and churn evals. Refs #673. |
 | `capacity-eval-axis/` | Current contract | Product and technical contract for the retrieval-quality-vs-store-size degradation curve: seeded corpus synthesis, per-channel metrics, and a regression budget wired into eval gates. Refs #675, #384. |
 | `current-memory-contracts/` | Current contract | Product and technical contract for converging existing memory truth, temporal facts, injection audits, usage feedback, staleness labels, observability, and host/app boundaries without a second rewrite. Refs #381, #383, #384, #385, #390, #948. |
-| `specs/GH823/` | Implemented reference (PR #922; Stop wiring consumed by PR #924) | SpecRail packet for the Cursor host runtime protocol: strict identity/event parsing, pre-capture PII removal, bounded nested tool-field decoding, verbatim generic capture, #825-gated stop transcripts, and the #822 real-host/MCP evidence gate. Refs #823, #821, #822, #825. |
-| `specs/GH824/` | Implemented reference (PR #927; contract v1 ships MCP-only, hook capability gates closed) | SpecRail packet for Cursor install-host integration: exact owned hook entries, capability-gated registration, conflict-safe config mutation, runtime readiness, and doctor-visible partial support. Refs #824, #821, #822, #823, #825. |
-| `specs/GH825/` | Implemented reference (PR #924) | SpecRail packet for lossless Cursor transcript capture: Stop-keyed immutable snapshots, physical-record ordinals, full-first arbitration, status-aware rollups, and current/history diagnostics without new schema. Refs #825, #821, #822, #823, #824. |
+| `specs/GH823/` | Implemented historical reference (PR #922; Stop wiring consumed by PR #924) | Historical issue packet for the Cursor host runtime protocol: strict identity/event parsing, pre-capture PII removal, bounded nested tool-field decoding, verbatim generic capture, #825-gated stop transcripts, and the #822 real-host/MCP evidence gate. Refs #823, #821, #822, #825. |
+| `specs/GH824/` | Implemented historical reference (PR #927; contract v1 ships MCP-only, hook capability gates closed) | Historical issue packet for Cursor install-host integration: exact owned hook entries, capability-gated registration, conflict-safe config mutation, runtime readiness, and doctor-visible partial support. Refs #824, #821, #822, #823, #825. |
+| `specs/GH825/` | Implemented historical reference (PR #924) | Historical issue packet for lossless Cursor transcript capture: Stop-keyed immutable snapshots, physical-record ordinals, full-first arbitration, status-aware rollups, and current/history diagnostics without new schema. Refs #825, #821, #822, #823, #824. |
 | `GH933/` | Current contract (Phase A) | Product and technical contract for the CurrentTruth read-side projection: versioned Evidence/Claim/Relation/CurrentTruth read DTOs, the three-dimension lifecycle mapping over existing status vocabularies, and the deterministic scope/as-of/supersedes/evidence-trust resolution policy with explicit Contradicted and abstention outcomes. Phase A is a read-only adapter over existing tables; Context Bundle wiring and writer convergence are later phases. Refs #933. |
 | `GH932/` | Current contract (v1 partial) | Product and technical contract for the Context Bundle v1 internal API: versioned ContextRequest/ContextPlan/ContextBundle/ContextAudit DTOs, deterministic plan/execute split wrapping SessionStart selection, stable plan hash, machine-readable audit reasons, and full/canonical_only/blocked degraded modes. MCP/REST endpoint, DB-backed executor wiring, doctor/benchmark surfaces are follow-up items. Refs #932. |
 | `GH934/` | Current contract (v1 partial) | Product and technical contract for the Retrieval Router v1: six routable ContextIntent variants with test-locked deterministic per-intent channel mappings, versioned RetrievalPlan (per-channel limits/weights/contribution caps/degradation, rerank/trust/freshness/abstention policy placeholders, stable plan hash), conservative explore_history fallback, and the `remem context-plan` debug command. Execution wiring, golden fixtures, and static-vs-router ablation are follow-up items. Refs #934. |
 | `GH935/` | Current contract (v1 infrastructure) | Product and technical contract for the Claude Code ↔ Codex cross-host continuity benchmark: bidirectional handoff charter, four primary conditions, attribution-bearing artifact schema, leak scanner, and offline dry-run runner under `eval/cross-host/`. No runs executed yet. Refs #935, #849, #852. |
-| `GH931/` | Current contract | SpecRail packet for the flagship E2E public proof: `remem_e2e` / `curated_file_budgeted` / `no_memory` primary matrix, condition registry with `remem_preloaded` / `curated_file_expert` renames, budgeted curator protocol and log schema, 6-stage / 12-enum failure taxonomy, and the pre-registered claim registry plus wording gate under `eval/claims/`. Runner execution support is the tracked src follow-up. Refs #931, #384, #385, #928. |
+| `GH931/` | Current contract | Contract for the flagship E2E public proof: `remem_e2e` / `curated_file_budgeted` / `no_memory` primary matrix, condition registry with `remem_preloaded` / `curated_file_expert` renames, budgeted curator protocol and log schema, 6-stage / 12-enum failure taxonomy, and the pre-registered claim registry plus wording gate under `eval/claims/`. Runner execution support is the tracked src follow-up. Refs #931, #384, #385, #928. |
 | `failure-lifecycle/` | Current contract | Product and technical contract for failed pending-observation, extraction-task, replay-range, and job lifecycle: transient/permanent taxonomy, bounded auto-recovery, retention/archiving, cleanup-safe history, actionable-vs-history doctor split, exact range list/retry/quarantine, terminal replay evidence, dual explicit acknowledgement for archived quarantine recovery, and exact-profile worker dispatch. Refs #681, #864. |
 | `host-native-memory/` | Current contract | Product and technical contract for host-native memory data sources: read-only Codex rollout-summary import into the candidate review queue (closed format set, plan-digest-bound apply, secret-blocked batches), Claude native topic-file ingestion via review candidates with self-ingest exclusion, and an explicitly no-go Claude `autoMemoryDirectory` bridge pending real-host PoC. Refs #852, #849. |
 | `high-fidelity-episode-evidence/` | Current contract | Product and technical contract for opt-in preserved source slices that make public benchmark and debugging failures distinguish missing evidence from retrieval/ranking, policy, or downstream task failures. Refs #626, #384, #385. |
