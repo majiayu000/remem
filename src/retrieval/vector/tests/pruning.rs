@@ -272,6 +272,20 @@ fn prune_holds_model_state_pin_until_delete_commits() -> Result<()> {
 
     let blocker = Connection::open(&db_path)?;
     blocker.execute_batch("BEGIN IMMEDIATE")?;
+    assert!(
+        !blocker.is_autocommit(),
+        "blocker must hold an explicit write transaction"
+    );
+    assert_eq!(
+        blocker.execute(
+            "UPDATE memory_embeddings
+             SET updated_at_epoch = updated_at_epoch
+             WHERE model = 'previous-local-artifact'",
+            [],
+        )?,
+        1,
+        "blocker must own an uncommitted write to the row prune will delete"
+    );
     PRUNE_DB_BUSY.store(false, Ordering::SeqCst);
     let prune_db_path = db_path.clone();
     let prune_model_root = model_root.clone();
