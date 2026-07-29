@@ -283,12 +283,21 @@ pub(crate) fn with_configured_model_read_lock<T>(
 ) -> Result<T> {
     let preset = configured_local_preset_or_default(config)?;
     #[cfg(windows)]
-    let _windows_install = windows_model_root::open_managed_install(config, preset, false)?
-        .ok_or_else(|| windows_model_root::missing_install_error())?;
+    let _windows_install = if config.provider == super::EmbeddingProvider::Auto {
+        windows_model_root::create_managed_install(config, preset)?
+    } else {
+        windows_model_root::open_managed_install(config, preset, false)?
+            .ok_or_else(|| windows_model_root::missing_install_error())?
+    };
     #[cfg(windows)]
     let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
     let install_dir = install_dir_for_preset(config, preset);
+    #[cfg(not(windows))]
+    if config.provider == super::EmbeddingProvider::Auto {
+        std::fs::create_dir_all(&install_dir)
+            .with_context(|| format!("create model-state pin dir {}", install_dir.display()))?;
+    }
     with_model_read_lock(&install_dir, operation)
 }
 
@@ -324,10 +333,9 @@ pub(super) fn auto_installed_model_profile(
         None => return Ok(None),
     };
     #[cfg(windows)]
-    return auto_verified_model_profile(config, preset).map(Some);
+    let install_dir = _windows_install.install_dir().to_path_buf();
     #[cfg(not(windows))]
     let install_dir = install_dir_for_preset(config, preset);
-    #[cfg(not(windows))]
     match std::fs::symlink_metadata(&install_dir) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Ok(metadata) if metadata.file_type().is_symlink() => Err(model_unavailable_error(format!(
@@ -338,6 +346,7 @@ pub(super) fn auto_installed_model_profile(
             "local embedding model install path is not a directory: {}",
             install_dir.display()
         ))),
+        Ok(_) if model_state_coordination_only(&install_dir)? => Ok(None),
         Ok(_) => auto_verified_model_profile(config, preset).map(Some),
         Err(error) => Err(model_unavailable_error(format!(
             "inspect local embedding model {} in {}: {error:#}",
@@ -345,6 +354,15 @@ pub(super) fn auto_installed_model_profile(
             install_dir.display()
         ))),
     }
+}
+
+fn model_state_coordination_only(install_dir: &Path) -> Result<bool> {
+    let entries = std::fs::read_dir(install_dir)
+        .context("read model-state coordination directory")?
+        .collect::<std::io::Result<Vec<_>>>()?;
+    Ok(entries.len() == 1
+        && entries[0].file_name() == MODEL_STATE_LOCK_FILE
+        && entries[0].file_type()?.is_file())
 }
 
 pub(super) fn download_model(model: Option<&str>) -> Result<LocalEmbeddingDownloadReport> {

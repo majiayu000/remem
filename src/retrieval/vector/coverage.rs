@@ -4,8 +4,10 @@ use rusqlite::{params, Connection};
 use crate::retrieval::embedding::{
     configured_backfill_target_with_fallback_cache, embedding_provider_status,
     embedding_provider_status_without_probe, resolve_embedding_config, EmbeddingBackfillTarget,
-    EmbeddingFallbackCache, EmbeddingProviderStatus,
+    EmbeddingConfig, EmbeddingFallbackCache, EmbeddingProviderStatus,
 };
+#[cfg(feature = "local-onnx")]
+use crate::retrieval::embedding::{with_configured_model_read_lock, EmbeddingProvider};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ActiveEmbeddingCoverage {
@@ -114,7 +116,25 @@ pub fn prune_inactive_memory_embeddings(
     conn: &Connection,
     target: &EmbeddingBackfillTarget,
 ) -> Result<InactiveEmbeddingPruneReport> {
-    ensure_current_prune_target(target)?;
+    let config = resolve_embedding_config()?;
+    #[cfg(feature = "local-onnx")]
+    if matches!(
+        config.provider,
+        EmbeddingProvider::Auto | EmbeddingProvider::Local
+    ) {
+        return with_configured_model_read_lock(&config, || {
+            prune_inactive_memory_embeddings_pinned(conn, target, &config)
+        });
+    }
+    prune_inactive_memory_embeddings_pinned(conn, target, &config)
+}
+
+fn prune_inactive_memory_embeddings_pinned(
+    conn: &Connection,
+    target: &EmbeddingBackfillTarget,
+    pinned_config: &EmbeddingConfig,
+) -> Result<InactiveEmbeddingPruneReport> {
+    ensure_current_prune_target(target, pinned_config)?;
     if !super::table_exists(conn, "memories")? || !super::table_exists(conn, "memory_embeddings")? {
         return Ok(InactiveEmbeddingPruneReport {
             pruned: 0,
@@ -201,8 +221,16 @@ pub fn active_embedding_coverage_for_target(
     })
 }
 
-fn ensure_current_prune_target(target: &EmbeddingBackfillTarget) -> Result<()> {
+fn ensure_current_prune_target(
+    target: &EmbeddingBackfillTarget,
+    pinned_config: &EmbeddingConfig,
+) -> Result<()> {
     let config_before = resolve_embedding_config()?;
+    if &config_before != pinned_config {
+        bail!(
+            "refusing to prune embedding profiles because the embedding configuration changed before the model-state pin was acquired"
+        );
+    }
     let status_before = embedding_provider_status_without_probe()?;
     if status_before.disabled {
         bail!("cannot prune embedding profiles while embedding provider is off");

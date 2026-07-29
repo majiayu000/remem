@@ -1,7 +1,59 @@
+#[cfg(all(feature = "local-onnx", not(windows)))]
+use std::path::{Path, PathBuf};
+#[cfg(all(feature = "local-onnx", not(windows)))]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(all(feature = "local-onnx", not(windows)))]
+use std::time::{Duration, Instant};
+
+#[cfg(all(feature = "local-onnx", not(windows)))]
+use anyhow::Context;
 use rusqlite::params;
 
 use super::*;
 use crate::retrieval::embedding::EmbeddingBackfillTarget;
+
+#[cfg(all(feature = "local-onnx", not(windows)))]
+static PRUNE_DB_BUSY: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(feature = "local-onnx", not(windows)))]
+fn signal_prune_db_busy(_attempt: i32) -> bool {
+    PRUNE_DB_BUSY.store(true, Ordering::SeqCst);
+    std::thread::sleep(Duration::from_millis(1));
+    true
+}
+
+#[cfg(all(feature = "local-onnx", not(windows)))]
+struct PruneRaceDir(PathBuf);
+
+#[cfg(all(feature = "local-onnx", not(windows)))]
+impl PruneRaceDir {
+    fn new() -> Result<Self> {
+        let path = std::env::temp_dir().join(format!(
+            "remem-prune-model-race-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&path)
+            .with_context(|| format!("create prune race fixture {}", path.display()))?;
+        Ok(Self(path))
+    }
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+#[cfg(all(feature = "local-onnx", not(windows)))]
+impl Drop for PruneRaceDir {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            eprintln!(
+                "failed to remove prune race fixture {}: {error}",
+                self.0.display()
+            );
+        }
+    }
+}
 
 #[test]
 fn local_model_unavailable_defers_memory_embedding_write() -> Result<()> {
@@ -184,5 +236,114 @@ fn prune_rejects_target_that_is_not_currently_active() -> Result<()> {
         |row| row.get(0),
     )?;
     assert_eq!(active_rows, 1);
+    Ok(())
+}
+
+#[test]
+#[cfg(all(feature = "local-onnx", not(windows)))]
+fn prune_holds_model_state_pin_until_delete_commits() -> Result<()> {
+    let fixture = PruneRaceDir::new()?;
+    let db_path = fixture.path().join("prune.sqlite");
+    let model_root = fixture.path().join("models");
+    let install_dir = model_root.join("fastembed-intfloat-multilingual-e5-small-v1");
+    let setup = Connection::open(&db_path)?;
+    crate::migrate::run_migrations(&setup)?;
+    insert_test_memory(&setup, 1)?;
+    ensure_vec_table(&setup)?;
+    let feature_hash_blob = vec![0u8; EMBEDDING_DIMENSIONS * std::mem::size_of::<f32>()];
+    let dormant_local_blob = vec![0u8; 384 * std::mem::size_of::<f32>()];
+    setup.execute(
+        "INSERT INTO memory_embeddings
+         (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+         VALUES (1, ?1, ?2, ?3, 'feature-hash', 1)",
+        params![
+            &feature_hash_blob,
+            EMBEDDING_DIMENSIONS as i64,
+            DEFAULT_EMBEDDING_MODEL
+        ],
+    )?;
+    setup.execute(
+        "INSERT INTO memory_embeddings
+         (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+         VALUES (1, ?1, 384, 'previous-local-artifact', 'local', 1)",
+        params![&dormant_local_blob],
+    )?;
+    drop(setup);
+
+    let blocker = Connection::open(&db_path)?;
+    blocker.execute_batch("BEGIN IMMEDIATE")?;
+    PRUNE_DB_BUSY.store(false, Ordering::SeqCst);
+    let prune_db_path = db_path.clone();
+    let prune_model_root = model_root.clone();
+    let target = EmbeddingBackfillTarget {
+        model: DEFAULT_EMBEDDING_MODEL.to_string(),
+        dimensions: EMBEDDING_DIMENSIONS,
+    };
+    let prune = std::thread::spawn(move || -> Result<InactiveEmbeddingPruneReport> {
+        let _provider = ScopedEmbeddingProvider::new("auto");
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &prune_model_root);
+        }
+        let conn = Connection::open(prune_db_path)?;
+        conn.busy_handler(Some(signal_prune_db_busy))?;
+        prune_inactive_memory_embeddings(&conn, &target)
+    });
+
+    let busy_deadline = Instant::now() + Duration::from_secs(3);
+    while !PRUNE_DB_BUSY.load(Ordering::SeqCst) && Instant::now() < busy_deadline {
+        if prune.is_finished() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    if !PRUNE_DB_BUSY.load(Ordering::SeqCst) {
+        blocker.execute_batch("ROLLBACK")?;
+        let result = prune
+            .join()
+            .map_err(|_| anyhow::anyhow!("prune race worker panicked"))?;
+        anyhow::bail!("prune never reached the blocked DELETE: {result:?}");
+    }
+
+    let (contended_tx, contended_rx) = std::sync::mpsc::sync_channel(1);
+    let (acquired_tx, acquired_rx) = std::sync::mpsc::sync_channel(1);
+    let activation = std::thread::spawn(move || -> Result<()> {
+        std::fs::create_dir_all(&install_dir)?;
+        let state_lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(install_dir.join(".remem-model-state.lock"))?;
+        match fs2::FileExt::try_lock_exclusive(&state_lock) {
+            Ok(()) => contended_tx.send(false)?,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                contended_tx.send(true)?;
+                fs2::FileExt::lock_exclusive(&state_lock)?;
+            }
+            Err(error) => return Err(error.into()),
+        }
+        acquired_tx.send(())?;
+        Ok(())
+    });
+    let activation_observed_contention = contended_rx
+        .recv_timeout(Duration::from_secs(1))
+        .context("activation did not report the model-state lock result")?;
+
+    blocker.execute_batch("ROLLBACK")?;
+    let report = prune
+        .join()
+        .map_err(|_| anyhow::anyhow!("prune race worker panicked"))??;
+    acquired_rx
+        .recv_timeout(Duration::from_secs(2))
+        .context("activation stayed blocked after prune released the state pin")?;
+    activation
+        .join()
+        .map_err(|_| anyhow::anyhow!("activation race worker panicked"))??;
+
+    assert!(
+        activation_observed_contention,
+        "local activation acquired the model-state lock while prune was blocked before DELETE"
+    );
+    assert_eq!(report.pruned, 1);
     Ok(())
 }
