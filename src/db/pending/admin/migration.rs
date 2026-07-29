@@ -20,6 +20,17 @@ const AUTO_ACTIONABLE_PREDICATE: &str = "
             AND (next_retry_epoch IS NULL OR next_retry_epoch <= :now))
     )";
 
+const MANUAL_ELIGIBLE_PREDICATE: &str = "
+    (status = 'pending'
+     OR (status = 'processing'
+         AND (lease_expires_epoch IS NULL OR lease_expires_epoch < :now)))";
+
+const LEGACY_PENDING_SNAPSHOT_COLUMNS: &str = "
+    id, host, session_id, project, tool_name, tool_input, tool_response, cwd,
+    created_at_epoch, updated_at_epoch, status, attempt_count, next_retry_epoch,
+    last_error, lease_owner, lease_expires_epoch, failure_class, failed_at_epoch,
+    archived_at_epoch";
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct LegacyPendingMigration {
     pub pending_id: i64,
@@ -31,6 +42,7 @@ pub struct LegacyPendingMigration {
     pub session_id: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LegacyPendingRow {
     pub(super) id: i64,
     pub(super) host: String,
@@ -41,6 +53,39 @@ pub(super) struct LegacyPendingRow {
     pub(super) tool_response: Option<String>,
     pub(super) cwd: Option<String>,
     pub(super) created_at_epoch: i64,
+}
+
+pub(super) struct PreparedLegacyReplay {
+    snapshot: LegacyPendingRow,
+    content: String,
+    git_branch: Option<String>,
+}
+
+#[derive(PartialEq, Eq)]
+struct LegacyPendingSnapshot {
+    legacy: LegacyPendingRow,
+    updated_at_epoch: i64,
+    status: String,
+    attempt_count: i64,
+    next_retry_epoch: Option<i64>,
+    last_error: Option<String>,
+    lease_owner: Option<String>,
+    lease_expires_epoch: Option<i64>,
+    failure_class: Option<String>,
+    failed_at_epoch: Option<i64>,
+    archived_at_epoch: Option<i64>,
+}
+
+struct PreparedManualLegacyReplay {
+    source: LegacyPendingSnapshot,
+    replay: PreparedLegacyReplay,
+    host: String,
+}
+
+impl PreparedLegacyReplay {
+    pub(super) fn matches(&self, row: &LegacyPendingRow) -> bool {
+        &self.snapshot == row
+    }
 }
 
 pub fn count_legacy_migration_candidates(
@@ -123,23 +168,71 @@ pub fn migrate_legacy_pending(
     fallback_host: Option<&str>,
     limit: i64,
 ) -> Result<Vec<LegacyPendingMigration>> {
+    let mut detector = db::detect_git_branch;
+    migrate_legacy_pending_with_detector(conn, project, fallback_host, limit, &mut detector)
+}
+
+fn migrate_legacy_pending_with_detector(
+    conn: &mut Connection,
+    project: Option<&str>,
+    fallback_host: Option<&str>,
+    limit: i64,
+    detector: &mut dyn FnMut(&str) -> Option<String>,
+) -> Result<Vec<LegacyPendingMigration>> {
     let fallback_host = fallback_host.map(normalize_capture_host).transpose()?;
-    let tx = conn.transaction()?;
-    let rows = select_legacy_pending_rows(&tx, project, limit)?;
+    let rows = select_legacy_pending_rows(conn, project, limit)?;
+    let prepared = rows
+        .into_iter()
+        .map(|source| {
+            let host = capture_host_for_row(&source.legacy.host, fallback_host)?.to_string();
+            let replay = prepare_legacy_replay_with_detector(&source.legacy, detector);
+            Ok(PreparedManualLegacyReplay {
+                source,
+                replay,
+                host,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if prepared.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let tx = conn
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .context("begin manual legacy pending migration transaction")?;
     let mut migrated = Vec::new();
 
-    for row in rows {
-        let host = capture_host_for_row(&row.host, fallback_host)?;
-        let migration = replay_legacy_row_into_capture(&tx, &row, host)?;
-        let now = chrono::Utc::now().timestamp();
-        let changed = tx.execute(MARK_MIGRATED_PENDING_SQL, params![row.id, now, now])?;
+    for prepared_row in prepared {
+        let pending_id = prepared_row.source.legacy.id;
+        let eligibility_now = chrono::Utc::now().timestamp();
+        let row = load_legacy_pending_row(&tx, pending_id, eligibility_now)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "legacy pending row {pending_id} changed or became ineligible while preparing migration; batch replay was rolled back"
+            )
+        })?;
+        if prepared_row.source != row || !prepared_row.replay.matches(&row.legacy) {
+            bail!(
+                "legacy pending row {pending_id} changed while preparing migration; batch replay was rolled back"
+            );
+        }
+        let migration =
+            replay_prepared_legacy_row_into_capture(&tx, &prepared_row.replay, &prepared_row.host)
+                .with_context(|| format!("replay legacy pending row {pending_id}"))?;
+        let completed_at = chrono::Utc::now().timestamp();
+        let changed = tx.execute(
+            MARK_MIGRATED_PENDING_SQL,
+            params![pending_id, completed_at, eligibility_now],
+        )?;
         if changed != 1 {
-            bail!("legacy pending row {} changed while migrating", row.id);
+            bail!(
+                "legacy pending row {pending_id} changed while migrating; batch replay was rolled back"
+            );
         }
         migrated.push(migration);
     }
 
-    tx.commit()?;
+    tx.commit()
+        .context("commit manual legacy pending migration")?;
     Ok(migrated)
 }
 
@@ -155,29 +248,44 @@ const MARK_MIGRATED_PENDING_SQL: &str = "UPDATE pending_observations
             OR (status = 'processing'
                 AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))";
 
-pub(super) fn replay_legacy_row_into_capture(
-    conn: &Connection,
+pub(super) fn prepare_legacy_replay_with_detector(
     row: &LegacyPendingRow,
+    detector: &mut dyn FnMut(&str) -> Option<String>,
+) -> PreparedLegacyReplay {
+    let git_branch = row.cwd.as_deref().and_then(detector);
+    let content = legacy_capture_content(row, git_branch.as_deref());
+    PreparedLegacyReplay {
+        snapshot: row.clone(),
+        content,
+        git_branch,
+    }
+}
+
+pub(super) fn replay_prepared_legacy_row_into_capture(
+    conn: &Connection,
+    prepared: &PreparedLegacyReplay,
     host: &str,
 ) -> Result<LegacyPendingMigration> {
+    let row = &prepared.snapshot;
     let event_id = legacy_event_id(row.id);
-    let content = legacy_capture_content(row);
-    let outcome = db::record_captured_event_with_id_and_created_at(
-        conn,
-        &CaptureEventInput {
-            host,
-            session_id: &row.session_id,
-            project: &row.project,
-            cwd: row.cwd.as_deref(),
-            event_type: "tool_result",
-            role: None,
-            tool_name: Some(&row.tool_name),
-            content: &content,
-            task_kind: Some(ExtractionTaskKind::ObservationExtract),
-        },
-        Some(&event_id),
-        row.created_at_epoch,
-    )?;
+    let outcome =
+        db::capture::record_captured_event_with_id_and_created_at_and_precomputed_git_branch(
+            conn,
+            &CaptureEventInput {
+                host,
+                session_id: &row.session_id,
+                project: &row.project,
+                cwd: row.cwd.as_deref(),
+                event_type: "tool_result",
+                role: None,
+                tool_name: Some(&row.tool_name),
+                content: &prepared.content,
+                task_kind: Some(ExtractionTaskKind::ObservationExtract),
+            },
+            Some(&event_id),
+            row.created_at_epoch,
+            prepared.git_branch.as_deref(),
+        )?;
     let extraction_task_id = outcome
         .extraction_task_id
         .ok_or_else(|| anyhow::anyhow!("legacy pending migration did not enqueue extraction"))?;
@@ -223,10 +331,19 @@ pub fn auto_migrate_actionable_legacy_pending(
     conn: &mut Connection,
     limit: i64,
 ) -> Result<AutoLegacyMigrationOutcome> {
+    let mut detector = db::detect_git_branch;
+    auto_migrate_actionable_legacy_pending_with_detector(conn, limit, &mut detector)
+}
+
+pub(super) fn auto_migrate_actionable_legacy_pending_with_detector(
+    conn: &mut Connection,
+    limit: i64,
+    detector: &mut dyn FnMut(&str) -> Option<String>,
+) -> Result<AutoLegacyMigrationOutcome> {
     let candidate_ids = select_auto_actionable_ids(conn, limit)?;
     let mut outcome = AutoLegacyMigrationOutcome::default();
     for row_id in candidate_ids {
-        match auto_migrate_candidate(conn, row_id) {
+        match auto_migrate_candidate_with_detector(conn, row_id, detector) {
             Ok(AutoCandidateOutcome::Migrated) => outcome.migrated += 1,
             Ok(AutoCandidateOutcome::Skipped) => {}
             Err(error) => {
@@ -266,7 +383,18 @@ fn select_auto_actionable_ids(conn: &Connection, limit: i64) -> Result<Vec<i64>>
         .map_err(Into::into)
 }
 
-fn auto_migrate_candidate(conn: &mut Connection, row_id: i64) -> Result<AutoCandidateOutcome> {
+fn auto_migrate_candidate_with_detector(
+    conn: &mut Connection,
+    row_id: i64,
+    detector: &mut dyn FnMut(&str) -> Option<String>,
+) -> Result<AutoCandidateOutcome> {
+    let preflight_now = chrono::Utc::now().timestamp();
+    let Some(preflight_row) = load_auto_actionable_row(conn, row_id, preflight_now)? else {
+        return Ok(AutoCandidateOutcome::Skipped);
+    };
+    normalize_capture_host(&preflight_row.legacy.host)?;
+    let prepared = prepare_legacy_replay_with_detector(&preflight_row.legacy, detector);
+
     let mut tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin legacy pending auto-migration transaction")?;
@@ -275,12 +403,16 @@ fn auto_migrate_candidate(conn: &mut Connection, row_id: i64) -> Result<AutoCand
         tx.commit()?;
         return Ok(AutoCandidateOutcome::Skipped);
     };
-    let host = normalize_capture_host(&row.host)?;
+    if preflight_row != row || !prepared.matches(&row.legacy) {
+        tx.commit()?;
+        return Ok(AutoCandidateOutcome::Skipped);
+    }
+    let host = normalize_capture_host(&row.legacy.host)?;
     let replay = {
         let savepoint = tx
             .savepoint_with_name("legacy_pending_auto_replay")
             .context("begin legacy pending replay savepoint")?;
-        let replay = replay_legacy_row_into_capture(&savepoint, &row, host);
+        let replay = replay_prepared_legacy_row_into_capture(&savepoint, &prepared, host);
         match replay {
             Ok(migration) => {
                 savepoint
@@ -345,9 +477,9 @@ fn load_auto_actionable_row(
     conn: &Connection,
     row_id: i64,
     now: i64,
-) -> Result<Option<LegacyPendingRow>> {
+) -> Result<Option<LegacyPendingSnapshot>> {
     let sql = format!(
-        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
+        "SELECT {LEGACY_PENDING_SNAPSHOT_COLUMNS}
          FROM pending_observations
          WHERE id = :id
            AND {AUTO_ACTIONABLE_PREDICATE}"
@@ -360,7 +492,7 @@ fn load_auto_actionable_row(
             ":claude_host": crate::runtime_config::CLAUDE_HOST,
             ":codex_host": crate::runtime_config::CODEX_HOST,
         },
-        row_from_db,
+        snapshot_from_db,
     )
     .optional()
     .map_err(Into::into)
@@ -460,35 +592,67 @@ fn select_legacy_pending_rows(
     conn: &Connection,
     project: Option<&str>,
     limit: i64,
-) -> Result<Vec<LegacyPendingRow>> {
+) -> Result<Vec<LegacyPendingSnapshot>> {
     let limit = limit.max(1);
     let now = chrono::Utc::now().timestamp();
-    let sql = if project.is_some() {
-        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
+    let sql = format!(
+        "SELECT {LEGACY_PENDING_SNAPSHOT_COLUMNS}
          FROM pending_observations
-         WHERE project = ?1
-           AND (status = 'pending'
-                OR (status = 'processing'
-                    AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?3)))
+         WHERE (:project IS NULL OR project = :project)
+           AND {MANUAL_ELIGIBLE_PREDICATE}
          ORDER BY created_at_epoch ASC, id ASC
-         LIMIT ?2"
-    } else {
-        "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd, created_at_epoch
-         FROM pending_observations
-         WHERE status = 'pending'
-            OR (status = 'processing'
-                AND (lease_expires_epoch IS NULL OR lease_expires_epoch < ?2))
-         ORDER BY created_at_epoch ASC, id ASC
-         LIMIT ?1"
-    };
-    let mut stmt = conn.prepare(sql)?;
-    let rows = if let Some(project) = project {
-        stmt.query_map(params![project, limit, now], row_from_db)?
-    } else {
-        stmt.query_map(params![limit, now], row_from_db)?
-    };
+         LIMIT :limit"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(
+        named_params! {
+            ":project": project,
+            ":now": now,
+            ":limit": limit,
+        },
+        snapshot_from_db,
+    )?;
     rows.collect::<std::result::Result<Vec<_>, _>>()
         .map_err(Into::into)
+}
+
+fn load_legacy_pending_row(
+    conn: &Connection,
+    pending_id: i64,
+    now: i64,
+) -> Result<Option<LegacyPendingSnapshot>> {
+    let sql = format!(
+        "SELECT {LEGACY_PENDING_SNAPSHOT_COLUMNS}
+         FROM pending_observations
+         WHERE id = :id
+           AND {MANUAL_ELIGIBLE_PREDICATE}"
+    );
+    conn.query_row(
+        &sql,
+        named_params! {
+            ":id": pending_id,
+            ":now": now,
+        },
+        snapshot_from_db,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn snapshot_from_db(row: &rusqlite::Row<'_>) -> rusqlite::Result<LegacyPendingSnapshot> {
+    Ok(LegacyPendingSnapshot {
+        legacy: row_from_db(row)?,
+        updated_at_epoch: row.get(9)?,
+        status: row.get(10)?,
+        attempt_count: row.get(11)?,
+        next_retry_epoch: row.get(12)?,
+        last_error: row.get(13)?,
+        lease_owner: row.get(14)?,
+        lease_expires_epoch: row.get(15)?,
+        failure_class: row.get(16)?,
+        failed_at_epoch: row.get(17)?,
+        archived_at_epoch: row.get(18)?,
+    })
 }
 
 fn row_from_db(row: &rusqlite::Row<'_>) -> rusqlite::Result<LegacyPendingRow> {
@@ -524,8 +688,7 @@ fn legacy_event_id(id: i64) -> String {
     format!("legacy-pending-{id}")
 }
 
-fn legacy_capture_content(row: &LegacyPendingRow) -> String {
-    let git_branch = row.cwd.as_deref().and_then(db::detect_git_branch);
+fn legacy_capture_content(row: &LegacyPendingRow, git_branch: Option<&str>) -> String {
     serde_json::json!({
         "summary": format!("Recovered legacy {} event", row.tool_name),
         "event_type": "legacy_pending_observation",

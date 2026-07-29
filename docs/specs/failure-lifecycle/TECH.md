@@ -100,12 +100,19 @@ archived source; no pending work may retain an archived marker.
   automatic candidates; doctor reports archived rows in those classes as
   `admin-required`.
 
-  Selection is revalidated per row in the write transaction. Success records
-  the deterministic legacy event in `captured_events`, enqueues its
-  `ObservationExtract` task, marks the source `migrated`, and clears legacy
-  lease, retry, failure, and archive fields atomically. Idempotency converges a
-  repeated attempt on the same current-pipeline event/task rather than creating
-  duplicate work. The bridge never deletes a source row.
+  Before an immediate write transaction starts, automatic and exact replay
+  snapshot their source row, while manual batch migration snapshots every
+  selected row; all paths resolve optional Git branch metadata before locking.
+  The transaction reloads and revalidates each candidate before writing; a
+  changed automatic candidate is skipped, while a changed manual candidate
+  rolls back the whole batch. Capture receives the explicit precomputed branch
+  value, including an explicit no-branch result, so no Git subprocess runs
+  while the SQLite write lock is held. Success records the deterministic legacy
+  event in `captured_events`, enqueues its `ObservationExtract` task, marks the
+  source `migrated`, and clears legacy lease, retry, failure, and archive fields
+  atomically. Idempotency converges a repeated attempt on the same
+  current-pipeline event/task rather than creating duplicate work. The bridge
+  never deletes a source row.
 
   Any replay failure rolls back the current-pipeline savepoint, increments the
   diagnostic attempt counter, records an exponential `next_retry_epoch` capped
@@ -120,10 +127,13 @@ archived source; no pending work may retain an archived marker.
   --dry-run`; apply repeats the exact command without `--dry-run`. It accepts
   no project/batch selector and rejects a missing, non-failed, or non-archived
   target. A known stored host is reused; `host='unknown'` requires the explicit
-  host option. Apply revalidates and replays only that ID in one transaction,
-  clearing failure/archive state only after the captured event, extraction
-  task, and migrated source commit. Replay or commit failure leaves the source
-  and current pipeline unchanged.
+  host option. Doctor queries this class independently of the global failed-row
+  list and prints a bounded oldest-first set with each real ID, stored host,
+  failure class, archive time, and concrete preview/apply commands. Apply
+  prepares Git metadata before its immediate transaction, revalidates and
+  replays only that ID in the transaction, and clears failure/archive state
+  only after the captured event, extraction task, and migrated source commit.
+  Replay or commit failure leaves the source and current pipeline unchanged.
 - `extraction_replay_ranges`: invoke the existing
   `retry_extraction_replay_ranges` machinery for retryable ranges.
 - `extraction_tasks` with a replay range: route through that range.
@@ -321,9 +331,9 @@ reviving the old queue or creating an upgrade-time retry storm.
   captured event/extraction task, marks the source migrated, and only then
   clears failure/archive state. Any error rolls back all current-pipeline
   writes and preserves every source field. Doctor labels archived permanent or
-  unknown-host rows `admin-required` and provides `list-failed` plus these exact
-  commands. This supplements the automatic drain without restoring a legacy
-  enqueue or claim API.
+  unknown-host rows `admin-required` and directly provides bounded candidate
+  details plus these exact commands. This supplements the automatic drain
+  without restoring a legacy enqueue or claim API.
 - Current limitation: no public pending subcommand recovers an archived
   no-range extraction task. Such rows remain inspectable in status/doctor and
   retained history, but the CLI must not advertise a recovery command until an

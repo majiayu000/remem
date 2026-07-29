@@ -25,3 +25,22 @@ impl FailedPendingRow {
         })
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AdminRequiredArchivedLegacyPendingRow {
+    pub id: i64,
+    pub host: String,
+    pub failure_class: Option<String>,
+    pub archived_at_epoch: i64,
+}
+
+impl AdminRequiredArchivedLegacyPendingRow {
+    pub(super) fn from_row(row: &Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            host: row.get(1)?,
+            failure_class: row.get(2)?,
+            archived_at_epoch: row.get(3)?,
+        })
+    }
+}

@@ -2,7 +2,10 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
 
-use super::migration::{replay_legacy_row_into_capture, LegacyPendingMigration, LegacyPendingRow};
+use super::migration::{
+    prepare_legacy_replay_with_detector, replay_prepared_legacy_row_into_capture,
+    LegacyPendingMigration, LegacyPendingRow,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ArchivedLegacyPendingRecoveryPreview {
@@ -22,9 +25,18 @@ pub struct ArchivedLegacyPendingRecovery {
     pub migrated: LegacyPendingMigration,
 }
 
+#[derive(Clone, PartialEq, Eq)]
 struct ArchivedLegacyPendingRow {
     legacy: LegacyPendingRow,
+    updated_at_epoch: i64,
+    status: String,
+    attempt_count: i64,
+    next_retry_epoch: Option<i64>,
+    last_error: Option<String>,
+    lease_owner: Option<String>,
+    lease_expires_epoch: Option<i64>,
     failure_class: Option<String>,
+    failed_at_epoch: Option<i64>,
     archived_at_epoch: i64,
 }
 
@@ -44,15 +56,35 @@ pub fn recover_archived_legacy_pending(
     pending_id: i64,
     fallback_host: Option<&str>,
 ) -> Result<ArchivedLegacyPendingRecovery> {
+    let mut detector = crate::db::detect_git_branch;
+    recover_archived_legacy_pending_with_detector(conn, pending_id, fallback_host, &mut detector)
+}
+
+fn recover_archived_legacy_pending_with_detector(
+    conn: &mut Connection,
+    pending_id: i64,
+    fallback_host: Option<&str>,
+    detector: &mut dyn FnMut(&str) -> Option<String>,
+) -> Result<ArchivedLegacyPendingRecovery> {
     ensure_positive_id(pending_id)?;
     let fallback_host = validate_fallback_host(fallback_host)?;
+    let preflight_row = load_archived_failed_row(conn, pending_id)?;
+    preview_for_row(&preflight_row, fallback_host)?;
+    let prepared = prepare_legacy_replay_with_detector(&preflight_row.legacy, detector);
+
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin archived legacy pending recovery transaction")?;
     let row = load_archived_failed_row(&tx, pending_id)?;
+    if row != preflight_row || !prepared.matches(&row.legacy) {
+        bail!(
+            "archived legacy pending row {pending_id} changed while preparing recovery; retry the exact command"
+        );
+    }
     let candidate = preview_for_row(&row, fallback_host)?;
-    let migrated = replay_legacy_row_into_capture(&tx, &row.legacy, &candidate.resolved_host)
-        .with_context(|| format!("replay archived legacy pending row {pending_id}"))?;
+    let migrated =
+        replay_prepared_legacy_row_into_capture(&tx, &prepared, &candidate.resolved_host)
+            .with_context(|| format!("replay archived legacy pending row {pending_id}"))?;
     let completed_at = chrono::Utc::now().timestamp();
     let changed = tx.execute(
         "UPDATE pending_observations
@@ -140,7 +172,9 @@ fn load_archived_failed_row(
 ) -> Result<ArchivedLegacyPendingRow> {
     conn.query_row(
         "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd,
-                created_at_epoch, failure_class, archived_at_epoch
+                created_at_epoch, updated_at_epoch, status, attempt_count, next_retry_epoch,
+                last_error, lease_owner, lease_expires_epoch, failure_class, failed_at_epoch,
+                archived_at_epoch
          FROM pending_observations
          WHERE id = ?1
            AND status = 'failed'
@@ -159,8 +193,16 @@ fn load_archived_failed_row(
                     cwd: row.get(7)?,
                     created_at_epoch: row.get(8)?,
                 },
-                failure_class: row.get(9)?,
-                archived_at_epoch: row.get(10)?,
+                updated_at_epoch: row.get(9)?,
+                status: row.get(10)?,
+                attempt_count: row.get(11)?,
+                next_retry_epoch: row.get(12)?,
+                last_error: row.get(13)?,
+                lease_owner: row.get(14)?,
+                lease_expires_epoch: row.get(15)?,
+                failure_class: row.get(16)?,
+                failed_at_epoch: row.get(17)?,
+                archived_at_epoch: row.get(18)?,
             })
         },
     )

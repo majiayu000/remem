@@ -181,7 +181,9 @@ Remaining Phase 1 analysis before freeze decisions execute:
 - New doctor section: per-surface row count, last-write epoch, current
   state (live/frozen/...), and the planned next transition.
 - Archived permanent or unknown-host pending rows are `admin-required`; doctor
-  prints `list-failed` plus the exact `recover-archived` dry-run/apply sequence.
+  directly prints a bounded oldest-first candidate set with real IDs, stored
+  hosts, failure classes, archive times, and the exact `recover-archived`
+  dry-run/apply sequence.
 - After a surface is frozen, any new write raises a doctor error finding
   (and the write path itself is removed or guarded — a frozen surface with
   active writers is a bug, not a warning).
@@ -441,7 +443,11 @@ It rejects non-failed/non-archived targets and requires `--host` for stored
 unknown identity. The mutating form revalidates and replays that ID in one
 transaction, clearing failure/archive state only on success and preserving the
 source on every failure. Doctor reports archived permanent and unknown-host
-rows as `admin-required` with `list-failed` plus the exact command sequence.
+rows as `admin-required` with bounded candidate details plus the exact command
+sequence. Replay resolves optional Git branch metadata before acquiring its
+immediate SQLite transaction, reloads and revalidates the source after the lock,
+and passes the explicit branch or no-branch result into capture; it never runs a
+Git subprocess while holding the write lock.
 `retry-failed` and `pending migrate-legacy` remain the non-archived migration
 prep path.
 Tests that need historical rows seed them through
