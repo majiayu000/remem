@@ -138,8 +138,11 @@ event-time rows are counted separately and excluded from strict window parity.
 Focused coverage lives in migration identity tests, ingest/session identity
 tests, Stop rollup tests, raw archive/classifier tests, read-only current-schema
 tests, CLI parse tests, and `memory::raw_reconcile` tests. Repository completion
-also requires formatting, check, full tests, clippy, plugin-version sync,
-workflow checks, preflight, PR CI, independent review, and PR gate evidence.
+also requires those focused regressions, `cargo fmt --check`, `cargo check`,
+`cargo test`, `cargo clippy --all-targets -- -D warnings`,
+`python3 scripts/ci/check_plugin_version_sync.py`,
+`python3 scripts/ci/check_pr_preflight.py --fast`, ordinary PR CI, and
+independent review.
 GH-825 additionally requires exact whitespace round-trip/conflict fixtures,
 physical-ordinal gap/replay fixtures, full snapshot bundle rollback, and proof
 that neither the trimming entrypoint nor identity-NULL dedup is invoked.
