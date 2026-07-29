@@ -380,16 +380,22 @@ otherwise failed replay rolls back current-pipeline writes, records exponential
 backoff capped at 900 seconds, and stops the batch. The bridge never infers a
 row-local permanent classification from a shared replay failure. Selection or
 a failed attempt never unarchives a row, and the bridge never deletes data.
+Before an immediate write transaction starts, automatic and exact replay
+snapshot their source row, while manual batch migration snapshots every
+selected row; all paths resolve optional Git branch metadata before locking.
+The transaction reloads and revalidates each candidate before writing, and
+capture receives the explicit precomputed branch value, including an explicit
+no-branch result. No Git subprocess runs while the SQLite write lock is held.
 
 Doctor reports archived failed rows excluded from the automatic bridge as
-`admin-required`. Operators inspect them with `remem pending list-failed
---json`, preview one exact row with `remem pending recover-archived --id <id>
---dry-run`, and apply by removing `--dry-run`. A stored `host = unknown`
-requires `--host claude-code|codex-cli`. The exact command rejects rows that
-are not both failed and archived, replays only the requested ID in one
-transaction, and clears failure/archive state only after the current event and
-task commit. Any failure rolls back current-pipeline writes and preserves the
-source row.
+`admin-required`. The check queries those candidates independently of the
+global failed-row listing and prints a bounded oldest-first set with real IDs,
+stored hosts, failure classes, archive times, and concrete preview/apply
+commands. A stored `host = unknown` prints both explicit
+`--host claude-code|codex-cli` choices. The exact command rejects rows that are
+not both failed and archived, replays only the requested ID in one transaction,
+and clears failure/archive state only after the current event and task commit.
+Any failure rolls back current-pipeline writes and preserves the source row.
 
 ## Memory Lifecycle
 

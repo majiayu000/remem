@@ -22,15 +22,20 @@
   most 25 oldest known-host rows once per `worker --once` process or once per
   60-second daemon interval, handles pending/expired-processing/due transient
   and historical archived transient rows, uses per-row immediate transactions
-  plus replay savepoints, and records capped exponential backoff without
-  rewriting first-failure/archive history on replay errors. Doctor reports
-  automatic backlog with executable `remem worker --once` guidance and marks
-  archived permanent/unknown-host rows `admin-required`. The new exact
-  `remem pending recover-archived --id` command supports dry-run, requires an
-  explicit host for stored unknown identity, and clears failure/archive state
-  only after transactional replay succeeds. Process-level kill/restart
-  coverage proves a durable failed backlog drains to zero. This staged version
-  follows `0.6.28` (#962) and `0.6.29` (#960); merge those PRs first.
+  plus replay savepoints, prepares Git metadata before taking the SQLite write
+  lock, revalidates the source snapshot after locking, and records capped
+  exponential backoff without rewriting first-failure/archive history on
+  replay errors. Doctor reports automatic backlog with executable `remem
+  worker --once` guidance and marks archived permanent/unknown-host rows
+  `admin-required`, listing a bounded oldest-first candidate set with concrete
+  exact-ID recovery commands instead of relying on the global recent-failure
+  list. The new exact `remem pending recover-archived --id` command supports
+  dry-run, requires an explicit host for stored unknown identity, and clears
+  failure/archive state only after transactional replay succeeds.
+  Deterministic two-connection coverage proves Git enrichment leaves the
+  database write lock available, and process-level kill/restart coverage proves
+  a durable failed backlog still drains to zero after restart. This staged
+  version follows `0.6.28` (#962) and `0.6.29` (#960); merge those PRs first.
 - Staged source version `0.6.27` for GH-934: Retrieval Router v1
   deterministic plan compilation. New `src/retrieval_router/` module with
   a versioned `RetrievalPlan` (per-channel enabled/limit/weight/max

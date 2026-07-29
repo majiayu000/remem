@@ -1,7 +1,7 @@
 #![cfg(unix)]
 
 use fs2::FileExt;
-use rusqlite::{params, Connection};
+use rusqlite::{params, types::Value, Connection};
 use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::os::unix::fs::PermissionsExt;
@@ -13,7 +13,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
-const FAULT_READY_TIMEOUT: Duration = Duration::from_secs(10);
+const PROCESS_READY_TIMEOUT: Duration = Duration::from_secs(10);
 const PROCESS_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(5);
 
@@ -27,9 +27,6 @@ struct Sandbox {
     bin_dir: PathBuf,
     tmp_dir: PathBuf,
     project_dir: PathBuf,
-    git_ready_path: PathBuf,
-    git_release_path: PathBuf,
-    git_pid_path: PathBuf,
 }
 
 impl Sandbox {
@@ -53,9 +50,6 @@ impl Sandbox {
         }
         Self {
             config_path: data_dir.join("config.toml"),
-            git_ready_path: root.join("git-ready"),
-            git_release_path: root.join("git-release"),
-            git_pid_path: root.join("git-pid"),
             root,
             home,
             data_dir,
@@ -77,14 +71,10 @@ impl Sandbox {
             .env("REMEM_ALLOW_PLAINTEXT_DB", "1")
             .env("TMPDIR", &self.tmp_dir)
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("NO_COLOR", "1")
-            .env_remove("REMEM_CIPHER_KEY")
-            .env_remove("REMEM_DISABLE_HOOKS")
-            .env_remove("REMEM_DEBUG")
-            .env_remove("REMEM_EMBEDDINGS_API_KEY")
-            .env_remove("REMEM_EMBEDDING_API_KEY")
-            .env_remove("REMEM_EMBEDDINGS_API_KEY_ENV")
-            .env_remove("REMEM_STDERR_TO_LOG");
+            .env("NO_COLOR", "1");
+        for name in "REMEM_CIPHER_KEY REMEM_DISABLE_HOOKS REMEM_DEBUG REMEM_EMBEDDINGS_API_KEY REMEM_EMBEDDING_API_KEY REMEM_EMBEDDINGS_API_KEY_ENV REMEM_STDERR_TO_LOG".split_whitespace() {
+            command.env_remove(name);
+        }
         command
     }
 
@@ -102,113 +92,32 @@ impl Sandbox {
 prev=""
 output_path=""
 for arg in "$@"; do
-  if [ "$prev" = "--output-last-message" ]; then
-    output_path="$arg"
-    break
-  fi
+  [ "$prev" = "--output-last-message" ] && { output_path="$arg"; break; }
   prev="$arg"
 done
-if [ -z "$output_path" ]; then
-  echo "missing output path" >&2
-  exit 1
-fi
+[ -n "$output_path" ] || { echo "missing output path" >&2; exit 1; }
 stdin_path="${TMPDIR:-/tmp}/remem-restart-codex-$$.txt"
 cat > "$stdin_path"
 if grep -q "Task: memory_candidate" "$stdin_path"; then
-cat <<'EOF' > "$output_path"
-<memory_candidate>
-  <scope>project</scope>
-  <type>decision</type>
-  <topic_key>process-worker-restart</topic_key>
-  <risk_class>low</risk_class>
-  <confidence>0.91</confidence>
-  <text>Process-level worker restart recovered the legacy observation.</text>
-</memory_candidate>
-EOF
-rm -f "$stdin_path"
-exit 0
+  printf '%s\n' '<memory_candidate><scope>project</scope><type>decision</type><topic_key>process-worker-restart</topic_key><risk_class>low</risk_class><confidence>0.91</confidence><text>Process-level worker restart recovered the legacy observation.</text></memory_candidate>' > "$output_path"
+  rm -f "$stdin_path"
+  exit 0
 fi
 if grep -q "Task: graph_candidate" "$stdin_path"; then
-cat <<'EOF' > "$output_path"
-<no_graph_candidates reason="restart stub has no graph facts"/>
-EOF
-rm -f "$stdin_path"
-exit 0
+  printf '%s\n' '<no_graph_candidates reason="restart stub has no graph facts"/>' > "$output_path"
+  rm -f "$stdin_path"
+  exit 0
 fi
-cat <<'EOF' > "$output_path"
-{
-  "observations": [
-    {
-      "type": "decision",
-      "title": "Process-level worker restart",
-      "subtitle": null,
-      "narrative": "Process-level worker restart recovered the legacy observation.",
-      "facts": [],
-      "concepts": [],
-      "files_read": [],
-      "files_modified": [],
-      "confidence": 0.9
-    }
-  ]
-}
-EOF
+printf '%s\n' '{"observations":[{"type":"decision","title":"Process-level worker restart","subtitle":null,"narrative":"Process-level worker restart recovered the legacy observation.","facts":[],"concepts":[],"files_read":[],"files_modified":[],"confidence":0.9}]}' > "$output_path"
 rm -f "$stdin_path"
 "#;
         write_executable(&path, script);
         path
     }
-
-    fn install_blocking_git_stub(&self) {
-        let path = self.bin_dir.join("git");
-        let script = r#"#!/bin/sh
-if [ "$*" != "rev-parse --abbrev-ref HEAD" ]; then
-  exit 1
-fi
-printf '%s\n' "$$" > "$REMEM_TEST_GIT_PID"
-printf '%s\n' "$*" > "$REMEM_TEST_GIT_READY"
-# Freeze the worker after publishing exact in-transaction readiness. This
-# prevents the production Git timeout from racing a heavily loaded test host.
-kill -STOP "$PPID"
-while [ ! -f "$REMEM_TEST_GIT_RELEASE" ]; do
-  sleep 0.05
-done
-exit 1
-"#;
-        write_executable(&path, script);
-    }
-
-    fn command_with_blocking_git(&self) -> Command {
-        let mut command = self.isolated_remem_command();
-        let inherited_path = std::env::var_os("PATH").unwrap_or_default();
-        let mut path_parts = vec![self.bin_dir.clone()];
-        path_parts.extend(std::env::split_paths(&inherited_path));
-        command
-            .env(
-                "PATH",
-                std::env::join_paths(path_parts).expect("join isolated PATH"),
-            )
-            .env("REMEM_TEST_GIT_READY", &self.git_ready_path)
-            .env("REMEM_TEST_GIT_RELEASE", &self.git_release_path)
-            .env("REMEM_TEST_GIT_PID", &self.git_pid_path);
-        command
-    }
-
-    fn terminate_git_probe_group(&self, process_group_id: i32) {
-        let _ = File::create(&self.git_release_path);
-        signal_probe_process_group(process_group_id, libc::SIGKILL)
-            .expect("terminate blocking Git probe process group");
-        let _ = fs::remove_file(&self.git_pid_path);
-    }
 }
 
 impl Drop for Sandbox {
     fn drop(&mut self) {
-        let _ = File::create(&self.git_release_path);
-        if let Ok(raw_pid) = fs::read_to_string(&self.git_pid_path) {
-            if let Ok(pid) = raw_pid.trim().parse::<i32>() {
-                let _ = signal_probe_process_group(pid, libc::SIGKILL);
-            }
-        }
         let _ = fs::remove_dir_all(&self.root);
     }
 }
@@ -327,18 +236,6 @@ fn signal_pid(process_id: u32, signal: i32) -> io::Result<()> {
     Err(error)
 }
 
-fn signal_probe_process_group(process_group_id: i32, signal: i32) -> io::Result<()> {
-    let result = unsafe { libc::kill(-process_group_id, signal) };
-    if result == 0 {
-        return Ok(());
-    }
-    let error = io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::ESRCH) {
-        return Ok(());
-    }
-    Err(error)
-}
-
 fn run_success(command: Command, sandbox: &Sandbox, label: &str) -> ProcessOutput {
     let output = LoggedChild::spawn_logged_remem(command, sandbox, label).wait(COMMAND_TIMEOUT);
     assert!(
@@ -352,31 +249,43 @@ fn run_success(command: Command, sandbox: &Sandbox, label: &str) -> ProcessOutpu
     output
 }
 
-fn wait_for_git_probe_and_kill_worker(worker: &mut LoggedChild, sandbox: &Sandbox) -> i32 {
-    let deadline = Instant::now() + FAULT_READY_TIMEOUT;
+fn initialize_database(sandbox: &Sandbox, codex_path: Option<&Path>) {
+    let mut config_init = sandbox.isolated_remem_command();
+    config_init.args(["config", "init"]);
+    run_success(config_init, sandbox, "config-init");
+    if let Some(codex_path) = codex_path {
+        let mut config_set_path = sandbox.isolated_remem_command();
+        config_set_path
+            .args(["config", "set", "memory_ai.profiles.codex.path"])
+            .arg(codex_path);
+        run_success(config_set_path, sandbox, "config-set-codex-path");
+    }
+    let mut disable_rule_sweep = sandbox.isolated_remem_command();
+    disable_rule_sweep.args(["config", "set", "rule_compilation.enabled", "false"]);
+    run_success(disable_rule_sweep, sandbox, "config-disable-rule-sweep");
+    let mut initialize_db = sandbox.isolated_remem_command();
+    initialize_db.args(["worker", "--once"]);
+    run_success(initialize_db, sandbox, "initialize-database");
+}
+
+fn wait_for_worker_start(worker: &mut LoggedChild) {
+    let deadline = Instant::now() + PROCESS_READY_TIMEOUT;
     loop {
-        if let Ok(arguments) = fs::read_to_string(&sandbox.git_ready_path) {
-            if arguments.trim() == "rev-parse --abbrev-ref HEAD" {
-                let git_pid = fs::read_to_string(&sandbox.git_pid_path)
-                    .expect("blocking Git stub should persist its pid")
-                    .trim()
-                    .parse::<i32>()
-                    .expect("blocking Git stub pid should be numeric");
-                signal_pid(worker.id(), libc::SIGKILL).expect("SIGKILL in-flight worker process");
-                return git_pid;
-            }
+        let (_, stderr) = worker.logs();
+        if stderr.contains("[INFO] [worker] start ") {
+            return;
         }
         if let Some(status) = worker.try_wait().expect("poll in-flight worker") {
             let (stdout, stderr) = worker.logs();
             panic!(
-                "worker exited before legacy replay reached the Git readiness probe: \
+                "worker exited before publishing its start log: \
                  status={status}\nstdout:\n{stdout}\nstderr:\n{stderr}"
             );
         }
         if Instant::now() >= deadline {
             let (stdout, stderr) = worker.logs();
             panic!(
-                "worker did not reach legacy replay Git probe within {FAULT_READY_TIMEOUT:?}\n\
+                "worker did not publish its start log within {PROCESS_READY_TIMEOUT:?}\n\
                  stdout:\n{stdout}\nstderr:\n{stderr}"
             );
         }
@@ -396,12 +305,30 @@ fn assert_worker_lock_reacquirable(path: &Path) {
     FileExt::unlock(&file).expect("release worker singleton lock probe");
 }
 
-fn seed_failed_legacy_backlog(sandbox: &Sandbox) -> i64 {
-    let conn =
-        Connection::open(sandbox.isolated_database_path()).expect("open isolated remem database");
+fn assert_worker_lock_held(path: &Path) {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(path)
+        .expect("open worker singleton lock");
+    match FileExt::try_lock_exclusive(&file) {
+        Ok(()) => {
+            FileExt::unlock(&file).expect("release unexpected worker lock acquisition");
+            panic!("live worker should hold its singleton lock");
+        }
+        Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
+        Err(error) => panic!("probe live worker singleton lock: {error}"),
+    }
+}
+
+fn seed_not_due_failed_legacy_backlog(sandbox: &Sandbox) -> (i64, i64) {
+    let conn = open_database(sandbox);
     conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")
         .expect("configure fixture database connection");
     let now = chrono::Utc::now().timestamp();
+    let next_retry_epoch = now + 3_600;
     conn.execute(
         "INSERT INTO pending_observations
          (host, session_id, project, tool_name, tool_input, tool_response, cwd,
@@ -409,150 +336,165 @@ fn seed_failed_legacy_backlog(sandbox: &Sandbox) -> i64 {
           next_retry_epoch, last_error, lease_owner, lease_expires_epoch,
           failure_class, failed_at_epoch, archived_at_epoch)
          VALUES (?1, ?2, ?3, 'Bash', ?4, ?5, ?6, ?7, ?8, 'failed', 3,
-                 ?9, 'worker terminated during legacy recovery', NULL, NULL,
+                 ?9, 'not due for automatic recovery', NULL, NULL,
                  'transient', ?10, NULL)",
         params![
             "codex-cli",
             "process-worker-restart-session",
             sandbox.project_dir.to_string_lossy().as_ref(),
-            r#"{"cmd":"printf important"}"#,
-            r#"{"output":"important"}"#,
+            r#"{"cmd":"printf legacy"}"#,
+            r#"{"output":"legacy"}"#,
             sandbox.project_dir.to_string_lossy().as_ref(),
             now - 3_600,
             now - 600,
-            now - 1,
+            next_retry_epoch,
             now - 600,
         ],
     )
-    .expect("seed failed legacy pending observation");
-    conn.last_insert_rowid()
+    .expect("seed legacy pending observation");
+    (conn.last_insert_rowid(), next_retry_epoch)
+}
+
+fn open_database(sandbox: &Sandbox) -> Connection {
+    Connection::open(sandbox.isolated_database_path()).expect("open isolated remem database")
+}
+
+fn source_recovery_state(
+    conn: &Connection,
+    pending_id: i64,
+) -> (String, i64, Option<i64>, Option<i64>) {
+    conn.query_row(
+        "SELECT status, attempt_count, next_retry_epoch, archived_at_epoch
+         FROM pending_observations WHERE id = ?1",
+        [pending_id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .expect("read legacy recovery state")
+}
+
+fn source_snapshot(conn: &Connection, pending_id: i64) -> Vec<Value> {
+    let mut statement = conn
+        .prepare(
+            "SELECT id, host, session_id, project, tool_name, tool_input, tool_response, cwd,
+                    created_at_epoch, updated_at_epoch, status, attempt_count, next_retry_epoch,
+                    last_error, lease_owner, lease_expires_epoch, failure_class, failed_at_epoch,
+                    archived_at_epoch
+             FROM pending_observations
+             WHERE id = ?1",
+        )
+        .expect("prepare full legacy source snapshot");
+    let column_count = statement.column_count();
+    statement
+        .query_row([pending_id], |row| {
+            (0..column_count)
+                .map(|index| row.get(index))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        })
+        .expect("read full legacy source snapshot")
+}
+
+fn captured_event_count(conn: &Connection, pending_id: i64) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM captured_events WHERE event_id = ?1",
+        [format!("legacy-pending-{pending_id}")],
+        |row| row.get(0),
+    )
+    .expect("count captured legacy events")
+}
+
+fn count_rows(conn: &Connection, sql: &str) -> i64 {
+    conn.query_row(sql, [], |row| row.get(0))
+        .expect("count database rows")
 }
 
 #[test]
-fn sigkill_preserves_legacy_backlog_and_once_restart_recovers_it() {
+fn sigkill_after_worker_start_preserves_not_due_backlog_and_once_restart_recovers_it() {
     let sandbox = Sandbox::new();
     let codex_stub = sandbox.install_codex_stub();
-    sandbox.install_blocking_git_stub();
+    initialize_database(&sandbox, Some(&codex_stub));
+    let (pending_id, next_retry_epoch) = seed_not_due_failed_legacy_backlog(&sandbox);
+    let before_snapshot = {
+        let conn = open_database(&sandbox);
+        let state = source_recovery_state(&conn, pending_id);
+        assert_eq!(
+            state,
+            ("failed".to_string(), 3, Some(next_retry_epoch), None)
+        );
+        assert_eq!(captured_event_count(&conn, pending_id), 0);
+        source_snapshot(&conn, pending_id)
+    };
 
-    let mut config_init = sandbox.isolated_remem_command();
-    config_init.args(["config", "init"]);
-    run_success(config_init, &sandbox, "config-init");
-
-    let mut config_set_path = sandbox.isolated_remem_command();
-    config_set_path
-        .args(["config", "set", "memory_ai.profiles.codex.path"])
-        .arg(&codex_stub);
-    run_success(config_set_path, &sandbox, "config-set-codex-path");
-
-    let mut disable_rule_sweep = sandbox.isolated_remem_command();
-    disable_rule_sweep.args(["config", "set", "rule_compilation.enabled", "false"]);
-    run_success(disable_rule_sweep, &sandbox, "config-disable-rule-sweep");
-
-    let mut initialize_db = sandbox.isolated_remem_command();
-    initialize_db.args(["worker", "--once"]);
-    run_success(initialize_db, &sandbox, "initialize-database");
-
-    let pending_id = seed_failed_legacy_backlog(&sandbox);
-    let event_id = format!("legacy-pending-{pending_id}");
-
-    let mut faulted_worker_command = sandbox.command_with_blocking_git();
-    faulted_worker_command.arg("worker");
-    let mut faulted_worker =
-        LoggedChild::spawn_logged_remem(faulted_worker_command, &sandbox, "faulted-worker");
-    let git_process_group = wait_for_git_probe_and_kill_worker(&mut faulted_worker, &sandbox);
-    sandbox.terminate_git_probe_group(git_process_group);
-    let killed = faulted_worker.wait(PROCESS_EXIT_TIMEOUT);
+    let mut daemon_command = sandbox.isolated_remem_command();
+    daemon_command.arg("worker");
+    let mut daemon =
+        LoggedChild::spawn_logged_remem(daemon_command, &sandbox, "idle-worker-daemon");
+    wait_for_worker_start(&mut daemon);
+    assert_worker_lock_held(&sandbox.worker_lock_path());
+    signal_pid(daemon.id(), libc::SIGKILL).expect("SIGKILL started worker process");
+    let killed = daemon.wait(PROCESS_EXIT_TIMEOUT);
     assert!(!killed.timed_out, "SIGKILLed worker should exit promptly");
     assert_eq!(
         killed.status.signal(),
         Some(libc::SIGKILL),
-        "faulted worker should terminate via SIGKILL\nstdout:\n{}\nstderr:\n{}",
+        "started worker should terminate via SIGKILL\nstdout:\n{}\nstderr:\n{}",
         killed.stdout,
         killed.stderr
     );
 
-    let conn =
-        Connection::open(sandbox.isolated_database_path()).expect("reopen database after SIGKILL");
-    let source_state: (String, i64, Option<i64>) = conn
-        .query_row(
-            "SELECT status, attempt_count, archived_at_epoch
-             FROM pending_observations WHERE id = ?1",
-            [pending_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("read source state after SIGKILL");
+    let conn = open_database(&sandbox);
     assert_eq!(
-        source_state,
-        ("failed".to_string(), 3, None),
-        "SIGKILL must roll back the in-flight source transition"
+        source_snapshot(&conn, pending_id),
+        before_snapshot,
+        "SIGKILL after worker start must not mutate any field of a not-due source row"
     );
-    let captured_before_restart: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM captured_events WHERE event_id = ?1",
-            [&event_id],
-            |row| row.get(0),
-        )
-        .expect("count captured events after SIGKILL");
     assert_eq!(
-        captured_before_restart, 0,
-        "SIGKILL must not leak a partial current-pipeline event"
+        captured_event_count(&conn, pending_id),
+        0,
+        "SIGKILL must not create a current-pipeline event"
     );
     drop(conn);
     assert_worker_lock_reacquirable(&sandbox.worker_lock_path());
+
+    let due_at = chrono::Utc::now().timestamp() - 1;
+    let conn = open_database(&sandbox);
+    conn.execute(
+        "UPDATE pending_observations
+         SET next_retry_epoch = ?2, updated_at_epoch = ?2
+         WHERE id = ?1",
+        params![pending_id, due_at],
+    )
+    .expect("make failed legacy backlog due for restart recovery");
+    drop(conn);
 
     let mut restart = sandbox.isolated_remem_command();
     restart.args(["worker", "--once"]);
     run_success(restart, &sandbox, "restart-worker-once");
 
-    let conn =
-        Connection::open(sandbox.isolated_database_path()).expect("reopen recovered database");
-    let failed_backlog: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count failed legacy backlog");
+    let conn = open_database(&sandbox);
+    let failed_backlog = count_rows(
+        &conn,
+        "SELECT COUNT(*) FROM pending_observations WHERE status = 'failed'",
+    );
     assert_eq!(failed_backlog, 0, "worker restart should drain the backlog");
-    let recovered_source: (String, i64, Option<i64>) = conn
-        .query_row(
-            "SELECT status, attempt_count, archived_at_epoch
-             FROM pending_observations WHERE id = ?1",
-            [pending_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-        )
-        .expect("read recovered source state");
-    assert_eq!(recovered_source, ("migrated".to_string(), 0, None));
-    let captured_after_restart: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM captured_events WHERE event_id = ?1",
-            [&event_id],
-            |row| row.get(0),
-        )
-        .expect("count recovered captured event");
+    let recovered_source = source_recovery_state(&conn, pending_id);
+    assert_eq!(recovered_source, ("migrated".to_string(), 0, None, None));
+    let captured_after_restart = captured_event_count(&conn, pending_id);
     assert_eq!(captured_after_restart, 1);
-    let recovered_observations: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM observations
-             WHERE text LIKE '%Process-level worker restart recovered%'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count recovered observations");
+    let recovered_observations = count_rows(
+        &conn,
+        "SELECT COUNT(*) FROM observations
+         WHERE text LIKE '%Process-level worker restart recovered%'",
+    );
     assert!(
         recovered_observations >= 1,
         "restart should process the current ObservationExtract task"
     );
-    let completed_extraction_tasks: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM extraction_tasks
-             WHERE task_kind = 'observation_extract' AND status = 'done'",
-            [],
-            |row| row.get(0),
-        )
-        .expect("count completed extraction tasks");
+    let completed_extraction_tasks = count_rows(
+        &conn,
+        "SELECT COUNT(*) FROM extraction_tasks
+         WHERE task_kind = 'observation_extract' AND status = 'done'",
+    );
     assert_eq!(completed_extraction_tasks, 1);
     drop(conn);
-
     assert_worker_lock_reacquirable(&sandbox.worker_lock_path());
 }

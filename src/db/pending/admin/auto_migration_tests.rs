@@ -1,6 +1,9 @@
+use anyhow::Result;
 use rusqlite::{params, Connection};
+use std::sync::mpsc;
+use std::time::Duration;
 
-use super::auto_migrate_actionable_legacy_pending;
+use super::{auto_migrate_actionable_legacy_pending, AutoLegacyMigrationOutcome};
 use crate::{db, migrate::MIGRATIONS};
 
 fn setup_conn() -> Connection {
@@ -156,4 +159,102 @@ fn auto_migration_commits_prior_rows_and_rolls_back_the_failing_row() {
         .collect::<rusqlite::Result<_>>()
         .expect("captured events should collect");
     assert_eq!(captured_ids, vec![format!("legacy-pending-{first_id}")]);
+}
+
+#[test]
+fn auto_detector_runs_without_writer_lock_and_changed_snapshot_is_skipped() -> Result<()> {
+    let db_path = db::test_support::unique_temp_db_path("auto-detector-lock");
+    let seed_conn = Connection::open(&db_path)?;
+    for migration in MIGRATIONS {
+        seed_conn.execute_batch(migration.sql)?;
+    }
+    let id = insert_legacy_row(
+        &seed_conn,
+        "auto-detector",
+        chrono::Utc::now().timestamp() - 60,
+    );
+    seed_conn.execute(
+        "UPDATE pending_observations
+         SET cwd = '/tmp/remem-auto-detector', tool_response = ?2
+         WHERE id = ?1",
+        params![id, r#"{"output":"before"}"#],
+    )?;
+    drop(seed_conn);
+
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let (done_tx, done_rx) = mpsc::sync_channel(1);
+    let worker_path = db_path.clone();
+    let handle = std::thread::spawn(move || {
+        let result = (|| -> Result<AutoLegacyMigrationOutcome> {
+            let mut conn = Connection::open(worker_path)?;
+            conn.busy_timeout(Duration::from_secs(5))?;
+            let mut detector = move |_cwd: &str| {
+                entered_tx.send(()).expect("announce auto detector entry");
+                resume_rx.recv().expect("resume auto detector");
+                None
+            };
+            super::migration::auto_migrate_actionable_legacy_pending_with_detector(
+                &mut conn,
+                1,
+                &mut detector,
+            )
+        })();
+        done_tx
+            .send(result)
+            .expect("publish auto migration completion");
+    });
+
+    entered_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("auto detector should run within timeout");
+    let observer = Connection::open(&db_path)?;
+    observer.busy_timeout(Duration::from_millis(100))?;
+    let lock_probe = observer.execute_batch("BEGIN IMMEDIATE; ROLLBACK;");
+    let changed_response = r#"{"output":"changed during auto preflight"}"#;
+    let drift = observer.execute(
+        "UPDATE pending_observations
+         SET tool_response = ?2,
+             attempt_count = 7,
+             last_error = 'changed during auto preflight',
+             updated_at_epoch = ?3
+         WHERE id = ?1",
+        params![id, changed_response, chrono::Utc::now().timestamp()],
+    );
+    resume_tx.send(()).expect("resume auto migration");
+    let outcome = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("auto migration should complete within timeout")?;
+    handle.join().expect("auto migration thread should join");
+    lock_probe?;
+    drift?;
+
+    assert_eq!(outcome.migrated, 0);
+    let state: (String, String, i64, Option<String>) = observer.query_row(
+        "SELECT status, tool_response, attempt_count, last_error
+         FROM pending_observations
+         WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(
+        state,
+        (
+            "pending".to_string(),
+            changed_response.to_string(),
+            7,
+            Some("changed during auto preflight".to_string())
+        )
+    );
+    let counts: (i64, i64) = observer.query_row(
+        "SELECT
+             (SELECT COUNT(*) FROM captured_events),
+             (SELECT COUNT(*) FROM extraction_tasks)",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(counts, (0, 0));
+    drop(observer);
+    db::test_support::cleanup_temp_db_files(&db_path);
+    Ok(())
 }

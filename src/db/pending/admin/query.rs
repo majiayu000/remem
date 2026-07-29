@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
-use super::types::FailedPendingRow;
+use super::types::{AdminRequiredArchivedLegacyPendingRow, FailedPendingRow};
 
 pub fn list_failed(
     conn: &Connection,
@@ -38,6 +38,35 @@ pub fn list_failed(
         rows_out.push(row?);
     }
     Ok(rows_out)
+}
+
+pub(crate) fn list_admin_required_archived_legacy_pending(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<AdminRequiredArchivedLegacyPendingRow>> {
+    let limit = limit.max(1);
+    let mut stmt = conn.prepare(
+        "SELECT id, host, failure_class, archived_at_epoch
+         FROM pending_observations
+         WHERE status = 'failed'
+           AND archived_at_epoch IS NOT NULL
+           AND NOT (
+               host IN (?1, ?2)
+               AND COALESCE(failure_class, 'transient') = 'transient'
+           )
+         ORDER BY archived_at_epoch ASC, id ASC
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            crate::runtime_config::CLAUDE_HOST,
+            crate::runtime_config::CODEX_HOST,
+            limit
+        ],
+        AdminRequiredArchivedLegacyPendingRow::from_row,
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
 }
 
 pub fn count_failed_retry_candidates(

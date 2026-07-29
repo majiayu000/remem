@@ -823,12 +823,13 @@ host must be repaired before replay. The bridge does not restore the legacy
 enqueue/claim API and never automatically deletes rows.
 
 Archived failed legacy rows that are not eligible for the automatic bridge are
-reported by doctor as `admin-required`. Inspect them with `remem pending
-list-failed --json`, preview one exact row with `remem pending recover-archived
---id <id> --dry-run`, then apply the same command without `--dry-run`. A row
-stored with `host = unknown` also requires `--host claude-code` or `--host
-codex-cli` on both commands. `recover-archived` rejects non-failed or
-non-archived rows, replays only the requested ID in one transaction, and clears
+reported by doctor as `admin-required`. Doctor lists a bounded, oldest-first
+set of those candidates directly, including each real ID, stored host, failure
+class, archive time, and concrete `remem pending recover-archived` preview and
+apply commands. A row stored with `host = unknown` is shown with both explicit
+`--host claude-code` and `--host codex-cli` variants so the operator can choose
+the correct identity. `recover-archived` rejects non-failed or non-archived
+rows, replays only the requested ID in one transaction, and clears
 failure/archive state only after the current event and extraction task commit;
 an error leaves the source row unchanged.
 

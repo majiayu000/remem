@@ -553,12 +553,13 @@ permanent 的行或 unknown-host 行继续通过 `remem pending` 供用户检查
 API，也绝不会自动删除记录。
 
 不符合自动 bridge 条件的 archived failed 旧行会由 doctor 报告为
-`admin-required`。先用 `remem pending list-failed --json` 查到精确 ID，再用
-`remem pending recover-archived --id <id> --dry-run` 预览，并去掉
-`--dry-run` 执行。同一行若保存为 `host = unknown`，预览和执行都必须再传
-`--host claude-code` 或 `--host codex-cli`。`recover-archived` 只接受精确的
-archived failed 行，在一个事务中 replay；只有当前 event 和 extraction task
-成功提交后才清理 failure/archive 状态，任何失败都会保持源行不变。
+`admin-required`。doctor 会直接按最老优先列出有上限的候选集，包含真实 ID、
+已保存 host、failure class、归档时间，以及具体的 `remem pending
+recover-archived` 预览和执行命令。同一行若保存为 `host = unknown`，doctor
+会同时给出显式的 `--host claude-code` 和 `--host codex-cli` 变体，供管理员
+选择正确身份。`recover-archived` 只接受精确的 archived failed 行，在一个
+事务中 replay；只有当前 event 和 extraction task 成功提交后才清理
+failure/archive 状态，任何失败都会保持源行不变。
 
 ## REST API
 
