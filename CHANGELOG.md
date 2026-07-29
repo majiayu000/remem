@@ -534,7 +534,7 @@
   outcomes without mutating the runtime store.
 - Staged source version `0.5.173` for the GH-672 memory poisoning defense
   closure fixture: captured-event instruction payloads now exercise
-  candidate quarantine through render absence, and the SpecRail task plan is
+  candidate quarantine through render absence, and the issue task plan is
   synchronized with the completed security tranche.
 - Staged source version `0.5.172` for GH-684 summary writer equivalence:
   field-comparison fixtures now document legacy Summary structured fields,
