@@ -143,6 +143,59 @@ Required behavior:
 - Source-anchor errors are logged and rendered as error labels or surfaced as
   load errors; they are not silently treated as `untracked`.
 
+## Automatic Lifecycle Maintenance Contract
+
+The cleanup planner and applier are shared runtime code, not CLI-owned logic.
+Dry-run planning remains read-only. A real run builds its plan and applies
+every selected retention mutation in one immediate SQLite transaction, then
+commits only after all steps succeed. Transaction-aware count/apply functions
+remain the source of truth for expiration, workstream inactivity, old events,
+provenance-qualified compressed sources, stale-memory archiving, and the
+operator-only archived-failure purge.
+
+Hard-delete eligibility is fail-closed:
+
+- legacy `events` rows have an explicit `ephemeral` or `audit` retention class;
+  cleanup selects only expired `ephemeral` rows, while referenced API mutation
+  audits are protected independently at the schema boundary;
+- a compressed source requires an old matching link to an active replacement,
+  an unchanged supported source snapshot/hash, no provenance fields outside
+  that snapshot, and no fact that still points at the source; and
+- deletion eligibility is revalidated in the same immediate transaction, with
+  bounded statements that do not exceed SQLite's parameter limit.
+
+`JobType::Cleanup` is a global, non-AI job. Its scheduling contract is:
+
+- one fixed global job identity, coalesced while pending or processing;
+- low priority behind extraction and ordinary background work;
+- a 24-hour cooldown measured from the latest completed automatic cleanup
+  attempt, whether successful or failed;
+- recent failed or in-flight work suppresses duplicate scheduling while normal
+  retry and failure-lifecycle handling remains active;
+- a dedicated cleanup-only claim before extraction prevents an old cleanup job
+  from starving, while the ordinary job claim excludes cleanup so the
+  non-cancellable SQLite work never enters the generic async timeout path; and
+- a schema migration accompanies the new persisted job vocabulary so an older
+  binary fails closed on the newer schema instead of repeatedly claiming an
+  unknown job type.
+
+The worker probes for due cleanup before its normal job claim. Both daemon and
+`worker --once` paths use the same SQLite decision, so process-local clocks only
+throttle probes and are not the cooldown authority. Cleanup effects, its
+successful run record, and the job's `done` transition commit in the same
+immediate transaction. A crash before commit leaves all three absent and the
+lease retryable; there is no committed-effects/uncommitted-job window.
+
+The automatic job always calls the default applier through a policy type that
+cannot enable archived-failure purge. Only a positive retention horizon from
+the explicit CLI flag may select that operator action. An append-only
+maintenance-run ledger records the trigger, policy version, bounded counts,
+timestamps, and a bounded safe failure message. Successful ledger insertion is
+part of the effects transaction; failure is recorded only after rollback.
+Doctor reads automatic runs and the active job through the shared read-only
+connection, reports never-run, in-flight, latest success, latest failure, and
+overdue state, and never infers outcomes from claim/retry timestamps.
+
 ## Observability Contract
 
 The current observability data exists across doctor, CLI status, REST status,
@@ -179,7 +232,8 @@ The structured observability payload should include:
   - verify-before-trust;
   - error;
   - fresh/aging/old age buckets;
-- queues and worker state;
+- queues, worker state, and automatic cleanup state, including last success and
+  latest failed attempt;
 - warnings with stable codes and suggested actions.
 
 `doctor --json` exposes this contract through a root `observability` object.
@@ -275,6 +329,14 @@ Required gates for implementation slices:
 
 ```bash
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
+```
+
+### Automatic lifecycle maintenance changes
+
+```bash
+cargo test --locked --lib maintenance
+cargo test --locked --lib worker::cleanup_tests
+cargo test --locked --lib doctor::cleanup
 ```
 
 ### Search, temporal, current-state, or staleness changes

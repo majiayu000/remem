@@ -1,7 +1,7 @@
 # Current Memory Contracts Product Spec
 
 Status: Current contract
-Issues: Refs #381, #383, #384, #385, #390
+Issues: Refs #381, #383, #384, #385, #390, #945
 
 ## Problem
 
@@ -148,6 +148,37 @@ Usage feedback must start as a reporting and shadow-ranking signal. It must not
 change default ranking unless deterministic evals and the coding-agent A/B
 benchmark show no regression.
 
+### Automatic Lifecycle Maintenance
+
+Default retrieval already treats an active memory past `expires_at_epoch` as
+non-current. Background cleanup is responsible for converging that hidden row
+to `stale` and applying the rest of the retention policy; it must not be
+described as the mechanism that first makes TTL visible.
+
+An ordinary worker schedules one database-global cleanup job when no cleanup
+attempt has finished within the 24-hour cooldown. The cooldown, run outcome,
+and in-flight identity live in SQLite so repeated short-lived `worker --once`
+processes cannot each run cleanup. A dedicated claim path keeps the daily job
+from starving behind an extraction backlog. The automatic job and the manual
+`remem cleanup` command use one cleanup implementation.
+
+Automatic cleanup may:
+
+- mark expired active memories stale;
+- pause or abandon inactive workstreams at the documented horizons;
+- delete old low-level events only when their retention class explicitly marks
+  them ephemeral and no governance record references them;
+- delete old compressed source observations only when an active replacement,
+  the complete supported hash/snapshot provenance, and the absence of live
+  fact references all authorize it; and
+- archive sufficiently old stale memories without deleting their rows.
+
+Those mutations commit atomically. A failure rolls back the whole cleanup run,
+keeps the job retryable, and remains visible in logs and doctor. Automatic
+cleanup never enables archived-failure purge. Hard deletion of archived
+failure rows remains available only through the explicit
+`remem cleanup --archived-failures[=<days>]` operator action.
+
 ### Host And App Boundaries
 
 Claude Code, Codex, MCP, REST, CLI, and the local app may have different
@@ -177,7 +208,8 @@ visibly rather than pretending Claude-equivalent behavior exists.
 After this contract is implemented and verified:
 
 - `remem doctor` can say whether automatic capture, temporal facts, promotion,
-  injection, usage feedback, and source-anchor staleness are working.
+  injection, usage feedback, source-anchor staleness, and automatic lifecycle
+  maintenance are working.
 - REST/API consumers can inspect the same health categories without scraping
   human CLI output.
 - The local app can show why a memory is trustworthy, stale, unused, cited, or
@@ -214,6 +246,14 @@ After this contract is implemented and verified:
   injection audit, and usage feedback contracts.
 - Usage ranking remains default-off until a committed eval report justifies
   changing the default.
+- Worker cleanup uses one global in-flight job identity and a persisted
+  24-hour completed-attempt cooldown across daemon and `worker --once`
+  processes.
+- The automatic cleanup path is all-or-nothing, never purges archived failures,
+  preserves audit/provenance rows, and leaves active rows without an elapsed
+  TTL unchanged.
+- Doctor distinguishes a never-run or scheduled cleanup from the latest
+  successful run and from a failed attempt.
 - No new parallel schema, IPC layer, or runtime boundary is introduced without
   a follow-up spec that proves the existing contract cannot satisfy the need.
 
