@@ -12,7 +12,7 @@ remem 的目标是做最强的 Claude Code / Codex 记忆系统，不是最便�
 2. Read `README.md` for user-facing behavior and `docs/ARCHITECTURE.md` for current runtime/data-flow context.
 3. Read `docs/specs/README.md` before treating any old `docs/specs/*.md` file as pending work. Most historical specs have been implemented, superseded, or absorbed into the current architecture.
 4. For Codex plugin/runtime work, also read `plugins/remem/README.md`, `plugins/remem/skills/remem/SKILL.md`, and the version-sync files listed below.
-5. Use repo-local skills under `skills/` and `.agents/skills/` when a task matches one.
+5. Use repo-local maintenance skills under `.agents/skills/` when a task matches one.
 6. Search existing code and docs before creating new files. Similar-file creation without search is not acceptable.
 
 ## Core Rules
@@ -26,29 +26,6 @@ remem 的目标是做最强的 Claude Code / Codex 记忆系统，不是最便�
 ## Spec Routing
 
 Use specs as contracts only after checking their status in `docs/specs/README.md`.
-
-## Optional SpecRail Reference
-
-The repository retains the SpecRail skills, checks, schemas, workflow data, and
-issue packets as offline reference material. They are not wired into CI and do
-not decide whether an issue or pull request may proceed or merge.
-
-Use a focused `skills/specrail-*/SKILL.md` only when the user explicitly asks
-for SpecRail or when an offline diagnostic would be useful. In that case, read
-`AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`, `labels.yaml`, and the
-relevant template before writing SpecRail artifacts. Outputs from
-`checks/route_gate.py`, `checks/pr_gate.py`, and related checks are advisory
-diagnostics, not authoritative approvals or blockers.
-
-Historical SpecRail issue packets live under `specs/GH<issue-number>/` with
-`product.md`, `tech.md`, and `tasks.md`. Existing remem implementation
-contracts stay under `docs/specs/`; update those current contracts when a
-change modifies the behavior they already govern. Do not copy old
-`docs/specs/` files into SpecRail packets unless the linked issue requires it.
-
-Readiness labels, SpecRail spec approval, and SpecRail final-review states are
-not mechanical prerequisites. Normal code review and CI still apply. Security
-decisions, merge, and release require explicit human authorization.
 
 | Change | Required path |
 |---|---|

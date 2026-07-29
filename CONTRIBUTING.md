@@ -63,14 +63,9 @@ such as plugin version synchronization and first-run smoke validation.
 
 ### Review and authorization
 
-SpecRail files under `checks/`, `schemas/`, `skills/`, and `specs/` are retained
-as optional offline reference material. Their readiness, spec-approval,
-final-review, PR-gate, and closure results are not CI requirements and do not
-authorize or block a merge.
-
 Every pull request must still pass the applicable ordinary CI checks and receive
 normal maintainer review. Changes involving authentication, secrets, security
 boundaries, or private vulnerability information require explicit human
 security review. Merge and release actions require explicit human
 authorization; agents must not infer that authorization from a green check,
-review artifact, label, or SpecRail result.
+review artifact, or label.

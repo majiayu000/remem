@@ -41,9 +41,6 @@ user-visible work must close an implementation issue, not a spec issue.
 - [ ] Actionable review findings and conversations are resolved
 - [ ] Security review completed when the change affects a security boundary
 
-SpecRail review artifacts may be attached as supporting evidence, but they are
-optional and do not authorize or block the pull request.
-
 ## Merge Authorization
 
 - [ ] Applicable ordinary CI checks are green on the final head
