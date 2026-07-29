@@ -14,12 +14,12 @@ use super::{
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct WindowsPathFingerprint {
+pub(in crate::retrieval::embedding::local_semantic) struct WindowsPathFingerprint {
     identity: WindowsFileId,
     change_time: i64,
 }
 
-pub(super) fn path_fingerprint(
+pub(in crate::retrieval::embedding::local_semantic) fn path_fingerprint(
     path: &Path,
     allow_reparse_point: bool,
 ) -> io::Result<WindowsPathFingerprint> {
