@@ -528,6 +528,13 @@ remem mcp
 remem sync-memory --cwd .
 ```
 
+worker 会在每个已完成 cleanup 尝试后的 24 小时窗口内，最多调度一个数据库
+全局生命周期清理。它先把 TTL 已到期的 memory 收敛为 `stale`，再原子执行与
+`remem cleanup` 相同的安全 retention policy；审计事件和仍在使用的 provenance
+不会被删除。自动 cleanup 永远不能 purge archived failures，这个硬删除边界仍
+必须由操作者显式传入正数 `--archived-failures[=DAYS]`。`remem doctor` 会分别
+报告最近一次自动成功和失败。
+
 ### 旧 pending 队列恢复
 
 当前采集路径不再写入或 claim 已退役的 `pending_observations` 队列。当前

@@ -793,6 +793,14 @@ remem mcp
 remem sync-memory --cwd .
 ```
 
+The worker schedules one database-global lifecycle cleanup at most once per
+24-hour completed-attempt window. It first converges elapsed-TTL memories to
+`stale`, then applies the same atomic retention policy as `remem cleanup`.
+Audit events and live provenance are preserved. Automatic cleanup can never
+purge archived failures; that hard-delete boundary still requires an explicit
+positive `--archived-failures[=DAYS]` operator flag. `remem doctor` reports the
+latest automatic success and failure independently.
+
 ### Legacy pending recovery
 
 Current capture no longer writes or claims the retired
