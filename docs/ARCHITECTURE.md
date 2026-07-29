@@ -682,7 +682,7 @@ Retention matrix:
 | stale memories | 180 days | Mark `archived` | Row remains auditable |
 | workstreams | 14/30 days inactivity | Pause/abandon | Row remains auditable |
 | compressed replacement observations | Indefinite | Retained | Preserve retrieval and source-summary context |
-| compressed source observations | 90 days after compression link | Hard delete only when eligible | Matching hash/snapshot, active replacement, no unsupported provenance fields, and no fact reference |
+| compressed source observations | 90 days after compression link | Hard delete only when eligible | Matching canonical `observation-v2` hash/snapshot revalidated across the AI window (or provenance-empty legacy v1), independently checked status, known schema, active replacement, and no fact reference |
 | failed queue rows | 14 days | Mark permanent/exhausted current-pipeline rows archived; legacy `pending_observations` transient rows stay visible for drain/admin recovery, a known-host archived historical transient may enter the bounded drain, and an archived permanent/unknown-host row requires exact `recover-archived` | Archive/failure state stays intact until one atomic migration succeeds |
 | archived failures | 90 days by explicit flag | Hard delete only with `--archived-failures[=DAYS]` | Aggregate history preserved in `failure_lifecycle_daily` |
 | raw archive, session summaries, candidates, edges | Indefinite by default | No cleanup in this command | Retained for audit/eval unless future policy says otherwise |

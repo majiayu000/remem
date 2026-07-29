@@ -5,11 +5,13 @@ mod v070;
 mod v071;
 mod v072;
 mod v073;
+mod v074;
 pub(in crate::migrate) use v068::V068_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v070::V070_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v071::V071_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v072::V072_SCHEMA_INVARIANTS;
 pub(in crate::migrate) use v073::V073_SCHEMA_INVARIANTS;
+pub(in crate::migrate) use v074::V074_SCHEMA_INVARIANTS;
 
 pub(in crate::migrate) const SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
     SchemaInvariant::table(20, "memory_fts_all_status", "memories_fts"),

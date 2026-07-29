@@ -55,7 +55,12 @@ Automatic hard deletion is fail-closed:
   governance/audit rows and any API-referenced event remain;
 - a compressed source observation requires an old matching link, an active
   replacement, a complete supported snapshot/hash, and no remaining fact
-  reference; and
+  reference. New `observation-v2` links preserve all canonical content and
+  provenance fields, revalidated from before the AI call through the atomic
+  write. Mutable `status`/`last_accessed_epoch` and noncanonical joined
+  `content_session_id` are not hashed; status is checked independently. Legacy
+  v1 links with omitted provenance and schemas with unknown observation columns
+  are retained; and
 - archived failures are never selected automatically. Their purge requires an
   explicit positive `remem cleanup --archived-failures[=DAYS]` horizon.
 

@@ -403,17 +403,27 @@ pub fn ttl_metadata(
 }
 
 pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize> {
-    let tx = conn.unchecked_transaction()?;
-    let mut stmt = tx.prepare(
+    if !conn.is_autocommit() {
+        return expire_active_memories_in_transaction(conn, now_epoch);
+    }
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let changed = expire_active_memories_in_transaction(&tx, now_epoch)?;
+    tx.commit()?;
+    Ok(changed)
+}
+
+fn expire_active_memories_in_transaction(conn: &Connection, now_epoch: i64) -> Result<usize> {
+    let mut stmt = conn.prepare(
         "SELECT id FROM memories
          WHERE status = 'active'
+           AND memory_type = 'preference'
            AND expires_at_epoch IS NOT NULL
            AND expires_at_epoch <= ?1",
     )?;
     let rows = stmt.query_map(params![now_epoch], |row| row.get::<_, i64>(0))?;
-    let expiring_ids = crate::db::query::collect_rows(rows)?;
+    let expiring_preference_ids = crate::db::query::collect_rows(rows)?;
     drop(stmt);
-    let changed = tx.execute(
+    let changed = conn.execute(
         "UPDATE memories
          SET status = 'stale',
              valid_to_epoch = COALESCE(valid_to_epoch, ?1),
@@ -423,8 +433,7 @@ pub fn expire_active_memories(conn: &Connection, now_epoch: i64) -> Result<usize
            AND expires_at_epoch <= ?1",
         params![now_epoch],
     )?;
-    crate::memory::preference::compilation::enqueue_for_memory_ids(&tx, &expiring_ids)?;
-    tx.commit()?;
+    crate::memory::preference::compilation::enqueue_for_memory_ids(conn, &expiring_preference_ids)?;
     Ok(changed)
 }
 

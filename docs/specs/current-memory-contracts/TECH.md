@@ -159,15 +159,27 @@ Hard-delete eligibility is fail-closed:
   cleanup selects only expired `ephemeral` rows, while referenced API mutation
   audits are protected independently at the schema boundary;
 - a compressed source requires an old matching link to an active replacement,
-  an unchanged supported source snapshot/hash, no provenance fields outside
-  that snapshot, and no fact that still points at the source; and
+  an unchanged supported source snapshot/hash and no fact that still points at
+  the source. New links use `observation-v2`, which covers every canonical
+  observation content/provenance column. Mutable lifecycle/access metadata
+  (`status`, `last_accessed_epoch`) is excluded from the hash; status is checked
+  independently, while access updates may continue during compression.
+  `content_session_id` is joined runtime context rather than canonical
+  observation provenance. The producer captures the record before the AI call
+  and revalidates the same record in the write savepoint. Legacy
+  `observation-v1` links remain eligible only when no v1-omitted provenance is
+  populated; any unknown future observation column blocks snapshot production
+  and cleanup; and
 - deletion eligibility is revalidated in the same immediate transaction, with
-  bounded statements that do not exceed SQLite's parameter limit.
+  bounded statements that do not exceed SQLite's parameter limit. Migration
+  v074 adds status/time cleanup indexes so the daily pass does not begin with
+  unindexed full-table predicates.
 
 `JobType::Cleanup` is a global, non-AI job. Its scheduling contract is:
 
 - one fixed global job identity, coalesced while pending or processing;
-- low priority behind extraction and ordinary background work;
+- one due cleanup claim may preempt the ordinary queue for its atomic pass;
+  extraction and ordinary background work resume immediately afterward;
 - a 24-hour cooldown measured from the latest completed automatic cleanup
   attempt, whether successful or failed;
 - recent failed or in-flight work suppresses duplicate scheduling while normal
