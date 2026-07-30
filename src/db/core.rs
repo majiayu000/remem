@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
 
-use super::pragma::{apply_connection_pragmas, ConnectionMode};
+use super::pragma::{ConnectionMode, ConnectionPragmas};
 
 thread_local! {
     static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
@@ -175,6 +175,7 @@ pub(crate) fn open_configured_connection(
     path: &Path,
     key: Option<&super::crypto::CipherKey>,
 ) -> Result<Connection> {
+    let pragmas = ConnectionPragmas::from_env()?;
     let conn = Connection::open(path)
         .with_context(|| format!("Failed to open database: {}", path.display()))?;
     #[cfg(test)]
@@ -182,7 +183,7 @@ pub(crate) fn open_configured_connection(
 
     super::crypto::configure_cipher(&conn, key)?;
 
-    apply_connection_pragmas(&conn, ConnectionMode::ReadWrite)?;
+    pragmas.apply(&conn, ConnectionMode::ReadWrite)?;
     Ok(conn)
 }
 
@@ -190,6 +191,7 @@ pub(crate) fn open_configured_existing_read_write_connection(
     path: &Path,
     key: Option<&super::crypto::CipherKey>,
 ) -> Result<Connection> {
+    let pragmas = ConnectionPragmas::from_env()?;
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_WRITE).with_context(
         || {
             format!(
@@ -203,7 +205,7 @@ pub(crate) fn open_configured_existing_read_write_connection(
 
     super::crypto::configure_cipher(&conn, key)?;
 
-    apply_connection_pragmas(&conn, ConnectionMode::ReadWrite)?;
+    pragmas.apply(&conn, ConnectionMode::ReadWrite)?;
     Ok(conn)
 }
 
@@ -211,13 +213,14 @@ pub(crate) fn open_configured_read_only_connection(
     path: &Path,
     key: Option<&super::crypto::CipherKey>,
 ) -> Result<Connection> {
+    let pragmas = ConnectionPragmas::from_env()?;
     let conn = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .with_context(|| format!("Failed to open database read-only: {}", path.display()))?;
     #[cfg(test)]
     record_configured_connection_open();
 
     super::crypto::configure_cipher(&conn, key)?;
-    apply_connection_pragmas(&conn, ConnectionMode::ReadOnly)?;
+    pragmas.apply(&conn, ConnectionMode::ReadOnly)?;
     Ok(conn)
 }
 

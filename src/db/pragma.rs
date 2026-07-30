@@ -1,145 +1,361 @@
 //! Connection pragmas shared by every way remem opens the store (GH949).
 //!
-//! Previously each `open_configured_*` helper in [`super::core`] repeated its
-//! own pragma string, so tuning drifted between read-write and read-only paths
-//! and the performance pragmas were missing entirely. All connection setup now
-//! funnels through [`apply_connection_pragmas`].
+//! Every configured connection parses the same environment policy before it
+//! opens a database and then applies one typed pragma set. This keeps
+//! read-write and read-only paths aligned without silently creating a database
+//! when an operator supplied an invalid override.
 //!
 //! `PRAGMA optimize` is deliberately not wired here. It pays off on a
 //! long-lived connection at close time, but the worker opens and drops a fresh
-//! connection every loop iteration and hook subcommands are one-shot, so the
-//! only sensible host is the daemon's periodic maintenance section — tracked
-//! separately to keep this change off that code path.
+//! connection every loop iteration and hook subcommands are one-shot. The
+//! daemon's periodic maintenance path is the appropriate future owner.
 
-use anyhow::{Context, Result};
+use std::env::VarError;
+use std::time::Duration;
+
+use anyhow::{bail, ensure, Context, Result};
 use rusqlite::Connection;
 
-/// Page cache per connection, expressed in KiB. SQLite treats a negative
-/// `cache_size` as "this many KiB" rather than "this many pages", which keeps
-/// the footprint predictable regardless of page size.
-///
-/// 64 MiB rather than the ~2 MiB default because SQLCipher disables mmap: every
-/// cache miss on a multi-GB store costs a `pread` plus an AES decrypt, so page
-/// residency is worth far more here than on a plaintext database.
-const DEFAULT_CACHE_KIB: i64 = 65_536;
-
-/// Overrides [`DEFAULT_CACHE_KIB`]. Must parse as a positive integer when set;
-/// a malformed value fails the open rather than silently reverting to the
-/// default, so an operator never believes a typo took effect.
 const CACHE_KIB_ENV: &str = "REMEM_SQLITE_CACHE_KIB";
+const SYNCHRONOUS_ENV: &str = "REMEM_SQLITE_SYNCHRONOUS";
+const DEFAULT_CACHE_KIB: i64 = 65_536;
+const MAX_CACHE_KIB: i64 = 1_048_576;
+const BUSY_TIMEOUT: Duration = Duration::from_millis(5_000);
 
-/// How a connection intends to use the database. Read-only connections cannot
-/// change `journal_mode` or meaningfully set `synchronous`, so they take a
-/// narrower pragma set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ConnectionMode {
     ReadWrite,
     ReadOnly,
 }
 
-/// Pure so it is testable without mutating process-global environment, which
-/// would race against every other test in the binary.
-fn parse_cache_kib(raw: Option<&str>) -> Result<i64> {
-    let Some(raw) = raw else {
-        return Ok(DEFAULT_CACHE_KIB);
-    };
-    let trimmed = raw.trim();
-    let parsed: i64 = trimmed.parse().with_context(|| {
-        format!("{CACHE_KIB_ENV} must be a positive integer of KiB, got {trimmed:?}")
-    })?;
-    if parsed <= 0 {
-        anyhow::bail!("{CACHE_KIB_ENV} must be a positive integer of KiB, got {parsed}");
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Synchronous {
+    Full,
+    Normal,
+}
+
+impl Synchronous {
+    fn pragma_value(self) -> &'static str {
+        match self {
+            Self::Full => "FULL",
+            Self::Normal => "NORMAL",
+        }
     }
-    Ok(parsed)
 }
 
-fn cache_kib() -> Result<i64> {
-    parse_cache_kib(std::env::var(CACHE_KIB_ENV).ok().as_deref())
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ConnectionPragmas {
+    cache_kib: i64,
+    synchronous: Synchronous,
 }
 
-fn pragma_batch_with(mode: ConnectionMode, cache: i64) -> String {
-    let mut batch = String::new();
-    if mode == ConnectionMode::ReadWrite {
-        // WAL first: `synchronous=NORMAL` is only crash-safe once the journal
-        // is WAL, where it costs at most the most recent commits on power loss
-        // and never risks corruption.
-        batch.push_str("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; ");
+impl ConnectionPragmas {
+    pub(crate) fn from_env() -> Result<Self> {
+        let cache_kib = read_optional_env(CACHE_KIB_ENV)?;
+        let synchronous = read_optional_env(SYNCHRONOUS_ENV)?;
+        Self::from_values(cache_kib.as_deref(), synchronous.as_deref())
     }
-    batch.push_str("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; ");
-    batch.push_str("PRAGMA temp_store=MEMORY; ");
-    batch.push_str(&format!("PRAGMA cache_size=-{cache};"));
-    batch
+
+    fn from_values(cache_kib: Option<&str>, synchronous: Option<&str>) -> Result<Self> {
+        let cache_kib = match cache_kib.map(str::trim).filter(|value| !value.is_empty()) {
+            None => DEFAULT_CACHE_KIB,
+            Some(value) => {
+                let parsed = value.parse::<i64>().with_context(|| {
+                    format!("{CACHE_KIB_ENV} must be an integer from 1 through {MAX_CACHE_KIB} KiB")
+                })?;
+                ensure!(
+                    (1..=MAX_CACHE_KIB).contains(&parsed),
+                    "{CACHE_KIB_ENV} must be between 1 and {MAX_CACHE_KIB} KiB, got {parsed}"
+                );
+                parsed
+            }
+        };
+
+        let synchronous = match synchronous.map(str::trim).filter(|value| !value.is_empty()) {
+            None => Synchronous::Full,
+            Some(value) if value.eq_ignore_ascii_case("full") => Synchronous::Full,
+            Some(value) if value.eq_ignore_ascii_case("normal") => Synchronous::Normal,
+            Some(value) => {
+                bail!("{SYNCHRONOUS_ENV} must be `full` or `normal`, got `{value}`")
+            }
+        };
+
+        Ok(Self {
+            cache_kib,
+            synchronous,
+        })
+    }
+
+    pub(crate) fn apply(self, conn: &Connection, mode: ConnectionMode) -> Result<()> {
+        if mode == ConnectionMode::ReadWrite {
+            let journal_mode: String = conn
+                .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+                .context("set SQLite journal_mode=WAL")?;
+            ensure!(
+                journal_mode.eq_ignore_ascii_case("wal"),
+                "SQLite refused journal_mode=WAL and returned `{journal_mode}`"
+            );
+        }
+
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .context("set SQLite foreign_keys=ON")?;
+        conn.busy_timeout(BUSY_TIMEOUT)
+            .context("set SQLite busy_timeout=5000")?;
+        conn.pragma_update(None, "cache_size", -self.cache_kib)
+            .with_context(|| format!("set SQLite cache_size=-{}", self.cache_kib))?;
+
+        if mode == ConnectionMode::ReadWrite {
+            conn.pragma_update(None, "synchronous", self.synchronous.pragma_value())
+                .with_context(|| {
+                    format!("set SQLite synchronous={}", self.synchronous.pragma_value())
+                })?;
+        }
+
+        // SQLCipher does not guarantee that file-backed temp storage is
+        // encrypted, so this is a security property rather than a tuning knob.
+        conn.pragma_update(None, "temp_store", "MEMORY")
+            .context("set SQLite temp_store=MEMORY")?;
+        Ok(())
+    }
 }
 
-pub(crate) fn pragma_batch(mode: ConnectionMode) -> Result<String> {
-    Ok(pragma_batch_with(mode, cache_kib()?))
-}
-
-pub(crate) fn apply_connection_pragmas(conn: &Connection, mode: ConnectionMode) -> Result<()> {
-    conn.execute_batch(&pragma_batch(mode)?)
-        .context("failed to apply connection pragmas")
+fn read_optional_env(name: &'static str) -> Result<Option<String>> {
+    match std::env::var(name) {
+        Ok(value) => Ok(Some(value)),
+        Err(VarError::NotPresent) => Ok(None),
+        Err(VarError::NotUnicode(_)) => bail!("{name} must contain valid UTF-8"),
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::ffi::OsString;
+
+    use rusqlite::{Connection, OpenFlags};
+
     use super::*;
+    use crate::db::{
+        core::{
+            open_configured_connection, open_configured_existing_read_write_connection,
+            open_configured_read_only_connection,
+        },
+        test_support::{cleanup_temp_db_files, unique_temp_db_path},
+    };
 
     #[test]
-    fn unset_cache_override_falls_back_to_default() {
-        assert_eq!(parse_cache_kib(None).unwrap(), DEFAULT_CACHE_KIB);
+    fn defaults_preserve_full_durability() {
+        let pragmas = ConnectionPragmas::from_values(None, None).expect("default pragmas");
+        assert_eq!(pragmas.cache_kib, DEFAULT_CACHE_KIB);
+        assert_eq!(pragmas.synchronous, Synchronous::Full);
     }
 
     #[test]
-    fn cache_override_is_parsed_and_trimmed() {
-        assert_eq!(parse_cache_kib(Some(" 512 ")).unwrap(), 512);
+    fn overrides_are_trimmed_and_case_insensitive() {
+        let pragmas = ConnectionPragmas::from_values(Some(" 32768 "), Some(" Normal "))
+            .expect("valid overrides");
+        assert_eq!(pragmas.cache_kib, 32_768);
+        assert_eq!(pragmas.synchronous, Synchronous::Normal);
     }
 
     #[test]
-    fn malformed_cache_override_fails_closed() {
-        assert!(parse_cache_kib(Some("not-a-number")).is_err());
-        assert!(parse_cache_kib(Some("0")).is_err());
-        assert!(parse_cache_kib(Some("-1")).is_err());
+    fn cache_override_rejects_invalid_or_unsafe_values() {
+        for value in ["words", "0", "-1", "1048577"] {
+            let error = ConnectionPragmas::from_values(Some(value), None)
+                .expect_err("invalid cache override must fail");
+            assert!(
+                error.to_string().contains(CACHE_KIB_ENV),
+                "unexpected error for {value}: {error:#}"
+            );
+        }
     }
 
     #[test]
-    fn read_only_batch_omits_write_only_pragmas() {
-        let batch = pragma_batch_with(ConnectionMode::ReadOnly, DEFAULT_CACHE_KIB);
-        assert!(!batch.contains("journal_mode"));
-        assert!(!batch.contains("synchronous"));
-        assert!(batch.contains("PRAGMA temp_store=MEMORY"));
-        assert!(batch.contains("PRAGMA cache_size=-65536"));
-        assert!(batch.contains("PRAGMA foreign_keys=ON"));
+    fn synchronous_override_is_a_closed_enum() {
+        for value in ["off", "extra", "1", "unexpected"] {
+            let error = ConnectionPragmas::from_values(None, Some(value))
+                .expect_err("invalid synchronous override must fail");
+            assert!(
+                error.to_string().contains(SYNCHRONOUS_ENV),
+                "unexpected error for {value}: {error:#}"
+            );
+        }
     }
 
     #[test]
-    fn read_write_batch_sets_wal_before_synchronous() {
-        let batch = pragma_batch_with(ConnectionMode::ReadWrite, DEFAULT_CACHE_KIB);
-        let wal = batch.find("journal_mode=WAL").expect("WAL pragma present");
-        let sync = batch
-            .find("synchronous=NORMAL")
-            .expect("synchronous pragma present");
-        assert!(wal < sync, "synchronous=NORMAL is only safe under WAL");
+    fn read_write_open_paths_apply_default_pragmas() {
+        let _lock = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("environment lock");
+        let _env = PragmaEnvGuard::clean();
+        let path = unique_temp_db_path("sqlite-pragmas-read-write");
+
+        let create = open_configured_connection(&path, None).expect("create configured database");
+        assert_default_read_write_pragmas(&create);
+        drop(create);
+
+        let existing = open_configured_existing_read_write_connection(&path, None)
+            .expect("open existing configured database");
+        assert_default_read_write_pragmas(&existing);
+        drop(existing);
+        cleanup_temp_db_files(&path);
     }
 
     #[test]
-    fn pragmas_take_effect_on_a_real_connection() {
-        let conn = Connection::open_in_memory().unwrap();
-        apply_connection_pragmas(&conn, ConnectionMode::ReadWrite).unwrap();
+    fn read_only_open_path_applies_connection_local_pragmas() {
+        let _lock = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("environment lock");
+        let _env = PragmaEnvGuard::clean();
+        let path = unique_temp_db_path("sqlite-pragmas-read-only");
 
-        let cache: i64 = conn
-            .query_row("PRAGMA cache_size", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(cache, -DEFAULT_CACHE_KIB);
+        let create = open_configured_connection(&path, None).expect("create configured database");
+        create
+            .execute_batch("CREATE TABLE marker (value INTEGER); INSERT INTO marker VALUES (1);")
+            .expect("seed database");
+        drop(create);
 
-        // 2 == MEMORY
-        let temp_store: i64 = conn
-            .query_row("PRAGMA temp_store", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(temp_store, 2);
+        let read_only =
+            open_configured_read_only_connection(&path, None).expect("open database read-only");
+        assert_eq!(pragma_i64(&read_only, "foreign_keys"), 1);
+        assert_eq!(pragma_i64(&read_only, "busy_timeout"), 5_000);
+        assert_eq!(pragma_i64(&read_only, "cache_size"), -DEFAULT_CACHE_KIB);
+        assert_eq!(pragma_i64(&read_only, "temp_store"), 2);
+        assert_eq!(
+            read_only
+                .query_row("SELECT value FROM marker", [], |row| row.get::<_, i64>(0))
+                .expect("read marker"),
+            1
+        );
+        drop(read_only);
+        cleanup_temp_db_files(&path);
+    }
 
-        let foreign_keys: i64 = conn
-            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
-            .unwrap();
-        assert_eq!(foreign_keys, 1);
+    #[test]
+    fn environment_overrides_reach_runtime_pragmas() {
+        let _lock = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("environment lock");
+        let mut env = PragmaEnvGuard::clean();
+        env.set(CACHE_KIB_ENV, "32768");
+        env.set(SYNCHRONOUS_ENV, "normal");
+        let path = unique_temp_db_path("sqlite-pragmas-env-overrides");
+        let conn = open_configured_connection(&path, None).expect("open configured database");
+
+        assert_eq!(pragma_i64(&conn, "cache_size"), -32_768);
+        assert_eq!(pragma_i64(&conn, "synchronous"), 1);
+        drop(conn);
+        cleanup_temp_db_files(&path);
+    }
+
+    #[test]
+    fn invalid_environment_fails_before_creating_database() {
+        let _lock = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("environment lock");
+        let mut env = PragmaEnvGuard::clean();
+        env.set(CACHE_KIB_ENV, "not-a-number");
+        let path = unique_temp_db_path("sqlite-pragmas-invalid-env");
+
+        let error = open_configured_connection(&path, None)
+            .expect_err("invalid environment must fail connection open");
+        assert!(format!("{error:#}").contains(CACHE_KIB_ENV), "{error:#}");
+        assert!(!path.exists(), "invalid config must not create a database");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_environment_fails_before_creating_database() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _lock = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("environment lock");
+        let _env = PragmaEnvGuard::clean();
+        unsafe {
+            std::env::set_var(CACHE_KIB_ENV, OsString::from_vec(vec![0xff]));
+        }
+        let path = unique_temp_db_path("sqlite-pragmas-non-unicode");
+
+        let error = open_configured_connection(&path, None)
+            .expect_err("non-Unicode environment must fail connection open");
+        assert!(format!("{error:#}").contains("valid UTF-8"), "{error:#}");
+        assert!(!path.exists(), "invalid config must not create a database");
+    }
+
+    #[test]
+    fn read_only_tuning_does_not_require_database_writes() {
+        let path = unique_temp_db_path("sqlite-pragmas-direct-read-only");
+        Connection::open(&path)
+            .expect("create database")
+            .execute_batch("CREATE TABLE marker (value INTEGER);")
+            .expect("create schema");
+        let conn = Connection::open_with_flags(&path, OpenFlags::SQLITE_OPEN_READ_ONLY)
+            .expect("open read-only");
+
+        ConnectionPragmas::from_values(None, None)
+            .expect("default pragmas")
+            .apply(&conn, ConnectionMode::ReadOnly)
+            .expect("apply read-only pragmas");
+        assert_eq!(pragma_i64(&conn, "cache_size"), -DEFAULT_CACHE_KIB);
+        assert_eq!(pragma_i64(&conn, "temp_store"), 2);
+        drop(conn);
+        cleanup_temp_db_files(&path);
+    }
+
+    fn assert_default_read_write_pragmas(conn: &Connection) {
+        let journal_mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .expect("read journal_mode");
+        assert_eq!(journal_mode, "wal");
+        assert_eq!(pragma_i64(conn, "foreign_keys"), 1);
+        assert_eq!(pragma_i64(conn, "busy_timeout"), 5_000);
+        assert_eq!(pragma_i64(conn, "cache_size"), -DEFAULT_CACHE_KIB);
+        assert_eq!(pragma_i64(conn, "synchronous"), 2);
+        assert_eq!(pragma_i64(conn, "temp_store"), 2);
+    }
+
+    fn pragma_i64(conn: &Connection, name: &str) -> i64 {
+        conn.pragma_query_value(None, name, |row| row.get(0))
+            .unwrap_or_else(|error| panic!("read PRAGMA {name}: {error}"))
+    }
+
+    struct PragmaEnvGuard {
+        previous: [(String, Option<OsString>); 2],
+    }
+
+    impl PragmaEnvGuard {
+        fn clean() -> Self {
+            let previous = [
+                (CACHE_KIB_ENV.to_string(), std::env::var_os(CACHE_KIB_ENV)),
+                (
+                    SYNCHRONOUS_ENV.to_string(),
+                    std::env::var_os(SYNCHRONOUS_ENV),
+                ),
+            ];
+            unsafe {
+                std::env::remove_var(CACHE_KIB_ENV);
+                std::env::remove_var(SYNCHRONOUS_ENV);
+            }
+            Self { previous }
+        }
+
+        fn set(&mut self, name: &str, value: &str) {
+            unsafe {
+                std::env::set_var(name, value);
+            }
+        }
+    }
+
+    impl Drop for PragmaEnvGuard {
+        fn drop(&mut self) {
+            for (name, value) in &self.previous {
+                unsafe {
+                    match value {
+                        Some(value) => std::env::set_var(name, value),
+                        None => std::env::remove_var(name),
+                    }
+                }
+            }
+        }
     }
 }

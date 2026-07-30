@@ -5,17 +5,16 @@
 ### Added
 - Staged source version `0.6.36` for GH-949: every database connection now
   applies tuned SQLite pragmas from one place. `cache_size=-65536` (64 MiB),
-  `synchronous=NORMAL`, and `temp_store=MEMORY` join the existing WAL,
+  `synchronous=FULL`, and `temp_store=MEMORY` join the existing WAL,
   foreign-key, and busy-timeout settings; SQLCipher disables mmap, so page
   residency matters far more here than on a plaintext store, and every cache
-  miss otherwise costs a `pread` plus an AES decrypt. `synchronous=NORMAL` is
-  emitted strictly after `journal_mode=WAL`, where it can cost at most the most
-  recent commits on power loss and never risks corruption; a test asserts that
-  ordering. Read-only connections take a narrower set that omits the two
-  write-only pragmas. `REMEM_SQLITE_CACHE_KIB` overrides the cache size and
-  fails the open on a malformed value rather than silently reverting to the
-  default. The three `open_configured_*` helpers no longer carry three separate
-  copies of the pragma string.
+  miss otherwise costs a `pread` plus an AES decrypt. `FULL` preserves the
+  prior power-loss durability by default; `REMEM_SQLITE_SYNCHRONOUS=normal`
+  makes the WAL latency/durability tradeoff explicit. Read-only connections
+  take a narrower set that omits write-only pragmas. Both tuning overrides
+  fail before opening the database on invalid or non-Unicode values.
+  `REMEM_SQLITE_CACHE_KIB` accepts 1 through 1048576 KiB. The three
+  `open_configured_*` helpers no longer carry separate pragma strings.
 - Staged source version `0.6.35` for the GH-934 post-merge corrective:
   Retrieval Router plans now preserve the caller's `include_superseded`
   temporal scope across explicit, keyword-fallback, and default-fallback

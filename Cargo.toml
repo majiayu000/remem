@@ -10,6 +10,7 @@ readme = "README.md"
 keywords = ["claude-code", "codex", "memory", "mcp", "agent-memory"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = [
+  ".remem/",
   "eval/locomo/locomo10.json",
   "eval/locomo/results/",
   "eval/local/results/",
