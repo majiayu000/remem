@@ -616,7 +616,7 @@ fn auto_migrate_recovers_archived_transient_rows_when_retry_is_due() {
     assert_eq!(
         count_recoverable_archived_legacy_pending(&conn)
             .expect("recoverable archived count should query"),
-        2
+        1
     );
     let outcome = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
         .expect("auto migration should succeed");
@@ -654,16 +654,24 @@ fn auto_migrate_recovers_archived_transient_rows_when_retry_is_due() {
     assert_eq!(
         count_recoverable_archived_legacy_pending(&conn)
             .expect("remaining archived count should query"),
-        1
+        0
     );
     conn.execute(
         "UPDATE pending_observations SET next_retry_epoch = ?2 WHERE id = ?1",
         params![future_id, now - 1],
     )
     .expect("future retry should become due");
-    let second = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
-        .expect("due archived retry should migrate");
-    assert_eq!(second.migrated, 1);
+    let yielded = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("ready extraction work should defer another legacy replay");
+    assert_eq!(yielded.migrated, 0);
+    conn.execute(
+        "UPDATE extraction_tasks SET status = 'done' WHERE status = 'pending'",
+        [],
+    )
+    .expect("current extraction work should drain");
+    let resumed = super::auto_migrate_actionable_legacy_pending(&mut conn, 10)
+        .expect("due archived retry should migrate after current work drains");
+    assert_eq!(resumed.migrated, 1);
     assert_eq!(
         count_recoverable_archived_legacy_pending(&conn)
             .expect("recoverable archived count should clear"),

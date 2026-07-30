@@ -531,6 +531,39 @@ mod tests {
     }
 
     #[test]
+    fn capture_liveness_does_not_prescribe_immediate_recovery_during_backoff() -> anyhow::Result<()>
+    {
+        let conn = setup_liveness_conn()?;
+        let id = crate::db::test_support::insert_legacy_pending_fixture(
+            &conn,
+            "codex-cli",
+            "sess-archived-backoff",
+            "/tmp/remem",
+            "Bash",
+            Some("{}"),
+            Some("{}"),
+            Some("/tmp/remem"),
+        )?;
+        let now = chrono::Utc::now().timestamp();
+        conn.execute(
+            "UPDATE pending_observations
+             SET status = 'failed',
+                 failure_class = 'transient',
+                 failed_at_epoch = ?1,
+                 archived_at_epoch = ?2,
+                 next_retry_epoch = ?3
+             WHERE id = ?4",
+            params![now - 20 * 86_400, now - 86_400, now + 900, id],
+        )?;
+
+        let check = check_capture_liveness(Some(&conn), &[]);
+
+        assert!(!check.detail.contains("failed-observation backlog"));
+        assert!(!check.detail.contains("`remem worker --once`"));
+        Ok(())
+    }
+
+    #[test]
     fn capture_liveness_fails_on_admin_required_archived_observation() -> anyhow::Result<()> {
         let conn = setup_liveness_conn()?;
         let unsafe_host = format!("unknown;\n{}", "h".repeat(120));
