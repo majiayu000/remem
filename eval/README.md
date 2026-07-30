@@ -149,19 +149,38 @@ for the embedding providers:
 
 ```bash
 REMEM_DATA_DIR=eval/provider-comparison/reference-data \
-  remem eval-provider-comparison --json-out eval/provider-comparison/report.json
+  cargo run --release --locked -- embedding download --model multilingual-e5-small
+REMEM_DATA_DIR=eval/provider-comparison/reference-data \
+  cargo run --release --locked -- eval-provider-comparison \
+    --json-out eval/provider-comparison/report.json
 ```
 
 The report forces `feature-hash`, `local`, and `api` rows without fallback so
 one provider cannot pass by silently using another provider's vector space. API
 embedding calls are disabled by default; pass `--allow-api` only for an
 intentional remote-provider run. Missing local model files or skipped API calls
-produce unavailable rows, not degraded passes.
+produce unavailable rows, not degraded passes. Model weights under
+`eval/provider-comparison/reference-data/` are ignored by Git; only the
+generated report is committed. Available local rows include a stable model
+artifact SHA-256 derived from the verified file inventory and upstream
+metadata. The report also records its build profile, target OS, and target
+architecture so release-mode latency evidence remains auditable.
+Configured model-directory paths are redacted from committed reports.
 
-The checked-in GH-716 report keeps the default provider unchanged. It records
-feature-hash as the runnable baseline, local semantic as blocked by a missing
-verified model manifest in the reference data dir, and API as blocked because
-the committed reference run does not call remote embeddings.
+The checked-in GH-716/#946 report keeps automatic download and an
+unconditional fresh-install default change disabled because the committed
+reference run does not call the remote API. The verified local row nevertheless
+provides the conditional-activation evidence: at the default `k=5`,
+paraphrase evidence recall is 1.00 versus feature-hash 0.00,
+provider-comparison evidence recall is
+0.75 versus 0.00, warm local query-embedding p95 is 12 ms, and provider
+verification plus the first profile probe is 5431 ms. The cold measurement
+exceeds the 1000 ms default-flip budget, while the run uses the default `k=5`,
+preserves abstention at 10/10 for both providers, and keeps every existing
+slice within its regression budget. After a user explicitly downloads that
+verified default model, `Auto` can therefore select it before feature-hash
+without introducing first-use network activity; the report does not hide the
+one-shot initialization cost behind warm samples.
 
 ## Capacity Eval
 

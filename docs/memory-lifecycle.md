@@ -35,6 +35,40 @@ Default TTLs:
 - product, architecture, verified bugfix, lesson, procedure, and user
   preference memories: no TTL unless explicitly superseded
 
+## Automatic Maintenance
+
+The worker probes SQLite for one database-global cleanup job. The durable
+24-hour cooldown is measured from the latest completed automatic attempt;
+process-local timers only reduce probe traffic. Cleanup has a dedicated claim
+path ahead of extraction so a persistent extraction backlog cannot starve the
+daily lifecycle convergence.
+
+A real cleanup builds its plan and applies it in one immediate transaction.
+The memory/workstream/event/observation effects, successful maintenance-run
+record, and automatic job completion commit together. Any failure rolls back
+all effects before a bounded failure record is appended and the job follows
+normal retry handling.
+
+Automatic hard deletion is fail-closed:
+
+- only old legacy `events` rows explicitly classified `ephemeral` are eligible;
+  governance/audit rows and any API-referenced event remain;
+- a compressed source observation requires an old matching link, an active
+  replacement, a complete supported snapshot/hash, and no remaining fact
+  reference. New `observation-v2` links preserve all canonical content and
+  provenance fields, revalidated from before the AI call through the atomic
+  write. Mutable `status`/`last_accessed_epoch` and noncanonical joined
+  `content_session_id` are not hashed; status is checked independently. An
+  exact legacy v1 link is upgraded to v2 inside the deletion transaction when
+  current canonical provenance was omitted; malformed/mismatched links and
+  schemas with unknown observation columns are retained; and
+- archived failures are never selected automatically. Their purge requires an
+  explicit positive `remem cleanup --archived-failures[=DAYS]` horizon.
+
+`remem doctor` reads the append-only automatic-run ledger rather than job
+claim/retry timestamps. A newer failure is visible even when an older success
+exists, and a later success restores healthy status without erasing history.
+
 Candidate review state is separate from memory state:
 
 | Candidate state | Meaning |

@@ -181,6 +181,74 @@ Required behavior:
 - Source-anchor loading records a distinct `load_staleness_labels` phase in
   context render statistics and debug output.
 
+## Automatic Lifecycle Maintenance Contract
+
+The cleanup planner and applier are shared runtime code, not CLI-owned logic.
+Dry-run planning remains read-only. A real run builds its plan and applies
+every selected retention mutation in one immediate SQLite transaction, then
+commits only after all steps succeed. Transaction-aware count/apply functions
+remain the source of truth for expiration, workstream inactivity, old events,
+provenance-qualified compressed sources, stale-memory archiving, and the
+operator-only archived-failure purge.
+
+Hard-delete eligibility is fail-closed:
+
+- legacy `events` rows have an explicit `ephemeral` or `audit` retention class;
+  cleanup selects only expired `ephemeral` rows, while referenced API mutation
+  audits are protected independently at the schema boundary;
+- a compressed source requires an old matching link to an active replacement,
+  an unchanged supported source snapshot/hash and no fact that still points at
+  the source. New links use `observation-v2`, which covers every canonical
+  observation content/provenance column. Mutable lifecycle/access metadata
+  (`status`, `last_accessed_epoch`) is excluded from the hash; status is checked
+  independently, while access updates may continue during compression.
+  `content_session_id` is joined runtime context rather than canonical
+  observation provenance. The producer captures the record before the AI call
+  and revalidates the same record in the write savepoint. Legacy
+  `observation-v1` links remain eligible when their original core hash and
+  snapshot still match. If v1 omitted current provenance, apply first upgrades
+  that exact link to a canonical v2 snapshot in the same transaction, then
+  deletes the source; malformed or mismatched legacy links remain retained.
+  Any unknown future observation column blocks snapshot production and cleanup;
+  and
+- deletion eligibility is revalidated in the same immediate transaction, with
+  bounded statements that do not exceed SQLite's parameter limit. Migration
+  v074 adds status/time cleanup indexes so the daily pass does not begin with
+  unindexed full-table predicates.
+
+`JobType::Cleanup` is a global, non-AI job. Its scheduling contract is:
+
+- one fixed global job identity, coalesced while pending or processing;
+- one due cleanup claim may preempt the ordinary queue for its atomic pass;
+  extraction and ordinary background work resume immediately afterward;
+- a 24-hour cooldown measured from the latest completed automatic cleanup
+  attempt, whether successful or failed;
+- recent failed or in-flight work suppresses duplicate scheduling while normal
+  retry and failure-lifecycle handling remains active;
+- a dedicated cleanup-only claim before extraction prevents an old cleanup job
+  from starving, while the ordinary job claim excludes cleanup so the
+  non-cancellable SQLite work never enters the generic async timeout path; and
+- a schema migration accompanies the new persisted job vocabulary so an older
+  binary fails closed on the newer schema instead of repeatedly claiming an
+  unknown job type.
+
+The worker probes for due cleanup before its normal job claim. Both daemon and
+`worker --once` paths use the same SQLite decision, so process-local clocks only
+throttle probes and are not the cooldown authority. Cleanup effects, its
+successful run record, and the job's `done` transition commit in the same
+immediate transaction. A crash before commit leaves all three absent and the
+lease retryable; there is no committed-effects/uncommitted-job window.
+
+The automatic job always calls the default applier through a policy type that
+cannot enable archived-failure purge. Only a positive retention horizon from
+the explicit CLI flag may select that operator action. An append-only
+maintenance-run ledger records the trigger, policy version, bounded counts,
+timestamps, and a bounded safe failure message. Successful ledger insertion is
+part of the effects transaction; failure is recorded only after rollback.
+Doctor reads automatic runs and the active job through the shared read-only
+connection, reports never-run, in-flight, latest success, latest failure, and
+overdue state, and never infers outcomes from claim/retry timestamps.
+
 ## Observability Contract
 
 The current observability data exists across doctor, CLI status, REST status,
@@ -217,7 +285,8 @@ The structured observability payload should include:
   - verify-before-trust;
   - error;
   - fresh/aging/old age buckets;
-- queues and worker state;
+- queues, worker state, and automatic cleanup state, including last success and
+  latest failed attempt;
 - warnings with stable codes and suggested actions.
 
 `doctor --json` exposes this contract through a root `observability` object.
@@ -313,6 +382,14 @@ Required gates for implementation slices:
 
 ```bash
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
+```
+
+### Automatic lifecycle maintenance changes
+
+```bash
+cargo test --locked --lib maintenance
+cargo test --locked --lib worker::cleanup_tests
+cargo test --locked --lib doctor::cleanup
 ```
 
 ### Search, temporal, current-state, or staleness changes

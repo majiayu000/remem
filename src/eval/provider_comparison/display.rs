@@ -19,11 +19,12 @@ impl Display for ProviderComparisonReport {
                 let evidence = slice_metrics.map_or(0.0, |metrics| metrics.evidence_recall_at_k);
                 writeln!(
                     f,
-                    "- {} available model={} evidence@{}={:.3} query_embed_p95_ms={:.2}",
+                    "- {} available model={} evidence@{}={:.3} cold_start_embed_ms={:.2} warm_query_embed_p95_ms={:.2}",
                     row.provider,
                     row.model_id.as_deref().unwrap_or("unknown"),
                     self.k,
                     evidence,
+                    row.cold_start_embedding_latency_ms.unwrap_or_default(),
                     row.query_embedding_latency_p95_ms.unwrap_or_default()
                 )?;
             } else {

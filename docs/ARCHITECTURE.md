@@ -26,8 +26,8 @@
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │
 │                      │  │  5. compile preference rules        │
-│  save_memory         │  │                                    │
-│  workstreams         │  │  Timeout: 180s global limit        │
+│  save_memory         │  │  6. daily lifecycle cleanup         │
+│  workstreams         │  │                                    │
 │  update_workstream   │  │                                    │
 └──────────┬───────────┘  └─────────────┬────────────────────┘
            │                            │
@@ -195,7 +195,8 @@ Stop hook fires
        └─ Ensure a current background worker is available
        │
        ▼
-  worker claims extraction_tasks before background jobs
+  worker claims due lifecycle cleanup first, then extraction_tasks before
+  ordinary background jobs
        │
        ├─ SessionRollup
        │    ├─ Load the captured_events range
@@ -661,28 +662,40 @@ remem cleanup --dry-run --json --archived-failures
 remem cleanup                     # Apply cleanup
 ```
 
+The worker also probes for one database-global automatic cleanup. SQLite owns
+the active identity and 24-hour completed-attempt cooldown, so daemon restarts
+and repeated `worker --once` processes do not duplicate the run. A dedicated
+cleanup claim prevents extraction backlog starvation. Cleanup effects, the
+successful `maintenance_runs` ledger row, and the job's `done` transition
+commit in one immediate transaction; failures roll back before a bounded
+failure row is recorded.
+
 Cleans:
 - Expired active memories: mark `stale`; keep provenance rows
 - Inactive workstreams: pause after 14 days, abandon after 30 days paused
-- Events: delete rows older than 30 days
+- Events: delete rows older than 30 days only when explicitly classified
+  `ephemeral`; preserve audit rows and every API-referenced event
 - Compressed source observations: delete `status='compressed'` source rows
   90 days after the compression link was created, only if
-  `compressed_observation_sources` preserves source hash and snapshot evidence
+  `compressed_observation_sources` preserves complete source hash/snapshot
+  evidence, an active replacement remains, and no fact references the source
 - Stale memories: archive rows older than 180 days
 - Archived failures: deleted only when `--archived-failures[=DAYS]` is supplied;
-  the default explicit horizon is 90 days, and archive/purge totals are rolled
-  into `failure_lifecycle_daily`
+  the explicit horizon must be positive, defaults to 90 days when the flag has
+  no value, and archive/purge totals are rolled into
+  `failure_lifecycle_daily`. Automatic cleanup cannot select this operation.
 
 Retention matrix:
 
 | Data | Retention | Cleanup behavior | Provenance requirement |
 |---|---:|---|---|
-| `events` | 30 days | Hard delete | None; these are low-level captured events |
+| `events` with `retention_class='ephemeral'` | 30 days | Hard delete | Governance/audit and API-referenced rows are retained |
+| `events` with `retention_class='audit'` | Indefinite | No retention delete | Governance provenance remains restorable |
 | active memories with `expires_at_epoch` | Until expiry | Mark `stale` | Row remains auditable |
 | stale memories | 180 days | Mark `archived` | Row remains auditable |
 | workstreams | 14/30 days inactivity | Pause/abandon | Row remains auditable |
 | compressed replacement observations | Indefinite | Retained | Preserve retrieval and source-summary context |
-| compressed source observations | 90 days after compression link | Hard delete only when eligible | Required `compressed_observation_sources` hash + snapshot + live compressed row |
+| compressed source observations | 90 days after compression link | Hard delete only when eligible | Matching canonical `observation-v2` hash/snapshot revalidated across the AI window (or an exact legacy v1 link upgraded transactionally to v2), independently checked status, known schema, active replacement, and no fact reference |
 | failed queue rows | 14 days | Mark permanent/exhausted current-pipeline rows archived; legacy `pending_observations` transient rows stay visible for drain/admin recovery, a known-host archived historical transient may enter the bounded drain, and an archived permanent/unknown-host row requires exact `recover-archived` | Archive/failure state stays intact until one atomic migration succeeds |
 | archived failures | 90 days by explicit flag | Hard delete only with `--archived-failures[=DAYS]` | Aggregate history preserved in `failure_lifecycle_daily` |
 | raw archive, session summaries, candidates, edges | Indefinite by default | No cleanup in this command | Retained for audit/eval unless future policy says otherwise |

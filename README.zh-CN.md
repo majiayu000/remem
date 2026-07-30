@@ -528,6 +528,13 @@ remem mcp
 remem sync-memory --cwd .
 ```
 
+worker 会在每个已完成 cleanup 尝试后的 24 小时窗口内，最多调度一个数据库
+全局生命周期清理。它先把 TTL 已到期的 memory 收敛为 `stale`，再原子执行与
+`remem cleanup` 相同的安全 retention policy；审计事件和仍在使用的 provenance
+不会被删除。自动 cleanup 永远不能 purge archived failures，这个硬删除边界仍
+必须由操作者显式传入正数 `--archived-failures[=DAYS]`。`remem doctor` 会分别
+报告最近一次自动成功和失败。
+
 ### 旧 pending 队列恢复
 
 当前采集路径不再写入或 claim 已退役的 `pending_observations` 队列。当前
@@ -584,6 +591,40 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 - REST API 仅绑定本机（`127.0.0.1`），并要求
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token 文件权限（`0600`）
+
+### 明文残留诊断
+
+`remem doctor` 的 `Plaintext residue` 检查会按内容检查
+`REMEM_DATA_DIR` 根层的每个普通文件，包括名称任意或没有扩展名的自定义
+备份输出；当 `REMEM_DATA_DIR/backups/` 是真实目录而不是符号链接时，还会
+递归检查其中真实目录下的普通文件，且不会跟随符号链接。该检查只读，绝不会删除数据。发现明文副本时，
+如果当前数据库已确认为加密库，该项会报告 `Fail`，且 `remem doctor`
+以退出码 2 结束；如果当前数据库是明文库，或无法确认其加密状态，该项报告
+`Warn`。因 I/O 错误而无法检查的目录项或候选文件会被明确报告，并阻止该项
+报告 `Ok`。
+
+请根据检查状态选择处置路径：
+
+- `Fail` 表示 doctor 已确认当前数据库已加密，同时存在明文副本。先运行
+  `remem status` 确认当前数据库可以打开，再运行 `remem admin backup` 创建
+  一份新的加密备份；完成后才能人工删除列出的明文副本，或仅将其保留在
+  加密存储中。
+- 如果当前数据库是明文库而报告 `Warn`，先检查
+  `REMEM_DATA_DIR/remem.db.bak` 或 `REMEM_DATA_DIR/remem.db.enc` 是否会阻塞
+  加密。若存在其中任一文件，先确认 `REMEM_DATA_DIR/backups/` 是真实目录而
+  不是符号链接，再为每个文件选择未被占用的目标名称，并在不覆盖任何文件的
+  前提下将阻塞文件移入该目录。然后运行 `remem encrypt`，并反复运行
+  `remem status`，确认当前数据库可以打开。再运行 `remem doctor`，确认
+  Plaintext residue 的详情显示当前数据库已加密且可读；只要保留的明文副本
+  仍在，该检查预期会继续报告 `Fail`。随后运行 `remem admin backup` 创建
+  新的加密备份，再人工删除旧的明文副本或仅将其保留在加密存储中，最后
+  反复运行 `remem doctor`，直到 Plaintext residue 通过。
+- 如果因当前数据库缺失或无法验证、密钥问题或 I/O 错误而报告 `Warn`，不要
+  备份或删除任何文件。先修复当前数据库、密钥或可读性问题；只有在
+  `remem status` 成功且 `remem doctor` 确认加密后，才能继续备份和处置。
+
+仅将副本移出 `REMEM_DATA_DIR` 只能让它不再被此项扫描，并不能保护其中的
+数据。Remem 不承诺人工删除文件后可实现安全擦除。
 
 ## 架构文档
 

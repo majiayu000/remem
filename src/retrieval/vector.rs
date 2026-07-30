@@ -1,10 +1,10 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Statement};
-use std::time::Instant;
 
 use super::embedding::TextEmbedding;
 pub use super::vector_candidates::VECTOR_SEARCH_CANDIDATE_LIMIT;
 
+mod backfill;
 mod coverage;
 mod reindex;
 
@@ -12,13 +12,18 @@ pub use super::embedding::{
     LOCAL_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS,
     LOCAL_EMBEDDING_MODEL as DEFAULT_EMBEDDING_MODEL,
 };
+pub use backfill::{
+    backfill_missing_memory_embeddings, pending_memory_embedding_count,
+    pending_memory_embedding_reindex_count, pending_memory_embedding_reindex_count_for_target,
+    reindex_memory_embeddings, reindex_memory_embeddings_with_report, EmbeddingReindexReport,
+};
+pub(crate) use backfill::{
+    reindex_memory_embeddings_with_session_report, EmbeddingBackfillSession,
+};
 pub use coverage::{
     active_embedding_coverage, active_embedding_coverage_for_status,
-    prune_inactive_memory_embeddings, ActiveEmbeddingCoverage, InactiveEmbeddingPruneReport,
-};
-use reindex::{
-    prepare_memory_embedding_batch, select_memory_embedding_reindex_candidates,
-    PreparedMemoryEmbedding,
+    active_embedding_coverage_for_target, prune_inactive_memory_embeddings,
+    ActiveEmbeddingCoverage, InactiveEmbeddingPruneReport,
 };
 
 const EMBEDDING_REINDEX_WRITE_BATCH_SIZE: usize = 512;
@@ -222,159 +227,6 @@ pub fn upsert_memory_embedding_for_row(conn: &Connection, memory_id: i64) -> Res
     )
 }
 
-pub fn backfill_missing_memory_embeddings(conn: &Connection, limit: i64) -> Result<usize> {
-    reindex_memory_embeddings(conn, limit)
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct EmbeddingReindexReport {
-    pub selected: usize,
-    pub processed: usize,
-    pub model: String,
-    pub dimensions: usize,
-    pub timings: Vec<crate::perf::PhaseTiming>,
-}
-
-pub fn reindex_memory_embeddings(conn: &Connection, limit: i64) -> Result<usize> {
-    let mut remaining_limit = limit.max(0);
-    let mut processed = 0usize;
-    while remaining_limit > 0 {
-        let batch_limit = remaining_limit.min(EMBEDDING_REINDEX_WRITE_BATCH_SIZE as i64);
-        let report = reindex_memory_embeddings_with_report(conn, batch_limit)?;
-        if report.processed == 0 {
-            break;
-        }
-        processed += report.processed;
-        remaining_limit -= report.processed as i64;
-        if report.processed < batch_limit as usize {
-            break;
-        }
-    }
-    Ok(processed)
-}
-
-pub fn reindex_memory_embeddings_with_report(
-    conn: &Connection,
-    limit: i64,
-) -> Result<EmbeddingReindexReport> {
-    let total_start = Instant::now();
-    let mut timings = vec![];
-    if super::embedding::provider_disabled_or_error()? {
-        crate::perf::push_elapsed(&mut timings, "total", total_start);
-        return Ok(EmbeddingReindexReport {
-            selected: 0,
-            processed: 0,
-            model: "off".to_string(),
-            dimensions: 0,
-            timings,
-        });
-    }
-    if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
-        crate::perf::push_elapsed(&mut timings, "total", total_start);
-        return Ok(EmbeddingReindexReport {
-            selected: 0,
-            processed: 0,
-            model: String::new(),
-            dimensions: 0,
-            timings,
-        });
-    }
-    let limit = limit.max(0);
-    if limit == 0 {
-        crate::perf::push_elapsed(&mut timings, "total", total_start);
-        return Ok(EmbeddingReindexReport {
-            selected: 0,
-            processed: 0,
-            model: String::new(),
-            dimensions: 0,
-            timings,
-        });
-    }
-
-    let profile_start = Instant::now();
-    let mut fallback_cache = super::embedding::EmbeddingFallbackCache::default();
-    let mut target =
-        match super::embedding::configured_backfill_target_with_fallback_cache(&mut fallback_cache)
-        {
-            Ok(target) => target,
-            Err(error) if super::embedding::is_embedding_provider_off_error(&error) => {
-                crate::perf::push_elapsed(&mut timings, "total", total_start);
-                return Ok(EmbeddingReindexReport {
-                    selected: 0,
-                    processed: 0,
-                    model: "off".to_string(),
-                    dimensions: 0,
-                    timings,
-                });
-            }
-            Err(error) => return Err(error),
-        };
-    crate::perf::push_elapsed(&mut timings, "profile_probe", profile_start);
-
-    let select_start = Instant::now();
-    let mut pending = select_memory_embedding_reindex_candidates(conn, &target, limit)?;
-    crate::perf::push_elapsed(&mut timings, "select_pending", select_start);
-
-    let mut selected = pending.len();
-    if pending.is_empty() {
-        crate::perf::push_elapsed(&mut timings, "total", total_start);
-        return Ok(EmbeddingReindexReport {
-            selected,
-            processed: 0,
-            model: target.model,
-            dimensions: target.dimensions,
-            timings,
-        });
-    }
-
-    let mut prepared = prepare_memory_embedding_batch(&pending, &mut timings, &mut fallback_cache)?;
-    if let Some(fallback_target) = fallback_cache.call_failure_fallback_target() {
-        if fallback_target != target {
-            target = fallback_target;
-            let fallback_select_start = Instant::now();
-            pending = select_memory_embedding_reindex_candidates(conn, &target, limit)?;
-            crate::perf::push_elapsed(
-                &mut timings,
-                "select_pending_after_fallback",
-                fallback_select_start,
-            );
-            selected = pending.len();
-            if pending.is_empty() {
-                crate::perf::push_elapsed(&mut timings, "total", total_start);
-                return Ok(EmbeddingReindexReport {
-                    selected,
-                    processed: 0,
-                    model: target.model,
-                    dimensions: target.dimensions,
-                    timings,
-                });
-            }
-            prepared = prepare_memory_embedding_batch(&pending, &mut timings, &mut fallback_cache)?;
-        }
-    }
-
-    let processed = upsert_prepared_memory_embedding_batch(conn, &prepared, &mut timings)?;
-    crate::perf::push_elapsed(&mut timings, "total", total_start);
-    Ok(EmbeddingReindexReport {
-        selected,
-        processed,
-        model: target.model,
-        dimensions: target.dimensions,
-        timings,
-    })
-}
-
-pub fn pending_memory_embedding_count(conn: &Connection) -> Result<i64> {
-    if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
-        return Ok(0);
-    }
-    count_pending_memory_embedding_reindex(conn)
-}
-
-pub fn pending_memory_embedding_reindex_count(conn: &Connection) -> Result<i64> {
-    count_pending_memory_embedding_reindex(conn)
-}
-
 pub fn embedding_count(conn: &Connection) -> Result<i64> {
     if !table_exists(conn, "memory_embeddings")? {
         return Ok(0);
@@ -384,94 +236,6 @@ pub fn embedding_count(conn: &Connection) -> Result<i64> {
             row.get(0)
         })?,
     )
-}
-
-fn upsert_prepared_memory_embedding_batch(
-    conn: &Connection,
-    prepared: &[PreparedMemoryEmbedding],
-    timings: &mut Vec<crate::perf::PhaseTiming>,
-) -> Result<usize> {
-    if prepared.is_empty() {
-        return Ok(0);
-    }
-    let prepared_count = prepared.len();
-
-    conn.execute_batch("SAVEPOINT remem_embedding_reindex_batch")
-        .context("start memory embedding reindex savepoint")?;
-    let result = (|| -> Result<()> {
-        let upsert_start = Instant::now();
-        {
-            let mut stmt = conn.prepare(UPSERT_EMBEDDING_SQL)?;
-            for embedding in prepared {
-                execute_embedding_upsert(
-                    &mut stmt,
-                    embedding.memory_id,
-                    &embedding.model,
-                    &embedding.content_hash,
-                    &embedding.values,
-                    embedding.updated_at_epoch,
-                )
-                .with_context(|| {
-                    format!(
-                        "memory embedding upsert failed for memory id={}",
-                        embedding.memory_id
-                    )
-                })?;
-            }
-        }
-        crate::perf::push_elapsed(timings, "upsert_embeddings", upsert_start);
-        Ok(())
-    })();
-
-    match result {
-        Ok(()) => {
-            let commit_start = Instant::now();
-            conn.execute_batch("RELEASE SAVEPOINT remem_embedding_reindex_batch")
-                .context("release memory embedding reindex savepoint")?;
-            crate::perf::push_elapsed(timings, "commit", commit_start);
-            Ok(prepared_count)
-        }
-        Err(error) => {
-            let rollback_result = conn.execute_batch(
-                "ROLLBACK TO SAVEPOINT remem_embedding_reindex_batch;
-                 RELEASE SAVEPOINT remem_embedding_reindex_batch",
-            );
-            match rollback_result {
-                Ok(()) => Err(error),
-                Err(rollback_error) => Err(error).context(format!(
-                    "memory embedding reindex failed and rollback failed: {rollback_error}"
-                )),
-            }
-        }
-    }
-}
-
-fn count_pending_memory_embedding_reindex(conn: &Connection) -> Result<i64> {
-    if super::embedding::provider_disabled_or_error()? {
-        return Ok(0);
-    }
-    if !table_exists(conn, "memories")? || !table_exists(conn, "memory_embeddings")? {
-        return Ok(0);
-    }
-    let target = match super::embedding::configured_backfill_target() {
-        Ok(target) => target,
-        Err(error) if super::embedding::is_embedding_provider_off_error(&error) => return Ok(0),
-        Err(error) => return Err(error),
-    };
-    let sql = "SELECT COUNT(*)
-               FROM memories m
-               LEFT JOIN memory_embeddings e
-                 ON e.memory_id = m.id
-                AND e.model = ?1
-                AND e.dimensions = ?2
-               WHERE (e.memory_id IS NULL
-                      OR e.updated_at_epoch < m.updated_at_epoch)
-                 AND m.status IN ('active', 'stale', 'archived')";
-    Ok(conn.query_row(
-        sql,
-        params![target.model.as_str(), target.dimensions as i64],
-        |row| row.get(0),
-    )?)
 }
 
 pub fn embed_query_text(query: &str) -> Vec<f32> {

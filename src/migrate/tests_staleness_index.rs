@@ -80,8 +80,11 @@ fn commit_files(conn: &Connection, commit_id: i64) -> Result<Vec<String>> {
 }
 
 #[test]
-fn v074_is_registered_as_latest() {
-    assert_eq!(super::latest_schema_version(), V074);
+fn v074_remains_registered_after_later_schema_versions() {
+    assert!(
+        super::latest_schema_version() >= V074,
+        "v074 must not be dropped by a later schema version"
+    );
     assert_eq!(
         MIGRATIONS
             .iter()
