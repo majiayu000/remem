@@ -21,12 +21,12 @@ CI 与显式人工 merge 授权推进。
 | --- | --- | --- |
 | Public API | Cargo package 名为 `remem-ai`，但 `[lib] name = "remem"`；真实 Rust path 是 `remem::truth` | README、docs、changelog 与 compile-able integration test 必须使用真实 path |
 | v1 DTO | `TRUTH_PROJECTION_VERSION = 1`，裸 `subject_key`，effective “now” 不进入输出 | v2 必须提供 typed identity、可审计的 `reference_epoch` 与 replayability |
-| Adapter | 读取 memories、captured events、memory/graph edges、user claims；不读取 observation evidence catalog 或 policy suppression | 补齐 issue 明确要求的 observation adapter 与 suppression policy |
+| Adapter | 多段读取 memories/evidence/edges/user claims，无统一 snapshot；不读 Observation/policy | 补齐 Observation/suppression，并把全 projection 固定在一个 read snapshot |
 | Trust | 任意 tool event 会被标为 Verified，resolver 对 evidence 取 max | external tool output 可被提权；v2 必须复用 canonical source classification 与 cap |
 | Observation status | writer 可写 `poisoning_quarantined`，lifecycle mapper 尚未列出 | quarantined prompt-injection 内容必须被显式 suppress，不能进入 catalog/truth |
-| Temporal history | user claim edit 生成版本链；suppress/unsuppress/delete 原地 mutation | edit 可按 transition 重建；原地 mutation 只能保守排除/Unknown |
+| Temporal history | capture replay 覆盖时间；Observation/user mutation 缺完整 history | replay 时间必须 immutable；不可重建的历史 lifecycle 显式失败 |
 | Relations | loader 全扫 edge table 后在 Rust 过滤；canonical heterogeneous pairwise conflict 使用 fallback operation metadata | relation lookup 必须 bounded；合法 heterogeneous operation 不得误报损坏 |
-| Suppression | `memory_suppressions` 有 owner pair 和 active/revoked 时间字段；production filter 忽略 owner | truth adapter 必须定义 owner-safe、可历史重放的 visibility 语义 |
+| Suppression | suppression row 有时间，`memory_entities` link 没有 | owner-safe intervals；entity current-only，历史 link 不可证明即失败 |
 | Tests | `src/truth/tests.rs` 已有 679 行 | 加测试前先拆为 `src/truth/tests/**`，任何单文件保持少于 800 行 |
 | Distribution | v1 已公开；v2 会改变合法输入的 public DTO/selector/output | v2 使用 0.7.0 或实现时下一个 breaking SemVer boundary，不能作为 0.6.x patch |
 
@@ -191,11 +191,10 @@ exact-owner memory 不改变 wrapper result/error domain。exact-owner memories
 `remem::truth` re-export，adapter loaders 改为 crate-private，避免调用方绕过
 shared epoch、scope、suppression 与 catalog。
 
-`as_of_epoch=Some(t)` 时 `requested_as_of_epoch=Some(t)` 且
-`reference_epoch=t`、`replayability=exact`。`None` 时入口只取一次 wall-clock
-epoch；若输出依赖无 durable proof 的 current binding，则
-`replayability=current_snapshot_only`，该 epoch 仅可审计、不能作为 replay
-key；否则为 `exact`。整个 adapter/resolver 使用同一值。
+`as_of_epoch=Some(t)` 使用 `t/exact`；`None` 只取一次 wall-clock，no-proof
+binding 或 unversioned entity link 使其 `current_snapshot_only`。所有 stage 共享
+该 epoch 与一个 SQLite snapshot：autocommit 入口拥有 deferred BEGIN 和 terminal
+COMMIT/ROLLBACK；caller transaction 被复用且不由 projection commit。
 
 输出排序固定为：
 
@@ -209,7 +208,7 @@ key；否则为 `exact`。整个 adapter/resolver 使用同一值。
 
 | Kind | scope | lifecycle | source/knowledge time | integrity | supporting refs |
 | --- | --- | --- | --- | --- | --- |
-| CapturedEvent | canonical event project，branch=`None` | `None` | event reference/created；`inserted_at_epoch` | Validated | empty |
+| CapturedEvent | canonical event project，branch=`None` | `None` | immutable first-capture source；insertion | Validated | empty |
 | SourceRef | containing user-claim Owner scope | `None` | claim-version valid-from-or-created；immutable provenance-binding epoch | resolved structured ref 为 Validated；仅 manual/free-form 为 Opaque | resolved nested canonical refs 或 empty |
 | SourceTrustClass | containing memory query scope/claim branch | `None` | memory reference/created；下文 effective memory knowledge | Validated | empty |
 | Observation | canonical observation Project/branch | `Some(observation lifecycle)` | observation reference/created；observation `created_at_epoch` | Validated or Quarantined | validated captured-event refs |
@@ -396,6 +395,10 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
 - `active` observation 的 lifecycle 是
   `(Active, Current, Live, Visible)`；`stale` 不进入 usable current catalog；
   `compressed` 是 Archived，也不进入 current catalog。
+  explicit history 若看到 cutoff 前已存在的 scoped stale/compressed row，必须
+  验证完整 transition history，否则返回
+  `unreconstructable_observation_lifecycle`。现有 compression snapshot 不含 prior
+  status，stale mutation 也无 timestamp，不能充当该证明。
   `poisoning_quarantined` 必须映射为
   `(Candidate, Unknown, Live, Suppressed)`，integrity 为 Quarantined，并在
   public `evidence_catalog`、claim attachment、trust aggregation 和 current
@@ -427,7 +430,8 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   两项 byte counts 等于 blob length、canonical preview/event SHA-256，以及
   matching SHA-256 或 exact 16-hex legacy blob hash。dangling/crossed storage、
   encoding/length/preview/hash mismatch fail closed。只可暴露 capture constant/
-  pure preview helper 与 poisoning pure classifier，不改变 writer。测试锁定
+  pure preview helper 与 poisoning pure classifier；除 duplicate timestamp
+  guard 外不改变 writer。测试锁定
   16384/16385、multibyte boundary 及只出现在 compacted middle 的 network marker。
 - `user_prompt`、`repo_file`、`local_tool_output` 的 cap 是 Verified；
   `pack`、`external_content` 的 cap 是 Untrusted。WebFetch、WebSearch、
@@ -471,7 +475,7 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
 
 ### Temporal reconstruction
 
-- 所有 Phase A 读取共享 `CurrentTruthProjection.reference_epoch`。
+- 所有 Phase A 读取共享 projection 的 `reference_epoch` 与 SQLite snapshot。
 - `effective_memory_knowledge_epoch` 统一用于 memory ClaimView、SourceRef
   referent 与 SourceTrustClass。proof 是 validated candidate completion（含 route
   chain），或 `memory-operation-planner-v1` 的 `add|update|conflict` result row；
@@ -497,7 +501,10 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   knowledge，不能重新附着 inherited refs。
 - Captured event 必须同时满足
   `COALESCE(reference_time_epoch, created_at_epoch) <= reference_epoch` 与
-  `inserted_at_epoch <= reference_epoch`；equality 可用。
+  original `inserted_at_epoch <= reference_epoch`。duplicate
+  `(host_id, session_id, event_id)` identity 是 event-row no-op，保留 payload/
+  creation/insertion/reference；只可追加 keyed Git evidence/extraction work。
+  pre-v2 stored insertion 冻结为 conservative floor。
 - User claim `edit_claim` 是版本化例外：旧 row 在 transition epoch 标为
   superseded，新 row 同时插入并以 `supersedes_claim_id` 指向旧 row。
   `reference_epoch < transition` 恢复旧 row；等于或晚于 transition 使用新 row。
@@ -572,6 +579,10 @@ AND (
   因此 revocation equality 已恢复可见。unknown suppression status/target kind、
   同时缺少 target ID/value 或同时填写不合法组合均 contextual error。测试覆盖
   全部七种 canonical target，包括两种 recognized non-applicable target。
+  `memory_entities` 无 link time：applicable current entity target 使 projection
+  `CurrentSnapshotOnly`；effective historical entity target 返回
+  `unreconstructable_entity_link_history`，除非 durable history 证明全部 scoped
+  membership/non-membership。entity creation/backfill/current join 都不是证明。
 
 ### Relations and resolution
 
@@ -621,26 +632,18 @@ AND (
 
 ### Bounded read behavior
 
-- `memory_edges`、trusted memory-to-memory `graph_edges`、captured events、
-  observation links和 policy suppressions 都必须由 scoped IDs/owner predicates
-  约束；不得扫描无关 project 全表后用 Rust `Vec::contains` 过滤。
-- SQLite bind-ID chunk 固定最大 900。任何 scoped set 都通过 stable ascending ID
-  chunks 查询，避免依赖构建机的 `SQLITE_MAX_VARIABLE_NUMBER`。
-- 加入 deterministic fixture `truth_bounded_lookup_contract`：
-  seed `933`，target project 901 memories、1,802 relevant relations、901 evidence
-  refs、900-link high-fanout subject；unrelated project 4,505 memories、9,010
-  relations、4,505 evidence refs。它必须证明 chunk boundary+1、high fanout 和
-  大量 unrelated rows 都不会泄漏或改变 target output。
+- claims、edges、captured events、Observation links 与 suppressions 全部以
+  scoped IDs/owner/index 查询，stable ascending bind chunk `<=900`，不允许无关
+  table scan 后 `Vec::contains`。第一条 claim SELECT 到 resolve 共享一个 snapshot。
+- seed-933：target 901 memories、1,802 relations、901 evidence refs、900-link
+  high fanout；unrelated 4,505/9,010/4,505，加入后不得改变 target output/counts。
 - Structural pass conditions：
-  - 每个 edge/evidence/suppression plan 使用对应 existing index search，不出现
-    无 project/ID predicate 的 table scan；
-  - bind count 每 statement `<=900`；
-  - materialized relation/evidence rows不超过 target fixture 的 relevant row
-    count，unrelated returned rows 为 0；
-  - SQL statement count `<= 12 + 5*ceil(scoped_claims/900)
-    + 2*ceil(scoped_evidence_refs/900)`；
-  - 在加入 unrelated corpus 前后 statement count、target row count 和
-    serialized target output完全相同。
+  - authorizer 只允许 read/SELECT 与 owned transaction controls，`total_changes=0`；
+  - indexed data plan、bind `<=900`、unrelated materialized/returned rows 为 0；
+  - data statements `<=12 + 5*ceil(scoped_claims/900) +
+    2*ceil(scoped_evidence_refs/900)`；
+  - transaction-control count 在 autocommit 为 2（BEGIN + COMMIT/ROLLBACK），在
+    caller transaction 为 0，并与 data statements 分开记录。
 - `src/truth/tests/performance.rs` 提供 ignored release-mode recorder。命令：
 
 ```bash
@@ -650,7 +653,8 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 
   固定 5 次 warm-up、50 次 measured runs。JSON 必须含
   `schema_version=1`、exact head SHA、seed/corpus counts、chunk size、SQLite/
-  Rust versions、query plans、statement/bind/row counts、serialized bytes、
+  Rust versions、query plans、data/transaction statement、bind/row counts、
+  serialized bytes、
   p50/p95、migration/index/truth/dependency fingerprints 和每项 structural
   check boolean。Rust test 自身验证必填字段与 structural checks；p50/p95 仅记录，
   本 Phase A 未建立可跨机器比较的 latency hard budget，不能把任意数字称为 pass。
@@ -663,18 +667,18 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 | CT-001 | typed identity、exact selector、stable serde/order、v2 golden、effective reference epoch |
 | CT-002 | 所有已知 lifecycle values；quarantined observation 显式 Suppressed |
 | CT-003 | repo owner/target Project inclusion、stale non-repo exclusion、Owner union、global/legacy fallback、wrapper suppression isolation、Project/Owner branch、relation scope |
-| CT-004 | memory/event time、candidate completion/route chain、procedure current-only、provenance-root refs、edit/candidate before/equal/after、in-place mutation |
+| CT-004 | memory/event time、duplicate capture immutability、candidate/route、edit/in-place mutation |
 | CT-005 | exact-identity supersedes beats recency |
 | CT-006 | full-blob canonical classifier、provenance-root/binding checks、total recursive user source grammar、candidate own-result/edit invariants、summary provenance fail-closed、WebFetch/MCP/Bash-network、pack/external cap、no-uplift/unknown class |
 | CT-007 | same-slot refutes、preference post-pass、overlap error、heterogeneous canonical pair neutral、malformed operation errors |
 | CT-008 | empty/stale-only abstention；malformed/dangling/unknown fail closed |
-| CT-009 | Observation DTO/catalog/order/dedup/NULL-ref ModelGenerated/NULL-epoch/read-scan/trust；memory_facts temporal attachment；no implicit link |
+| CT-009 | Observation DTO/catalog/trust/attachment；stale/compressed history integrity error |
 | CT-010 | ClaimSource 仅 Memory/UserContextClaim；Observation 只作 evidence |
-| CT-011 | raw status validation；七种 suppression target（含两种 non-applicable）/owner/time boundaries |
+| CT-011 | raw status；七种 suppression/owner/time；entity current-only/history error |
 | CT-012 | Archived 不进 current truth/catalog；后续 historical explanation 单独设计 |
 | CT-013 | Phase B context load/render/error/rollback；本 PR 不声称完成 |
 | CT-014 | Phase C benchmark/architecture decision；本 PR 不声称完成 |
-| CT-015 | SQLite authorizer + clean/poison-match `total_changes` SELECT-only；public API compile test；restricted v1→v2 diff |
+| CT-015 | one read snapshot；authorizer/transaction controls/`total_changes=0`；public API |
 
 ## Compatibility and Golden Diff
 
@@ -719,8 +723,8 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
   relation endpoint scope 都是 security boundary，必须有人审阅实现。
 - Future HTTP/MCP surface 需要独立 auth/redaction/sensitivity review；Phase A
   不能直接把完整 statement/catalog 序列化到网络。
-- Projection 只读：不执行 migration、write、LLM、network 或 external process。
-  读取失败记录/返回 diagnostic error，不能包装为空成功。
+- Projection data-SELECT-only；允许 owned transaction control，不执行 canonical
+  write/migration/LLM/network/process。失败返回 diagnostic，不能包装为空成功。
 
 ## Phase B / Phase C Boundaries
 
@@ -749,9 +753,9 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 
 ## Rollback
 
-Phase A hardening 不新增 schema 或数据 mutation。若 v2 有问题，回滚 truth module、
-public integration test、docs/changelog 与整组 0.7.0 distribution metadata；不得
-只回退一份 manifest 造成版本漂移。已发布 0.6.x v1 artifacts 不可改写。
+Phase A 不新增 schema/backfill。若 v2 有问题，整体回滚 truth module、
+duplicate-capture timestamp guard、tests/docs 与 0.7.0 metadata；不得只回退
+一份 manifest。已发布 0.6.x artifacts 不可改写。
 
 Phase B 保留旧 context path 并按独立 rollout/rollback design 切换；projection
 失败不得静默输出缺失 context。Phase C 如果引入 migration/dual-write，必须在
@@ -759,11 +763,11 @@ Phase B 保留旧 context path 并按独立 rollout/rollback design 切换；pro
 
 ## Implementation Change Set
 
-Phase A v2 implementation 预计修改以下现有/明确新增路径，且不得静默扩大到
-writer、schema 或 context：
+Phase A v2 implementation 预计修改以下路径；除 duplicate capture timestamp
+immutability 外，不得静默扩大到 writer、schema 或 context：
 
 - `src/truth.rs`
-- `src/db/capture.rs`（只暴露 content boundary/pure preview helper）
+- `src/db/capture.rs`（duplicate row timestamp no-op + pure preview helper）
 - `src/memory/poisoning.rs`（只暴露 pure classifier）
 - `src/truth/adapter.rs`
 - `src/truth/lifecycle.rs`

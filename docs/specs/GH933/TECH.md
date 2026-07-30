@@ -8,10 +8,10 @@ Phase A v2 implementation contract.
 Truth v1 shipped publicly in `remem-ai` 0.6.26/0.6.27. The Cargo library target
 is `remem`, so the public API is `remem::truth`.
 
-Phase A v2 remains a read-only adapter over existing tables:
+The Phase A v2 projection remains a read-only adapter over existing tables:
 
 ```text
-src/db/capture.rs (visibility-only constants/pure preview helper)
+src/db/capture.rs (duplicate-event timestamp immutability + pure preview helper)
 src/truth.rs
 src/truth/adapter.rs
 src/truth/lifecycle.rs
@@ -20,9 +20,9 @@ src/truth/types.rs
 src/truth/tests/**
 tests/truth_public_api.rs
 ```
-No Phase A query may write, migrate, call an LLM/network/process, or change the
-Context Bundle. Files stay below 800 lines; split the current 679-line
-`src/truth/tests.rs` before adding the v2 matrix.
+No projection query may write/migrate/call external systems/change Context
+Bundle; duplicate captures preserve row timestamps, and no other writer changes.
+Split `src/truth/tests.rs` before v2 tests; every source file stays below 800 lines.
 
 ## Public v2 Types
 
@@ -176,10 +176,10 @@ Exact-owner memories require the normative Owner query.
 The v1 `load_memory_claim_groups`/`load_user_claim_groups` exports become
 crate-private; README documents this migration.
 
-`Some(t)` yields `Some(t)/t/Exact`. `None` samples once and yields
-`None/<sample>/Exact`, unless emitted output depends on a no-proof current
-binding, which yields `CurrentSnapshotOnly`; that epoch is auditable but not a
-replay key. Every stage receives the same effective epoch.
+`Some(t)` yields `Some(t)/t/Exact`; `None` samples once and is Exact unless a
+no-proof binding/entity link makes it `CurrentSnapshotOnly`, not a replay key.
+Every stage shares that epoch and snapshot: autocommit owns deferred BEGIN plus
+terminal COMMIT/ROLLBACK; a caller transaction is reused, never nested/committed.
 
 Stable output ordering:
 
@@ -194,7 +194,7 @@ Evidence field semantics:
 
 | Kind | scope | lifecycle | source/knowledge time | integrity | supporting refs |
 | --- | --- | --- | --- | --- | --- |
-| CapturedEvent | canonical event Project, branch `None` | `None` | event reference/created; `inserted_at_epoch` | Validated | empty |
+| CapturedEvent | canonical event Project, branch `None` | `None` | immutable first-capture reference/created; insertion | Validated | empty |
 | SourceRef | containing user-claim Owner | `None` | claim-version valid-from-or-created; immutable provenance-binding epoch | Validated for resolved structured refs; Opaque only for manual/free-form refs | resolved nested canonical refs, or empty |
 | SourceTrustClass | containing memory query scope/claim branch | `None` | memory reference/created; effective memory knowledge below | Validated | empty |
 | Observation | canonical Observation Project/branch | `Some(observation lifecycle)` | Observation reference/created; Observation `created_at_epoch` | Validated or Quarantined | validated captured-event refs |
@@ -394,10 +394,11 @@ integrity                = Validated only after a current read-time scan
 supporting_evidence_refs = validated captured_event refs, sorted/deduped
 ```
 
-Stale/Archived observations do not enter the current catalog.
-`poisoning_quarantined` maps to Quarantined internally and is filtered before
-public catalog, claim attachment, trust aggregation and truth. It must never
-expose the quarantined content as usable evidence.
+Stale/Archived rows do not enter a current-snapshot catalog. Explicit history
+requires complete transition history for any scoped stale/compressed row created
+by the cutoff, else `unreconstructable_observation_lifecycle`. Compression
+snapshots omit prior status and stale transitions lack timestamps, so neither
+proves it. Quarantined content stays filtered before catalog/attachment/trust.
 
 The normal Observation writer is allowed to leave `evidence_event_ids=NULL`;
 that value means an empty ref list. A non-null value must be a JSON integer
@@ -555,9 +556,10 @@ links error. Event source/insertion must not exceed binding/reference.
   `knowledge_time_epoch=updated_at_epoch`; a query before it cannot reconstruct
   that prior state and must exclude/return Unknown. SourceRef knowledge remains
   the provenance-root binding because those refs were not rewritten.
-- Captured-event source epoch is
-  `COALESCE(reference_time_epoch, created_at_epoch)`; knowledge epoch is
-  `inserted_at_epoch`. Both must be `<= reference_epoch`.
+- Captured-event source is `COALESCE(reference_time_epoch, created_at_epoch)`;
+  knowledge is original insertion. Replay of `(host_id, session_id, event_id)`
+  preserves row timestamps/payload but may append keyed Git evidence/work. Pre-v2
+  stored insertion is a conservative floor; source/knowledge must be `<=reference_epoch`.
 - A one-to-one `edit_claim` chain uses the superseded old row before transition
   and the successor at/after transition. Missing/forked/cross-owner or
   timestamp-inconsistent explicit edit chains error.
@@ -623,7 +625,7 @@ hidden. A missing direct target, owner mismatch, unknown status or invalid
 shape is an error. Tests cover every match rule, global/exact-owner direct-ID
 semantics and both recognized non-applicable kinds.
 
-Historical `t` match:
+Historical non-entity target match at `t`:
 
 ```text
 created_at_epoch <= t
@@ -634,6 +636,10 @@ AND (
 ```
 
 At revocation equality the target is visible again.
+`memory_entities` has no link time. Any applicable current entity target makes
+the projection `CurrentSnapshotOnly`; an effective historical entity target
+returns `unreconstructable_entity_link_history` unless durable history proves
+scoped membership/non-membership. Current links/entity creation/backfill are not proof.
 ## Relations and Resolution
 
 Only relations with both endpoints in the scoped set are loaded.
@@ -697,28 +703,24 @@ scope/time/lifecycle eligibility
 ```
 ## Bounded SQL Contract
 
-Edges, captured evidence, Observation links and suppression reads use scoped
-IDs/owner predicates and existing indexes. They must not scan unrelated tables
-and filter via Rust `Vec::contains`.
-
-ID chunks are stable ascending chunks of at most 900. Deterministic seed-933
-fixture:
-
-- target: 901 memories, 1,802 relations, 901 evidence refs, one 900-link
-  high-fanout subject;
-- unrelated: 4,505 memories, 9,010 relations, 4,505 evidence refs.
-
+Claims, edges, captured evidence, Observation links and suppressions use scoped
+IDs/owners and existing indexes, never unrelated scans plus `Vec::contains`.
+One SQLite snapshot covers the first scoped-claim SELECT through final resolve.
+Autocommit owns deferred BEGIN and terminal COMMIT/ROLLBACK; an existing caller
+transaction is reused without nested control or committing caller work.
+ID chunks are stable ascending chunks of at most 900. Seed-933 contains 901
+target memories, 1,802 relations, 901 evidence refs and one 900-link high-fanout
+subject, plus 4,505 unrelated memories, 9,010 relations and 4,505 evidence refs.
 Required structural checks:
-
-- each edge/evidence/suppression plan is an indexed search with scope/ID
-  predicate;
-- each statement binds at most 900 values;
-- no unrelated rows are returned/materialized;
-- statement count is at most
-  `12 + 5*ceil(scoped_claims/900) +
+- authorizer permits read/SELECT and only the owned transaction controls;
+  `total_changes` remains unchanged and every DML/DDL attempt is denied;
+- each data plan is an indexed scoped/ID search, each bind count is at most 900,
+  and no unrelated row is returned/materialized;
+- data-statement count is at most `12 + 5*ceil(scoped_claims/900) +
   2*ceil(scoped_evidence_refs/900)`;
-- adding the unrelated corpus does not change target statement count, target
-  row count or serialized output.
+- transaction-control count is exactly two for autocommit (BEGIN plus terminal
+  COMMIT/ROLLBACK), zero inside a caller transaction, and reported separately;
+- adding unrelated rows changes neither counts nor serialized target output.
 
 Final-head record:
 
@@ -728,11 +730,10 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 ```
 
 Use five warmups and 50 measured runs. JSON schema version 1 includes exact
-head SHA, seed/counts, chunk size, Rust/SQLite versions, plans, statement/bind/
-row counts, serialized bytes, p50/p95, source/dependency fingerprints and
-structural check booleans. The Rust test validates the record. Latency is
-informational until a reference-machine budget is approved; structural bounds
-are pass/fail. Any later commit/base sync invalidates the record.
+head SHA, seed/counts, chunk size, Rust/SQLite versions, plans, data/transaction
+statement, bind and row counts, serialized bytes, p50/p95, fingerprints and
+structural booleans. The Rust test validates it; latency stays informational.
+Any later commit/base sync invalidates the record.
 ## Versioning and Golden Diff
 
 v2 ships in 0.7.0 or the next explicit breaking boundary. Sync Cargo, lockfile,
@@ -784,8 +785,8 @@ python3 scripts/ci/check_pr_preflight.py --base origin/main \
   --pr-body-file /tmp/pr-body.md
 ```
 
-Also require the final-head bounded/performance record, fresh exact-head CI,
-independent review and explicit human merge authorization.
+Also require a WAL concurrent-writer snapshot regression, final-head bounded/
+performance record, fresh exact-head CI, independent review and human merge authorization.
 
 ## Phase Boundaries and Rollback
 
@@ -794,6 +795,6 @@ worktree/task selectors, error-visible failure, budget/cache/historical output
 and old-path rollback. Phase C separately decides writer convergence and any
 migration/dual-write/backfill/cutover/firewall work.
 
-Phase A v2 has no schema/data mutation. Roll back truth code, tests, docs,
-changelog and the complete breaking-version metadata set together. Published
-0.6.x v1 artifacts are immutable and must not be rewritten.
+Phase A v2 has no schema/backfill and its projection remains data-SELECT-only.
+Roll back truth code, the duplicate-capture timestamp guard, tests, docs,
+changelog and breaking-version metadata together. Published 0.6.x stays immutable.

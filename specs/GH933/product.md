@@ -43,7 +43,8 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 - 不让 LLM 任意裁决 truth，也不把模型自报 confidence 当作真实性分数。
 - 不把所有 event 或 generated enrichment 自动提升为 canonical Claim。
 - Phase A hardening follow-up 不接入 Context Bundle，不交付 worktree/task
-  selector，不修改 canonical writer/schema，也不声明 Phase B/C 完成。
+  selector，不修改 canonical memory/claim writer 或 schema；唯一 writer 修正是
+  duplicate captured-event 保留原 timestamps。它不声明 Phase B/C 完成。
 - 本规格不把 archived、compressed 或 suppressed 简化为 false。
 
 ## Behavior Invariants
@@ -125,13 +126,17 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    返回 `Unknown`，不得把 post-cutoff status/content 应用到历史查询。
    captured evidence 必须同时满足 source time
    `COALESCE(reference_time_epoch, created_at_epoch) <= as_of` 与 remem knowledge
-   time `inserted_at_epoch <= as_of`；source event 虽早、但在 `as_of` 后才被
-   ingest 的 late evidence 不得回溯改变历史 winner。若底层数据没有足够历史
+   time（v2-frozen `inserted_at_epoch`）`<= as_of`；source event 虽早、但在
+   `as_of` 后才被 ingest 的 late evidence 不得回溯改变历史 winner。若底层数据没有足够历史
    信息恢复过去状态，必须暴露限制或返回 `Unknown`，不得根据当前值伪造历史
    truth。v2 output 必须同时序列化 `requested_as_of_epoch` 与实际使用的
    `reference_epoch` 及 replayability。显式 `as_of` 是 `Exact`；
    `as_of=None` 只采样一次 now，无 proof current binding 参与输出时必须标记
    `CurrentSnapshotOnly`，该 epoch 仅可审计、不能作为 replay key。
+   同一 `(host_id, session_id, event_id)` captured-event identity 的 idempotent replay 不得覆盖首次
+   creation、insertion/knowledge 或 reference/source epoch；只能追加独立 keyed
+   Git evidence/extraction work。既有 pre-v2 row 以当前 stored insertion 作为
+   保守 knowledge floor，不得猜测或回填更早 eligibility。
 5. CT-005 在同一 subject 的候选 claim 中，时间上生效的显式
    `Supersedes` 必须优先于纯 recency，并在结果中记录被替代项和选择原因。
 6. CT-006 verified evidence 必须优先于 model-generated 或 untrusted
@@ -143,7 +148,8 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    `>16384` plain UTF-8 `raw_compact` blob 的 byte counts、preview、event SHA-256
    及 current/legacy blob hash 后重建 full content；不能只读 stored preview。
    非法 storage/encoding/length/preview/hash fail closed。truth 只暴露/复用
-   capture pure helpers 与 canonical pure classifier，不改变 writer。memory 的有效 trust
+   capture pure helpers 与 canonical pure classifier；除 duplicate timestamp
+   immutability guard 外不改变 writer。memory 的有效 trust
    是“可用 evidence 中的最强 tier”与 effective source cap 的较弱者；effective
    cap 同时取 validated stored `memories.source_trust_class` 和所有 referenced
    event 重新按 canonical classifier 分类后的最弱值，防止 v060 legacy/default
@@ -227,6 +233,10 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    `memory_facts` row 才是 observation evidence 附到 memory claim 的显式
    link，不能根据共享 event、文本相似度或模型猜测自动关联。subject selector
    只过滤 truth subjects，不过滤 scoped `evidence_catalog`。
+   current snapshot 排除 stale/compressed row；explicit history 遇到 cutoff
+   前已存在、但现在 stale/compressed 且没有完整 validated transition history 的
+   scoped row 时必须返回 `unreconstructable_observation_lifecycle`，不能静默丢
+   evidence 或改变 winner。
 10. CT-010 generated enrichment 不得仅凭模型生成身份创建或覆盖 canonical
     Claim。Phase A 的读取结果必须排除不具备 claim standing 的 enrichment；
     writer 侧的统一防线属于 Phase C，Phase A hardening 不宣称已完成。
@@ -253,6 +263,10 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
     exact canonical owner 生效；partial pair 必须 contextual error。direct
     memory/user-claim target 还必须验证 target row 属于该 owner，topic/entity/
     pattern target 也不得跨 owner 隐藏 truth。
+    `memory_entities` 没有 link history；任何 applicable current entity target
+    都使 projection 为 `CurrentSnapshotOnly`。explicit historical query 中有效的
+    entity target 必须返回 `unreconstructable_entity_link_history`，除非 durable
+    history 能证明每个 scoped memory 的 membership/non-membership。
 12. CT-012 archived evidence 可用于后续 historical explanation，但默认不得
     进入 current context。Phase A 可以保守排除 archived current truth；
     historical explanation 的完整消费契约属于后续阶段。
@@ -264,7 +278,9 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
     provenance、scope 隔离或历史解释能力。
 15. CT-015 projection 必须是只读、可重建且可版本化的。读取失败、schema
     不兼容或 evidence 解析失败必须返回可诊断错误或明确的 fail-closed 结果，
-    不得修改 canonical 数据来完成查询。
+    不得修改 canonical 数据来完成查询。所有 SQL stage 必须处于一个 SQLite
+    read snapshot：autocommit 入口拥有 deferred BEGIN 与 terminal
+    COMMIT/ROLLBACK，caller transaction 则被复用且不得由 projection commit。
 
 ## 验收标准
 
@@ -303,7 +319,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       independence，以及 `memory_facts(source_memory_id,
       source_observation_id)` 的唯一 attachment direction。NULL refs、active-row
       read scan、external supporting trust，以及 fact learned/valid/
-      invalidated/replacement before/equal/after 都有 regressions。
+      invalidated/replacement before/equal/after 都有 regressions。cutoff 后
+      stale/compressed 且无完整 transition history 必须显式 integrity error。
 - [ ] `poisoning_quarantined` observation 映射为
       `(Candidate, Unknown, Live, Suppressed)`，并有 lifecycle 与 catalog/claim
       attachment negative regressions；其内容不得进入 usable evidence 或 trust
@@ -334,7 +351,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       multi-active co-predecessor before/equal/after、kept-result SourceRefs 与
       unexplained unlinked-row error 也必须覆盖；row 后来原地更新且无法重建旧
       版本时必须排除/`Unknown`。same/cross-topic canonical noop、governance/
-      candidate ack 的 before/equal/after 与 replayability serde golden 均覆盖。
+      candidate ack 的 before/equal/after、duplicate captured-event replay 前后
+      timestamp/历史输出不变与 replayability serde golden 均覆盖。
 - [ ] captured-event trust 使用 canonical source classification；WebFetch、
       WebSearch、`mcp__*`、external-fetching Bash、`pack`、unknown class 与
       stale legacy/default cap mixed-evidence regressions 证明 external/pack cap
@@ -355,9 +373,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       为损坏 provenance。uniform preference exception 另行严格校验
       owner/scope/branch/type，并覆盖 A-B + A-C overlap error。
 - [ ] malformed `evidence_event_ids`、malformed `source_refs_json`，以及
-      syntactically valid 但指向不存在 `captured_events` row 的 dangling event
-      ref 均 fail closed，并返回包含 claim/ref context 的可诊断错误；不得静默
-      形成较低 trust 的“正常成功”。
+      syntactically valid 但 dangling 或 foreign-project 的 captured-event ref
+      均 fail closed，并返回包含 claim/ref/project context 的可诊断错误；不得
+      静默形成较低 trust 的“正常成功”。
 - [ ] closed user source-kind mapping 覆盖 canonical 顶层
       `user_context_candidate`；每种 structured ref 的 exact fields/type、
       extra-field、scope/binding/reference-time 和 duplicate rules 都有 fixture。
@@ -365,11 +383,12 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       owner/host/project/session、preserved edit edges、initial-result ancestry、
       nested own-result chain、provenance-root binding、manual scalar path `0`、
       single-wrapper recursion/cycle 与 first-party predicate 均有正反测试。
-- [ ] SQLite authorizer、`total_changes` 或等价 regression 证明 projection
-      SELECT-only。
+- [ ] SQLite authorizer、`total_changes` 允许 owned BEGIN/COMMIT/ROLLBACK 但拒绝
+      DML/DDL；WAL concurrent-writer regression 证明 projection 全程单一 snapshot。
 - [ ] memory subject identity 与 canonical writer 对齐为
       `(source, owner_scope, owner_key, normalized memory scope, memory_type,
-      topic_key-or-singleton)`；相同 topic、不同 owner/scope/`memory_type` 绝不
+      NULL/exact-empty=>memory:<id> singleton，否则 exact topic_key)`；相同
+      topic、不同 owner/scope/`memory_type` 绝不
       竞争或 supersede。owner pair 必须来自完整 canonical fields；仅两者同时
       缺失的 legacy row 可按 v019/default writer rules 一起 fallback，partial
       pair fail closed。Project owner-key/target-only、repo reroute old→new、
@@ -395,6 +414,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       regressions 证明 suppression 不被当作 false，也不会在 revoke 后继续隐藏；
       `(NULL,NULL)` global、完整 owner pair exact-match、partial pair error 与
       direct/value target 的 cross-owner negative fixtures 防止跨 owner 隐藏。
+      entity current-only replayability、post-cutoff add/replace link 与 explicit
+      historical `unreconstructable_entity_link_history` 均有 regression。
 - [ ] final rebase、current-contract/version metadata 更新全部完成后，在最终
       candidate head 重跑完整 bounded-query/performance/golden validation；evidence
       绑定 exact SHA 与 relevant migration/index/truth/dependency fingerprints，
@@ -402,7 +423,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - [ ] follow-up PR 使用 `Refs #933`，只修改批准的 Phase A hardening、当前
       `docs/specs/GH933/{PRODUCT,TECH}.md` 契约与必要的 release metadata；
       current contract 必须移除已被 hardening 纠正的过时完成声明，不接入
-      Context Bundle/writers/schema，不关闭 GH-933。
+      Context Bundle/schema/一般 writer convergence；只允许 duplicate capture
+      timestamp immutability guard，不关闭 GH-933。
 
 ### GH-933：后续整体完成条件
 
@@ -430,6 +452,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - claim 在 `as_of` 前存在，但其 verified captured-event evidence 在 `as_of`
   后才被 remem ingest，source time 可能仍早于 `as_of`；或引用的 ledger event
   已不存在/属于另一个 project。
+- 同一 captured-event 在 cutoff 后 idempotent replay；原 insertion/reference
+  timestamps 与 cutoff 前 truth 必须保持不变。
 - imported memory 的 source-created/reference time 早于 `as_of`，但最早
   current-compatible canonical operation proof 晚于 `as_of`；或只有历史
   incompatible operation/既有 row 在 `as_of` 后原地更新。
@@ -467,6 +491,10 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - active/revoked `memory_suppressions` 通过 memory/topic/entity/pattern/
   user-claim target 覆盖 canonical row status，并在 `as_of` 区间边界改变
   visibility。
+- Observation 在 cutoff 后原地 stale/compressed，或 entity link 在 cutoff 后
+  add/replace；缺少完整 transition/link history 时历史查询必须显式失败。
+- writer 在 claims 与 relation/evidence/suppression 分段读取之间提交；进行中的
+  projection 只能看到 transaction 开始后的一个 SQLite snapshot。
 - claim 被 suppressed 但仍可能在政策允许的历史审计中存在。
 - archived evidence 仍有历史价值，但当前查询不应把它当作 active truth。
 - 底层状态被原地改写或数据已删除，无法完整重建过去时点。

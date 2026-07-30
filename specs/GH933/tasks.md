@@ -51,8 +51,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
 - [ ] `GH933-A3` — Adapter and resolver hardening.
   - Owner files: `src/truth/adapter.rs`, `src/truth/lifecycle.rs`,
     `src/truth/projection.rs` plus A2-owned tests after A2 stops writing；
-    `src/memory/poisoning.rs` 与 `src/db/capture.rs` 仅可作 pure classifier/
-    content-boundary/preview helper visibility change。
+    `src/memory/poisoning.rs` 仅暴露 pure classifier；`src/db/capture.rs` 只允许
+    duplicate `(host_id, session_id, event_id)` row timestamp no-op 与
+    content-boundary/preview helper。
   - Implement owner/scope/type identity、NULL/exact-empty singleton、nonempty
     topic byte identity、canonical repo
     owner/target Project inclusion、stale non-repo placement exclusion、Owner
@@ -79,7 +80,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     trust、empty-ref ModelGenerated default、fact learned/valid/invalidation/
     replacement boundaries。
     `poisoning_quarantined` 映射 Candidate/Unknown/Live/Suppressed 并在 usable
-    output/trust 前排除。
+    output/trust 前排除；explicit history 遇到 cutoff 前存在但无完整 transition
+    history 的 stale/compressed row 时返回
+    `unreconstructable_observation_lifecycle`。
   - Reuse canonical source classification；effective cap 取 stored class 与所有
     referenced events 重新分类后的最弱值。external/pack 不能被 WebFetch、MCP、
     network Bash 或 stale v060 default 提权；SourceTrustClass 不参加 evidence
@@ -87,10 +90,13 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     content，不能只按 16 KiB preview：覆盖 `raw_keep`、current-hash
     `raw_compact`、legacy-hash `raw_compact`，并校验 retention/blob 组合、
     UTF-8/byte counts/preview/event+blob hash。锁定 16384/16385 bytes、multibyte
-    boundary 和只在 compacted middle 出现 network marker；不得改变 writer。
+    boundary 和只在 compacted middle 出现 network marker；classifier 本身不得
+    写入，writer 变化仅限上述 duplicate timestamp no-op。
   - Apply memory/user claim policy suppression with global/exact-owner/partial-owner
     rules and active/revoked historical intervals；识别并验证 canonical
-    user-candidate/summary targets，但保持 Phase-A non-applicable。
+    user-candidate/summary targets，但保持 Phase-A non-applicable。entity target
+    current query 标 `CurrentSnapshotOnly`；explicit history 无 durable link
+    history 时返回 `unreconstructable_entity_link_history`。
   - Reconstruct valid user-claim edit chains，区分 ClaimView state time、
     immutable provenance-root SourceRef binding 与 predecessor transition；
     preserved refs 不得在 successor creation 重新绑定。按
@@ -108,7 +114,13 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     noop/route/ack 的 max；noop 验证 result owner/type 而不要求 input topic 等于
     result topic。无 proof 的 procedure memory 仅 current-snapshot
     可用，explicit historical 排除/Unknown。epoch 比较为秒级 `<=`，同秒绝对
-    顺序留给 Phase C attachment sequence。projection 全程 SELECT-only。
+    顺序留给 Phase C attachment sequence。projection data statements 全程
+    SELECT-only。
+  - Projection autocommit 使用 deferred read transaction 覆盖 first scoped SELECT
+    到 final resolve；caller transaction 被复用且不由 projection commit。capture
+    replay 只追加 keyed Git evidence/extraction work，原 payload 与
+    creation/insertion/reference epochs 全部不变；pre-v2 stored insertion 作为
+    conservative floor。
   - Verify: focused routed/global/legacy identity、Project/Owner branch、
     canonical repo-global 与 repo-rerouted-global Project-negative、
     compatibility wrapper result/error isolation（含 malformed exact-owner memory）、
@@ -119,7 +131,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     procedure current-only、memory proof/ack/provenance、
     same/cross-topic noop/ack trust transition、relation source-ID shapes、
     replayability serde、
-    authorizer/`total_changes` tests；`cargo test truth -- --nocapture`.
+    duplicate capture timestamp/history stability、post-cutoff Observation
+    stale/compressed integrity error、post-cutoff entity add/replace negative、
+    WAL concurrent-writer single-snapshot、authorizer transaction-control/
+    `total_changes` tests；`cargo test truth -- --nocapture`.
 
 - [ ] `GH933-A4` — Bounded lookup and performance evidence.
   - Owner: read-only verifier after A3 stops writing.
@@ -127,8 +142,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     900-link high fanout，以及 4,505 unrelated memories、9,010 relations、
     4,505 evidence refs。
   - Assert bind chunks `<=900`、indexed scoped plans、zero unrelated returned rows、
-    documented statement-count formula and identical target output before/after
-    unrelated corpus。
+    documented data-statement formula、autocommit transaction-control count=2 /
+    caller-transaction count=0，以及 unrelated corpus 前后 target output 相同。
   - Run the structural verifier and, when useful, generate a preliminary
     implementation-head record:
 
@@ -208,7 +223,7 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
 ## File Ownership and Handoff
 
 - One writable owner at a time for shared truth modules、tests、current specs、
-  version metadata and PR body。Read-only reviewers may run in parallel。
+  capture helper、version metadata and PR body。Read-only reviewers may run in parallel。
 - A2 completes and hands off test paths before A3 writes them；A4 is read-only；
   A5 starts after implementation and verifier stop writing。
 - Do not add migration、writer、`src/context/**` or public network surface to

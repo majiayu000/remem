@@ -65,11 +65,12 @@ pending v2 requirements below.
    selector with no row yields an empty truth list, not synthesized Unknown.
    Owner/memory-scope values are closed domains; trimmed `" global "` is global.
 
-3. **Auditable reference time.** An explicit `as_of` is used directly and is
-   `Exact`. A query without one samples “now” once. Every output serializes the
-   requested value, effective `reference_epoch` and replayability. A current
-   result depending on an operation-less binding is `CurrentSnapshotOnly`, not
-   replayable merely by passing the sampled epoch. All reads share one epoch.
+3. **Auditable reference time and snapshot.** An explicit `as_of` is used
+   directly and is `Exact`. A query without one samples “now” once. Every output
+   serializes the requested value, effective `reference_epoch` and replayability.
+   A current result depending on an operation-less binding or an unversioned
+   entity link is `CurrentSnapshotOnly`, not replayable merely by passing the
+   sampled epoch. All reads share one epoch and one SQLite read snapshot.
 
 4. **Temporal correctness.** Source time and remem knowledge time must both be
    no later than the reference epoch. A valid user-claim edit chain restores
@@ -91,6 +92,12 @@ pending v2 requirements below.
    ingestion; its request topic may legitimately differ from the result topic.
    Candidate-linked route changes need a complete scope-cleanup event chain;
    unexplained post-candidate content/provenance drift fails closed.
+   Captured-event identity `(host_id, session_id, event_id)` is immutable across
+   idempotent replay: a duplicate cannot replace its original creation,
+   insertion/knowledge or reference/source epoch. Replay may append separately
+   keyed Git evidence or extraction work. Existing pre-v2 rows keep their stored
+   insertion epoch as a conservative knowledge floor; v2 never backdates
+   eligibility it cannot reconstruct.
 
 5. **Evidence trust without escalation.** Captured events reuse canonical
    `SourceTrustClass` semantics. WebFetch/WebSearch, `mcp__*`, network-fetching
@@ -100,10 +107,11 @@ pending v2 requirements below.
    blob above it, including valid legacy hashes, then calls the canonical pure
    classifier. It never classifies only the stored preview; invalid storage,
    UTF-8, lengths, preview or hashes fail closed. Phase A may expose pure capture
-   helpers and the classifier but does not change writer behavior. Effective trust is the weaker of the
-   strongest eligible
-   evidence and a cap formed from both the stored class and the weakest
-   canonical reclassification of all referenced events. This protects legacy
+   helpers and the classifier; its only capture-writer correction makes duplicate
+   event timestamps immutable without changing payload semantics. Effective trust
+   is the weaker of the strongest eligible evidence and a cap formed from both
+   the stored class and the weakest canonical reclassification of all referenced
+   events. This protects legacy
    rows whose stored default is too strong. SourceTrustClass diagnostic
    evidence never participates in the strongest-evidence max, and a cap cannot
    uplift a claim that lacks verified evidence. Candidate-backed memory also
@@ -132,6 +140,10 @@ pending v2 requirements below.
    never becomes a Claim. Attachment to a memory Claim requires a scoped,
    bitemporally effective `memory_facts` row that explicitly contains both
    `source_memory_id` and `source_observation_id`.
+   Current queries exclude rows whose current lifecycle is stale/compressed.
+   Explicit history returns a contextual integrity error when such a scoped row
+   existed by the cutoff but lacks complete validated transition history; it
+   cannot silently drop evidence or change a winner using current status.
 
 7. **Quarantine safety.** `poisoning_quarantined` maps to
    Candidate/Unknown/Live/Suppressed and is excluded before the usable catalog,
@@ -149,6 +161,10 @@ pending v2 requirements below.
    `(NULL,NULL)` owner means global; a complete owner pair is exact; a partial
    pair is an error. Historical queries honor creation and revocation
    boundaries, including visibility restoration at revocation equality.
+   Entity membership itself is unversioned: current evaluation is
+   `CurrentSnapshotOnly`, while an effective entity-target suppression in an
+   explicit historical query fails with `unreconstructable_entity_link_history`
+   unless durable link history proves membership and non-membership.
 
 9. **Scoped relations.** Both endpoints must be in the scoped claim set.
    Supersedes and ordinary Refutes only decide within one exact identity.
@@ -167,7 +183,9 @@ pending v2 requirements below.
 
 11. **Bounded reads.** Edge, evidence, Observation-link and suppression lookups
     use scoped/indexed SQL and stable ID chunks of at most 900. Large unrelated
-    projects do not change target query counts, returned rows or output.
+    projects do not change target query counts, returned rows or output. The full
+    projection runs in one deferred SQLite read snapshot; transaction control is
+    read orchestration, not a canonical-data write.
 
 12. **Deterministic output.** DTO serde shape, truth/evidence/relation ordering,
     deduplication and v1→v2 golden differences are explicit. No LLM, network,
@@ -186,8 +204,9 @@ pending v2 requirements below.
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.
-- [ ] Effective reference epoch, replayability enum and source/knowledge
-      boundaries are golden-locked; current-only output is never labeled exact.
+- [ ] Effective reference epoch, one-read-snapshot behavior, replayability enum,
+      immutable duplicate-capture time and source/knowledge boundaries are
+      golden-locked; current-only output is never labeled exact.
 - [ ] Candidate-backed memory validates completion and contiguous route events,
       rejects unexplained post-candidate mutation, and keeps the candidate trust
       cap while mapping workspace/user input scope through the writer route and
@@ -210,8 +229,8 @@ pending v2 requirements below.
 - [ ] Observation catalog shape/order/dedup/provenance and explicit attachment
       are covered, including NULL refs, read-time poisoning scan, external
       trust cap, empty-ref ModelGenerated default, nullable epoch errors and fact
-      learned/valid/invalidation/replacement boundaries; no implicit linkage
-      exists.
+      learned/valid/invalidation/replacement boundaries; post-cutoff stale/
+      compressed lifecycle mutation fails visibly and no implicit linkage exists.
 - [ ] `poisoning_quarantined` and unknown Observation statuses cannot expose
       usable evidence.
 - [ ] External/pack trust caps, WebFetch/MCP/network-Bash mixed evidence and
@@ -224,14 +243,17 @@ pending v2 requirements below.
 - [ ] All seven canonical suppression targets, owner and active/revoked
       interval cases and exact match/shape matrix are covered without
       cross-owner hiding, including correctly typed non-applicable
-      user-candidate/summary targets.
+      user-candidate/summary targets. Entity-link current-only replayability and
+      explicit-history integrity errors prevent retroactive suppression.
 - [ ] Same-identity decisions, cross-identity provenance, uniform preference
       conflict output/application boundaries and heterogeneous canonical pair
       behavior are covered, including overlapping-pair rejection and unbacked/
       candidate-only/operation-only provenance shapes.
 - [ ] Malformed/dangling/foreign evidence and operation provenance fail closed
       with contextual diagnostics.
-- [ ] SQLite authorizer/`total_changes` proves SELECT-only behavior.
+- [ ] SQLite authorizer/`total_changes` proves SELECT-only behavior while
+      allowing bounded transaction control; a concurrent-writer fixture proves
+      every stage observes one snapshot.
 - [ ] Seed-933 chunk/high-fanout/unrelated-project validation passes and a
       final-head performance record is produced.
 - [ ] README, architecture, changelog and distribution metadata document the
