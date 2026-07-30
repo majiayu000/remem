@@ -118,10 +118,18 @@ pub fn prune_inactive_memory_embeddings(
 ) -> Result<InactiveEmbeddingPruneReport> {
     let config = resolve_embedding_config()?;
     #[cfg(feature = "local-onnx")]
-    if matches!(
-        config.provider,
-        EmbeddingProvider::Auto | EmbeddingProvider::Local
-    ) {
+    let pin_local_model_state = match config.provider {
+        EmbeddingProvider::Local => true,
+        EmbeddingProvider::Auto => {
+            embedding_provider_status_without_probe()?.active_provider
+                != EmbeddingProvider::OpenAi.label()
+        }
+        EmbeddingProvider::FeatureHash | EmbeddingProvider::OpenAi | EmbeddingProvider::Off => {
+            false
+        }
+    };
+    #[cfg(feature = "local-onnx")]
+    if pin_local_model_state {
         return with_configured_model_read_lock(&config, || {
             prune_inactive_memory_embeddings_pinned(conn, target, &config)
         });

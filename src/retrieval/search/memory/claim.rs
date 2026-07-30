@@ -25,7 +25,11 @@ pub(super) fn entity_scope_candidates(query_text: &str, project: Option<&str>) -
         .into_iter()
         .filter(|term| {
             normalize_claim_token(term).is_some_and(|normalized| {
-                !project_terms.contains(&normalized) && text_contains_exact_token(query_text, term)
+                !normalized
+                    .chars()
+                    .all(|character| character.is_ascii_digit())
+                    && !project_terms.contains(&normalized)
+                    && text_contains_exact_token(query_text, term)
             })
         })
         .collect()
@@ -495,6 +499,32 @@ mod tests {
 
         assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("remem")));
         assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("api")));
+    }
+
+    #[test]
+    fn parsed_temporal_number_is_not_an_entity_scope_candidate() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::memory::tests_helper::setup_memory_schema(&conn);
+        let candidates =
+            entity_scope_candidates("What changed in the last 30 days?", Some("/repo"));
+        let (terms, ids) = select_entity_anchors(
+            &conn,
+            &candidates,
+            Some("/repo"),
+            None,
+            None,
+            5,
+            false,
+            false,
+        )?;
+
+        assert!(
+            !candidates.iter().any(|term| term == "30"),
+            "{candidates:?}"
+        );
+        assert!(terms.is_empty(), "{terms:?}");
+        assert!(ids.is_empty(), "{ids:?}");
+        Ok(())
     }
 
     #[test]

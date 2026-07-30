@@ -147,6 +147,39 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
 }
 
 #[test]
+fn parsed_temporal_number_does_not_filter_temporal_results() -> Result<()> {
+    let conn = setup_explain_conn()?;
+    let now = chrono::Utc::now().timestamp();
+    insert_explain_memory(
+        &conn,
+        &ExplainMemory {
+            id: 1,
+            project: "/repo",
+            title: "Deployment update",
+            content: "Deployment changed in the last several days.",
+            scope: "project",
+            updated_at_epoch: now - 60,
+        },
+    )?;
+
+    let (memories, explain) = search_with_branch_explain(
+        &conn,
+        Some("What changed in the last 30 days?"),
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+    )?;
+    let explain = explain.context("query explain should be present")?;
+
+    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
+    assert!(explain.temporal_range.is_some());
+    Ok(())
+}
+
+#[test]
 fn like_fallback_only_participates_when_stronger_channels_are_empty() -> Result<()> {
     let conn = setup_explain_conn()?;
     insert_explain_memory(

@@ -32,7 +32,42 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/eval/golden/types.rs",
     "src/eval/graph_decision.rs",
     "src/eval/provider_comparison.rs",
+    "src/memory.rs",
+    "src/memory/facts.rs",
+    "src/memory/graph_contract.rs",
+    "src/memory/graph_provenance.rs",
+    "src/memory/lifecycle.rs",
+    "src/memory/operation.rs",
+    "src/memory/promote.rs",
+    "src/memory/promote/slug.rs",
+    "src/memory/retrieval_enrichment.rs",
+    "src/memory/search_context.rs",
+    "src/memory/semantic_dedup.rs",
+    "src/memory/staleness.rs",
+    "src/memory/staleness/capabilities.rs",
+    "src/memory/staleness/path.rs",
+    "src/memory/staleness/util.rs",
+    "src/memory/state_key.rs",
+    "src/memory/store.rs",
+    "src/memory/store/read.rs",
     "src/memory/store/write.rs",
+    "src/memory/suppression.rs",
+    "src/memory/types.rs",
+    "src/migrate.rs",
+    "src/migrate/content_identity.rs",
+    "src/migrate/run.rs",
+    "src/migrate/schema_drift.rs",
+    "src/migrate/schema_drift/exists.rs",
+    "src/migrate/schema_drift/invariants.rs",
+    "src/migrate/schema_drift/invariants/v068.rs",
+    "src/migrate/schema_drift/invariants/v070.rs",
+    "src/migrate/schema_drift/invariants/v071.rs",
+    "src/migrate/schema_drift/invariants/v072.rs",
+    "src/migrate/schema_drift/invariants/v073.rs",
+    "src/migrate/state.rs",
+    "src/migrate/transition.rs",
+    "src/migrate/types.rs",
+    "src/project_id.rs",
     "src/retrieval/embedding.rs",
     "src/retrieval/embedding/config.rs",
     "src/retrieval/embedding/fallback.rs",
@@ -40,6 +75,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/retrieval/embedding/status.rs",
     "src/retrieval/entity.rs",
     "src/retrieval/entity/extract.rs",
+    "src/retrieval/entity/link.rs",
     "src/retrieval/entity/search.rs",
     "src/retrieval/entity/search/lookup.rs",
     "src/retrieval/entity/search/runner.rs",
@@ -48,20 +84,137 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/retrieval/graph/query.rs",
     "src/retrieval/graph/traverse.rs",
     "src/retrieval/graph/types.rs",
+    "src/retrieval/memory_search.rs",
+    "src/retrieval/memory_search/filters.rs",
+    "src/retrieval/memory_search/fts.rs",
+    "src/retrieval/memory_search/like.rs",
+    "src/retrieval/query_expand.rs",
     "src/retrieval/query_expand/expand.rs",
     "src/retrieval/query_expand/tokenize.rs",
     "src/retrieval/query_expand/translations.rs",
+    "src/retrieval/rerank.rs",
+    "src/retrieval/rerank/config.rs",
+    "src/retrieval/rerank/inventory.rs",
+    "src/retrieval/rerank/model.rs",
+    "src/retrieval/rerank/stage.rs",
+    "src/retrieval/rerank/types.rs",
+    "src/retrieval/search.rs",
     "src/retrieval/search/common.rs",
+    "src/retrieval/search/memory.rs",
     "src/retrieval/search/memory/claim.rs",
+    "src/retrieval/search/memory/runner.rs",
+    "src/retrieval/search/memory/source_anchor.rs",
+    "src/retrieval/search/memory/suppression_filter.rs",
     "src/retrieval/search/memory/text.rs",
+    "src/retrieval/search/memory/text/format.rs",
     "src/retrieval/search/memory/text/graph.rs",
     "src/retrieval/search/memory/text/support.rs",
     "src/retrieval/search/memory/text/support/fact.rs",
     "src/retrieval/search/memory/text/support/graph_claim.rs",
+    "src/retrieval/search/memory/usage_rank.rs",
     "src/retrieval/search/memory/weights.rs",
+    "src/retrieval/search_multihop.rs",
+    "src/retrieval/search_multihop/discover.rs",
+    "src/retrieval/search_multihop/expand.rs",
+    "src/retrieval/search_multihop/merge.rs",
+    "src/retrieval/search_multihop/search.rs",
+    "src/retrieval/search_multihop/types.rs",
+    "src/retrieval/temporal.rs",
     "src/retrieval/temporal/fact_keys.rs",
+    "src/retrieval/temporal/fact_labels.rs",
+    "src/retrieval/temporal/parse.rs",
+    "src/retrieval/temporal/search.rs",
+    "src/retrieval/temporal/types.rs",
     "src/retrieval/vector.rs",
     "src/retrieval/vector_candidates.rs",
+    "src/runtime_config.rs",
+];
+
+/// Synthetic input name for the exact SQL bundle applied by
+/// `crate::migrate::run_migrations` in every graph-decision arm. The registry
+/// source itself is fingerprinted above; this bundle additionally binds the
+/// bytes behind every `include_str!` entry instead of only the registration
+/// statements.
+const MIGRATION_BUNDLE_PATH: &str = "crate::migrate::MIGRATIONS";
+
+/// Kept in registry order. The structural test below compares every path,
+/// version, name, and SQL byte with the test-visible runtime `MIGRATIONS`
+/// registry, so adding, removing, reordering, or retargeting a migration cannot
+/// leave this bundle stale silently.
+const MIGRATION_SQL_INPUTS: &[&str] = &[
+    "src/migrations/v001_baseline.sql",
+    "src/migrations/v002_raw_messages.sql",
+    "src/migrations/v003_host_identity.sql",
+    "src/migrations/v004_worker_heartbeat.sql",
+    "src/migrations/v005_memories_fts_active_filter.sql",
+    "src/migrations/v006_capture_pipeline.sql",
+    "src/migrations/v007_session_rollup_ranges.sql",
+    "src/migrations/v008_observation_evidence.sql",
+    "src/migrations/v009_memory_candidate_promotion.sql",
+    "src/migrations/v010_ai_usage_token_breakdown.sql",
+    "src/migrations/v011_reprice_ai_usage_events.sql",
+    "src/migrations/v012_memory_search_context.sql",
+    "src/migrations/v013_memory_temporal_facts.sql",
+    "src/migrations/v014_procedure_verifications.sql",
+    "src/migrations/v015_rebuild_memory_search_context.sql",
+    "src/migrations/v016_context_injection_gate.sql",
+    "src/migrations/v017_memory_lessons.sql",
+    "src/migrations/v018_commit_session_links.sql",
+    "src/migrations/v019_memory_ownership.sql",
+    "src/migrations/v020_memory_fts_all_status.sql",
+    "src/migrations/v021_raw_messages_session_dedup.sql",
+    "src/migrations/v022_memory_state_keys.sql",
+    "src/migrations/v023_topic_segments.sql",
+    "src/migrations/v024_memory_operation_log.sql",
+    "src/migrations/v025_memory_edges.sql",
+    "src/migrations/v026_memory_claims.sql",
+    "src/migrations/v027_compressed_observation_sources.sql",
+    "src/migrations/v028_raw_ingest_failures.sql",
+    "src/migrations/v029_memory_embeddings.sql",
+    "src/migrations/v030_dream_cluster_decisions.sql",
+    "src/migrations/v031_graph_edges.sql",
+    "src/migrations/v032_candidate_block_reason.sql",
+    "src/migrations/v033_graph_candidates.sql",
+    "src/migrations/v034_graph_edge_file_nodes.sql",
+    "src/migrations/v035_context_injection_data_version.sql",
+    "src/migrations/v036_capture_drop_events.sql",
+    "src/migrations/v037_graph_edge_source_candidate_integrity.sql",
+    "src/migrations/v038_extraction_replay_ranges.sql",
+    "src/migrations/v039_context_injection_items.sql",
+    "src/migrations/v040_memory_fact_invalidations.sql",
+    "src/migrations/v041_content_identity_sha256.sql",
+    "src/migrations/v042_reference_time_epoch.sql",
+    "src/migrations/v043_graph_candidate_prompt_memory_refs.sql",
+    "src/migrations/v044_memory_embeddings_profile_index.sql",
+    "src/migrations/v045_memory_usage_columns.sql",
+    "src/migrations/v046_ai_usage_session_id.sql",
+    "src/migrations/v047_lesson_outcome_metadata.sql",
+    "src/migrations/v048_failure_lesson_feed_events.sql",
+    "src/migrations/v049_user_context_claims.sql",
+    "src/migrations/v050_user_context_summaries.sql",
+    "src/migrations/v051_memory_suppressions_feedback.sql",
+    "src/migrations/v052_user_context_candidates.sql",
+    "src/migrations/v053_workstream_identity_continuity.sql",
+    "src/migrations/v054_memory_candidate_source_kind.sql",
+    "src/migrations/v055_session_ingest_cursors.sql",
+    "src/migrations/v056_raw_messages_source_root_key.sql",
+    "src/migrations/v057_failure_lifecycle.sql",
+    "src/migrations/v058_memory_embeddings_multimodel_key.sql",
+    "src/migrations/v059_candidate_review_metadata.sql",
+    "src/migrations/v060_memory_poisoning_defense.sql",
+    "src/migrations/v061_memory_poisoning_injection_drops.sql",
+    "src/migrations/v062_preference_rule_state.sql",
+    "src/migrations/v063_procedure_exports.sql",
+    "src/migrations/v064_reject_legacy_summary_jobs.sql",
+    "src/migrations/v065_preference_reinforcement.sql",
+    "src/migrations/v066_session_rollup_evidence_checkpoint.sql",
+    "src/migrations/v067_capture_git_evidence.sql",
+    "src/migrations/v068_session_rollup_followup_checkpoint.sql",
+    "src/migrations/v069_job_queue_atomicity.sql",
+    "src/migrations/v070_web_console_governance.sql",
+    "src/migrations/v071_raw_session_identity.sql",
+    "src/migrations/v072_memory_retrieval_enrichment.sql",
+    "src/migrations/v073_session_summary_poisoning.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,14 +236,20 @@ pub struct GraphEvidenceFingerprintInput {
 
 /// Compute the dataset + implementation fingerprints by reading the live files
 /// from disk. `dataset_path` is parameterized so callers/tests can point at a
-/// different dataset; implementation paths are fixed by `IMPLEMENTATION_INPUTS`.
+/// different dataset; implementation paths are fixed by `IMPLEMENTATION_INPUTS`
+/// plus the structurally verified migration SQL bundle.
 pub fn compute(dataset_path: &str) -> Result<GraphEvidenceFingerprint> {
     let mut raw: Vec<(String, &'static str, Vec<u8>)> =
-        Vec::with_capacity(1 + IMPLEMENTATION_INPUTS.len());
+        Vec::with_capacity(2 + IMPLEMENTATION_INPUTS.len());
     raw.push((
         dataset_path.to_string(),
         "dataset",
         read_bytes(dataset_path)?,
+    ));
+    raw.push((
+        MIGRATION_BUNDLE_PATH.to_string(),
+        "implementation",
+        migration_bundle_bytes()?,
     ));
     for path in IMPLEMENTATION_INPUTS {
         raw.push(((*path).to_string(), "implementation", read_bytes(path)?));
@@ -127,6 +286,19 @@ pub fn compute(dataset_path: &str) -> Result<GraphEvidenceFingerprint> {
 
 fn read_bytes(path: &str) -> Result<Vec<u8>> {
     std::fs::read(path).with_context(|| format!("read graph-decision fingerprint input {path}"))
+}
+
+fn migration_bundle_bytes() -> Result<Vec<u8>> {
+    let mut bundle = Vec::new();
+    bundle.extend_from_slice(&(MIGRATION_SQL_INPUTS.len() as u64).to_be_bytes());
+    for path in MIGRATION_SQL_INPUTS {
+        let sql = read_bytes(path)?;
+        bundle.extend_from_slice(&(path.len() as u64).to_be_bytes());
+        bundle.extend_from_slice(path.as_bytes());
+        bundle.extend_from_slice(&(sql.len() as u64).to_be_bytes());
+        bundle.extend_from_slice(&sql);
+    }
+    Ok(bundle)
 }
 
 /// Length-prefixed encoding prevents boundary ambiguity between (path, content)
@@ -212,11 +384,23 @@ mod tests {
     }
 
     #[test]
-    fn fingerprint_covers_provider_embedding_vector_and_search_inputs() -> Result<()> {
+    fn fingerprint_covers_result_changing_retrieval_inputs() -> Result<()> {
         let fingerprint = compute(DEFAULT_DATASET_PATH)?;
         for required_path in [
             "src/eval/provider_comparison.rs",
+            "src/memory.rs",
+            "src/memory/facts.rs",
+            "src/memory/retrieval_enrichment.rs",
+            "src/memory/search_context.rs",
+            "src/memory/staleness.rs",
+            "src/memory/staleness/capabilities.rs",
+            "src/memory/staleness/path.rs",
+            "src/memory/staleness/util.rs",
+            "src/memory/store.rs",
+            "src/memory/store/read.rs",
             "src/memory/store/write.rs",
+            "src/memory/suppression.rs",
+            "src/memory/types.rs",
             "src/retrieval/embedding.rs",
             "src/retrieval/embedding/config.rs",
             "src/retrieval/embedding/fallback.rs",
@@ -224,14 +408,44 @@ mod tests {
             "src/retrieval/embedding/status.rs",
             "src/retrieval/entity/search/lookup.rs",
             "src/retrieval/entity/search/sql.rs",
+            "src/retrieval/memory_search.rs",
+            "src/retrieval/memory_search/filters.rs",
+            "src/retrieval/memory_search/fts.rs",
+            "src/retrieval/memory_search/like.rs",
+            "src/retrieval/query_expand.rs",
             "src/retrieval/query_expand/expand.rs",
             "src/retrieval/query_expand/tokenize.rs",
             "src/retrieval/query_expand/translations.rs",
+            "src/retrieval/rerank.rs",
+            "src/retrieval/rerank/config.rs",
+            "src/retrieval/rerank/inventory.rs",
+            "src/retrieval/rerank/model.rs",
+            "src/retrieval/rerank/stage.rs",
+            "src/retrieval/rerank/types.rs",
+            "src/retrieval/search.rs",
             "src/retrieval/search/common.rs",
+            "src/retrieval/search/memory.rs",
+            "src/retrieval/search/memory/claim.rs",
+            "src/retrieval/search/memory/runner.rs",
+            "src/retrieval/search/memory/source_anchor.rs",
+            "src/retrieval/search/memory/suppression_filter.rs",
+            "src/retrieval/search/memory/text.rs",
+            "src/retrieval/search/memory/text/format.rs",
+            "src/retrieval/search/memory/text/graph.rs",
+            "src/retrieval/search/memory/text/support.rs",
+            "src/retrieval/search/memory/text/support/fact.rs",
+            "src/retrieval/search/memory/text/support/graph_claim.rs",
+            "src/retrieval/search/memory/usage_rank.rs",
             "src/retrieval/search/memory/weights.rs",
+            "src/retrieval/temporal.rs",
             "src/retrieval/temporal/fact_keys.rs",
+            "src/retrieval/temporal/fact_labels.rs",
+            "src/retrieval/temporal/parse.rs",
+            "src/retrieval/temporal/search.rs",
+            "src/retrieval/temporal/types.rs",
             "src/retrieval/vector.rs",
             "src/retrieval/vector_candidates.rs",
+            "src/runtime_config.rs",
         ] {
             assert!(
                 fingerprint
@@ -241,6 +455,104 @@ mod tests {
                 "missing graph-decision fingerprint input {required_path}"
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn fingerprint_covers_every_graph_decision_arm_direct_dependency() -> Result<()> {
+        let fingerprint = compute(DEFAULT_DATASET_PATH)?;
+        for required_path in [
+            "src/eval/golden/run.rs",
+            "src/eval/graph_decision.rs",
+            "src/memory/graph_contract.rs",
+            "src/memory/graph_provenance.rs",
+            "src/memory/lifecycle.rs",
+            "src/memory/operation.rs",
+            "src/memory/promote.rs",
+            "src/memory/promote/slug.rs",
+            "src/memory/semantic_dedup.rs",
+            "src/memory/state_key.rs",
+            "src/migrate.rs",
+            "src/migrate/content_identity.rs",
+            "src/migrate/run.rs",
+            "src/migrate/schema_drift.rs",
+            "src/migrate/schema_drift/exists.rs",
+            "src/migrate/schema_drift/invariants.rs",
+            "src/migrate/schema_drift/invariants/v068.rs",
+            "src/migrate/schema_drift/invariants/v070.rs",
+            "src/migrate/schema_drift/invariants/v071.rs",
+            "src/migrate/schema_drift/invariants/v072.rs",
+            "src/migrate/schema_drift/invariants/v073.rs",
+            "src/migrate/state.rs",
+            "src/migrate/transition.rs",
+            "src/migrate/types.rs",
+            "src/project_id.rs",
+            "src/retrieval/entity/link.rs",
+            "src/retrieval/search_multihop.rs",
+            "src/retrieval/search_multihop/discover.rs",
+            "src/retrieval/search_multihop/expand.rs",
+            "src/retrieval/search_multihop/merge.rs",
+            "src/retrieval/search_multihop/search.rs",
+            "src/retrieval/search_multihop/types.rs",
+            MIGRATION_BUNDLE_PATH,
+        ] {
+            assert!(
+                fingerprint
+                    .inputs
+                    .iter()
+                    .any(|input| input.role == "implementation" && input.path == required_path),
+                "missing graph-decision direct dependency {required_path}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn migration_bundle_matches_runtime_registry_structurally() -> Result<()> {
+        let migrations = crate::migrate::MIGRATIONS;
+        assert_eq!(
+            MIGRATION_SQL_INPUTS.len(),
+            migrations.len(),
+            "migration SQL bundle must cover every runtime registry entry"
+        );
+
+        let mut expected_bundle = Vec::new();
+        expected_bundle.extend_from_slice(&(migrations.len() as u64).to_be_bytes());
+        for (path, migration) in MIGRATION_SQL_INPUTS.iter().zip(migrations) {
+            let expected_path = format!(
+                "src/migrations/v{:03}_{}.sql",
+                migration.version, migration.name
+            );
+            assert_eq!(
+                *path, expected_path,
+                "migration bundle path/order drifted from runtime registry"
+            );
+            let live_sql = read_bytes(path)?;
+            assert_eq!(
+                live_sql.as_slice(),
+                migration.sql.as_bytes(),
+                "migration bundle SQL bytes drifted from runtime registry for {path}"
+            );
+            expected_bundle.extend_from_slice(&(path.len() as u64).to_be_bytes());
+            expected_bundle.extend_from_slice(path.as_bytes());
+            expected_bundle.extend_from_slice(&(migration.sql.len() as u64).to_be_bytes());
+            expected_bundle.extend_from_slice(migration.sql.as_bytes());
+        }
+
+        let bundle = migration_bundle_bytes()?;
+        assert_eq!(bundle, expected_bundle);
+        let fingerprint = compute(DEFAULT_DATASET_PATH)?;
+        let bundle_input = fingerprint
+            .inputs
+            .iter()
+            .find(|input| input.path == MIGRATION_BUNDLE_PATH)
+            .context("migration bundle fingerprint input")?;
+        assert_eq!(bundle_input.role, "implementation");
+        assert_eq!(bundle_input.byte_len, bundle.len() as u64);
+        assert_eq!(
+            bundle_input.sha256,
+            length_prefixed_sha256(MIGRATION_BUNDLE_PATH, &bundle)
+        );
         Ok(())
     }
 

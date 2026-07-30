@@ -134,6 +134,38 @@ fn local_model_unavailable_defers_memory_embedding_write() -> Result<()> {
 }
 
 #[test]
+#[cfg(feature = "local-onnx")]
+fn auto_api_prune_does_not_open_local_model_state() -> Result<()> {
+    let server = FailingEmbeddingServer::success_once_then_fail()?;
+    let _provider = ScopedEmbeddingProvider::new("auto");
+    let fixture = PruneRaceDir::new()?;
+    let non_directory_model_root = fixture.path().join("not-a-directory");
+    std::fs::write(
+        &non_directory_model_root,
+        b"local model state is irrelevant to API",
+    )?;
+    unsafe {
+        std::env::set_var("REMEM_EMBEDDINGS_API_KEY", "test-key");
+        std::env::set_var("REMEM_EMBEDDINGS_BASE_URL", &server.base_url);
+        std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &non_directory_model_root);
+    }
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let target = EmbeddingBackfillTarget {
+        model: "normalized-model".to_string(),
+        dimensions: 4,
+    };
+
+    let report = prune_inactive_memory_embeddings(&conn, &target)?;
+
+    assert_eq!(report.active_model, target.model);
+    assert_eq!(report.active_dimensions, target.dimensions);
+    assert_eq!(report.pruned, 0);
+    assert_eq!(server.call_count(), 1);
+    Ok(())
+}
+
+#[test]
 fn prune_inactive_profiles_requires_complete_active_coverage() -> Result<()> {
     let conn = setup_vector_conn()?;
     for id in 1..=2 {
