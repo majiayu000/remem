@@ -38,7 +38,9 @@ fn get_observations_attaches_compressed_observation_sources() {
     .expect("compressed observation inserts");
     let sources = crate::db::get_observations_by_ids(&conn, &[source_id], Some("/repo"))
         .expect("source observation loads");
-    let expected_hash = crate::db::observation_source_hash(&sources[0]);
+    let expected_hash = crate::db::observation_source_retention_record(&conn, &sources[0])
+        .expect("retention record builds")
+        .source_hash;
     crate::db::insert_compressed_observation_sources(
         &conn,
         &[compressed_id],

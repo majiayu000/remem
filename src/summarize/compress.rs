@@ -31,6 +31,7 @@ async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Res
     if old_obs.is_empty() {
         return Ok(());
     }
+    let source_retention_records = db::observation_source_retention_records(&conn, &old_obs)?;
 
     let timer = crate::log::Timer::start("compress", &format!("{} observations", old_obs.len()));
     let events = build_compress_events(&old_obs);
@@ -55,7 +56,13 @@ async fn maybe_compress(host: &str, project: &str, profile: Option<&str>) -> Res
         }
     };
 
-    let outcome = apply_compression_response(&conn, project, &old_obs, &response)?;
+    let outcome = apply_compression_response_with_records(
+        &conn,
+        project,
+        &old_obs,
+        &source_retention_records,
+        &response,
+    )?;
     match outcome {
         CompressionOutcome::Skipped {
             reason,
@@ -159,10 +166,29 @@ enum CompressionOutcome {
     },
 }
 
+#[cfg(test)]
 fn apply_compression_response(
     conn: &rusqlite::Connection,
     project: &str,
     source_observations: &[db::models::Observation],
+    response: &str,
+) -> Result<CompressionOutcome> {
+    let source_retention_records =
+        db::observation_source_retention_records(conn, source_observations)?;
+    apply_compression_response_with_records(
+        conn,
+        project,
+        source_observations,
+        &source_retention_records,
+        response,
+    )
+}
+
+fn apply_compression_response_with_records(
+    conn: &rusqlite::Connection,
+    project: &str,
+    source_observations: &[db::models::Observation],
+    source_retention_records: &[db::ObservationSourceRetentionRecord],
     response: &str,
 ) -> Result<CompressionOutcome> {
     let parsed = format::parse_observations_with_outcome(response);
@@ -189,10 +215,11 @@ fn apply_compression_response(
     let source_ids: Vec<i64> = source_observations.iter().map(|obs| obs.id).collect();
     with_compression_savepoint(conn, || {
         let stored = store_compressed_observations(conn, project, response, &compressed)?;
-        let linked = db::insert_compressed_observation_sources(
+        let linked = db::insert_compressed_observation_sources_checked(
             conn,
             &stored.ids,
             source_observations,
+            source_retention_records,
             &stored.memory_session_id,
         )?;
         let expected_links = stored.ids.len() * source_observations.len();

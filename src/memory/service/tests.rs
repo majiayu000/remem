@@ -628,6 +628,8 @@ fn resolve_none_local_path_returns_default() {
 fn resolve_none_local_path_allows_env_directory_inside_base() {
     let _dir = ScopedTestDataDir::new("path-default-env-inside");
     let base = crate::db::data_dir();
+    std::fs::create_dir_all(&base).expect("create data directory");
+    let expected_base = base.canonicalize().expect("canonicalize data directory");
     let env_dir = base.join("manual-notes-custom");
     unsafe { std::env::set_var("REMEM_SAVE_MEMORY_LOCAL_DIR", &env_dir) };
 
@@ -639,11 +641,12 @@ fn resolve_none_local_path_allows_env_directory_inside_base() {
         "env path inside base should be allowed: {got:?}"
     );
     let path = got.unwrap();
+    let expected_env_dir = expected_base.join("manual-notes-custom");
     assert!(
-        path.starts_with(&env_dir),
+        path.starts_with(&expected_env_dir),
         "default path {:?} should be inside env dir {:?}",
         path,
-        env_dir
+        expected_env_dir
     );
 }
 

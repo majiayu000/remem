@@ -1,6 +1,6 @@
 use super::{
-    apply_compression_response, CompressionOutcome, COMPRESS_PROMPT, INVALID_REPLACEMENTS_REASON,
-    NO_REPLACEMENTS_REASON,
+    apply_compression_response, apply_compression_response_with_records, CompressionOutcome,
+    COMPRESS_PROMPT, INVALID_REPLACEMENTS_REASON, NO_REPLACEMENTS_REASON,
 };
 use crate::db;
 use anyhow::Result;
@@ -27,7 +27,15 @@ fn setup_observation_schema(conn: &Connection) -> Result<()> {
             status TEXT DEFAULT 'active',
             last_accessed_epoch INTEGER,
             branch TEXT,
-            commit_sha TEXT
+            commit_sha TEXT,
+            host_id INTEGER,
+            project_id INTEGER,
+            session_row_id INTEGER,
+            observation_type TEXT,
+            text TEXT,
+            evidence_event_ids TEXT,
+            confidence REAL,
+            reference_time_epoch INTEGER
         );
         CREATE TABLE sdk_sessions (
             id INTEGER PRIMARY KEY,
@@ -290,6 +298,7 @@ fn valid_compression_inserts_replacement_then_marks_sources() -> Result<()> {
     ];
 
     let sources = source_observations(&conn, &ids)?;
+    let expected_records = db::observation_source_retention_records(&conn, &sources)?;
     let outcome =
         apply_compression_response(&conn, "proj", &sources, &valid_response("Compressed"))?;
 
@@ -306,10 +315,10 @@ fn valid_compression_inserts_replacement_then_marks_sources() -> Result<()> {
     let links = compressed_source_links(&conn)?;
     assert_eq!(links.len(), 2);
     for (_, source_id, source_hash) in links {
-        let Some(source) = sources.iter().find(|source| source.id == source_id) else {
+        let Some(source_index) = sources.iter().position(|source| source.id == source_id) else {
             panic!("linked source should be in original batch");
         };
-        assert_eq!(source_hash, db::observation_source_hash(source));
+        assert_eq!(source_hash, expected_records[source_index].source_hash);
     }
     Ok(())
 }
@@ -354,6 +363,7 @@ fn multi_replacement_compression_links_every_replacement_to_every_source() -> Re
         insert_source_observation(&conn, "stale")?,
     ];
     let sources = source_observations(&conn, &ids)?;
+    let expected_records = db::observation_source_retention_records(&conn, &sources)?;
     let response = format!(
         "{}\n{}",
         valid_response("Compressed one"),
@@ -372,11 +382,11 @@ fn multi_replacement_compression_links_every_replacement_to_every_source() -> Re
     );
     let links = compressed_source_links(&conn)?;
     assert_eq!(links.len(), 4);
-    for source in &sources {
+    for (source, expected_record) in sources.iter().zip(expected_records) {
         let matching = links
             .iter()
             .filter(|(_, source_id, source_hash)| {
-                *source_id == source.id && *source_hash == db::observation_source_hash(source)
+                *source_id == source.id && *source_hash == expected_record.source_hash
             })
             .count();
         assert_eq!(matching, 2);
@@ -385,7 +395,7 @@ fn multi_replacement_compression_links_every_replacement_to_every_source() -> Re
 }
 
 #[test]
-fn partial_source_mark_rolls_back_sources_and_replacements() -> Result<()> {
+fn invalid_source_status_is_rejected_before_writes() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     setup_observation_schema(&conn)?;
     let ids = vec![
@@ -395,11 +405,11 @@ fn partial_source_mark_rolls_back_sources_and_replacements() -> Result<()> {
 
     let sources = source_observations(&conn, &ids)?;
     let error = apply_compression_response(&conn, "proj", &sources, &valid_response("Compressed"))
-        .expect_err("partial mark should roll back");
+        .expect_err("invalid source status should reject compression");
 
     assert!(error
         .to_string()
-        .contains("marked 1 of 2 source observations compressed"));
+        .contains("compressed observation sources must be active or stale"));
     assert_eq!(statuses_for(&conn, &ids)?, vec!["active", "compressed"]);
     assert!(compressed_titles(&conn)?.is_empty());
     assert!(compressed_source_links(&conn)?.is_empty());
@@ -460,6 +470,206 @@ fn replacement_insert_failure_rolls_back_sources_and_replacements() -> Result<()
 
     assert!(error.to_string().contains("bad compressed insert"));
     assert_eq!(statuses_for(&conn, &ids)?, vec!["active", "stale"]);
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn compression_rejects_core_source_changes_after_input_selection() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![insert_source_observation(&conn, "active")?];
+    let sources = source_observations(&conn, &ids)?;
+    let source_records = db::observation_source_retention_records(&conn, &sources)?;
+    conn.execute(
+        "UPDATE observations SET narrative = 'changed during AI call' WHERE id = ?1",
+        params![ids[0]],
+    )?;
+
+    let error = apply_compression_response_with_records(
+        &conn,
+        "proj",
+        &sources,
+        &source_records,
+        &valid_response("Compressed"),
+    )
+    .expect_err("changed source content must reject compression");
+
+    assert!(
+        error
+            .to_string()
+            .contains("changed after compression input selection"),
+        "{error:#}"
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn compression_rejects_provenance_changes_after_input_selection() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![insert_source_observation(&conn, "active")?];
+    let sources = source_observations(&conn, &ids)?;
+    let source_records = db::observation_source_retention_records(&conn, &sources)?;
+    conn.execute(
+        "UPDATE observations SET prompt_number = 7 WHERE id = ?1",
+        params![ids[0]],
+    )?;
+
+    let error = apply_compression_response_with_records(
+        &conn,
+        "proj",
+        &sources,
+        &source_records,
+        &valid_response("Compressed"),
+    )
+    .expect_err("changed source provenance must reject compression");
+
+    assert!(
+        error
+            .to_string()
+            .contains("compression source observations changed"),
+        "{error:#}"
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["active"]);
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn compression_rejects_status_changes_after_input_selection() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![insert_source_observation(&conn, "active")?];
+    let sources = source_observations(&conn, &ids)?;
+    let source_records = db::observation_source_retention_records(&conn, &sources)?;
+    conn.execute(
+        "UPDATE observations SET status = 'stale' WHERE id = ?1",
+        params![ids[0]],
+    )?;
+
+    let error = apply_compression_response_with_records(
+        &conn,
+        "proj",
+        &sources,
+        &source_records,
+        &valid_response("Compressed"),
+    )
+    .expect_err("changed source status must reject compression");
+
+    assert!(
+        error
+            .to_string()
+            .contains("changed after compression input selection"),
+        "{error:#}"
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["stale"]);
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn compression_allows_last_access_changes_after_input_selection() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let ids = vec![insert_source_observation(&conn, "active")?];
+    let sources = source_observations(&conn, &ids)?;
+    let source_records = db::observation_source_retention_records(&conn, &sources)?;
+    conn.execute(
+        "UPDATE observations SET last_accessed_epoch = 123 WHERE id = ?1",
+        params![ids[0]],
+    )?;
+
+    let outcome = apply_compression_response_with_records(
+        &conn,
+        "proj",
+        &sources,
+        &source_records,
+        &valid_response("Compressed"),
+    )?;
+
+    assert_eq!(
+        outcome,
+        CompressionOutcome::Compressed {
+            source_count: 1,
+            replacement_count: 1,
+            marked_count: 1,
+        }
+    );
+    assert_eq!(statuses_for(&conn, &ids)?, vec!["compressed"]);
+    assert_eq!(compressed_titles(&conn)?, vec!["Compressed"]);
+    assert_eq!(compressed_source_links(&conn)?.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn compression_rolls_back_when_a_selected_source_disappears() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let source_id = insert_source_observation(&conn, "active")?;
+    let _anchor_id = insert_source_observation(&conn, "active")?;
+    let sources = source_observations(&conn, &[source_id])?;
+    let source_records = db::observation_source_retention_records(&conn, &sources)?;
+    conn.execute("DELETE FROM observations WHERE id = ?1", params![source_id])?;
+
+    let error = apply_compression_response_with_records(
+        &conn,
+        "proj",
+        &sources,
+        &source_records,
+        &valid_response("Compressed"),
+    )
+    .expect_err("missing source must reject compression");
+
+    assert!(
+        error
+            .to_string()
+            .contains("load observation 1 retention provenance"),
+        "{error:#}"
+    );
+    assert!(compressed_titles(&conn)?.is_empty());
+    assert!(compressed_source_links(&conn)?.is_empty());
+    Ok(())
+}
+
+#[test]
+fn compression_rolls_back_when_a_source_id_is_reused() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_observation_schema(&conn)?;
+    let source_id = insert_source_observation(&conn, "active")?;
+    let sources = source_observations(&conn, &[source_id])?;
+    let source_records = db::observation_source_retention_records(&conn, &sources)?;
+    conn.execute("DELETE FROM observations WHERE id = ?1", params![source_id])?;
+    conn.execute(
+        "INSERT INTO observations
+         (id, memory_session_id, project, type, title, narrative, created_at,
+          created_at_epoch, discovery_tokens, status)
+         VALUES (?1, 'reused-session', 'proj', 'discovery', 'Reused',
+                 'different row', 'reused', 1, 0, 'active')",
+        params![source_id],
+    )?;
+
+    let error = apply_compression_response_with_records(
+        &conn,
+        "proj",
+        &sources,
+        &source_records,
+        &valid_response("Compressed"),
+    )
+    .expect_err("reused source id must reject compression");
+
+    assert!(
+        error
+            .to_string()
+            .contains("changed after compression input selection"),
+        "{error:#}"
+    );
     assert!(compressed_titles(&conn)?.is_empty());
     assert!(compressed_source_links(&conn)?.is_empty());
     Ok(())

@@ -558,7 +558,9 @@ pub mod tests_helper {
                 detail TEXT,
                 files TEXT,
                 exit_code INTEGER,
-                created_at_epoch INTEGER NOT NULL
+                created_at_epoch INTEGER NOT NULL,
+                retention_class TEXT NOT NULL DEFAULT 'audit'
+                    CHECK (retention_class IN ('ephemeral', 'audit'))
             );
             CREATE TABLE IF NOT EXISTS entities (
                 id INTEGER PRIMARY KEY,

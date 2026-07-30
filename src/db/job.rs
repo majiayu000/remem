@@ -1,4 +1,5 @@
 mod claim;
+mod cleanup;
 mod enqueue;
 mod state;
 #[cfg(test)]
@@ -6,7 +7,10 @@ mod tests;
 
 pub use crate::db::models::{Job, JobType};
 
-pub use claim::claim_next_job;
+pub use claim::{claim_next_job, claim_ready_cleanup_job};
+pub use cleanup::{
+    maybe_enqueue_cleanup_job, maybe_enqueue_cleanup_job_at, CleanupEnqueueDecision,
+};
 pub use enqueue::{enqueue_job, maybe_enqueue_dream_job, DreamEnqueueDecision};
 pub(crate) use enqueue::{enqueue_job_in_transaction, maybe_enqueue_dream_job_in_transaction};
 pub use state::{
