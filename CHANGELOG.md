@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.36` for GH-949: every database connection now
+- Staged source version `0.6.37` for GH-949: every database connection now
   applies tuned SQLite pragmas from one place. `cache_size=-65536` (64 MiB),
   `synchronous=FULL`, and `temp_store=MEMORY` join the existing WAL,
   foreign-key, and busy-timeout settings; SQLCipher disables mmap, so page
@@ -15,6 +15,13 @@
   fail before opening the database on invalid or non-Unicode values.
   `REMEM_SQLITE_CACHE_KIB` accepts 1 through 1048576 KiB. The three
   `open_configured_*` helpers no longer carry separate pragma strings.
+- Staged source version `0.6.36` for the GH-946 post-merge corrective:
+  automatic E5 downloads now use the exact immutable Hugging Face revision
+  evaluated by the checked-in provider evidence, while presets without an
+  approved revision fail before any network request. Exact-entity retrieval
+  also grounds the irregular `build` / `built` / `builds` / `building` family
+  without matching unrelated predicates, and the graph-decision fingerprint
+  is regenerated against the corrected implementation.
 - Staged source version `0.6.35` for the GH-934 post-merge corrective:
   Retrieval Router plans now preserve the caller's `include_superseded`
   temporal scope across explicit, keyword-fallback, and default-fallback
