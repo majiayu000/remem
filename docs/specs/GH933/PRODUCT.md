@@ -67,21 +67,26 @@ pending v2 requirements below.
    selector with no row yields an empty truth list, not synthesized Unknown.
    Owner/memory-scope values are closed domains; trimmed `" global "` is global.
    Explicit history discovers candidates from a persistent, scope-indexed route
-   ledger, then reconstructs owner, target and invariant memory scope at the
+   ledger, then reconstructs owner, target and versioned memory scope at the
    cutoff from its complete version chain. A trigger covers every creation/
    import. The three existing-row writers—normal save upsert, Markdown restore/
-   import, and scope cleanup—atomically append a route version whenever their
+   import, and scope cleanup—use one canonical route-transition service to
+   atomically append a route version whenever their
    actual placement/branch/scope/source/target/owner/topic/routing/context tuple changes; same-value
-   assignments remain legal no-ops. Scope cleanup also appends its same-status
+   assignments remain legal no-ops. Markdown transitions use
+   `source_kind=markdown_import`; scope cleanup also appends its same-status
    lifecycle version and audit mirror. A guard rejects every other direct change.
    A validated A→B→C chain remains discoverable in B. Because legacy save and
    Markdown mutations were not exhaustively logged and 30-day audit events may
    be gone, migration marks history complete only with exhaustive durable proof;
    otherwise it starts forward-only coverage at migration. A pre-floor query
    fails with `unreconstructable_routing_history` before scope filtering.
-   Project/Owner membership and SubjectIdentity use route-at-t, with the new
-   route effective at transition equality. Missing, forked, contradictory or
-   scope-changing history never falls back to the current route.
+   Project/Owner membership and SubjectIdentity use the full route-at-t,
+   including scope, with the new route effective at transition equality. A
+   validated Markdown project→global transition is Project-scoped before and
+   Owner-scoped at/after equality. Only missing, discontinuous, contradictory,
+   invalid-scope or legacy/forward-only coverage-gapped history returns
+   `unreconstructable_routing_history`; a validated scope change does not.
 
 3. **Auditable reference time and snapshot.** An explicit `as_of` is used
    directly and is `Exact`. A query without one samples “now” once. Every output
@@ -119,11 +124,13 @@ pending v2 requirements below.
    After ingestion, a canonical no-op with validated result provenance records
    later trust/ack rewrites and advances knowledge time but cannot prove initial
    ingestion; its request topic may legitimately differ from the result topic.
-   Candidate-linked route changes need the same complete route-ledger chain;
-   each version links its predecessor and the terminal snapshot must equal the
-   current row. The reroute writer does not mutate memory scope, so normalized
-   scope is a creation-proof-validated invariant; unexplained routing, scope,
-   content or provenance drift fails closed.
+   Candidate completion scope must match its validated completion route.
+   Subsequent candidate-linked route or scope changes need the same complete
+   route-ledger chain; each version links its predecessor and the terminal
+   snapshot must equal the current row. Validated later transitions use
+   scope-at-t; missing or discontinuous history fails with the routing-history
+   error, while unexplained routing, scope, content or provenance drift fails
+   closed.
    Captured-event identity `(host_id, session_id, event_id)` is immutable across
    idempotent replay: a duplicate cannot replace its original creation,
    insertion/knowledge or reference/source epoch. Replay may append separately
@@ -241,10 +248,13 @@ pending v2 requirements below.
       cross-scope negative tests. The indexed route-ledger migration materializes
       creation plus every validated reroute, an A→B→C fixture discovers B without
       a creation/current B candidate, and Project/Owner before/equal/after uses
-      route-at-t. Backfill gaps, forward-only pre-floor reads and incomplete
-      writer chains fail closed. All six current insert families, the three
-      existing-row route writers, same-value no-ops, changed-route staging and
-      direct bypass rejection are covered; the legacy user-claim wrapper stays
+      route-at-t. A Markdown existing-row project→global fixture proves old
+      Project membership/identity before, new Owner membership/identity at and
+      after equality, `source_kind=markdown_import`, atomic rollback, and a
+      missing-predecessor or legacy gap error. Backfill gaps, forward-only
+      pre-floor reads and incomplete writer chains fail closed. All six current
+      insert families, the three existing-row route writers, same-value no-ops,
+      changed-route staging and direct bypass rejection are covered; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.

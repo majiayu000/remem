@@ -365,7 +365,7 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   恢复 Project/Owner membership 与 `SubjectIdentity`。逻辑列为
   `id,memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,
   audit_event_id(no FK),source_ref,coverage_kind,coverage_start_epoch`，以及完整
-  placement/source/target/owner/topic/routing/context/memory-scope/branch snapshot；
+  placement/source/target/owner/topic/routing/context/branch snapshot 与 per-version normalized `project|global` memory scope；
   memory/self FK 均 `ON DELETE RESTRICT`，version/predecessor unique/连续。按
   memory/time、owner、target、
   legacy placement 与 coverage 分别建 index，候选先 UNION scope indexes，再按
@@ -379,19 +379,18 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   `unreconstructable_routing_history`，因为 unknown prior route 可能命中 query。
   migration 仅在每个 memory 有 terminal state、完整链/terminal 校验通过且
   forward-only counts 可见后标 applied。
-- cutover 后 `AFTER INSERT` trigger 覆盖六类 INSERT：
-  store、lifecycle、candidate apply、CLI import、Markdown import、pack import。
+- cutover 后 `AFTER INSERT` trigger 覆盖六类 INSERT：store、lifecycle、candidate apply、CLI import、Markdown import、pack import。
   三类 existing-row route writer——store save upsert、Markdown restore/update、
-  scope cleanup——统一走 reviewed staging helper；按 OLD/NEW 实际 placement/
+  scope cleanup——统一走 canonical route-transition service；按 OLD/NEW placement/
   branch/scope/source/target/owner/topic/routing/context tuple 判定。同值 assignment
   不写 version 且合法通过；真变化必须在同一 savepoint/transaction/epoch append
-  matching next snapshot 再 guarded update，scope cleanup 同时写 audit mirror。
-  eval/test seed 必须 initial insert final route 或走 fixture helper。
+  matching next snapshot 再 guarded update；validated Markdown project→global 用 `source_kind=markdown_import`，scope cleanup 同时写 audit mirror。
 - database guard 只在上述 tuple 真变化时触发，拒绝 missing/wrong-head/NEW-mismatch
   stage；任何失败全 rollback，ledger update/delete 禁止。source kind closed 为
   `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup`；event ID/ref
   只是复制的 diagnostic，不参与 proof。fold `(effective_at_epoch,id)` 且
-  `epoch<=t`；gap/fork/source/time/terminal/scope drift 一律 fail closed。
+  `epoch<=t`，scope 决定 membership/SubjectIdentity；invalid scope、missing predecessor/source、
+  gap/fork/time/terminal/legacy coverage gap fail closed，完整 scope transition 不报错。
 
 ### Observation evidence
 
@@ -498,9 +497,9 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   candidate scope 与 derived title 都不是 copied-equality fields。必须有
   `memory_operation_log(source='memory_candidate',source_candidate_id=candidate.id,
   result_memory_id=memory.id)` completion；workspace/pack positive fixtures
-  锁定 scope mapping/title exclusion。owner/project route 只可通过上文完整
-  route-at-t chain 改变，scope invariant；chain error 使用
-  `unreconstructable_routing_history`，其他 immutable drift 使用
+  锁定 scope mapping/title exclusion。completion scope 必须匹配 initial route；
+  后续 owner/project/scope 只可通过完整 route-at-t chain 改变；chain/coverage
+  error 使用 `unreconstructable_routing_history`，其他 unexplained drift 使用
   `unverifiable_post_candidate_mutation`。refs 绑定 candidate
   creation，completion/cleanup knowledge 独立要求 reference-eligible。无 candidate
   时 compatible result operation 绑定 refs；两者都没有时 `as_of=None` 以
@@ -764,8 +763,9 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 - [ ] Full PR preflight with the exact intended PR body.
 - [ ] Final-head bounded/performance artifact command above.
 - [ ] 六类 route INSERT、三类 UPDATE、no-op/change guard、indexed A→B→C、
-      backfill/forward-only；durable lifecycle、30-day event cleanup invariance、
-      fact created-at gate、six edge mappings、unknown/unsupported fail-closed。
+      Markdown project→global before/equal/after、`markdown_import`、rollback/gap；
+      backfill/forward-only、durable lifecycle、event-cleanup invariance、
+      fact created-at、six edge mappings、unknown/unsupported fail-closed。
 - [ ] Fresh exact-head CI and independent review.
 
 ## Rollback

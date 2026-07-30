@@ -355,13 +355,13 @@ memory_route_ledger(
   topic_domain, routing_confidence, routing_reason, context_class, memory_scope, branch,
   UNIQUE(memory_id,route_version), UNIQUE(previous_route_id))
 ```
-Each row is a complete route state. Versions start at one, are contiguous, and link a predecessor from the same memory. `source_kind` is the closed `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup` set; audit IDs/refs are copied diagnostics, never history dependencies. `memory_scope` is normalized `project|global`. Required indexes are `(memory_id,effective_at_epoch,id)`, owner and target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)`, and `(coverage_kind,coverage_start_epoch)`.
+Each row is a complete route state. Versions start at one, are contiguous, and link a predecessor from the same memory. `source_kind` is the closed `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup` set; audit IDs/refs are copied diagnostics, never history dependencies. `memory_scope` is per-version normalized `project|global` route state. Required indexes are `(memory_id,effective_at_epoch,id)`, owner and target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)`, and `(coverage_kind,coverage_start_epoch)`.
 The foreground migration and Rust post-hook share one `BEGIN IMMEDIATE`. They may copy validated surviving creation/result and `scope_cleanup` evidence into creation and intermediate A→B→C states, but pre-cutover `save_memory` and Markdown updates had no exhaustive durable route log and `events` may already be pruned. Therefore `complete` is allowed only with exhaustive durable proof; otherwise only the migration-time current snapshot is `forward_only` at that floor. Missing evidence never invents history.
 Before scoped discovery, an indexed probe returns `unreconstructable_routing_history` when any forward-only floor is after `t`, because that unknown prior route could match. Migration is marked applied only after every memory has one terminal row, complete chains validate, forward-only counts are reported, and terminal snapshots match `memories`.
 After cutover, an `AFTER INSERT ON memories` trigger inserts version one with the SQLite statement epoch. This covers the six current insert families in `memory/store/write.rs`, `memory/lifecycle.rs`, `memory_candidate/apply.rs`, `cli/actions/import.rs`, `markdown_archive.rs`, and `pack_import/active_import.rs`, plus future inserts.
-All three production existing-row route writers use one reviewed staging helper: `memory::store::update_existing_memory`, Markdown `update_markdown_memory`, and `scope_cleanup::update_owner`. It compares the actual OLD/NEW placement/project, branch, scope, source/target, owner, topic/routing/context tuple. A no-op route assignment needs no version; a real change appends the exact next snapshot and performs the row update in the same savepoint/transaction and epoch. Scope cleanup also writes its audit mirror there. Eval/test seeds must insert their final route initially or use the explicit fixture helper.
+All three production existing-row route writers use one reviewed canonical route-transition service: `memory::store::update_existing_memory`, Markdown `update_markdown_memory`, and `scope_cleanup::update_owner`. It compares the actual OLD/NEW placement/project, branch, scope, source/target, owner, topic/routing/context tuple. A no-op route assignment needs no version; a real change appends the exact next snapshot and performs the row update in the same savepoint/transaction and epoch. A validated Markdown project→global change uses `source_kind=markdown_import`; scope cleanup also writes its audit mirror there. Eval/test seeds must insert their final route initially or use the explicit fixture helper.
 A database guard runs only when that tuple actually changes and rejects a missing, wrong-head, or NEW-mismatching staged version, so legal no-op save/Markdown writes pass while bypasses cannot leave history holes. Any piece failing rolls back all pieces; ledger update/delete is forbidden.
-Candidate discovery UNIONs the owner, target and legacy indexes before stable ID chunking; the per-ID chain is folded through `effective_at_epoch<=t` in `(epoch,id)` order. Gaps/forks, source mismatch, nonmonotonic time, terminal drift or scope change return `unreconstructable_routing_history`, never current fallback.
+Candidate discovery UNIONs the owner, target and legacy indexes before stable ID chunking; the per-ID chain is folded through `effective_at_epoch<=t` in `(epoch,id)` order, including scope for membership and SubjectIdentity. Invalid scope, a missing predecessor/source, gap/fork, nonmonotonic time, terminal drift, or legacy/forward-only coverage gap returns `unreconstructable_routing_history`, never current fallback; a complete scope transition does not.
 
 ## Lifecycle and Observation Mapping
 
@@ -521,9 +521,10 @@ scope must equal `CandidateRoute::memory_scope()` for the validated route:
 unpersisted derived title are not copied-equality fields. An exact
 `memory_operation_log(source='memory_candidate',source_candidate_id=candidate.id,
 result_memory_id=memory.id)` completion is required; workspace and pack fixtures
-lock scope mapping/title exclusion. Owner/project routing may differ only by the
-complete route-at-t chain defined above; scope is invariant. Chain-integrity
-failures use `unreconstructable_routing_history`; other immutable drift is
+lock scope mapping/title exclusion. Completion scope must match that initial
+route; later owner/project/scope changes may differ only through the complete
+route-at-t chain defined above. Chain/coverage failures use
+`unreconstructable_routing_history`; other unexplained immutable drift is
 `unverifiable_post_candidate_mutation`. Refs bind at candidate creation;
 completion/cleanup knowledge is separately reference-eligible. Without a
 candidate, a compatible durable result operation binds
@@ -780,9 +781,10 @@ python3 scripts/ci/check_pr_preflight.py --base origin/main \
 ```
 
 Focused regressions cover all six route inserts, three route-update writers,
-no-op versus changed-route guards, indexed A→B→C, backfill/forward-only
-failure, event cleanup invariance, durable general/Web/scope archive/cleanup
-lifecycle, fact insertion time, and six edge mappings.
+no-op versus changed-route guards, indexed A→B→C, and Markdown project→global
+before/equal/after with `markdown_import`, atomic rollback and gap failure;
+also backfill/forward-only failure, event cleanup invariance, durable
+general/Web/scope archive/cleanup lifecycle, fact insertion time, and six edge mappings.
 Also require WAL snapshot regression, final-head bounded/performance record,
 fresh exact-head CI, independent review and human merge authorization.
 

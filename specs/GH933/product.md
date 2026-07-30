@@ -83,18 +83,22 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    selected claims 可应用的 `user_claim`/`pattern` suppression 与显式引用 memory，
    不枚举 memory-only suppression。explicit historical query 必须先从持久、
    scope-indexed `memory_route_ledger` 发现候选，再从完整 state-version chain
-   恢复 cutoff 时的 owner/target route；A→B→C 的 B 必须可发现，即使 creation/
+   恢复 cutoff 时的 owner/target/scope route；A→B→C 的 B 必须可发现，即使 creation/
    current 都不是 B。六类 production INSERT 由 trigger 建 v1；normal save
-   upsert、Markdown existing-row import 与 scope cleanup 三类 UPDATE 在实际
+   upsert、Markdown existing-row import 与 scope cleanup 三类 UPDATE 统一走
+   canonical route-transition service，在实际
    placement/branch/scope/source/target/owner/topic/routing/context tuple 变化时同 transaction
-   append route version；同值 assignment 合法；scope cleanup 还 append
-   same-status lifecycle version 与 audit mirror，其他 bypass 由 guard 拒绝。
+   append route version；Markdown 使用 `source_kind=markdown_import`，同值
+   assignment 合法；scope cleanup 还 append same-status lifecycle version 与
+   audit mirror，其他 bypass 由 guard 拒绝。
    migration 可复制 surviving validated evidence，但旧 save/Markdown mutation
    没有 exhaustive durable log，30-day events 也可能已删；只有 exhaustive proof
    才标 complete，否则只从 migration epoch forward-only，任何更早查询都在
    scope filtering 前返回 `unreconstructable_routing_history`。Project/Owner membership 与
-   SubjectIdentity 使用 route-at-t，equality 使用 new route。memory scope 由
-   creation proof 验证为 invariant；gap/fork/contradiction 不得 fallback current。
+   SubjectIdentity 使用包含 scope 的 route-at-t，equality 使用 new route。
+   validated Markdown project→global 在 cutoff 前属于旧 Project，equality/之后
+   属于新 Owner。只有 missing/discontinuous/contradictory/invalid-scope 或
+   legacy/forward-only coverage gap fail closed；合法 scope transition 不报错。
    relation 的两个
    endpoint 也必须同时属于该查询的 scoped claim set。`Supersedes` 只有两端属于同一完整 subject
    identity 才能改变 winner；普通 `Refutes` 同样只在同一 identity 内裁决。
@@ -124,10 +128,12 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    不证明 current incarnation。仅 `updated_at_epoch` 不能证明 ingestion。无
    proof 的 memory 只可用于 `as_of=None` current snapshot，explicit historical
    必须排除/`Unknown`；这也定义了无 operation-log 的 canonical procedure
-   memory。candidate-linked routing 从 creation route 到 current row 必须由按
-   `(effective_at_epoch,id)` 排序、version/previous link 连续且 terminal=current
-   的 route ledger 证明；cutoff 折叠所有 epoch `<=as_of` 的 state，scope 保持
-   creation-proof invariant，其他 route/scope/content/provenance drift fail closed。
+   memory。candidate completion scope 必须匹配 validated completion route；
+   后续 candidate-linked owner/project/scope change 从 completion 到 current row
+   必须由按 `(effective_at_epoch,id)` 排序、version/previous link 连续且
+   terminal=current 的 route ledger 证明。cutoff 折叠所有 epoch `<=as_of` 的
+   state；缺链/coverage gap 返回 routing-history error，其他 unexplained
+   route/scope/content/provenance drift fail closed。
    已有 ingestion proof 后，canonical no-op 仅在 planner、result ID、current
    owner/type、empty transition sets 与 source/reason 全部验证时证明后续
    trust/ack transition；input topic 是 request provenance，可合法不同于 result
@@ -445,8 +451,10 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       memory/memory-only suppression 不改变其 result/error domain。Project 与
       indexed route ledger 的 migration/backfill、coverage probe、atomic writer
       guard 与 A→B→C intermediate-B discovery 均有 regression；Project/Owner 的
-      route before/equal/after 使用历史 owner/target，incomplete/forward-only
-      pre-floor chain 返回 `unreconstructable_routing_history`，不能使用 current。
+      route before/equal/after 使用历史 owner/target/scope。Markdown existing-row
+      project→global 覆盖 cutoff 前旧 Project identity、equality/之后新 Owner
+      identity、`markdown_import`、atomic rollback 与 missing-predecessor/legacy
+      gap error；incomplete/forward-only pre-floor chain 不能使用 current。
       六类 INSERT、normal save/Markdown/scope-cleanup 三类 UPDATE、同值 no-op、
       changed-route staging 与 bypass rejection 均有 focused regression。
       `topic_key` 为 NULL 或 exact-empty 时必须使用 `memory:<id>` singleton；
@@ -552,8 +560,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
 - fact 在 cutoff 后实际插入但 caller 把 learned time 回填到 cutoff 前；不得附着。
 - scoped `memory_edges` 存在 typo/newer edge type，或 known `derived_from` 只有
   provenance endpoint；前者 contextual error，后者不得伪造 Claim endpoint。
-- scope cleanup 在 cutoff 前后把 memory 从旧 Project/Owner 路由到新目标；
-  before/equal/after 必须使用旧/新 route，缺链不得 fallback current row。
+- Markdown existing-row import 把 memory 从 project 改为 global，或 scope
+  cleanup 改路由；before/equal/after 必须使用完整旧/新 route（含 scope），
+  缺 predecessor/legacy coverage 不得 fallback current row。
 - writer 在 claims 与 relation/evidence/suppression 分段读取之间提交；进行中的
   projection 只能看到 transaction 开始后的一个 SQLite snapshot。
 - claim 被 suppressed 但仍可能在政策允许的历史审计中存在。

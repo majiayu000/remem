@@ -65,15 +65,18 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     Materialize A→B→C only when every transition is proved. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
   - Route INSERT trigger covers the six production creation families. Existing
-    save upsert, Markdown restore/update and scope cleanup stage the exact next
-    route snapshot only when the NULL-safe OLD/NEW route tuple really changes;
-    same-value assignments pass. Scope cleanup also writes its same-status
+    save upsert, Markdown restore/update and scope cleanup use the canonical
+    route-transition service to stage the exact next route snapshot only when
+    the NULL-safe OLD/NEW route tuple changes; same-value assignments pass.
+    Validated Markdown project→global uses `source_kind=markdown_import`.
+    Scope cleanup also writes its same-status
     lifecycle version and event mirror in the transaction. Reject wrong/missing stages and direct bypasses; rollback
     all pieces together. Lifecycle INSERT trigger writes its baseline.
   - Verify indexed `EXPLAIN` plans, rollback/idempotence, partial/forward-only
     backfill, pre-floor global failure, A→B→C intermediate discovery, all six
-    inserts/three updates, no-op/change/same-second guards, terminal drift, and
-    event-cleanup independence.
+    inserts/three updates, no-op/change/same-second guards, terminal drift,
+    Markdown project→global before/equal/after plus atomic rollback and
+    missing-predecessor/legacy-gap errors, and event-cleanup independence.
 
 - [ ] `GH933-A3` — Adapter and resolver hardening.
   - Owner files: `src/truth/adapter.rs`, `src/truth/lifecycle.rs`,
@@ -90,9 +93,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     semantics，以及 user-claim-only compatibility wrapper；wrapper 仅 bounded
     读取 applicable `user_claim`/`pattern` suppressions 与显式 memory ref。
     explicit history 从 A2R 的 indexed route-state candidates 加完整 chain
-    重建 owner/target；Project/Owner membership 与 SubjectIdentity 使用 cutoff
-    route，equality 用 new state。normalized memory scope 是 creation-proof
-    invariant；gap/fork/coverage/terminal drift 返回 routing integrity error。
+    重建 owner/target/scope；Project/Owner membership 与 SubjectIdentity 使用
+    cutoff route，equality 用 new state。normalized memory scope 是 per-version
+    route state；gap/fork/coverage/terminal drift 返回 routing integrity error，
+    但完整 validated scope transition 不报错。
   - Implement total user source-kind/ref grammar；candidate-derived claim 必须
     exact-match authoritative candidate/result copied fields、nested provenance
     与 preserved edit fields；验证 owner/host/project/session、provenance-root
@@ -152,9 +156,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     evidence and inconsistent routing/ownership；所有 SQL parameterized。
     memory candidate evidence 还要求 completed status、origin trust cap、
     exact confidence/persisted copied fields（不含未持久化 derived title）与
-    result operation；candidate input scope 按 validated route 映射为 user=global/
-    other=project，workspace positive 必须通过。route drift 只接受 indexed ledger
-    的完整 anchor/adjacency/terminal chain，scope 不变，其他 mutation fail closed。effective memory
+    result operation；candidate input scope 按 validated completion route 映射为
+    user=global/other=project，workspace positive 必须通过。后续 owner/project/
+    scope transition 只接受 indexed ledger 的完整 anchor/adjacency/terminal chain，
+    其他 mutation fail closed。effective memory
     knowledge 选择 earliest current-compatible ingestion proof，再取 canonical
     noop/route/ack 的 max；noop 验证 result owner/type 而不要求 input topic 等于
     result topic。无 proof 的 procedure memory 仅 current-snapshot
@@ -178,7 +183,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     replayability serde、
     duplicate capture timestamp/history stability、post-cutoff Observation
     stale/compressed integrity error、post-cutoff entity add/replace negative、
-    Project/Owner route before/equal/after、A→B→C 与 coverage error、general/Web/
+    Project/Owner route before/equal/after、Markdown project→global 与
+    `markdown_import`/rollback/gap、A→B→C 与 coverage error、general/Web/
     scope archive/cleanup durable lifecycle before/equal/after、30-day event
     cleanup invariance 与 broken-ledger error、late-insert fact、六种
     edge mapping 与 unknown-kind error、
