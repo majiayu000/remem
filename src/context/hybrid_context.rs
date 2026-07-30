@@ -40,8 +40,9 @@ pub(super) fn query_hybrid_context_memories(
 
 /// Injection retrieval against explicit weights. `query_hybrid_context_memories`
 /// is the production caller and passes `SearchWeights::default()`; taking the
-/// weights as a parameter is what lets a test prove that `eval-weight-grid`
-/// output actually reaches this path (GH953).
+/// weights as a parameter is what lets a test prove that an explicit
+/// `SearchWeights` value reaches this path. Applying a generated
+/// `eval-weight-grid` result remains later staged work (GH953).
 pub(super) fn query_hybrid_context_memories_with_weights(
     conn: &Connection,
     project: &str,

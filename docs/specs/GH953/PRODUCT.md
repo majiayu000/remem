@@ -1,7 +1,7 @@
 # Retrieval Engine Convergence — Product Spec
 
 Issue: #953 (parent #942)
-Status: Current contract
+Status: Current contract (stage S1 implemented; issue remains open)
 
 ## Problem
 
@@ -49,3 +49,8 @@ primary surface, and any future weight change silently applies to one path only.
 - A weight-grid change is demonstrably reflected in injection output, proven by
   a test that varies `SearchWeights` and observes injection ordering change.
 - No `const` duplicating a `SearchWeights` field remains in `hybrid_context.rs`.
+
+S1 establishes only the shared weight-source prerequisite. It does not make the
+search evaluator execute the injection path, apply a generated weight-grid
+report at runtime, or satisfy the shared-channel and injection-evaluation
+criteria. Those remain required before #953 can close.

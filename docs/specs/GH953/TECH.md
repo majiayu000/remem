@@ -1,7 +1,7 @@
 # Retrieval Engine Convergence — Tech Spec
 
 Issue: #953 (parent #942)
-Status: Current contract
+Status: Current contract (stage S1 implemented; issue remains open)
 
 ## Current state
 
@@ -142,7 +142,7 @@ shows an unexplained ranking delta stops the sequence.
 
 | Stage | Scope | Injection output |
 |---|---|---|
-| S1 | `SearchWeights` becomes the only weight source for injection; delete the nine private `const` items in `hybrid_context.rs`. Channel SQL untouched. | byte-identical |
+| S1 | `SearchWeights` becomes the only scoring-weight source for injection; delete the eight duplicated scoring `const` items in `hybrid_context.rs` while retaining injection-only candidate-pool depth. Channel SQL untouched. | byte-identical |
 | S2 | Introduce `RetrievalProfile` / `ChannelMask` / `ScopeFilter`; injection assembles channels through the profile but keeps its own SQL behind the `ScopeFilter` translation. | byte-identical |
 | S3 | Retire the nine `query_local_*` implementations one channel at a time in favour of the shared `memory::search_memories_*` helpers. One channel per commit, each proving identical ids on the fixture. | byte-identical per channel |
 | S4 | Enable `graph` for injection. | ranking delta, evaluated |
@@ -152,9 +152,11 @@ shows an unexplained ranking delta stops the sequence.
 of scope for #953; they change what users see for reasons unrelated to engine
 convergence and belong to their own issues.
 
-S1 alone satisfies the issue's stated acceptance criterion that
-`eval-weight-grid` output reaches the injection path, and is the smallest change
-that does so.
+S1 proves that explicit `SearchWeights` values reach injection and that the
+production wrapper uses the shipped defaults. It does not consume a generated
+`eval-weight-grid` report, make that evaluator execute injection, or prove
+shared-channel parity. Those issue-level acceptance criteria remain open until
+the later engine and injection-evaluation stages.
 
 ## Verification
 

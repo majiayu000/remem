@@ -83,10 +83,10 @@ fn injection_ordering_follows_search_weights() {
     let fts_first = ids_for(&conn, fts_heavy);
     let entity_first = ids_for(&conn, entity_heavy);
 
-    // The point of GH953: eval-weight-grid tunes SearchWeights, so a change
-    // there has to be observable on the path users actually receive. Before
-    // this change hybrid_context read private constants and both runs returned
-    // the same order.
+    // The S1 prerequisite for GH953: an explicit SearchWeights value must be
+    // observable on the path users actually receive. Before this change
+    // hybrid_context read private constants and both runs returned the same
+    // order. Making eval-weight-grid execute/apply this path is later work.
     assert_ne!(
         fts_first, entity_first,
         "injection ordering must respond to SearchWeights; got {fts_first:?} for both"
