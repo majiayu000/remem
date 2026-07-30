@@ -31,6 +31,35 @@ fn write_non_plaintext_db(path: &Path) {
     fs::write(path, [0xAB_u8; 64]).expect("non-plaintext fixture should write");
 }
 
+#[cfg(unix)]
+fn write_hf_snapshot_pointer(dir: &Path, blob_plaintext: bool) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::symlink;
+
+    let repo = dir
+        .join("models")
+        .join("fastembed-test")
+        .join("models--owner--repo");
+    let digest = "a".repeat(64);
+    let blob = repo.join("blobs").join(&digest);
+    let pointer = repo
+        .join("snapshots")
+        .join("b".repeat(40))
+        .join("onnx")
+        .join("model.onnx");
+    fs::create_dir_all(blob.parent().expect("blob should have parent"))
+        .expect("blob directory should create");
+    fs::create_dir_all(pointer.parent().expect("pointer should have parent"))
+        .expect("snapshot directory should create");
+    if blob_plaintext {
+        write_plaintext_db(&blob);
+    } else {
+        write_non_plaintext_db(&blob);
+    }
+    symlink(Path::new("../../../blobs").join(digest), &pointer)
+        .expect("snapshot pointer should create");
+    (pointer, blob)
+}
+
 #[test]
 fn root_custom_sqlite_backup_is_detected() {
     let dir = arbitrary_backup_test_dir();
@@ -111,6 +140,119 @@ fn live_database_sidecar_symlinks_are_not_artifact_warnings() {
             result.detail
         );
     }
+    fs::remove_dir_all(&dir).ok();
+    fs::remove_dir_all(&external).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn internal_hf_snapshot_symlink_is_not_an_artifact_warning() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (pointer, _) = write_hf_snapshot_pointer(&dir, false);
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Ok, "{}", result.detail);
+    assert!(!result.detail.contains(&pointer.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn hf_snapshot_blob_plaintext_is_detected_without_following_pointer() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (pointer, blob) = write_hf_snapshot_pointer(&dir, true);
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Fail, "{}", result.detail);
+    assert!(result.detail.contains(&blob.display().to_string()));
+    assert!(!result.detail.contains(&pointer.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn broken_hf_snapshot_symlink_keeps_inspection_incomplete() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (pointer, blob) = write_hf_snapshot_pointer(&dir, false);
+    fs::remove_file(blob).expect("blob should be removed");
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Warn, "{}", result.detail);
+    assert!(result.detail.contains(&pointer.display().to_string()));
+    assert!(result.detail.contains("symbolic-link artifact"));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn malformed_hf_snapshot_symlinks_keep_inspection_incomplete() {
+    use std::os::unix::fs::symlink;
+
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (pointer, blob) = write_hf_snapshot_pointer(&dir, false);
+    let digest = blob
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("blob digest should be UTF-8");
+    let malformed = [
+        ("trailing separator", format!("../../../blobs/{digest}/")),
+        ("trailing dot", format!("../../../blobs/{digest}/.")),
+        ("extra parent", format!("../../../../blobs/{digest}")),
+        ("wrong layout", format!("../../../objects/{digest}")),
+        ("invalid hash", format!("../../../blobs/{}", "g".repeat(64))),
+    ];
+    for (case, target) in malformed {
+        fs::remove_file(&pointer).expect("prior pointer should remove");
+        symlink(target, &pointer).expect("malformed pointer should create");
+
+        let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+        assert_eq!(result.status, Status::Warn, "{case}: {}", result.detail);
+        assert!(
+            result.detail.contains(&pointer.display().to_string()),
+            "{case}: {}",
+            result.detail
+        );
+    }
+    fs::remove_file(&pointer).expect("prior pointer should remove");
+    symlink(&blob, &pointer).expect("absolute pointer should create");
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+    assert_eq!(result.status, Status::Warn, "{}", result.detail);
+    assert!(result.detail.contains(&pointer.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn hf_snapshot_pointer_to_symlink_blob_keeps_inspection_incomplete() {
+    use std::os::unix::fs::symlink;
+
+    let dir = arbitrary_backup_test_dir();
+    let external = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (pointer, blob) = write_hf_snapshot_pointer(&dir, false);
+    let external_blob = external.join("blob");
+    write_non_plaintext_db(&external_blob);
+    fs::remove_file(&blob).expect("regular blob should remove");
+    symlink(&external_blob, &blob).expect("blob symlink should create");
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Warn, "{}", result.detail);
+    assert!(result.detail.contains(&pointer.display().to_string()));
+    assert!(result.detail.contains(&blob.display().to_string()));
     fs::remove_dir_all(&dir).ok();
     fs::remove_dir_all(&external).ok();
 }

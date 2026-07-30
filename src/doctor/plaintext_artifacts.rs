@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use super::types::{Check, Status};
 use crate::db;
 
+mod hf_cache;
+
 const SQLITE_PLAINTEXT_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
 #[derive(Debug)]
@@ -237,7 +239,9 @@ fn scan_directory(
             }
         };
         if entry_type.is_symlink() {
-            if is_known_non_artifact_path(data_dir, db_path, &path) {
+            if is_known_non_artifact_path(data_dir, db_path, &path)
+                || hf_cache::is_snapshot_pointer(data_dir, &path)
+            {
                 continue;
             }
             let description = if path == data_dir.join("backups") {
