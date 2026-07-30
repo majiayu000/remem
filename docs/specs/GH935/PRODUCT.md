@@ -36,10 +36,13 @@ Claude Code -> remem -> Codex
 Codex -> remem -> Claude Code
 ```
 
-For each direction, the source host creates history before the target task is
-revealed. Every target condition receives the same fixture revision, task
-prompt, scorer, model/profile configuration, and source-episode identity.
-Only the declared memory surface differs.
+For each direction, the source host creates history before any byte of the
+target's complete host-channel prompt stream is revealed. Every target
+condition receives the same fixture revision, task-prompt segment, scoring
+commitment, model/profile configuration, and source-episode identity. The
+complete stream includes every benchmark-controlled system, developer,
+context/memory, task, tool prelude, separator, and framing byte written to a
+prompt-bearing host channel; only the declared memory-surface segment differs.
 
 The primary outcome is hidden-test `resolved_rate`. Reports also include
 failure rates, recall/use attribution, stale-memory harm, project leakage,
@@ -104,6 +107,9 @@ primary comparative claim.
    scorer-recognized wrong-action class with a unique memory/state hash,
    deterministic artifact matcher, and exactly one target-blind proof method
    with its parser/intervention and outcome table.
+   Its `pre_run_scorer_commitment_v1` also freezes all result-affecting scorer
+   semantics and the exact sanitized oracle bytes, or the one deterministic
+   derivation that produces those bytes, before any live host/provider call.
 3. The complete primary matrix is exactly
    `24 tasks * 4 conditions * 3 runs = 288` unique tuples.
 4. The complete source-native import diagnostic is exactly
@@ -217,9 +223,18 @@ identity.
   candidate. An unknown relation, wrong outcome, duplicate, quarantine, noop,
   or pre-existing-memory reuse is insufficient.
 
-The target task prompt is byte-identical across conditions. A condition may
-add only its declared, separately hashed memory envelope or production
-SessionStart/MCP context surface.
+For every condition, `host_channel_prompt_stream_v1` is rendered into one
+immutable byte object before launch. Its ordered surface manifest binds segment
+role/channel, offset, length, and SHA-256, including an explicit zero-length
+hash for an absent memory surface. `condition_surface` is a framing closure:
+its hash covers content plus every derived length prefix, checksum,
+content-length field, separator, or wrapper byte changed by that content. The
+task segment is byte-identical across conditions; the full stream may differ
+only inside that closure, supplied by the exported envelope or plan-selected
+production SessionStart/Context Bundle adapter. Claim-bearing v2 forbids a
+later interactive MCP/context delivery of condition-specific bytes; all such
+memory is in the committed initial stream. An opaque or nondeterministic host
+prelude that cannot be captured exactly makes that profile unsupported.
 
 ### 4. Scope and Privacy
 
@@ -282,16 +297,39 @@ source preparation unit and to each dependent target tuple:
   sealed, dependent tuples are recorded as not started and the candidate report
   is `partial_non_security` / `INSUFFICIENT`.
 
-Immediately before writing any target task-prompt byte to the host channel, the
-runner appends, fsyncs, and hash-seals `prompt_reveal_committed` with the target
-attempt ID, exact prompt hash, planned and realized sequence, commit timestamp,
-and prior journal hash. Its presence means revealed even if the subsequent send
-partly writes or fails. Its absence is retryable pre-reveal only when sealed
-launcher/channel evidence proves that writing any prompt byte was impossible;
-missing or ambiguous evidence is conservatively revealed and non-retryable.
-Every attempt seals one terminal reason. The manifest verifier derives claim
-selection only from these events and no-write proofs, rejecting gaps, tampering,
-duplicates, or timestamp/status inference.
+Immediately before spawning a process capable of writing prompt bytes or writing the first
+byte of `host_channel_prompt_stream_v1`, the runner appends, fsyncs, and
+hash-seals `prompt_reveal_committed`. It binds the target attempt ID, exact
+full-stream hash/length, ordered surface-manifest hash, task-segment hash,
+condition-surface hash/length, planned and realized sequence, adapter/framing
+version, immutable-byte-object ID, commit timestamp, and prior journal hash.
+The adapter sends from that object without rerendering and records a rolling
+sent hash/length. Its presence means revealed even if a later send partly
+writes or fails. No system, context/memory, task, tool-prelude, separator, or
+framing byte may precede it.
+
+For one attempt let `R` be the count of valid reveal commits, `N` the count of
+valid sealed channel/launcher no-write proofs, and `T` the count of valid
+terminal records whose attempt ID, prior-journal hash, and terminal class agree;
+`M` counts malformed, unhashed, out-of-order, conflicting, or unexpected
+artifacts, including ones otherwise excluded from `R`/`N`/`T`.
+Selection uses the following closed table; it never invents a missing event or
+picks a later better result:
+
+| Evidence and terminal class | Attempt/tuple result | Selection and final evidence |
+|---|---|---|
+| `M = 0`, `R = 1`, `N = 0`, `T = 1` | `reveal_state = committed`; `resolved` is boolean only after the frozen-input scorer/oracle checks succeed, otherwise null. | This attempt is terminally `selected_claim_attempt`; no later attempt is allowed. Any null/unverified score makes the final manifest `partial_non_security` / `INSUFFICIENT`. |
+| `M = 0`, `R = 0`, `N = 1`, `T = 1`, exact retryable reason, budget remains | `reveal_state = proven_no_write`; `resolved = null`. | No attempt is selected yet; exactly the next authorized attempt may run. The checkpoint manifest is `partial_non_security` / `INSUFFICIENT` until a terminal selection exists. |
+| `M = 0`, `R = 0`, `N = 1`, `T = 1`, exact retryable reason, budget exhausted | Tuple is terminal `missing_pre_prompt_exhausted`; `resolved = null`. | `selected_claim_attempt = null`; no scorer or later attempt; final manifest is `partial_non_security` / `INSUFFICIENT`. |
+| `M = 0`, `R = 0`, `N = 1`, `T = 1`, registered non-retryable post-common-source preparation failure | Terminal `ordinary_failure`; `resolved = false`. | This no-reveal attempt is selected and remains in the denominator; no later attempt. It may appear in `complete` evidence if every other invariant holds. |
+| Any other combination, including `M > 0`, `T != 1`, duplicates, both reveal/no-write, or neither | Verifier-derived tuple terminal `reveal_evidence_invalid`; `reveal_state = conservatively_revealed_invalid`; `resolved = null`; conflicting attempt artifacts remain immutable. | The current attempt ID is terminally selected, all later attempts and hidden scoring are forbidden, and the final manifest is `partial_non_security` / `INSUFFICIENT`, unless a verified breach overrides with `partial_security` / `FAIL`. |
+
+Every attempt terminal seal binds its reason, ordered journal root, every
+reveal/no-write artifact including duplicates, counts, derived reveal state,
+selection, `resolved`, and scorer refs. The verifier applies the table only
+after finalization or crash recovery, rejects hash/class drift and
+timestamp/status inference, preserves conflicting artifacts, and applies one
+result to attempt, tuple, manifest, and verdict.
 
 Every target record references exactly one `source_attempt_id` and has its own
 `target_attempt_id`. All attempts remain immutable and visible in operational
@@ -400,11 +438,17 @@ regression yield `FAIL`, all-four improvement yield `PASS`, or the result remain
 `INSUFFICIENT`.
 
 The closed security-breach predicates are `wrong_project_injection > 0`,
-`source_private_session_leak > 0`, any key exposure, and, once the production
-user-scope prerequisite makes the metric numeric, `wrong_user_injection > 0`.
-Each produces `security_breach` / `partial_security` / safety `FAIL` even with
-missing identity or an incomplete matrix. The non-security claim-bearing
-stop-losses are:
+`source_private_session_leak > 0`, `private_benchmark_byte_leak > 0`, any key
+exposure, and, once the production user-scope prerequisite makes the metric
+numeric, `wrong_user_injection > 0`. The private-byte predicate covers exact,
+hex, standard/URL-safe base64 with and without padding, percent/JSON escaping,
+the fixed archive/compression formats, normalization, and recursion limits in
+normative `private_byte_encoding_registry_v1`; a plan may add but never remove
+coverage. A scanner crash or unclassifiable candidate is not proof of absence and instead yields
+`partial_non_security` / `INSUFFICIENT`. A verified predicate produces
+`security_breach` / `partial_security` / safety `FAIL` even with missing
+identity or an incomplete matrix. The non-security claim-bearing stop-losses
+are:
 
 - `stale_memory_followed <= 1%`;
 - `memory_hurt <= 2%`.
@@ -439,23 +483,73 @@ challenge across all three runs of the relevant task and therefore at least
 three applicable tuples per direction; fewer or none forces `INSUFFICIENT`.
 Empty metrics remain blank with a reason, never zero-filled.
 
-The release evidence contains all sanitized primary and diagnostic records,
-attempt history, manifests, scorer/version hashes, direction reports, and
-claim verdict. Every claim-bearing JSON artifact uses the versioned exact-byte
+Before the first live host/provider call, the canonical plan seals
+`pre_run_scorer_commitment_v1`. It binds the exact hidden scorer engine/wrapper
+bytes, runtime and invocation semantics, result-affecting
+`scoring_semantics_ir_v1`, hidden-input manifest root, oracle-rule revision,
+release revision ID, and either the exact already-built
+`sanitized_scorer_oracle_v1` bytes or one deterministic derivation. A derivation
+binds the sanitizer/deriver executable bytes, runtime/toolchain, canonical
+static inputs, typed future freeze slots, output framing, and equivalence
+vectors; concrete target outputs fill those slots only after freezing. The
+same plan commits `scorer_read_contract_v1`, a deny-by-default set of allowed
+paths, streams, metadata fields, environment, and ambient state. The scorer and
+public oracle must call the same committed scoring IR; no post-run
+implementation, branching, regeneration, output selection, or semantic
+redaction is allowed.
+
+After a target terminates and before any hidden scorer/test byte becomes
+visible to a scoring process, the runner closes writers and freezes the final
+workspace and complete target output as immutable, content-addressed objects.
+`scoring_input_freeze_v1` binds their exact hashes, lengths, sorted manifests,
+allowed exclusions, and freeze/scanner policy. The precommitted read-set
+projector derives `public_scoring_projection_v1`; its manifest/hash, actual
+read-set hash, and inclusion proofs bind every scorer-readable byte to those
+frozen objects.
+The hidden scorer and public oracle are sandboxed to byte-identical read-only
+clones of that projection and cannot read the larger private root. The exact
+projection is published after terminal sealing. The run record, selected-attempt record,
+manifest, report, and verdict all bind the plan commitment, frozen input
+hashes, scorer invocation/result hash, and oracle recomputation hash.
+
+After all authorized attempts are terminally sealed, the release bundle opens
+the pre-run commitment: it publishes the exact non-secret scorer
+engine/scoring-IR and oracle bytes (or rerunnable deterministic derivation),
+the minimum non-secret frozen fixtures/replay inputs, and inclusion/derivation
+proofs needed to recompute every selected `resolved` and
+`action_counterfactual_v1`. A result-affecting input that cannot be opened in a
+sanitized form makes the task non-claimable; raw private roots, credentials,
+transcripts, and irrelevant private test material remain non-public. A clean
+checkout must verify published hashes against the pre-run commitment, verify
+every scorer-readable projection object and its proof into the committed
+full-freeze roots, rebuild under the committed Git/runtime/toolchain with no
+network or ambient state when derivation was chosen, and recompute scores,
+report, and verdict without trusting recorded `resolved`. An out-of-set read,
+undisclosable input, missing object/proof, root mismatch, scorer/oracle
+disagreement, or other tampered/unrunnable evidence yields
+`partial_non_security` / `INSUFFICIENT`.
+
+The oracle and its commitment opening remain unavailable to every target,
+exporter, source host, and run-visible root until all attempts seal. Early
+visibility is benchmark-integrity failure and yields
+`partial_non_security` / `INSUFFICIENT`; exposure of registered private bytes
+is instead a verified security breach. Publication stages immutable content,
+performs one create-only/CAS visibility seal, then retires a content-derived
+fingerprint over the hidden-input root, scoring IR, oracle rules, and
+sanitizer/deriver bytes. An ambiguous publication crash retires the fingerprint
+without retry and yields `partial_non_security` / `INSUFFICIENT`. A duplicate
+command must make zero mutations and does not invalidate an already-valid first
+publication; two observed seals, or any official run using a retired
+fingerprint under another revision ID, make that candidate evidence
+`partial_non_security` / `INSUFFICIENT`. A future official run requires newly
+fingerprinted hidden/scorer/oracle material.
+
+The release evidence also contains all sanitized primary and diagnostic
+records, attempt history, manifests, direction reports, and claim verdict.
+Every claim-bearing JSON artifact uses the versioned exact-byte
 `canonical_json_rfc8785_v1` contract defined in TECH. Markdown is
 deterministically rendered from that JSON; the verdict binds both hashes and
 the renderer version, and verification regenerates Markdown byte-for-byte.
-After all authorized attempts are terminally sealed, the same bundle releases
-a sanitized executable scorer oracle and the minimum non-secret fixtures/replay
-inputs needed for a clean checkout to recompute every selected `resolved` value
-and `action_counterfactual_v1` result. It is hash-bound to the pre-registered
-hidden-test, scorer, oracle-rule, run-record, and replay-input revisions, was
-unavailable to target processes during execution, and passes the artifact
-scanner before publication. Raw private tests, roots, credentials, and
-transcripts remain non-public. A missing, mismatched, or unrunnable oracle makes
-the score non-claimable and the overall verdict `INSUFFICIENT`. Publication
-retires that hidden revision for official use; any future official run requires
-a newly registered hidden revision.
 
 For `PASS`, `FAIL`, and `INSUFFICIENT`, the same reporting change updates:
 
@@ -510,9 +604,15 @@ decisions. This spec PR authorizes none of them.
   isolation, counterbalanced ordering, encrypted/rekeyed target projection,
   native-neutral ablation, registered-native-canary exclusion, maintained-export
   protocol, causal attribution, remem-preparation failure fan-out, pre-prompt
-  null/no-imputation, durable reveal commitment, fixed retry selection, failure
-  retention, post-run scorer-oracle recomputation, and leak redaction have
-  positive, missing-evidence, and tamper tests.
+  null/no-imputation, full-stream reveal commitment, fixed retry selection,
+  failure retention, pre-run scorer/oracle commitment, frozen scoring inputs,
+  post-run scorer-oracle recomputation, and leak redaction have positive,
+  missing-evidence, and tamper tests.
+- Negative tests cover oracle/commitment-opening visibility before terminal
+  sealing, raw and registered-encoding private-byte leaks, scanner
+  crash/unclassifiable output, duplicate release attempts and observed duplicate
+  seals, and retired revision reuse, asserting the exact safety `FAIL` versus
+  comparative `INSUFFICIENT` mapping above.
 - The production user-identity prerequisite is either implemented and tested,
   or every public comparative verdict is deterministically `INSUFFICIENT`.
 - A separately authorized smoke covers both directions and all six required

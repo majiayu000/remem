@@ -65,6 +65,7 @@ An executable task adds to the v1 skeleton:
   query-relevant pre-filter match assertion;
 - target-invisible `causal_oracle_v1` rules covering every scorer-recognized wrong-action class,
   each binding a unique memory/content/state hash, artifact matcher, and one plan-hashed proof method plus its closed outcome table;
+- `pre_run_scorer_commitment_v1`, which commits all result-affecting scorer/oracle semantics and bytes or their sole deterministic derivation before any live call;
 - source-native snapshot policy for the diagnostic arm;
 - per-host executable/profile requirements;
 - `status: "ready"` and `todo: []`.
@@ -96,106 +97,34 @@ One source seal exists per `(direction, task_id, run_index, source_attempt_id)` 
   reason and no output/freeze hash;
 - creation/cleanup timestamps and scanner status.
 
-The full store archive and target-transfer projection are private execution
-material, not committed public artifacts. In v2, a source and all dependent
-targets run in one single-operator execution root. The full archive is
-data-only: its source SQLCipher key stays in a runner-private secret root only
-until attribution completes. The deterministic projection logical content and
-the one sealed ciphertext object have separate hashes. The sealed ciphertext
-is read-only; only its fresh byte-identical clones can back `remem_shared`.
-Initial clones may diverge only through normal target-runtime writes after
-verification.
-The full archive lives outside every target-visible root and is added to the
-target host-read deny policy; a target process that can open it invalidates the
-run even if no transcript is emitted.
+The full store archive and target-transfer projection are private execution material, not committed public artifacts. In v2, a source and all dependent targets run in one single-operator execution root. The data-only full archive keeps its source SQLCipher key in a runner-private secret root only until attribution completes. Logical projection and sealed ciphertext have separate hashes; the ciphertext is read-only and only fresh byte-identical clones back `remem_shared`. Clones diverge only through normal target-runtime writes after verification. The full archive stays outside target-visible roots and in the host-read deny policy; target access invalidates the run even without transcript output.
 
-The projection is derived mechanically from the full store after the fixed
-primary review policy completes. A trusted runner opens the source with its
-private source key, sanitizes into the logical projection, and SQLCipher
-exports/rekeys it under a fresh projection-scoped 256-bit key that is distinct
-from the source key. The same sealed ciphertext and key back every initial
-clone of that projection. It preserves the complete current schema, migration
-metadata, required tables, triggers, and indexes so normal `open_db()`
-schema-drift checks and MCP preflight succeed. It contains curated memory rows,
-relations, current-state, and minimal opaque provenance needed to reproduce
-production candidate filtering. Registered stale/superseded challenge rows
-remain present with their production state flags unchanged; they are not made
-retrieval-eligible or exposed through a target-only surface.
+After fixed primary review, a trusted runner opens the source with its private key, mechanically sanitizes the logical projection, and SQLCipher exports/rekeys it under a distinct fresh projection-scoped 256-bit key. The same ciphertext/key back every initial clone. It preserves current schema/migrations/tables/triggers/indexes for normal `open_db()` drift and MCP checks, plus curated rows, relations, current state, and minimal opaque provenance for production filtering. Registered stale/superseded challenges keep their state flags without becoming retrieval-eligible or target-exposed.
 
-The sanitizer removes source rows from raw messages, captured events/blobs,
-observations, extraction payloads, and other target-ineligible session
-surfaces; removes their FTS/auxiliary index entries and resolvable private
-paths; checkpoints into a fresh database; and ships no source transcript,
-host-native file, credential, `.key`, WAL, or SHM file. It must not delete a
-registered challenge row merely because the row is stale or superseded.
+The sanitizer removes raw messages, captured events/blobs, observations, extraction payloads, other target-ineligible session surfaces, their FTS/auxiliary entries, and resolvable private paths; checkpoints a fresh database; and ships no transcript, host-native file, credential, `.key`, WAL, or SHM. It never deletes a registered challenge merely for being stale/superseded.
 
-The plan-hashed `projection_secret_channel_v1` fixes IPC path/type,
-authentication, lifecycle, and failure behavior. A trusted runner outside the
-host sandbox starts a remem sidecar and provisions one projection key over a
-private inherited pipe. Host hook/MCP config has only a keyless authenticated
-client endpoint. The host cannot read the sidecar environment, argv, process
-metadata, pipe, or secret root; no key enters HOME, config, projection,
-manifest, log, or `.key`.
-The runner checks the sealed ciphertext and clone hashes before any SQLite
-open. Schema/open/MCP preflight uses a disposable clone; an actual target clone
-records its pre-open hash, then alone becomes mutable. Validation proves schema
-and migration invariants, referential integrity, `PRAGMA foreign_key_check`,
-encrypted header, and production open; source, wrong, and missing keys fail
-closed, and raw/sparse searches return zero source hits.
-A private registry tracks each `projection_key_id`,
-`remaining_target_tuple_ids`, `active_attempt_ids`, and destruction proof.
-Attempt exit releases only its active ref; the tuple reservation survives a
-retryable pre-prompt failure. First prompt reveal, exhausted retry budget, or a
-non-retryable terminal result removes that tuple exactly once; zero destroys
-the key. Live scans exclude expected trusted live holders. After raw attribution
-materialization, the runner destroys the source key, then scans trusted holders,
-environment, argv, logs, process metadata, and retained artifacts for raw, hex,
-and versioned encodings. It records cleanup before finalizing the manifest and
-report. Exposure is a security breach; cleanup failure is partial/insufficient.
+Plan-hashed `projection_secret_channel_v1` fixes IPC type/path, authentication, lifecycle, and failure. A trusted runner outside the host sandbox starts the sidecar and provisions one key over a private inherited pipe; host hook/MCP config has only a keyless authenticated endpoint. The host cannot read sidecar environment/argv/process metadata/pipe/secret root, and no key enters HOME, config, projection, manifest, log, or `.key`.
 
-`native_neutral_base_v1` is a separate mechanical preparation object and never
-replaces or mutates the primary full store/projection. It removes candidates
-whose `source_kind` is `claude_native` or `codex_native` and the transitive
-candidate-derived memory, operation, graph, and current-state provenance
-closure, then proves native candidate/active/provenance counts are zero,
-foreign keys and schema are valid, and production open succeeds. Both native
-diagnostic arms start from byte-identical neutral-base clones.
+The runner hashes sealed ciphertext/clones before SQLite opens. A disposable clone handles schema/open/MCP preflight; only an actual target clone records its pre-open hash then becomes mutable. Validation proves schema/migrations, referential integrity, `PRAGMA foreign_key_check`, encrypted header, and production open; source/wrong/missing keys fail closed and raw/sparse searches find no source hits.
 
-Cross-clone continuation is unsupported. A `source_attempt_id` owns immutable evidence/preparation results; every target has a separate `target_attempt_id`, and sealed objects are never regenerated.
-Before any dependent prompt and before condition-neutral evidence seals, a new source attempt may start only for the five exact `pre_prompt_transient_v1` reasons and within the three-attempt limit.
-For an attempt that ultimately has that seal, any remem-only archive, extraction, projection, rekey, clone, or verification failure is a non-retryable condition failure under the fan-out rule, not a source retry.
-Records remain immutable. A verified security breach is `partial_security`/`FAIL`; cleanup that makes isolation unsafe is `partial_non_security`/`INSUFFICIENT`.
-Cross-clone support requires a separate encrypted retention/fetch contract.
+A private registry tracks each `projection_key_id`, reserved tuple IDs, active attempts, and destruction proof. Attempt exit releases only its active ref; reservation survives an eligible no-write retry. First committed/conservative reveal, exhausted budget, or non-retryable terminal removes the tuple once; zero destroys the key. Live scans exclude only expected trusted holders. After attribution, the runner destroys the source key and scans trusted holders, environment, argv, logs, process metadata, and artifacts for raw/registered encodings before manifest/report finalization. Exposure is a breach; cleanup failure is partial/insufficient.
+
+`native_neutral_base_v1` never replaces/mutates the primary store/projection. It removes `claude_native`/`codex_native` candidates and the transitive candidate-derived memory, operation, graph, and current-state provenance closure; proves zero native candidate/active/provenance counts, valid foreign keys/schema, and production open; and supplies byte-identical clones to both diagnostic arms.
+
+Cross-clone continuation is unsupported. A source attempt owns immutable evidence/preparation; every target has its own attempt, and sealed objects are never regenerated. Before dependent reveal and common-evidence seal, only the five `pre_prompt_transient_v1` reasons may start a new source attempt within the three-attempt limit. After that seal, remem-only archive/extraction/projection/rekey/clone/verification failure is a non-retryable condition failure, not source retry. Verified breach is `partial_security`/`FAIL`; unsafe cleanup is `partial_non_security`/`INSUFFICIENT`. Cross-clone support needs a separate encrypted retention/fetch contract.
 
 ### Maintained Export Protocol
 
-`maintained_export_v1` is closed and plan-hashed before live execution. It
-contains:
+`maintained_export_v1` is closed and plan-hashed before live execution. It contains:
 
 - exact system, generation, and update prompt bytes and hashes;
 - exporter executable, model, profile, sampling, and protocol versions;
-- `evidence_projection_v1`, which enumerates each visible source ref/file and
-  content hash in canonical order, includes the foreign-project canary as an
-  exclusion test, and rejects target prompt, gold, hidden scorer, and prior
-  condition output;
-- generation input as episode-one evidence, and each update input as the
-  previous frozen envelope plus only the newly registered episode delta;
-- envelope schema/version, stable-key update rules, and a conflict rule that
-  replaces prior state only with explicit chronology/supersession evidence and
-  otherwise preserves both sides with an abstention marker;
-- per-cycle and cumulative host-call, LLM-call, input/output-token, turn,
-  wall-time, byte, and estimated-cost caps.
+- `evidence_projection_v1`: canonically ordered visible source refs/files and hashes, foreign-project-canary exclusion test, and rejection of target prompt, gold, hidden scorer, or prior-condition output;
+- episode-one generation input; each update gets the previous frozen envelope plus only its registered new episode delta;
+- envelope schema/version, stable-key rules, and conflict handling that replaces state only with explicit chronology/supersession evidence, otherwise retaining both with abstention;
+- per-cycle/cumulative host/LLM calls, input/output tokens, turns, wall time, bytes, and estimated-cost caps.
 
-Each boundary creates one immutable `cycle_id` in exactly one state:
-`committed` (one atomic schema-valid envelope commit), `failed` (zero commits),
-or `not_started_after_prior_failure`. Regeneration, output selection, and prior
-envelope fallback are forbidden. The first non-retryable failure terminally
-disables later cycles. A whitelisted pre-prompt transient aborts the entire
-source attempt; a fresh attempt may restart under `pre_prompt_transient_v1`
-while retaining all records/cost. Other non-security/non-integrity failures
-make `exported_file` an `ordinary_failure`; other conditions continue from the
-unmodified source seal. Security/integrity failures use global breach rules.
-Retry never changes prompts, evidence, conflict rules, schema, or caps.
+Each boundary creates one immutable `cycle_id`: `committed` (one atomic schema-valid commit), `failed` (zero commits), or `not_started_after_prior_failure`. Regeneration, output choice, and prior-envelope fallback are forbidden. First non-retryable failure disables later cycles. A whitelisted pre-prompt transient aborts the source attempt; a fresh attempt may restart under `pre_prompt_transient_v1` while retaining records/cost. Other non-security/non-integrity failures make `exported_file` an `ordinary_failure` while other conditions continue from the unmodified seal. Security/integrity uses global breach rules. Retry never changes prompts, evidence, rules, schema, or caps.
 
 ### Causal Oracle
 
@@ -217,10 +146,31 @@ the matcher is false and the required assertion passes. The same registered fail
 `not_proven/refuted_counterfactual`; non-unique transforms, unsupported side effects, replay
 drift/errors, different failures, or conflicting results are `missing_evidence`.
 
-The closed record binds method/intervention hashes, resolved tuple, use and first-wrong-action event IDs/orders, replay hashes, matcher/scorer results, reason, and status. A Stop-created `memory_usage_events` row and its `memory_citation_events` parent are post-action corroboration only
-and cannot satisfy either proof method. Missing, ambiguous, competing, or post-hoc evidence becomes
-`missing_evidence` and, outside the narrow lower-bound rule, comparative `INSUFFICIENT`;
-a no-memory surface is `not_proven/no_memory_surface`. Sanitized inputs support recomputation.
+The closed record binds method/intervention hashes, resolved tuple, use and first-wrong-action event IDs/orders, replay hashes, matcher/scorer results, reason, and status. A Stop-created `memory_usage_events` row and its `memory_citation_events` parent are post-action corroboration only and cannot satisfy either proof method. Missing, ambiguous, competing, or post-hoc evidence becomes `missing_evidence` and, outside the narrow lower-bound rule, comparative `INSUFFICIENT`; a no-memory surface is `not_proven/no_memory_surface`. Sanitized inputs support recomputation.
+
+### Prompt Stream and Reveal
+
+`host_channel_prompt_stream_v1` is one immutable object containing the complete initial ordered bytes written to prompt-bearing channels: benchmark-controlled system/developer content, condition context/memory, task content, tool prelude, separators, and adapter framing. `prompt_surface_manifest_v1` binds each segment's role/channel, offset, length, SHA-256, and condition owner; absent surfaces have a zero-length hash. The task segment is identical across conditions. The sole differing `condition_surface` is a framing closure containing content plus every derived prefix/checksum/content-length/separator/wrapper byte. Claim-bearing v2 forbids later condition-specific MCP/context delivery; an opaque/nondeterministic prelude is unsupported.
+
+Before spawning a process that can emit prompt bytes or writing any byte, the runner appends, fsyncs, and seals `prompt_reveal_committed(target_attempt_id, immutable_object_id, prompt_stream_hash, prompt_stream_length, prompt_surface_manifest_hash, task_segment_hash, condition_surface_hash, condition_surface_length, adapter_version, planned_sequence, realized_sequence, prior_journal_hash)`. It then sends from that object without rerendering and records rolling sent hash/length. No stream byte may precede the seal. A no-write proof binds the planned hashes and launcher/channel state and proves no prompt-bearing process spawned and zero bytes written.
+
+After finalization or crash recovery, `R`/`N` count valid reveal/no-write artifacts, `T` counts terminal seals whose ID/prior hash/class agree, and `M` counts every malformed, unhashed, out-of-order, conflicting, or unexpected artifact excluded from those counts. The verifier applies this closed table:
+
+| Evidence / terminal class | `reveal_state`; `resolved` | `selected_claim_attempt`; manifest/verdict; retry |
+|---|---|---|
+| `M=0,R=1,N=0,T=1` | `committed`; boolean only after frozen-input score/oracle verification, else null | current attempt; null score forces `partial_non_security`/`INSUFFICIENT`; never retry |
+| `M=0,R=0,N=1,T=1`, exact retryable reason, budget remains | `proven_no_write`; null | null in checkpoint `partial_non_security`/`INSUFFICIENT`; exactly next attempt allowed |
+| Same, budget exhausted | `proven_no_write`; null; tuple `missing_pre_prompt_exhausted` | null; final `partial_non_security`/`INSUFFICIENT`; no scorer/retry |
+| `M=0,R=0,N=1,T=1`, registered post-common-source non-retryable preparation failure | `proven_no_write`; false `ordinary_failure` | current attempt; `complete` remains possible; never retry |
+| Every other combination (`M>0`, `T!=1`, duplicates, both, or neither included) | verifier-derived `conservatively_revealed_invalid`; null `reveal_evidence_invalid` | current attempt ID; final `partial_non_security`/`INSUFFICIENT` unless breach override; no scorer/retry |
+
+Each terminal seal binds the ordered journal root, every reveal/no-write artifact including duplicates, counts, derived state, selection, `resolved`, and scorer refs. The last row preserves conflicts and fabricates no reveal event. Selection never uses timestamps/status inference or a better later score. Precommit spawn, prefix write, rerender drift, send reordering/hash/length mismatch, or undeclared bytes sets `M>0`.
+
+### Scorer Commitment and Frozen Inputs
+
+Before the first live host/provider call, the canonical plan seals `pre_run_scorer_commitment_v1`: release fingerprint/revision; exact hidden scorer engine/wrapper bytes/hashes; runtime/container, argv, environment allowlist, and output framing; result-affecting `scoring_semantics_ir_v1`; hidden-input root; assertion/oracle-rule revisions; and exact already-built oracle bytes/hash or one deterministic derivation. A derivation commits sanitizer/deriver bytes, runtime/toolchain, static inputs, typed future-freeze slots, framing, and equivalence vectors; concrete outputs fill slots only after freeze. `scorer_read_contract_v1` deny-by-default commits permitted paths/streams/metadata/environment/ambient state. Hidden scorer/oracle call the same IR. Post-run authoring, semantic redaction, uncommitted rebuild, regeneration, branching, or output choice is invalid.
+
+After target termination and before the scorer receives hidden bytes, `scoring_input_freeze_v1` closes writers and content-addresses final workspace plus complete host output with exact lengths, sorted manifest, exclusions, archive hashes, and scanner policy. The committed projector derives `public_scoring_projection_v1`; its manifest/root, actual read-set hash, and inclusion proofs bind every scorer-readable byte to full-freeze roots. Hidden scorer/oracle are deny-by-default sandboxed to byte-identical read-only projection clones and cannot read the larger private root. The exact projection publishes after terminal sealing. Out-of-set read, undisclosable result input, missing proof/object, root mismatch, or scorer/oracle disagreement sets `resolved=null` and `partial_non_security`/`INSUFFICIENT`.
 
 ### Source Attempt Record
 
@@ -244,8 +194,12 @@ Each target attempt records:
   `target_attempt_id`, condition, direction, task, and run index;
 - planned/realized condition position, start/end timestamps, and one sealed terminal reason;
 - source seal hash, even when the condition cannot read its contents;
-- task prompt, condition surface, executable/profile, and scorer hashes, plus either
-  `prompt_reveal_committed` or a sealed launcher/channel no-write proof;
+- full prompt-stream/surface-manifest/task-segment/condition-surface hashes and
+  lengths, executable/profile hashes, plus all reveal/no-write artifacts and
+  the derived reveal state;
+- pre-run scorer-commitment/release-fingerprint/revision hashes, frozen final
+  workspace/output hashes, scorer invocation/result hash, and oracle
+  recomputation hash;
 - projection logical/ciphertext hashes and `projection_key_id`, where applicable;
 - target HOME/config/session/workspace identities;
 - status: `success`, `ordinary_failure`, or `security_breach`;
@@ -259,13 +213,6 @@ Each target attempt records:
 A record can be schema-valid while its task outcome failed. Failed records stay
 in the registered denominator.
 
-`prompt_reveal_committed` contains target-attempt ID, exact prompt hash, planned/
-realized sequence, commit timestamp, and prior journal hash. The runner appends,
-fsyncs, and seals it before the first prompt byte. Presence means revealed even
-when send fails; absence is pre-reveal only with sealed launcher/channel proof
-that no byte could be written. Missing/duplicate/ambiguous evidence is revealed
-and non-retryable; selection uses only this event/proof and the terminal record.
-
 ### Evidence Manifest
 
 The manifest has one of three closed kinds:
@@ -276,9 +223,13 @@ partial_non_security
 partial_security
 ```
 
-Every kind contains the planned tuple set, source-attempt record hashes,
-recorded target attempts, the fixed attempt policy/version, the selected claim
-attempt, missing/not-started tuples, artifact hashes, and reason codes.
+Every kind contains the planned tuple set, source-attempt record hashes, all
+target attempts, fixed attempt/reveal policy, per-attempt `R`/`N` counts and
+`M`/`T` counts, ordered journal/terminal-seal roots, derived reveal states,
+terminal `selected_claim_attempt`/`resolved`, missing/
+not-started tuples, scorer commitment/release fingerprint/revision, frozen scoring-input
+hashes, artifact hashes, and reason codes. A manifest cannot be `complete` when
+any selected boolean score lacks a matching committed-oracle recomputation.
 
 - `complete` requires 288 unique primary tuples and 144 unique source-native
   import tuples.
@@ -306,6 +257,8 @@ The `canonical_json_rfc8785_v1` report includes:
   recompute stop-losses and diagnostic pairing;
 - per-task and aggregate export generation/maintenance cost;
 - stop-loss values and source attribution;
+- pre-run scorer commitment/release fingerprint/revision, frozen workspace/output and
+  scorer/oracle result hashes for every selection;
 - hashes of the manifest and complete sanitized record bundle.
 
 Markdown is rendered deterministically from canonical JSON. The verdict binds:
@@ -313,7 +266,8 @@ Markdown is rendered deterministically from canonical JSON. The verdict binds:
 - SHA-256 of the exact canonical JSON bytes;
 - Markdown report hash;
 - renderer version/hash;
-- evidence-manifest and sanitized-record-bundle hashes.
+- evidence-manifest and sanitized-record-bundle hashes;
+- scorer commitment/release fingerprint/revision and the ordered frozen-input/result root.
 
 Verification regenerates Markdown byte-for-byte before publication. Plan-hashed
 vectors must match an independent RFC 8785 implementation for nested key order,
@@ -325,12 +279,14 @@ arrays, escapes/non-ASCII, numeric edges, invalid I-JSON, BOM, and trailing LF.
 
 The planner:
 
-1. validates the charter, schemas, all 24 tasks, fixtures, scorer paths,
-   maintained-export protocol, and causal-oracle rules;
+1. validates the charter, schemas, all 24 tasks, fixtures, maintained-export
+   protocol, causal-oracle rules, exact prompt-stream adapters, and unretired
+   release fingerprint/revision;
 2. proves 288 primary and 144 required diagnostic tuple keys with no
    duplicates;
-3. resolves exact host/model/profile/exporter binaries and hashes, plus
-   projection derivation/rekey/provisioning and bootstrap versions;
+3. resolves exact host/model/profile/exporter binaries, projection/rekey/
+   provisioning/bootstrap versions, then builds and seals
+   `pre_run_scorer_commitment_v1` without exposing it to a run-visible root;
 4. builds `balanced_latin_square_v1` over the four primary and two required
    native-import conditions for 36 source seals per direction. For six
    seed-permuted labels, `williams_6_v1` starts with positions
@@ -342,8 +298,9 @@ The planner:
    appears exactly six times per direction;
 5. calculates upper bounds for host calls, LLM calls, export bytes, and
    estimated cost;
-6. writes the schedule, all protocol/seed/algorithm hashes, and canonical plan
-   hash without starting a host or network call.
+6. writes the schedule, prompt/scorer/release and all other
+   protocol/seed/algorithm hashes, and canonical plan hash without starting a
+   host or network call.
 
 Dry-run and verification must have tests proving their call graph cannot reach
 the host adapter.
@@ -414,8 +371,10 @@ plan-hashed counterbalanced order. Each condition gets a fresh fixture reset
 and only its declared memory surface. The runner records planned/realized
 position and timestamps; skipped, reordered, or duplicated positions make the
 comparison insufficient.
-Each target attempt either seals launcher/channel proof that no write is possible
-or commits `prompt_reveal_committed` before sending, then seals one terminal reason.
+Before a prompt-bearing process can start, the adapter renders the complete
+`host_channel_prompt_stream_v1` and surface manifest. The runner then seals the
+matching no-write proof or commits `prompt_reveal_committed` before any stream
+byte, sends exactly those bytes, and seals one terminal reason/reveal state.
 
 #### `no_memory`
 
@@ -446,9 +405,9 @@ store/native/workspace mounts are read-only, and before/after manifests must
 match.
 
 The runner exposes the envelope through the same versioned system/context
-adapter for Claude Code and Codex. The target task prompt remains identical;
-the separately hashed envelope is the treatment surface. A condition-only task
-prompt note is forbidden.
+adapter for Claude Code and Codex. The common task segment remains identical;
+the separately hashed envelope is the sole differing stream segment. A
+condition-only task note or any unmanifested byte is forbidden.
 
 The envelope contains only allowed handoff facts and provenance, never raw
 transcripts, tool logs, hidden paths, or the foreign-project canary.
@@ -457,11 +416,11 @@ transcripts, tool logs, hidden paths, or the foreign-project canary.
 
 The target receives a fresh verified clone of the sealed curated transfer
 projection, never the full automatic-capture store. Retrieval runs through the
-production SessionStart/MCP/Context Bundle path. The raw MCP/CLI surfaces and
-ordinary-search raw fallback may exist in the binary, but the projection
-contains no source raw rows or transcript files for them to return. Direct
-memory inserts, gold seeding, manual saves, manual candidate review, and
-special eval-only retrieval are rejected by attribution validation.
+plan-selected production SessionStart/Context Bundle path before the immutable
+initial stream is sealed. Interactive MCP memory retrieval is disabled for
+claim-bearing v2. Raw MCP/CLI surfaces may exist in the binary, but the
+projection has no source raw rows/transcripts. Direct inserts, gold seeding,
+manual saves/review, and special eval-only retrieval are rejected.
 
 #### Source-Native Import Diagnostic
 
@@ -507,10 +466,14 @@ is used for this diagnostic.
 
 After the target exits, the runner:
 
-1. freezes target output before revealing hidden tests;
-2. runs the scorer in a separate restricted process;
-3. scans target-visible and candidate artifact roots;
-4. records outcome, attribution, cost, and cleanup;
+1. closes writers and seals `scoring_input_freeze_v1` over the final workspace
+   and complete host output before revealing hidden tests;
+2. verifies the frozen objects and pre-run commitment, then runs the committed
+   hidden scorer on a read-only clone in a separate restricted process;
+3. runs the precommitted oracle on the same frozen hashes, scans target-visible
+   and candidate artifact roots, and rejects scorer/oracle disagreement;
+4. records outcome, attribution, cost, cleanup, commitment, frozen-input,
+   invocation/result, and recomputation hashes;
 5. redacts leaked bytes before persisting a `security_breach` record;
 6. destroys target HOME/session roots and verifies cleanup;
 7. releases its active-attempt key ref, and releases the tuple reservation only
@@ -571,9 +534,10 @@ identity plumbing.
 - maximum three immutable source attempts before any dependent reveal and three target attempts per tuple;
 - retry before reveal only for `transient_auth_unavailable`, `provider_unavailable`,
   `host_bootstrap_failed`, `runner_io_before_prompt`, or `pre_prompt_timeout`;
-- select the first attempt with `prompt_reveal_committed` regardless of outcome;
-  only one non-retryable post-common-source preparation attempt may be selected
-  without reveal, and neither form permits a later claim retry;
+- apply the Prompt Stream and Reveal table: the first `committed` or
+  `conservatively_revealed_invalid` attempt is selected, while the only
+  selected `proven_no_write` attempt is the registered non-retryable
+  post-common-source preparation failure; none permits a later attempt;
 - semantic failure, unresolved result, post-reveal timeout, scorer result,
   security/scope event, and cleanup failure are never retry-eligible;
 - after three eligible pre-reveal failures, `selected_claim_attempt = null`, the
@@ -584,9 +548,10 @@ identity plumbing.
   dependent tuples are not started and the candidate report is
   `partial_non_security` / `INSUFFICIENT`.
 
-Selection uses only sealed reveal/no-write evidence and terminal reasons, never
-timestamps. All attempts remain in reliability/cost tables; successful retries
-cannot be selected post hoc. Preparation failure differs from infrastructure exhaustion.
+Selection uses only the sealed artifacts, closed table, and terminal reasons,
+never timestamps. Missing/duplicate/conflicting evidence cannot become a retry.
+All attempts remain in reliability/cost tables; preparation failure differs
+from infrastructure exhaustion.
 
 The primary statistical family has four registered comparisons:
 `remem_shared` versus `no_memory` and `exported_file`, separately in both
@@ -644,10 +609,16 @@ Each `stale_superseded_decision` task registers a challenge for all three runs,
 so a claim-bearing report requires at least three applicable tuples per
 direction. A missing expected match or a smaller/empty applicable set forces
 `INSUFFICIENT`; it is not a passing zero.
-Wrong-project injection, source-private-session leak, key exposure, and, once
-numeric, wrong-user injection each map to
-`security_breach`/`partial_security`/safety `FAIL` regardless of completeness;
-only stale-memory-followed and memory-hurt are non-security stop-losses.
+Wrong-project injection, source-private-session leak, a registered private
+benchmark byte found raw or under `private_byte_encoding_registry_v1`, key
+exposure, and, once numeric, wrong-user injection each map to
+`security_breach`/`partial_security`/safety `FAIL` regardless of completeness.
+The normative registry fixes exact/hex, standard and URL-safe base64 padded or
+unpadded, percent/JSON escapes, archive/compression formats, normalization, and
+recursion limits; plans may add but never remove coverage. Scanner crash,
+unsupported encoding, or unclassifiable candidate proves neither breach nor
+absence: `partial_non_security` / `INSUFFICIENT`. Only stale-memory-followed
+and memory-hurt are non-security stop-losses.
 
 Verdict precedence is unique:
 
@@ -694,26 +665,47 @@ security contract, not an implicit extension of this benchmark.
 ## Sanitized Release Evidence
 
 Raw stores, host sessions, credentials, private roots, and unsanitized hidden
-tests are target-invisible and never committed. After all authorized attempts
-terminally seal, the sanitized bundle recomputes every metric and verdict:
+tests are target-invisible and never committed. The runner builds the release
+only after every authorized attempt terminally seals. The bundle contains:
 
 - all selected primary and diagnostic run records;
-- immutable prior-attempt summaries and selection policy;
+- immutable prior-attempt summaries, reveal artifacts/states, and selection policy;
 - complete or partial manifest;
-- task/fixture/scorer/schema/version hashes, export boundary/budgets, and native-import lineage;
+- task/fixture/schema/version hashes, export boundary/budgets, and native-import lineage;
 - sanitized causal inputs/results, bootstrap bytes/hash, and sampled-index/quantile vectors;
 - projection/key-ID/rekey protocol hashes, but never source or projection key bytes;
-- `sanitized_scorer_oracle_v1`: an executable oracle and minimum non-secret
-  fixtures/replay inputs that cleanly recompute every selected `resolved` and
-  `action_counterfactual_v1`, hash-bound to hidden-test/scorer/oracle/run revisions;
+- the `pre_run_scorer_commitment_v1` opening: exact non-secret hidden-scorer
+  engine/scoring-IR bytes, exact oracle bytes or rerunnable committed
+  derivation, release fingerprint/revision, and hidden-input inclusion/derivation proofs;
+- each `scoring_input_freeze_v1` manifest/object needed to verify final
+  workspace/output hashes and recompute selected `resolved` and
+  `action_counterfactual_v1`;
 - candidate JSON and deterministic Markdown reports;
-- verdict binding both report hashes and renderer version.
+- verdict binding report/manifest/bundle hashes, renderer, scorer commitment,
+  release fingerprint/revision, and ordered frozen-input/result root.
 
-The oracle remains target/run-invisible until all attempts seal and is scanned
-before publication. Missing, mismatched, tampered, or unrunnable bytes make
-scores non-claimable and the verdict `INSUFFICIENT`; raw tests/transcripts stay
-private. Publication is one-shot, so future official runs need a new hidden
-revision. A clean checkout recomputes scorer results, report, and verdict.
+A clean checkout uses the committed Git/runtime/toolchain without network or
+ambient state, verifies exact hashes against the pre-run commitment, rebuilds
+the oracle if selected, verifies every published scoring-projection object and
+proof into the full-freeze roots, reruns oracle/counterfactuals, and regenerates
+report/verdict without trusting `resolved`. Missing, mismatched, unopenable, or
+unrunnable bytes are `partial_non_security` / `INSUFFICIENT`; undisclosed raw
+material cannot affect a result.
+
+`release_revision_registry_v1` keys a content-derived fingerprint over hidden
+input root, scoring IR, oracle rules, and sanitizer/deriver bytes, and is
+included in the offline plan. Publication stages immutable content, then one
+create-only/CAS seal is its visibility transition after the scanner passes. Oracle, derivation
+opening, and scoring inputs must be unreadable to source/target/exporter/run
+roots before terminal sealing. Early visibility is
+`partial_non_security` / `INSUFFICIENT`, unless registered private bytes were
+exposed, which is `partial_security` / safety `FAIL`. An ambiguous publication
+crash retires the fingerprint without retry and is `INSUFFICIENT`. A duplicate
+command fails with zero mutation and does not invalidate the valid first seal;
+two observed seals invalidate the candidate evidence as `INSUFFICIENT`.
+Publication retires the fingerprint; planner/runner reject it under any
+revision ID before process spawn or host/provider call, and observed reuse is
+`partial_non_security` / `INSUFFICIENT`.
 
 ## Implementation Slices
 
@@ -770,14 +762,21 @@ Future executable-version focused coverage must include:
 - native import pairing with neutral counts, Claude snapshot/drift rejection,
   authorized inserted lineage, canary typed exclusion/zero rows, and raw-free projections;
 - causal-oracle pre-action/counterfactual positive, refuted, Stop-only, ambiguous/missing cases, and failed-run retention;
-- automatic-only review, exact attempt refs, preparation/infrastructure classification,
-  reveal-commit crash/tamper/no-write, and null/no-scorer pre-prompt exhaustion;
+- automatic-only review, exact attempt refs, preparation/infrastructure
+  classification, immutable full-stream/framing-closure hash/send, `M/R/N/T`
+  reveal crash/tamper/duplicate/conflict/no-write truth table, and null/no-scorer exhaustion;
 - required stale challenge pre-filter inventory and empty-applicable-set
   rejection;
 - source failure before seal with immutable lifecycle/cost/cleanup evidence, plus
   complete, non-security partial, and security partial reports;
 - cross-implementation RFC 8785 byte vectors, deterministic Markdown, and hash-bound verdict;
 - scorer-oracle missing/hash/tamper/unrunnable and clean-checkout recomputation;
+- pre-run scorer/read-set commitment, frozen workspace/output projection,
+  scorer-oracle disagreement, and result-affecting undisclosable-input rejection;
+- early oracle/opening visibility (`INSUFFICIENT`), raw/encoded private leak
+  (`FAIL`), scanner crash (`INSUFFICIENT`), duplicate publication (reject before
+  mutation; observed duplicate is `INSUFFICIENT`), and retired-revision reuse
+  (pre-call reject; observed reuse is `INSUFFICIENT`);
 - fixed bootstrap framing/rejection/quantile vectors, adjusted regression, and
   PASS/FAIL/INSUFFICIENT edges;
 - secret-channel topology and raw/hex/versioned key residue scans;
