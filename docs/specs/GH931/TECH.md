@@ -39,7 +39,65 @@ The Rust runner (`src/eval/coding_bench`) needs:
    capture (`captured_events`) → extraction_tasks → observations/candidates →
    promotion policy → memories, then serve the target run via the production
    SessionStart/MCP retrieval path only. Hard-fail if the run plan attempts
-   direct memory seeding or gold-evidence preloading.
+   direct memory seeding or gold-evidence preloading. Before any capture write,
+   construct `remem_e2e_capture_projection_v1` exclusively from
+   `history_episodes[].raw_events`. Its closed event schema allows only
+   `event_id`, `timestamp_epoch`, `role`, `sanitized_content`, `tool_name`,
+   `sanitized_tool_input`, `sanitized_tool_output`, and `host_boundary`.
+   Every key is required: IDs are unique opaque
+   `evt-` plus 32-lowercase-hex CSPRNG values, timestamps are signed 64-bit
+   epoch seconds, role is `user|assistant|tool`, content is a string, tool
+   fields are string-or-null, and boundary is
+   `user_message|assistant_message|tool_call|tool_result`. The unique v1
+   combinations are: user message = `user` + non-empty content + three null
+   tool fields; assistant message = `assistant` + non-empty content + three
+   null tool fields; tool call = `assistant` + non-empty tool name/input +
+   null output; tool result = `tool` + non-empty tool name/output + null input.
+   Tool-event content remains a required string but may be empty. Events are
+   non-empty and already strictly ordered by `(timestamp_epoch,event_id)`;
+   projection preserves that order without filtering, reordering,
+   deduplication, or merging. Unknown fields/combinations fail.
+   Task/episode IDs bind projection hashes only in the outer manifest and are
+   forbidden from projection bytes and capture identity. The registered
+   capture-identity block instead supplies the closed production host DB value,
+   a nonsemantic `e2e-` plus 32-lowercase-hex CSPRNG session ID, and the exact
+   fixed `/workspace/remem-e2e/project` Git-root mount for both `project` and
+   `cwd`; the mount is identical across tasks in separate isolation
+   namespaces. Event/session IDs and paths may not derive from or contain
+   task/episode IDs, prompt/gold tokens, or ambient paths. Authority attests
+   CSPRNG generation, and the
+   verifier enforces formats, the fixed path, and forbidden-token absence.
+   Episode `summary`, `expected_memory_facts`, `memories`, gold/supporting refs,
+   target prompt, score/hidden/oracle/scorer metadata, and every non-raw-event
+   field are forbidden projection sources. Canonical projection bytes and
+   SHA-256 are sealed before provider or target work and recorded in the run
+   artifact/source manifest. Projection and call content use RFC 8785 JCS
+   UTF-8, retain every required key including nulls, and hash the exact encoded
+   bytes. Call content is the closed object `host_boundary`,
+   `sanitized_content`, `sanitized_tool_input`, `sanitized_tool_output`.
+   Before DB mutation, the adapter materializes a same-length ordered call
+   plan, applies the production capture redactor to every encoded content
+   value, requires byte-identical output, and binds its SHA-256. Each event maps to exactly one
+   `record_captured_event_with_id_and_reference_time` call:
+   `event_id_override=event_id`, `reference_time_epoch=timestamp_epoch`,
+   registered host/session/project/cwd, and event type from the fixed v1 map
+   (`user_message→user_prompt_submit`,
+   `assistant_message→assistant_message`, `tool_call→tool_call`,
+   `tool_result→tool_result`). The call uses exact role/tool name,
+   `ObservationExtract`, and canonical JSON content
+   containing all four sanitized content/tool/boundary channels.
+   The isolated connection starts `BEGIN IMMEDIATE`, proves every
+   `(host,session_id,event_id)` absent before the first call, then executes all
+   calls and verifies the complete call-plan↔new-row bijection inside that same
+   transaction. The writer lock makes the existing upsert API insert-only for
+   this batch; any pre-existing ID, call/row mismatch, or error rolls back all
+   captured rows and queued tasks before commit. Verification includes ID,
+   reference time, role, tool, post-production-redaction content hash, project,
+   session, and order; worker drain starts only after commit. The independent
+   verifier rebuilds projection/call-plan bytes and compares both hashes and
+   all rows. Missing raw events, cardinality/order drift, hash mismatch, or a
+   forbidden field reaching the plan fails before the first write. No
+   summary/gold or partial-event fallback exists.
 3. `remem_e2e` requires a configured remem LLM provider key at execution time;
    `--dry-run` must not require it.
 4. `curated_file_budgeted` run support: inject a curator-produced `MEMORY.md`,
@@ -117,6 +175,17 @@ The implementation must preserve these fail-closed boundaries:
    GraphCandidate to quiescence; exact replay, unexpected/residual/failed
    tasks, SessionRollup/UserContext/background jobs, and native-memory effects
    are invalid for this registered adapter.
+9. The report builder validates all 144 keys before aggregation. For each
+   task/condition it computes the arithmetic mean of exactly three binary
+   `resolved` values; target-started timeout/crash/score failure is `0`, while
+   any pre-target missing or integrity-invalid tuple makes the matrix
+   `INSUFFICIENT` without imputation. A primary point estimate is the mean of
+   16 within-task treatment-minus-control differences. Each fixed-seed
+   percentile-bootstrap replicate resamples 16 task IDs with replacement and
+   recomputes the two three-run means and paired difference inside every
+   sampled cluster. Pair/hash absence is `INSUFFICIENT`; the registration
+   freezes algorithm/version, replicate count, seed, and 95% percentile-index
+   rule before official execution.
 
 Detailed task ownership and negative-test expectations are retained in
 `specs/GH931/tasks.md` as planning evidence. That file does not replace this

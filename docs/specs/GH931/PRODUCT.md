@@ -45,6 +45,21 @@ workflow gate or authorization source.
   Smoke approvals must assign policy-derived, non-colliding
   `run_phase=smoke` namespaces; smoke artifacts can never become official
   evidence. Smoke and official work still share one cumulative-budget ledger.
+- The registered outcome for one task/condition is the arithmetic mean of its
+  exactly three pre-registered binary `resolved` values; majority-success and
+  any-success aggregation are forbidden. A target-started timeout, crash, or
+  scoring failure contributes `0`. A pre-target missing tuple or any
+  integrity-invalid tuple makes the full matrix `INSUFFICIENT`; it is never
+  imputed or removed from a denominator.
+- Each primary comparison first subtracts the control three-run mean from the
+  treatment three-run mean within each of the 16 paired tasks, then averages
+  those 16 task differences and reports the absolute percentage-point effect.
+  Every percentile-bootstrap replicate samples 16 task IDs with replacement
+  and recomputes both three-run means and their paired difference for every
+  sampled task; repetitions are never treated as independent clusters.
+  Missing pair/hash evidence is `INSUFFICIENT`. The immutable registration
+  locks the bootstrap algorithm/version, replicate count, seed, and 95%
+  percentile-index rule before any official run.
 - Every paired condition uses the same registered `evaluation_as_of`. Semantic
   capture/candidate/promotion timestamps, TTL/active-memory decisions, and all
   SessionStart, PromptSubmit, search/detail, temporal, staleness, usage, graph,
@@ -55,7 +70,12 @@ workflow gate or authorization source.
 - `remem_e2e` uses the production capture → extraction → candidate/review →
   promotion → retrieval path. Any treatment-side human work is target-blind,
   frozen before target reveal, supervisor-timed, and included in maintenance
-  cost. Direct seed, preload, or target-aware repair is invalid.
+  cost. Its capture input is a canonical, hash-bound projection of allowlisted
+  raw history events only. It losslessly preserves chronological order and
+  every content/tool channel, with exactly one capture call and inserted row
+  per raw event. Capture-visible project/session identity is opaque and
+  task-neutral; summary, expected-memory, gold, target, and scorer fields
+  cannot enter capture. Direct seed, preload, or target-aware repair is invalid.
 - Target agents and tools receive no repository authority, benchmark/scorer
   files, or public network. Only the pinned Codex process may reach a private
   loopback provider adapter; it has no network and forwards bounded frames over
