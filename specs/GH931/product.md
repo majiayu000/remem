@@ -125,7 +125,13 @@ stale/irrelevant memory harm。
    进入 `captured_events`，再经真实 `extraction_tasks`、自动 extraction、
    review/promotion policy、memories/projections 和 production
    SessionStart/MCP retrieval 到达 agent。gold `memories`/expected answer 只能
-   进入 scorer，不得伪装为 captured input。
+   进入 scorer，不得伪装为 captured input。adapter 必须按注册的
+   `history_episodes`/`raw_events` 原始嵌套数组顺序 flatten，并派生全 projection
+   连续 `source_ordinal=0..N-1`；ordinal 是唯一 canonical order，`event_id`
+   只作身份、不得排序或破同秒平局。timestamp 按 ordinal 非递减且允许同秒；
+   ordinal 必须进入 call content，每个 call index 与 inserted row ID 随 ordinal
+   严格递增。gap/duplicate/shuffle、timestamp 回退、event-ID sort 或 call/row
+   inversion 在首个 commit 前失败。
 9. **B-009** `remem_e2e` 必须拒绝直接 DB seed gold memory、手工
    `save_memory`、`render_seeded_remem_context`、完整 gold-evidence preload
    或把 expected answer 写入 prompt。
@@ -179,10 +185,12 @@ stale/irrelevant memory harm。
     形式落盘。检测到 secret 时必须 fail closed、丢弃原 bytes 并记录无 secret
     的 reason code。
 16. **B-016** hidden oracle 只在 agent 结束后，于与 agent repo 分离的
-    scorer-only clean tree 中 materialize；harness 只能把经校验的 patch 应用到
-    该 tree，必须拒绝 symlink/hardlink/device/path collision，并保持 scorer
-    bootstrap/import files read-only。agent 读取、修改或影响 hidden content/
-    bootstrap 必须 fail closed。
+    scorer-only clean tree 中 materialize；scorer 使用独立 OS principal/process/
+    tree，controller 永不 import/exec patched code。无 hidden mount 的不可信 code
+    worker 只能经 bounded、closed-schema RFC 8785 JCS JSON RPC 与 scorer 边界交互；
+    scorer 拒绝 symlink/hardlink/device/path collision 并保持 oracle/bootstrap
+    read-only。stdout、exit 0、visible tests、worker 自报结果都不能定 PASS；
+    monkeypatch/shared interpreter、异常或 malformed RPC 必须 fail closed。
 17. **B-017** auth/provider 不可用、capture/extraction/promotion/retrieval
     失败、agent timeout/crash、score/cleanup/scanner 失败都必须形成 typed
     artifact 或显式 suite error，不能静默丢弃。
@@ -198,15 +206,20 @@ stale/irrelevant memory harm。
     append `target_started`。重试保留此前失败 artifact；
     recovery 发现 started 但无 terminal artifact 时，必须一次性生成 immutable
     `abandoned_after_target_start` failure（`resolved=0`）并封闭该 run index，
-    不得重试或永久留作“缺失”。每个 terminal outcome 的 sanitized artifact
-    digest、matrix key、cost/timing/frozen-surface digests 必须由 supervisor
-    CAS seal 到同一 ledger；没有匹配 terminal attestation 的本地 artifact/
-    manifest 不可信。target 已启动后的其他 outcome failure同样留在预注册
+    不得重试或永久留作“缺失”。每个 terminal outcome 先冻结 receipt-free、
+    immutable RFC 8785 JCS payload；payload 不含 terminal attestation/checkpoint、
+    source-manifest/report hash 或任何由自身 digest 派生的字段。supervisor
+    先计算 payload digest 并将 matrix key、cost/timing/frozen-surface digests CAS
+    seal 到同一 ledger；receipt 产生后，source manifest 才以 detached mapping
+    绑定 payload digest、terminal attestation 与 checkpoint receipt。verifier
+    依次验证 payload→ledger seal/signature/ancestry→checkpoint→mapping；没有
+    匹配链的 artifact/manifest 不可信。target 已启动后的其他 outcome failure同样留在预注册
     分母，不允许挑成功重跑。
 19. **B-019** resume 只补缺失 tuple；duplicate tuple、hash drift、partial
     artifact 或已完成 artifact overwrite 必须被拒绝。
 20. **B-020** dry-run、schema validation、report verify 和普通 CI 不读取
-    provider key、不启动 agent、不访问网络；live run 必须引用 default branch
+    provider key、不启动 agent、不访问网络；默认 report 只验证 execution-time
+    bundle receipts/proofs，明确不声称当前 authority freshness。live run 必须引用 default branch
     上经 maintainer review/merge 的 immutable approval policy。其 stable
     `approval_key` 只能由 pre-merge 可知且不包含自身的 canonical policy
     digest、approval PR number 与 repository identity 派生；不得包含承载该
@@ -224,7 +237,8 @@ stale/irrelevant memory harm。
     tool/cache ceilings；provider/API 不能硬性执行或 broker 无法在超限前终止时
     禁止 dispatch。随后在 authoritative shared ledger durably reserve 该计算值，
     crash/abandoned reservation 仍按上限计费。
-    verify、smoke、official run 与 report 的每次 invocation 都必须由固定、
+    live approval verify、smoke、official run 与显式 network freshness audit
+    都必须由固定、
     root-owned immutable host supervisor 从 authority 取得 expected digest 并执行
     `openat(O_NOFOLLOW)`、same-fd hash/fstat 和 same-handle exec；runner 以同一
     primitive 启动 agent，artifact 验证 OS/security-owner-key attestation。
@@ -253,7 +267,8 @@ stale/irrelevant memory harm。
     `SigningConfig` 解析，禁止 hard-code rotating endpoint。Rekor inclusion
     proof、signed checkpoint、consistency proof 与严格递增 log index 验证并
     durable 保存前，不得接受 transition 或 dispatch。verifier 在每次状态迁移
-    和 report 时都重验 writer signature chain、Rekor bundle/consistency chain、
+    和显式 network freshness audit 时都重验 writer signature chain、Rekor
+    bundle/consistency chain、
     TUF trust/key rotation、identity/role permission 与两个 exact rulesets。
     匿名/普通 Git credential、未授权/已撤销 identity、signature/bundle 缺失或
     不匹配、相对 pinned/previous checkpoint 的 rollback/consistency failure、
@@ -261,7 +276,11 @@ stale/irrelevant memory harm。
     的 external operator anchor；无独立 witness/gossip 时不能声称检测一个恶意
     log operator 为本客户端持续提供的自洽 split view，该威胁若进入 live
     approval 必须先另行批准 witness quorum。resume、换 clone/`execution_id`、
-    并发或拆单都不得重复领取预算。
+    并发或拆单都不得重复领取预算。network freshness audit 必须在不改 report
+    bytes 的前提下输出 authority-signed detached receipt，绑定
+    `report_sha256`、ledger tip、ruleset/TUF/Rekor digests、`observed_at` 与
+    `expires_at`；publication/closure/release 要求 exact-report receipt 未过期。
+    network denial、stale receipt、wrong-report binding 或远端 drift 均 fail closed。
 
 ### Attribution、失败分解与 claim
 
@@ -279,8 +298,9 @@ stale/irrelevant memory harm。
     用 `null` + missing count。144 个 primary tuple 的 scanner-passed sanitized
     run records 与 source manifest 必须作为 committed release evidence 保留，
     并足以独立重算分母、失败、成本、attribution、report hash 和 gate input；
-    每个 record/manifest 还必须匹配 authoritative ledger 中 supervisor-sealed
-    terminal matrix-key/artifact digest；control 必须解析到 committed
+    每个 receipt-free record 的 JCS digest 必须经 source manifest detached mapping
+    匹配 authoritative ledger 中 supervisor-sealed terminal matrix-key/artifact
+    digest 及 checkpoint receipt；control 必须解析到 committed
     content-addressed sanitized frozen bytes。`/tmp`、self-rehashed mutable tree
     或 aggregate-only report 不构成可复验证据。
 24. **B-024** 每个 task/condition 的 outcome 固定为三次预注册 run 的二元

@@ -279,11 +279,14 @@ security boundary 时还必须取得独立 security review。spec lane 不预创
   detect/redact，确认 sanitized 后才允许写 artifact。命中 secret 时原 frame
   只留在内存并立即清零/丢弃，run fail closed；禁用 core dump，任何 raw/
   ignored/temp stdout/stderr 都不得落盘。
-- agent 退出并卸载 sandbox 后，harness 从 clean fixture 建立 scorer-only
-  tree，只应用经过 allowed-path 校验的 patch；copy/apply 前后拒绝 symlink、
-  hardlink、device、path traversal/collision。hidden oracle 与 read-only
-  bootstrap/import files 只存在于 scorer tree，score command 使用 argument
-  array且不经过 agent-modifiable import path。
+- agent 退出并卸载 sandbox 后，独立 scorer OS principal/process 建立 read-only
+  hidden tree；controller 永不 import/exec patched code。另一个不可信 code-worker
+  principal 只挂载 validated patch tree、无 hidden/oracle mount，并只经
+  supervisor pipe 上 bounded、closed-schema RFC 8785 JCS JSON RPC 接收输入和
+  返回结果。scorer 拒绝 symlink/hardlink/device/path collision，并只比较
+  scorer-owned oracle 与绑定 exact patch/tree/hidden digests 的 RPC 结果。
+  stdout、exit 0、visible tests 或 worker 自报不能定 PASS；monkeypatch/shared
+  interpreter、extra/truncated RPC、异常、crash 或 timeout 全部 fail closed。
 - dry-run 构造并验证完整 plan、paths 和 capability declaration，调用图在
   auth/provider/agent spawn 前结束。普通 CI 只跑 dry-run、schema 和 synthetic
   tests。
@@ -302,10 +305,14 @@ security boundary 时还必须取得独立 security review。spec lane 不预创
   视为 started failure。recovery 对 remote started 且无 terminal record 的
   attempt 以 compare-and-swap 追加唯一
   `abandoned_after_target_start` terminal record（`resolved=0`）并封闭 matrix
-  key；不得再 spawn。terminal artifact 通过 scanner 后，trusted supervisor
-  必须将 `(matrix_key,attempt_id,artifact_sha256,outcome,cost/timing hashes,
+  key；不得再 spawn。scanner 先冻结不含 terminal attestation/checkpoint、
+  source-manifest/report hash 或任何自身 digest 派生字段的 receipt-free RFC 8785
+  JCS payload。trusted supervisor 计算 `payload_sha256` 后，才将
+  `(matrix_key,attempt_id,payload_sha256,outcome,cost/timing hashes,
   frozen_control/treatment hashes)` 作为 terminal attestation CAS append；
-  resume/report 只接受 ledger attested 且 hash 验证后的 terminal tuple。
+  receipt 产生后由 source manifest detached mapping 绑定 payload、attestation
+  与 checkpoint。resume/report 按 payload→ledger signature/ancestry→checkpoint
+  →mapping 顺序验证，任何缺失或自引用都失败。
 - live `run` 的唯一 policy 源是 `origin` default branch 上的
   `eval/coding-bench/live-run-approvals.json`，调用方不得传任意 registry path。
   entry 的 canonical policy preimage 明确排除 `approval_key`、review node、
@@ -417,11 +424,14 @@ security boundary 时还必须取得独立 security review。spec lane 不预创
 
 - `fixtures/tasks.json` 的每个 required history episode 必须新增 bounded、
   answer-bearing `raw_events`：真实 role/content/tool name/tool input/tool output/
-  timestamp/host boundary 的 sanitized payload，以及独立 gold refs。adapter
-  只能把 `raw_events` 转为 production `CaptureEventInput` 并使用
-  `record_captured_event*` 写 isolated project/session；summary 与
-  `memories[].text` 只供 post-run verifier，缺 raw answer evidence 的 task
-  schema invalid。
+  timestamp/host boundary 的 sanitized payload，以及独立 gold refs。adapter 按
+  registered `history_episodes`/`raw_events` 原始嵌套数组顺序 flatten，派生全
+  projection 连续 `source_ordinal=0..N-1` 并写入 call content；timestamp 按
+  ordinal 非递减且允许同秒，`event_id` 只作 identity、绝不排序。每个 ordinal
+  恰好映射一个 `record_captured_event*` call，call index 与 inserted row ID
+  严格递增；gap/duplicate/shuffle、timestamp 回退、event-ID sort、call/row
+  inversion 都在 commit 前失败。summary/`memories[].text` 只供 post-run
+  verifier；缺 raw answer evidence 的 task schema invalid。
 - 每个 raw event 提供 stable event ID，并以 production
   `CaptureEventInput(task_kind=ObservationExtract)` enqueue；禁止
   `run_claimed_exact`（它会抑制 candidate follow-up）。isolated DB 上单个 normal
@@ -494,7 +504,9 @@ security boundary 时还必须取得独立 security review。spec lane 不预创
   无充分 root evidence 时 suite error 为 `unclassified`，不得按检查顺序猜测。
 - flagship run schema 固定 `run_phase`/`matrix_namespace` canonical matrix key、
   run identity、registered clock/order fields、
-  `pre_target_work_started`/human interaction/target/terminal ledger receipts、
+  `pre_target_work_started`/human interaction/target transitions 与 receipt-free
+  terminal payload；receipt-free payload 明确排除 terminal attestation/checkpoint receipt、
+  source-manifest/report hash、payload 自身 digest 及任何由该 digest 派生字段；payload 必须包含
   condition surface、runtime/score result、stage failure、tokens/wall time、
   supervisor-timed curator/treatment cost、closed
   `treatment_review_input_projection` + input/output/freeze hashes、
@@ -506,14 +518,20 @@ security boundary 时还必须取得独立 security review。spec lane 不预创
   `eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl`，并生成
   `source-manifest.json`：记录 144 个 matrix keys、全部 attempt hashes、schema/
   code/fixture/binary/profile/registration hashes、scanner verdict、denominator
-  policy、bundle hash、report input hash，以及每个 matrix key 对应的
-  authoritative terminal ledger attestation OID/digest。manifest 通过独立
-  schema；control refs 必须解析到 committed
-  `frozen-control-content.jsonl` 的 exact sanitized bytes。verifier fresh 验证
-  ledger ancestry/terminal seal，再重算 bundle/control digests；仅在 mutable
-  evidence tree 内 self-hash 一致不构成可信。只有 streaming-redacted
-  stdout/stderr 可进入 local/bundle artifacts，raw credential-bearing frames
-  必须在落盘前丢弃。auth/private roots 永不进入任何 artifact。
+  policy、bundle/report-input hashes，以及 detached
+  `(matrix_key,attempt_id,payload_sha256) → (terminal attestation OID/digest,
+  checkpoint receipt digest)` mapping。manifest 通过独立 schema；control refs
+  必须解析到 committed `frozen-control-content.jsonl` exact sanitized bytes。
+  默认 report verifier 完全离线，按序复验 JCS payload、execution-time ledger
+  receipt/signature/ancestry、checkpoint proof、detached mapping 与 bundle/control
+  digests，不访问 network，也不声称 current freshness。仅在 mutable evidence
+  tree 内 self-hash 一致不构成可信。只有 streaming-redacted stdout/stderr 可进入
+  artifacts；raw credential frames 落盘前丢弃，auth/private roots 永不进入。
+- 显式 network-only freshness invocation 不改 report bytes，只输出
+  authority-signed detached receipt，绑定 `report_sha256`、ledger tip、
+  ruleset/TUF/Rekor digests、`observed_at` 与 `expires_at`。publication、closure、
+  release gate 要求 exact-report receipt 未过期；network denial、stale/expired
+  receipt、wrong-report binding 或 tip/ruleset/TUF/Rekor drift 全部 fail closed。
 - report builder 先验证 144 tuple completeness、attempt policy、同 pair hashes
   、source manifest 与 bundle hash，再汇总 task-level denominator。缺失
   metric 使用 `null` 与 `missing_count`。aggregate-only report 或只位于
@@ -582,6 +600,7 @@ remem bench coding --suite issue385-v1 --condition <primary-id> \
 remem bench coding --suite issue385-v1 --condition remem_preloaded ...
 remem bench report --root <artifact-root> \
   --json-out <path> --markdown-out <path>
+remem bench report --root <artifact-root> --verify-current-freshness --freshness-receipt-out <path>
 ```
 
 - `--verify-live-approval-only` 使用 authority credential 读取 default-branch
@@ -589,7 +608,7 @@ remem bench report --root <artifact-root> \
   bindings，但在 provider/host credential bootstrap、agent spawn 和 billable
   dispatch 前退出；输出 policy-derived `run_phase`、namespaces、exact tuples、
   caps、binary digests 与 `authorized` verdict。caller 字符串不能让它 PASS。
-- verify/smoke/official/report 只由固定
+- verify/smoke/official/report/freshness 只由固定
   `/usr/local/libexec/remem-bench-supervisor` 执行。独立 security owner 将其
   provision 为 root-owned immutable service；approval 绑定 OS code-sign/
   fs-verity/unit measurement 与不可由 caller 使用的 attestation public key。
@@ -599,8 +618,8 @@ remem bench report --root <artifact-root> \
   attestation；wrong supervisor/direct invocation 失败。平台不能保证时 fail
   closed，shell `shasum` 不是执行证明。
 - 保留现有 `BenchAction::Coding/Report` 结构与 `bench report --root` command
-  contract；新增参数必须保留显式 matrix、output、live confirmation 和 hard
-  caps 语义。若路径偏离 implementation-scope reference，在 linked PR 说明并
+  contract；新增参数必须保留显式 matrix、output、live confirmation、hard caps
+  与 detached freshness receipt 语义。若路径偏离 implementation-scope reference，在 linked PR 说明并
   同步 current contract。
 - README/docs 在 report PASS 前只描述方法与无公开 outcome；report 通过后也
   只能引用 gate 允许且带 report link 的 wording。
@@ -615,12 +634,12 @@ remem bench report --root <artifact-root> \
 | B-001-B-004 state/IDs/matrix | types、run plan、registry validator | 新 ID parse 正例；旧 ID 负例；primary dry-run `planned_runs == 144`；缺/重 tuple 被拒绝。 |
 | B-005-B-006 pair/randomization | run identity、registered clock、planner | same-pair executable/profile + `evaluation_as_of` equality；registration 预先固定 order seed/PRNG version/完整 tuple permutation，planner 重算 byte-identical；真实 clock、order/seed/binary/profile drift 均失败。 |
 | B-007 no-memory | condition/isolation | hooks/MCP/SessionStart/file/native surfaces 全无；额外 surface 负例失败。 |
-| B-008-B-010 E2E path | raw-event fixture、capture/extraction adapter、run schema、treatment-review projection、worker drain、context render | answer-bearing raw event→capture→use DAG；T2 schema 强制 closed review projection/input-output/timing/ledger fields；同 task 三 repetition 在首个 target 前 batch-freeze；target/outcome 注入、暴露 actor 复用、post-reveal review、seed/save/preload 与 drain failure 均失败。 |
+| B-008-B-010 E2E path | source-ordinal raw fixture、capture/extraction adapter、run schema、worker drain、context render | nested-array ordinal 唯一排序且 call/row 严增；same-second 正例与 gap/shuffle/event-ID-sort/inversion 负例；answer-bearing capture→use DAG、blind batch、seed/save/preload/drain negatives。 |
 | B-011-B-013 curator/diagnostics | curator projection/schema、supervisor timing、content-addressed control bundle | allowlisted projection 可重建；elapsed 只能来自 supervisor monotonic receipts；committed frozen bytes 可重算 mounted hash；跨-run target exposure、gold/target/hidden/scorer 注入、missing bytes/receipt、freeze/hash/budget 负例失败；diagnostic 不进入 primary。 |
-| B-014-B-016 isolation/security | service/agent privilege split、deny-egress broker、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root/network/public-repo access；provider broker 拒绝 fetch/tunnel；secret-before-write、symlink/hardlink/import bootstrap tamper 全失败。 |
+| B-014-B-016 isolation/security | service/agent privilege split、deny-egress broker、streaming redactor、scorer/code-worker RPC | agent/tool 无 auth/DB/private-root/network/public-repo access；controller 不 import/exec patch，code worker 无 hidden mount；stdout/exit0/monkeypatch/shared-interpreter/RPC tamper 全失败。 |
 | B-017-B-020 failure/retry/dry-run | parent-wired approval/checkpoint modules、pre-target/target/terminal transitions、pricing broker、per-call authority、anchored CAS ledger | human/prep 前 durable attempt；abandoned pre-target work 保留/保守计时且不可重做；dispatch 前验证 actual input 并硬设 output/reasoning/cache/tool caps；每次 fresh 重验 expiry/two-ruleset/TUF/Rekor/signature/ancestry；terminal digest seal；wrong writer、rules/log rollback/proof inconsistency、crash/race/超额 negatives 均失败，dry-run 零 external call。 |
 | B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；overlapping failures 按 earliest causal root 稳定，downstream consequences 单列。 |
-| B-023-B-024 report/bootstrap | sanitized evidence/control bundles、terminal ledger attestations、source manifest、report builder | 144 records；每个 record/manifest digest 与 authoritative terminal seal 一致，control bytes 可独立检查；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden。 |
+| B-023-B-024 report/bootstrap | receipt-free JCS payloads、detached receipts/source manifest、report builder | 144 records；payload→ledger→checkpoint→mapping 可离线复验；freshness receipt 单独绑定 report；三-run mean、missing/failed rules 与 16-task bootstrap golden。 |
 | B-025-B-029 claim gates | post-final-binary registration projection、closed causal-rule verifier、result bindings、gate/public CI | T6 synthetic registry 后 T7 才以 final binary/clock/order permutation 冻结 live registration；superiority/non-inferiority、48-run stop-loss、trusted treatment review cost、唯一 `memory_caused`/`independent_cause` 匹配正例，零/多匹配、sealed evidence/hash 缺失、post-smoke mutation 与 PASS wording/report-link negatives。 |
 | B-030 human gates | CLI/live authorization/handoff | 缺 approval/confirm/hard caps 在 agent/provider 调用前失败；spec 不自批。 |
 
@@ -643,12 +662,12 @@ remem bench report --root <artifact-root> \
   -> hidden deterministic scoring
   -> failure-stage + attribution resolution
   -> registered closed memory-harm causal classifier
-  -> immutable run artifact/hash -> authoritative terminal ledger seal
-  -> scanner-passed sanitized run/control bundles + source manifest
+  -> immutable receipt-free JCS payload/hash -> authoritative terminal ledger seal
+  -> scanner-passed bundles + detached source-manifest receipt mapping
   -> task-level paired aggregation/bootstrap
   -> stop-loss + claim gate
-  -> hash-bound JSON/Markdown report
-  -> public wording CI + human release decision
+  -> hash-bound offline JSON/Markdown report -> detached network freshness receipt
+  -> public wording CI + receipt-expiry gate + human release decision
 ```
 
 只有 isolated temp roots、显式 artifact output、scanner-passed sanitized

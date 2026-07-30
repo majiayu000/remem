@@ -71,17 +71,26 @@ workflow gate or authorization source.
   promotion → retrieval path. Any treatment-side human work is target-blind,
   frozen before target reveal, supervisor-timed, and included in maintenance
   cost. Its capture input is a canonical, hash-bound projection of allowlisted
-  raw history events only. It losslessly preserves chronological order and
-  every content/tool channel, with exactly one capture call and inserted row
-  per raw event. Capture-visible project/session identity is opaque and
-  task-neutral; summary, expected-memory, gold, target, and scorer fields
-  cannot enter capture. Direct seed, preload, or target-aware repair is invalid.
+  raw history events only. It flattens the registered `history_episodes` and
+  their `raw_events` in literal nested-array order and derives one
+  projection-wide `source_ordinal=0..N-1`; timestamps must be nondecreasing by
+  ordinal, equal-second events are valid, and `event_id` is identity only,
+  never an ordering key. It preserves every content/tool channel, with exactly
+  one capture call and inserted row per raw event in strict ordinal order.
+  Capture-visible project/session identity is opaque and task-neutral; summary,
+  expected-memory, gold, target, and scorer fields cannot enter capture. Direct
+  seed, preload, or target-aware repair is invalid.
 - Target agents and tools receive no repository authority, benchmark/scorer
   files, or public network. Only the pinned Codex process may reach a private
   loopback provider adapter; it has no network and forwards bounded frames over
   supervisor-created pipes. Tool subprocesses cannot reach loopback or Unix
-  sockets. Unsupported process isolation fails closed, and hidden scoring uses
-  a separate clean tree.
+  sockets. Hidden scoring runs only after the target exits, under an independent
+  scorer OS principal, process, and tree. The controller never imports or
+  executes patched code; an untrusted code worker has no hidden mount and can
+  exchange only bounded, schema-checked canonical JSON RPC. Stdout, exit zero,
+  visible tests, or a worker-asserted result cannot produce PASS. Shared
+  interpreter state, monkeypatch reachability, malformed RPC, or scorer failure
+  fails closed.
 - Live execution requires a default-branch, independently reviewed approval
   entry bound to an OS/security-owner-anchored host supervisor and exact
   binaries, profiles, fixtures, tuples,
@@ -100,6 +109,19 @@ workflow gate or authorization source.
   unsigned, wrong-writer, or ruleset/log-trust drift fails closed. Without a
   separately approved witness quorum, this does not claim detection of a
   malicious Rekor operator's self-consistent split view.
+- Every flagship run is first frozen as a receipt-free immutable RFC 8785 JCS
+  payload. It contains no terminal receipt, checkpoint, source-manifest/report
+  hash, or other field derived from its own digest. The supervisor hashes and
+  CAS-seals those bytes first; only then may the source manifest add a detached
+  mapping from that payload digest to the terminal attestation and checkpoint
+  receipt. Verification walks payload → ledger seal → checkpoint chain.
+- Default report construction and verification are fully offline: they verify
+  only the signed receipts and proofs bundled at execution time and make no
+  claim about current authority freshness. A separate explicit network
+  freshness invocation may emit a detached signed receipt binding the immutable
+  report SHA-256, ledger tip, ruleset, TUF and Rekor digests, observation time,
+  and expiry. Publication, issue closure, and release require an unexpired
+  matching receipt; the freshness invocation never rewrites the report.
 - `memory_hurt` and `stale_memory_followed` are computed only by a
   pre-registered, hashed, scorer-only closed causal classifier over sealed
   traces. Missing or ambiguous classification makes the claim

@@ -75,15 +75,17 @@ GH-931
       virtual-clock policy、condition-order seed/PRNG version、完整 tuple
       permutation/digest，planner 重算不一致或读取真实 clock 均失败；
     - 每个 required history episode 有 answer-bearing sanitized `raw_events`；
-      validator 拒绝只在 summary/gold `memories` 中存在答案的 fixture；
+      projection 按注册的 nested arrays 派生连续 `source_ordinal=0..N-1`，
+      timestamp 非递减/同秒可用、event ID 不排序；ordinal 入 call content 且
+      call index/row ID 严增，validator 拒绝顺序/ordinal/gold-only drift；
     - validator 按 closed schema/example registry 通用发现；T3A 后续增加
       checkpoint schema/example 不需回写 T2 文件；
     - closed `curator_input_projection` schema 只允许 chronological raw-event
       字段；validator 拒绝 gold/expected/target/hidden/scorer 字段；
-    - T2 独占的 `flagship-run.schema.json` 要求 closed
-      `treatment_review_input_projection`、input/output/freeze hashes、
-      supervisor timing、pre-target/target/terminal ledger receipts 与
-      frozen-control content digest；T4/T6 不修改该 schema；
+    - T2 独占的 `flagship-run.schema.json` 要求 closed review projection/hashes、
+      supervisor timing、pre-target/target fields 与 receipt-free RFC 8785 JCS
+      terminal payload；payload 拒绝 terminal/checkpoint receipt 及自身 digest
+      派生字段，detached source manifest 另绑 receipts；T4/T6 不修改该 schema；
     - live approval schema 要求 canonical USD pricing snapshot、SKU/rates、
       per-call token ceilings/rounding/provider hard-limit capability fields，
       拒绝 caller-supplied cost；同时要求 policy-derived
@@ -130,9 +132,11 @@ GH-931
       pinned agent 不能证明该进程级隔离，feasibility gate fail closed；
     - streaming redactor 在任何 local/bundle write 前检测 credential，命中即
       fail closed 且原 bytes 不落盘；
-    - scorer 从 clean fixture + validated patch 建立 agent 不可访问的独立 tree，
-      拒绝 symlink/hardlink/device/path collision，hidden oracle/bootstrap
-      read-only，score command 使用 argument array；
+    - hidden scorer 使用独立 OS principal/process/read-only tree；controller 永不
+      import/exec patch，无 hidden mount 的 code worker 只走 bounded、schema-checked
+      RFC 8785 JCS RPC。stdout/exit0/visible tests/self-report 不能定 PASS；
+      monkeypatch/shared interpreter、RPC/异常失败及 symlink/hardlink/device/
+      path collision 均 fail closed；
     - temp-write/fsync/atomic rename、unique attempt、resume-only-missing 生效；
     - timeout/crash/cleanup/scanner/partial/duplicate/hash drift 都有负例；
     - non-self-referential `approval_key` 只由 repo identity、pre-merge policy
@@ -172,7 +176,7 @@ GH-931
       require signed commits。两个 ID/hash/active target 都逐次验证；
     - 每个 record 验证 writer signature；每次 remote CAS 后必须取得 T3A 定义的
       verified Rekor bundle。missing/wrong/revoked writer、任一 ruleset drift 或
-      Rekor/TUF rollback 或 proof inconsistency 都在 transition/dispatch/report
+      Rekor/TUF rollback 或 proof inconsistency 都在 transition/dispatch/network-freshness
       前失败；
     - approval 绑定 ledger genesis、sole writer App、两个 rulesets 与 TUF/Rekor
       trust；每个 reservation/transition/terminal seal 前 fresh 验证 approval
@@ -185,8 +189,9 @@ GH-931
     - target spawn 前将 reservation-bound `target_started` CAS append 到同一
       anchored remote ledger；recovery 将无 terminal 的 started attempt CAS 封为
       `abandoned_after_target_start`/resolved=0，禁止重跑；
-    - scanner 后 supervisor 把 matrix key + terminal artifact/cost/timing/frozen
-      digests CAS seal 到 ledger；无匹配 terminal attestation 的 artifact 不可
+    - scanner 后 supervisor 先 hash receipt-free JCS payload，再 CAS seal matrix
+      key + payload/cost/timing/frozen digests；source manifest 随后 detached 绑定
+      attestation/checkpoint，payload→ledger→checkpoint→mapping 不完整不可
       resume/report；
     - forged/expired/dismissed/drift/hash/tuple/cap approval，sibling reservation
       race、forced/rollback ledger、resume/new clone/execution ID replay 与累计
@@ -293,8 +298,9 @@ GH-931
       promotion/retrieval，gold-only fixture 被 validator 拒绝；
     - E2E path 不调用 seed/save/full-detail preload；
     - provider/drain/promotion/retrieval failure typed 且无降级；
-    - fixture 用 stable event ID 与 `task_kind=ObservationExtract` 进入 production
-      capture；单个 normal `run_next` worker 只允许
+    - fixture 用 stable event ID 只作 identity，nested-array-derived ordinal 入 call content 并使 call/row ID 严增；
+      以 `task_kind=ObservationExtract` 进入 production
+      capture，顺序/timestamp 负例失败；单个 normal `run_next` worker 只允许
       ObservationExtract→MemoryCandidate→GraphCandidate 并 drain 至 quiescent。
       exact replay、unexpected kind、failed/residual/capped task 全部 invalid；
     - immutable `EvaluationClock` 不在 env/global/target request；normal outer
@@ -400,9 +406,9 @@ GH-931
     - superiority lower bound、non-inferiority lower bound >=-3pp、treatment-side
       review cost、固定 48-run stop-loss denominator 与 attribution-missing
       insufficient 全有边界测试；
-    - 144 个 scanner-passed sanitized run records、content-addressed frozen
-      control bytes 和 source manifest 完整；每个 terminal digest 匹配
-      authoritative ledger attestation，report 可仅从 governed evidence 重算；
+    - 144 个 receipt-free JCS records、frozen control 与 detached source manifest 完整；每个 payload digest 依次匹配 ledger attestation/checkpoint/mapping；
+    - 默认 report 只从 execution-time governed evidence 完全离线重算且不声称 current freshness；
+    - 显式 network freshness audit 输出不改 report 的 signed detached receipt；network denial/stale/wrong-report/drift 失败，publish/closure/release 要求 exact receipt 未过期；
     - 未执行 live matrix 时 report/registry 保持 `INSUFFICIENT`。
   - Verify:
     ```bash
@@ -447,7 +453,7 @@ GH-931
       build/记录 host supervisor、remem 与 agent binary hashes；supervisor
       由 OS/security-owner measurement + attestation key 建立 trust，binaries 装到
       security-owned、read-only content-addressed mount，拒绝 symlink；
-    - 每次 verify/smoke/official/report invocation 都从 no-follow executing-file
+    - 每次 verify/smoke/official/report/freshness invocation 都从 no-follow executing-file
       handle 自验 approval/manifest-pinned digest，并在 artifact 记录 digest +
       stable file identity；平台不能保证“验证的同一 handle 被执行”时 fail closed，
       不能依赖一次 path hash；
@@ -470,11 +476,11 @@ GH-931
   - Dependencies: SP931-T7
   - Covers: B-001-B-030
   - Done when:
-    - 独立 reviewer 检查 E2E 未 seed/preload、curator blind、auth/hidden isolation、
-      cross-run blind batch、supervisor timing、pre-target/terminal ledger、
-      dispatch token caps、per-call two-ruleset/TUF/Rekor freshness、完整
-      evaluation-clock scope、same-handle binary verification、pinned order、
-      final-binary registration、attempt denominator、statistics 和 public wording；
+    - 独立 reviewer 检查 E2E source ordinal/call-row order、未 seed/preload、
+      curator blind、scorer/code-worker OS/RPC isolation、receipt-free payload 的
+      payload→ledger→checkpoint→mapping、offline report 与 detached network
+      freshness receipt、clock/same-handle/order/registration/denominator/statistics/
+      wording，并覆盖 monkeypatch、network denial、stale/wrong-report negatives；
     - fresh offline/focused/full commands 全绿；
     - review artifact、remote PR head 与 intended PR body 都绑定同一 exact
       head，full
@@ -683,14 +689,14 @@ GH-931
     - no secret/HOME/hidden/cross-run leak；
     - run 使用 locked registration projection、actual approved executable/profile
       digests 和 protected remote reservation ledger；
-    - official run 与 report 分别从 read-only CAS mount 的 no-follow executing
+    - official run、report 与 freshness audit 分别从 read-only CAS mount 的 no-follow executing
       handle 自验 approval/manifest digest；一次 path hash 不能复用于后续 command；
-    - 每个 tuple 的 terminal artifact digest 由 supervisor seal 到 authoritative
-      ledger；control exact bytes 可从 committed content-addressed bundle 重建；
-    - report 可从 artifacts + terminal ledger attestations 重建。
+    - 每个 tuple 的 receipt-free JCS payload digest 先由 supervisor seal 到
+      authoritative ledger，再由 source manifest detached 绑定 attestation/checkpoint；
+    - report 从 artifacts + execution receipts 离线重建；current freshness 只来自另行签名 receipt。
     - scanner-passed sanitized attempts/runs 写入 committed
       `run-records.jsonl`，`source-manifest.json` 绑定全部 attempt、matrix、
-      scanner、code/fixture/registry、terminal ledger attestations 与 report-input
+      scanner、code/fixture/registry、detached terminal/checkpoint receipts 与 report-input
       hashes；frozen control content bundle 绑定 exact sanitized bytes；
       raw/private/secret evidence 不进入 git。
   - Verify:
@@ -727,12 +733,12 @@ GH-931
     - `eval/claims/registry.json`（仅 `result_bindings`）
     - `README.md`, `README.zh-CN.md`, `CHANGELOG.md`（仅 PASS + exact wording approval）
   - Done when:
-    - JSON/Markdown report、committed sanitized run-record bundle、
-      source manifest/hash 与 registry 一致；
+    - immutable JSON/Markdown report、receipt-free run bundle、detached source manifest/receipts 与 registry 一致，默认 verification 完全离线；
     - paired CI、maintenance cost、memory-harm stop-loss 可复算；
     - registration projection 保持 byte-identical；只更新 result bindings；
-    - PASS/FAIL/INSUFFICIENT 都保留 report；只有 PASS 才由 maintainer 批准
-      exact public wording，public files 必须逐字匹配并链接相同 report；
+    - PASS/FAIL/INSUFFICIENT 都保留 report；只有 PASS + exact-report 未过期
+      signed freshness receipt 才可批准 public wording/closure/release，receipt
+      生成不得重写 report；
     - independent final review、CI、fresh exact-head full preflight 与 closure
       audit 完成；
     - maintainer 单独决定 merge、是否关闭 #931 与 release。

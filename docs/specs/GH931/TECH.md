@@ -42,9 +42,13 @@ The Rust runner (`src/eval/coding_bench`) needs:
    direct memory seeding or gold-evidence preloading. Before any capture write,
    construct `remem_e2e_capture_projection_v1` exclusively from
    `history_episodes[].raw_events`. Its closed event schema allows only
-   `event_id`, `timestamp_epoch`, `role`, `sanitized_content`, `tool_name`,
-   `sanitized_tool_input`, `sanitized_tool_output`, and `host_boundary`.
-   Every key is required: IDs are unique opaque
+   derived `source_ordinal`, `event_id`, `timestamp_epoch`, `role`,
+   `sanitized_content`, `tool_name`, `sanitized_tool_input`,
+   `sanitized_tool_output`, and `host_boundary`. The adapter flattens
+   `history_episodes` and each `raw_events` array in their literal registered
+   nested-array order and assigns one projection-wide, contiguous
+   `source_ordinal=0..N-1`; fixture-supplied ordinals are rejected. Every
+   projection key is required: IDs are unique opaque
    `evt-` plus 32-lowercase-hex CSPRNG values, timestamps are signed 64-bit
    epoch seconds, role is `user|assistant|tool`, content is a string, tool
    fields are string-or-null, and boundary is
@@ -54,9 +58,11 @@ The Rust runner (`src/eval/coding_bench`) needs:
    null tool fields; tool call = `assistant` + non-empty tool name/input +
    null output; tool result = `tool` + non-empty tool name/output + null input.
    Tool-event content remains a required string but may be empty. Events are
-   non-empty and already strictly ordered by `(timestamp_epoch,event_id)`;
-   projection preserves that order without filtering, reordering,
-   deduplication, or merging. Unknown fields/combinations fail.
+   non-empty; timestamps are nondecreasing by `source_ordinal`, and equal-second
+   events are valid. Ordinal is the sole canonical order: `event_id` never
+   sorts or breaks ties. Projection preserves literal source order without
+   filtering, reordering, deduplication, or merging. Unknown fields,
+   non-contiguous ordinals, decreasing timestamps, or reordered IDs fail.
    Task/episode IDs bind projection hashes only in the outer manifest and are
    forbidden from projection bytes and capture identity. The registered
    capture-identity block instead supplies the closed production host DB value,
@@ -74,10 +80,12 @@ The Rust runner (`src/eval/coding_bench`) needs:
    artifact/source manifest. Projection and call content use RFC 8785 JCS
    UTF-8, retain every required key including nulls, and hash the exact encoded
    bytes. Call content is the closed object `host_boundary`,
-   `sanitized_content`, `sanitized_tool_input`, `sanitized_tool_output`.
+   `source_ordinal`, `sanitized_content`, `sanitized_tool_input`,
+   `sanitized_tool_output`.
    Before DB mutation, the adapter materializes a same-length ordered call
-   plan, applies the production capture redactor to every encoded content
-   value, requires byte-identical output, and binds its SHA-256. Each event maps to exactly one
+   plan whose index equals `source_ordinal`, applies the production capture
+   redactor to every encoded content value, requires byte-identical output, and
+   binds its SHA-256. Each event maps to exactly one
    `record_captured_event_with_id_and_reference_time` call:
    `event_id_override=event_id`, `reference_time_epoch=timestamp_epoch`,
    registered host/session/project/cwd, and event type from the fixed v1 map
@@ -93,7 +101,10 @@ The Rust runner (`src/eval/coding_bench`) needs:
    this batch; any pre-existing ID, call/row mismatch, or error rolls back all
    captured rows and queued tasks before commit. Verification includes ID,
    reference time, role, tool, post-production-redaction content hash, project,
-   session, and order; worker drain starts only after commit. The independent
+   session, and order; call-plan index and inserted `captured_events.id` must
+   both increase strictly with ordinal. A duplicate/gapped/shuffled ordinal,
+   decreasing timestamp, event-ID sort, or call/row inversion rolls back before
+   commit. Worker drain starts only after commit. The independent
    verifier rebuilds projection/call-plan bytes and compares both hashes and
    all rows. Missing raw events, cardinality/order drift, hash mismatch, or a
    forbidden field reaching the plan fails before the first write. No
@@ -151,7 +162,25 @@ The implementation must preserve these fail-closed boundaries:
    witness/gossip evidence it does not claim detection of a malicious Rekor
    operator's self-consistent split view. Receipts therefore fix
    `view_assurance=operator_consistency_only`.
-5. The registered scorer-only `memory_harm_rules` closed set deterministically
+   A terminal flagship run first freezes a receipt-free immutable RFC 8785 JCS
+   payload. It excludes the terminal attestation/checkpoint, source-manifest or
+   report hashes, and every field derived from its own payload digest. The
+   supervisor computes `payload_sha256` and CAS-seals it before any receipt
+   exists. After sealing, `source-manifest.json` stores a detached
+   `(matrix_key,attempt_id,payload_sha256) → (ledger attestation OID/digest,
+   checkpoint receipt digest)` mapping. Verification recomputes the JCS bytes
+   and then validates the payload digest, ledger seal/signature/ancestry,
+   checkpoint proof, and detached mapping in that order.
+5. Hidden scoring runs under an independent scorer OS principal, process, and
+   read-only tree after target teardown. The controller never imports or
+   executes patched code. A separate untrusted code worker has no hidden mount
+   and exchanges only size-bounded, closed-schema RFC 8785 JCS JSON RPC over
+   supervisor-created pipes. Only scorer-owned validation bound to the exact
+   patch/tree and hidden-rule digests may produce PASS; stdout, exit zero,
+   visible tests, or a worker-asserted result cannot. Shared interpreter state,
+   monkeypatch reachability, extra/truncated RPC fields, crash, timeout, or
+   exception fails closed.
+   The registered scorer-only `memory_harm_rules` closed set deterministically
    classifies every `remem_e2e` tuple as `memory_caused`,
    `independent_cause`, or `no_wrong_action` from sealed evidence.
    Zero/multiple matches or incomplete traces make the gate `INSUFFICIENT`.
@@ -186,6 +215,17 @@ The implementation must preserve these fail-closed boundaries:
    sampled cluster. Pair/hash absence is `INSUFFICIENT`; the registration
    freezes algorithm/version, replicate count, seed, and 95% percentile-index
    rule before official execution.
+10. `remem bench report` defaults to a fully offline path. It verifies only the
+    execution-time receipts/proofs carried by the governed bundle and explicitly
+    reports that current authority freshness was not checked. A separate
+    `--verify-current-freshness --freshness-receipt-out <path>` invocation is
+    explicitly networked and emits, without rewriting report bytes, an
+    authority-signed detached receipt binding `report_sha256`, ledger tip,
+    ruleset digests, TUF metadata digest, Rekor bundle/checkpoint digest,
+    `observed_at`, and `expires_at`. Publication, closure, and release gates
+    require an unexpired receipt for the exact report. Network denial,
+    stale/expired receipt, wrong report hash, or any tip/ruleset/TUF/Rekor drift
+    fails closed and leaves the report unchanged.
 
 Detailed task ownership and negative-test expectations are retained in
 `specs/GH931/tasks.md` as planning evidence. That file does not replace this
