@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.36` for the GH-946 post-merge corrective:
+  automatic E5 downloads now use the exact immutable Hugging Face revision
+  evaluated by the checked-in provider evidence, while presets without an
+  approved revision fail before any network request. Exact-entity retrieval
+  also grounds the irregular `build` / `built` / `builds` / `building` family
+  without matching unrelated predicates, and the graph-decision fingerprint
+  is regenerated against the corrected implementation.
 - Staged source version `0.6.35` for the GH-934 post-merge corrective:
   Retrieval Router plans now preserve the caller's `include_superseded`
   temporal scope across explicit, keyword-fallback, and default-fallback
