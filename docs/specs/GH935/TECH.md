@@ -673,52 +673,51 @@ security contract, not an implicit extension of this benchmark.
 
 ## Sanitized Release Evidence
 
-Raw stores, sessions, credentials, private roots, and unsanitized tests remain invisible. After all attempts seal, scanner-approved `core_evidence_v1` contains selected/prior attempts, manifest, run records, task/schema/export/native/causal/bootstrap material, scorer opening and public scoring projections, complete published prompt objects/manifests (or valid no-reveal absence), report JSON/Markdown, and `candidate_verdict_v1`. It contains registry namespace/genesis/prior/reservation evidence but no retirement/post proof, `core_evidence_root`, final envelope/hash, or visibility receipt.
+Raw stores, sessions, credentials, private roots, and unsanitized tests remain invisible. After all attempts seal, scanner-approved `core_evidence_v1` contains selected/prior attempts, manifest, run records, task/schema/export/native/causal/bootstrap material, scorer opening and public scoring projections, complete prompt objects/manifests (or valid no-reveal absence), report JSON/Markdown, and `candidate_verdict_v1`. It contains registry namespace/genesis/prior/reservation evidence but no retirement/post proof, `core_evidence_root`, final envelope/hash, or visibility receipt.
 
-Core members form a fixed canonical ordered `(path, byte_length, sha256(bytes))` list. `core_evidence_root = MerkleRoot("cross-host-v2/core-evidence-v1\\0", leaves)` is frozen only after scan; member bytes cannot change afterward and do not embed that root. A clean checkout verifies members, prompt partitions/slices/outside-closure equality/rolling-send equality, scorer projections, report, and candidate verdict independently.
+`core_evidence_merkle_v1` accepts a non-empty unique member set. A path must already match `segment("/" segment)*`, where `segment = [A-Za-z0-9_-](?:[A-Za-z0-9._-]*[A-Za-z0-9_-])?`; it rejects absolute paths, `.`, `..`, empty segments, backslash, NUL, non-ASCII, aliases, and duplicates, then sorts by unsigned ASCII bytes. Let `u64be`, `raw32`, and `hex64` mean unsigned 64-bit big-endian, raw 32-byte digest, and 64 lowercase hex characters. For member bytes `b` at path bytes `p`, `leaf = SHA256(ASCII("cross-host-v2/core-evidence-v1/leaf") || 0x00 || u64be(len(p)) || p || u64be(len(b)) || raw32(SHA256(b)))`; each next-level `node = SHA256(ASCII("cross-host-v2/core-evidence-v1/node") || 0x00 || raw32(left) || raw32(right))`. At every odd level `right = left` for the last node without adding a member; one leaf is its root. `core_evidence_root = hex64(root)`. Members never embed the root.
 
-The runner then invokes atomic `publish_and_retire(fingerprint, core_evidence_root)`: exact replay is idempotent, while a different core is rejected. It binds the root in the authoritative registry, changes `reserved -> retired`, exposes no evidence bytes, and returns post-root/retirement/inclusion/consistency/state/non-reuse proofs.
+Fixed vectors (byte strings are hex; paths are ASCII):
 
-Deterministic `final_publication_envelope_v1` binds the core member list/root, candidate-verdict hash/value, CAS request/receipt/proofs/post-root, and the first quorum-witnessed canonical checkpoint at/after post-root. It excludes its own hash and visibility receipt. After scan, one create-only seal at charter-fixed `(fingerprint, core_evidence_root)` atomically exposes that envelope plus referenced core objects; the external visibility record binds final hash. Public verdict equals the core candidate only when core, CAS proof, envelope, independent history, and external seal verify.
+| Vector | Input | Expected lowercase SHA-256 hex |
+|---|---|---|
+| leaf 1 | path `a.txt`, bytes empty | `71caa83e102f0a84aeeb9fb2c28aee41bee3645d1ce80549f1ebcb63f02171af` |
+| leaf 2 | path `dir/b.bin`, bytes `00ff` | `4d025417f7adf5ebc354f2437803ce0fba6fbc772aa0e82198a215ae28a13f58` |
+| leaf 3 | path `z.txt`, UTF-8 bytes of `remem` | `b1bde8b9a236ca646e52fbcfed709026e3b52378299726a77a535dccfd9d652d` |
+| three-leaf root | the ordered leaves above; duplicate leaf 3 at level one | `3aae31029e37d4de1553dd856615389208808c68e6bc9a5f82a92bcc2e2f527c` |
+| final-hash framing (not a schema object) | RFC-8785 bytes `7b2261223a317d` (`{"a":1}`, length 7) | `9abf4bd745be0f13e3a17928a74a3b5d57292e26c24810677b81ee447a879c04` |
+| visibility object set | raw core-root and final-envelope digests from the two rows above | `200f9238e30ce0ea0b03770fb81dfb2e66da4c64a0ddd8d4e2f594e3308a1661` |
 
-`release_revision_registry_v1` pins namespace, genesis/root, log key, witness quorum/gossip, and freshness in the charter. Plan/preflight bind and check a fresh witnessed prior root, genesis consistency, `unused` proof, and reservation. Verifier uses a separately distributed checkpoint outside the envelope to validate genesis -> prior -> reservation -> retirement -> post -> checkpoint and reject split views, bundle-local history, or fingerprint reuse.
+`release_revision_registry_v1` pins namespace/genesis, log/map key, witness quorum/gossip/freshness, and proof suite in the charter. Plan/preflight bind a fresh independently witnessed prior root, genesis consistency, `unused` proof, and reservation; verification independently obtains a matching-or-later checkpoint and validates genesis -> prior -> reservation -> retirement -> post -> checkpoint.
+
+Atomic `publish_and_retire(fingerprint, core_evidence_root)` changes that registry `reserved -> retired`, exposes no bytes, and returns post-root/retirement/inclusion/consistency/state/non-reuse proofs; exact replay returns the committed proof and a different core is rejected. Deterministic `final_publication_envelope_v1` binds the core list/root, candidate-verdict hash/value, CAS request/receipt/proofs/post-root, and the lowest append-log-index canonical checkpoint at/after post-root that has the charter-pinned quorum plus its history proof, excluding its own hash and visibility receipt. Its RFC-8785 bytes `e` have `final_publication_envelope_hash_v1 = hex64(SHA256(ASCII("cross-host-v2/final-publication-envelope-v1") || 0x00 || u64be(len(e)) || e))`.
+
+The charter separately pins `publication_visibility_authority_v1` namespace/genesis, pure Ed25519 RFC-8032 receipt key, append-log/map key, `visibility_proof_suite_v1`, witness quorum/gossip/freshness, and object namespace. For raw core/final digests `c/f`, `visibility_object_set_root_v1 = hex64(SHA256(ASCII("cross-host-v2/visibility-object-set-v1") || 0x00 || c || f))`. `seal_visible(fingerprint, core_root, final_hash)` verifies the private staged envelope/core set, then one transaction changes the authenticated key from absent to visible and exposes exactly those bytes. Canonical `visibility_seal_receipt_v1` binds authority identity, key tuple, core/final/registry-post/object-set roots, visibility prior/post roots, proof-suite version, and the lowest-index quorum-witnessed checkpoint at/after the visibility post-root; pure Ed25519 signs `ASCII("cross-host-v2/visibility-seal-receipt-v1") || 0x00 || u64be(len(JCS(receipt_without_signature))) || JCS(receipt_without_signature)`, and its raw 64-byte signature is serialized as 128 lowercase hex characters. Verifier requires that signature, an independently obtained matching-or-later witnessed checkpoint, append inclusion/consistency, absent-to-visible state and atomic object-set proofs, plus every rehashed object. Alternate authority/key, forged/mismatched receipt, partial/different objects, collision, or missing proof is invalid.
+
+`publication_state_v1` is closed and evidence-derived: `reserved_unpublished` requires exact reservation plus authenticated visibility absence; `retired_unpublished` requires exact retirement for this core plus absence; `authority_unresolved` covers unavailable, stale, malformed, conflicting, alternate-authority, or wrong-tuple evidence; `visible` requires exact retirement, valid visibility receipt/proofs, and all exact bytes. Timestamp/local/bundle assertions never derive state. Registry and visibility checkpoints are independent verifier inputs.
 
 | Crash boundary | Closed recovery/result |
 |---|---|
-| Before core freeze | Staging is invisible; rebuild only deterministically from sealed inputs. Lost/different bytes are `INSUFFICIENT`. |
-| Core frozen; CAS unknown | Query authority: still reserved permits exact CAS retry; exact retired core recovers proof; different/unresolved root is `retired_unpublished` / `INSUFFICIENT`. |
-| Retired; final not sealed | Fingerprint/core are immutable. Rebuild/rescan and retry only the byte-identical deterministic envelope; until success no public claim and effective verdict is `INSUFFICIENT`. |
-| Visibility call unknown | Exact visible final hash is success without another seal; absence permits exact retry; partial/different/multiple visibility is `INSUFFICIENT`. |
-| Final seal committed | No retry/replacement. Correction requires a new unused fingerprint; old remains retired. |
+| Before core freeze | Proven reservation/absence is `reserved_unpublished`; rebuild private staging only from sealed inputs. Drift/loss is `INSUFFICIENT`. |
+| Core frozen; CAS unknown | Exact reserved/absent permits exact CAS retry; exact retired/absent recovers proof as `retired_unpublished`; unavailable/conflicting/different-root evidence is `authority_unresolved` / `INSUFFICIENT` with no mutation. |
+| Retired; final not sealed | `retired_unpublished`; rebuild/rescan only the byte-identical envelope for the same core, proof, and checkpoint selection. |
+| Visibility call unknown | Exact receipt/proofs and all objects derive `visible`; authenticated absence permits the exact retry; partial/different/multiple/forged/unavailable evidence derives `authority_unresolved` / `INSUFFICIENT`. |
+| `visible` | No retry/replacement. Correction requires a new unused fingerprint; old remains retired and visible. |
 
-Failures/recovery are append-only. Non-security publication gaps are `partial_non_security`/`INSUFFICIENT`; verified private leakage remains `partial_security`/`FAIL`. Exact same-core recovery never creates a second retirement or visibility transition.
+Failures/recovery are append-only and preserve the last provable state. Non-security gaps are `partial_non_security`/`INSUFFICIENT`; verified private leakage remains `partial_security`/`FAIL`. Recovery never creates a second retirement or visibility transition.
 
 ## Implementation Slices
 
 These are sequential handoffs, not permission to run live hosts:
 
-1. **Executable contracts and fixtures**
-   - bump charter/schemas, build 24 deterministic tasks, and validate
-     export/causal protocols, exact 288/144 plans, canonical JSON, and partial manifests.
-2. **Isolation, source seal, and runner**
-   - reuse coding-bench isolation and implement same-path sequencing, sealing,
-     neutral evidence, remem-failure fan-out, null exhaustion, cleanup, and caps.
-3. **Condition surfaces**
-   - implement no-memory, target-native negative control, maintained export,
-     production remem, and source-native import diagnostic boundaries;
-   - add Claude import, authorized/canary outcomes, digest, batch rules, and lineage.
-4. **Artifacts, report, and verdict**
-   - implement causal records, manifests, bootstrap/verdict, RFC 8785 vectors,
-     deterministic rendering, and sanitized bundles.
-5. **Evidence and status**
-   - separately authorize a smoke of both directions and all six surfaces;
-   - only after smoke review, optionally authorize the full matrix;
-   - publish verdict artifacts and update every current-status document together.
+1. **Executable contracts/fixtures** — bump charter/schemas, build 24 deterministic tasks, and validate export/causal protocols, exact 288/144 plans, canonical JSON, and partial manifests.
+2. **Isolation/source/conditions** — implement same-path isolation, source sealing, neutral evidence, failure fan-out, caps, all primary surfaces, and native-import lineage/canary rules.
+3. **Score and core freeze** — close writers; build/recompute/scan prompt, scorer, causal, manifest, report, candidate-verdict, exact hash vectors, canonical member list, then freeze `core_evidence_root`.
+4. **Registry retirement** — call only exact idempotent `publish_and_retire(fingerprint, core_evidence_root)` and persist independently verifiable transition proofs; no evidence becomes visible.
+5. **Final envelope and visibility** — build/rescan/hash the byte-identical final envelope, then perform the independent authority's atomic create-only seal; implement all `publication_state_v1`, crash/retry/collision/partial-visibility paths before exposing a claim.
+6. **Evidence/status** — separately authorize the six-surface smoke, optionally authorize the matrix only after review, then publish verified artifacts and update every current-status document together.
 
-Shared schema/report files have one owner at a time; ownership transfers before another edit.
-
-Production user identity is an external prerequisite with its own current contract
-and implementation review; GH935 may exercise it only after that exists.
+Shared schema/report files have one owner at a time and transfer ownership before another edit. Production user identity remains an external reviewed prerequisite.
 
 ## Verification
 
@@ -755,7 +754,7 @@ Future executable-version focused coverage must include:
   rejection;
 - source failure before seal with immutable lifecycle/cost/cleanup evidence, plus
   complete, non-security partial, and security partial reports;
-- cross-implementation RFC 8785 byte vectors, deterministic Markdown, and hash-bound verdict;
+- cross-implementation RFC 8785, `core_evidence_merkle_v1`, and final-envelope fixed vectors; invalid/aliased/duplicate paths, empty trees, odd levels, deterministic Markdown, and hash-bound verdict;
 - scorer-oracle missing/hash/tamper/unrunnable and clean-checkout recomputation;
 - pre-run scorer/read-set commitment, frozen workspace/output projection,
   scorer-oracle disagreement, and result-affecting undisclosable-input rejection;
@@ -770,10 +769,12 @@ Future executable-version focused coverage must include:
   gossip/bundle-external checkpoint, invalid non-membership/inclusion/
   consistency/state proof, CAS race, missing retirement, and fingerprint reuse:
   reject pre-call; observed candidate evidence is `INSUFFICIENT`;
-- publication-DAG cycle/self-hash/final-field-in-core rejection, core drift or
-  different-core CAS replay, exact same-core idempotent recovery, crashes before/
-  after core freeze/CAS/retirement/final seal, changed-envelope retry,
-  create-only collision, partial visibility, and double transition/seal;
+- publication-DAG cycle/self-hash/final-field-in-core rejection, core drift,
+  different-core CAS replay, exact same-core recovery, and every closed
+  `publication_state_v1` crash/retry transition before/after freeze/CAS/seal;
+- alternate visibility authority/namespace/key, forged or mismatched Ed25519
+  receipt/proof/checkpoint, non-atomic object exposure, changed-envelope retry,
+  create-only collision, partial/multiple visibility, and double transition/seal;
 - fixed bootstrap framing/rejection/quantile vectors, adjusted regression, and
   PASS/FAIL/INSUFFICIENT edges;
 - secret-channel topology and raw/hex/versioned key residue scans;
