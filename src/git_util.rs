@@ -650,22 +650,27 @@ mod tests {
         let error = command_output_with_timeout(command, Duration::from_millis(150))
             .expect_err("inherited pipes must exceed the command deadline");
         assert!(started.elapsed() < Duration::from_secs(2));
-        let pid: libc::pid_t = std::fs::read_to_string(&pid_file)
+        let pid: u32 = std::fs::read_to_string(&pid_file)
             .expect("read descendant pid")
             .parse()
             .expect("parse descendant pid");
         std::fs::remove_file(pid_file).expect("remove pid file");
         #[cfg(unix)]
-        for _ in 0..50 {
-            if unsafe { libc::kill(pid, 0) } != 0 {
-                return error;
+        {
+            let pid = pid as libc::pid_t;
+            for _ in 0..50 {
+                if unsafe { libc::kill(pid, 0) } != 0 {
+                    return error;
+                }
+                thread::sleep(Duration::from_millis(10));
             }
-            thread::sleep(Duration::from_millis(10));
+            panic!("descendant process {pid} survived process-group cleanup");
         }
-        #[cfg(unix)]
-        panic!("descendant process {pid} survived process-group cleanup");
         #[cfg(not(unix))]
-        error
+        {
+            let _ = pid;
+            error
+        }
     }
 
     #[cfg(unix)]

@@ -5,14 +5,17 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 mod config;
+mod fallback;
 mod index_text;
 mod local_semantic;
 mod status;
 
 use config::env_value;
 pub(crate) use config::resolve_embedding_config;
+pub use fallback::EmbeddingExecutionMetadata;
 pub(crate) use index_text::embed_memory_index_with_fallback_cache;
 pub use index_text::{embed_memory_index, memory_index_hash};
+pub(crate) use local_semantic::with_configured_model_read_lock;
 use local_semantic::LocalEmbeddingInputKind;
 pub use local_semantic::{
     LocalEmbeddingDownloadReport, LocalEmbeddingInventoryReport, LocalEmbeddingModelInventory,
@@ -170,6 +173,8 @@ pub struct EmbeddingBackfillTarget {
 pub(crate) struct EmbeddingFallbackCache {
     call_failure_fallback: Option<EmbeddingProvider>,
     call_failure_fallback_target: Option<EmbeddingBackfillTarget>,
+    execution_provider: Option<EmbeddingProvider>,
+    degradation_reason: Option<String>,
 }
 
 impl EmbeddingFallbackCache {
@@ -188,6 +193,12 @@ impl EmbeddingFallbackCache {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct QueryEmbeddingExecution {
+    pub(crate) embedding: TextEmbedding,
+    pub(crate) metadata: EmbeddingExecutionMetadata,
+}
+
 pub fn embed_query(query: &str) -> Result<TextEmbedding> {
     embed_text(query, LocalEmbeddingInputKind::Query)
 }
@@ -197,6 +208,36 @@ pub(crate) fn embed_query_with_fallback_cache(
     cache: &mut EmbeddingFallbackCache,
 ) -> Result<TextEmbedding> {
     embed_text_with_fallback_cache(query, LocalEmbeddingInputKind::Query, cache)
+}
+
+pub(crate) fn embed_query_with_execution_if_enabled(
+    query: &str,
+) -> Result<Option<QueryEmbeddingExecution>> {
+    #[cfg(test)]
+    let _test_env_guard = config::lock_test_env();
+    let config = resolve_embedding_config()?;
+    let status_before = status::resolve_provider_status(&config);
+    if let Some(error) = disabled_provider_status_error(&status_before) {
+        return if is_embedding_provider_off_error(&error) {
+            Ok(None)
+        } else {
+            Err(error)
+        };
+    }
+    let mut cache = EmbeddingFallbackCache::default();
+    let embedding = embed_text_with_resolved_config(
+        query,
+        LocalEmbeddingInputKind::Query,
+        &config,
+        &mut cache,
+    )?;
+    let status_after = status::resolve_provider_status(&config);
+    let metadata =
+        fallback::embedding_execution_metadata(&status_before, &status_after, &cache, &embedding)?;
+    Ok(Some(QueryEmbeddingExecution {
+        embedding,
+        metadata,
+    }))
 }
 
 pub(crate) fn embed_query_if_enabled(query: &str) -> Result<Option<TextEmbedding>> {
@@ -323,6 +364,18 @@ pub(crate) fn configured_local_embedding_model_id(config: &EmbeddingConfig) -> R
     local_semantic::configured_model_id(config)
 }
 
+pub(crate) fn configured_local_embedding_model_root(
+    config: &EmbeddingConfig,
+) -> std::path::PathBuf {
+    local_semantic::model_root(config)
+}
+
+pub(crate) fn configured_local_embedding_artifact_sha256(
+    config: &EmbeddingConfig,
+) -> Result<String> {
+    Ok(local_semantic::installed_model_profile(config)?.artifact_sha256)
+}
+
 pub fn download_local_embedding_model(model: Option<&str>) -> Result<LocalEmbeddingDownloadReport> {
     local_semantic::download_model(model)
 }
@@ -330,6 +383,15 @@ pub fn download_local_embedding_model(model: Option<&str>) -> Result<LocalEmbedd
 pub fn local_embedding_inventory() -> Result<LocalEmbeddingInventoryReport> {
     local_semantic::inventory()
 }
+
+#[cfg(test)]
+pub(crate) use local_semantic::install_test_model as install_test_local_embedding_model;
+#[cfg(all(test, feature = "local-onnx"))]
+pub(crate) use local_semantic::{
+    fail_next_test_model_embed_generic, fail_next_test_model_embed_unavailable,
+};
+#[cfg(test)]
+pub(crate) const TEST_LOCAL_SEMANTIC_MODEL: &str = local_semantic::DEFAULT_LOCAL_SEMANTIC_MODEL;
 
 pub(crate) fn is_local_embedding_model_unavailable_error(error: &anyhow::Error) -> bool {
     local_semantic::is_model_unavailable_error(error)
@@ -348,90 +410,41 @@ fn embed_text_with_fallback_cache(
     #[cfg(test)]
     let _test_env_guard = config::lock_test_env();
     let config = resolve_embedding_config()?;
-    if let Some(fallback) = cache.call_failure_fallback {
-        return embed_with_cached_call_failure_fallback(text, kind, &config, fallback);
-    }
-    match active_provider(&config)? {
-        ActiveEmbeddingProvider::Local => local_semantic::embed_text(text, &config, kind),
-        ActiveEmbeddingProvider::FeatureHash => {
-            TextEmbedding::new(FEATURE_HASH_EMBEDDING_MODEL, embed_text_local(text))
-        }
-        ActiveEmbeddingProvider::OpenAi { api_key } => embed_openai(text, &config, &api_key)
-            .or_else(|error| embed_with_call_failure_fallback(text, kind, &config, error, cache)),
-        ActiveEmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
-    }
+    embed_text_with_resolved_config(text, kind, &config, cache)
 }
 
-fn embed_with_cached_call_failure_fallback(
+fn embed_text_with_resolved_config(
     text: &str,
     kind: LocalEmbeddingInputKind,
     config: &EmbeddingConfig,
-    fallback: EmbeddingProvider,
-) -> Result<TextEmbedding> {
-    let fallback_runtime = status::provider_runtime(config, fallback);
-    if let Some(reason) = fallback_runtime.unavailable_reason {
-        bail!(
-            "cached embedding fallback {} unavailable: {reason}",
-            fallback.label()
-        );
-    }
-    match fallback_runtime.provider {
-        EmbeddingProvider::Local => local_semantic::embed_text(text, config, kind),
-        EmbeddingProvider::FeatureHash => {
-            TextEmbedding::new(FEATURE_HASH_EMBEDDING_MODEL, embed_text_local(text))
-        }
-        EmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
-        EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => {
-            bail!("cached embedding fallback must be local, feature-hash, or off")
-        }
-    }
-}
-
-fn embed_with_call_failure_fallback(
-    text: &str,
-    kind: LocalEmbeddingInputKind,
-    config: &EmbeddingConfig,
-    error: anyhow::Error,
     cache: &mut EmbeddingFallbackCache,
 ) -> Result<TextEmbedding> {
-    let Some(fallback) = config.fallback else {
-        return Err(error);
-    };
-    let fallback_runtime = status::provider_runtime(config, fallback);
-    if let Some(reason) = fallback_runtime.unavailable_reason {
-        bail!(
-            "embedding provider api failed: {error}; fallback {} unavailable: {reason}",
-            fallback.label()
-        );
+    if let Some(fallback) = cache.call_failure_fallback {
+        let embedding =
+            fallback::embed_with_cached_call_failure_fallback(text, kind, config, fallback)?;
+        cache.execution_provider = Some(fallback);
+        return Ok(embedding);
     }
-    let message = format!(
-        "configured embedding provider api failed: {}; using fallback {}",
-        error,
-        fallback.label()
-    );
-    crate::log::error("embedding", &message);
-    match fallback_runtime.provider {
-        EmbeddingProvider::Local => {
-            let embedding = local_semantic::embed_text(text, config, kind)?;
-            cache.call_failure_fallback = Some(fallback_runtime.provider);
-            cache.call_failure_fallback_target = Some(EmbeddingBackfillTarget {
-                model: embedding.model().to_string(),
-                dimensions: embedding.dimensions(),
-            });
+    match active_provider(config)? {
+        ActiveEmbeddingProvider::Local => {
+            fallback::embed_local_with_auto_race_fallback(text, kind, config, cache)
+        }
+        ActiveEmbeddingProvider::FeatureHash => {
+            let embedding =
+                TextEmbedding::new(FEATURE_HASH_EMBEDDING_MODEL, embed_text_local(text))?;
+            cache.execution_provider = Some(EmbeddingProvider::FeatureHash);
             Ok(embedding)
         }
-        EmbeddingProvider::FeatureHash => {
-            cache.call_failure_fallback = Some(fallback_runtime.provider);
-            cache.call_failure_fallback_target = Some(EmbeddingBackfillTarget {
-                model: FEATURE_HASH_EMBEDDING_MODEL.to_string(),
-                dimensions: FEATURE_HASH_EMBEDDING_DIMENSIONS,
-            });
-            TextEmbedding::new(FEATURE_HASH_EMBEDDING_MODEL, embed_text_local(text))
-        }
-        EmbeddingProvider::Off => Err(status::embedding_provider_off_error_with_cause(format!(
-            "embedding provider api failed: {error}; fallback off disabled provider fallback"
-        ))),
-        EmbeddingProvider::OpenAi | EmbeddingProvider::Auto => Err(error),
+        ActiveEmbeddingProvider::OpenAi { api_key } => match embed_openai(text, config, &api_key) {
+            Ok(embedding) => {
+                cache.execution_provider = Some(EmbeddingProvider::OpenAi);
+                Ok(embedding)
+            }
+            Err(error) => {
+                fallback::embed_with_call_failure_fallback(text, kind, config, error, cache)
+            }
+        },
+        ActiveEmbeddingProvider::Off => Err(status::embedding_provider_off_error()),
     }
 }
 

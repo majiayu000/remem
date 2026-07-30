@@ -3,6 +3,23 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.34` for GH-946: `Auto` now prefers an explicitly
+  downloaded, verified `multilingual-e5-small` local embedding model over
+  feature-hash when no remem-specific API key is configured. Provider/model
+  switches gain an actionable doctor backfill hint. The default-k provider
+  comparison now records the verified model artifact digest, preserves
+  abstention and existing-slice budgets, and shows the local paraphrase
+  improvement while separating cold-start latency from warm-query p95. A
+  two-stage evidence gate prevents unsupported vector-only tails without
+  suppressing semantic fallback behind weak lexical hits. Local manifests now
+  bind active HF snapshot symlinks and resolved blobs, released schema-v1
+  installs migrate offline, runtime sessions are process-wide singleflight,
+  and artifact-qualified model ids prevent old/new weight revisions from
+  silently sharing vector coverage. Windows model staging, private runtime
+  caches, and lock files now use protected owner-only ACLs, reject reparse
+  points, and verify 128-bit file identities under native Windows CI. Windows
+  custom/shared model roots fail closed instead of accepting a weaker trust
+  boundary.
 - Staged source version `0.6.32` for GH-945: workers now schedule one
   database-global lifecycle cleanup after a durable 24-hour cooldown and claim
   it through a dedicated lane. Each run atomically expires memory TTLs, advances

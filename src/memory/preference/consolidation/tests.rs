@@ -399,6 +399,48 @@ fn embedding_thresholds_are_model_specific() {
 }
 
 #[test]
+fn artifact_qualified_local_embedding_thresholds_use_base_profile() {
+    let digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    assert_eq!(
+        model_embedding_refine_threshold(&format!(
+            "fastembed-intfloat-multilingual-e5-small-v1@sha256:{digest}"
+        )),
+        MULTILINGUAL_E5_EMBEDDING_REFINE_THRESHOLD
+    );
+    assert_eq!(
+        model_embedding_refine_threshold(&format!("fastembed-bge-m3-v1@sha256:{digest}")),
+        BGE_M3_EMBEDDING_REFINE_THRESHOLD
+    );
+}
+
+#[test]
+fn malformed_or_unknown_local_model_suffixes_use_unknown_threshold() {
+    let valid_digest = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let malformed_models = [
+        "fastembed-intfloat-multilingual-e5-small-v1@sha256:0123",
+        "fastembed-intfloat-multilingual-e5-small-v1@sha256:\
+         0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg",
+        "fastembed-intfloat-multilingual-e5-small-v1@sha512:\
+         0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    ];
+
+    for model in malformed_models {
+        assert_eq!(
+            model_embedding_refine_threshold(model),
+            UNKNOWN_MODEL_EMBEDDING_REFINE_THRESHOLD,
+            "malformed model ID should not inherit a local profile: {model}"
+        );
+    }
+    assert_eq!(
+        model_embedding_refine_threshold(&format!(
+            "fastembed-unknown-local-v1@sha256:{valid_digest}"
+        )),
+        UNKNOWN_MODEL_EMBEDDING_REFINE_THRESHOLD
+    );
+}
+
+#[test]
 fn embedding_fallback_refines_same_intent_when_concepts_miss() {
     let existing_text = r#"- Prefer minimal vertical slice (最小纵向闭环) over "full cloud platform" first; strict scope control and phased delivery.
 - Favor extending existing pathways rather than creating parallel UI/event infrastructure."#;

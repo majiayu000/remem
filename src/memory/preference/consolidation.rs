@@ -24,6 +24,8 @@ const MULTILINGUAL_E5_EMBEDDING_REFINE_THRESHOLD: f32 = 0.78;
 const BGE_M3_EMBEDDING_REFINE_THRESHOLD: f32 = 0.80;
 const OPENAI_EMBEDDING_REFINE_THRESHOLD: f32 = 0.82;
 const UNKNOWN_MODEL_EMBEDDING_REFINE_THRESHOLD: f32 = 0.90;
+const MULTILINGUAL_E5_MODEL: &str = "fastembed-intfloat-multilingual-e5-small-v1";
+const BGE_M3_MODEL: &str = "fastembed-bge-m3-v1";
 
 fn embedding_refine_threshold(model: &str) -> f32 {
     std::env::var("REMEM_PREF_EMBEDDING_THRESHOLD")
@@ -34,14 +36,35 @@ fn embedding_refine_threshold(model: &str) -> f32 {
 }
 
 fn model_embedding_refine_threshold(model: &str) -> f32 {
+    if let Some(threshold) = local_model_embedding_refine_threshold(model) {
+        return threshold;
+    }
+
     match model {
         crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL => {
             FEATURE_HASH_EMBEDDING_REFINE_THRESHOLD
         }
-        "fastembed-intfloat-multilingual-e5-small-v1" => MULTILINGUAL_E5_EMBEDDING_REFINE_THRESHOLD,
-        "fastembed-bge-m3-v1" => BGE_M3_EMBEDDING_REFINE_THRESHOLD,
         model if model.starts_with("text-embedding-3-") => OPENAI_EMBEDDING_REFINE_THRESHOLD,
         _ => UNKNOWN_MODEL_EMBEDDING_REFINE_THRESHOLD,
+    }
+}
+
+fn local_model_embedding_refine_threshold(model: &str) -> Option<f32> {
+    let base_model = match model.rsplit_once('@') {
+        None => model,
+        Some((base_model, suffix)) => {
+            let digest = suffix.strip_prefix("sha256:")?;
+            if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                return None;
+            }
+            base_model
+        }
+    };
+
+    match base_model {
+        MULTILINGUAL_E5_MODEL => Some(MULTILINGUAL_E5_EMBEDDING_REFINE_THRESHOLD),
+        BGE_M3_MODEL => Some(BGE_M3_EMBEDDING_REFINE_THRESHOLD),
+        _ => None,
     }
 }
 

@@ -1,6 +1,10 @@
 use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
 
 use super::*;
+
+#[cfg(feature = "local-onnx")]
+mod runtime_failures;
 
 const TEST_API_KEY_ENV: &str = "REMEM_TEST_EMBEDDING_KEY";
 
@@ -20,41 +24,376 @@ const ENV_KEYS: &[&str] = &[
     ENV_TIMEOUT_SECS,
     ENV_FALLBACK,
     ENV_MODEL_DIR,
+    "HF_HOME",
+    "HF_ENDPOINT",
     DEFAULT_API_KEY_ENV,
     TEST_API_KEY_ENV,
 ];
 
-fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
-    let _guard = crate::runtime_config::TEST_ENV_LOCK
-        .lock()
-        .expect("env lock should acquire");
-    let saved = ENV_KEYS
-        .iter()
-        .map(|key| (*key, std::env::var(key).ok()))
-        .collect::<Vec<_>>();
-    for key in ENV_KEYS {
-        unsafe { std::env::remove_var(key) };
+struct TestModelRoot(PathBuf);
+
+impl TestModelRoot {
+    fn new() -> Self {
+        Self(std::env::temp_dir().join(format!(
+            "remem-embedding-model-test-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        )))
     }
-    let result = f();
-    for (key, value) in saved {
-        match value {
-            Some(value) => unsafe { std::env::set_var(key, value) },
-            None => unsafe { std::env::remove_var(key) },
+
+    fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for TestModelRoot {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "failed to remove test model root {}: {error}",
+                    self.0.display()
+                );
+            }
         }
     }
-    result
+}
+
+struct CleanEnv {
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+    _guard: crate::runtime_config::TestEnvGuard,
+}
+
+impl CleanEnv {
+    fn new() -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var_os(key)))
+            .collect::<Vec<_>>();
+        for key in ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        let isolated_config = std::env::temp_dir().join(format!(
+            "remem-embedding-missing-config-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        unsafe { std::env::set_var("REMEM_CONFIG", isolated_config) };
+        Self {
+            saved,
+            _guard: guard,
+        }
+    }
+}
+
+impl Drop for CleanEnv {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
+    let _env = CleanEnv::new();
+    f()
 }
 
 #[test]
-fn auto_provider_uses_feature_hash_without_remem_specific_key() -> Result<()> {
+fn auto_provider_uses_feature_hash_without_key_or_installed_model() -> Result<()> {
     with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+
         let embedding = embed_query("protect persisted data")?;
         let status = embedding_provider_status()?;
 
-        assert_eq!(embedding.model(), LOCAL_EMBEDDING_MODEL);
-        assert_eq!(embedding.dimensions(), LOCAL_EMBEDDING_DIMENSIONS);
+        assert_eq!(embedding.model(), FEATURE_HASH_EMBEDDING_MODEL);
+        assert_eq!(embedding.dimensions(), FEATURE_HASH_EMBEDDING_DIMENSIONS);
         assert_eq!(status.configured_provider, "auto");
         assert_eq!(status.active_provider, "feature-hash");
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(unix)]
+fn auto_provider_marks_dangling_local_install_symlink_as_degraded() -> Result<()> {
+    use std::os::unix::fs::symlink;
+
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        std::fs::create_dir_all(model_root.path())?;
+        let install_dir = model_root
+            .path()
+            .join(local_semantic::DEFAULT_LOCAL_SEMANTIC_MODEL);
+        symlink(
+            model_root.path().join("missing-install-target"),
+            &install_dir,
+        )?;
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "feature-hash");
+        assert!(status.degraded);
+        assert!(
+            status
+                .degradation_reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("symlink"),
+            "{status:?}"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_uses_installed_local_model_without_api_key() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.configured_provider, "auto");
+        assert_eq!(status.active_provider, "local");
+        let active_model_id = status.active_model_id.as_deref().unwrap_or_default();
+        assert!(active_model_id.starts_with(&format!(
+            "{}@sha256:",
+            local_semantic::DEFAULT_LOCAL_SEMANTIC_MODEL
+        )));
+        assert_eq!(
+            active_model_id.len(),
+            local_semantic::DEFAULT_LOCAL_SEMANTIC_MODEL.len() + "@sha256:".len() + 64
+        );
+        assert_eq!(
+            status.active_dimensions,
+            Some(local_semantic::DEFAULT_LOCAL_SEMANTIC_DIMENSIONS)
+        );
+        assert!(!status.degraded);
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_upgrades_released_schema_v1_install_without_network() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        local_semantic::install_test_model_v1(model_root.path())?;
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "local");
+        assert!(!status.degraded);
+        let manifest_path = model_root
+            .path()
+            .join(local_semantic::DEFAULT_LOCAL_SEMANTIC_MODEL)
+            .join("remem-model-manifest.json");
+        let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(manifest_path)?)?;
+        assert_eq!(manifest["schema_version"], serde_json::json!(2));
+        assert!(manifest["symlinks"].is_array());
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_ignores_ambient_openai_key_when_local_model_is_installed() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe {
+            std::env::set_var(ENV_MODEL_DIR, model_root.path());
+            std::env::set_var(DEFAULT_API_KEY_ENV, "ambient-key");
+        }
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "local");
+        assert!(status
+            .active_model_id
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with(&format!(
+                "{}@sha256:",
+                local_semantic::DEFAULT_LOCAL_SEMANTIC_MODEL
+            )));
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_marks_invalid_local_install_as_degraded_feature_hash() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+        let ready = embedding_provider_status_without_probe()?;
+        assert_eq!(ready.active_provider, "local");
+
+        let model_file = local_semantic::test_model_runtime_file(model_root.path(), "config.json");
+        std::fs::write(model_file, b"tampered-content-1234567")?;
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "feature-hash");
+        assert!(status.degraded);
+        assert!(status
+            .degradation_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("using feature-hash"));
+        assert!(status.unavailable_reason.is_none());
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_runtime_constructor_failure_degrades_to_feature_hash() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        let _failure = local_semantic::fail_test_model_runtime_readiness(
+            model_root.path(),
+            "synthetic ONNX constructor failure",
+        )?;
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.configured_provider, "auto");
+        assert_eq!(status.active_provider, "feature-hash");
+        assert!(status.degraded);
+        assert!(status
+            .degradation_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("initialize verified local embedding runtime"));
+        assert!(status
+            .degradation_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("synthetic ONNX constructor failure"));
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(not(feature = "local-onnx"))]
+fn auto_provider_does_not_select_manifest_without_local_runtime() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe { std::env::set_var(ENV_MODEL_DIR, model_root.path()) };
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "feature-hash");
+        assert!(status.degraded);
+        assert!(status
+            .degradation_reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("local-onnx"));
+        Ok(())
+    })
+}
+
+#[test]
+fn auto_provider_prefers_api_key_over_installed_local_model() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe {
+            std::env::set_var(ENV_MODEL_DIR, model_root.path());
+            std::env::set_var(ENV_API_KEY, "test-key");
+        }
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.configured_provider, "auto");
+        assert_eq!(status.active_provider, "api");
+        assert_eq!(
+            status.active_model_id.as_deref(),
+            Some(OPENAI_DEFAULT_MODEL)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn auto_provider_prefers_configured_custom_api_key_env() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe {
+            std::env::set_var(ENV_MODEL_DIR, model_root.path());
+            std::env::set_var(ENV_API_KEY_ENV, TEST_API_KEY_ENV);
+            std::env::set_var(TEST_API_KEY_ENV, "test-key");
+        }
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.configured_provider, "auto");
+        assert_eq!(status.active_provider, "api");
+        assert_eq!(
+            status.active_model_id.as_deref(),
+            Some(OPENAI_DEFAULT_MODEL)
+        );
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_uses_installed_e5_with_unrelated_hf_home() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe {
+            std::env::set_var(ENV_MODEL_DIR, model_root.path());
+            std::env::set_var("HF_HOME", model_root.path().join("other-hf-cache"));
+        }
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "local");
+        assert!(!status.degraded);
+        assert!(status.degradation_reason.is_none());
+        Ok(())
+    })
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_uses_installed_e5_with_empty_hf_home() -> Result<()> {
+    with_clean_env(|| {
+        let model_root = TestModelRoot::new();
+        install_test_local_embedding_model(model_root.path())?;
+        unsafe {
+            std::env::set_var(ENV_MODEL_DIR, model_root.path());
+            std::env::set_var("HF_HOME", "");
+        }
+
+        let status = embedding_provider_status_without_probe()?;
+
+        assert_eq!(status.active_provider, "local");
+        assert!(!status.degraded);
+        assert!(status.degradation_reason.is_none());
         Ok(())
     })
 }
@@ -129,7 +468,11 @@ fn local_and_feature_hash_are_distinct_configured_providers() -> Result<()> {
             .unavailable_reason
             .as_deref()
             .unwrap_or_default()
-            .contains("local embedding model multilingual-e5-small is not ready"));
+            .contains(if cfg!(feature = "local-onnx") {
+                "local embedding model multilingual-e5-small is not ready"
+            } else {
+                "local-onnx"
+            }));
 
         unsafe { std::env::set_var(ENV_PROVIDER, "feature-hash") };
         let feature_hash = resolve_embedding_config()?;

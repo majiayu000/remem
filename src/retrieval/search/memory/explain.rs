@@ -53,6 +53,8 @@ pub struct SearchExplainChannel {
     pub disabled_reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub candidates_scanned: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub embedding: Option<crate::retrieval::embedding::EmbeddingExecutionMetadata>,
     pub hits: Vec<ChannelHit>,
 }
 

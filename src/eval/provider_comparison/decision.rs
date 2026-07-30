@@ -1,8 +1,9 @@
 use crate::eval::golden::MetricAverages;
 
 use super::{
-    DefaultDecision, DefaultDecisionKind, DefaultFlipCriteria, ProviderComparisonRow, EPSILON,
-    EXISTING_REGRESSION_BUDGET, QUERY_EMBEDDING_LATENCY_BUDGET_P95_MS,
+    DefaultDecision, DefaultDecisionKind, DefaultFlipCriteria, ProviderComparisonRow,
+    COLD_START_EMBEDDING_LATENCY_BUDGET_MS, EPSILON, EXISTING_REGRESSION_BUDGET,
+    QUERY_EMBEDDING_LATENCY_BUDGET_P95_MS,
 };
 
 pub(super) fn build_default_decision(providers: &[ProviderComparisonRow]) -> DefaultDecision {
@@ -17,9 +18,16 @@ pub(super) fn build_default_decision(providers: &[ProviderComparisonRow]) -> Def
     let provider_comparison_slice_improves = feature_hash
         .zip(local)
         .is_some_and(|(baseline, local)| provider_slice_improves(baseline, local));
+    let paraphrase_slice_improves = feature_hash
+        .zip(local)
+        .is_some_and(|(baseline, local)| existing_slice_improves(baseline, local, "paraphrase"));
     let existing_slices_within_budget = feature_hash
         .zip(local)
         .is_some_and(|(baseline, local)| existing_slices_within_budget(baseline, local));
+    let cold_start_embedding_latency_within_budget = local.is_some_and(|row| {
+        row.cold_start_embedding_latency_ms
+            .is_some_and(|latency| latency <= COLD_START_EMBEDDING_LATENCY_BUDGET_MS)
+    });
     let query_embedding_latency_within_budget = local.is_some_and(|row| {
         row.query_embedding_latency_p95_ms
             .is_some_and(|latency| latency <= QUERY_EMBEDDING_LATENCY_BUDGET_P95_MS)
@@ -30,7 +38,9 @@ pub(super) fn build_default_decision(providers: &[ProviderComparisonRow]) -> Def
         api_reference_available,
         provider_comparison_slice_present,
         provider_comparison_slice_improves,
+        paraphrase_slice_improves,
         existing_slices_within_budget,
+        cold_start_embedding_latency_within_budget,
         query_embedding_latency_within_budget,
     };
     let mut blockers = Vec::new();
@@ -49,12 +59,24 @@ pub(super) fn build_default_decision(providers: &[ProviderComparisonRow]) -> Def
                 .to_string(),
         );
     }
+    if !criteria.paraphrase_slice_improves {
+        blockers.push(
+            "local provider did not improve paraphrase evidence recall over feature-hash"
+                .to_string(),
+        );
+    }
     if !criteria.existing_slices_within_budget {
         blockers.push("local provider regressed existing golden slices beyond budget".to_string());
     }
+    if !criteria.cold_start_embedding_latency_within_budget {
+        blockers.push(format!(
+            "local cold-start embedding latency exceeded {:.0}ms budget or was not measured",
+            COLD_START_EMBEDDING_LATENCY_BUDGET_MS
+        ));
+    }
     if !criteria.query_embedding_latency_within_budget {
         blockers.push(format!(
-            "local query embedding p95 exceeded {:.0}ms budget or was not measured",
+            "local warm-query embedding p95 exceeded {:.0}ms budget or was not measured",
             QUERY_EMBEDDING_LATENCY_BUDGET_P95_MS
         ));
     }
@@ -65,7 +87,7 @@ pub(super) fn build_default_decision(providers: &[ProviderComparisonRow]) -> Def
         DefaultDecisionKind::KeepFeatureHash
     };
     let decision_reason = if change_default {
-        "Local semantic embeddings satisfied the provider-comparison quality, regression, latency, and API-reference criteria.".to_string()
+        "Local semantic embeddings improved both paraphrase and provider-comparison evidence recall while satisfying the remaining regression, cold-start, warm-query latency, and API-reference criteria.".to_string()
     } else {
         format!(
             "Keep the default provider unchanged until GH-716 blockers are cleared: {}",
@@ -112,6 +134,25 @@ fn provider_slice_improves(
     .is_some_and(|delta| delta > EPSILON)
 }
 
+fn existing_slice_improves(
+    feature_hash: &ProviderComparisonRow,
+    local: &ProviderComparisonRow,
+    slice: &str,
+) -> bool {
+    metric_delta(
+        feature_hash
+            .existing_slice_details
+            .get(slice)
+            .and_then(|category| category.metrics.as_ref()),
+        local
+            .existing_slice_details
+            .get(slice)
+            .and_then(|category| category.metrics.as_ref()),
+        |metrics| metrics.evidence_recall_at_k,
+    )
+    .is_some_and(|delta| delta > EPSILON)
+}
+
 pub(super) fn existing_slices_within_budget(
     feature_hash: &ProviderComparisonRow,
     local: &ProviderComparisonRow,
@@ -119,21 +160,53 @@ pub(super) fn existing_slices_within_budget(
     if feature_hash.existing_slice_details.is_empty() {
         return false;
     }
-    let mut checked_slices = 0usize;
-    let all_checked_slices_pass = feature_hash
+    feature_hash
         .existing_slice_details
         .iter()
-        .filter_map(|(slice, baseline)| {
-            let baseline = baseline.metrics.as_ref()?;
-            let candidate = local.existing_slice_details.get(slice)?.metrics.as_ref()?;
-            Some((baseline, candidate))
+        .all(|(slice, baseline)| {
+            local
+                .existing_slice_details
+                .get(slice)
+                .is_some_and(|candidate| {
+                    category_within_budget(baseline, candidate, EXISTING_REGRESSION_BUDGET)
+                })
         })
-        .all(|(baseline, candidate)| {
-            checked_slices += 1;
-            metrics_within_budget(baseline, candidate, EXISTING_REGRESSION_BUDGET)
-        });
+}
 
-    checked_slices > 0 && all_checked_slices_pass
+fn category_within_budget(
+    baseline: &crate::eval::golden::CategoryEvaluation,
+    candidate: &crate::eval::golden::CategoryEvaluation,
+    budget: f64,
+) -> bool {
+    if baseline.total_queries != candidate.total_queries
+        || baseline.scored_queries != candidate.scored_queries
+        || baseline.abstention_queries != candidate.abstention_queries
+    {
+        return false;
+    }
+
+    let mut checked = false;
+    if baseline.scored_queries > 0 {
+        checked = true;
+        let Some((baseline_metrics, candidate_metrics)) =
+            baseline.metrics.as_ref().zip(candidate.metrics.as_ref())
+        else {
+            return false;
+        };
+        if !metrics_within_budget(baseline_metrics, candidate_metrics, budget) {
+            return false;
+        }
+    }
+    if baseline.abstention_queries > 0 {
+        checked = true;
+        let baseline_rate = baseline.abstention_passed as f64 / baseline.abstention_queries as f64;
+        let candidate_rate =
+            candidate.abstention_passed as f64 / candidate.abstention_queries as f64;
+        if candidate_rate + budget + EPSILON < baseline_rate {
+            return false;
+        }
+    }
+    checked
 }
 
 fn metric_delta(
