@@ -4,14 +4,18 @@ use std::fs::File;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::{check_plaintext_artifacts_in, Status, SQLITE_PLAINTEXT_HEADER};
 
 fn arbitrary_backup_test_dir() -> PathBuf {
+    static NEXT_DIR: AtomicU64 = AtomicU64::new(0);
+
     let dir = std::env::temp_dir().join(format!(
-        "remem-plaintext-arbitrary-unreadable-{}-{}",
+        "remem-plaintext-arbitrary-unreadable-{}-{}-{}",
         std::process::id(),
-        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default(),
+        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
     ));
     fs::create_dir_all(&dir).expect("test directory should create");
     dir
@@ -25,6 +29,90 @@ fn write_plaintext_db(path: &Path) {
 
 fn write_non_plaintext_db(path: &Path) {
     fs::write(path, [0xAB_u8; 64]).expect("non-plaintext fixture should write");
+}
+
+#[test]
+fn root_custom_sqlite_backup_is_detected() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let backup = dir.join("pre-encryption.sqlite");
+    write_plaintext_db(&backup);
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Fail);
+    assert!(result.detail.contains(&backup.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn custom_subdirectory_backup_is_detected() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let backup = dir.join("archive").join("pre-encryption.sqlite");
+    fs::create_dir_all(backup.parent().expect("backup should have parent"))
+        .expect("custom backup directory should create");
+    write_plaintext_db(&backup);
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Fail);
+    assert!(result.detail.contains(&backup.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn readable_external_key_symlink_is_not_an_artifact_warning() {
+    use std::os::unix::fs::symlink;
+
+    let dir = arbitrary_backup_test_dir();
+    let external = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let external_key = external.join("key");
+    fs::write(&external_key, format!("v2:{}", "a".repeat(64)))
+        .expect("external key fixture should write");
+    symlink(&external_key, dir.join(".key")).expect("key symlink should create");
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Ok);
+    assert!(!result.detail.contains(".key"), "{}", result.detail);
+    fs::remove_dir_all(&dir).ok();
+    fs::remove_dir_all(&external).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn live_database_sidecar_symlinks_are_not_artifact_warnings() {
+    use std::os::unix::fs::symlink;
+
+    let dir = arbitrary_backup_test_dir();
+    let external = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    for suffix in ["-wal", "-shm", "-journal"] {
+        let target = external.join(format!("sidecar{suffix}"));
+        fs::write(&target, b"runtime sidecar").expect("sidecar target should write");
+        symlink(&target, dir.join(format!("remem.db{suffix}")))
+            .expect("sidecar symlink should create");
+    }
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Ok);
+    for suffix in ["-wal", "-shm", "-journal"] {
+        assert!(
+            !result.detail.contains(&format!("remem.db{suffix}")),
+            "{}",
+            result.detail
+        );
+    }
+    fs::remove_dir_all(&dir).ok();
+    fs::remove_dir_all(&external).ok();
 }
 
 #[cfg(unix)]
