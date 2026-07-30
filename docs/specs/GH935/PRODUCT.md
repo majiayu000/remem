@@ -601,16 +601,18 @@ a second transition; a different root for the fingerprint is rejected.
 
 Third, closed RFC-8785 `final_publication_envelope_v1` has only the
 TECH-declared candidate verdict/hash, core member list/root, fingerprint,
-registry post-root/checkpoint/hash/proof, and literal version fields. Nested
-CAS request/receipt, reserved-to-retired state/map paths, retirement leaf, log
-proofs, checkpoint, and witness signatures are closed too. JCS key order is
-normative; members sort by canonical path, proof nodes use their declared
-topology, and witnesses sort by ID. From canonical history it selects the
-lowest `log_size` checkpoint containing the transition and exactly the
-lexicographically smallest valid charter-quorum witness IDs. It contains
-neither its own hash nor visibility data. `final_publication_envelope_hash_v1`
-hashes its exact bytes with TECH's domain/length framing; TECH supplies one
-complete valid fixed envelope and schema/history/quorum tamper vectors.
+registry post-root/checkpoint-certificate/hash/proof, and literal version
+fields. Nested CAS request/receipt, arbitrary-history reservation and
+retirement map/log proofs, certificates, and signatures are closed too. JCS
+key order is normative; members sort by canonical path and proof nodes use
+their declared topology. The CAS atomically allocates one create-only
+`checkpoint_certificate_v1`: its epoch, transition index/leaf, exact
+`log_size = index + 1`, roots, and charter-fixed `witness_set_id` select exactly
+the predeclared quorum IDs. The receipt binds its hash and an exact replay
+returns the same certificate. Later checkpoints or signatures cannot change
+the envelope. It contains neither its own hash nor visibility data.
+`final_publication_envelope_hash_v1` uses TECH's domain/length framing; TECH
+supplies complete production-shape and general-history vectors.
 
 The charter independently pins `publication_visibility_authority_v1`:
 namespace/genesis, pure Ed25519 receipt/checkpoint keys, append-log/map
@@ -619,20 +621,25 @@ namespace. TECH closes the map key over namespace/fingerprint/core root, the
 only serializable `visible` map value, object-set root, and transition log
 leaf. Closed `visibility_proof_suite_v1` carries the signed prior absence and
 post visible checkpoints, sparse absence/inclusion paths, append-log
-inclusion/consistency paths, bound leaf/value, signed receipt, and the same
-lowest-checkpoint/lexicographically-smallest-quorum rule. Its create-only
+inclusion/consistency paths, bound leaf/value, signed receipt, and its own
+create-only checkpoint certificate under the same fixed-set rule. Its
 transaction verifies private staging, then atomically publishes the map value,
-leaf, receipt, exact envelope, and every core object. One authenticated read
-gate exposes bytes only while that exact currently proven value is `visible`;
-there is no staged, partial, direct-object, or receipt-only public state.
-Positive and signature/hash/sibling/order/early-read tamper vectors are fixed
-in TECH. Alternate authority/key, missing proof/quorum, or partial/different
-objects cannot upgrade a claim.
+leaf, receipt, exact envelope, and every core object. One authenticated
+`read_visible(fingerprint, core_root, object_path)` gate rejects every request
+until the committed visible value, object root, and requested bytes agree;
+there is no staged, partial, direct-object, or receipt-only public state. TECH
+fixes non-empty multi-sibling/order and early-read state-machine vectors.
+Alternate authority/key, missing proof/quorum, or partial/different objects
+cannot upgrade a claim.
 
 The persisted publication sequence is exactly four separately tested steps:
 freeze/scan/hash the core; CAS-retire it; freeze/scan/hash the final envelope;
 then atomically seal visibility, verify its proof/read gate, and append final
-completion. Recovery may resume only the next step proven by both authorities.
+completion. `publication_complete_v1` is a closed, hash-chained durable record
+over the exact candidate, both authority proofs/certificates, and verified
+read-set root. Compare-and-append on its previous hash is create-only:
+byte-identical replay returns the original record/hash, while any same-ID drift
+is rejected. Recovery may resume only the next step proven by both authorities.
 
 A public verdict equals the core candidate verdict only when both object layers,
 the registry transition, every exposed object, and the independent visibility
@@ -657,11 +664,11 @@ The publication recovery table is closed:
 |---|---|
 | Before core freeze/scan | With exact reservation/absence proofs the state is `reserved_unpublished`; staging is private. Resume deterministic construction from immutable run inputs. Differing bytes, lost input, or missing proof is `authority_unresolved` or `partial_non_security` / `INSUFFICIENT` as applicable. |
 | Core frozen, CAS result unknown | Query the registry and visibility authorities. Exact reservation plus absence remains `reserved_unpublished` and permits only the exact fingerprint/core-root CAS; exact retirement plus absence is `retired_unpublished` and recovers its proof. Unavailable, conflicting, stale, malformed, or different-root evidence is `authority_unresolved` / `INSUFFICIENT` and permits no mutation. |
-| CAS committed, before final-envelope seal | State is `retired_unpublished`. Deterministically rebuild and rescan only the byte-identical envelope for the same core/proof; never substitute a core, run, report, verdict, checkpoint selection, or revision ID. |
-| Final envelope frozen/hashed, visibility absent | Preserve or deterministically rebuild the byte-identical closed envelope, require its frozen hash, and retry only the exact visibility seal. Drift is `authority_unresolved` / `INSUFFICIENT`; never redo CAS or evaluation. |
+| CAS committed, before final-envelope seal | State is `retired_unpublished`. Deterministically rebuild and rescan only the certificate-bound envelope whose byte length and hash equal this candidate's frozen values; never substitute a core, proof, certificate, run, report, verdict, or revision ID. |
+| Final envelope frozen/hashed, visibility absent | Preserve or rebuild only that candidate's frozen `(byte_length, hash)` envelope and retry only the exact visibility seal. Drift is `authority_unresolved` / `INSUFFICIENT`; never redo CAS or evaluation. |
 | Visibility call ambiguous | Query both authorities. Exact signed receipt/proofs plus every exact object derives `visible` without another seal; authenticated absence preserves `retired_unpublished` and permits only the byte-identical retry. Partial/different/multiple visibility, forged/mismatched proof, or unavailable truth derives `authority_unresolved` / `INSUFFICIENT`. |
-| `visible`, completion record absent | Reverify exact retirement, final hash, minimal checkpoints/quorums, proof suite, read gate, and every byte, then append `publication_complete_v1`; never call the seal again. |
-| `publication_complete_v1` | Envelope, core, receipt, and verdict are immutable. No retry, replacement, or second seal is allowed; correction needs a new unused fingerprint while the old one stays retired and visible. |
+| `visible`, completion record absent | Reverify exact retirement, candidate-specific final length/hash, both fixed certificates, proof suite, read gate, and every byte, then compare-and-append the closed `publication_complete_v1`; never call the seal again. |
+| `publication_complete_v1` | Exact replay returns the existing record/hash. Any field drift, previous-hash mismatch, retry, replacement, or second seal is rejected; correction needs a new unused fingerprint while the old one stays retired and visible. |
 
 All staging remains invisible before the final seal. Failures and recovery
 queries are append-only. A transient failure may retry only the exact operation
