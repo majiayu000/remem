@@ -224,6 +224,20 @@ fn non_debug_load_keeps_owner_counts_and_drops_traces() {
         "Rows without owner metadata still load through project fallback.",
         now - 1,
     );
+    insert_owned_memory(
+        &conn,
+        3,
+        stash,
+        Some("codex-tool-diagnostic"),
+        "decision",
+        "Codex tool diagnostic stays excluded",
+        "Tool-owned context must appear only in the debug exclusion trace.",
+        now + 1,
+        "tool",
+        "codex-cli",
+        None,
+        Some("codex-sandbox"),
+    );
 
     let policy = ContextPolicy::from_limits(ContextLimits::default());
 
@@ -250,6 +264,15 @@ fn non_debug_load_keeps_owner_counts_and_drops_traces() {
     assert!(
         !debug_load.owner_traces.is_empty(),
         "debug load must still report owner traces"
+    );
+    assert!(
+        debug_load.owner_traces.iter().any(|trace| {
+            trace.id == 3
+                && !trace.included
+                && trace.owner_scope.as_deref() == Some("tool")
+                && trace.reason == "tool_not_relevant_to_startup"
+        }),
+        "debug load must execute the exclusion query and report the tool-owned row"
     );
 
     // Selection itself is unaffected.
