@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest, Sha256};
 
+use super::pragma::{apply_connection_pragmas, ConnectionMode};
+
 thread_local! {
     static DATA_DIR_OVERRIDE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
 }
@@ -180,9 +182,7 @@ pub(crate) fn open_configured_connection(
 
     super::crypto::configure_cipher(&conn, key)?;
 
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
-    )?;
+    apply_connection_pragmas(&conn, ConnectionMode::ReadWrite)?;
     Ok(conn)
 }
 
@@ -203,9 +203,7 @@ pub(crate) fn open_configured_existing_read_write_connection(
 
     super::crypto::configure_cipher(&conn, key)?;
 
-    conn.execute_batch(
-        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
-    )?;
+    apply_connection_pragmas(&conn, ConnectionMode::ReadWrite)?;
     Ok(conn)
 }
 
@@ -219,7 +217,7 @@ pub(crate) fn open_configured_read_only_connection(
     record_configured_connection_open();
 
     super::crypto::configure_cipher(&conn, key)?;
-    conn.execute_batch("PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+    apply_connection_pragmas(&conn, ConnectionMode::ReadOnly)?;
     Ok(conn)
 }
 
