@@ -147,6 +147,7 @@ mod tests {
     fn apply_score_demotions_keeps_search_results_when_commit_files_fail() -> anyhow::Result<()> {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
+        use_legacy_git_commit_lookup(&conn)?;
         seed_memory(&conn, 1, "malformed-session", r#"["src/stale.rs"]"#)?;
         seed_memory(&conn, 2, "fresh-session", r#"["src/fresh.rs"]"#)?;
         link_commit(
@@ -176,6 +177,19 @@ mod tests {
             vec![1, 2]
         );
         assert_eq!(demoted, fused);
+        Ok(())
+    }
+
+    fn use_legacy_git_commit_lookup(conn: &Connection) -> anyhow::Result<()> {
+        conn.execute_batch(
+            "DROP TRIGGER git_commits_validate_changed_files_insert;
+             DROP TRIGGER git_commits_validate_changed_files_update;
+             DROP TRIGGER git_commits_sync_files_insert;
+             DROP TRIGGER git_commits_sync_files_update;
+             DROP TRIGGER git_commits_sync_files_delete;
+             DROP TABLE git_commit_files;
+             DROP INDEX idx_git_commits_project_commit_epoch;",
+        )?;
         Ok(())
     }
 

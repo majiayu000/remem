@@ -6,6 +6,16 @@ use sha2::{Digest, Sha256};
 
 use crate::db::models::{CompressedObservationSource, Observation};
 
+mod retention;
+
+#[cfg(test)]
+pub(crate) use retention::observation_source_retention_record;
+pub(crate) use retention::{
+    ensure_observation_retention_schema_supported,
+    observation_source_retention_record_on_supported_schema, observation_source_retention_records,
+    ObservationSourceRetentionRecord,
+};
+
 pub fn insert_observation(
     conn: &Connection,
     memory_session_id: &str,
@@ -218,11 +228,49 @@ pub fn insert_compressed_observation_sources(
     if source_observations.is_empty() {
         anyhow::bail!("compressed observations require source observation links");
     }
+    let source_records = observation_source_retention_records(conn, source_observations)?;
+    insert_compressed_observation_sources_checked(
+        conn,
+        compressed_observation_ids,
+        source_observations,
+        &source_records,
+        compression_session_id,
+    )
+}
+
+pub(crate) fn insert_compressed_observation_sources_checked(
+    conn: &Connection,
+    compressed_observation_ids: &[i64],
+    source_observations: &[Observation],
+    expected_source_records: &[ObservationSourceRetentionRecord],
+    compression_session_id: &str,
+) -> Result<usize> {
+    if compressed_observation_ids.is_empty() {
+        return Ok(0);
+    }
+    if source_observations.is_empty() {
+        anyhow::bail!("compressed observations require source observation links");
+    }
+    anyhow::ensure!(
+        source_observations.len() == expected_source_records.len(),
+        "compressed observation source record count mismatch"
+    );
+    anyhow::ensure!(
+        source_observations
+            .iter()
+            .all(|source| matches!(source.status.as_str(), "active" | "stale")),
+        "compressed observation sources must be active or stale"
+    );
 
     let now = chrono::Utc::now().timestamp();
+    let current_source_records = observation_source_retention_records(conn, source_observations)?;
+    anyhow::ensure!(
+        current_source_records == expected_source_records,
+        "compression source observations changed after input selection"
+    );
     let mut inserted = 0;
     for compressed_id in compressed_observation_ids {
-        for source in source_observations {
+        for (source, record) in source_observations.iter().zip(expected_source_records) {
             inserted += conn.execute(
                 "INSERT INTO compressed_observation_sources
                  (compressed_observation_id, source_observation_id, source_hash,
@@ -232,8 +280,8 @@ pub fn insert_compressed_observation_sources(
                 params![
                     *compressed_id,
                     source.id,
-                    observation_source_hash(source),
-                    observation_source_snapshot_json(source)?,
+                    record.source_hash,
+                    record.source_snapshot_json,
                     source.created_at_epoch,
                     compression_session_id,
                     now
@@ -318,7 +366,7 @@ fn hash_i64(hasher: &mut Sha256, name: &str, value: i64) {
     hash_field(hasher, name, Some(value.as_str()));
 }
 
-fn observation_source_snapshot_json(observation: &Observation) -> Result<String> {
+pub(crate) fn observation_source_snapshot_json(observation: &Observation) -> Result<String> {
     let snapshot = serde_json::json!({
         "hash_version": "observation-v1",
         "id": observation.id,

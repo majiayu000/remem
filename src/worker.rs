@@ -3,6 +3,7 @@ use tokio::time::{sleep, Duration, Instant};
 
 use crate::db;
 
+mod cleanup;
 mod job;
 mod lock;
 
@@ -15,9 +16,81 @@ mod lock;
 const JOB_TIMEOUT_SECS: u64 = 420;
 const JOB_LEASE_SECS: i64 = (JOB_TIMEOUT_SECS as i64) + 60;
 const _: () = assert!(JOB_LEASE_SECS > JOB_TIMEOUT_SECS as i64);
+// Cleanup owns one immediate SQLite transaction and cannot heartbeat its lease
+// without contending with itself. Give the bounded maintenance pass a separate
+// recovery window instead of routing it through the cancellable job timeout.
+const CLEANUP_JOB_LEASE_SECS: i64 = 6 * 60 * 60;
 const EXTRACTION_TASK_TIMEOUT_SECS: u64 = JOB_TIMEOUT_SECS;
 const EMBEDDING_BACKFILL_IDLE_BATCH_SIZE: i64 = 128;
 const RULE_COMPILATION_SWEEP_INTERVAL_SECS: u64 = 60;
+const LEGACY_PENDING_MIGRATION_BATCH: i64 = 25;
+const LEGACY_PENDING_MIGRATION_INTERVAL: Duration = Duration::from_secs(60);
+
+struct LegacyPendingMigrationSchedule {
+    once: bool,
+    attempted_once: bool,
+    next_daemon_attempt_at: Instant,
+}
+
+impl LegacyPendingMigrationSchedule {
+    fn new(once: bool, now: Instant) -> Self {
+        Self {
+            once,
+            attempted_once: false,
+            next_daemon_attempt_at: now,
+        }
+    }
+
+    fn is_due(&self, now: Instant) -> bool {
+        if self.once {
+            !self.attempted_once
+        } else {
+            now >= self.next_daemon_attempt_at
+        }
+    }
+
+    fn record_attempt(&mut self, now: Instant) {
+        self.attempted_once = true;
+        self.next_daemon_attempt_at = now + LEGACY_PENDING_MIGRATION_INTERVAL;
+    }
+}
+
+fn extraction_pipeline_is_idle(conn: &rusqlite::Connection) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let active: i64 = conn.query_row(
+        "SELECT EXISTS(
+             SELECT 1
+             FROM extraction_tasks
+             WHERE (status = 'pending'
+                    AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?1))
+                OR status = 'processing'
+         )",
+        [now],
+        |row| row.get(0),
+    )?;
+    Ok(active == 0)
+}
+
+fn should_attempt_legacy_pending_migration(
+    conn: &rusqlite::Connection,
+    schedule: &LegacyPendingMigrationSchedule,
+    now: Instant,
+) -> Result<bool> {
+    if !schedule.is_due(now) {
+        return Ok(false);
+    }
+    extraction_pipeline_is_idle(conn)
+}
+
+fn record_legacy_pending_migration_outcome(
+    schedule: &mut LegacyPendingMigrationSchedule,
+    now: Instant,
+    outcome: &db::pending::admin::AutoLegacyMigrationOutcome,
+) {
+    if outcome.migrated > 0 || !outcome.yielded_to_current_work {
+        schedule.record_attempt(now);
+    }
+}
 
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
@@ -256,6 +329,9 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
         record_worker_heartbeat(&conn, &lease_owner, started_at_epoch)?;
     }
 
+    let mut legacy_pending_migration_schedule =
+        LegacyPendingMigrationSchedule::new(once, Instant::now());
+    let mut cleanup_probe_schedule = cleanup::CleanupProbeSchedule::new(once, Instant::now());
     let mut next_rule_compilation_sweep_at = Instant::now();
     loop {
         if Instant::now() >= next_rule_compilation_sweep_at {
@@ -302,6 +378,88 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             );
         }
         db::maintain_failure_lifecycle(&conn)?;
+        let cleanup_probe_now = Instant::now();
+        if let Some(decision) =
+            cleanup::enqueue_if_due(&conn, &mut cleanup_probe_schedule, cleanup_probe_now)?
+        {
+            crate::log::info(
+                "worker",
+                &format!("automatic cleanup schedule decision={decision:?}"),
+            );
+        }
+        if let Some(cleanup_job) =
+            db::claim_ready_cleanup_job(&mut conn, &lease_owner, CLEANUP_JOB_LEASE_SECS)?
+        {
+            crate::log::info(
+                "worker",
+                &format!(
+                    "claimed id={} type=cleanup attempt={}/{}",
+                    cleanup_job.id,
+                    cleanup_job.attempt_count + 1,
+                    cleanup_job.max_attempts
+                ),
+            );
+            drop(conn);
+            match cleanup::execute_claimed(&cleanup_job, &lease_owner).await {
+                Ok(execution) => crate::log::info(
+                    "worker",
+                    &format!(
+                        "automatic cleanup done id={} applied={:?}",
+                        cleanup_job.id, execution.applied
+                    ),
+                ),
+                Err(error) => {
+                    let message = cleanup::safe_failure_message(&error);
+                    let backoff = retry_backoff_secs(cleanup_job.attempt_count);
+                    let conn = db::open_db()?;
+                    record_failed_job_transition(
+                        &conn,
+                        cleanup_job.id,
+                        cleanup_job.job_type,
+                        &cleanup_job.project,
+                        &lease_owner,
+                        &message,
+                        backoff,
+                    )?;
+                }
+            }
+            continue;
+        }
+        let migration_now = Instant::now();
+        if should_attempt_legacy_pending_migration(
+            &conn,
+            &legacy_pending_migration_schedule,
+            migration_now,
+        )? {
+            match db::pending::admin::auto_migrate_actionable_legacy_pending(
+                &mut conn,
+                LEGACY_PENDING_MIGRATION_BATCH,
+            ) {
+                Ok(outcome) => {
+                    record_legacy_pending_migration_outcome(
+                        &mut legacy_pending_migration_schedule,
+                        Instant::now(),
+                        &outcome,
+                    );
+                    if outcome.migrated > 0 {
+                        crate::log::info(
+                            "worker",
+                            &format!(
+                                "surface=pending_observation outcome=migrated count={}",
+                                outcome.migrated
+                            ),
+                        );
+                    }
+                }
+                Err(error) => {
+                    legacy_pending_migration_schedule.record_attempt(Instant::now());
+                    crate::log::error(
+                        "worker",
+                        &format!("legacy pending auto-migration failed: {error}"),
+                    );
+                }
+            }
+        }
         if crate::extraction_worker::run_next(
             &lease_owner,
             JOB_LEASE_SECS,
@@ -389,6 +547,10 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
 }
 
 #[cfg(test)]
+mod cleanup_tests;
+#[cfg(test)]
 mod exact_tests;
+#[cfg(test)]
+mod legacy_pending_schedule_tests;
 #[cfg(all(test, unix))]
 mod tests;

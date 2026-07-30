@@ -43,6 +43,9 @@ pub(super) async fn process_job(job: &db::Job) -> Result<()> {
                 .await??;
             Ok(())
         }
+        db::JobType::Cleanup => {
+            anyhow::bail!("Cleanup jobs require the dedicated non-timeout worker path")
+        }
     }
 }
 

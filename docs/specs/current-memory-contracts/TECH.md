@@ -1,7 +1,7 @@
 # Current Memory Contracts Technical Spec
 
 Status: Current contract
-Issues: Refs #381, #383, #384, #385, #390
+Issues: Refs #381, #383, #384, #385, #390, #948
 
 ## Current Implementation Truth
 
@@ -38,6 +38,7 @@ introduce a replacement storage model or a second retrieval stack.
 | Citation feedback | `memory_citation_events` | One event per assistant message hash/source. |
 | Usage feedback | `memory_usage_events` | Links cited memory IDs to injected item rows. |
 | Source-anchor staleness | `MemoryStalenessLabel` | Exposed through API/search/context metadata. |
+| Commit-file staleness lookup | `git_commits`, `git_commit_files` | `git_commits.changed_files` remains the captured payload; the normalized relation and commit-epoch expression index are migration-managed lookup data. |
 | A/B outcome evidence | `issue385-coding-agent-ab` | Separate end-to-end benchmark contract. |
 
 ## Storage Contracts
@@ -108,6 +109,41 @@ injected items:
   `context_injection_items`.
 - Missing or unmatched citations are data and must be recorded.
 
+### Commit Source Anchors
+
+`git_commits.changed_files` remains the captured commit payload.
+`git_commit_files` is a migration-managed lookup relation derived from that
+payload; it is not a second source of commit truth.
+
+Required invariants:
+
+- Migration backfill and database triggers keep every valid string entry in
+  `changed_files` synchronized with `git_commit_files`.
+- Invalid JSON, non-array payloads, and non-string paths never produce partial
+  lookup data. Historical backfill failures identify the offending commit ID
+  and SHA; post-migration writes are rejected atomically by validation
+  triggers before derived paths change.
+- Deleting or updating a commit removes obsolete derived paths atomically.
+- The range expression
+  `COALESCE(authored_at_epoch, updated_at_epoch, created_at_epoch)` is backed by
+  an exact `(project, expression, id)` index. The query and index expressions
+  must remain identical so SQLite can use the range term.
+- Later-commit ordering uses `(commit_epoch, id)` as a stable tuple. Equal
+  timestamps must not make later inserted commits invisible. Indexed lookup
+  uses disjoint `commit_epoch > anchor_epoch` and
+  `commit_epoch = anchor_epoch AND id > anchor_id` branches so either boundary
+  is a database seek rather than a post-scan filter.
+- Source-anchor lookup starts from the indexed session-link rows and resolves
+  their commit primary keys. Commit-epoch ordering must not turn it into a scan
+  of unlinked project history.
+- File overlap preserves both directions: a touched ancestor invalidates a
+  remembered descendant, and a touched descendant invalidates a remembered
+  ancestor.
+- Branch matching preserves the existing rule for the active branch and
+  branchless commits.
+- No hard row or time limit may change a source-anchor result. Database errors
+  remain `error`, never `untracked`.
+
 ## Retrieval And Ranking Contract
 
 Search is a fused channel plan. This spec does not replace it.
@@ -142,6 +178,76 @@ Required behavior:
 - Suppressed duplicate output is visible through `context_injections`.
 - Source-anchor errors are logged and rendered as error labels or surfaced as
   load errors; they are not silently treated as `untracked`.
+- Source-anchor loading records a distinct `load_staleness_labels` phase in
+  context render statistics and debug output.
+
+## Automatic Lifecycle Maintenance Contract
+
+The cleanup planner and applier are shared runtime code, not CLI-owned logic.
+Dry-run planning remains read-only. A real run builds its plan and applies
+every selected retention mutation in one immediate SQLite transaction, then
+commits only after all steps succeed. Transaction-aware count/apply functions
+remain the source of truth for expiration, workstream inactivity, old events,
+provenance-qualified compressed sources, stale-memory archiving, and the
+operator-only archived-failure purge.
+
+Hard-delete eligibility is fail-closed:
+
+- legacy `events` rows have an explicit `ephemeral` or `audit` retention class;
+  cleanup selects only expired `ephemeral` rows, while referenced API mutation
+  audits are protected independently at the schema boundary;
+- a compressed source requires an old matching link to an active replacement,
+  an unchanged supported source snapshot/hash and no fact that still points at
+  the source. New links use `observation-v2`, which covers every canonical
+  observation content/provenance column. Mutable lifecycle/access metadata
+  (`status`, `last_accessed_epoch`) is excluded from the hash; status is checked
+  independently, while access updates may continue during compression.
+  `content_session_id` is joined runtime context rather than canonical
+  observation provenance. The producer captures the record before the AI call
+  and revalidates the same record in the write savepoint. Legacy
+  `observation-v1` links remain eligible when their original core hash and
+  snapshot still match. If v1 omitted current provenance, apply first upgrades
+  that exact link to a canonical v2 snapshot in the same transaction, then
+  deletes the source; malformed or mismatched legacy links remain retained.
+  Any unknown future observation column blocks snapshot production and cleanup;
+  and
+- deletion eligibility is revalidated in the same immediate transaction, with
+  bounded statements that do not exceed SQLite's parameter limit. Migration
+  v074 adds status/time cleanup indexes so the daily pass does not begin with
+  unindexed full-table predicates.
+
+`JobType::Cleanup` is a global, non-AI job. Its scheduling contract is:
+
+- one fixed global job identity, coalesced while pending or processing;
+- one due cleanup claim may preempt the ordinary queue for its atomic pass;
+  extraction and ordinary background work resume immediately afterward;
+- a 24-hour cooldown measured from the latest completed automatic cleanup
+  attempt, whether successful or failed;
+- recent failed or in-flight work suppresses duplicate scheduling while normal
+  retry and failure-lifecycle handling remains active;
+- a dedicated cleanup-only claim before extraction prevents an old cleanup job
+  from starving, while the ordinary job claim excludes cleanup so the
+  non-cancellable SQLite work never enters the generic async timeout path; and
+- a schema migration accompanies the new persisted job vocabulary so an older
+  binary fails closed on the newer schema instead of repeatedly claiming an
+  unknown job type.
+
+The worker probes for due cleanup before its normal job claim. Both daemon and
+`worker --once` paths use the same SQLite decision, so process-local clocks only
+throttle probes and are not the cooldown authority. Cleanup effects, its
+successful run record, and the job's `done` transition commit in the same
+immediate transaction. A crash before commit leaves all three absent and the
+lease retryable; there is no committed-effects/uncommitted-job window.
+
+The automatic job always calls the default applier through a policy type that
+cannot enable archived-failure purge. Only a positive retention horizon from
+the explicit CLI flag may select that operator action. An append-only
+maintenance-run ledger records the trigger, policy version, bounded counts,
+timestamps, and a bounded safe failure message. Successful ledger insertion is
+part of the effects transaction; failure is recorded only after rollback.
+Doctor reads automatic runs and the active job through the shared read-only
+connection, reports never-run, in-flight, latest success, latest failure, and
+overdue state, and never infers outcomes from claim/retry timestamps.
 
 ## Observability Contract
 
@@ -179,7 +285,8 @@ The structured observability payload should include:
   - verify-before-trust;
   - error;
   - fresh/aging/old age buckets;
-- queues and worker state;
+- queues, worker state, and automatic cleanup state, including last success and
+  latest failed attempt;
 - warnings with stable codes and suggested actions.
 
 `doctor --json` exposes this contract through a root `observability` object.
@@ -277,6 +384,14 @@ Required gates for implementation slices:
 cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 ```
 
+### Automatic lifecycle maintenance changes
+
+```bash
+cargo test --locked --lib maintenance
+cargo test --locked --lib worker::cleanup_tests
+cargo test --locked --lib doctor::cleanup
+```
+
 ### Search, temporal, current-state, or staleness changes
 
 ```bash
@@ -285,6 +400,22 @@ cargo test -q temporal --lib
 cargo test -q staleness --lib
 cargo test -q retrieval::search --lib
 ```
+
+Staleness performance coverage must also include:
+
+- an `EXPLAIN QUERY PLAN` assertion that the later-commit lookup uses the
+  commit-epoch range index;
+- a deterministic SQLite VM-step comparison showing that adding a large
+  pre-anchor history, including same-epoch rows below the anchor ID, does not
+  materially increase later-commit lookup work;
+- a deterministic SQLite VM-step comparison showing that adding a large
+  unlinked project history does not materially increase source-anchor lookup
+  work for either the normalized relation or legacy JSON fallback;
+- migration tests for backfill, trigger synchronization, invalid payload
+  rollback, and schema convergence;
+- an ignored, manually runnable large-dataset SessionStart benchmark that
+  prints `load_staleness_labels` timing without a fixed wall-clock pass/fail
+  threshold.
 
 ### API label or public error changes
 
