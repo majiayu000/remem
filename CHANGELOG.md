@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.38` for GH-953 stage S1: SessionStart injection now
+  scores from `SearchWeights` instead of nine private constants in
+  `hybrid_context.rs` that duplicated it and had already drifted — the injection
+  path had no `graph` channel and no `usage` channel. Because
+  `eval-weight-grid` tunes `SearchWeights` and injection never read it, the
+  evaluation harness was optimizing a path users do not take. Channel SQL and
+  post-fusion behavior are unchanged; `docs/specs/GH953/TECH.md` stages the
+  remaining convergence work so each ranking-visible change lands with its own
+  evaluation delta.
 - Staged source version `0.6.35` for the GH-934 post-merge corrective:
   Retrieval Router plans now preserve the caller's `include_superseded`
   temporal scope across explicit, keyword-fallback, and default-fallback
