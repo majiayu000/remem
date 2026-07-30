@@ -12,6 +12,7 @@ mod mcp_processes;
 mod memory_poisoning;
 mod native_memory;
 mod pack_imports;
+mod plaintext_artifacts;
 mod procedure_exports;
 mod promotion_funnel;
 mod report;

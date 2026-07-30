@@ -220,6 +220,7 @@ fn plan_carries_versions_scope_and_budget() {
     let p = plan(&req, Some(ContextIntent::ExploreHistory)).unwrap();
     assert_eq!(p.schema_version, RETRIEVAL_PLAN_SCHEMA_VERSION);
     assert_eq!(p.policy_version, RETRIEVAL_ROUTER_POLICY_VERSION);
+    assert_eq!(p.policy_version, "retrieval_router_v2");
     assert_eq!(p.filters.project, "demo/project");
     assert_eq!(p.filters.branch.as_deref(), Some("main"));
     assert_eq!(p.filters.as_of_epoch, 1_710_000_000);
@@ -333,28 +334,59 @@ fn reviewer_role_enables_constraints_channel() {
         .any(|r| r == "reviewer_constraints_enabled"));
 }
 
+fn assert_superseded_scope(plan: &RetrievalPlan, expected: bool) {
+    assert_eq!(plan.filters.include_superseded, expected);
+    assert_eq!(plan.freshness_policy.include_superseded, expected);
+    let superseded_history = plan
+        .channel_plans
+        .iter()
+        .find(|channel| channel.channel == RetrievalChannel::SupersededHistory)
+        .unwrap();
+    assert!(superseded_history.enabled);
+    assert_eq!(
+        superseded_history
+            .allowed_validity
+            .contains(&ItemValidity::Superseded),
+        expected
+    );
+}
+
 #[test]
-fn history_intents_compile_one_effective_superseded_scope() {
+fn explicit_history_intents_preserve_false_superseded_scope() {
     for intent in [
         ContextIntent::ExplainDecision,
         ContextIntent::ExploreHistory,
     ] {
         let p = plan(&request("t"), Some(intent)).unwrap();
-        assert!(p.filters.include_superseded, "intent {intent:?}");
-        assert!(p.freshness_policy.include_superseded, "intent {intent:?}");
-        let superseded = p
-            .channel_plans
-            .iter()
-            .find(|c| c.channel == RetrievalChannel::SupersededHistory)
-            .unwrap();
-        assert!(superseded.enabled, "intent {intent:?}");
-        assert!(
-            superseded
-                .allowed_validity
-                .contains(&ItemValidity::Superseded),
-            "intent {intent:?}"
-        );
+        assert_eq!(p.intent_source, IntentSource::Explicit, "intent {intent:?}");
+        assert_superseded_scope(&p, false);
     }
+}
+
+#[test]
+fn keyword_history_fallback_preserves_false_superseded_scope() {
+    let p = plan(&request("why was this decision replaced"), None).unwrap();
+    assert_eq!(p.intent, ContextIntent::ExplainDecision);
+    assert_eq!(p.intent_source, IntentSource::KeywordFallback);
+    assert_superseded_scope(&p, false);
+}
+
+#[test]
+fn default_history_fallback_preserves_false_superseded_scope() {
+    let p = plan(&request("quarterly llama farming report"), None).unwrap();
+    assert_eq!(p.intent, ContextIntent::ExploreHistory);
+    assert_eq!(p.intent_source, IntentSource::DefaultFallback);
+    assert_superseded_scope(&p, false);
+}
+
+#[test]
+fn caller_opt_in_allows_superseded_across_plan_layers() {
+    let mut opted_in = request("why was this decision replaced");
+    opted_in.include_superseded = true;
+    let p = plan(&opted_in, None).unwrap();
+    assert_eq!(p.intent, ContextIntent::ExplainDecision);
+    assert_eq!(p.intent_source, IntentSource::KeywordFallback);
+    assert_superseded_scope(&p, true);
 }
 
 #[test]

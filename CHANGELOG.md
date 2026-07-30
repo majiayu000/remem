@@ -3,6 +3,36 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.36` for the GH-946 post-merge corrective:
+  automatic E5 downloads now use the exact immutable Hugging Face revision
+  evaluated by the checked-in provider evidence, while presets without an
+  approved revision fail before any network request. Exact-entity retrieval
+  also grounds the irregular `build` / `built` / `builds` / `building` family
+  without matching unrelated predicates, and the graph-decision fingerprint
+  is regenerated against the corrected implementation.
+- Staged source version `0.6.35` for the GH-934 post-merge corrective:
+  Retrieval Router plans now preserve the caller's `include_superseded`
+  temporal scope across explicit, keyword-fallback, and default-fallback
+  intents. Filters, freshness policy, and history-channel validity share the
+  same caller-controlled value, so intent classification cannot silently
+  expand access to superseded evidence.
+- Staged source version `0.6.34` for GH-946: `Auto` now prefers an explicitly
+  downloaded, verified `multilingual-e5-small` local embedding model over
+  feature-hash when no remem-specific API key is configured. Provider/model
+  switches gain an actionable doctor backfill hint. The default-k provider
+  comparison now records the verified model artifact digest, preserves
+  abstention and existing-slice budgets, and shows the local paraphrase
+  improvement while separating cold-start latency from warm-query p95. A
+  two-stage evidence gate prevents unsupported vector-only tails without
+  suppressing semantic fallback behind weak lexical hits. Local manifests now
+  bind active HF snapshot symlinks and resolved blobs, released schema-v1
+  installs migrate offline, runtime sessions are process-wide singleflight,
+  and artifact-qualified model ids prevent old/new weight revisions from
+  silently sharing vector coverage. Windows model staging, private runtime
+  caches, and lock files now use protected owner-only ACLs, reject reparse
+  points, and verify 128-bit file identities under native Windows CI. Windows
+  custom/shared model roots fail closed instead of accepting a weaker trust
+  boundary.
 - Staged source version `0.6.32` for GH-945: workers now schedule one
   database-global lifecycle cleanup after a durable 24-hour cooldown and claim
   it through a dedicated lane. Each run atomically expires memory TTLs, advances
@@ -230,6 +260,11 @@
   hook `--host` aliases and arbitrary values now fail closed.
 
 ### Fixed
+- Staged source version `0.6.33` for GH-944: `remem doctor` now detects
+  plaintext SQLite residue across the active data and backup locations,
+  reports inspection failures instead of silently skipping them, and bases
+  cleanup guidance on the live database state. Release metadata remains
+  `unreleased`.
 - Staged source version `0.6.17`: AI HTTP calls now reuse one process-wide
   `reqwest::Client` (connection pool + TLS config) via a `OnceLock` instead of
   rebuilding a client on every call. The timeout is a compile-time constant, so
