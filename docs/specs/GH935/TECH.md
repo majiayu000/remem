@@ -1,37 +1,21 @@
 # Cross-Host Continuity Benchmark — Technical Contract
 
-Status: Current contract; v1 infrastructure shipped, completion unimplemented
-Issue: #935
+Status: Current contract; v1 infrastructure shipped, completion unimplemented; Issue: #935
 
 ## Existing Implementation Facts
 
-- `eval/cross-host/benchmark-charter.json` is
-  `cross-host-v1` / `infrastructure_only_no_runs`.
+- `eval/cross-host/benchmark-charter.json` is `cross-host-v1` / `infrastructure_only_no_runs`.
 - `eval/cross-host/tasks/` contains 24 `skeleton_todo` JSON tasks.
-- `cross-host-task.schema.json`, `cross-host-run.schema.json`,
-  `schema_validate.py`, `scan_artifacts.py`, and `run_dry.py` are offline
-  infrastructure. There is no Rust cross-host runner or report command.
-- Production project identity is the canonical absolute Git root returned by
-  `project_from_cwd` in `src/project_id.rs`.
-- Production `ContextRequest` has no user field, and startup user-owned state
-  currently resolves through `user:default`.
-- The host-native import paths in `docs/specs/host-native-memory/` produce
-  untrusted candidates. They do not auto-promote active memories.
-- Claude Code `Write`/`Edit` observe hooks can call `sync_native_memory` and
-  insert `claude_native` candidates into the normal source database before a
-  diagnostic importer runs; cloning that database is therefore not a neutral
-  import control.
-- PR #965 removed the repo-local SpecRail workflow, route/PR gates, sensitive
-  registry, and their executable checks. They are not dependencies of this
-  design.
+- `cross-host-task.schema.json`, `cross-host-run.schema.json`, `schema_validate.py`,
+  `scan_artifacts.py`, and `run_dry.py` are offline; no Rust runner/report exists.
+- Production project identity is the canonical Git root from `src/project_id.rs`.
+- `ContextRequest` has no user field; startup ownership resolves through `user:default`.
+- Host-native import produces untrusted candidates, never auto-promoted memories.
+- Claude hooks can call `sync_native_memory` before diagnostics, so a source clone is not a neutral control.
 
 ## Versioning
 
-Implementation must bump the charter and all changed schemas from
-`cross-host-v1` infrastructure to the executable `cross-host-v2` contract.
-Old skeletons and examples cannot silently become result-bearing artifacts. A
-converter, if provided, must validate every field and write v2; otherwise old
-input is rejected.
+Implementation bumps charter/schemas from `cross-host-v1` to executable `cross-host-v2`; old artifacts need a field-validating v2 converter.
 
 The status lifecycle is:
 
@@ -58,9 +42,6 @@ benchmark framework:
 | CLI wiring | existing `bench` command modules under `src/cli/` |
 | Sanitized release evidence and reports | versioned paths under `eval/cross-host/evidence/` and `eval/cross-host/reports/` |
 | Current-status documentation | `eval/cross-host/README.md`, this spec pair, the spec index, and public-memory benchmark contracts |
-
-No implementation slice owns a removed `workflow.yaml`, `checks/route_gate.py`,
-`checks/pr_gate.py`, or SpecRail state/label file.
 
 ## Contract Objects
 
@@ -249,15 +230,30 @@ drift/errors, different failures, or conflicting results are `missing_evidence`.
 
 The closed record binds method/intervention hashes, resolved tuple, use and first-wrong-action event IDs/orders, replay hashes, matcher/scorer results, reason, and status. A Stop-created `memory_usage_events` row and its `memory_citation_events` parent are post-action corroboration only
 and cannot satisfy either proof method. Missing, ambiguous, competing, or post-hoc evidence becomes
-`missing_evidence` and, after security-breach precedence, comparative `INSUFFICIENT`; a no-memory
-surface is `not_proven/no_memory_surface`. Sanitized inputs support clean recomputation.
+`missing_evidence` and, outside the narrow lower-bound rule, comparative `INSUFFICIENT`;
+a no-memory surface is `not_proven/no_memory_surface`. Sanitized inputs support recomputation.
+
+### Source Attempt Record
+
+Before auth, extraction, quiescing, or projection work, the outer runner creates an
+append-only lifecycle journal for `cross-host-source-attempt-v2`. Finalization seals
+`source_attempt_id`, preparation unit and input/plan/executable hashes, lifecycle
+timestamps, terminal status/reason, nullable seal/snapshot hashes with typed absence,
+cost counters, cleanup, and leak-scan outcomes. Failure before Source Seal is therefore
+evidenced. Recovery appends an interruption/cleanup event and seals a new record; it
+never rewrites the journal or a prior record.
+
+Every manifest lists all source-attempt record hashes, even without a target attempt;
+target runs bind the matching ID and hash. Missing/non-terminal journals, hash drift,
+or unrecorded cost make a non-security manifest partial and `INSUFFICIENT`; a verified
+breach still takes precedence.
 
 ### Run Record
 
 Each target attempt records:
 
-- tuple key, `source_attempt_id`, `target_attempt_id`, condition, direction,
-  task, and run index;
+- tuple key, `source_attempt_id`, source-attempt record hash,
+  `target_attempt_id`, condition, direction, task, and run index;
 - planned condition position, realized position, and start/end timestamps;
 - source seal hash, even when the condition cannot read its contents;
 - task prompt, condition surface, executable/profile, and scorer hashes;
@@ -286,9 +282,9 @@ partial_non_security
 partial_security
 ```
 
-Every kind contains the planned tuple set, recorded attempts, the fixed attempt
-policy/version, the selected claim attempt, missing/not-started tuples, artifact
-hashes, and reason codes.
+Every kind contains the planned tuple set, source-attempt record hashes,
+recorded target attempts, the fixed attempt policy/version, the selected claim
+attempt, missing/not-started tuples, artifact hashes, and reason codes.
 
 - `complete` requires 288 unique primary tuples and 144 unique source-native
   import tuples.
@@ -477,6 +473,16 @@ before cleanup:
 - Codex source: supported Codex rollout-summary input;
 - Claude Code source: supported Claude topic-file input.
 
+Implementation adds `remem import claude-memories --source <sealed-root>` with the
+Codex importer's dry-run/`--expect-plan-digest` boundary. Its required
+`claude-native-snapshot-v1` manifest assigns every stable-read topic file a
+`native_record_id`, relative path, source-project identity, byte hash, and snapshot
+hash. Discovery rejects symlinks, unknown entries, drift, unsafe/malformed content,
+or hash mismatch as one failed batch. JSON apply returns one `import_attempt_id` and
+`Inserted(candidate_id)`, `Duplicate`, or `Quarantined` per native record; only a
+complete Inserted lineage is eligible. The new importer reuses external-candidate
+persistence beside the Codex importer, never hook-only `sync_native_memory`.
+
 Both diagnostic arms start in separate preparation roots from byte-identical
 `native_neutral_base_v1` clones and the same sealed source-native snapshot.
 Before toggling, each clone must have zero native candidate, active-memory, and
@@ -620,10 +626,11 @@ AND remem_shared.resolved = false
 AND causal_oracle_v1.status = proven
 ```
 
-Its denominator is all complete valid `no_memory`/`remem_shared` pairs in the direction. The
-causal record must bind the same memory across exposure,
-pre-action use or registered counterfactual, wrong-action matcher, and scorer
-failure. Missing, ambiguous, competing, or post-hoc attribution makes the metric and verdict insufficient.
+Its registered directional denominator is all 36 `no_memory`/`remem_shared`
+pairs; missing/invalid pairs never shrink it. The causal record binds the same
+memory across exposure, pre-action use or counterfactual, wrong-action matcher,
+and scorer failure. Missing/ambiguous attribution leaves the rate blank and is
+insufficient except under verdict step 2.
 
 The `stale_memory_followed` denominator is every complete valid
 `remem_shared` tuple in the direction whose hashed candidate inventory,
@@ -634,26 +641,28 @@ sanitization cannot remove a registered challenge based on freshness or
 validity. The inventory is evaluator-only evidence and is never a target memory
 surface. The numerator additionally requires that item to be cited/used and
 have a `causal_oracle_v1 = proven` record for the wrong action. Missing
-inventory-stage proof, challenge inventory, or causal evidence makes the
-metric and verdict insufficient. The report also shows all 36 `remem_shared`
+inventory-stage proof, challenge inventory, or causal evidence leaves the rate
+blank and is insufficient except under verdict step 2. The report shows all 36 `remem_shared`
 tuples per direction so the applicable set cannot be hidden.
 Each `stale_superseded_decision` task registers a challenge for all three runs,
 so a claim-bearing report requires at least three applicable tuples per
 direction. A missing expected match or a smaller/empty applicable set forces
 `INSUFFICIENT`; it is not a passing zero.
-Wrong-project injection, source-private-session leak, and key exposure each map
-to `security_breach`/`partial_security`/safety `FAIL` regardless of completeness;
+Wrong-project injection, source-private-session leak, key exposure, and, once
+numeric, wrong-user injection each map to
+`security_breach`/`partial_security`/safety `FAIL` regardless of completeness;
 only stale-memory-followed and memory-hurt are non-security stop-losses.
 
 Verdict precedence is unique:
 
 1. verified redacted security breach -> safety `FAIL`;
-2. missing identity, incomplete/invalid evidence or pairs, non-security partial
-   manifest, or missing causal/applicable data -> comparative `INSUFFICIENT`;
-3. complete-valid evidence exceeding a non-security stop-loss -> `FAIL`;
-4. any rank-98,750 adjusted regression upper bound `< 0` -> `FAIL`;
-5. all four rank-2,500 descriptive lower bounds `> 0` -> `PASS`;
-6. every other complete result -> `INSUFFICIENT`.
+2. identity-valid, otherwise complete direction with only causal/applicability
+   gaps and proven `memory_hurt / 36 > 2%` or `stale_memory_followed / 36 > 1%` -> `FAIL`;
+3. missing identity, incomplete/invalid evidence or pairs, or a non-security partial manifest -> `INSUFFICIENT`;
+4. remaining missing causal/applicable data -> `INSUFFICIENT`;
+5. any rank-98,750 adjusted regression upper bound `< 0` -> `FAIL`;
+6. all four rank-2,500 descriptive lower bounds `> 0` -> `PASS`;
+7. every other complete result -> `INSUFFICIENT`.
 
 No metric with an empty applicable set is serialized as zero.
 The four-comparison PASS is an intersection-union claim; comparisons cannot be
@@ -714,37 +723,27 @@ host credentials or private artifacts.
 These are sequential handoffs, not permission to run live hosts:
 
 1. **Executable contracts and fixtures**
-   - bump charter/schemas;
-   - build the 24 deterministic tasks;
-   - validate export/causal protocols, exact 288/144 plans, and partial
-     manifests.
+   - bump charter/schemas, build 24 deterministic tasks, and validate
+     export/causal protocols, exact 288/144 plans, and partial manifests.
 2. **Isolation, source seal, and runner**
-   - reuse coding-bench process/HOME restrictions;
-   - implement same-canonical-path sequencing, quiesced full-store sealing,
-     native-neutral derivation, private SQLCipher rekey/provisioning,
-     byte-identical projection fan-out, fixed attempts, cleanup, and cost caps.
+   - reuse coding-bench isolation and implement same-path sequencing, sealing,
+     neutral derivation, rekey/provisioning, fan-out, attempts, cleanup, and caps.
 3. **Condition surfaces**
    - implement no-memory, target-native negative control, maintained export,
-     production remem, and source-native import diagnostic boundaries.
+     production remem, and source-native import diagnostic boundaries;
+   - add Claude snapshot import, digest, batch rules, and lineage before its arm.
 4. **Artifacts, report, and verdict**
-   - implement causal records, complete/partial manifests, exact paired
-     bootstrap/verdict predicates, deterministic rendering, and sanitized
-     bundles.
+   - implement causal records, manifests, exact bootstrap/verdict, deterministic
+     rendering, and sanitized bundles.
 5. **Evidence and status**
-   - run a separately authorized smoke that exercises both directions and all
-     six required primary/native-import surfaces, including both importer
-     with/without paths;
+   - separately authorize a smoke of both directions and all six surfaces;
    - only after smoke review, optionally authorize the full matrix;
-   - publish PASS/FAIL/INSUFFICIENT artifacts and update every current-status
-     document in the same result PR.
+   - publish verdict artifacts and update every current-status document together.
 
-Shared schema or report files have one owner at a time. Parallel lanes may use
-disjoint files, but ownership transfers before another lane edits a shared
-file.
+Shared schema/report files have one owner at a time; ownership transfers before another edit.
 
-The production user-identity capability is an external prerequisite. It needs
-its own current contract and implementation review; GH935 may exercise it only
-after it exists.
+Production user identity is an external prerequisite with its own current contract
+and implementation review; GH935 may exercise it only after that exists.
 
 ## Verification
 
@@ -771,19 +770,20 @@ Future executable-version focused coverage must include:
 - exporter immutability, atomic commit/retry/failure scope, fixed protocol and
   budget rules, condition isolation, and target-native source-seal denial;
 - counterbalanced schedule equality and planned/realized-order drift;
-- maintained-export cost and native import pairing, including neutral counts,
-  complete Inserted-to-memory lineage, and raw-free projections;
+- maintained-export cost and native import pairing, including neutral counts, Claude
+  snapshot/hash/drift rejection, complete Inserted-to-memory lineage, and raw-free projections;
 - causal-oracle pre-action/counterfactual positive, refuted, Stop-only, ambiguous/missing cases, and failed-run retention;
 - automatic-only primary review, exact source/target attempt references, and
   exact pre-prompt retry selection;
 - required stale challenge pre-filter inventory and empty-applicable-set
   rejection;
-- complete, non-security partial, and security partial reports;
+- source failure before seal with immutable lifecycle/cost/cleanup evidence, plus
+  complete, non-security partial, and security partial reports;
 - deterministic Markdown regeneration and hash-bound verdict;
 - fixed bootstrap framing/rejection/quantile vectors, adjusted regression, and
   PASS/FAIL/INSUFFICIENT edges;
 - secret-channel topology and raw/hex/versioned key residue scans;
-- user-scope `not_testable` rejection of fabricated zero;
+- user-scope `not_testable` rejection of fabricated zero and numeric wrong-user zero-tolerance;
 - per-invocation call/cost cap enforcement and CI live-call denial.
 
 Before any implementation PR is submitted:

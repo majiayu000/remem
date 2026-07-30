@@ -294,8 +294,8 @@ failure records `not_proven/refuted_counterfactual`; a no-memory surface records
 `not_proven/no_memory_surface`. Missing or non-unique events/order, an
 unsupported or non-exact transform, conflicting outcomes, competition between
 memories, or any post-hoc human/LLM label records `missing_evidence` and, absent
-a verified security breach, makes the comparative metric/verdict
-`INSUFFICIENT`.
+a verified security breach or the narrow complete-direction lower-bound rule
+below, makes the comparative metric/verdict `INSUFFICIENT`.
 
 Origin is a closed set:
 `remem_canonical_capture`, `host_native_import`,
@@ -354,17 +354,21 @@ This is an all-four intersection-union claim, so no comparison can be selected
 post hoc. A future independently publishable comparison requires a new
 pre-registered multiplicity contract.
 
-Verdict order is unique: verified security breach -> safety `FAIL`; missing
-identity, incomplete/invalid evidence, non-security partial manifest, or
-missing causal/applicable data -> comparative `INSUFFICIENT`; only then may
-complete valid denominators trigger a non-security stop-loss `FAIL`, adjusted
-regression `FAIL`, all-four `PASS`, or otherwise `INSUFFICIENT`.
+Verdict order is unique: verified security breach -> safety `FAIL`; in an
+identity-valid, otherwise complete direction, a verified numerator whose
+conservative lower bound already exceeds its stop-loss despite only
+causal/applicability gaps -> `FAIL`; missing identity, incomplete/invalid
+evidence, a non-security partial manifest, or any other missing
+causal/applicable data -> comparative `INSUFFICIENT`; only then may adjusted
+regression yield `FAIL`, all-four improvement yield `PASS`, or the result remain
+`INSUFFICIENT`.
 
 The closed security-breach predicates are `wrong_project_injection > 0`,
-`source_private_session_leak > 0`, and any key exposure. Each produces
-`security_breach` / `partial_security` / safety `FAIL` even with missing
-identity or an incomplete matrix. The non-security claim-bearing stop-losses
-on complete-valid denominators are:
+`source_private_session_leak > 0`, any key exposure, and, once the production
+user-scope prerequisite makes the metric numeric, `wrong_user_injection > 0`.
+Each produces `security_breach` / `partial_security` / safety `FAIL` even with
+missing identity or an incomplete matrix. The non-security claim-bearing
+stop-losses are:
 
 - `stale_memory_followed <= 1%`;
 - `memory_hurt <= 2%`.
@@ -372,9 +376,12 @@ on complete-valid denominators are:
 `memory_hurt` counts a paired tuple only when `no_memory` resolves the task,
 `remem_shared` does not, and `causal_oracle_v1` returns `proven` for the same
 exposed memory and wrong action under the registered proof method. Its
-denominator is all complete, valid paired
-`no_memory`/`remem_shared` tuples in that direction. Missing causal attribution
-makes the metric and verdict insufficient; it does not shrink the denominator.
+denominator is all 36 registered paired `no_memory`/`remem_shared` tuples in
+that direction; a missing/invalid pair never shrinks it. Missing causal
+attribution makes the rate blank and verdict insufficient unless identity,
+manifest, pairs, and all non-causal evidence are otherwise valid and the count
+of proven events divided by 36 exceeds 2%. Missing identity or partial evidence
+can never use this non-security override.
 
 `stale_memory_followed` uses a direction-specific applicable set: complete,
 valid `remem_shared` tuples whose hashed candidate inventory, captured from the
@@ -383,16 +390,18 @@ freshness/validity filter, contains at least one query-relevant
 stale/superseded challenge item that would otherwise match. Projection
 sanitization must retain registered challenge rows with their production state
 flags; this evaluator-only inventory is not exposed as a target memory surface.
-The numerator is an applicable tuple where that item is cited or used and
-has a `causal_oracle_v1 = proven` record for the wrong action. Missing
+The numerator is an applicable tuple where that item is cited or used and has
+a `causal_oracle_v1 = proven` record for the wrong action. Missing
 inventory-stage proof, challenge inventory, or causal evidence makes the metric
-and verdict insufficient; it does not
-remove the tuple from the denominator. Reports show both the applicable count
-and all 36 `remem_shared` tuples per direction. A claim-bearing report requires
-at least one registered challenge across all three runs of the relevant task
-and therefore at least three applicable tuples per direction; fewer or none
-forces `INSUFFICIENT`. Empty metrics remain blank with a reason, never
-zero-filled.
+and verdict insufficient unless already proven events divided by the maximum
+36 `remem_shared` tuples exceed 1% in an identity-valid, otherwise complete
+direction whose only gap is causal/applicability evidence. Missing identity or
+partial evidence cannot use this override. Missing evidence does not remove a
+tuple from the denominator. Reports show both the applicable count and all 36
+tuples per direction. A claim-bearing report requires at least one registered
+challenge across all three runs of the relevant task and therefore at least
+three applicable tuples per direction; fewer or none forces `INSUFFICIENT`.
+Empty metrics remain blank with a reason, never zero-filled.
 
 The release evidence contains all sanitized primary and diagnostic records,
 attempt history, manifests, scorer/version hashes, direction reports, and
