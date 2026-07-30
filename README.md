@@ -1,5 +1,7 @@
 # remem: Local-first Coding Agent Memory for Claude Code and OpenAI Codex
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.majiayu000%2Fremem.svg)](https://mcptoplist.com/server/io.github.majiayu000%2Fremem)
+
 > Stop re-explaining your project every new coding-agent session.
 
 Language: **English** | [简体中文](README.zh-CN.md)
