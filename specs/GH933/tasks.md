@@ -48,32 +48,38 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - Verify: DTO golden、public API test、line-count check、`cargo fmt --check`,
     `cargo check`.
 
-- [ ] `GH933-A2R` — Durable route ledger migration and writer cutover.
-  - Owner files: next `src/migrations/vNNN_current_truth_route_ledger.sql`,
+- [ ] `GH933-A2R` — Durable route/lifecycle ledgers and route-writer cutover.
+  - Owner files: next `src/migrations/vNNN_current_truth_history_ledgers.sql`,
     `src/migrate/run.rs` + focused backfill helper/tests,
-    `src/memory/scope_cleanup/{mutate,plan}.rs`, and route guard/schema tests.
-  - Add append-only `memory_route_ledger` state versions with contiguous
-    `(memory_id,route_version,previous_route_id)`, complete route snapshots,
-    exact source-event binding, coverage metadata, and named memory/owner/target/
-    legacy-placement/coverage indexes.
-  - In one foreground migration transaction, reconstruct creation plus every
-    legacy reroute. Materialize all A→B→C states; unresolved history gets only a
-    migration-time `forward_only` state and coverage floor, never fabricated
-    earlier eligibility. Do not mark the migration applied until row counts,
-    terminal snapshots, complete chains and reported incomplete counts validate.
-  - Install an `AFTER INSERT ON memories` trigger that writes version one with
-    the SQLite statement epoch, covering every creation/import without per-writer
-    calls. Reroute uses one atomic event+ledger+guarded-row transaction and one
-    epoch. Reject unmatched direct route mutation; rollback all pieces together.
-  - Verify indexed `EXPLAIN` plans, migration rollback/idempotence, exact/partial
-    backfill, forward-only pre-floor global failure, A→B→C intermediate-B
-    discovery, multiple reroutes/same-second ordering, guard rejection and
-    terminal/current mismatch failure.
+    `src/memory/store/write.rs`, `src/cli/actions/markdown_archive.rs`,
+    `src/memory/scope_cleanup/mutate.rs`, affected eval/test fixtures, and
+    route guard/schema tests.
+  - Add append-only route and lifecycle versions with contiguous memory-local
+    version/predecessor chains, complete state snapshots, coverage metadata,
+    memory/self `ON DELETE RESTRICT`, and no FK/cascade to deletable `events`.
+    Audit IDs are copied diagnostics only. Add the TECH-named route indexes plus
+    lifecycle `(memory_id,effective_at_epoch,id)` and coverage/operation indexes.
+  - In one foreground migration transaction, copy only exhaustive durable proof.
+    Legacy save/Markdown changes and pruned events make unproved rows
+    migration-time `forward_only`; never infer absence or earlier eligibility.
+    Materialize A→B→C only when every transition is proved. Validate counts,
+    terminal snapshots/chains and reported incomplete counts before apply.
+  - Route INSERT trigger covers the six production creation families. Existing
+    save upsert, Markdown restore/update and scope cleanup stage the exact next
+    route snapshot only when the NULL-safe OLD/NEW route tuple really changes;
+    same-value assignments pass. Scope cleanup also writes its same-status
+    lifecycle version and event mirror in the transaction. Reject wrong/missing stages and direct bypasses; rollback
+    all pieces together. Lifecycle INSERT trigger writes its baseline.
+  - Verify indexed `EXPLAIN` plans, rollback/idempotence, partial/forward-only
+    backfill, pre-floor global failure, A→B→C intermediate discovery, all six
+    inserts/three updates, no-op/change/same-second guards, terminal drift, and
+    event-cleanup independence.
 
 - [ ] `GH933-A3` — Adapter and resolver hardening.
   - Owner files: `src/truth/adapter.rs`, `src/truth/lifecycle.rs`,
     `src/truth/projection.rs` plus A2-owned tests after A2/A2R stop writing；
-    `src/memory/governance.rs` and cleanup lifecycle tests after A2R handoff；
+    `src/memory/governance.rs`、`src/memory/scope_cleanup/{mutate,plan}.rs` and
+    focused API/event-cleanup lifecycle tests after A2R handoff；
     `src/memory/poisoning.rs` 仅暴露 pure classifier；`src/db/capture.rs` 只允许
     duplicate `(host_id, session_id, event_id)` row timestamp no-op 与
     content-boundary/preview helper。
@@ -134,12 +140,14 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     authoritative candidate/result/timestamp pattern 重建 replacement/no-op
     multi-active co-predecessors，并拒绝 unexplained unlinked Superseded row；
     非 governance/versioned 的 post-cutoff in-place mutation 保守排除/Unknown。
-    先 union `memory_governance` 与 `scope_cleanup` events，再以同一
-    `(created_at_epoch,event.id)` order 重建 lifecycle。closed mapping 覆盖
-    `govern_memories`、Web archive/restore、scope archive、cleanup-plan
-    canonical→active/duplicates→stale 与 route-only same-status；链连续到 current。
-    Web exact bind operation/audit/schema-1；unsupported/unrecorded/gap/fork/
-    terminal drift/ledger mismatch 返回 `unreconstructable_memory_lifecycle`。
+    从 A2R durable lifecycle ledger 按 memory/time index 重建；general/Web
+    governance、scope archive、cleanup-plan canonical→active/duplicates→stale
+    将 status+next version 原子提交，event 仅 audit mirror。链连续到 current；
+    其他合法 status writers 不加 global guard，出现 terminal drift 时 fail closed。
+    Web row 复制 operation binding，并 exact bind durable API mutation
+    resource/action/schema/response/status/time；audit ID 非 proof。
+    unsupported/unrecorded/gap/fork/terminal drift/ledger mismatch 返回
+    `unreconstructable_memory_lifecycle`。
   - Fail closed on unknown status、malformed/dangling/foreign/future-binding
     evidence and inconsistent routing/ownership；所有 SQL parameterized。
     memory candidate evidence 还要求 completed status、origin trust cap、
@@ -171,7 +179,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     duplicate capture timestamp/history stability、post-cutoff Observation
     stale/compressed integrity error、post-cutoff entity add/replace negative、
     Project/Owner route before/equal/after、A→B→C 与 coverage error、general/Web/
-    scope archive/cleanup lifecycle before/equal/after 与 broken-ledger error、late-insert fact、六种
+    scope archive/cleanup durable lifecycle before/equal/after、30-day event
+    cleanup invariance 与 broken-ledger error、late-insert fact、六种
     edge mapping 与 unknown-kind error、
     WAL concurrent-writer single-snapshot、authorizer transaction-control/
     `total_changes` tests；`cargo test truth -- --nocapture`.
@@ -185,7 +194,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     scoped plans、zero unrelated returned rows、
     documented data-statement formula、autocommit transaction-control count=2 /
     caller-transaction count=0，以及 unrelated corpus 前后 target output 相同；
-    facts、raw edges、governance/scope-cleanup events 也必须 scoped/index-bounded。
+    facts、raw edges、route/lifecycle ledgers 也必须 scoped/index-bounded，且
+    history plans 不得扫描 `events`。
   - Run the structural verifier and, when useful, generate a preliminary
     implementation-head record:
 

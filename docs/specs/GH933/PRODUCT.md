@@ -10,7 +10,7 @@ of GH-933.
 
 This document defines the pending Phase A v2 hardening contract. Its checkboxes
 remain open until implementation and fresh verification land. Phase A now
-includes the narrow route-ledger migration/backfill and route/lifecycle writer
+includes narrow durable route/lifecycle ledgers, migration/backfill, and writer
 instrumentation required for exact history. Phase B Context Bundle consumption,
 worktree/task scope, and Phase C general writer convergence remain later work,
 so GH-933 stays open.
@@ -68,13 +68,16 @@ pending v2 requirements below.
    Owner/memory-scope values are closed domains; trimmed `" global "` is global.
    Explicit history discovers candidates from a persistent, scope-indexed route
    ledger, then reconstructs owner, target and invariant memory scope at the
-   cutoff from its complete version chain. Every creation/import commits its
-   canonical row and first route version atomically; reroute additionally
-   commits its audit evidence in the same transaction. The
-   migration backfills every validated legacy `scope_cleanup` transition, so an
-   A→B→C memory remains discoverable for a cutoff in B even when neither its
-   creation nor current route is B. Rows whose pre-migration chain cannot be
-   proved receive forward-only coverage; a query before that coverage floor
+   cutoff from its complete version chain. A trigger covers every creation/
+   import. The three existing-row writers—normal save upsert, Markdown restore/
+   import, and scope cleanup—atomically append a route version whenever their
+   actual placement/branch/scope/source/target/owner/topic/routing/context tuple changes; same-value
+   assignments remain legal no-ops. Scope cleanup also appends its same-status
+   lifecycle version and audit mirror. A guard rejects every other direct change.
+   A validated A→B→C chain remains discoverable in B. Because legacy save and
+   Markdown mutations were not exhaustively logged and 30-day audit events may
+   be gone, migration marks history complete only with exhaustive durable proof;
+   otherwise it starts forward-only coverage at migration. A pre-floor query
    fails with `unreconstructable_routing_history` before scope filtering.
    Project/Owner membership and SubjectIdentity use route-at-t, with the new
    route effective at transition equality. Missing, forked, contradictory or
@@ -96,16 +99,17 @@ pending v2 requirements below.
    co-predecessors even though only one row may have an explicit successor
    link. In-place suppress/unsuppress/delete mutations without a historical row
    are conservatively excluded/Unknown; current bytes must not be projected
-   backward. Memory status changes written by `govern_memories`, Web
-   archive/restore, `scope_cleanup::archive_objects`, or either side of
+   backward. Memory status changes written by `govern_memories`, Web archive/
+   restore, `scope_cleanup::archive_objects`, or either side of
    `apply_memory_cleanup_plan` (canonical→active and duplicate→stale) are instead
-   reconstructed from one complete chain. The projection unions
-   `memory_governance` and `scope_cleanup` events before applying the single
-   `(created_at_epoch,event_id)` order; every previous status must equal the
-   prior new status and the terminal status must equal the current row. Web
-   transitions also require their exact operation/audit ledger binding. The new
-   status is effective at transition equality; an unsupported action/status,
-   missing writer event, gap, fork or contradiction returns
+   reconstructed from one durable, memory-indexed lifecycle ledger. Those
+   writers commit status and the next version atomically; Web versions bind the
+   durable API operation record. Audit events are optional mirrors, not proof.
+   Both history ledgers are retained indefinitely with restrictive memory/self
+   links and no FK/cascade to the 30-day `events` table.
+   Every previous status must equal the prior new status and the terminal status
+   must equal the current row. The new status is effective at transition
+   equality; an unsupported/unrecorded transition, gap, fork or contradiction returns
    `unreconstructable_memory_lifecycle`. Because backup/Markdown imports preserve source timestamps,
    `updated_at_epoch` alone is not ingestion proof: the earliest
    current-compatible canonical result operation, candidate completion and
@@ -214,9 +218,9 @@ pending v2 requirements below.
     conflict pairs must form a matching; an A-B plus A-C survivor graph errors.
 
 11. **Bounded reads.** Historical candidate discovery uses the route ledger's
-    owner, target and legacy-placement indexes; route chains, raw edges,
-    evidence, facts, suppression and governance/scope-cleanup events use
-    scoped/indexed SQL and stable ID chunks of at most 900. Large unrelated
+    owner, target and legacy-placement indexes; route/lifecycle chains, raw
+    edges, evidence, facts and suppression use scoped/indexed SQL and stable ID
+    chunks of at most 900 without scanning `events`. Large unrelated
     projects do not change target query counts, returned rows or output. The full
     projection runs in one deferred SQLite read snapshot; transaction control is
     read orchestration, not a canonical-data write.
@@ -238,7 +242,9 @@ pending v2 requirements below.
       creation plus every validated reroute, an A→B→C fixture discovers B without
       a creation/current B candidate, and Project/Owner before/equal/after uses
       route-at-t. Backfill gaps, forward-only pre-floor reads and incomplete
-      writer chains fail closed; the legacy user-claim wrapper stays
+      writer chains fail closed. All six current insert families, the three
+      existing-row route writers, same-value no-ops, changed-route staging and
+      direct bypass rejection are covered; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.
@@ -254,7 +260,9 @@ pending v2 requirements below.
       before/equal/after tests. One globally ordered lifecycle chain covers
       general and Web governance plus scope-cleanup archive and cleanup-plan
       active/stale transitions; gaps, forks, unsupported transitions and Web
-      ledger mismatches return `unreconstructable_memory_lifecycle`.
+      ledger mismatches return `unreconstructable_memory_lifecycle`. Its
+      memory/time index is used, and deleting 30-day events leaves both ledgers,
+      Web proof and serialized historical output unchanged.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all

@@ -13,17 +13,12 @@ requires a narrow durable history substrate and its canonical writers:
 
 ```text
 src/db/capture.rs (duplicate-event timestamp immutability + pure preview helper)
-src/migrations/vNNN_current_truth_route_ledger.sql
-src/migrate/run.rs + route-ledger backfill helper
-src/memory/governance.rs
-src/memory/scope_cleanup/{mutate,plan}.rs
-src/truth.rs
-src/truth/adapter.rs
-src/truth/lifecycle.rs
-src/truth/projection.rs
-src/truth/types.rs
-src/truth/tests/**
-tests/truth_public_api.rs
+src/migrations/vNNN_current_truth_history_ledgers.sql + src/migrate/run.rs/backfill
+src/memory/store/write.rs + src/cli/actions/markdown_archive.rs
+src/memory/governance.rs + src/memory/scope_cleanup/{mutate,plan}.rs
+affected route-mutating eval/test fixtures
+src/truth.rs + src/truth/{adapter,lifecycle,projection,types}.rs
+src/truth/tests/** + tests/truth_public_api.rs
 ```
 No projection query may write/migrate/call external systems/change Context
 Bundle. The foreground schema migration/backfill and atomic route/lifecycle
@@ -353,24 +348,20 @@ For explicit `as_of=t`, Project/Owner membership and emitted `SubjectIdentity` u
 
 ```text
 memory_route_ledger(
-  id PK AUTOINCREMENT, memory_id FK, route_version, previous_route_id FK,
-  effective_at_epoch, source_kind, source_event_id FK,
+  id PK AUTOINCREMENT, memory_id FK ON DELETE RESTRICT, route_version,
+  previous_route_id FK ON DELETE RESTRICT, effective_at_epoch, source_kind, audit_event_id scalar(no FK), source_ref,
   coverage_kind[complete|forward_only], coverage_start_epoch,
   placement_project, source_project, target_project, owner_scope, owner_key,
   topic_domain, routing_confidence, routing_reason, context_class, memory_scope, branch,
-  UNIQUE(memory_id,route_version), UNIQUE(previous_route_id),
-  UNIQUE(source_event_id))
+  UNIQUE(memory_id,route_version), UNIQUE(previous_route_id))
 ```
-
-Each row is a complete route state. `previous_route_id` belongs to the same memory; versions start at one and are contiguous. `source_kind` is the closed `insert|legacy_backfill|scope_cleanup` set, with an exact unique event required for scope-cleanup. `memory_scope` is normalized `project|global`. Required indexes are `(memory_id,effective_at_epoch,id)`, owner and target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, a partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)` index for NULL/NULL owners, and `(coverage_kind,coverage_start_epoch)`.
-
-The foreground SQL migration creates this schema; a Rust post-hook in the same `BEGIN IMMEDIATE` validates creation/result route plus every legacy `scope_cleanup` reroute ordered `(created_at_epoch,events.id)`, then inserts creation and every intermediate state. Thus A→B→C indexes A, B and C. Complete creation/adjacency/terminal proof sets `complete`; otherwise only the migration-time current snapshot is stored as `forward_only` at that coverage floor—never invented history.
-
+Each row is a complete route state. Versions start at one, are contiguous, and link a predecessor from the same memory. `source_kind` is the closed `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup` set; audit IDs/refs are copied diagnostics, never history dependencies. `memory_scope` is normalized `project|global`. Required indexes are `(memory_id,effective_at_epoch,id)`, owner and target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)`, and `(coverage_kind,coverage_start_epoch)`.
+The foreground migration and Rust post-hook share one `BEGIN IMMEDIATE`. They may copy validated surviving creation/result and `scope_cleanup` evidence into creation and intermediate A→B→C states, but pre-cutover `save_memory` and Markdown updates had no exhaustive durable route log and `events` may already be pruned. Therefore `complete` is allowed only with exhaustive durable proof; otherwise only the migration-time current snapshot is `forward_only` at that floor. Missing evidence never invents history.
 Before scoped discovery, an indexed probe returns `unreconstructable_routing_history` when any forward-only floor is after `t`, because that unknown prior route could match. Migration is marked applied only after every memory has one terminal row, complete chains validate, forward-only counts are reported, and terminal snapshots match `memories`.
-
-After cutover, an `AFTER INSERT ON memories` trigger inserts version one with the SQLite statement epoch, so every creation/import is covered in the canonical row transaction without voluntary writer calls. `scope_cleanup::reroute_objects` writes its audit event, next full version and guarded `memories` update with one epoch in one transaction; failure rolls all back. A database guard rejects route-field updates without a staged next version that links the current head and matches the new row; update/delete of ledger rows is forbidden.
-
-Candidate discovery UNIONs the owner, target and legacy indexes before stable ID chunking; the per-ID chain is folded through `effective_at_epoch<=t` in `(epoch,id)` order. Gaps/forks, event mismatch, nonmonotonic time, terminal drift or scope change return `unreconstructable_routing_history`, never current fallback.
+After cutover, an `AFTER INSERT ON memories` trigger inserts version one with the SQLite statement epoch. This covers the six current insert families in `memory/store/write.rs`, `memory/lifecycle.rs`, `memory_candidate/apply.rs`, `cli/actions/import.rs`, `markdown_archive.rs`, and `pack_import/active_import.rs`, plus future inserts.
+All three production existing-row route writers use one reviewed staging helper: `memory::store::update_existing_memory`, Markdown `update_markdown_memory`, and `scope_cleanup::update_owner`. It compares the actual OLD/NEW placement/project, branch, scope, source/target, owner, topic/routing/context tuple. A no-op route assignment needs no version; a real change appends the exact next snapshot and performs the row update in the same savepoint/transaction and epoch. Scope cleanup also writes its audit mirror there. Eval/test seeds must insert their final route initially or use the explicit fixture helper.
+A database guard runs only when that tuple actually changes and rejects a missing, wrong-head, or NEW-mismatching staged version, so legal no-op save/Markdown writes pass while bypasses cannot leave history holes. Any piece failing rolls back all pieces; ledger update/delete is forbidden.
+Candidate discovery UNIONs the owner, target and legacy indexes before stable ID chunking; the per-ID chain is folded through `effective_at_epoch<=t` in `(epoch,id)` order. Gaps/forks, source mismatch, nonmonotonic time, terminal drift or scope change return `unreconstructable_routing_history`, never current fallback.
 
 ## Lifecycle and Observation Mapping
 
@@ -385,11 +376,20 @@ allowlists before projection. Unknown values return table/canonical-ref/raw
 value context. A mapper’s generic Candidate/Unknown fallback is not a silent
 adapter success.
 
-Explicit memory history unions ID/project-bounded `memory_governance` and `scope_cleanup` events before one `(created_at_epoch,events.id)` order; per-source chains are never concatenated. Closed mappings are general `delete|reject|stale→deleted|rejected|stale`, same-status acknowledgment, Web active→archived/archive and archived→active/restore, scope-cleanup `archive` from the recorded recognized status to archived, and `memory-cleanup` canonical→active plus each duplicate→stale. Route-only reroute is same-status. Every event exact-matches memory/object ref, project, action, statuses and writer shape.
+Explicit memory history reads this independent durable projection:
 
-The chain starts at validated creation/result status, joins every previous to prior new, and ends at current status. Event ID orders same-second transitions; all events with `epoch<=t` apply at equality. Every Web event also binds one exact `api_mutation_requests` operation, memory resource/ID, action, schema-1, audit ID and matching response fields/time/project/session, including archive marker or restore clearing.
-
-Each writer commits status and event together. Unknown/unsupported/unrecorded transitions, broken adjacency, fork, terminal drift or Web mismatch return `unreconstructable_memory_lifecycle`; current status is never projected backward. Candidate replacement remains its separately validated multi-row transition.
+```text
+memory_lifecycle_ledger(
+  id PK AUTOINCREMENT, memory_id FK ON DELETE RESTRICT, lifecycle_version,
+  previous_lifecycle_id FK ON DELETE RESTRICT, effective_at_epoch, previous_status, new_status, source_kind, source_action,
+  source_operation_id, audit_event_id scalar(no FK), source_fingerprint,
+  coverage_kind[complete|forward_only], coverage_start_epoch,
+  UNIQUE(memory_id,lifecycle_version), UNIQUE(previous_lifecycle_id))
+```
+Required indexes are `(memory_id,effective_at_epoch,id)`, `(coverage_kind,coverage_start_epoch,memory_id)`, and a partial unique `source_operation_id`. `source_kind` is closed to `insert|legacy_backfill|memory_governance|web_governance|scope_cleanup`; closed actions/transitions remain general delete/reject/stale, same-status acknowledgment, Web archive/restore, scope archive, cleanup-plan canonical-active/duplicate-stale, and route-only same-status. Version one and a forward-only baseline have `previous_lifecycle_id=NULL`, `previous_status=NULL`, `new_status=<inserted/current status>`, and `source_action='baseline'`; their source kind is `insert` or `legacy_backfill`.
+General/Web governance and scope-cleanup archive/cleanup-plan writers append the next row with the status update in one transaction; `scope_cleanup::reroute_objects` appends a same-status row in its route transaction. Events are optional mirrors. Save/Markdown, candidate/TTL/supersede, preference removal, and stale-archive status writers remain legal but unsupported for exact history: terminal drift fails closed rather than a global guard breaking current behavior. Candidate replacement remains separately validated.
+The chain starts at its validated baseline, joins `previous_status` to the prior `new_status`, ends at current status, and folds `(effective_at_epoch,id)` with equality applying the new status. A scoped memory with a forward-only floor after `t` returns `unreconstructable_memory_lifecycle`. Web rows copy the operation binding and exact-match durable `api_mutation_requests` resource/action/schema/response/status/time; its `audit_id` is correlation only. Unknown/unsupported/unrecorded transitions, gaps, forks, terminal drift, or Web mismatch return the same error.
+Both ledgers have indefinite retention, are excluded from `cleanup_old_events`, and have no FK/cascade to `events`; event deletion or ID reuse cannot change proof. Memory/self FKs use `ON DELETE RESTRICT`, so cleanup cannot erase canonical history. A future purge requires a separately reviewed tombstone/compaction migration, never cascade. Regression calls `cleanup_old_events_at` past 30 days and proves identical route/lifecycle output, intact Web proof, zero ledger deletes, and `foreign_key_check`.
 
 A scoped Observation with `created_at_epoch=NULL` is a contextual integrity
 error because the public knowledge-time field is non-null; human-readable
@@ -709,7 +709,7 @@ scope/time/lifecycle eligibility
 ## Bounded SQL Contract
 
 Claims, route coverage/discovery/history, raw edge validation, captured
-evidence, facts, suppressions and lifecycle events use scoped IDs/owners/
+evidence, facts, suppressions and lifecycle-ledger rows use scoped IDs/owners/
 projects and the named indexes, never unrelated scans plus `Vec::contains`.
 One SQLite snapshot covers the first scoped-claim SELECT through final resolve.
 Autocommit owns deferred BEGIN and terminal COMMIT/ROLLBACK; an existing caller
@@ -721,7 +721,8 @@ Required structural checks:
 - authorizer permits read/SELECT and only the owned transaction controls;
   `total_changes` remains unchanged and every DML/DDL attempt is denied;
 - each data plan is an indexed scoped/ID search, each bind count is at most 900,
-  and no unrelated row is returned/materialized;
+  and no unrelated row is returned/materialized; route/lifecycle plans must
+  report index SEARCH and must not SCAN `events`;
 - data-statement count is at most `12 + 5*ceil(scoped_claims/900) +
   2*ceil(scoped_evidence_refs/900)`;
 - transaction-control count is exactly two for autocommit (BEGIN plus terminal
@@ -778,7 +779,10 @@ python3 scripts/ci/check_pr_preflight.py --base origin/main \
   --pr-body-file /tmp/pr-body.md
 ```
 
-Focused regressions cover indexed A→B→C, backfill/forward-only failure and writer guard; globally ordered general/Web/scope archive/cleanup lifecycle; fact insertion time; and six edge mappings.
+Focused regressions cover all six route inserts, three route-update writers,
+no-op versus changed-route guards, indexed A→B→C, backfill/forward-only
+failure, event cleanup invariance, durable general/Web/scope archive/cleanup
+lifecycle, fact insertion time, and six edge mappings.
 Also require WAL snapshot regression, final-head bounded/performance record,
 fresh exact-head CI, independent review and human merge authorization.
 
@@ -786,4 +790,5 @@ fresh exact-head CI, independent review and human merge authorization.
 
 Phase B defines Context Bundle, shared render epoch, selectors, visible failure, budget/cache/history and rollback. Phase C decides general Claim-writer convergence beyond Phase A's narrow history substrate.
 
-Projection stays data-SELECT-only; Phase A includes the reviewed ledger/backfill/guards. Rollback disables v2 consumption but retains ledger instrumentation. Restoring a pre-migration database requires downtime and proof no later writes are lost. Published 0.6.x cannot use the newer schema.
+Projection stays data-SELECT-only; Phase A includes both reviewed ledgers, backfill, instrumentation, and route guards. Rollback disables v2 consumption but never drops history.
+Restoring a pre-migration database requires downtime and proof no later writes are lost. Published 0.6.x cannot use the newer schema.

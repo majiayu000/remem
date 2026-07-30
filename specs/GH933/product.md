@@ -31,7 +31,7 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
   确定性的选择规则。
 - Phase A baseline 先提供可重建的只读 projection；下一份 Phase A hardening
   follow-up 补齐 scope/relation 隔离、可诊断 provenance、只读证明、bounded
-  lookup，以及 exact history 所需的窄 route-ledger migration/backfill 和
+  lookup，以及 exact history 所需的窄 route/lifecycle ledger migration/backfill 和
   route/lifecycle writer instrumentation；Phase B 再消费 projection，Phase C
   评估更广泛的 Claim writer 收敛。
 - 在所有阶段保留 canonical ref、evidence refs 和明确的
@@ -39,13 +39,13 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
 
 ## 非目标
 
-- 不替换 canonical memory/claim 表；只新增 route history 所需的 additive
-  ledger/index，并对可证明旧历史 backfill，不能证明的范围显式 fail closed。
+- 不替换 canonical memory/claim 表；只新增 route/lifecycle history 所需的
+  additive ledger/index，并对可证明旧历史 backfill，不能证明的范围显式 fail closed。
 - 不引入新的图数据库或实时 multi-agent blackboard。
 - 不让 LLM 任意裁决 truth，也不把模型自报 confidence 当作真实性分数。
 - 不把所有 event 或 generated enrichment 自动提升为 canonical Claim。
 - Phase A hardening follow-up 不接入 Context Bundle，不交付 worktree/task
-  selector。除 route ledger、对应 migration/backfill、route/lifecycle 原子
+  selector。除 route/lifecycle ledgers、对应 migration/backfill/writer 原子
   instrumentation 和 duplicate capture timestamp immutability 外，不做一般
   writer convergence；它不声明 Phase B/C 完成。
 - 本规格不把 archived、compressed 或 suppressed 简化为 false。
@@ -84,10 +84,15 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    不枚举 memory-only suppression。explicit historical query 必须先从持久、
    scope-indexed `memory_route_ledger` 发现候选，再从完整 state-version chain
    恢复 cutoff 时的 owner/target route；A→B→C 的 B 必须可发现，即使 creation/
-   current 都不是 B。migration 以 creation proof 和全部 legacy
-   `scope_cleanup` reroute backfill 每个中间状态；不能证明的旧行只建立
-   migration-epoch 起的 forward-only coverage，任何更早查询都在 scope filtering
-   前返回 `unreconstructable_routing_history`。Project/Owner membership 与
+   current 都不是 B。六类 production INSERT 由 trigger 建 v1；normal save
+   upsert、Markdown existing-row import 与 scope cleanup 三类 UPDATE 在实际
+   placement/branch/scope/source/target/owner/topic/routing/context tuple 变化时同 transaction
+   append route version；同值 assignment 合法；scope cleanup 还 append
+   same-status lifecycle version 与 audit mirror，其他 bypass 由 guard 拒绝。
+   migration 可复制 surviving validated evidence，但旧 save/Markdown mutation
+   没有 exhaustive durable log，30-day events 也可能已删；只有 exhaustive proof
+   才标 complete，否则只从 migration epoch forward-only，任何更早查询都在
+   scope filtering 前返回 `unreconstructable_routing_history`。Project/Owner membership 与
    SubjectIdentity 使用 route-at-t，equality 使用 new route。memory scope 由
    creation proof 验证为 invariant；gap/fork/contradiction 不得 fallback current。
    relation 的两个
@@ -128,11 +133,14 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    trust/ack transition；input topic 是 request provenance，可合法不同于 result
    topic。它推进 knowledge time，但不能独立证明初始 ingestion。
    `govern_memories`、Web archive/restore、`scope_cleanup::archive_objects` 与
-   cleanup plan 的 canonical→active/duplicate→stale 都从统一 lifecycle chain
-   重建。先 union `memory_governance`/`scope_cleanup` events，再按唯一
-   `(created_at_epoch,event_id)` 排序；previous 必须连续、terminal 必须等于
-   current。Web 还 exact bind `api_mutation_requests` operation/audit/schema-1。
-   equality 使用最后一个 new status；unsupported/unrecorded action/status、
+   cleanup plan 的 canonical→active/duplicate→stale 都从 durable、
+   memory/time-indexed `memory_lifecycle_ledger` 重建；status 与 next version
+   同 transaction，event 仅 optional audit mirror。previous 必须连续、terminal
+   必须等于 current。Web row 复制 operation binding 并 exact bind durable
+   `api_mutation_requests` resource/action/schema/response/status/time；audit ID
+   仅 correlation。两 history ledgers indefinite retention、无 `events` FK/cascade，
+   30-day cleanup 与 event ID reuse 不影响 proof。equality 使用最后一个 new
+   status；unsupported/unrecorded action/status、
    gap/fork/contradiction/ledger mismatch 返回
    `unreconstructable_memory_lifecycle`。
    user-context `edit` 是例外的版本化路径：
@@ -386,7 +394,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       版本时必须排除/`Unknown`。same/cross-topic canonical noop、candidate ack、
       general/Web governance、scope archive、cleanup-plan active/stale 的统一
       lifecycle order 与 before/equal/after 均覆盖；unsupported/unrecorded、
-      gap/fork/Web ledger mismatch 返回指定 lifecycle error。
+      gap/fork/Web ledger mismatch 返回指定 lifecycle error。读取使用
+      lifecycle memory/time index；30-day event cleanup 后两 ledger、Web proof
+      与 serialized history 完全不变。
       duplicate captured-event replay 前后 timestamp/历史输出不变与
       replayability serde golden 均覆盖。
 - [ ] captured-event trust 使用 canonical source classification；WebFetch、
@@ -437,6 +447,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       guard 与 A→B→C intermediate-B discovery 均有 regression；Project/Owner 的
       route before/equal/after 使用历史 owner/target，incomplete/forward-only
       pre-floor chain 返回 `unreconstructable_routing_history`，不能使用 current。
+      六类 INSERT、normal save/Markdown/scope-cleanup 三类 UPDATE、同值 no-op、
+      changed-route staging 与 bypass rejection 均有 focused regression。
       `topic_key` 为 NULL 或 exact-empty 时必须使用 `memory:<id>` singleton；
       `foo`、` foo ` 与纯空白 key 保持不同 slot。该合法输入变化触发上一轮既定
       version boundary：hardening 输出必须为 `projection_version=2`，
@@ -464,7 +476,7 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       `docs/specs/GH933/{PRODUCT,TECH}.md` 契约与必要的 release metadata；
       current contract 必须移除已被 hardening 纠正的过时完成声明，不接入
       Context Bundle 或一般 writer convergence；schema/writer 范围仅限 reviewed
-      route ledger migration/backfill、route/lifecycle atomic instrumentation 与
+      route/lifecycle ledgers migration/backfill、atomic instrumentation 与
       duplicate capture timestamp immutability，不关闭 GH-933。
 
 ### GH-933：后续整体完成条件
