@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.37` for the post-merge event-retention
+  corrective: automatic cleanup deletes only the seven explicitly ephemeral
+  event kinds. Governance, scope-cleanup, and all future unknown event kinds
+  remain durable audit history by default instead of being silently classified
+  as disposable.
 - Staged source version `0.6.36` for the GH-946 post-merge corrective:
   automatic E5 downloads now use the exact immutable Hugging Face revision
   evaluated by the checked-in provider evidence, while presets without an
