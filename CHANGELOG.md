@@ -4,7 +4,7 @@
 
 ### Added
 - Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
-  scores from `SearchWeights` instead of nine private constants in
+  scores from `SearchWeights` instead of eight private scoring constants in
   `hybrid_context.rs` that duplicated it and had already drifted — the injection
   path had no `graph` channel and no `usage` channel. Because
   `eval-weight-grid` tunes `SearchWeights` and injection never read it, the

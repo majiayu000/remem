@@ -3,7 +3,7 @@
 Issue: #953 (parent #942)
 Status: Current contract (stage S1 implemented; issue remains open)
 
-## Current state
+## Pre-S1 state
 
 Two channel-assembly implementations exist.
 
@@ -29,8 +29,10 @@ Two channel-assembly implementations exist.
 - Emits `NamedChannel` with `disabled_reason` and `candidates_scanned`, which
   feeds `explain`.
 
-The injection path is therefore missing `graph`, `usage`, and the evidence
-confidence gate, and cannot observe any `SearchWeights` change.
+The injection path was therefore missing `graph`, `usage`, and the evidence
+confidence gate, and could not observe any `SearchWeights` change. S1 replaces
+only the private scoring constants with an explicit `SearchWeights` input; the
+remaining differences stay open below.
 
 ### The duplication is deeper than the constants
 
@@ -160,20 +162,28 @@ the later engine and injection-evaluation stages.
 
 ## Verification
 
-1. `channel_sources_are_shared` — asserts the channel name/weight pairs the
-   engine produces under `injection()` and `search()` both come from the same
-   `SearchWeights` instance, and that no `hybrid_context` symbol shadows a
-   `SearchWeights` field.
-2. `weight_change_reaches_injection` — runs injection twice over a fixture with
-   two different `SearchWeights` values and asserts the returned ordering
-   differs. This is the direct proof that weight-grid output governs injection.
-3. `injection_channel_mask_is_exhaustive` — compile-time: `ChannelMask` has no
+S1 implements these focused tests:
+
+1. `injection_ordering_follows_search_weights` — runs injection twice over a
+   fixture with two explicit `SearchWeights` values and proves the returned
+   ordering changes. This proves only that explicit weights reach injection;
+   it does not prove that `eval-weight-grid` executes injection or that its
+   generated report is applied at runtime.
+2. `default_weights_are_the_production_path` — proves the zero-argument
+   production wrapper is equivalent to explicit `SearchWeights::default()`.
+3. `hybrid_context_declares_no_private_scoring_constants` — rejects all eight
+   former scoring `const` declarations in `hybrid_context.rs`.
+
+The issue-level completion verification remains:
+
+1. `channel_sources_are_shared` — assert the channel name/weight pairs produced
+   under `injection()` and `search()` come from one engine/profile definition.
+2. `injection_channel_mask_is_exhaustive` — compile-time: `ChannelMask` has no
    `Default`, so every constructor must name every field.
-4. Injection evaluation before and after, committed to the PR, showing no
-   regression; the `graph` and confidence-gate deltas reported separately from
-   the refactor.
-5. `cargo test` green; no `const` in `hybrid_context.rs` duplicating a
-   `SearchWeights` field (grep assertion in the test).
+3. Run injection evaluation before and after, commit the evidence to the PR,
+   and report the `graph` and confidence-gate deltas separately from the
+   behavior-preserving refactor.
+4. Keep `cargo test` green through every stage.
 
 ## Risks
 
