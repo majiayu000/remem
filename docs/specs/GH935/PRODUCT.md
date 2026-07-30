@@ -512,6 +512,23 @@ projection is published after terminal sealing. The run record, selected-attempt
 manifest, report, and verdict all bind the plan commitment, frozen input
 hashes, scorer invocation/result hash, and oracle recomputation hash.
 
+For every `committed` selected attempt, the release bundle must also publish
+the complete, scanner-approved immutable `host_channel_prompt_stream_v1` byte
+object and canonical RFC-8785 `prompt_surface_manifest_v1`; the registered
+no-reveal preparation failure instead carries its typed absence. The manifest
+uses plan-fixed segment IDs/order/ownership and exactly partitions
+`[0, stream_length)` once, with no gap, overlap, duplicate, relabeling, or
+post-run closure expansion. Verification independently slices the published
+object, rehashes every segment and the whole stream, proves all bytes outside
+the single `condition_surface` framing closure are byte-identical across the
+paired conditions, and proves the terminal rolling sent hash/length equals the
+published object exactly. Recorded hashes are inputs to compare, never trusted
+as proof. A partial send, slice/root mismatch, out-of-closure difference,
+unpublished/redacted byte, or scanner failure makes `resolved = null` and the
+evidence `partial_non_security` / `INSUFFICIENT`; a verified private-byte leak
+retains security precedence. Privacy or result sensitivity is never a reason
+to omit a byte from claim-bearing evidence.
+
 After all authorized attempts are terminally sealed, the release bundle opens
 the pre-run commitment: it publishes the exact non-secret scorer
 engine/scoring-IR and oracle bytes (or rerunnable deterministic derivation),
@@ -533,16 +550,42 @@ The oracle and its commitment opening remain unavailable to every target,
 exporter, source host, and run-visible root until all attempts seal. Early
 visibility is benchmark-integrity failure and yields
 `partial_non_security` / `INSUFFICIENT`; exposure of registered private bytes
-is instead a verified security breach. Publication stages immutable content,
-performs one create-only/CAS visibility seal, then retires a content-derived
-fingerprint over the hidden-input root, scoring IR, oracle rules, and
-sanitizer/deriver bytes. An ambiguous publication crash retires the fingerprint
-without retry and yields `partial_non_security` / `INSUFFICIENT`. A duplicate
-command must make zero mutations and does not invalidate an already-valid first
-publication; two observed seals, or any official run using a retired
-fingerprint under another revision ID, make that candidate evidence
-`partial_non_security` / `INSUFFICIENT`. A future official run requires newly
-fingerprinted hidden/scorer/oracle material.
+is instead a verified security breach.
+
+`release_revision_registry_v1` is one public, append-only authoritative
+CAS/transparency namespace whose identity, genesis checkpoint/root, log key,
+independent witness keys/quorum, gossip rule, and maximum checkpoint age are
+fixed by the charter, never supplied by an execution root or bundle. It
+combines an append log with an authenticated state map keyed by the
+content-derived fingerprint over hidden-input root, scoring IR, oracle rules,
+and sanitizer/deriver bytes. The plan binds a fresh, independently obtained,
+quorum-witnessed prior checkpoint/root, its consistency proof from genesis,
+prior chain hash, authenticated `unused`/non-membership proof, and expected
+create-only CAS. Before any live host/provider call, preflight obtains the
+current checkpoint from the authority and witness quorum, rejects same-key
+equivocation/split view through gossip, and atomically reserves the fingerprint
+against that root. A race, stale/forked root, missing quorum, alternate
+namespace/key, unavailable authority, or ambiguous receipt forbids the call.
+A reservation consumes the fingerprint even when execution later aborts.
+
+Publication stages immutable content, performs one create-only/CAS visibility
+seal, and appends the `reserved -> retired` transition. The bundle carries the
+signed prior and post checkpoints, reservation and retirement leaves/receipts,
+append-log inclusion and consistency proofs, state-map transition proof, and
+non-reuse proof. The verifier's trust input includes a fresh quorum-witnessed
+checkpoint obtained independently of the bundle and at or after its post-root;
+offline verification may use the separately distributed canonical checkpoint
+in the clean checkout, but never a bundle-only checkpoint. It validates one
+genesis -> prior -> reservation -> retirement -> post -> independent-checkpoint
+consistency chain, witness quorum/freshness/gossip, and absence of same-key
+equivocation against the canonical public history. A bundle-local or
+execution-root-declared empty/forked registry and reuse under another revision
+ID, execution root, or clone are invalid. An ambiguous publication crash retires without retry and yields
+`partial_non_security` / `INSUFFICIENT`. A rejected duplicate command makes
+zero mutations and does not invalidate the valid first publication; two
+observed seals or missing/invalid history proofs make the candidate evidence
+`partial_non_security` / `INSUFFICIENT`. A future official run requires a
+fingerprint proven unused in the same authoritative namespace.
 
 The release evidence also contains all sanitized primary and diagnostic
 records, attempt history, manifests, direction reports, and claim verdict.
@@ -613,6 +656,19 @@ decisions. This spec PR authorizes none of them.
   crash/unclassifiable output, duplicate release attempts and observed duplicate
   seals, and retired revision reuse, asserting the exact safety `FAIL` versus
   comparative `INSUFFICIENT` mapping above.
+- Prompt-publication attacks cover missing/redacted bytes, manifest
+  gap/overlap/duplicate/relabeling/closure expansion, slice/root rehash drift,
+  out-of-closure cross-condition mutation, rolling-send mismatch, and a byte
+  declared too private or result-sensitive to publish; each is
+  `partial_non_security` / `INSUFFICIENT` unless a verified leak yields safety
+  `FAIL`.
+- Registry attacks cover a self-reported empty/local namespace, alternate key,
+  missing/wrong genesis, stale/forked or same-key split-view checkpoint,
+  missing witness quorum/gossip or bundle-external checkpoint, invalid
+  non-membership/inclusion/consistency/state proof, CAS race, missing
+  retirement, and fingerprint reuse via a new revision ID/execution root; live
+  preflight rejects before calls, while observed candidate evidence is
+  `partial_non_security` / `INSUFFICIENT`.
 - The production user-identity prerequisite is either implemented and tested,
   or every public comparative verdict is deterministically `INSUFFICIENT`.
 - A separately authorized smoke covers both directions and all six required

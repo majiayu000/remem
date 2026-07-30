@@ -195,8 +195,8 @@ Each target attempt records:
 - planned/realized condition position, start/end timestamps, and one sealed terminal reason;
 - source seal hash, even when the condition cannot read its contents;
 - full prompt-stream/surface-manifest/task-segment/condition-surface hashes and
-  lengths, executable/profile hashes, plus all reveal/no-write artifacts and
-  the derived reveal state;
+  lengths, rolling sent hash/length, executable/profile hashes, all
+  reveal/no-write artifacts, and the derived reveal state;
 - pre-run scorer-commitment/release-fingerprint/revision hashes, frozen final
   workspace/output hashes, scorer invocation/result hash, and oracle
   recomputation hash;
@@ -228,8 +228,12 @@ target attempts, fixed attempt/reveal policy, per-attempt `R`/`N` counts and
 `M`/`T` counts, ordered journal/terminal-seal roots, derived reveal states,
 terminal `selected_claim_attempt`/`resolved`, missing/
 not-started tuples, scorer commitment/release fingerprint/revision, frozen scoring-input
-hashes, artifact hashes, and reason codes. A manifest cannot be `complete` when
-any selected boolean score lacks a matching committed-oracle recomputation.
+hashes, prompt-stream/manifest bundle root, authoritative registry
+namespace/prior/reservation/retirement/post roots and proof root, artifact
+hashes, and reason codes. A manifest cannot be `complete` when any selected
+`committed` boolean lacks matching oracle/publishable stream, when the
+registered no-reveal `ordinary_failure` lacks its typed stream/scorer absence,
+or when the authoritative registry proof is invalid.
 
 - `complete` requires 288 unique primary tuples and 144 unique source-native
   import tuples.
@@ -259,6 +263,7 @@ The `canonical_json_rfc8785_v1` report includes:
 - stop-loss values and source attribution;
 - pre-run scorer commitment/release fingerprint/revision, frozen workspace/output and
   scorer/oracle result hashes for every selection;
+- prompt-stream/manifest bundle root and authoritative registry proof/root chain;
 - hashes of the manifest and complete sanitized record bundle.
 
 Markdown is rendered deterministically from canonical JSON. The verdict binds:
@@ -267,7 +272,8 @@ Markdown is rendered deterministically from canonical JSON. The verdict binds:
 - Markdown report hash;
 - renderer version/hash;
 - evidence-manifest and sanitized-record-bundle hashes;
-- scorer commitment/release fingerprint/revision and the ordered frozen-input/result root.
+- scorer commitment/release fingerprint/revision, prompt-stream root,
+  registry post-root, and the ordered frozen-input/result root.
 
 Verification regenerates Markdown byte-for-byte before publication. Plan-hashed
 vectors must match an independent RFC 8785 implementation for nested key order,
@@ -664,9 +670,7 @@ security contract, not an implicit extension of this benchmark.
 
 ## Sanitized Release Evidence
 
-Raw stores, host sessions, credentials, private roots, and unsanitized hidden
-tests are target-invisible and never committed. The runner builds the release
-only after every authorized attempt terminally seals. The bundle contains:
+Raw stores, host sessions, credentials, private roots, and unsanitized hidden tests remain target-invisible and uncommitted. Only after every authorized attempt terminally seals, the bundle contains:
 
 - all selected primary and diagnostic run records;
 - immutable prior-attempt summaries, reveal artifacts/states, and selection policy;
@@ -674,38 +678,19 @@ only after every authorized attempt terminally seals. The bundle contains:
 - task/fixture/schema/version hashes, export boundary/budgets, and native-import lineage;
 - sanitized causal inputs/results, bootstrap bytes/hash, and sampled-index/quantile vectors;
 - projection/key-ID/rekey protocol hashes, but never source or projection key bytes;
-- the `pre_run_scorer_commitment_v1` opening: exact non-secret hidden-scorer
-  engine/scoring-IR bytes, exact oracle bytes or rerunnable committed
-  derivation, release fingerprint/revision, and hidden-input inclusion/derivation proofs;
-- each `scoring_input_freeze_v1` manifest/object needed to verify final
-  workspace/output hashes and recompute selected `resolved` and
-  `action_counterfactual_v1`;
+- scorer-commitment opening: exact non-secret engine/IR, oracle bytes or rerunnable derivation, release fingerprint/revision, hidden-input proofs, and every scoring projection/freeze manifest/object needed to recompute `resolved` and counterfactuals;
+- for every `committed` selected attempt, the scanner-approved complete immutable `host_channel_prompt_stream_v1` bytes and canonical RFC-8785 `prompt_surface_manifest_v1`; registered no-reveal preparation failure carries typed absence;
+- authoritative registry namespace/checkpoints, reservation/retirement leaves and receipts, append inclusion/consistency, authenticated-state transition, and non-reuse proofs;
 - candidate JSON and deterministic Markdown reports;
-- verdict binding report/manifest/bundle hashes, renderer, scorer commitment,
-  release fingerprint/revision, and ordered frozen-input/result root.
+- verdict binding report/manifest/bundle, renderer, scorer commitment/fingerprint/revision, prompt-stream root, registry post-root, and ordered frozen-input/result root.
 
-A clean checkout uses the committed Git/runtime/toolchain without network or
-ambient state, verifies exact hashes against the pre-run commitment, rebuilds
-the oracle if selected, verifies every published scoring-projection object and
-proof into the full-freeze roots, reruns oracle/counterfactuals, and regenerates
-report/verdict without trusting `resolved`. Missing, mismatched, unopenable, or
-unrunnable bytes are `partial_non_security` / `INSUFFICIENT`; undisclosed raw
-material cannot affect a result.
+A clean checkout uses the committed Git/runtime/toolchain without network/ambient state, verifies exact hashes against the pre-run commitment, rebuilds the oracle if selected, verifies every scoring projection/proof into full-freeze roots, reruns oracle/counterfactuals, and regenerates report/verdict without trusting `resolved`. Missing, mismatched, unopenable, or unrunnable bytes are `partial_non_security` / `INSUFFICIENT`; undisclosed raw material cannot affect a result.
 
-`release_revision_registry_v1` keys a content-derived fingerprint over hidden
-input root, scoring IR, oracle rules, and sanitizer/deriver bytes, and is
-included in the offline plan. Publication stages immutable content, then one
-create-only/CAS seal is its visibility transition after the scanner passes. Oracle, derivation
-opening, and scoring inputs must be unreadable to source/target/exporter/run
-roots before terminal sealing. Early visibility is
-`partial_non_security` / `INSUFFICIENT`, unless registered private bytes were
-exposed, which is `partial_security` / safety `FAIL`. An ambiguous publication
-crash retires the fingerprint without retry and is `INSUFFICIENT`. A duplicate
-command fails with zero mutation and does not invalidate the valid first seal;
-two observed seals invalidate the candidate evidence as `INSUFFICIENT`.
-Publication retires the fingerprint; planner/runner reject it under any
-revision ID before process spawn or host/provider call, and observed reuse is
-`partial_non_security` / `INSUFFICIENT`.
+For each published stream, the verifier independently requires the plan-fixed segment IDs/order/ownership to partition `[0, length)` exactly once; rejects gap/overlap/duplicate/relabel/closure expansion; slices and rehashes every segment and whole object; compares all paired-condition bytes outside the sole framing closure; and requires terminal rolling sent hash/length to equal the published object. It never trusts recorded hashes. Partial send, mismatch, outside mutation, unpublished/redacted byte, or scan failure sets `resolved=null` and `partial_non_security`/`INSUFFICIENT`; verified private leakage remains safety `FAIL`. Privacy/result sensitivity cannot excuse omission.
+
+`release_revision_registry_v1` is a public append-only authoritative CAS/transparency namespace whose identity, genesis/root, log key, independent witness keys/quorum, gossip, and maximum checkpoint age are charter-pinned, not root/bundle inputs. Its append log/authenticated map key the fingerprint. The plan binds a fresh independently obtained quorum-witnessed prior root, genesis consistency proof, chain hash, `unused` proof, and expected CAS. Before spawn/host/provider call, preflight checks the authority plus witnesses, rejects same-key equivocation/split view, and reserves against the current root; stale/forked/missing-quorum/alternate/unavailable/ambiguous state forbids calls, and reservation consumes the fingerprint after abort.
+
+Publication stages immutable content, makes one create-only/CAS seal, and appends `reserved -> retired`. Besides bundle proofs, verifier trust input requires a fresh quorum-witnessed checkpoint independently distributed outside the bundle at/after post-root; offline checkout may carry that canonical artifact. It validates genesis -> prior -> reservation -> retirement -> post -> independent checkpoint, freshness/quorum/gossip, and no same-key equivocation. Bundle-local empty/forked history or reuse by revision/root/clone fails. Early oracle visibility is `INSUFFICIENT` unless private bytes leaked (`FAIL`). Ambiguous publication retires without retry; a rejected duplicate preserves the first seal, while two seals or invalid history is `partial_non_security`/`INSUFFICIENT`.
 
 ## Implementation Slices
 
@@ -773,10 +758,17 @@ Future executable-version focused coverage must include:
 - scorer-oracle missing/hash/tamper/unrunnable and clean-checkout recomputation;
 - pre-run scorer/read-set commitment, frozen workspace/output projection,
   scorer-oracle disagreement, and result-affecting undisclosable-input rejection;
+- published stream missing/redacted/private-result byte, canonical-manifest
+  gap/overlap/duplicate/relabel/closure expansion, slice/root rehash drift,
+  out-of-closure paired mutation, and rolling-send/object mismatch, all
+  `INSUFFICIENT` unless verified private leakage yields `FAIL`;
 - early oracle/opening visibility (`INSUFFICIENT`), raw/encoded private leak
-  (`FAIL`), scanner crash (`INSUFFICIENT`), duplicate publication (reject before
-  mutation; observed duplicate is `INSUFFICIENT`), and retired-revision reuse
-  (pre-call reject; observed reuse is `INSUFFICIENT`);
+  (`FAIL`), scanner crash (`INSUFFICIENT`), and duplicate publication semantics;
+- authoritative-registry fake empty/local/alternate namespace or key,
+  wrong genesis, stale/forked/same-key split-view root, missing witness quorum/
+  gossip/bundle-external checkpoint, invalid non-membership/inclusion/
+  consistency/state proof, CAS race, missing retirement, and fingerprint reuse:
+  reject pre-call; observed candidate evidence is `INSUFFICIENT`;
 - fixed bootstrap framing/rejection/quantile vectors, adjusted regression, and
   PASS/FAIL/INSUFFICIENT edges;
 - secret-channel topology and raw/hex/versioned key residue scans;
