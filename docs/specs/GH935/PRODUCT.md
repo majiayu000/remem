@@ -17,9 +17,8 @@ The charter remains `infrastructure_only_no_runs`. This contract defines the
 remaining completion work; it is not outcome evidence and does not authorize a
 live run.
 
-Root-level `specs/GH*/` packets are historical planning evidence after the
-SpecRail workflow retirement in PR #965. This directory is the normative GH935
-contract.
+Root-level `specs/GH*/` packets are historical planning evidence. This
+directory is the normative GH935 contract.
 
 ## Product Question
 
@@ -283,6 +282,17 @@ source preparation unit and to each dependent target tuple:
   sealed, dependent tuples are recorded as not started and the candidate report
   is `partial_non_security` / `INSUFFICIENT`.
 
+Immediately before writing any target task-prompt byte to the host channel, the
+runner appends, fsyncs, and hash-seals `prompt_reveal_committed` with the target
+attempt ID, exact prompt hash, planned and realized sequence, commit timestamp,
+and prior journal hash. Its presence means revealed even if the subsequent send
+partly writes or fails. Its absence is retryable pre-reveal only when sealed
+launcher/channel evidence proves that writing any prompt byte was impossible;
+missing or ambiguous evidence is conservatively revealed and non-retryable.
+Every attempt seals one terminal reason. The manifest verifier derives claim
+selection only from these events and no-write proofs, rejecting gaps, tampering,
+duplicates, or timestamp/status inference.
+
 Every target record references exactly one `source_attempt_id` and has its own
 `target_attempt_id`. All attempts remain immutable and visible in operational
 reliability and cost metrics, including attempts exhausted before prompt reveal.
@@ -435,6 +445,17 @@ claim verdict. Every claim-bearing JSON artifact uses the versioned exact-byte
 `canonical_json_rfc8785_v1` contract defined in TECH. Markdown is
 deterministically rendered from that JSON; the verdict binds both hashes and
 the renderer version, and verification regenerates Markdown byte-for-byte.
+After all authorized attempts are terminally sealed, the same bundle releases
+a sanitized executable scorer oracle and the minimum non-secret fixtures/replay
+inputs needed for a clean checkout to recompute every selected `resolved` value
+and `action_counterfactual_v1` result. It is hash-bound to the pre-registered
+hidden-test, scorer, oracle-rule, run-record, and replay-input revisions, was
+unavailable to target processes during execution, and passes the artifact
+scanner before publication. Raw private tests, roots, credentials, and
+transcripts remain non-public. A missing, mismatched, or unrunnable oracle makes
+the score non-claimable and the overall verdict `INSUFFICIENT`. Publication
+retires that hidden revision for official use; any future official run requires
+a newly registered hidden revision.
 
 For `PASS`, `FAIL`, and `INSUFFICIENT`, the same reporting change updates:
 
@@ -456,8 +477,7 @@ Git head, fixture/plan hash, host/model profiles, tuple set, and hard
 per-invocation host-call, LLM-call, and estimated-cost caps. The v2 runner is
 single-operator only:
 
-- it does not accept a reusable SpecRail approval, route-gate result, or PR-gate
-  artifact;
+- it does not accept a reusable workflow or gate approval artifact;
 - it does not claim a local lock or same-repository Git ref is a global budget
   ledger;
 - it does not support concurrent or cross-clone execution under one
@@ -490,8 +510,9 @@ decisions. This spec PR authorizes none of them.
   isolation, counterbalanced ordering, encrypted/rekeyed target projection,
   native-neutral ablation, registered-native-canary exclusion, maintained-export
   protocol, causal attribution, remem-preparation failure fan-out, pre-prompt
-  null/no-imputation, fixed retry selection, failure retention, and leak
-  redaction have positive and negative tests.
+  null/no-imputation, durable reveal commitment, fixed retry selection, failure
+  retention, post-run scorer-oracle recomputation, and leak redaction have
+  positive, missing-evidence, and tamper tests.
 - The production user-identity prerequisite is either implemented and tested,
   or every public comparative verdict is deterministically `INSUFFICIENT`.
 - A separately authorized smoke covers both directions and all six required

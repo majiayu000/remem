@@ -242,23 +242,29 @@ Each target attempt records:
 
 - tuple key, `source_attempt_id`, source-attempt record hash,
   `target_attempt_id`, condition, direction, task, and run index;
-- planned condition position, realized position, and start/end timestamps;
+- planned/realized condition position, start/end timestamps, and one sealed terminal reason;
 - source seal hash, even when the condition cannot read its contents;
-- task prompt, condition surface, executable/profile, and scorer hashes;
-- projection logical/ciphertext hashes and `projection_key_id`, where
-  applicable;
+- task prompt, condition surface, executable/profile, and scorer hashes, plus either
+  `prompt_reveal_committed` or a sealed launcher/channel no-write proof;
+- projection logical/ciphertext hashes and `projection_key_id`, where applicable;
 - target HOME/config/session/workspace identities;
 - status: `success`, `ordinary_failure`, or `security_breach`;
 - resolved and secondary metrics with nullable values and reasons;
 - host calls, LLM calls, tokens, wall time, turns, and estimated cost;
 - cleanup and leak-scan results;
 - attribution refs or typed `absent_due_to` for every production stage;
-- maintained-export protocol/boundary/budget records or native-neutral/import
-  attempt records for the applicable condition;
+- maintained-export protocol/boundary/budget or applicable native-neutral/import records;
 - a closed `causal_oracle_v1` record for every scorer-recognized wrong action.
 
 A record can be schema-valid while its task outcome failed. Failed records stay
 in the registered denominator.
+
+`prompt_reveal_committed` contains target-attempt ID, exact prompt hash, planned/
+realized sequence, commit timestamp, and prior journal hash. The runner appends,
+fsyncs, and seals it before the first prompt byte. Presence means revealed even
+when send fails; absence is pre-reveal only with sealed launcher/channel proof
+that no byte could be written. Missing/duplicate/ambiguous evidence is revealed
+and non-retryable; selection uses only this event/proof and the terminal record.
 
 ### Evidence Manifest
 
@@ -408,6 +414,8 @@ plan-hashed counterbalanced order. Each condition gets a fresh fixture reset
 and only its declared memory surface. The runner records planned/realized
 position and timestamps; skipped, reordered, or duplicated positions make the
 comparison insufficient.
+Each target attempt either seals launcher/channel proof that no write is possible
+or commits `prompt_reveal_committed` before sending, then seals one terminal reason.
 
 #### `no_memory`
 
@@ -560,15 +568,12 @@ identity plumbing.
 
 `pre_prompt_transient_v1` applies independently to every source unit and tuple:
 
-- maximum three immutable source attempts before any dependent reveal and three
-  immutable target attempts per tuple;
-- retry before the relevant target prompt is revealed only for
-  `transient_auth_unavailable`, `provider_unavailable`,
-  `host_bootstrap_failed`, `runner_io_before_prompt`, or
-  `pre_prompt_timeout`;
-- the first prompt-revealed attempt is selected regardless of outcome; the only
-  no-reveal selection is one non-retryable condition-preparation attempt after
-  common-source success, and neither form permits a later claim retry;
+- maximum three immutable source attempts before any dependent reveal and three target attempts per tuple;
+- retry before reveal only for `transient_auth_unavailable`, `provider_unavailable`,
+  `host_bootstrap_failed`, `runner_io_before_prompt`, or `pre_prompt_timeout`;
+- select the first attempt with `prompt_reveal_committed` regardless of outcome;
+  only one non-retryable post-common-source preparation attempt may be selected
+  without reveal, and neither form permits a later claim retry;
 - semantic failure, unresolved result, post-reveal timeout, scorer result,
   security/scope event, and cleanup failure are never retry-eligible;
 - after three eligible pre-reveal failures, `selected_claim_attempt = null`, the
@@ -579,9 +584,9 @@ identity plumbing.
   dependent tuples are not started and the candidate report is
   `partial_non_security` / `INSUFFICIENT`.
 
-Immutable timestamps/reasons validate selection. Every attempt remains in
-reliability/cost tables; successful retries cannot be selected post hoc.
-Condition-attributable preparation failure differs from infrastructure exhaustion.
+Selection uses only sealed reveal/no-write evidence and terminal reasons, never
+timestamps. All attempts remain in reliability/cost tables; successful retries
+cannot be selected post hoc. Preparation failure differs from infrastructure exhaustion.
 
 The primary statistical family has four registered comparisons:
 `remem_shared` versus `no_memory` and `exported_file`, separately in both
@@ -688,26 +693,27 @@ security contract, not an implicit extension of this benchmark.
 
 ## Sanitized Release Evidence
 
-Raw source stores, host sessions, credentials, hidden tests, and private roots
-are never committed. The release bundle contains enough sanitized data to
-recompute every reported numerator, denominator, interval, cost, attribution
-status, stop-loss, and verdict:
+Raw stores, host sessions, credentials, private roots, and unsanitized hidden
+tests are target-invisible and never committed. After all authorized attempts
+terminally seal, the sanitized bundle recomputes every metric and verdict:
 
 - all selected primary and diagnostic run records;
 - immutable prior-attempt summaries and selection policy;
 - complete or partial manifest;
-- task/fixture/scorer/schema/version hashes, maintained-export boundary and
-  budget records, and native-neutral/import lineage;
-- sanitized causal inputs/results, exact bootstrap algorithm bytes/hash, and
-  sampled-index/quantile vectors needed to recompute stop-losses and intervals;
-- projection logical/ciphertext hashes, key IDs, and rekey/provisioning
-  protocol hashes, but never source or projection key bytes;
+- task/fixture/scorer/schema/version hashes, export boundary/budgets, and native-import lineage;
+- sanitized causal inputs/results, bootstrap bytes/hash, and sampled-index/quantile vectors;
+- projection/key-ID/rekey protocol hashes, but never source or projection key bytes;
+- `sanitized_scorer_oracle_v1`: an executable oracle and minimum non-secret
+  fixtures/replay inputs that cleanly recompute every selected `resolved` and
+  `action_counterfactual_v1`, hash-bound to hidden-test/scorer/oracle/run revisions;
 - candidate JSON and deterministic Markdown reports;
 - verdict binding both report hashes and renderer version.
 
-The scanner validates the bundle before report construction and again before
-publication. A clean checkout can recompute the report and verdict without
-host credentials or private artifacts.
+The oracle remains target/run-invisible until all attempts seal and is scanned
+before publication. Missing, mismatched, tampered, or unrunnable bytes make
+scores non-claimable and the verdict `INSUFFICIENT`; raw tests/transcripts stay
+private. Publication is one-shot, so future official runs need a new hidden
+revision. A clean checkout recomputes scorer results, report, and verdict.
 
 ## Implementation Slices
 
@@ -764,13 +770,14 @@ Future executable-version focused coverage must include:
 - native import pairing with neutral counts, Claude snapshot/drift rejection,
   authorized inserted lineage, canary typed exclusion/zero rows, and raw-free projections;
 - causal-oracle pre-action/counterfactual positive, refuted, Stop-only, ambiguous/missing cases, and failed-run retention;
-- automatic-only review, exact attempt refs, preparation/infrastructure
-  classification, and pre-prompt exhaustion with null resolved/no scorer;
+- automatic-only review, exact attempt refs, preparation/infrastructure classification,
+  reveal-commit crash/tamper/no-write, and null/no-scorer pre-prompt exhaustion;
 - required stale challenge pre-filter inventory and empty-applicable-set
   rejection;
 - source failure before seal with immutable lifecycle/cost/cleanup evidence, plus
   complete, non-security partial, and security partial reports;
 - cross-implementation RFC 8785 byte vectors, deterministic Markdown, and hash-bound verdict;
+- scorer-oracle missing/hash/tamper/unrunnable and clean-checkout recomputation;
 - fixed bootstrap framing/rejection/quantile vectors, adjusted regression, and
   PASS/FAIL/INSUFFICIENT edges;
 - secret-channel topology and raw/hex/versioned key residue scans;
