@@ -270,6 +270,33 @@ fn prune_holds_model_state_pin_until_delete_commits() -> Result<()> {
     )?;
     drop(setup);
 
+    PRUNE_DB_BUSY.store(false, Ordering::SeqCst);
+    let prune_db_path = db_path.clone();
+    let prune_model_root = model_root.clone();
+    let target = EmbeddingBackfillTarget {
+        model: DEFAULT_EMBEDDING_MODEL.to_string(),
+        dimensions: EMBEDDING_DIMENSIONS,
+    };
+    let (prune_ready_tx, prune_ready_rx) = std::sync::mpsc::sync_channel(1);
+    let (prune_start_tx, prune_start_rx) = std::sync::mpsc::sync_channel(1);
+    let prune = std::thread::spawn(move || -> Result<InactiveEmbeddingPruneReport> {
+        let _provider = ScopedEmbeddingProvider::new("auto");
+        unsafe {
+            std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &prune_model_root);
+        }
+        prune_ready_tx.send(())?;
+        prune_start_rx.recv()?;
+        let conn = Connection::open(prune_db_path)?;
+        conn.busy_handler(Some(signal_prune_db_busy))?;
+        prune_inactive_memory_embeddings(&conn, &target)
+    });
+
+    // Full-suite peers may hold TEST_ENV_LOCK for several seconds. Start the
+    // database-contention deadline only after this worker owns that lock and
+    // has installed its environment.
+    prune_ready_rx
+        .recv_timeout(Duration::from_secs(30))
+        .context("prune worker did not acquire the test environment lock")?;
     let blocker = Connection::open(&db_path)?;
     blocker.execute_batch("BEGIN IMMEDIATE")?;
     assert!(
@@ -286,22 +313,7 @@ fn prune_holds_model_state_pin_until_delete_commits() -> Result<()> {
         1,
         "blocker must own an uncommitted write to the row prune will delete"
     );
-    PRUNE_DB_BUSY.store(false, Ordering::SeqCst);
-    let prune_db_path = db_path.clone();
-    let prune_model_root = model_root.clone();
-    let target = EmbeddingBackfillTarget {
-        model: DEFAULT_EMBEDDING_MODEL.to_string(),
-        dimensions: EMBEDDING_DIMENSIONS,
-    };
-    let prune = std::thread::spawn(move || -> Result<InactiveEmbeddingPruneReport> {
-        let _provider = ScopedEmbeddingProvider::new("auto");
-        unsafe {
-            std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &prune_model_root);
-        }
-        let conn = Connection::open(prune_db_path)?;
-        conn.busy_handler(Some(signal_prune_db_busy))?;
-        prune_inactive_memory_embeddings(&conn, &target)
-    });
+    prune_start_tx.send(())?;
 
     let busy_deadline = Instant::now() + Duration::from_secs(3);
     while !PRUNE_DB_BUSY.load(Ordering::SeqCst) && Instant::now() < busy_deadline {
