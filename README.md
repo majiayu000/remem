@@ -1135,9 +1135,10 @@ scripts/smoke_native_web_api.sh
 
 The `Plaintext residue` check in `remem doctor` inspects every regular file at
 the root of `REMEM_DATA_DIR` by content, including custom backup outputs with
-arbitrary names or no extension. It also inspects regular files one level under
-`REMEM_DATA_DIR/backups/` when `backups/` is a real directory rather than a
-symlink. The check is read-only and never deletes data. When it finds a
+arbitrary names or no extension. It also recursively inspects regular files
+throughout `REMEM_DATA_DIR/backups/` when `backups/` and its descendants are
+real directories rather than symlinks. The check is read-only and never
+deletes data. When it finds a
 plaintext copy while the live database is confirmed encrypted, it reports
 `Fail` and `remem doctor` exits with code 2. If the live database is plaintext
 or its encryption state cannot be confirmed, the finding is `Warn`. An entry
@@ -1156,11 +1157,13 @@ Handle a finding according to its status:
   encryption. If either exists, verify that `REMEM_DATA_DIR/backups/` is an
   actual directory and not a symlink, choose unused destination names there,
   and move each blocker without overwriting another file. Then run
-  `remem encrypt` and rerun `remem status` and `remem doctor` until the database
-  opens and doctor confirms that it is encrypted. Only after both checks
-  succeed should you run `remem admin backup` to create a new encrypted backup,
-  then manually delete the older plaintext copies or retain them solely in
-  encrypted storage.
+  `remem encrypt` and use `remem status` to confirm that the live database
+  opens. Run `remem doctor` and verify that the Plaintext residue detail says
+  the live database is encrypted and readable; this check is expected to remain
+  `Fail` while the preserved copies are still present. Then run
+  `remem admin backup` to create a new encrypted backup, manually delete the
+  older plaintext copies or retain them solely in encrypted storage, and rerun
+  `remem doctor` until Plaintext residue passes.
 - For `Warn` caused by a missing or unverified live database, key problems, or
   I/O errors, do not back up or delete anything. First repair the live database,
   key, or readability problem. Continue with backup and disposal only after

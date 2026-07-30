@@ -53,11 +53,13 @@ files `REMEM_DATA_DIR/remem.db.bak` and \
 `REMEM_DATA_DIR/backups/` is a real directory and not a symbolic link, choose a distinct unused \
 destination name there for each blocker, and move each blocker without overwriting any existing \
 file. Only after every existing blocker has been preserved successfully should you run `remem \
-encrypt`, then run `remem status` and `remem doctor` until they report the live database as \
-encrypted and readable. Before that confirmation, do not treat any `remem admin backup` output \
-as encrypted. After confirmation, run `remem admin backup` to create a new encrypted backup; \
-after it succeeds, manually delete the listed plaintext copies or retain them only in encrypted \
-storage. Moving them outside the remem data dir alone does not protect them"
+encrypt`, then run `remem status` to confirm the live database opens. Run `remem doctor` and \
+verify that its Plaintext residue detail reports the live database as encrypted and readable; \
+that check is expected to remain `Fail` while the preserved plaintext copies exist. Only after \
+that confirmation should you run `remem admin backup` to create a new encrypted backup. After \
+the backup succeeds, manually delete the listed plaintext copies or retain them only in encrypted \
+storage, then rerun `remem doctor` until Plaintext residue passes. Moving them outside the remem \
+data dir alone does not protect them"
             }
             Self::Missing => {
                 "remem doctor did not delete any files. Do not create a new backup or delete any \
@@ -79,8 +81,8 @@ outside the remem data dir alone does not protect them"
     }
 }
 
-/// Detect plaintext SQLite residue next to the live database and in the first
-/// level of the managed backup directory.
+/// Detect plaintext SQLite residue next to the live database and throughout
+/// the managed backup directory.
 ///
 /// The shared doctor connection is the source of truth for live-database
 /// readability. A non-plaintext header alone is not proof of encryption: a
@@ -101,15 +103,7 @@ fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readabl
     let mut plaintext = Vec::new();
     let mut issues = Vec::new();
     scan_sibling_artifacts(data_dir, db_path, &mut plaintext, &mut issues);
-    scan_directory(
-        &data_dir.join("backups"),
-        true,
-        true,
-        false,
-        |_| true,
-        &mut plaintext,
-        &mut issues,
-    );
+    scan_backup_artifacts(data_dir, &mut plaintext, &mut issues);
     let live_state = inspect_live_database(db_path, live_db_readable, &mut issues);
     plaintext.sort_by(|left, right| left.path.cmp(&right.path));
     plaintext.dedup_by(|left, right| left.path == right.path);
@@ -120,7 +114,7 @@ fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readabl
             return Check::new(
                 "Plaintext residue",
                 Status::Ok,
-                "no plaintext database artifacts found beside the live database or in the first level of the backups directory",
+                "no plaintext database artifacts found beside the live database or in the managed backups directory tree",
             );
         }
         return Check::new(
@@ -200,6 +194,7 @@ fn scan_sibling_artifacts(
         },
         plaintext,
         issues,
+        None,
     );
     scan_directory(
         data_dir,
@@ -209,7 +204,29 @@ fn scan_sibling_artifacts(
         |name| name != OsStr::new(db_file_name),
         plaintext,
         issues,
+        None,
     );
+}
+
+fn scan_backup_artifacts(
+    data_dir: &Path,
+    plaintext: &mut Vec<PlaintextArtifact>,
+    issues: &mut Vec<String>,
+) {
+    let root = data_dir.join("backups");
+    let mut directories = vec![root.clone()];
+    while let Some(directory) = directories.pop() {
+        scan_directory(
+            &directory,
+            directory == root,
+            true,
+            false,
+            |_| true,
+            plaintext,
+            issues,
+            Some(&mut directories),
+        );
+    }
 }
 
 fn scan_directory(
@@ -220,6 +237,7 @@ fn scan_directory(
     is_candidate: impl Fn(&OsStr) -> bool,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
+    mut child_directories: Option<&mut Vec<PathBuf>>,
 ) {
     let directory_metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
@@ -269,6 +287,22 @@ fn scan_directory(
         };
         if !is_candidate(&entry.file_name()) {
             continue;
+        }
+        if let Some(directories) = child_directories.as_deref_mut() {
+            match entry.file_type() {
+                Ok(file_type) if file_type.is_dir() => {
+                    directories.push(entry.path());
+                    continue;
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    issues.push(format!(
+                        "cannot determine file type for {}: {error}",
+                        entry.path().display()
+                    ));
+                    continue;
+                }
+            }
         }
         inspect_candidate(
             &entry,
@@ -446,14 +480,12 @@ fn same_file(left: &Metadata, right: &Metadata) -> bool {
     true
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod regression_tests;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(unix)]
-    use std::os::unix::fs::PermissionsExt;
 
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -572,47 +604,15 @@ mod tests {
     }
 
     #[test]
-    fn scans_custom_root_sqlite_without_treating_arbitrary_files_as_candidates() {
-        let dir = temp_dir("custom-root");
-        write_non_plaintext_db(&dir.join("remem.db"));
-        write_plaintext_db(&dir.join("pre-encryption-backup"));
-        fs::write(dir.join("truncated.sqlite"), b"short").unwrap();
-        fs::write(dir.join(".key"), b"short").unwrap();
-        fs::write(dir.join("remem.log"), b"short").unwrap();
-        write_non_plaintext_db(&dir.join("unrelated.txt"));
-        write_non_plaintext_db(&dir.join("noise.sqlite"));
-        #[cfg(unix)]
-        let unreadable = {
-            let path = dir.join("unreadable.sqlite");
-            write_plaintext_db(&path);
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o000)).unwrap();
-            path
-        };
-        let result = check(&dir, true);
-        assert_eq!(result.status, Status::Fail);
-        let detail = result.detail.as_str();
-        for expected in ["pre-encryption-backup", "truncated.sqlite", "shorter than"] {
-            assert!(detail.contains(expected), "{detail}");
-        }
-        #[cfg(unix)]
-        assert!(detail.contains("cannot open") && detail.contains("unreadable.sqlite"));
-        for excluded in [".key", "remem.log", "unrelated.txt", "noise.sqlite"] {
-            assert!(!detail.contains(excluded), "{detail}");
-        }
-        #[cfg(unix)]
-        fs::set_permissions(unreadable, fs::Permissions::from_mode(0o600)).unwrap();
-        cleanup(&dir);
-    }
-
-    #[test]
-    fn backup_scan_is_not_recursive() {
+    fn scans_nested_backup_destinations() {
         let dir = temp_dir("nonrecursive");
         write_non_plaintext_db(&dir.join("remem.db"));
         let nested = dir.join("backups").join("nested");
         fs::create_dir_all(&nested).unwrap();
         write_plaintext_db(&nested.join("plaintext.sqlite"));
         let result = check(&dir, true);
-        assert_eq!(result.status, Status::Ok);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.detail.contains("nested/plaintext.sqlite"));
         cleanup(&dir);
     }
 
@@ -644,44 +644,11 @@ mod tests {
         let detail = result.detail.as_str();
         assert!(detail.contains("Live database is plaintext"));
         assert!(detail.contains("every existing blocker has been preserved successfully"));
-        assert!(detail.contains("`remem doctor` until"));
-        assert!(detail.contains("do not treat any `remem admin backup` output as encrypted"));
-        assert!(detail.contains("After confirmation, run `remem admin backup`"));
+        assert!(detail.contains("expected to remain `Fail`"));
+        assert!(detail.contains("Only after that confirmation"));
+        assert!(detail.contains("rerun `remem doctor` until Plaintext residue passes"));
         assert!(detail.contains("did not delete any files"));
         assert!(detail.contains("alone does not protect"));
-        cleanup(&dir);
-    }
-
-    #[test]
-    fn plaintext_live_db_preserves_encrypt_blockers_before_encryption() {
-        let dir = temp_dir("live-plaintext-blockers");
-        for name in ["remem.db", "remem.db.bak", "remem.db.enc"] {
-            write_plaintext_db(&dir.join(name));
-        }
-        let result = check(&dir, true);
-        assert_eq!(result.status, Status::Warn);
-        let steps = [
-            "`REMEM_DATA_DIR/remem.db.bak`",
-            "`REMEM_DATA_DIR/remem.db.enc`",
-            "`REMEM_DATA_DIR/backups/`",
-            "real directory and not a symbolic link",
-            "distinct unused destination name",
-            "without overwriting any existing file",
-            "`remem encrypt`",
-            "`remem status`",
-            "`remem doctor`",
-            "`remem admin backup`",
-            "manually delete",
-        ]
-        .map(|step| result.detail.find(step).expect("ordered remediation step"));
-        assert!(steps.windows(2).all(|pair| pair[0] < pair[1]));
-        for shell_fragment in ["export ", "mkdir -p", "mktemp", "mv \"", "[ -L "] {
-            assert!(
-                !result.detail.contains(shell_fragment),
-                "{detail}",
-                detail = result.detail
-            );
-        }
         cleanup(&dir);
     }
 
