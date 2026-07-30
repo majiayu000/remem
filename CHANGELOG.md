@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.37` for GH-951: the owner-trace exclusion query is
+  a `NOT ... OR ...` scan no index can serve, and it ran on every SessionStart
+  even though its only consumers are debug output and `governance_eval_snapshot`
+  (which passes `collect_diagnostics = true`). It is now gated, removing a full
+  table scan from the non-debug hot path. The indexed `id IN (...)` lookup stays
+  unconditional because `owner_counts` feeds `ContextRenderStats` and
+  `remem context --status`; only the per-row trace construction is gated. A test
+  asserts that a non-debug load keeps identical owner counts and memory
+  selection while reporting no traces.
 - Staged source version `0.6.35` for the GH-934 post-merge corrective:
   Retrieval Router plans now preserve the caller's `include_superseded`
   temporal scope across explicit, keyword-fallback, and default-fallback

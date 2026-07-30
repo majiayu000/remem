@@ -189,3 +189,79 @@ fn debug_trace_reports_owner_reasons_and_counts() {
     assert!(!footer.contains("owners repo="));
     assert!(!footer.contains("tool=0 domain=0"));
 }
+
+/// GH951: owner traces are debug-only, but `owner_counts` feeds
+/// ContextRenderStats on every SessionStart. Gating the counts along with the
+/// traces would zero out visible stats, so the two must move independently.
+#[test]
+fn non_debug_load_keeps_owner_counts_and_drops_traces() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_context_schema(&conn);
+    let stash = "/Users/lifcc/Desktop/code/AI/tool/stash";
+    let now = chrono::Utc::now().timestamp();
+
+    insert_owned_memory(
+        &conn,
+        1,
+        stash,
+        Some("stash-dnd-decision"),
+        "decision",
+        "Stash DnD uses pointer sensors",
+        "The Stash UI uses pointer sensors for drag and drop behavior.",
+        now,
+        "repo",
+        stash,
+        Some(stash),
+        Some("stash-ui"),
+    );
+    insert_memory(
+        &conn,
+        2,
+        stash,
+        Some("legacy-stash-fallback"),
+        "bugfix",
+        "Legacy Stash memory remains compatible",
+        "Rows without owner metadata still load through project fallback.",
+        now - 1,
+    );
+
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let debug_load = load_context_data_with_policy(&conn, stash, None, &policy, true);
+    let plain_load = load_context_data_with_policy(&conn, stash, None, &policy, false);
+
+    // The counts are what users see; they must not depend on debug mode.
+    assert_eq!(plain_load.owner_counts.repo, debug_load.owner_counts.repo);
+    assert_eq!(
+        plain_load.owner_counts.legacy,
+        debug_load.owner_counts.legacy
+    );
+    assert!(
+        plain_load.owner_counts.repo > 0 || plain_load.owner_counts.legacy > 0,
+        "non-debug load must still populate owner counts"
+    );
+
+    // The traces are diagnostics; skipping them is what removes the
+    // unindexable exclusion scan from the non-debug hot path.
+    assert!(
+        plain_load.owner_traces.is_empty(),
+        "non-debug load must not build owner traces"
+    );
+    assert!(
+        !debug_load.owner_traces.is_empty(),
+        "debug load must still report owner traces"
+    );
+
+    // Selection itself is unaffected.
+    let plain_titles = plain_load
+        .memories
+        .iter()
+        .map(|memory| memory.title.as_str())
+        .collect::<Vec<_>>();
+    let debug_titles = debug_load
+        .memories
+        .iter()
+        .map(|memory| memory.title.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(plain_titles, debug_titles);
+}
