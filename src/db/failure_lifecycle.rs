@@ -251,7 +251,7 @@ pub fn archive_eligible_failures(
             surface: "pending_observation",
             table: "pending_observations",
             failed_predicate: "status = 'failed'",
-            eligible_extra: "1 = 1",
+            eligible_extra: "COALESCE(failure_class, 'transient') = 'permanent'",
         },
         cutoff,
         now_epoch,

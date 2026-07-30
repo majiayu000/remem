@@ -215,6 +215,9 @@ Stop hook fires
        │    ├─ File overlap detection → mark old observations stale
        │    └─ Enqueue memory/graph/rule candidate follow-ups
        │
+       ├─ When no current extraction task is ready
+       │    └─ Admit one rate-limited legacy drain batch into extraction_tasks
+       │
        ▼
   process Compress/Dream jobs
        │
@@ -357,14 +360,47 @@ New session starts
 ### 5. Legacy Pending Queue Recovery
 
 Runtime capture no longer writes `pending_observations`, and `session-init`
-does not auto-flush that legacy queue. Old pending rows and expired legacy
-processing rows have an explicit replay path instead: `remem pending
-migrate-legacy` records equivalent `captured_events` with the legacy event
-timestamp, enqueues `observation_extract` tasks, then marks the legacy rows
-`migrated`. Rows stored with `host = unknown` require `--host
-claude-code|codex-cli` so replayed evidence has a valid v2 capture identity.
-Failed legacy rows stay visible through pending admin commands; retry them back
-to `pending` before migration or purge them explicitly.
+does not auto-flush that legacy queue. The deleted enqueue/claim API stays
+deleted. Ordinary workers instead expose a drain-only migration bridge for
+residual rows, and consider it only after the current extraction worker finds
+no ready task.
+
+A once worker admits at most one batch in its process lifetime. A daemon admits
+at most one batch every 60 seconds. Each batch contains at most 25 oldest rows
+with a known `claude-code` or `codex-cli` host: pending rows, expired processing
+rows, due transient failures, and controlled historical archived transient
+failures. Permanent and unknown-host rows are not automatic candidates. If
+current work appears during preflight, a zero-progress yield keeps the
+once/interval admission available after that work drains; a partial-progress
+yield consumes the admission and preserves the per-process/per-interval cap.
+
+For each selected row, one transaction records the deterministic legacy
+`captured_event`, enqueues its current `ObservationExtract` task, marks the
+legacy source `migrated`, and clears its old lease, retry, failure, and archive
+state. A repeated attempt converges on the same event/task. A shared or
+otherwise failed replay rolls back current-pipeline writes, records exponential
+backoff capped at 900 seconds, and stops the batch. The bridge never infers a
+row-local permanent classification from a shared replay failure. Selection or
+a failed attempt never unarchives a row, and the bridge never deletes data.
+Before an immediate write transaction starts, automatic and exact replay
+snapshot their source row, while manual batch migration snapshots every
+selected row; all paths resolve optional Git branch metadata before locking.
+The transaction reloads and revalidates each candidate before writing, and
+capture receives the explicit precomputed branch value, including an explicit
+no-branch result. No Git subprocess runs while the SQLite write lock is held.
+
+Doctor reports due and deferred known-host archived transient rows separately.
+A deferred row remains a capture-liveness failure with its earliest retry epoch,
+but does not receive immediate once-worker guidance. Archived failed rows
+excluded from the automatic bridge are `admin-required`; the check queries
+those candidates independently of the global failed-row listing and prints a
+bounded oldest-first set with real IDs, stored hosts, failure classes, archive
+times, and concrete preview/apply commands. A stored `host = unknown` prints
+both explicit `--host claude-code|codex-cli` choices. The exact command rejects
+rows that are not both failed and archived, replays only the requested ID in
+one transaction, and clears failure/archive state only after the current event
+and task commit. Any failure rolls back current-pipeline writes and preserves
+the source row.
 
 ## Memory Lifecycle
 
@@ -406,8 +442,12 @@ session_summaries ──→ memories (auto-promoted)
 - **Failure lifecycle**: Failed pending observations, extraction tasks, replay
   ranges, and jobs carry `failure_class`, `failed_at_epoch`, and
   `archived_at_epoch`. Transient extraction/replay/job failures receive
-  bounded automatic retries; permanent or exhausted failures stay visible until
-  they age into archived history.
+  bounded automatic retries. Eligible legacy pending rows use the idle-only,
+  25-row drain bridge; once workers admit one batch and daemons admit one batch
+  per 60 seconds, except a zero-progress yield retains that admission. Deferred
+  archived transient rows remain doctor-visible with their next retry; archived
+  permanent or unknown-host legacy rows are `admin-required` and use exact
+  `recover-archived`. No automatic path deletes them.
 
 ## Rate Limiting
 
@@ -643,7 +683,7 @@ Retention matrix:
 | workstreams | 14/30 days inactivity | Pause/abandon | Row remains auditable |
 | compressed replacement observations | Indefinite | Retained | Preserve retrieval and source-summary context |
 | compressed source observations | 90 days after compression link | Hard delete only when eligible | Required `compressed_observation_sources` hash + snapshot + live compressed row |
-| failed queue rows | 14 days | Mark archived after permanent/exhausted or legacy pending failure | Row remains queryable and counted as archived history |
+| failed queue rows | 14 days | Mark permanent/exhausted current-pipeline rows archived; legacy `pending_observations` transient rows stay visible for drain/admin recovery, a known-host archived historical transient may enter the bounded drain, and an archived permanent/unknown-host row requires exact `recover-archived` | Archive/failure state stays intact until one atomic migration succeeds |
 | archived failures | 90 days by explicit flag | Hard delete only with `--archived-failures[=DAYS]` | Aggregate history preserved in `failure_lifecycle_daily` |
 | raw archive, session summaries, candidates, edges | Indefinite by default | No cleanup in this command | Retained for audit/eval unless future policy says otherwise |
 
@@ -672,7 +712,8 @@ extraction_tasks (task_kind, host_id, workspace_id, project_id, session_row_id,
                   lease_expires_epoch, failure_class, failed_at_epoch,
                   archived_at_epoch)
 
--- Legacy queue kept only for explicit admin migration/replay
+-- Frozen legacy queue: bounded worker drain plus explicit admin fallback;
+-- no current enqueue/claim API
 pending_observations (session_id, project, tool_name, tool_input, tool_response, cwd,
                       created_at_epoch, status[pending|processing|failed|migrated],
                       lease_owner, lease_expires_epoch, failure_class,

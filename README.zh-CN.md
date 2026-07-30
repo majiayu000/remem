@@ -273,7 +273,7 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 Claude Code 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
-        |- UserPromptSubmit  -> 注册会话、刷新旧队列
+        |- UserPromptSubmit  -> 注册会话、记录 prompt 并注入上下文
         |- PostToolUse       -> 捕获工具操作（入队，<1ms）
         '- Stop              -> 后台总结（返回约 6ms）
 
@@ -503,7 +503,14 @@ remem model test [--live]
 remem model rollback
 remem usage --days 14 --weeks 8
 remem pending list-failed
+remem pending list-failed --json
 remem pending retry-failed --dry-run
+remem pending migrate-legacy --dry-run
+remem pending migrate-legacy
+remem pending recover-archived --id 42 --dry-run
+remem pending recover-archived --id 42
+remem pending recover-archived --id 42 --host claude-code --dry-run
+remem pending recover-archived --id 42 --host claude-code
 remem pending purge-failed --dry-run --older-than-days 7
 remem review list
 remem review approve <id>
@@ -520,6 +527,36 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+### 旧 pending 队列恢复
+
+当前采集路径不再写入或 claim 已退役的 `pending_observations` 队列。当前
+extraction 没有 ready 任务时，普通 worker 可以把残留行迁入当前
+capture/extraction 管线。`remem worker --once` 每个进程最多投喂一批；
+daemon 每 60 秒最多投喂一批；每批最多选择 25 条最老的合格记录。若 legacy
+预检期间出现当前 extraction 工作，零进度 yield 会保留本次投喂资格，等当前
+工作完成后重试；已经迁移过记录的部分进度 yield 则会消耗该资格。
+
+自动候选必须带有已知的 Claude Code 或 Codex host，且状态为 pending、租约已
+过期的 processing、已到重试时间的 transient failure，或受控恢复的历史
+archived transient failure。成功时会在同一事务中记录当前 captured event 和
+extraction task、将旧行标记为 migrated，并清除旧的 failure/archive 状态。
+任何 replay 错误都会回滚当前管线写入，记录最长 900 秒的指数退避，并中止
+本批。bridge 不会把共享 replay 故障猜成单行 permanent。doctor 会让退避中的
+known-host archived transient 行继续可见，显示最早 `next_retry_epoch`，并在尚无
+到期行时省略立即运行 `worker --once` 的建议。已经被分类为
+permanent 的行或 unknown-host 行继续通过 `remem pending` 供用户检查和显式
+管理恢复；unknown host 必须先在 replay 时补全。该桥不会恢复旧 enqueue/claim
+API，也绝不会自动删除记录。
+
+不符合自动 bridge 条件的 archived failed 旧行会由 doctor 报告为
+`admin-required`。doctor 会直接按最老优先列出有上限的候选集，包含真实 ID、
+已保存 host、failure class、归档时间，以及具体的 `remem pending
+recover-archived` 预览和执行命令。同一行若保存为 `host = unknown`，doctor
+会同时给出显式的 `--host claude-code` 和 `--host codex-cli` 变体，供管理员
+选择正确身份。`recover-archived` 只接受精确的 archived failed 行，在一个
+事务中 replay；只有当前 event 和 extraction task 成功提交后才清理
+failure/archive 状态，任何失败都会保持源行不变。
 
 ## REST API
 

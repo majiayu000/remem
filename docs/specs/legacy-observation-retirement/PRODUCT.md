@@ -1,21 +1,24 @@
 # Legacy Observation Retirement Product Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-28
 
 Tracking:
 - Epic issue: #684
 - Related contracts: `current-memory-contracts/` (anti-rewrite convergence,
   Refs #381/#383/#384)
+- Related drain implementation: #943
 
 ## Problem
 
 Two storage generations run side by side. The 2026-07-02 verification pass
 (inventory in TECH.md) sharpened what "legacy" actually means here:
 
-- `pending_observations` is a dead queue: no default-path writer remains,
-  and the dogfood database shows zero rows in every state. Its claim/lease
-  machinery ships in the binary with no production caller.
+- `pending_observations` is a frozen queue input: no default-path writer,
+  enqueue API, or claim API remains. Residual rows are consumed only by a
+  bounded drain bridge that migrates their value into the current
+  capture/extraction pipeline; this transitional consumer does not revive the
+  legacy queue.
 - `session_summaries` is dual-written on every session end: the current
   `SessionRollup` task and the pre-v006 summarize job chain
   (`JobType::Summary` -> `finalize_summarize`) both fire from the same Stop
@@ -25,8 +28,8 @@ Two storage generations run side by side. The 2026-07-02 verification pass
   of the current extraction pipeline. GH684-T8 fixes the MCP/docs wording that
   previously advertised it as "legacy observations".
 
-So the debt is one dead surface, one duplicated writer chain, and one
-mislabeled current surface — not a wholesale parallel pipeline.
+So the debt is one frozen drain-only surface, one duplicated writer chain, and
+one mislabeled current surface — not a wholesale parallel pipeline.
 
 Costs of the dual path:
 
@@ -43,6 +46,9 @@ Costs of the dual path:
   memory.
 - Zero data loss: rows carrying unique value are migrated before any drop,
   behind a deprecation window.
+- Residual legacy pending rows drain without starving current extraction:
+  current work has priority, once workers run at most one 25-row batch, and
+  daemons run at most one 25-row batch every 60 seconds.
 - Users can see legacy state: doctor reports legacy row counts and whether
   legacy writes still occur.
 
@@ -62,7 +68,9 @@ Costs of the dual path:
 
 Each legacy surface passes through explicit states: live -> frozen
 (no new writes, reads labeled legacy) -> migrated -> removed. A surface
-never skips frozen, and each transition is observable in doctor.
+never skips frozen, and each transition is observable in doctor. A
+transactional drain that marks an existing frozen row migrated is a value
+migration, not a restored legacy writer.
 
 ### Reads Move Before Writes Die
 
@@ -71,14 +79,16 @@ first, with equivalence evidence (fixtures comparing old vs new output).
 Only then do legacy writers stop, so no user-visible feature regresses
 during the window.
 
-### Legacy-Only Surfaces Are Opt-In After Freeze
+### Frozen Surfaces May Drain Without Revival
 
-Once frozen, default surfaces stop advertising surfaces that are truly
-legacy-only, such as `pending_observations` and the legacy Summary writer
-chain. `observations` is different: it is reclassified as a current
-intermediate of the capture pipeline, so MCP `source='observation'` remains
-an explicit observation audit path after the wording is fixed. It is not
-deprecated or removed by this contract.
+Once frozen, default APIs stop advertising truly legacy-only write/claim
+surfaces. An ordinary worker may drain existing `pending_observations` into
+the current pipeline under the bounded #943 contract, but it cannot enqueue or
+claim new legacy work. The legacy Summary writer chain remains retired.
+`observations` is different: it is reclassified as a current intermediate of
+the capture pipeline, so MCP `source='observation'` remains an explicit
+observation audit path after the wording is fixed. It is not deprecated or
+removed by this contract.
 
 ## User Stories
 
@@ -103,6 +113,9 @@ Acceptance:
 
 - Doctor reports row counts for `pending_observations`, `observations`,
   `session_summaries`, and last-write timestamps.
+- Doctor distinguishes rows eligible for the automatic drain from permanent
+  or unknown-host archived rows that are `admin-required`, and gives the exact
+  dry-run/apply recovery commands.
 - After freeze, a legacy write triggers a doctor error, not a silent
   success.
 
@@ -114,7 +127,25 @@ with provenance, and I get a release-note warning before any drop.
 
 Acceptance:
 
-- Migration commands are idempotent and report migrated/skipped counts.
+- Bulk migration commands are idempotent and report migrated/skipped counts;
+  exact archived recovery never falls back or duplicates work and rejects a
+  target whose state changed after preview.
+- The automatic bridge runs only when current extraction has no ready work,
+  migrates at most 25 oldest eligible rows per allowed interval, and never
+  deletes a source row.
+- Eligible rows have a known host and are pending, expired-processing, due
+  transient failures, or controlled historical archived transient failures.
+  Permanent and unknown-host rows never enter automatic recovery.
+- Success atomically migrates value and clears old failure/archive state.
+  Any replay error rolls back current-pipeline writes, uses exponential
+  backoff capped at 900 seconds, and stops the batch. The bridge never guesses
+  that a shared replay failure is row-local permanent.
+- `remem pending recover-archived --id <id> [--host
+  claude-code|codex-cli] --dry-run` previews one exact archived failed row;
+  apply removes `--dry-run`, unknown host requires the option, success clears
+  failure/archive only after atomic replay, and failure preserves the source.
+- A process-level fault-injection test kills and restarts a worker around a
+  durable failed backlog and proves the backlog drains to zero.
 - A drop migration refuses to run while unmigrated valuable rows remain.
 
 ### Durable Commit Traceability
@@ -200,8 +231,9 @@ Acceptance:
    contract; no code).
 2. Doctor visibility: legacy row counts, last-write tracking.
 3. Reader migration with equivalence fixtures; freeze writers.
-4. Value migration + a remem 0.6.0 deprecation announcement in doctor and
-   release notes; guarded drop migrations no earlier than remem 0.7.0.
+4. Idle-only value migration through the bounded worker bridge plus exact
+   archived admin recovery, followed by a deprecation announcement in doctor
+   and release notes; guarded drop migrations no earlier than remem 0.7.0.
 
 Each code phase ships independently with focused tests plus:
 

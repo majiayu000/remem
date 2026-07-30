@@ -4,8 +4,12 @@
 
 GH-933
 
-PR #939 是 Phase A partial implementation，使用 `Refs #933`。本技术规格同时
-记录 Phase A 的真实实现边界和 Phase B/C 的后续设计，但不把后续阶段记为已实现。
+PR #939 已于 2026-07-26 合并（merge commit `0ed42e3d`），并随 GitHub
+Release 与 crates.io `remem-ai` 0.6.26 公开发布；0.6.27 仍包含同一 public
+v1 API。它是使用 `Refs #933` 的 Phase A baseline，不是 GH-933 的完整实现。
+PR #965 已退役旧的仓库内执行工作流；本文件只保留 issue-level 规划证据，
+规范性当前契约位于 `docs/specs/GH933/`。后续实现按普通 issue/PR、代码审查、
+CI 与显式人工 merge 授权推进。
 
 ## Product Spec
 
@@ -13,239 +17,777 @@ PR #939 是 Phase A partial implementation，使用 `Refs #933`。本技术规�
 
 ## Codebase Context
 
-| Area | Files | Current behavior | Why relevant |
-| --- | --- | --- | --- |
-| Public module boundary | `src/lib.rs`, `src/truth.rs` | PR #939 新增 public `remem_ai::truth` module，导出 DTO、lifecycle mapper、adapter 和 projection API | Phase A 的唯一新调用面；没有 CLI/HTTP/Context Bundle wiring |
-| Versioned DTO | `src/truth/types.rs` | `TRUTH_PROJECTION_VERSION = 1`；完整 `CurrentTruthProjection` 携带版本、scope、selector 与 truth rows | 锁定序列化 shape、canonical refs、relations 和 selection reason |
-| Lifecycle mapping | `src/truth/lifecycle.rs` | 将 memories、observations、user-context claims、memory candidates 的已知状态映射为 publication/validity/retention/visibility；未知状态 fail closed | 防止把 retention 或 suppression 误当 truth；observations/candidates 在 Phase A 只共享状态语言，不成为 claim source |
-| Read adapter | `src/truth/adapter.rs` | 读取 memories、captured events、memory/graph edges 和 user-context claims；生成 `ClaimView`、`EvidenceView`、`RelationView` | 负责 scope、canonical ref、relation direction 和 evidence trust 的边界 |
-| Resolution policy | `src/truth/projection.rs` | 按 eligibility、显式 supersedes、refutes、evidence trust、recency 的固定顺序解析；冲突与 abstention 均显式返回 | `CT-003`–`CT-009` 的核心决策路径 |
-| Phase A fixtures | `src/truth/tests.rs`, `src/truth/lifecycle.rs` | 使用完整 migrations 的内存 SQLite，现有 18 个 truth tests 覆盖主要 projection 与状态映射 | 验证真实 schema 上的确定性输出，不以 mock DTO 替代 adapter |
-| Existing schema contract | `src/migrations/v001_baseline.sql`, `v025_memory_edges.sql`, `v031_graph_edges.sql`, `v049_user_context_claims.sql` 及后续 migrations | 现有 tables/columns/indexes 是 Phase A 的全部数据源；PR #939 没有 migration | 保持 read-side additive，并暴露 `as_of` 无状态历史表的限制 |
-| Current context path | `src/context.rs`, `src/context/query.rs`, `src/context/types.rs`, `src/context/render_inputs.rs`, `src/context/render/*` | 仍按现有 memory/session/workstream pipeline 加载和渲染，不调用 `remem_ai::truth` | Phase B 的候选集成点；PR #939 不改变 context 输出或 fallback |
-| Canonical writers | `src/memory/service/save.rs`, `src/memory/store/write.rs`, `src/memory/edge.rs`, `src/memory_candidate/apply.rs`, `src/user_context/claims.rs` | 继续写现有 memories、edges、candidates 和 claims | Phase C 才能评估 writer 收敛；Phase A 不改 writer |
-| Distribution | `Cargo.toml`, `Cargo.lock`, `CHANGELOG.md`, `plugins/remem/.codex-plugin/plugin.json`, `plugins/remem/runtimes/remem-releases.json`, `npm/remem/package.json`, `server.json` | PR #939 staged version 为 `0.6.26`，release manifest 仍是 `unreleased` | 新 public library surface 必须与版本同步，但不代表 Phase B/C 发布 |
+| Area | Current truth | Hardening consequence |
+| --- | --- | --- |
+| Public API | Cargo package 名为 `remem-ai`，但 `[lib] name = "remem"`；真实 Rust path 是 `remem::truth` | README、docs、changelog 与 compile-able integration test 必须使用真实 path |
+| v1 DTO | `TRUTH_PROJECTION_VERSION = 1`，裸 `subject_key`，effective “now” 不进入输出 | v2 必须提供 typed identity、可审计的 `reference_epoch` 与 replayability |
+| Adapter | 多段读取 memories/evidence/edges/user claims，无统一 snapshot；不读 Observation/policy | 补齐 Observation/suppression，并把全 projection 固定在一个 read snapshot |
+| Trust | 任意 tool event 会被标为 Verified，resolver 对 evidence 取 max | external tool output 可被提权；v2 必须复用 canonical source classification 与 cap |
+| Observation status | writer 可写 `poisoning_quarantined`，lifecycle mapper 尚未列出 | quarantined prompt-injection 内容必须被显式 suppress，不能进入 catalog/truth |
+| Temporal history | capture replay 覆盖时间；Observation/user mutation 缺完整 history | replay 时间必须 immutable；不可重建的历史 lifecycle 显式失败 |
+| Relations | loader 全扫 edge table 后在 Rust 过滤；canonical heterogeneous pairwise conflict 使用 fallback operation metadata | relation lookup 必须 bounded；合法 heterogeneous operation 不得误报损坏 |
+| Suppression | suppression row 有时间，`memory_entities` link 没有 | owner-safe intervals；entity current-only，历史 link 不可证明即失败 |
+| Tests | `src/truth/tests.rs` 已有 679 行 | 加测试前先拆为 `src/truth/tests/**`，任何单文件保持少于 800 行 |
+| Distribution | v1 已公开；v2 会改变合法输入的 public DTO/selector/output | v2 使用 0.7.0 或实现时下一个 breaking SemVer boundary，不能作为 0.6.x patch |
 
-## 设计方案
+## Public v2 Contract Snapshot
 
-### Phase A：PR #939
+以下 shape 是本历史 packet 在本次修订时对规范性
+`docs/specs/GH933/TECH.md` 的镜像快照，不是第二份 normative source；若两者
+不一致，以 current contract 为准。所有 enum 使用
+`#[serde(rename_all = "snake_case")]`；tagged enum 使用字段
+`scope_kind`。所有 `Option` 在 JSON 中显式序列化为 `null`，不得
+`skip_serializing_if`，以保持 golden shape 稳定。
 
-1. `TruthQuery` 接收 project、optional branch、optional `as_of_epoch` 和
-   optional subject selector。memory 查询使用 exact `project` match；
-   branch selector 存在时只接受 branch-neutral 或 exact-branch rows。
-2. `load_memory_claim_groups` 把 memory 映射为 `ClaimView`。`topic_key`
-   相同的 rows 竞争同一 subject；缺少 `topic_key` 时以 `memory:<id>`
-   形成 singleton subject。
-3. evidence 只保存稳定引用和 trust：
-   - captured user/tool event 为 `Verified`；
-   - 其它 captured event 为 `ModelGenerated`；
-   - `source_trust_class=user_prompt` 为 `Verified`，
-     `external_content` 为 `Untrusted`；
-   - 其它 memory trust class 不额外抬高 trust，无 ledger evidence 时按
-     `ModelGenerated` 竞争；
-   - manual user claim 为 `Verified`，third-party statement 为
-     `Untrusted`，其它 source kind 为 `ModelGenerated`。
-4. relation 只接受明确 allowlist。`memory_edges` 与 trusted、memory-to-memory
-   `graph_edges` 可映射 `Supersedes`、`Refutes`、`Supports` 或
-   `DerivedFrom`；diagnostic graph edges 不进入 truth。replacement edge 的
-   stored direction 会规范化为 `from_ref supersedes to_ref`。
-5. lifecycle mapper 对已知状态做 total mapping；unknown string 映射为
-   `Candidate + Unknown + Live + Visible`。`valid_to_epoch` 或 expiry 到期后
-   动态覆盖为 `Expired`，不回写数据库。
-6. projection 先剔除 reference time 尚未创建、未到 valid-from、已过期、
-   非 Active、非 Live、Suppressed 或非 Current 的 claim；再应用有效
-   supersedes；之后依次处理 refutes、最高 evidence tier 和 recency。
-7. 无 surviving claim 返回 `Unknown + InsufficientEvidence`；refutes 或
-   同 trust/同 timestamp 的不可破同分返回
-   `Contradicted + UnresolvedConflict`，不任选一侧。
-8. `CurrentTruthProjection` 只序列化 read DTO，不执行 migration、write、
-   LLM、network 或 external process。所有 SQL 继续使用 bound parameters。
+```rust
+pub const TRUTH_PROJECTION_VERSION: u32 = 2;
 
-### Phase A 必须补齐或明确保留的边界
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimSource {
+    Memory,
+    UserContextClaim,
+}
 
-- relation 只有在两个 endpoint 都属于同一 query 的 scoped claim set 时才能
-  参与选择。当前 adapter 以“任一 endpoint 命中”纳入 relation，现有
-  `scope_mismatch_never_leaks_other_projects` 未覆盖 cross-project edge
-  影响；merge-ready 前需增加 fixture 或修正实现，不能让 scope 外 relation
-  使 scope 内 claim 被拒绝。
-- 当前 relation loader 扫描全部 `memory_edges` 和 trusted memory graph
-  edges 后在 Rust 中用 `Vec::contains` 过滤。Phase A library-only 可以先保留，
-  但进入 Phase B hot path 前必须把 scope/id 约束下推到 SQL，或用等价 bounded
-  lookup，并用 representative corpus 证明延迟和内存上限。
-- 当前 dual-evidence fixture 验证一个 claim 的两个 evidence refs，不验证
-  `ClaimRelationKind::Supports` 的 adapter/delivery。Phase A 验证应补一个
-  focused Supports relation fixture。
-- malformed `evidence_event_ids` 和 malformed user `source_refs_json` 当前会
-  fail closed 为“无 verified evidence/默认 source evidence”，不会 panic，
-  但没有结构化 diagnostic，也没有 focused regression。Phase A 至少要锁定
-  降级后的 trust/result；Phase B 接入 context 前必须将解析问题加入可见错误
-  或 diagnostics，不能静默形成缺失 context。
-- `as_of` 只能依据现存 row 的 created/validity/relation timestamps；对后来
-  hard-delete 或原地 status rewrite 无法完整重建。Phase A 通过规格公开此
-  限制，不伪造历史；完整 historical explanation 需要后续持久化契约。
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Serialize)]
+pub struct SubjectIdentity {
+    pub source: ClaimSource,
+    pub owner_scope: String,
+    pub owner_key: String,
+    pub memory_scope: Option<String>,
+    pub kind: String,
+    pub key: String,
+}
 
-### Phase B：Context Bundle（后续，不属于 PR #939）
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "scope_kind", rename_all = "snake_case")]
+pub enum TruthScope {
+    Project {
+        project: String,
+        branch: Option<String>,
+    },
+    Owner {
+        owner_scope: String,
+        owner_key: String,
+    },
+}
 
-1. 使用一次 render 共享的 reference epoch 和 project/branch selector 调用
-   versioned projection，避免同次 render 的 sections 观察不同时间。
-2. 将 current truths、decisions、conflicts 分别转换为现有 context render
-   输入；projection error 必须进入现有 error/diagnostic 路径并以 error level
-   可见，不能回传看似成功但缺失 truth 的 bundle。
-3. 通过单独批准的 rollout/rollback gate 在旧 context path 与 projection
-   path 间切换；本规格不提前声明 config key、CLI flag 或 public API。
-4. Phase B 必须增加 worktree/task selector、budget/truncation、cache-stable
-   render 和 policy suppression 的产品/技术细化与回归测试。
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct TruthQuery {
+    pub scope: TruthScope,
+    pub as_of_epoch: Option<i64>,
+    pub subject: Option<SubjectIdentity>,
+}
 
-### Phase C：writer convergence（后续，不属于 PR #939）
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectionReplayability { Exact, CurrentSnapshotOnly }
 
-1. 先用 benchmark 和 Phase B 运行证据判断是否需要 writer schema 收敛；
-   不因 DTO 存在就创建新 canonical tables。
-2. 如需 migration，必须另写 migration/compatibility/rollback contract，
-   保留 canonical refs、evidence provenance、scope 和 historical semantics。
-3. memory、candidate、user-context 与 graph writers 的任何 dual-write、
-   backfill 或 cutover 都需要独立任务与 human spec approval；PR #939 不包含
-   writer firewall 完成声明。
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceKind {
+    CapturedEvent,
+    SourceRef,
+    SourceTrustClass,
+    Observation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceIntegrity {
+    Validated,
+    Opaque,
+    Quarantined,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct EvidenceView {
+    pub evidence_ref: String,
+    pub kind: EvidenceKind,
+    pub source_ref: String,
+    pub scope: TruthScope,
+    pub lifecycle: Option<Lifecycle>,
+    pub source_time_epoch: Option<i64>,
+    pub knowledge_time_epoch: i64,
+    pub trust: EvidenceTrust,
+    pub integrity: EvidenceIntegrity,
+    pub supporting_evidence_refs: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ClaimView {
+    pub canonical_ref: String,
+    pub subject: SubjectIdentity,
+    pub statement: String,
+    pub branch: Option<String>,
+    pub lifecycle: Lifecycle,
+    pub valid_from_epoch: Option<i64>,
+    pub valid_to_epoch: Option<i64>,
+    pub source_time_epoch: Option<i64>,
+    pub knowledge_time_epoch: i64,
+    pub evidence: Vec<EvidenceView>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CurrentTruthView {
+    pub subject: SubjectIdentity,
+    pub claim: Option<ClaimView>,
+    pub validity: ValidityState,
+    pub evidence: Vec<EvidenceView>,
+    pub supporting_relations: Vec<RelationView>,
+    pub contradicting_relations: Vec<RelationView>,
+    pub rejected: Vec<String>,
+    pub conflicting_claims: Vec<ClaimView>,
+    pub selected_reason: TruthSelectionReason,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CurrentTruthProjection {
+    pub projection_version: u32,
+    pub scope: TruthScope,
+    pub requested_as_of_epoch: Option<i64>,
+    pub reference_epoch: i64,
+    pub replayability: ProjectionReplayability,
+    pub truths: Vec<CurrentTruthView>,
+    pub evidence_catalog: Vec<EvidenceView>,
+}
+
+pub fn project_current_truth(
+    conn: &rusqlite::Connection,
+    query: &TruthQuery,
+) -> anyhow::Result<CurrentTruthProjection>;
+
+pub fn project_user_claim_truth(
+    conn: &rusqlite::Connection,
+    owner_scope: &str,
+    owner_key: &str,
+    as_of_epoch: Option<i64>,
+) -> anyhow::Result<CurrentTruthProjection>;
+```
+
+`RelationView`、`Lifecycle`、`EvidenceTrust`、`TruthSelectionReason` 的 v1 字段和
+snake_case serde names 保持不变。`TruthScope` 必须实现 `Serialize`，让输出能
+完整回放输入 scope。Owner selector 的 owner 必须 exact match；Project selector
+必须是 non-global Memory identity，但 membership 由 row-level Project routing
++ branch predicate 决定，不要求 `owner_key=project`，因此 owner Q、
+`target_project=P` 的 row 可匹配 Project(P)。结构不兼容返回 contextual error；
+兼容 selector 没有 scoped row 时固定 `truths=[]`，只有已 load identity 没有
+eligible survivor 才输出 `Unknown`。Project scope 查询 memories 与 scoped
+observation catalog；Owner scope 查询 canonical owner exact-match 的 memories
+与 user-context claims，`evidence_catalog` 为空。selector 只过滤 `truths`，
+不改变 Project observation catalog。
+
+current contract 中的 `project_current_truth` 按 `TruthQuery.scope` dispatch，
+是 v2 public entrypoint。`project_user_claim_truth` 作为 user-claim-only
+compatibility convenience 保留：在 row load/validation 前先选择
+`ClaimSource::UserContextClaim`，再复用 shared user-claim Owner
+adapter/resolver。它不枚举/验证无关 memory claims、memory-only relations、
+Observation attachment 或 memory-only suppression；只 bounded 读取对 selected
+claims 可应用的 `user_claim`/`pattern` suppression。只有 explicit
+`preference_backfill` ref 可定点读取 memory，因此 unreferenced malformed
+exact-owner memory 不改变 wrapper result/error domain。exact-owner memories
+只由 normative Owner query 返回。v1 的
+`load_memory_claim_groups`/`load_user_claim_groups` 不再从
+`remem::truth` re-export，adapter loaders 改为 crate-private，避免调用方绕过
+shared epoch、scope、suppression 与 catalog。
+
+`as_of_epoch=Some(t)` 使用 `t/exact`；`None` 只取一次 wall-clock，no-proof
+binding 或 unversioned entity link 使其 `current_snapshot_only`。所有 stage 共享
+该 epoch 与一个 SQLite snapshot：autocommit 入口拥有 deferred BEGIN 和 terminal
+COMMIT/ROLLBACK；caller transaction 被复用且不由 projection commit。
+
+输出排序固定为：
+
+1. `truths` 按 `SubjectIdentity` 字段的派生 lexicographic order；
+2. 每个 claim 的 evidence 按 `(source_time_epoch, knowledge_time_epoch,
+   evidence_ref)` 升序，其中 `None` 早于任意 `Some`；
+3. `evidence_catalog` 以同一 evidence key 排序，并按 `evidence_ref` 去重；
+4. relations 按 `(created_at_epoch, relation_ref)`，canonical refs 按字节序。
+
+各 Evidence kind 的 v2 field semantics：
+
+| Kind | scope | lifecycle | source/knowledge time | integrity | supporting refs |
+| --- | --- | --- | --- | --- | --- |
+| CapturedEvent | canonical event project，branch=`None` | `None` | immutable first-capture source；insertion | Validated | empty |
+| SourceRef | containing user-claim Owner scope | `None` | claim-version valid-from-or-created；immutable provenance-binding epoch | resolved structured ref 为 Validated；仅 manual/free-form 为 Opaque | resolved nested canonical refs 或 empty |
+| SourceTrustClass | containing memory query scope/claim branch | `None` | memory reference/created；下文 effective memory knowledge | Validated | empty |
+| Observation | canonical observation Project/branch | `Some(observation lifecycle)` | observation reference/created；observation `created_at_epoch` | Validated or Quarantined | validated captured-event refs |
+
+`SourceTrustClass` view 是 diagnostic/cap provenance，不参加
+`strongest_evidence` 的 max；cap 单独按下文计算。CapturedEvent 的 branch 为
+`None`，因为 canonical event schema 不持久化 branch，adapter 不得从当前
+workspace branch 猜值。SourceRef 的 Opaque 表示已通过 JSON shape validation，
+但其自由格式指针没有 ledger integrity proof。
+
+CapturedEvent `source_ref` 沿用 v1 `event_type/role`（无 role 时为
+`event_type`）；SourceTrustClass `source_ref` 是 validated stored class；
+structured SourceRef 使用 canonical compact JSON。
+
+`EvidenceView.evidence_ref` 固定为：CapturedEvent
+`captured_event:<event-id>`、SourceTrustClass
+`memory_trust_class:<memory-id>`、Observation `observation:<observation-id>`、
+empty-manual SourceRef `user_claim_source:<claim-id>:manual`，其余 SourceRef
+为 `user_claim_source:<claim-id>:<path>`。legacy top-level manual JSON string
+规范成 synthetic singleton array，path 固定 `0`。每层 ref array 递归 canonicalize、
+exact-dedup、按 bytes 排序，再用 zero-based canonical index 组成冒号分隔 path；
+candidate nested ref 例如 `0:0`，绝不使用原 JSON index。wrapper 与每个 nested
+ref 都有独立 SourceRef EvidenceView，wrapper 的 supporting refs 指向直属 child
+paths；empty/manual/nested candidate 都纳入 v2 golden。
+
+User-claim `source_kind` 是 closed mapping：
+
+| source_kind | cap / required provenance |
+| --- | --- |
+| `manual` | Verified；zero refs 或仅 nonblank strings/`manual_cli`，均为 Opaque |
+| `explicit_user_statement` | Verified cap；1+ captured events 且全部 first-party（`event_type=user_prompt_submit` 或 `role=user`），可另有最多一个 session summary |
+| `preference_backfill` | 等于 referenced memory 的 effective trust；必须恰有一个有效 memory ref |
+| `inferred_from_behavior` | ModelGenerated；1+ behavior captured events，可另有最多一个 session summary |
+| `session_summary` | ModelGenerated；1+ captured events，可另有最多一个 session summary |
+| `speculative_inference` | ModelGenerated；1+ captured events，可另有最多一个 session summary |
+| `third_party_statement` | Untrusted；1+ captured events，可另有最多一个 session summary |
+| `user_context_candidate` | 恰一个 authoritative candidate wrapper；cap 递归得出 |
+
+`source_refs_json` 必须是 array；唯一例外是 legacy `manual` nonblank scalar
+string。只有 `manual` 可用 empty array 并生成 Opaque `source_ref=manual`；
+其他 kind 至少一个 resolved ref并满足上表；其他 scalar/blank 是 error。
+上表是 exact allowlist，额外 kind/count 均报错。五种 terminal extraction kind
+使用 canonical writer 的 captured-events + optional-one-summary shape；即使
+`session_summary` 也拒绝 direct summary-only。candidate 只能按下文
+single-wrapper rule 递归。structured object 使用 exact schema：
+
+| ref kind | exact fields/types | resolution、scope、time |
+| --- | --- | --- |
+| `captured_event` | `{"kind":"captured_event","id":<positive integer>}` | row 存在且 time eligible；enclosing candidate 要求 exact host/project/session，direct ref 以 containing `repo` owner key 为 project anchor |
+| `session_summary` | `{"kind":"session_summary","id":<positive integer>}` | recognized，但因下文 read-only limitation 在 Phase A 不可用 |
+| `memory` | `{"kind":"memory","id":<positive integer>}` | row 存在、time eligible、canonical owner 与 containing claim exact match；trust 使用该 memory effective trust |
+| `manual_cli` | `{"kind":"manual_cli","command":<nonblank string>}` | 不解析 row，在 containing Owner scope 保持 Opaque |
+| `user_context_candidate` | `{"kind":"user_context_candidate","candidate_id":<positive integer>,"source_kind":<string>,"source_refs":<array>}` | 对 authoritative candidate 校验并递归解析 refs |
+
+object 不允许 extra fields。non-repo Owner 的 project-bound direct ref 没有持久化
+project anchor，必须报错。missing、foreign-scope、quarantined 或 malformed
+referent 都是 contextual error。referent 晚于 immutable binding epoch 也是
+integrity error；合法 bound referent 只有在晚于 query cutoff 时才作为
+time-ineligible。同一 sibling array 的 exact duplicate 先按 canonical compact
+JSON/string bytes 折叠；相同 kind/ID 不同 payload 报错。最终 refs byte-sort。
+
+terminal ref 绑定 enclosing candidate creation；direct ref 绑定 edit chain 中
+首次引入 exact kind/refs 的 provenance root，后续 edit 必须保留且不得重绑。
+source/knowledge 必须 `<=` binding/reference；event knowledge 是 insert，memory
+使用 `effective_memory_knowledge_epoch`。wrapper knowledge 是 validated
+application，必须 `<=` containing binding（top-level root-result creation；
+nested enclosing-candidate creation）。比较为秒级，equality eligible；同秒绝对
+顺序需 Phase C durable sequence。
+explicit-user 至少一个 captured ref，且全部必须 first-party。
+
+top-level `source_kind=user_context_candidate` 必须且只能有一个 wrapper。
+每个 wrapper 的 authoritative candidate 必须有 nonblank host/session/project；
+event 与 optional summary 必须 join 这三者表示的 exact
+`(host_id,project_id,session_row_id)`，missing/foreign/disagreement 报错。
+nested `source_kind` 是五种 terminal kind 之一（refs 遵循对应 event/optional
+summary rule 且不得含 candidate），或 `user_context_candidate`（refs 恰一个
+wrapper，不得混 terminal refs）。candidate 必须存在、owner exact 且 application
+不晚于 containing binding/reference；wrapper kind/refs structural-equal stored
+row。其 `result_claim_id` 指自己的 initial result；top-level result 是 current
+row/ancestor，nested wrapper 则验证自己的 root/edit chain。replacement/new
+initial row exact copy candidate
+user/owner/type/key/text/confidence/sensitivity，使用 canonical wrapper、NULL
+validity，并让 creation/initial-update/last-confirmed 等于 application。后续
+descendant 保留 user/owner/confidence/source kind/refs，各自 creation 等于 edit
+transition，只允许 type/key/text/sensitivity/validity 改变。no-op 指向 ordered
+pre-existing exact match；kept row/SourceRefs 不变，不能冒充 wrapper Claim。
+nested wrapper 重复全部校验；ancestry 再遇同 ID 是 cycle，sibling exact
+duplicate 已折叠，同 ID/different payload 报错；trust 取最弱 leaf。
+
+`session_summary` 在 Phase A 必须 fail closed。writer event range 由
+`(host_id,project_id,session_row_id,first_event_id,last_event_id)` 标识，但 schema
+没有 summary 到完整 generated surfaces 的 immutable binding：
+`topic_segments` 没有 `session_summary_id`，quarantined segment 也可能不持久化。
+因此任何 status/ack 都不能证明原 writer scan input；每个 structured summary
+ref 在 content/trust 使用前返回
+`unverifiable_session_summary_provenance`。projection 不按 range 猜 segment、
+不写状态；Phase C 加 immutable surface snapshot/FK 后才可启用。SELECT-only
+fixtures 覆盖 missing/safe/quarantined/acknowledged。
+
+## Phase A Hardening Design
+
+### Subject identity and scope
+
+- Memory identity 是
+  `(Memory, canonical owner_scope, canonical owner_key,
+  Some(normalized memory scope), memory_type,
+  nonempty topic_key or memory:<id>)`。
+- normalized memory scope 是
+  `COALESCE(NULLIF(TRIM(scope), ''), 'project')`。只有 NULL 或 exact-empty
+  `topic_key` 使用 `memory:<id>` singleton；所有 nonempty key（含纯空白）按
+  bytes 原样成 slot。
+- User claim identity 是
+  `(UserContextClaim, exact owner_scope, exact owner_key, None,
+  claim_type, claim_key)`。
+- memory owner pair 必须完整。两者都缺失时才按既有 v019/default writer
+  原子规则 fallback：global => `user/user:default`，其余 =>
+  `repo/memory.project`。完整且 nonblank 的 pair 是 authoritative，即使
+  scope-cleanup reroute 不改 `memories.project`；partial/blank pair contextual
+  error。stored `owner_scope` 必须 exact 属于
+  `user|workspace|repo|tool|domain|workstream|session`，owner key 必须
+  trim-stable/nonblank；normalized memory scope 只能是 `project|global`。
+  unknown domain 均 contextual error。memory scope trim 是 v2 intentional
+  hardening：raw `" global "` canonicalize 为 global，绝不泄入 Project；不声称
+  与 legacy untrimmed context SQL byte-equivalent。
+- `branch=Some(B)` 读取 neutral + exact-B；`branch=None` 保持公开 v1 的
+  branch-agnostic 全分支视图。Project/branch scope 外 claim 和 relation 不能
+  影响结果。worktree/task selector 属 Phase B。
+- Project(P,B) memory inclusion 先统一要求 normalized memory scope!=global，
+  再满足 `(owner_scope='repo' AND (owner_key=P OR target_project=P))`，或
+  `(owner_scope IS NULL AND owner_key IS NULL AND memories.project=P)`，最后
+  应用 branch predicate。
+  `source_project` 仅用于 evidence provenance。完整 repo owner 的 owner、
+  target、placement 可以合法不同；owner 或 target 任一匹配即可。完整的
+  repo-rerouted global 仍只由 Owner 读取。
+  tool/domain/workspace/workstream/session/user owner 即使 stale placement、
+  source 或 target 为 P 也不进入 Project，而由 exact Owner query 读取。
+  canonical/legacy global 同样不进 Project，由
+  `Owner(user,user:default)` 读取。legacy non-global 则同时可由 Project(P) 与
+  `Owner(repo,P)` 读取。
+- scoped validation probe 包含 placement、repo owner 或 target 引用 P 的 row；
+  命中的 partial owner pair 必须 contextual error。full repo pair 的 blank target
+  当作 absent，owner/target difference 合法。legacy 只有 owner pair 双 NULL 才
+  原子 fallback；`target_project` 不扩大 legacy/non-repo Project inclusion。
+- Owner(S,K) 纳入 canonical owner（含 atomic legacy fallback）exact 等于
+  `(S,K)` 的全部 memories，以及 exact owner 的 user-context claims；不通过
+  `target_project` 扩张。Owner 没有 branch selector，因此 memory 明确使用
+  branch-agnostic all-branch semantics。Owner 不读取 Observation catalog，
+  Phase A 也不把 Observation attachment 暗中带入 Owner memory。
+- Project observation 优先用 `observations.project_id` join
+  `projects.project_path` exact match；只有 project_id NULL 时才可 fallback 到
+  非空 legacy `observations.project`，两者都有时必须一致，并应用同一 branch
+  predicate。subject selector 与 scope 不一致 contextual error。
+
+### Observation evidence
+
+- scoped Observation 的 `created_at_epoch=NULL` 是 contextual integrity error，
+  因为 public knowledge-time 非 NULL；display `created_at` 不能作 canonical
+  epoch fallback。它与 `reference_time_epoch=NULL` 分开处理，后者合法 fallback
+  到 required creation epoch。
+- `observations` 必须被 adapter 映射，不能只覆盖 lifecycle unit test。
+  canonical ref 与 `EvidenceView.evidence_ref` 均为 `observation:<id>`，
+  `kind=Observation`，`source_ref=observation:<id>`，
+  `scope=TruthScope::Project { project, branch }`，
+  `source_time_epoch=COALESCE(reference_time_epoch, created_at_epoch)`，
+  `knowledge_time_epoch=created_at_epoch`。
+- 正常 writer 可保留 `evidence_event_ids=NULL`，它表示 empty refs；非 NULL
+  才必须严格解析为 JSON 正整数 array、排序、去重，并逐个验证存在、project
+  相同和时间 eligible。Observation 任一 `host_id/project_id/session_row_id`
+  非 NULL 时三者必须齐全、joined session exact，并要求每个 event exact 同三元；
+  三者全 NULL 才是 legacy path；partial/dangling/cross-host/session 报错。结果作为
+  `supporting_evidence_refs=["captured_event:<id>", ...]`。malformed、
+  dangling、foreign-project ref 返回 contextual error。每个 event 的 source 与
+  `inserted_at_epoch` 还必须不晚于 Observation `created_at_epoch` binding epoch
+  和 query reference epoch；later-inserted future ID 是 integrity error，不能
+  retroactive support。
+- Observation trust 是
+  `min(ModelGenerated, weakest canonical supporting-event trust)`，无 refs 时
+  为 ModelGenerated；external-backed row 必须是 Untrusted，不能被抬级。
+- historical active row 没有 scan-version，不能直接标 Validated。adapter
+  必须用当前 generated-surface scanner 重扫 title/subtitle/narrative/facts/
+  concepts；clean 才是 Validated，命中则返回 contextual poisoning error 且不
+  产生成功 projection。stored `poisoning_quarantined` 是 Quarantined policy
+  state，在 public output/trust 前过滤且不重新暴露内容。
+- `active` observation 的 lifecycle 是
+  `(Active, Current, Live, Visible)`；`stale` 不进入 usable current catalog；
+  `compressed` 是 Archived，也不进入 current catalog。
+  explicit history 若看到 cutoff 前已存在的 scoped stale/compressed row，必须
+  验证完整 transition history，否则返回
+  `unreconstructable_observation_lifecycle`。现有 compression snapshot 不含 prior
+  status，stale mutation 也无 timestamp，不能充当该证明。
+  `poisoning_quarantined` 必须映射为
+  `(Candidate, Unknown, Live, Suppressed)`，integrity 为 Quarantined，并在
+  public `evidence_catalog`、claim attachment、trust aggregation 和 current
+  truth 之前过滤。其他 unknown observation status 返回含 table/ref/raw value
+  的 contextual error。
+- Observation 从不进入 `ClaimSource`。唯一允许的 claim attachment 是
+  `memory_facts` row 同时带
+  `source_memory_id=<memory claim id>` 与
+  `source_observation_id=<observation id>`；两端必须已在 scoped/time-eligible
+  set，fact project、memory placement 与 canonical observation project exact
+  相同。
+  方向固定为 observation evidence supports memory claim。共享 captured event、
+  相同 topic/text 或模型相似度都不是 link。User claim 在 Phase A 没有
+  observation attachment。
+  Link at `t` 复用 `memory::facts::as_of_validity_filter_sql`：
+  `learned_at_epoch <= t`、`valid_from IS NULL OR <=t`、
+  `invalidated_at IS NULL OR >t` 与 half-open `valid_to >t`；只有既有 helper
+  的“invalidation/replacement 尚未被 t 时点获知”条件可以保留旧 link。
+  known fact status/predicate、replacement linkage 和 endpoints 都要验证，并
+  覆盖 learned/invalidation/replacement before/equal/after。
+
+### Evidence trust and provenance
+
+- captured-event trust 必须复用
+  `src/memory/poisoning.rs::SourceTrustClass` 的 canonical 分类，不得使用
+  “存在 tool_name 即 Verified”的简化规则。truth 先重建 full content：
+  `raw_keep` exact 为 `full_content_byte_length<=16384`、无 blob、完整 `content_text` 与
+  canonical SHA-256 event hash；`raw_compact` 为 `full_content_byte_length>16384`、plain UTF-8 blob、
+  两项 byte counts 等于 blob length、canonical preview/event SHA-256，以及
+  matching SHA-256 或 exact 16-hex legacy blob hash。dangling/crossed storage、
+  encoding/length/preview/hash mismatch fail closed。只可暴露 capture constant/
+  pure preview helper 与 poisoning pure classifier；除 duplicate timestamp
+  guard 外不改变 writer。测试锁定
+  16384/16385、multibyte boundary 及只出现在 compacted middle 的 network marker。
+- `user_prompt`、`repo_file`、`local_tool_output` 的 cap 是 Verified；
+  `pack`、`external_content` 的 cap 是 Untrusted。WebFetch、WebSearch、
+  `mcp__*`、抓取外部 URL 的 Bash 与 session-stop 均按 canonical classifier
+  归入 `external_content`。unknown stored class 返回 contextual error。
+- 每条 memory 先解析 stored class，再用当前 canonical classifier 重新分类
+  每一个 referenced event。`effective_source_cap` 是 stored cap 与所有 event
+  caps 中的最弱者；无 event 时只用 stored cap。`strongest_evidence` 只对
+  eligible、validated、非 SourceTrustClass evidence 取 max，无 evidence 时是
+  ModelGenerated。最终
+  `effective_claim_trust=min(strongest_evidence,effective_source_cap)`。
+  SourceTrustClass view 只作 diagnostic/cap provenance，不参加 max；source cap
+  只限制、不能凭自身把无 verified evidence 的 claim 抬级。
+- candidate-backed memory 的 `effective_source_cap` 还必须包含 validated
+  candidate stored cap；后续 memory trust rewrite 不能提权。
+- `external_content`/`pack` memory 即使同时引用一个被旧 adapter 视为 tool
+  output 的 event，也保持 Untrusted。即使 v060 legacy/default stored class 是
+  `local_tool_output`，WebFetch/MCP/network-Bash ref 的 recomputed weakest cap
+  仍使 mixed evidence 为 Untrusted。
+- captured event 必须 join `projects.project_path`。expected source project
+  优先使用非空 `memory.source_project`；只有没有 routing assertion、owner
+  legacy pair 完整可推导时才 fallback `memory.project`。missing、foreign、
+  ambiguous 或 routed-but-source-missing 均 contextual error。
+- malformed `memories.evidence_event_ids`、user `source_refs_json` 或 dangling
+  event ref 不得静默成功。非空 `source_candidate_id` 是 claimed binding：
+  candidate 必须是 `auto_promoted|approved|edited`，candidate/memory
+  evidence、content/type/topic/confidence exact，candidate scope 是 validated
+  input。completion memory scope 必须等于 validated route 的
+  `CandidateRoute::memory_scope()`：user owner 为 global，其他为 project；
+  candidate scope 与 derived title 都不是 copied-equality fields。必须有
+  `memory_operation_log(source='memory_candidate',source_candidate_id=candidate.id,
+  result_memory_id=memory.id)` completion；workspace/pack positive fixtures
+  锁定 scope mapping/title exclusion。owner/project route 只可通过
+  contiguous/unambiguous `scope_cleanup` events 的
+  `previous_owner→new_owner` chain 改变并结束于 current route；其他 immutable/
+  routing drift 返回 `unverifiable_post_candidate_mutation`。refs 绑定 candidate
+  creation，completion/cleanup knowledge 独立要求 reference-eligible。无 candidate
+  时 compatible result operation 绑定 refs；两者都没有时 `as_of=None` 以
+  `reference_epoch` 绑定 current refs，explicit historical 排除/Unknown。
+  malformed claimed link 报错；event source/insert 不得晚于 binding/reference。
+
+### Temporal reconstruction
+
+- 所有 Phase A 读取共享 projection 的 `reference_epoch` 与 SQLite snapshot。
+- `effective_memory_knowledge_epoch` 统一用于 memory ClaimView、SourceRef
+  referent 与 SourceTrustClass。proof 是 validated candidate completion（含 route
+  chain），或 `memory-operation-planner-v1` 的 `add|update|conflict` result row；
+  后者须 result ID/current canonical owner/type/topic exact，historical mismatch/
+  其他 planner 是 non-proof。已有 ingestion proof 后，canonical `noop` 必须
+  planner/result ID/current owner/type、empty transition sets、
+  `noop_reason='already represented by active memory'`
+  及 source tuple `direct/save_memory/NULL` 或
+  `memory_candidate/memory_candidate` + matching noop candidate；input topic
+  可与 result topic 不同。
+  它只作 transition proof，不能独立证明 ingestion。epoch 取 earliest proof、
+  eligible noops、memory update、candidate completion/ack、route-chain events 与
+  validated
+  complete/current memory ack 的 max，partial/stale ack 报错。无 proof 时
+  historical 排除/Unknown，current 用
+  `reference_epoch`。source time 仍是
+  `COALESCE(reference_time_epoch,created_at_epoch)`，future raw time 报错。
+  direct-save noop 以 operation timestamp 绑定同 transaction trust/ack rewrite；
+  governance ack 用 memory update，candidate ack 用 candidate update。
+- UserContextClaim source epoch 是
+  `COALESCE(valid_from_epoch,created_at_epoch)`；edited descendant 的 SourceRef
+  仍用上文 provenance-root binding，transition 只改变 ClaimView state
+  knowledge，不能重新附着 inherited refs。
+- Captured event 必须同时满足
+  `COALESCE(reference_time_epoch, created_at_epoch) <= reference_epoch` 与
+  original `inserted_at_epoch <= reference_epoch`。duplicate
+  `(host_id, session_id, event_id)` identity 是 event-row no-op，保留 payload/
+  creation/insertion/reference；只可追加 keyed Git evidence/extraction work。
+  pre-v2 stored insertion 冻结为 conservative floor。
+- User claim `edit_claim` 是版本化例外：旧 row 在 transition epoch 标为
+  superseded，新 row 同时插入并以 `supersedes_claim_id` 指向旧 row。
+  `reference_epoch < transition` 恢复旧 row；等于或晚于 transition 使用新 row。
+  historical predecessor 的 ClaimView 使用 pre-transition lifecycle 和
+  `knowledge_time_epoch=created_at_epoch`；transition equality 后 successor 使用
+  自己的 source/creation time。若 predecessor 作为 rejected provenance 保留，
+  它使用 transition knowledge epoch 与 Superseded lifecycle。predecessor 的
+  mutated `updated_at_epoch` 是 edit boundary，不是 immutable SourceRef knowledge
+  time。missing、forked、cross-owner 或 timestamp-inconsistent chain contextual
+  error。
+- Candidate apply 是另一种 canonical multi-row transition。applied candidate
+  status 只能是 `auto_promoted`、`approved` 或 `edited`，必须有 exact
+  owner/type/key 的 `result_claim_id`，且 candidate update 与每个 changed
+  predecessor update 使用同一 transition epoch。
+  - Replacement：active rows 按 `(updated_at_epoch DESC,id DESC)`；first 必须是
+    result 的 `supersedes_claim_id`，同 epoch Superseded 的其他 same-identity
+    rows 也是 co-predecessors。transition 前恢复，equality 时 result 替代。
+  - No-op：`result_claim_id` 指向 pre-existing、text/sensitivity exact match 且
+    在同一 ordering 中最先的 row；它保持不变，其他 active rows 被 Superseded。
+    transition 前恢复它们，equality 时 kept result current；candidate 不替换其
+    SourceRefs。
+  - unlinked Superseded row 只有在 authoritative candidate/result/timestamp
+    pattern 全部验证通过时才合法；否则 historical state 不可重建，返回 contextual
+    integrity error，不能 silent drop 或猜 predecessor。
+- `suppress`、`unsuppress`、`delete` 是原地 mutation。若
+  `updated_at_epoch > reference_epoch` 且没有独立版本 row，保守排除/Unknown，
+  不把 current status/content 回灌历史。查询在 mutation 时点或之后可以让当前
+  ClaimView 使用 `knowledge_time_epoch=updated_at_epoch`；SourceRef knowledge
+  仍是 provenance-root binding，因为 refs 未改写。
+- hard delete 或一般 content rewrite 没有历史表时无法完整恢复；规格明确少返回，
+  不根据 current bytes 猜过去。
+- Claim、Relation、Fact 的 event-validity window 全部 half-open：
+  `valid_from <= t`、`valid_to > t`；valid_to equality 已失效。source/knowledge
+  equality eligible，user-edit successor 在 transition equality 生效；
+  suppression revocation equality 按独立 policy 恢复可见。
+
+### Policy suppression
+
+- Canonical stored matrix 固定：`memory`/`user_claim`/`user_candidate` 只能用
+  positive ID；`topic_key`/`entity`/`pattern` 只能用 trim-stable nonblank
+  value；`summary` 必须在 positive ID 与 trim-stable nonblank value 中恰选一个。
+  extra/both/missing 字段均报错。ID 分别解析到 `memories`、
+  `user_context_claims`、`user_context_candidates` 与
+  `user_context_summaries`，不能把后两者错绑为 memory candidate 或
+  `session_summaries`。
+- topic 是 `memories.topic_key` byte-exact；entity 是 linked
+  `entities.canonical_name` 的 SQLite `lower()` equality；pattern 是 SQLite
+  `instr(lower(field),lower(value))>0`，field 为 memory title/content 或
+  user-claim text/key。summary value 按 production 对
+  `user_context_summaries` 的 decimal ID equality 或 summary_text
+  case-insensitive substring。
+- memory/topic/entity/pattern/user-claim 命中只改 Visibility，不改 validity。
+  `user_candidate` 与 `summary` 在 Phase A recognized-but-non-applicable；验证
+  后不产生 effect，也不 transitively suppress candidate-derived claim、
+  `session_summaries` SourceRef 或 evidence。unknown kind 报错。
+- owner pair `(NULL,NULL)` 是 global；两个字段都非空时仅对 exact
+  `SubjectIdentity.owner_scope/owner_key` 生效；partial pair contextual error。
+  exact-owner direct ID 必须校验 target row 属于该 canonical owner，
+  value 也只在该 owner 内匹配；global `(NULL,NULL)` direct ID 可命中任意 owner
+  的 exact row，value 不加 owner 限制，但 query scope 仍限制可隐藏 claims。
+  missing direct target 或 owner mismatch 报错。
+- Current query 只应用 active row。Historical `as_of=t` 应用：
+
+```text
+created_at_epoch <= t
+AND (
+  status = 'active'
+  OR (status = 'revoked' AND t < updated_at_epoch)
+)
+```
+
+  因此 revocation equality 已恢复可见。unknown suppression status/target kind、
+  同时缺少 target ID/value 或同时填写不合法组合均 contextual error。测试覆盖
+  全部七种 canonical target，包括两种 recognized non-applicable target。
+  `memory_entities` 无 link time：applicable current entity target 使 projection
+  `CurrentSnapshotOnly`；effective historical entity target 返回
+  `unreconstructable_entity_link_history`，除非 durable history 证明全部 scoped
+  membership/non-membership。entity creation/backfill/current join 都不是证明。
+
+### Relations and resolution
+
+- Relation 两端必须都在本次 scoped claim set。`Supersedes` 与普通 `Refutes`
+  只有两端 `SubjectIdentity` 完全相同才进入 survivor/conflict 计算。
+- `Supports`/`DerivedFrom` 可以在 scoped set 内跨 typed subject；当一端是 winner
+  时作为 provenance 输出，但不参与 survivor、trust 或 recency。
+- 唯一 cross-identity decision exception 是 canonical operation-backed
+  preference conflict。两端必须同 owner、同 normalized memory scope、同
+  normalized branch（`COALESCE(branch,'')` byte equality）、都是
+  `memory_type=preference`，并分别是自身 slot survivor；post-pass 将两个
+  output 标为 Contradicted，但不合并 identity。
+- 带 `source_operation_id` 的 conflict 必须验证 operation kind、
+  `conflicting_ids` 的 integer-ID array、replacement/pairwise membership、
+  source/candidate/edge linkage。missing/wrong/malformed/inconsistent data 返回
+  包含 edge/operation/endpoints/field 的 contextual error。没有 operation ID
+  的 unbacked conflict edge decision-neutral。
+- Canonical graph/dream pairwise conflict 可以连接 heterogeneous owner/type；
+  writer 合法使用 `owner_scope=repo`、`owner_key=source_project`、
+  `memory_type=memory` fallback metadata。只要 operation/link/membership 有效，
+  这种 row 不报错，但因不满足 uniform preference predicate而
+  decision-neutral。
+- approved uniform-conflict graph 在 same-pair parallel edges 折叠后必须是
+  matching；任一 survivor 有两个不同 partner（如 A-B 与 A-C）即 contextual
+  integrity error。
+- approved cross-topic pair 的每个 output 固定为：subject 保持各自 identity；
+  `claim=None`；`validity=Contradicted`；evidence 是双方 survivor evidence
+  按 evidence_ref 去重并按标准排序的 union；`supporting_relations=[]`；
+  `contradicting_relations` 是连接双方的 validated canonical conflict relations
+  标准排序集合；`rejected` 保留各 slot 之前 rejected refs 并 byte-sort/dedup；
+  `conflicting_claims` 固定含双方并按 canonical_ref bytes 排序；
+  `selected_reason=UnresolvedConflict`。两个 outputs 使用同一 pair/relation set。
+- unbacked 明确要求 candidate/operation 两个 source ID 都为 NULL；knowledge 是
+  edge creation，不查 lookup，unbacked conflict decision-neutral。candidate-only
+  contextual error；operation-only 合法。operation-backed provenance 不
+  late-resolve：operation creation 必须 `<=edge.created_at_epoch`，两者
+  reference-eligible。claimed candidate creation 必须 `<=` operation、匹配
+  source discriminator/ID，并证明 canonical completion：
+  memory status/result/operation/endpoints，或 graph status/promoted-edge/
+  source-operation。writer 在 edge 后更新 candidate，所以 relation knowledge 是
+  edge/operation creation 与 validated application update 的 max；它须
+  reference-eligible，但不要求 candidate update<=edge。dangling/future-created/
+  mismatch 报错；application before/equal/after fixtures 防 retroactive visibility。
+- Resolver 顺序固定：scope/time/lifecycle eligibility → exact-identity
+  supersedes → exact-identity refutes → evidence trust → recency →
+  cross-topic preference post-pass。stored confidence 不进入决策。
+
+### Bounded read behavior
+
+- claims、edges、captured events、Observation links 与 suppressions 全部以
+  scoped IDs/owner/index 查询，stable ascending bind chunk `<=900`，不允许无关
+  table scan 后 `Vec::contains`。第一条 claim SELECT 到 resolve 共享一个 snapshot。
+- seed-933：target 901 memories、1,802 relations、901 evidence refs、900-link
+  high fanout；unrelated 4,505/9,010/4,505，加入后不得改变 target output/counts。
+- Structural pass conditions：
+  - authorizer 只允许 read/SELECT 与 owned transaction controls，`total_changes=0`；
+  - indexed data plan、bind `<=900`、unrelated materialized/returned rows 为 0；
+  - data statements `<=12 + 5*ceil(scoped_claims/900) +
+    2*ceil(scoped_evidence_refs/900)`；
+  - transaction-control count 在 autocommit 为 2（BEGIN + COMMIT/ROLLBACK），在
+    caller transaction 为 0，并与 data statements 分开记录。
+- `src/truth/tests/performance.rs` 提供 ignored release-mode recorder。命令：
+
+```bash
+GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
+  cargo test truth_performance_contract --release -- --ignored --nocapture
+```
+
+  固定 5 次 warm-up、50 次 measured runs。JSON 必须含
+  `schema_version=1`、exact head SHA、seed/corpus counts、chunk size、SQLite/
+  Rust versions、query plans、data/transaction statement、bind/row counts、
+  serialized bytes、
+  p50/p95、migration/index/truth/dependency fingerprints 和每项 structural
+  check boolean。Rust test 自身验证必填字段与 structural checks；p50/p95 仅记录，
+  本 Phase A 未建立可跨机器比较的 latency hard budget，不能把任意数字称为 pass。
+  final candidate SHA 的 artifact 只能在最后一次 commit/base sync 后生成。
 
 ## Product-to-Test Mapping
 
-| Product invariant | Implementation area | Verification |
-| --- | --- | --- |
-| CT-001 | `src/truth/types.rs`, `src/truth.rs` | `golden_projection_shape_is_versioned_and_stable`; `cargo test truth` |
-| CT-002 | `src/truth/lifecycle.rs` | 四组 `*_statuses_map_deterministically` tests；assert 四个正交维度 |
-| CT-003 | `adapter::load_memory_claim_groups`, `TruthQuery` | `branches_keep_isolated_current_truth`, `scope_mismatch_never_leaks_other_projects`; 仍需 cross-project relation fixture；worktree/task 属 Phase B |
-| CT-004 | `projection::eligible`, `relation_effective` | `as_of_returns_the_then_current_now_superseded_decision`, `expiry_is_derived_from_validity_window`; hard-delete/status-history limitation仅文档化 |
-| CT-005 | `adapter::replacement_relation`, `projection::resolve_group` | `explicit_supersedes_beats_recency`, `user_claim_supersedes_link_resolves_deterministically` |
-| CT-006 | `captured_event_evidence`, `trust_class_evidence`, `user_claim_evidence`, `claim_trust_tier` | `verified_evidence_beats_newer_model_generated_claim`, `two_sources_supporting_one_claim_keep_both_evidence_refs`; stored confidence 不在决策输入 |
-| CT-007 | `resolve_group` 的 refutes/tie branches | `unresolved_conflict_returns_contradicted_not_a_silent_pick`, `same_tier_same_timestamp_is_contradicted` |
-| CT-008 | `eligible`, `abstention` | `stale_only_group_abstains_instead_of_answering`, project-empty result in `scope_mismatch_never_leaks_other_projects`; malformed evidence regression 待补 |
-| CT-009 | `CurrentTruthView`, relation/evidence adapter | golden shape、dual-evidence、supersedes 和 conflict fixtures；focused Supports relation fixture 待补 |
-| CT-010 | `ClaimSource`, adapter exports, lifecycle-only observation/candidate mapping | code review confirms Phase A claim sources only Memory/UserContextClaim；writer-side firewall 属 Phase C，PR #939 无完成测试 |
-| CT-011 | `src/truth/lifecycle.rs`, `eligible` | status mapping、unknown fail-closed、expiry tests；`archived_and_deleted_rows_never_become_current_truth`; suppressed path covered by user-claim supersedes fixture |
-| CT-012 | `eligible` excludes non-Live rows | `archived_and_deleted_rows_never_become_current_truth`; historical explanation consumer 属 Phase B/C |
-| CT-013 | future `src/context/*` integration | PR #939 无实现/测试；Phase B 需 context load/render/error/rollback fixtures |
-| CT-014 | future writer evaluation in memory/candidate/user-context/graph areas | PR #939 无实现/测试；Phase C 需 benchmark、migration compatibility 和 rollback evidence |
-| CT-015 | SELECT-only `src/truth/adapter.rs`, `TRUTH_PROJECTION_VERSION`, contextual `anyhow` errors | code review + `cargo test truth` + golden shape；仍需 no-write/`total_changes` 或 SQLite authorizer regression，以及 malformed provenance diagnostic test |
+| Invariant | Verification |
+| --- | --- |
+| CT-001 | typed identity、exact selector、stable serde/order、v2 golden、effective reference epoch |
+| CT-002 | 所有已知 lifecycle values；quarantined observation 显式 Suppressed |
+| CT-003 | repo owner/target Project inclusion、stale non-repo exclusion、Owner union、global/legacy fallback、wrapper suppression isolation、Project/Owner branch、relation scope |
+| CT-004 | memory/event time、duplicate capture immutability、candidate/route、edit/in-place mutation |
+| CT-005 | exact-identity supersedes beats recency |
+| CT-006 | full-blob canonical classifier、provenance-root/binding checks、total recursive user source grammar、candidate own-result/edit invariants、summary provenance fail-closed、WebFetch/MCP/Bash-network、pack/external cap、no-uplift/unknown class |
+| CT-007 | same-slot refutes、preference post-pass、overlap error、heterogeneous canonical pair neutral、malformed operation errors |
+| CT-008 | empty/stale-only abstention；malformed/dangling/unknown fail closed |
+| CT-009 | Observation DTO/catalog/trust/attachment；stale/compressed history integrity error |
+| CT-010 | ClaimSource 仅 Memory/UserContextClaim；Observation 只作 evidence |
+| CT-011 | raw status；七种 suppression/owner/time；entity current-only/history error |
+| CT-012 | Archived 不进 current truth/catalog；后续 historical explanation 单独设计 |
+| CT-013 | Phase B context load/render/error/rollback；本 PR 不声称完成 |
+| CT-014 | Phase C benchmark/architecture decision；本 PR 不声称完成 |
+| CT-015 | one read snapshot；authorizer/transaction controls/`total_changes=0`；public API |
 
-## 数据流
+## Compatibility and Golden Diff
 
-### Phase A memory projection
+- v1 是公开 API。v2 在 `0.7.0` 或实现时下一个 breaking SemVer boundary 发布；
+  Cargo、lockfile、plugin manifest、runtime release manifest、npm wrapper、
+  `server.json` 与 changelog 同步。
+- README 和 `docs/ARCHITECTURE.md` 必须给出 `remem::truth` v1→v2 migration：
+  `subject_key/scope/as_of_epoch` 到 typed subject/TruthScope/
+  `requested_as_of_epoch+reference_epoch`，ClaimView
+  `created_at_epoch/updated_at_epoch` 到 version-specific
+  `source_time_epoch/knowledge_time_epoch`（含 edit transition、in-place mutation
+  限制与 recency 使用 selected ClaimView effective knowledge epoch），以及
+  observation catalog。
+- `tests/truth_public_api.rs` 必须作为 external crate consumer 编译
+  `use remem::truth::{...}`，构造 Project 与 Owner query，并锁定 public exports。
+  文档与编译示例只使用这一真实 library path。
+- Golden diff 逐字段 allowlist 仅包括：
+  1. version 1→2、public entrypoint/export、TruthScope、typed subject、exact selector、
+     effective epoch/replayability；
+  2. EvidenceView v2 fields/integrity、ClaimView temporal-field replacement、
+     Observation catalog/read-scan/nullable-epoch/trust/explicit attachment；
+  3. NULL/exact-empty topic singleton、owner/scope/type isolation、canonical owner/target
+     Project inclusion、stale non-repo placement exclusion、Owner memory+claim
+     union、global/legacy fallback 与 user-claim-only compatibility wrapper；
+  4. versioned edit 与 candidate multi-row/no-op historical recovery、in-place
+     mutation conservative exclusion；
+  5. policy suppression owner/time visibility；
+  6. canonical stored+recomputed source-trust cap、all-source binding-time
+     checks、first-party explicit-user rules、candidate/result/edit invariants、
+     summary provenance fail-closed 与 full-blob external/tool提权修复；
+  7. valid heterogeneous conflict 由 error 改为 neutral；
+  8. approved cross-topic preference outputs 与 overlapping-pair error；
+  9. malformed/dangling/unknown provenance/status 的 fail-closed/error output。
+  branch semantics、same-slot resolver order和其它 contract-valid output 不变。
+  禁止整份重录 golden 掩盖 allowlist 外 drift。
 
-```text
-TruthQuery(project, branch, as_of, subject)
-  -> SELECT scoped memories ordered by (updated_at_epoch, id)
-  -> resolve captured_event refs + memory trust metadata
-  -> SELECT allowlisted memory_edges + trusted memory graph_edges
-  -> ClaimView[] + EvidenceView[] + RelationView[]
-  -> BTreeMap subject grouping
-  -> lifecycle/as_of eligibility
-  -> supersedes -> refutes -> evidence trust -> recency
-  -> CurrentTruthProjection(version=1, truths[])
-```
+## Security
 
-### Phase A user-context projection
+- 所有 SQL 使用 bound parameters；project、branch、owner、pattern 和 user content
+  不得拼接。
+- external content trust cap、poisoning quarantine、suppression owner scope 和
+  relation endpoint scope 都是 security boundary，必须有人审阅实现。
+- Future HTTP/MCP surface 需要独立 auth/redaction/sensitivity review；Phase A
+  不能直接把完整 statement/catalog 序列化到网络。
+- Projection data-SELECT-only；允许 owned transaction control，不执行 canonical
+  write/migration/LLM/network/process。失败返回 diagnostic，不能包装为空成功。
 
-```text
-(owner_scope, owner_key, as_of)
-  -> SELECT exact-owner user_context_claims
-  -> source refs + row supersedes links
-  -> shared resolver
-  -> CurrentTruthProjection(version=1, truths[])
-```
+## Phase B / Phase C Boundaries
 
-Phase A 不产生 persistence，不调用 LLM/network，不改变 context。Phase B 才将
-projection 作为 context loader 的 typed input；Phase C 才可能改变 writer。
+- Phase B 才让 Context Bundle 使用 projection。一次 render 只计算一个
+  reference epoch；current truth、decisions、conflicts 分开渲染；旧 path 有明确
+  rollback；projection failure 必须 error-visible。worktree/task selector、
+  budget/cache/historical explanation 也在 Phase B 细化。
+- Phase C 才评估 writer convergence。是否收敛由 benchmark 与架构审阅决定；
+  migration、dual-write、backfill、cutover 和 generated-enrichment writer
+  firewall 需要独立 contract。Phase A DTO 不自动授权 schema 改动。
 
-## 兼容性与版本
+## Test Plan
 
-- `pub mod truth` 是 additive Rust API；现有 CLI、HTTP、MCP、hook 和 context
-  output 不变。
-- `CurrentTruthProjection.projection_version=1` 锁定 observable JSON shape；
-  字段或 resolution policy 的不兼容变化必须 bump version 并保留明确迁移说明。
-- Phase A 读取当前 schema，不新增 migration；旧数据库仍需先由现有 migration
-  path 升到当前 schema，projection 自身不得迁移。
-- `target_project` fallthrough、global/project ownership convergence、
-  worktree/task selector 和 Context Bundle compatibility 均未由 PR #939
-  交付，调用方不得据此推断能力。
-- staged `0.6.26` 必须通过 plugin/npm/server/Cargo version-sync checks；
-  `unreleased` manifest 不等于已向 installed-binary 用户发布。
+- [ ] `cargo test truth -- --nocapture`
+- [ ] `cargo test --test truth_public_api`
+- [ ] `cargo test context`
+- [ ] `cargo fmt --check`
+- [ ] `cargo check`
+- [ ] `cargo clippy --all-targets -- -D warnings`
+- [ ] `cargo test`
+- [ ] `python3 scripts/ci/check_plugin_version_sync.py`
+- [ ] `python3 scripts/ci/check_version_bump.py origin/main HEAD`
+- [ ] Full PR preflight with the exact intended PR body.
+- [ ] Final-head bounded/performance artifact command above.
+- [ ] Fresh exact-head CI and independent review.
 
-## 性能
+## Rollback
 
-- scoped memories 使用现有 project/topic/branch indexes；owner claims 使用
-  owner-active index。
-- 当前 evidence lookup 为逐 claim/逐 event 查询，relation lookup 为全表扫描
-  后内存过滤，`memory_ids.contains` 还会带来线性 membership cost。Phase A
-  不在 context hot path，风险暂时隔离，但不能直接带入 Phase B。
-- Phase B gate 前应记录 representative project 的 claim/edge 数量、SQL
-  query plan、p50/p95 latency、allocated rows 和 rendered budget；relation
-  查询必须 bounded，且同一次 render 只运行一次 projection。
-- 没有数据时返回空/abstention，不应启动 LLM 或 background work。
+Phase A 不新增 schema/backfill。若 v2 有问题，整体回滚 truth module、
+duplicate-capture timestamp guard、tests/docs 与 0.7.0 metadata；不得只回退
+一份 manifest。已发布 0.6.x artifacts 不可改写。
 
-## 安全
+Phase B 保留旧 context path 并按独立 rollout/rollback design 切换；projection
+失败不得静默输出缺失 context。Phase C 如果引入 migration/dual-write，必须在
+独立 contract 中给出停止写入、向后兼容读取、数据校验与恢复步骤。
 
-- 所有 SQL 使用 parameters；不拼接 project、branch、owner 或 user content。
-- memory 使用 exact project filter，user claim 使用 exact owner pair；
-  policy-suppressed rows 不进入 current truth。
-- 只有 trusted memory-to-memory graph edges 可进入 projection；
-  diagnostic hints 与 stored confidence 不参与 truth。
-- Phase A 是 local library surface，无新增 auth boundary；调用者仍可能读取完整
-  claim statement，因此未来 HTTP/MCP 暴露必须另做 auth、redaction、sensitivity
-  和 policy review，不能直接序列化到网络。
-- cross-project relation 必须要求两个 endpoint 都在 scoped set；否则虽不泄露
-  scope 外 statement，也可能让 scope 外数据影响 scope 内 truth。
-- provenance 解析失败不得抬高 trust；Phase B 前必须可诊断，防止安全性降级被
-  误认成正常空 context。
+## Implementation Change Set
 
-## 备选方案
+Phase A v2 implementation 预计修改以下路径；除 duplicate capture timestamp
+immutability 外，不得静默扩大到 writer、schema 或 context：
 
-- 直接重写 canonical schema：拒绝用于 Phase A；风险大且无法先验证 read
-  semantics。
-- 让每个 context/CLI caller 自行解释状态：拒绝；会产生不一致 truth。
-- 用 LLM 或 stored confidence 决胜：拒绝；不可解释且不可稳定重放。
-- 仅按 `updated_at_epoch` 取最新：拒绝；会覆盖 supersedes、evidence trust
-  和 unresolved conflict。
-- Phase A 建 materialized table/cache：暂不采用；当前 projection 可由 canonical
-  rows 重建，先通过 benchmark 再决定。
+- `src/truth.rs`
+- `src/db/capture.rs`（duplicate row timestamp no-op + pure preview helper）
+- `src/memory/poisoning.rs`（只暴露 pure classifier）
+- `src/truth/adapter.rs`
+- `src/truth/lifecycle.rs`
+- `src/truth/projection.rs`
+- `src/truth/types.rs`
+- `src/truth/tests.rs`（先拆分）
+- `src/truth/tests/**`
+- `tests/truth_public_api.rs`
+- `README.md`
+- `docs/ARCHITECTURE.md`
+- `docs/specs/GH933/PRODUCT.md`
+- `docs/specs/GH933/TECH.md`
+- `docs/specs/README.md`
+- `CHANGELOG.md`
+- `Cargo.toml`
+- `Cargo.lock`
+- `plugins/remem/.codex-plugin/plugin.json`
+- `plugins/remem/runtimes/remem-releases.json`
+- `npm/remem/package.json`
+- `server.json`
 
-## 风险
-
-- Security: scope 外 relation 影响、未来网络暴露完整 statement、suppression
-  绕过和 provenance trust 错分。
-- Compatibility: version 1 shape/policy 被调用方固化；Phase B 误把 partial
-  Phase A 当完整 GH-933；旧 schema 缺 column 时查询失败。
-- Performance: relation 全表扫描、逐 evidence lookup 和内存 membership 在大库
-  上放大；进入 SessionStart hot path 前必须优化并量测。
-- Data fidelity: `as_of` 无法重建 hard-delete/status rewrite；malformed refs
-  当前只有 trust 降级，缺少显式 diagnostic。
-- Maintenance: status writer 新增值时 mapper 默认 fail closed，但需要同步测试
-  和版本说明；relation allowlist 与 graph contract 必须同步。
-
-## 测试计划
-
-- [ ] Phase A focused: `cargo test truth`
-- [ ] Phase A quality: `cargo fmt --check`
-- [ ] Phase A lint: `cargo clippy --all-targets -- -D warnings`
-- [ ] Phase A regression: `cargo test`
-- [ ] 补 cross-project relation、focused Supports relation、malformed provenance
-      和 SELECT-only/no-write regression。
-- [ ] Version sync:
-      `python3 scripts/ci/check_plugin_version_sync.py`
-- [ ] Version bump:
-      `python3 scripts/ci/check_version_bump.py origin/main HEAD`
-- [ ] SpecRail:
-      `python3 checks/check_workflow.py --repo . --spec-dir specs/GH933`
-- [ ] Phase B：Context Bundle current/decision/conflict、shared `as_of`、error-visible、
-      rollback、worktree/task、cache/budget/performance tests。
-- [ ] Phase C：writer/migration/benchmark/rollback tests；必须由后续批准规格定义。
-
-## 回滚方案
-
-Phase A 没有 schema 或 data mutation。若 public projection 有问题，可回滚
-`src/truth*`、`src/lib.rs` export、对应 docs/changelog 和 version-sync 变更；
-现有 writer、CLI/HTTP/MCP/hook/context path 无需数据恢复。
-
-Phase B 必须通过单独批准的 rollout gate 保留旧 context path；projection
-加载失败时记录 error 并按批准的 rollback policy 切回旧 path，而不是静默输出
-缺失 context。Phase C 若引入 migration/dual-write，必须在独立规格中给出
-向后兼容读取、停止写入、数据校验与恢复步骤；本 Phase A rollback 不适用于
-尚未设计的 Phase C。
+如果实现证明需要新 index/migration、writer、Context Bundle 或新的 public network
+surface，停止该 implementation PR，先更新当前 contract 并重新审阅范围。

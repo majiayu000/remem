@@ -3,6 +3,29 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.30` for GH-943: ordinary workers now drain
+  eligible residual `pending_observations` into the current capture/extraction
+  pipeline only when no current extraction task is ready. The bridge admits at
+  most 25 oldest known-host rows once per `worker --once` process or once per
+  60-second daemon interval, handles pending/expired-processing/due transient
+  and historical archived transient rows, uses per-row immediate transactions
+  plus replay savepoints, prepares Git metadata before taking the SQLite write
+  lock, revalidates the source snapshot after locking, and records capped
+  exponential backoff without rewriting first-failure/archive history on
+  replay errors. A zero-progress yield to newly arrived current work keeps the
+  once/interval admission available, while partial progress consumes it.
+  Doctor keeps deferred archived transient rows visible with their earliest
+  retry epoch, reports due automatic backlog with executable `remem worker
+  --once` guidance, and marks archived permanent/unknown-host rows
+  `admin-required`, listing a bounded oldest-first candidate set with concrete
+  exact-ID recovery commands instead of relying on the global recent-failure
+  list. The new exact `remem pending recover-archived --id` command supports
+  dry-run, requires an explicit host for stored unknown identity, and clears
+  failure/archive state only after transactional replay succeeds.
+  Deterministic two-connection coverage proves Git enrichment leaves the
+  database write lock available, and process-level kill/restart coverage proves
+  a durable failed backlog still drains to zero after restart. This staged
+  version follows `0.6.28` (#962) and `0.6.29` (#960); merge those PRs first.
 - Staged source version `0.6.27` for GH-934: Retrieval Router v1
   deterministic plan compilation. New `src/retrieval_router/` module with
   a versioned `RetrievalPlan` (per-channel enabled/limit/weight/max
@@ -19,16 +42,17 @@
   contents; no LLM or network call on any router path. Wiring the plan
   into retrieval execution, rerank mechanics (GH-851), and per-intent
   golden-fixture ablation remain follow-up work on GH-934.
-- Staged source version `0.6.26` for GH-933 Phase A: read-only CurrentTruth
-  projection module (`remem_ai::truth`). Versioned Evidence/Claim/Relation/
-  CurrentTruth read DTOs, a three-dimension lifecycle mapping (publication /
-  validity / retention plus policy visibility) covering every stored status
-  value of memories, observations, user-context claims, and memory
-  candidates, and a deterministic resolution policy: scope and branch
-  isolation, `as_of` filtering, explicit supersedes over recency, verified
-  evidence over model-generated, `Contradicted` for unresolved conflicts, and
-  abstention instead of guessing. No writer, schema, or context-path changes;
-  Context Bundle wiring is Phase B. Contract: `docs/specs/GH933/`.
+- Released in `0.6.26` for GH-933 Phase A: read-only CurrentTruth
+  projection module (`remem::truth`). Versioned Evidence/Claim/Relation/
+  CurrentTruth read DTOs, a baseline lifecycle mapping (publication /
+  validity / retention plus policy visibility) for memories, observations,
+  user-context claims, and memory candidates, and a deterministic resolution
+  policy: project/branch claim filtering, `as_of` filtering, explicit
+  supersedes over recency, verified evidence over model-generated,
+  `Contradicted` for unresolved conflicts, and abstention instead of guessing.
+  No writer, schema, or context-path changes; pending v2 hardening and later
+  Context Bundle work remain tracked by GH-933. Contract:
+  `docs/specs/GH933/`.
 - Staged source version `0.6.25` for GH-932: Context Bundle v1 internal
   contract. New `src/context_bundle/` module with versioned
   `ContextRequest` / `ContextPlan` / `ContextBundle` / `ContextAudit`
@@ -517,7 +541,7 @@
   outcomes without mutating the runtime store.
 - Staged source version `0.5.173` for the GH-672 memory poisoning defense
   closure fixture: captured-event instruction payloads now exercise
-  candidate quarantine through render absence, and the SpecRail task plan is
+  candidate quarantine through render absence, and the issue task plan is
   synchronized with the completed security tranche.
 - Staged source version `0.5.172` for GH-684 summary writer equivalence:
   field-comparison fixtures now document legacy Summary structured fields,

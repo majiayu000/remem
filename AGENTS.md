@@ -12,7 +12,7 @@ remem 的目标是做最强的 Claude Code / Codex 记忆系统，不是最便�
 2. Read `README.md` for user-facing behavior and `docs/ARCHITECTURE.md` for current runtime/data-flow context.
 3. Read `docs/specs/README.md` before treating any old `docs/specs/*.md` file as pending work. Most historical specs have been implemented, superseded, or absorbed into the current architecture.
 4. For Codex plugin/runtime work, also read `plugins/remem/README.md`, `plugins/remem/skills/remem/SKILL.md`, and the version-sync files listed below.
-5. Use repo-local skills under `skills/` and `.agents/skills/` when a task matches one.
+5. Use repo-local maintenance skills under `.agents/skills/` when a task matches one.
 6. Search existing code and docs before creating new files. Similar-file creation without search is not acceptable.
 
 ## Core Rules
@@ -26,33 +26,6 @@ remem 的目标是做最强的 Claude Code / Codex 记忆系统，不是最便�
 ## Spec Routing
 
 Use specs as contracts only after checking their status in `docs/specs/README.md`.
-
-## SpecRail Workflow
-
-This repository adopts SpecRail when `skills-lock.json` and
-`skills/specrail-workflow/SKILL.md` are present.
-
-For SpecRail-governed issue, PR, CI, and release work:
-
-1. Start with `skills/specrail-workflow/SKILL.md` only.
-2. After the route is known, load exactly one focused SpecRail skill such as
-   `specrail-triage-issue`, `specrail-write-product-spec`,
-   `specrail-write-tech-spec`, `specrail-plan-tasks`, `specrail-implement`,
-   `specrail-review-pr`, `specrail-diagnose-ci`, `specrail-pr-gate`, or
-   `specrail-release-note`.
-3. Read `AGENT_USAGE.md`, `workflow.yaml`, `states.yaml`, `labels.yaml`, and
-   the relevant template before writing SpecRail artifacts.
-4. Run `python3 checks/route_gate.py --repo . --route <route> ... --json` when
-   the route has enough issue or PR evidence.
-
-SpecRail's new issue packets live under `specs/GH<issue-number>/` with
-`product.md`, `tech.md`, and `tasks.md`. Existing remem implementation
-contracts stay under `docs/specs/`; update those current contracts when a
-change modifies the behavior they already govern. Do not copy old
-`docs/specs/` files into SpecRail packets unless the linked issue requires it.
-
-SpecRail never removes the human gates for readiness labels, spec approval,
-final PR review, security decisions, merge, or release.
 
 | Change | Required path |
 |---|---|
@@ -82,15 +55,15 @@ checks land. See `docs/specs/spec-lifecycle-governance/`.
 
 ## Commands
 
-Before opening or updating a PR, run the local preflight so CI gate failures are
+Before opening or updating a PR, run the local preflight so CI failures are
 reported together instead of one push at a time:
 
 ```bash
 python3 scripts/ci/check_pr_preflight.py --base origin/main --pr-body-file /tmp/pr-body.md
 ```
 
-Use `--fast` for the mechanical subset while iterating, then run the full
-preflight before merge readiness. If the PR already exists, copy the intended
+Use `--fast` for the smaller subset while iterating, then run the full
+preflight before submission. If the PR already exists, copy the intended
 PR body to the file passed with `--pr-body-file` so spec-lifecycle and version
 bump checks see the same metadata as CI.
 
@@ -118,7 +91,7 @@ cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 cargo clippy --all-targets -- -D warnings
 ```
 
-Use focused tests first for narrow fixes, then the broader gate when practical. Do not claim completion from earlier or unrelated output.
+Use focused tests first for narrow fixes, then the broader suite when practical. Do not claim completion from earlier or unrelated output.
 
 ## Documentation Rules
 
