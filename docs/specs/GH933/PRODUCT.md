@@ -64,6 +64,12 @@ pending v2 requirements below.
    routing + branch and can include owner Q via `target_project=P`. A compatible
    selector with no row yields an empty truth list, not synthesized Unknown.
    Owner/memory-scope values are closed domains; trimmed `" global "` is global.
+   Explicit history reconstructs owner, target and invariant memory scope at the
+   cutoff from the canonical creation proof plus a complete timestamped
+   scope-cleanup chain; Project/Owner membership and SubjectIdentity use that
+   route, with the new route effective at transition equality. Missing, forked,
+   contradictory or scope-changing history returns
+   `unreconstructable_routing_history`, never current-route fallback.
 
 3. **Auditable reference time and snapshot.** An explicit `as_of` is used
    directly and is `Exact`. A query without one samples “now” once. Every output
@@ -81,7 +87,12 @@ pending v2 requirements below.
    co-predecessors even though only one row may have an explicit successor
    link. In-place suppress/unsuppress/delete mutations without a historical row
    are conservatively excluded/Unknown; current bytes must not be projected
-   backward. Because backup/Markdown imports preserve source timestamps,
+   backward. Memory status changes written by `govern_memories` or Web
+   archive/restore are instead reconstructed from a complete, continuous
+   `memory_governance` audit chain; Web transitions also require their exact
+   operation/audit ledger binding. The new status is effective at transition
+   equality; missing, forked or contradictory history returns
+   `unreconstructable_memory_lifecycle`. Because backup/Markdown imports preserve source timestamps,
    `updated_at_epoch` alone is not ingestion proof: the earliest
    current-compatible canonical result operation, candidate completion and
    validated acknowledgement define memory knowledge; an unproven memory is
@@ -91,7 +102,10 @@ pending v2 requirements below.
    later trust/ack rewrites and advances knowledge time but cannot prove initial
    ingestion; its request topic may legitimately differ from the result topic.
    Candidate-linked route changes need a complete scope-cleanup event chain;
-   unexplained post-candidate content/provenance drift fails closed.
+   each previous/new owner snapshot must join the next and the terminal snapshot
+   must equal the current row. The real writer does not store or mutate scope in
+   those snapshots, so normalized memory scope is a creation-proof-validated
+   invariant; unexplained routing, scope, content or provenance drift fails closed.
    Captured-event identity `(host_id, session_id, event_id)` is immutable across
    idempotent replay: a duplicate cannot replace its original creation,
    insertion/knowledge or reference/source epoch. Replay may append separately
@@ -139,7 +153,9 @@ pending v2 requirements below.
    Untrusted when any canonical supporting source is external. Observation
    never becomes a Claim. Attachment to a memory Claim requires a scoped,
    bitemporally effective `memory_facts` row that explicitly contains both
-   `source_memory_id` and `source_observation_id`.
+   `source_memory_id` and `source_observation_id`; both its caller-supplied
+   learned time and actual NOT-NULL insertion `created_at_epoch` must be no later
+   than the cutoff, with no legacy timestamp fallback.
    Current queries exclude rows whose current lifecycle is stale/compressed.
    Explicit history returns a contextual integrity error when such a scoped row
    existed by the cutoff but lacks complete validated transition history; it
@@ -171,7 +187,9 @@ pending v2 requirements below.
    Scoped Supports/DerivedFrom provenance may cross identities without changing
    the winner. Unbacked means both source IDs are NULL. Candidate-only provenance
    is invalid; operation-only and candidate+operation rows follow their exact
-   validation paths.
+   validation paths. Every scoped `memory_edges.edge_type` is parsed through the
+   closed six-kind writer domain; an unknown/newer/typo value is a contextual
+   table/edge/raw-value error, never a silently omitted relation.
 
 10. **Canonical preference conflicts.** A validated operation-backed conflict
     can mark two same-owner/scope/branch preference survivors Contradicted
@@ -181,8 +199,9 @@ pending v2 requirements below.
     both outputs use the deterministic full-field shape in `TECH.md`. Uniform
     conflict pairs must form a matching; an A-B plus A-C survivor graph errors.
 
-11. **Bounded reads.** Edge, evidence, Observation-link and suppression lookups
-    use scoped/indexed SQL and stable ID chunks of at most 900. Large unrelated
+11. **Bounded reads.** Raw edges, evidence, facts, suppression and governance/
+    scope-cleanup events use scoped/indexed SQL and stable ID chunks of at most
+    900. Large unrelated
     projects do not change target query counts, returned rows or output. The full
     projection runs in one deferred SQLite read snapshot; transaction control is
     read orchestration, not a canonical-data write.
@@ -200,7 +219,8 @@ pending v2 requirements below.
 - [ ] Typed owner/scope/type identity, repo owner/target Project routing,
       non-repo reroute exclusion, Owner memory+claim union, global/legacy
       fallback, NULL/exact-empty singleton and branch semantics have positive and
-      cross-scope negative tests; the legacy user-claim wrapper stays
+      cross-scope negative tests. Historical Project/Owner before/equal/after
+      fixtures use the cutoff route and incomplete chains fail closed; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.
@@ -213,7 +233,9 @@ pending v2 requirements below.
       not requiring an unavailable candidate title. Operation-less procedure
       memory is current-snapshot-only; explicit history excludes/Unknown.
 - [ ] Versioned edit and in-place mutation histories have separate
-      before/equal/after tests.
+      before/equal/after tests; validated general and Web governance chains
+      restore memory lifecycle, while gaps/forks/ledger mismatches return
+      `unreconstructable_memory_lifecycle`.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
@@ -229,8 +251,9 @@ pending v2 requirements below.
 - [ ] Observation catalog shape/order/dedup/provenance and explicit attachment
       are covered, including NULL refs, read-time poisoning scan, external
       trust cap, empty-ref ModelGenerated default, nullable epoch errors and fact
-      learned/valid/invalidation/replacement boundaries; post-cutoff stale/
-      compressed lifecycle mutation fails visibly and no implicit linkage exists.
+      learned/created/valid/invalidation/replacement boundaries plus late-insert
+      rejection; post-cutoff stale/compressed lifecycle mutation fails visibly
+      and no implicit linkage exists.
 - [ ] `poisoning_quarantined` and unknown Observation statuses cannot expose
       usable evidence.
 - [ ] External/pack trust caps, WebFetch/MCP/network-Bash mixed evidence and
@@ -248,7 +271,8 @@ pending v2 requirements below.
 - [ ] Same-identity decisions, cross-identity provenance, uniform preference
       conflict output/application boundaries and heterogeneous canonical pair
       behavior are covered, including overlapping-pair rejection and unbacked/
-      candidate-only/operation-only provenance shapes.
+      candidate-only/operation-only provenance shapes. All six memory-edge kinds
+      have exact direction/mapping tests and an unknown kind fails contextually.
 - [ ] Malformed/dangling/foreign evidence and operation provenance fail closed
       with contextual diagnostics.
 - [ ] SQLite authorizer/`total_changes` proves SELECT-only behavior while

@@ -20,8 +20,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   SemVer boundary，并提供 README migration。
 - 当前 adapter 存在外部 tool evidence 提权、Observation quarantine 状态缺失、
   relation 全表读取、suppression owner 未应用和 effective epoch 不可审计等 gap。
-- user claim edit 有可重建版本链；suppress/unsuppress/delete 是不可重建的原地
-  mutation，不能混为同一种历史行为。
+- user claim edit 有可重建版本链；非 governance/versioned 的原地 mutation
+  不可重建，而 memory governance 有 timestamped audit/ledger，不能混为一类。
 - `src/truth/tests.rs` 已有 679 行；新增测试前必须拆分。
 - Phase B/C 仍是后续工作，GH-933 在最终 closure audit 前保持开放。
 
@@ -60,6 +60,11 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     memory+user-claim union、global/legacy fallback、Project/Owner branch
     semantics，以及 user-claim-only compatibility wrapper；wrapper 仅 bounded
     读取 applicable `user_claim`/`pattern` suppressions 与显式 memory ref。
+    explicit history 从 canonical creation proof 加完整 timestamped
+    `scope_cleanup` previous→new chain 重建 owner/target route；Project/Owner
+    membership 与 SubjectIdentity 使用 cutoff route，equality 用 new route。
+    normalized memory scope 是 creation-proof invariant；gap/fork/contradiction
+    返回 `unreconstructable_routing_history`。
   - Implement total user source-kind/ref grammar；candidate-derived claim 必须
     exact-match authoritative candidate/result copied fields、nested provenance
     与 preserved edit fields；验证 owner/host/project/session、provenance-root
@@ -69,7 +74,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     content/trust、不猜 `topic_segments`。
   - Implement scoped-ID bounded relation reads、decision/provenance split and
     canonical preference conflict post-pass；uniform graph 必须是 matching，
-    A-B + A-C overlap contextual error。
+    A-B + A-C overlap contextual error。对 touching scoped ID 的每条
+    `memory_edges` 在 endpoint 过滤前 total-parse closed six-kind domain：
+    Supersedes/Supports/Refutes/DerivedFrom 的 exact direction 固定；unknown kind
+    返回 table/edge/raw context，NULL-source provenance 不伪造 endpoint。
   - Accept structurally valid heterogeneous canonical pairwise conflict as
     decision-neutral；unbacked 要求 candidate/operation IDs 都为 NULL，
     candidate-only error、operation-only valid；malformed provenance仍报错。
@@ -77,8 +85,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     scoped/bitemporally effective
     `memory_facts(source_memory_id, source_observation_id)` attachment；覆盖
     NULL refs/NULL creation epoch、read-time poison scan、external supporting
-    trust、empty-ref ModelGenerated default、fact learned/valid/invalidation/
-    replacement boundaries。
+    trust、empty-ref ModelGenerated default、fact learned/actual-insert `created_at_epoch`/
+    valid/invalidation/replacement boundaries 与 late-insert/backdated-learned
+    rejection；fact creation NULL/missing 没有 legacy fallback。
     `poisoning_quarantined` 映射 Candidate/Unknown/Live/Suppressed 并在 usable
     output/trust 前排除；explicit history 遇到 cutoff 前存在但无完整 transition
     history 的 stale/compressed row 时返回
@@ -102,14 +111,18 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     preserved refs 不得在 successor creation 重新绑定。按
     authoritative candidate/result/timestamp pattern 重建 replacement/no-op
     multi-active co-predecessors，并拒绝 unexplained unlinked Superseded row；
-    post-cutoff in-place suppress/unsuppress/delete 保守排除/Unknown。
+    非 governance/versioned 的 post-cutoff in-place mutation 保守排除/Unknown。
+    对 `govern_memories` 与 Web archive/restore，strict-parse timestamped
+    `memory_governance` previous→new status chain 并连续到 current row；Web 必须
+    exact bind operation/audit/schema-1 ledger。equality 用 new status，gap/fork/
+    contradiction/ledger mismatch 返回 `unreconstructable_memory_lifecycle`。
   - Fail closed on unknown status、malformed/dangling/foreign/future-binding
     evidence and inconsistent routing/ownership；所有 SQL parameterized。
     memory candidate evidence 还要求 completed status、origin trust cap、
     exact confidence/persisted copied fields（不含未持久化 derived title）与
     result operation；candidate input scope 按 validated route 映射为 user=global/
-    other=project，workspace positive 必须通过。route drift 只接受 contiguous
-    scope-cleanup event chain，其他 mutation fail closed。effective memory
+    other=project，workspace positive 必须通过。route drift 只接受 anchor/adjacency/
+    terminal 都完整的 scope-cleanup chain，scope 不变，其他 mutation fail closed。effective memory
     knowledge 选择 earliest current-compatible ingestion proof，再取 canonical
     noop/route/ack 的 max；noop 验证 result owner/type 而不要求 input topic 等于
     result topic。无 proof 的 procedure memory 仅 current-snapshot
@@ -133,6 +146,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     replayability serde、
     duplicate capture timestamp/history stability、post-cutoff Observation
     stale/compressed integrity error、post-cutoff entity add/replace negative、
+    Project/Owner route before/equal/after 与 incomplete-chain error、general/Web
+    lifecycle before/equal/after 与 broken-ledger error、late-insert fact、六种
+    edge mapping 与 unknown-kind error、
     WAL concurrent-writer single-snapshot、authorizer transaction-control/
     `total_changes` tests；`cargo test truth -- --nocapture`.
 
@@ -143,7 +159,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     4,505 evidence refs。
   - Assert bind chunks `<=900`、indexed scoped plans、zero unrelated returned rows、
     documented data-statement formula、autocommit transaction-control count=2 /
-    caller-transaction count=0，以及 unrelated corpus 前后 target output 相同。
+    caller-transaction count=0，以及 unrelated corpus 前后 target output 相同；
+    facts、raw edges、governance/scope-cleanup events 也必须 scoped/index-bounded。
   - Run the structural verifier and, when useful, generate a preliminary
     implementation-head record:
 

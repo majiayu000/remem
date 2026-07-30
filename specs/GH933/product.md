@@ -78,7 +78,12 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    包括 Owner-scoped global/legacy rows，并保持 all-branch semantics；
    user-claim compatibility wrapper 仍只返回 UserContextClaim，只 bounded 读取
    selected claims 可应用的 `user_claim`/`pattern` suppression 与显式引用 memory，
-   不枚举 memory-only suppression。relation 的两个
+   不枚举 memory-only suppression。explicit historical query 必须从 canonical
+   creation proof 与完整 `scope_cleanup` previous→new chain 恢复 cutoff 时的
+   owner/target route；Project/Owner membership 与 SubjectIdentity 都用该 route，
+   transition equality 使用 new route。writer 不修改且不审计 memory scope，
+   因此 scope 必须由 creation proof 验证为 invariant；missing/forked/
+   contradictory chain 返回 `unreconstructable_routing_history`。relation 的两个
    endpoint 也必须同时属于该查询的 scoped claim set。`Supersedes` 只有两端属于同一完整 subject
    identity 才能改变 winner；普通 `Refutes` 同样只在同一 identity 内裁决。
    唯一 cross-identity decision exception 是 canonical writer 记录且可验证的
@@ -90,7 +95,12 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    内结果。
    `Supports`/`DerivedFrom` 等 provenance-only relation 可以连接同一 scope
    内的不同 typed subject，但只能作为 winner 的 provenance 输出，不能参与
-   survivor、trust 或 recency 决策。worktree/task selector 属于 GH-933
+   survivor、trust 或 recency 决策。`memory_edges.edge_type` 的 closed writer
+   domain 只有 `supersedes`、`duplicates`、`conflicts`、`derived_from`、
+   `merged_into`、`split_from`，分别映射 Supersedes(new→old)、
+   Supports(from→to)、Refutes(from→to) 与 DerivedFrom(to→from)。任何 scoped
+   unknown/newer/typo kind 返回 table/edge/raw-value contextual error。
+   worktree/task selector 属于 GH-933
    后续阶段，不是 Phase A hardening 的完成项。compatible selector 没有 row 时
    返回 `truths=[]`；只有已加载 identity 无 survivor 才返回 `Unknown`。
 4. CT-004 指定 `as_of` 时，projection 只能使用该时点已存在且在有效时间窗内
@@ -102,13 +112,21 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    不证明 current incarnation。仅 `updated_at_epoch` 不能证明 ingestion。无
    proof 的 memory 只可用于 `as_of=None` current snapshot，explicit historical
    必须排除/`Unknown`；这也定义了无 operation-log 的 canonical procedure
-   memory。candidate-linked routing 变化必须由 contiguous/unambiguous
-   scope-cleanup event chain 证明，其他 post-candidate content/provenance drift
-   fail closed。
+   memory。candidate-linked routing 从 creation route 到 current row 必须由按
+   `(created_at_epoch,id)` 排序、previous/new 全字段连续且 terminal=current 的
+   scope-cleanup chain 证明；cutoff 折叠所有 epoch `<=as_of` 的 transition，
+   scope 保持 creation-proof invariant，其他 route/scope/content/provenance
+   drift fail closed。
    已有 ingestion proof 后，canonical no-op 仅在 planner、result ID、current
    owner/type、empty transition sets 与 source/reason 全部验证时证明后续
    trust/ack transition；input topic 是 request provenance，可合法不同于 result
    topic。它推进 knowledge time，但不能独立证明初始 ingestion。
+   `govern_memories` 以及 Web archive/restore 写出的 memory status 例外地由
+   timestamped `memory_governance` previous→new status chain 重建；链必须从
+   creation/result status 连续到 current row。Web transition 还必须 exact bind
+   `api_mutation_requests` operation/audit/schema-1 response。transition equality
+   使用 new status；missing/broken/forked/contradictory/ledger-mismatched chain
+   返回 `unreconstructable_memory_lifecycle`。
    user-context `edit` 是例外的版本化路径：
    writer 保留旧 row、在 transition epoch 将其标为 `superseded`，并插入带
    `supersedes_claim_id` 的新 row；`as_of` 早于 transition 时必须从这条完整
@@ -121,7 +139,8 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    link；projection 必须用 authoritative candidate/result/timestamp pattern
    恢复全部 co-predecessors，不能把合法 writer state 当 fork，也不能接受无法
    解释的 unlinked Superseded row。
-   `suppress`、`unsuppress` 与 `delete` 是原地 mutation；若其
+   其他没有 canonical governance/version history 的原地 `suppress`、
+   `unsuppress` 与 `delete` mutation；若其
    `updated_at_epoch > as_of` 且没有可验证 successor，Phase A 必须保守排除或
    返回 `Unknown`，不得把 post-cutoff status/content 应用到历史查询。
    captured evidence 必须同时满足 source time
@@ -231,7 +250,10 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    本身不获得 canonical Claim standing；只有同 scope、在 reference time
    生效且同时带 `source_memory_id`/`source_observation_id` 的 bitemporal
    `memory_facts` row 才是 observation evidence 附到 memory claim 的显式
-   link，不能根据共享 event、文本相似度或模型猜测自动关联。subject selector
+   link。该 fact 的 caller-supplied `learned_at_epoch` 与实际插入时写入的
+   NOT-NULL `created_at_epoch` 都必须 `<=as_of`；NULL/missing legacy 字段没有
+   fallback，late insert 不能用 backdated learned time 回溯附着。不能根据共享
+   event、文本相似度或模型猜测自动关联。subject selector
    只过滤 truth subjects，不过滤 scoped `evidence_catalog`。
    current snapshot 排除 stale/compressed row；explicit history 遇到 cutoff
    前已存在、但现在 stale/compressed 且没有完整 validated transition history 的
@@ -309,6 +331,8 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       或等价 bounded lookup 中受 scoped IDs 约束，不扫描无关项目全表；提供
       seed-933 chunk-boundary/high-fanout/unrelated-project structural assertions
       与 final-head JSON record；p50/p95 只记录，不冒充跨机器 hard threshold。
+      scoped raw `memory_edges` 必须在 endpoint 输出过滤前按上述六种 kind total
+      mapping；六种方向各有 fixture，unknown kind 返回 table/edge/raw error。
 - [ ] `ClaimRelationKind::Supports` 有真实 adapter/output fixture。
 - [ ] `observations` 经 read adapter 映射为不具 Claim standing 的 versioned
       evidence；project/branch/lifecycle、source/knowledge time、
@@ -318,8 +342,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       canonical `observation:<id>`、stable ordering/dedup、subject-filter
       independence，以及 `memory_facts(source_memory_id,
       source_observation_id)` 的唯一 attachment direction。NULL refs、active-row
-      read scan、external supporting trust，以及 fact learned/valid/
-      invalidated/replacement before/equal/after 都有 regressions。cutoff 后
+      read scan、external supporting trust，以及 fact learned/created/valid/
+      invalidated/replacement before/equal/after、late-insert/backdated-learned
+      rejection 都有 regressions。cutoff 后
       stale/compressed 且无完整 transition history 必须显式 integrity error。
 - [ ] `poisoning_quarantined` observation 映射为
       `(Candidate, Unknown, Live, Suppressed)`，并有 lifecycle 与 catalog/claim
@@ -350,9 +375,11 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       historical winner都有 regression。candidate replacement/no-op 的
       multi-active co-predecessor before/equal/after、kept-result SourceRefs 与
       unexplained unlinked-row error 也必须覆盖；row 后来原地更新且无法重建旧
-      版本时必须排除/`Unknown`。same/cross-topic canonical noop、governance/
-      candidate ack 的 before/equal/after、duplicate captured-event replay 前后
-      timestamp/历史输出不变与 replayability serde golden 均覆盖。
+      版本时必须排除/`Unknown`。same/cross-topic canonical noop、candidate ack、
+      general/Web memory-governance lifecycle 的 before/equal/after 均覆盖；
+      governance gap/fork/Web ledger mismatch 返回指定 lifecycle error。
+      duplicate captured-event replay 前后 timestamp/历史输出不变与
+      replayability serde golden 均覆盖。
 - [ ] captured-event trust 使用 canonical source classification；WebFetch、
       WebSearch、`mcp__*`、external-fetching Bash、`pack`、unknown class 与
       stale legacy/default cap mixed-evidence regressions 证明 external/pack cap
@@ -396,7 +423,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       canonical/legacy/repo-rerouted global、legacy non-global、Owner/Project branch semantics
       和 user-claim-only compatibility wrapper 都有正反 regression；wrapper
       只读 applicable user-claim/pattern suppressions，malformed exact-owner
-      memory/memory-only suppression 不改变其 result/error domain。
+      memory/memory-only suppression 不改变其 result/error domain。Project 与
+      Owner 的 route before/equal/after 使用历史 owner/target，incomplete chain
+      必须返回 `unreconstructable_routing_history`，不能使用 current route。
       `topic_key` 为 NULL 或 exact-empty 时必须使用 `memory:<id>` singleton；
       `foo`、` foo ` 与纯空白 key 保持不同 slot。该合法输入变化触发上一轮既定
       version boundary：hardening 输出必须为 `projection_version=2`，
@@ -493,6 +522,13 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
   visibility。
 - Observation 在 cutoff 后原地 stale/compressed，或 entity link 在 cutoff 后
   add/replace；缺少完整 transition/link history 时历史查询必须显式失败。
+- memory 在 cutoff 前后经过 general governance 或 Web archive/restore；完整
+  audit/ledger chain 恢复 old/new status，gap/fork/contradiction 必须显式失败。
+- fact 在 cutoff 后实际插入但 caller 把 learned time 回填到 cutoff 前；不得附着。
+- scoped `memory_edges` 存在 typo/newer edge type，或 known `derived_from` 只有
+  provenance endpoint；前者 contextual error，后者不得伪造 Claim endpoint。
+- scope cleanup 在 cutoff 前后把 memory 从旧 Project/Owner 路由到新目标；
+  before/equal/after 必须使用旧/新 route，缺链不得 fallback current row。
 - writer 在 claims 与 relation/evidence/suppression 分段读取之间提交；进行中的
   projection 只能看到 transaction 开始后的一个 SQLite snapshot。
 - claim 被 suppressed 但仍可能在政策允许的历史审计中存在。
