@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.31` for GH-948: indexed source-anchor staleness
+  lookup. Schema v074 adds a commit-epoch expression index and a
+  trigger-maintained commit-file relation; link-first and split epoch/ID
+  queries preserve branch, path-overlap, and equal-timestamp semantics without
+  scanning pre-anchor project history. SessionStart now reports a dedicated
+  `load_staleness_labels` phase and includes a 50,376-commit ignored benchmark.
 - Staged source version `0.6.30` for GH-943: ordinary workers now drain
   eligible residual `pending_observations` into the current capture/extraction
   pipeline only when no current extraction task is ready. The bridge admits at

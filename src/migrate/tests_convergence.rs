@@ -51,6 +51,7 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "workstream_aliases",
     "workstream_alias_sources",
     "git_commits",
+    "git_commit_files",
     "git_commit_sessions",
     "memory_facts",
     "procedure_verifications",

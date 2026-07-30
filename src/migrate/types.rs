@@ -370,6 +370,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "session_summary_poisoning",
         sql: include_str!("../migrations/v073_session_summary_poisoning.sql"),
     },
+    Migration {
+        version: 74,
+        name: "git_commit_staleness_index",
+        sql: include_str!("../migrations/v074_git_commit_staleness_index.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;
