@@ -14,8 +14,10 @@ pub use migration::{
     migrate_legacy_pending, AutoLegacyMigrationOutcome, LegacyPendingMigration,
 };
 pub use mutate::{purge_failed, retry_failed};
-pub(crate) use query::list_admin_required_archived_legacy_pending;
 pub use query::{count_failed_purge_candidates, count_failed_retry_candidates, list_failed};
+pub(crate) use query::{
+    list_admin_required_archived_legacy_pending, query_archived_transient_legacy_pending,
+};
 pub use recovery::{
     preview_archived_legacy_pending_recovery, recover_archived_legacy_pending,
     ArchivedLegacyPendingRecovery, ArchivedLegacyPendingRecoveryPreview,

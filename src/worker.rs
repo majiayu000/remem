@@ -77,6 +77,16 @@ fn should_attempt_legacy_pending_migration(
     extraction_pipeline_is_idle(conn)
 }
 
+fn record_legacy_pending_migration_outcome(
+    schedule: &mut LegacyPendingMigrationSchedule,
+    now: Instant,
+    outcome: &db::pending::admin::AutoLegacyMigrationOutcome,
+) {
+    if outcome.migrated > 0 || !outcome.yielded_to_current_work {
+        schedule.record_attempt(now);
+    }
+}
+
 fn retry_backoff_secs(attempt: i64) -> i64 {
     match attempt {
         0 => 5,
@@ -368,12 +378,16 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
             &legacy_pending_migration_schedule,
             migration_now,
         )? {
-            legacy_pending_migration_schedule.record_attempt(migration_now);
             match db::pending::admin::auto_migrate_actionable_legacy_pending(
                 &mut conn,
                 LEGACY_PENDING_MIGRATION_BATCH,
             ) {
                 Ok(outcome) => {
+                    record_legacy_pending_migration_outcome(
+                        &mut legacy_pending_migration_schedule,
+                        Instant::now(),
+                        &outcome,
+                    );
                     if outcome.migrated > 0 {
                         crate::log::info(
                             "worker",
@@ -384,10 +398,13 @@ pub async fn run(once: bool, idle_sleep_ms: u64) -> Result<()> {
                         );
                     }
                 }
-                Err(error) => crate::log::error(
-                    "worker",
-                    &format!("legacy pending auto-migration failed: {error}"),
-                ),
+                Err(error) => {
+                    legacy_pending_migration_schedule.record_attempt(Instant::now());
+                    crate::log::error(
+                        "worker",
+                        &format!("legacy pending auto-migration failed: {error}"),
+                    );
+                }
             }
         }
         if crate::extraction_worker::run_next(
@@ -595,6 +612,45 @@ mod legacy_pending_schedule_tests {
             &conn, &schedule, started_at
         )?);
         Ok(())
+    }
+
+    #[test]
+    fn zero_progress_yield_does_not_consume_once_migration_slot() {
+        let started_at = Instant::now();
+        let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+        let outcome = db::pending::admin::AutoLegacyMigrationOutcome {
+            migrated: 0,
+            yielded_to_current_work: true,
+        };
+
+        record_legacy_pending_migration_outcome(&mut schedule, started_at, &outcome);
+
+        assert!(schedule.is_due(started_at));
+    }
+
+    #[test]
+    fn partial_progress_yield_consumes_once_migration_slot() {
+        let started_at = Instant::now();
+        let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+        let outcome = db::pending::admin::AutoLegacyMigrationOutcome {
+            migrated: 1,
+            yielded_to_current_work: true,
+        };
+
+        record_legacy_pending_migration_outcome(&mut schedule, started_at, &outcome);
+
+        assert!(!schedule.is_due(started_at));
+    }
+
+    #[test]
+    fn completed_zero_progress_attempt_consumes_once_migration_slot() {
+        let started_at = Instant::now();
+        let mut schedule = LegacyPendingMigrationSchedule::new(true, started_at);
+        let outcome = db::pending::admin::AutoLegacyMigrationOutcome::default();
+
+        record_legacy_pending_migration_outcome(&mut schedule, started_at, &outcome);
+
+        assert!(!schedule.is_due(started_at));
     }
 
     #[test]

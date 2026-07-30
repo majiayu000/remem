@@ -212,6 +212,7 @@ fn auto_migration_yields_when_current_extraction_work_appears_between_rows() {
     .expect("first eligible row should migrate");
 
     assert_eq!(outcome.migrated, 1);
+    assert!(outcome.yielded_to_current_work);
     assert_eq!(
         detector_calls, 1,
         "new current work must stop the batch before another Git probe"
@@ -282,6 +283,7 @@ fn auto_migration_yields_when_legacy_task_starts_processing_between_rows() {
     .expect("first eligible row should migrate");
 
     assert_eq!(outcome.migrated, 1);
+    assert!(outcome.yielded_to_current_work);
     assert_eq!(detector_calls, 1);
     let second_state: String = conn
         .query_row(
@@ -334,6 +336,7 @@ fn auto_migration_yields_when_legacy_task_retry_becomes_due_between_rows() {
     .expect("first eligible row should migrate");
 
     assert_eq!(outcome.migrated, 1);
+    assert!(outcome.yielded_to_current_work);
     assert_eq!(detector_calls, 1);
     let second_state: String = conn
         .query_row(
@@ -502,6 +505,7 @@ fn auto_migration_yields_when_current_work_arrives_during_git_probe() -> Result<
     let outcome = handle.join().expect("auto migration thread should join")?;
 
     assert_eq!(outcome.migrated, 0);
+    assert!(outcome.yielded_to_current_work);
     let state: String = observer.query_row(
         "SELECT status FROM pending_observations WHERE id = ?1",
         [id],

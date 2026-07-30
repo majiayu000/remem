@@ -12,8 +12,11 @@
   plus replay savepoints, prepares Git metadata before taking the SQLite write
   lock, revalidates the source snapshot after locking, and records capped
   exponential backoff without rewriting first-failure/archive history on
-  replay errors. Doctor reports automatic backlog with executable `remem
-  worker --once` guidance and marks archived permanent/unknown-host rows
+  replay errors. A zero-progress yield to newly arrived current work keeps the
+  once/interval admission available, while partial progress consumes it.
+  Doctor keeps deferred archived transient rows visible with their earliest
+  retry epoch, reports due automatic backlog with executable `remem worker
+  --once` guidance, and marks archived permanent/unknown-host rows
   `admin-required`, listing a bounded oldest-first candidate set with concrete
   exact-ID recovery commands instead of relying on the global recent-failure
   list. The new exact `remem pending recover-archived --id` command supports

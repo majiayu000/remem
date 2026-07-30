@@ -4,10 +4,14 @@ use rusqlite::{Connection, OptionalExtension};
 use super::types::{Check, Status};
 use crate::db;
 
+mod admin_required;
+
+use admin_required::{
+    admin_required_archived_recovery_detail, ADMIN_REQUIRED_ARCHIVED_CANDIDATE_LIMIT,
+};
+
 const STALE_CAPTURE_HEARTBEAT_SECS: i64 = 7 * 24 * 60 * 60;
 const SUMMARY_HEARTBEAT_GRACE_SECS: i64 = 60;
-const ADMIN_REQUIRED_ARCHIVED_CANDIDATE_LIMIT: i64 = 5;
-const ADMIN_REQUIRED_ARCHIVED_FIELD_DISPLAY_BYTES: usize = 80;
 
 pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[Check]) -> Check {
     let setup_findings = capture_setup_findings(setup_checks);
@@ -47,23 +51,25 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
             return Check::new("Capture liveness", Status::Fail, failures.join("; "));
         }
     };
-    let recoverable_archived_pending =
-        match db::pending::admin::count_recoverable_archived_legacy_pending(conn) {
-            Ok(count) => count,
+    let archived_transient_pending =
+        match db::pending::admin::query_archived_transient_legacy_pending(conn) {
+            Ok(stats) => stats,
             Err(err) => {
                 if failures.is_empty() {
                     return Check::new(
                         "Capture liveness",
                         Status::Warn,
-                        format!("cannot count recoverable archived pending observations: {err}"),
+                        format!("cannot classify archived transient pending observations: {err}"),
                     );
                 }
                 failures.push(format!(
-                    "cannot count recoverable archived pending observations: {err}"
+                    "cannot classify archived transient pending observations: {err}"
                 ));
                 return Check::new("Capture liveness", Status::Fail, failures.join("; "));
             }
         };
+    let recoverable_archived_pending = archived_transient_pending.due;
+    let deferred_archived_pending = archived_transient_pending.deferred;
     let admin_required_archived_pending =
         match db::pending::admin::count_admin_required_archived_legacy_pending(conn) {
             Ok(count) => count,
@@ -100,6 +106,7 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
 
     if stats.failed_pending_observations > 0
         || recoverable_archived_pending > 0
+        || deferred_archived_pending > 0
         || admin_required_archived_pending > 0
         || stats.failed_extraction_tasks > 0
     {
@@ -109,6 +116,19 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
         let mut recovery: Vec<String> = Vec::new();
         if stats.failed_pending_observations > 0 || recoverable_archived_pending > 0 {
             recovery.push("a running `remem worker` auto-migrates eligible transient rows into the capture pipeline; run `remem worker --once` to drain one known-host batch now, including archived transient rows; for non-archived or unknown-host repair, run `remem pending list-failed --limit 20`, then preview/apply `remem pending retry-failed --dry-run` and `remem pending retry-failed`, followed by `remem pending migrate-legacy --dry-run --host claude-code` and `remem pending migrate-legacy --host claude-code` (or the corresponding `remem pending migrate-legacy --dry-run --host codex-cli` and `remem pending migrate-legacy --host codex-cli` commands)".to_string());
+        }
+        if deferred_archived_pending > 0 {
+            let Some(next_retry_epoch) = archived_transient_pending.earliest_deferred_retry_epoch
+            else {
+                failures.push(
+                    "deferred archived transient pending observations have no retry epoch"
+                        .to_string(),
+                );
+                return Check::new("Capture liveness", Status::Fail, failures.join("; "));
+            };
+            recovery.push(format!(
+                "automatic recovery remains deferred; earliest next_retry_epoch={next_retry_epoch}"
+            ));
         }
         if admin_required_archived_pending > 0 {
             recovery.push(admin_required_archived_recovery_detail(
@@ -120,9 +140,10 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
             recovery.push("run `remem worker --once` for failed extraction tasks".to_string());
         }
         failures.push(format!(
-            "failed-observation backlog: {} actionable failed pending observations, {} recoverable archived transient pending observations, {} admin-required archived pending observations, {} actionable failed extraction tasks{}; {}",
+            "failed-observation backlog: {} actionable failed pending observations, {} recoverable archived transient pending observations, {} deferred archived transient pending observations, {} admin-required archived pending observations, {} actionable failed extraction tasks{}; {}",
             stats.failed_pending_observations,
             recoverable_archived_pending,
+            deferred_archived_pending,
             admin_required_archived_pending,
             stats.failed_extraction_tasks,
             oldest_age,
@@ -223,60 +244,6 @@ pub(super) fn check_capture_liveness(conn: Option<&Connection>, setup_checks: &[
     }
 
     Check::new("Capture liveness", Status::Ok, detail)
-}
-
-fn admin_required_archived_recovery_detail(
-    candidates: &[db::pending::admin::AdminRequiredArchivedLegacyPendingRow],
-    total: usize,
-) -> String {
-    let details = candidates
-        .iter()
-        .map(admin_required_archived_candidate_detail)
-        .collect::<Vec<_>>()
-        .join("; ");
-    format!(
-        "admin-required archived candidates (showing {} of {total}, oldest first): {details}",
-        candidates.len()
-    )
-}
-
-fn admin_required_archived_candidate_detail(
-    candidate: &db::pending::admin::AdminRequiredArchivedLegacyPendingRow,
-) -> String {
-    let failure_class = candidate
-        .failure_class
-        .as_deref()
-        .map(bounded_debug_field)
-        .unwrap_or_else(|| "<null>".to_string());
-    let metadata = format!(
-        "candidate id={} host={} failure_class={} archived_at_epoch={}",
-        candidate.id,
-        bounded_debug_field(&candidate.host),
-        failure_class,
-        candidate.archived_at_epoch
-    );
-    if matches!(
-        candidate.host.as_str(),
-        crate::runtime_config::CLAUDE_HOST | crate::runtime_config::CODEX_HOST
-    ) {
-        return format!(
-            "{metadata}; preview `remem pending recover-archived --id {} --dry-run`; apply `remem pending recover-archived --id {}`",
-            candidate.id, candidate.id
-        );
-    }
-    format!(
-        "{metadata}; unknown host requires explicit `--host`; preview `remem pending recover-archived --id {} --host claude-code --dry-run`; apply `remem pending recover-archived --id {} --host claude-code`; alternatively preview `remem pending recover-archived --id {} --host codex-cli --dry-run`; apply `remem pending recover-archived --id {} --host codex-cli`",
-        candidate.id, candidate.id, candidate.id, candidate.id
-    )
-}
-
-fn bounded_debug_field(value: &str) -> String {
-    let truncated = db::truncate_str(value, ADMIN_REQUIRED_ARCHIVED_FIELD_DISPLAY_BYTES);
-    if truncated.len() == value.len() {
-        return format!("{truncated:?}");
-    }
-    let displayed = format!("{truncated}…");
-    format!("{displayed:?}")
 }
 
 fn oldest_actionable_failure_age(stats: &db::FailureLifecycleStats) -> Option<i64> {
@@ -531,8 +498,8 @@ mod tests {
     }
 
     #[test]
-    fn capture_liveness_does_not_prescribe_immediate_recovery_during_backoff() -> anyhow::Result<()>
-    {
+    fn capture_liveness_keeps_deferred_archived_retry_visible_without_immediate_recovery(
+    ) -> anyhow::Result<()> {
         let conn = setup_liveness_conn()?;
         let id = crate::db::test_support::insert_legacy_pending_fixture(
             &conn,
@@ -558,7 +525,14 @@ mod tests {
 
         let check = check_capture_liveness(Some(&conn), &[]);
 
-        assert!(!check.detail.contains("failed-observation backlog"));
+        assert!(matches!(check.status, Status::Fail));
+        assert!(check.detail.contains("failed-observation backlog"));
+        assert!(check
+            .detail
+            .contains("1 deferred archived transient pending observations"));
+        assert!(check
+            .detail
+            .contains(&format!("earliest next_retry_epoch={}", now + 900)));
         assert!(!check.detail.contains("`remem worker --once`"));
         Ok(())
     }

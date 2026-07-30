@@ -129,23 +129,7 @@ pub fn count_legacy_migration_candidates(
 }
 
 pub fn count_recoverable_archived_legacy_pending(conn: &Connection) -> Result<usize> {
-    let now = chrono::Utc::now().timestamp();
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*)
-         FROM pending_observations
-         WHERE host IN (?1, ?2)
-           AND status = 'failed'
-           AND COALESCE(failure_class, 'transient') = 'transient'
-           AND archived_at_epoch IS NOT NULL
-           AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?3)",
-        params![
-            crate::runtime_config::CLAUDE_HOST,
-            crate::runtime_config::CODEX_HOST,
-            now,
-        ],
-        |row| row.get(0),
-    )?;
-    Ok(count.max(0) as usize)
+    Ok(super::query::query_archived_transient_legacy_pending(conn)?.due)
 }
 
 pub fn count_admin_required_archived_legacy_pending(conn: &Connection) -> Result<usize> {
@@ -308,6 +292,7 @@ pub(super) fn replay_prepared_legacy_row_into_capture(
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct AutoLegacyMigrationOutcome {
     pub migrated: usize,
+    pub yielded_to_current_work: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -354,6 +339,7 @@ pub(super) fn auto_migrate_actionable_legacy_pending_with_detector(
     let mut migrated_tasks = HashSet::new();
     for row_id in candidate_ids {
         if current_extraction_work_is_ready(conn, &migrated_tasks)? {
+            outcome.yielded_to_current_work = true;
             break;
         }
         match auto_migrate_candidate_with_detector(
@@ -370,7 +356,10 @@ pub(super) fn auto_migrate_actionable_legacy_pending_with_detector(
                 migrated_tasks.insert((extraction_task_id, captured_event_id));
             }
             Ok(AutoCandidateOutcome::Skipped) => {}
-            Ok(AutoCandidateOutcome::YieldedToCurrentWork) => break,
+            Ok(AutoCandidateOutcome::YieldedToCurrentWork) => {
+                outcome.yielded_to_current_work = true;
+                break;
+            }
             Err(error) => {
                 return Err(error).with_context(|| {
                     format!(

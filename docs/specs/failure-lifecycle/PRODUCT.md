@@ -52,17 +52,24 @@ surface that #381/#383 evidence collection depends on.
 
 - `remem status` / `remem doctor` split failure reporting into
   `actionable total`, `actionable 7d`, and `archived history`; FAIL/WARN
-  severity keys off actionable total (all non-archived failures), and shows
-  the oldest actionable failure age.
+  severity normally keys off actionable total (all non-archived failures), and
+  shows the oldest actionable failure age. Doctor's capture-liveness check also
+  fails for archived legacy rows that remain in the automatic bridge.
 - `remem status --json` exposes per-class counts (transient/permanent),
   attempt counts, and archived totals.
 - Ordinary workers drain eligible legacy pending rows only when no current
   extraction task is ready. A once worker may drain at most one batch per
-  process; a daemon may drain at most one batch of 25 every 60 seconds.
+  process; a daemon may drain at most one batch of 25 every 60 seconds. Current
+  work appearing during preflight yields immediately; a zero-progress yield
+  does not consume that admission, while a migrated row or recorded retry
+  transition does.
 - Eligible legacy rows have a known Claude Code or Codex host and are pending,
   expired-processing, or due transient failures. The same controlled path may
   recover historical archived transient rows. Permanent and unknown-host rows
   are never automatic candidates.
+- Doctor splits known-host archived transient failures into recoverable-now
+  and deferred-backoff counts. Deferred rows remain failure-visible with the
+  earliest `next_retry_epoch`, without immediate `worker --once` guidance.
 - Doctor reports archived failed legacy rows excluded from the automatic bridge
   as `admin-required`. Operators inspect the row, preview exact recovery with
   `remem pending recover-archived --id <id> --dry-run`, and apply by removing
@@ -119,7 +126,9 @@ surface that #381/#383 evidence collection depends on.
   `ObservationExtract` task and clears legacy failure/archive state.
 - A once worker runs at most one legacy drain batch per process. A daemon runs
   at most one batch per 60 seconds. Ready current extraction work always wins,
-  so a historical backlog cannot displace current capture processing.
+  so a historical backlog cannot displace current capture processing. A yield
+  before any migration leaves the admission available after current work
+  drains; a partial-progress yield consumes it and preserves the 25-row cap.
 - A process-level fault-injection test starts a worker, kills it while failed
   legacy backlog is durable, restarts it, proves the singleton can be
   reacquired, and asserts that backlog reaches zero.
@@ -128,6 +137,9 @@ surface that #381/#383 evidence collection depends on.
   errors take the same conservative path instead of being guessed permanent.
   Rows already classified permanent and unknown-host rows remain unchanged and
   admin-visible.
+- An archived known-host transient row remains doctor-visible throughout its
+  backoff window with its earliest retry epoch, but doctor does not prescribe
+  an immediate once-worker drain until at least one row is due.
 - The bridge adds no legacy enqueue or claim API and never automatically
   deletes legacy rows. `recover-archived` accepts only one exact failed,
   archived legacy row; dry-run performs no writes, unknown host requires
