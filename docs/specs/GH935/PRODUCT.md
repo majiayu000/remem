@@ -67,9 +67,10 @@ The native-import diagnostic compares
 `remem_without_host_native_import` with
 `remem_with_host_native_import`. In both arms, "host native" means the
 **source host's** native-memory snapshot. The target host never receives a raw
-source seal. The with arm alone imports the same sealed source-native snapshot
-into remem, applies the pre-registered target-blind review/promotion policy,
-and preserves external origin/trust.
+source seal. Both arms derive and verify independent raw-free target
+projections. The with arm alone imports the same sealed source-native snapshot
+into its preparation clone, applies the pre-registered target-blind
+review/promotion policy, and preserves external origin/trust.
 
 Other diagnostic conditions may remain for debugging, but they never enter a
 primary comparative claim.
@@ -83,13 +84,22 @@ primary comparative claim.
    the existing 12 categories in each direction.
 2. A task becomes `ready` only when it has a deterministic fixture, at least
    two chronological source episodes, hidden tests, non-empty score commands,
-   allowed/forbidden paths, gold facts, and an empty TODO list.
+   allowed/forbidden paths, gold facts, and an empty TODO list. Each
+   `stale_superseded_decision` task also registers at least one deterministic,
+   query-relevant stale/superseded challenge, its production state, and its
+   expected pre-filter match assertion for every run.
 3. The complete primary matrix is exactly
    `24 tasks * 4 conditions * 3 runs = 288` unique tuples.
 4. The complete source-native import diagnostic is exactly
    `24 tasks * 2 conditions * 3 runs = 144` unique tuples.
 5. Missing, duplicate, substituted, schema-invalid, or unverified tuples make
    the comparative verdict `INSUFFICIENT`; they are never filled with zeroes.
+6. The canonical plan fixes a counterbalanced order for the four primary and
+   two required native-import conditions across 36 source seals per direction
+   (72 total). Each condition appears exactly six times in every serial
+   position per direction. The plan hash binds the schedule; realized order
+   and timestamps are recorded, and any deviation invalidates the affected
+   comparison.
 
 ### 2. One Source Episode, Many Target Conditions
 
@@ -98,15 +108,21 @@ once. After automatic extraction reaches a terminal state, the runner seals:
 
 - source transcript/tool-event and Git evidence hashes;
 - the canonical project identity and fixture revision;
-- a quiesced, content-addressed `REMEM_DATA_DIR` snapshot and sorted file
-  manifest;
+- a quiesced, content-addressed full source `REMEM_DATA_DIR` snapshot and
+  sorted file manifest;
+- a deterministic target-transfer projection derived from that snapshot,
+  preserving the current database schema and production state flags while
+  containing the curated rows needed to exercise production candidate
+  filtering—including registered stale/superseded challenge rows—and no source
+  transcript/session/capture rows or archives;
 - the source-host native-memory snapshot, when present;
 - executable, model, profile, schema, and migration versions.
 
 Every dependent condition uses that exact source-episode seal. Each
 `remem_shared` target receives a fresh byte-identical private clone of the
-sealed store. Re-running a source episode for only one condition, regenerating
-the store, or accepting a mismatched hash invalidates the pair.
+sealed target-transfer projection; the full source store is never target
+visible. Re-running a source episode for only one condition, regenerating
+either store, or accepting a mismatched derivation/hash invalidates the pair.
 
 The source and target phases use separate HOME/config/session roots but reuse
 the same run-scoped canonical absolute Git workspace path sequentially. This
@@ -122,14 +138,28 @@ identity.
 - `exported_file` is generated after the first source episode, updated after
   every later source episode, and frozen before the target task is revealed.
   Generation and every maintenance cycle record tokens, wall time, turns, and
-  byte/diff size.
-- `remem_shared` uses the real automatic capture-to-retrieval path. Direct gold
-  inserts, manual `save_memory`, target-visible hidden data, or preloaded
-  answers invalidate the run.
+  byte/diff size. The exporter runs in an exporter-only HOME/config/session
+  with remem hooks, automatic capture, and host-native persistence disabled.
+  It receives read-only allowlisted source evidence, writes only the envelope
+  and its usage log, and must leave the source store, source-native state, and
+  canonical workspace unchanged during each exporter window.
+- `remem_shared` uses the real automatic capture-to-retrieval path. Its primary
+  review policy is fixed as `automatic_only_v1`: only candidates activated by
+  the shipped automatic promotion policy before the target task is known enter
+  the transfer projection. Pending/quarantined candidates remain inactive;
+  manual approve/edit/reject actions are forbidden and the report records
+  `manual_review_time = 0`, `manual_review_turns = 0`, and
+  `manual_review_cost = 0`. Automatic extraction/promotion cost remains in the
+  normal remem cost ledger. A separately named diagnostic may measure human
+  review later, but it cannot enter the primary claim. Direct gold inserts,
+  manual `save_memory`, target-visible hidden data, or preloaded answers
+  invalidate the run.
 - The source-native import diagnostic snapshots actual native files produced
   by the source host before toggling import. The with and without arms share
   the same source episodes, native snapshot, target task, and non-import
-  configuration.
+  configuration. Each arm starts from a fresh preparation clone and derives and
+  verifies its own raw-free target projection; only the with arm performs the
+  import and target-blind review/promotion mutation before projection.
 
 The target task prompt is byte-identical across conditions. A condition may
 add only its declared, separately hashed memory envelope or production
@@ -165,8 +195,32 @@ artifacts. A detected leak produces a redacted, schema-valid
 
 Every attempted tuple produces an immutable record. Auth failure, cancellation,
 timeout, host crash, capture/extraction failure, scoring failure, scan failure,
-and cleanup failure are explicit outcomes. A retry has a new `attempt_id` and
-cannot overwrite an earlier attempt.
+and cleanup failure are explicit outcomes.
+
+The attempt rule is fixed before live execution. It applies independently to a
+source preparation unit and to each dependent target tuple:
+
+- at most three immutable `source_attempt_id` values are allowed before any
+  dependent target prompt is revealed, and at most three immutable
+  `target_attempt_id` values are allowed per target tuple;
+- a retry before the relevant target prompt is revealed is allowed only for
+  `transient_auth_unavailable`, `provider_unavailable`,
+  `host_bootstrap_failed`, `runner_io_before_prompt`, or
+  `pre_prompt_timeout`;
+- the first target attempt that reveals the prompt is the sole claim-bearing
+  attempt, regardless of success, failure, timeout, or unresolved outcome;
+- semantic/task failure, post-reveal timeout, security breach, scope leak,
+  scoring result, or cleanup failure cannot be retried into a better claim
+  outcome;
+- if all three target attempts fail before prompt reveal, the tuple is an
+  `ordinary_failure` with `resolved = false`;
+- if all three source attempts fail before any dependent prompt reveal, the
+  dependent tuples are recorded as not started and the candidate report is
+  `INSUFFICIENT`.
+
+Every target record references exactly one `source_attempt_id` and has its own
+`target_attempt_id`. All attempts remain immutable and visible in operational
+metrics.
 
 For `remem_shared`, capture, extraction, review/promotion, selection, and
 citation/use each contain either a resolvable reference or a typed
@@ -215,9 +269,22 @@ the wrong action. Its denominator is all complete, valid paired
 `no_memory`/`remem_shared` tuples in that direction. Missing causal attribution
 makes the metric and verdict insufficient; it does not shrink the denominator.
 
-`stale_memory_followed` counts a `remem_shared` tuple when a cited or used
-stale/superseded item causes a wrong action. Metrics with no applicable data are
-blank with a reason, never zero-filled.
+`stale_memory_followed` uses a direction-specific applicable set: complete,
+valid `remem_shared` tuples whose hashed candidate inventory, captured from the
+sealed target-transfer projection immediately before the production
+freshness/validity filter, contains at least one query-relevant
+stale/superseded challenge item that would otherwise match. Projection
+sanitization must retain registered challenge rows with their production state
+flags; this evaluator-only inventory is not exposed as a target memory surface.
+The numerator is an applicable tuple where that item is cited or used and
+causes a wrong action. Missing inventory-stage proof, challenge inventory, or
+causal attribution makes the metric and verdict insufficient; it does not
+remove the tuple from the denominator. Reports show both the applicable count
+and all 36 `remem_shared` tuples per direction. A claim-bearing report requires
+at least one registered challenge across all three runs of the relevant task
+and therefore at least three applicable tuples per direction; fewer or none
+forces `INSUFFICIENT`. Empty metrics remain blank with a reason, never
+zero-filled.
 
 The release evidence contains all sanitized primary and diagnostic records,
 attempt history, manifests, scorer/version hashes, direction reports, and
@@ -276,12 +343,13 @@ decisions. This spec PR authorizes none of them.
 - Offline validation plans exactly 288 primary and 144 native-import tuples
   without launching hosts.
 - Source sealing, byte-identical fan-out, canonical project identity, condition
-  isolation, attribution, failure retention, and leak redaction have positive
+  isolation, counterbalanced ordering, curated target projection, attribution,
+  fixed retry selection, failure retention, and leak redaction have positive
   and negative tests.
 - The production user-identity prerequisite is either implemented and tested,
   or every public comparative verdict is deterministically `INSUFFICIENT`.
-- A separately authorized smoke covers both directions and all four primary
-  surfaces before any full-matrix authorization.
+- A separately authorized smoke covers both directions and all six required
+  primary and native-import surfaces before any full-matrix authorization.
 - Complete and both partial manifest forms regenerate deterministic JSON,
   Markdown, and verdict artifacts.
 - Current documentation is updated for every final verdict.

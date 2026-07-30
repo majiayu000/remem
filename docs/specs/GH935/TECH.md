@@ -73,6 +73,9 @@ An executable task adds to the v1 skeleton:
 - hidden tests and non-empty score commands;
 - target-blind gold facts;
 - foreign-project decoy fixture and canary;
+- for `stale_superseded_decision`, at least one deterministic
+  stale/superseded challenge per run with its production state and expected
+  query-relevant pre-filter match assertion;
 - source-native snapshot policy for the diagnostic arm;
 - per-host executable/profile requirements;
 - `status: "ready"` and `todo: []`.
@@ -82,38 +85,76 @@ target-visible hidden paths, and any canary copied into prompts or gold facts.
 
 ### Source Seal
 
-One source seal exists per `(direction, task_id, run_index, attempt_id)`. It
+One source seal exists per
+`(direction, task_id, run_index, source_attempt_id)`. It
 contains:
 
 - task/fixture, executable, profile, model, schema, and migration hashes;
 - source host/session/event IDs and transcript/tool-event/Git hashes;
 - canonical project path and the exact `project_from_cwd` value;
 - terminal extraction/review state and queue counts;
-- a sorted manifest for the quiesced `REMEM_DATA_DIR`;
-- a deterministic store archive hash, length, and creation policy;
+- a sorted manifest for the quiesced full source `REMEM_DATA_DIR`;
+- a deterministic full-store archive hash, length, and creation policy;
+- a deterministic target-transfer projection hash, sorted manifest, derivation
+  policy/version, and proof that source raw/capture/session rows, auxiliary
+  index entries, and files are absent;
 - source-host native file manifest/hash, or typed absence;
 - export generation/update/freeze hashes and cost records;
 - creation/cleanup timestamps and scanner status.
 
-The store archive is private execution material, not a committed public
-artifact. In v2, a source and all dependent targets run in one
-single-operator execution root. The archive is content-addressed, read-only
-after sealing, and retained until every target fan-out and verifier step for
-that source seal completes.
+The full store archive and target-transfer projection are private execution
+material, not committed public artifacts. In v2, a source and all dependent
+targets run in one single-operator execution root. Both objects are
+content-addressed and read-only after sealing. The full archive is retained for
+attribution verification but is never mounted into a target. Only a fresh
+byte-identical clone of the projection can back `remem_shared`.
+The full archive lives outside every target-visible root and is added to the
+target host-read deny policy; a target process that can open it invalidates the
+run even if no transcript is emitted.
 
-Cross-clone continuation is deliberately unsupported. If the execution root or
-archive is missing, hash-mismatched, or interrupted before fan-out completes,
-the runner writes a partial attempt record and starts a new full source attempt;
-it never regenerates a store under the old seal. This avoids pretending a
-machine-local archive is a durable cross-clone object. A future cross-clone
-mode would require a separately specified encrypted immutable store, retention
-policy, access protocol, and independently verified fetch path.
+The projection is derived mechanically from the full store after the fixed
+primary review policy completes. It preserves the complete current schema,
+migration metadata, required tables, triggers, and indexes so normal
+`open_db()` schema-drift checks and MCP preflight succeed. It contains curated
+memory rows, relations, current-state, and minimal opaque provenance needed to
+reproduce production candidate filtering. Registered stale/superseded
+challenge rows remain present with their production state flags unchanged;
+they are not made retrieval-eligible or exposed through a target-only surface.
+
+The sanitizer removes source rows from raw messages, captured events/blobs,
+observations, extraction payloads, and other target-ineligible session
+surfaces; removes their FTS/auxiliary index entries and resolvable private
+paths; checkpoints into a fresh database; and ships no source transcript,
+host-native file, credential, WAL, or SHM file. It must not delete a registered
+challenge row merely because the row is stale or superseded. It must preserve
+referential integrity for retained curated rows and pass migration/schema
+invariants, `PRAGMA foreign_key_check`, production open, and MCP preflight.
+Validation then proves both `search_raw` and sparse ordinary search return zero
+source hits.
+
+Cross-clone continuation is deliberately unsupported. A `source_attempt_id`
+owns the immutable full-store seal and projection; each dependent target has a
+separate `target_attempt_id`. The runner never regenerates an object under an
+existing seal. Before any dependent target prompt is revealed, it may start a
+new source attempt from scratch only when the failure has one of the five exact
+`pre_prompt_transient_v1` retry reason codes and the source-preparation
+three-attempt limit has not been exhausted. Archive absence, hash mismatch,
+integrity or security
+failure, cleanup failure, and interruption after prompt reveal are not
+retry-eligible: they preserve the immutable partial record and yield
+`partial_non_security`/`INSUFFICIENT` or, for a verified security breach,
+`partial_security`/`FAIL`. This avoids pretending a machine-local archive is a
+durable cross-clone object. A future cross-clone mode would require a
+separately specified encrypted immutable store, retention policy, access
+protocol, and independently verified fetch path.
 
 ### Run Record
 
 Each target attempt records:
 
-- tuple key, attempt ID, condition, direction, task, and run index;
+- tuple key, `source_attempt_id`, `target_attempt_id`, condition, direction,
+  task, and run index;
+- planned condition position, realized position, and start/end timestamps;
 - source seal hash, even when the condition cannot read its contents;
 - task prompt, condition surface, executable/profile, and scorer hashes;
 - target HOME/config/session/workspace identities;
@@ -136,8 +177,9 @@ partial_non_security
 partial_security
 ```
 
-Every kind contains the planned tuple set, recorded attempts, selected-attempt
-policy, missing/not-started tuples, artifact hashes, and reason codes.
+Every kind contains the planned tuple set, recorded attempts, the fixed attempt
+policy/version, the selected claim attempt, missing/not-started tuples, artifact
+hashes, and reason codes.
 
 - `complete` requires 288 unique primary tuples and 144 unique source-native
   import tuples.
@@ -185,8 +227,18 @@ The planner:
 2. proves 288 primary and 144 required diagnostic tuple keys with no
    duplicates;
 3. resolves exact host/model/profile binaries and hashes;
-4. calculates upper bounds for host calls, LLM calls, and estimated cost;
-5. writes a canonical plan hash without starting a host or network call.
+4. builds `balanced_latin_square_v1` over the four primary and two required
+   native-import conditions for 36 source seals per direction. For six
+   seed-permuted labels, `williams_6_v1` starts with positions
+   `[0, 1, 5, 2, 4, 3]` and forms the other five rows by adding `1..5` modulo
+   six. The seed hashes the label permutation and deterministic row assignment;
+   the complete six-row block repeats six times across the pre-sorted source
+   seals. The verifier proves every condition appears exactly six times in
+   every serial position and every ordered pair of distinct adjacent conditions
+   appears exactly six times per direction;
+5. calculates upper bounds for host calls, LLM calls, and estimated cost;
+6. writes the schedule, seed/algorithm version, and canonical plan hash without
+   starting a host or network call.
 
 Dry-run and verification must have tests proving their call graph cannot reach
 the host adapter.
@@ -213,19 +265,32 @@ substitutable because production project identity is path-based.
 
 The source host executes all chronological source episodes before seeing the
 target task. remem uses normal automatic capture. At each episode boundary, the
-target-blind exporter runs against only the allowed source evidence: it creates
-the handoff after episode one, updates it after every later episode, and records
-generation/update cost before the next episode starts. After the final episode,
-the runner:
+runner drains and quiesces capture, records source-store, source-native, and
+workspace manifests, and launches the target-blind exporter in a separate
+exporter-only HOME/config/session. That process has remem hooks, automatic
+capture, and host-native persistence disabled; it receives read-only mounts of
+only the allowlisted source evidence and can write only the envelope and its
+usage log. It creates the handoff after episode one, updates it after every
+later episode, and records generation/update cost before the next episode
+starts. The runner then proves the three protected manifests are unchanged
+during the exporter window. Any other mutation invalidates every condition
+dependent on that source seal. After the final episode, the runner:
 
 1. freezes the maintained export and records its final hash;
-2. drains extraction and required review/promotion work to a recorded terminal
-   state;
+2. drains extraction and applies primary review policy `automatic_only_v1`:
+   only the shipped automatic promotion path may activate candidates;
+   pending/quarantined rows stay inactive, manual review mutations are rejected,
+   and `manual_review_time`, `manual_review_turns`, and `manual_review_cost` are
+   recorded as zero while automatic pipeline cost remains attributed to remem;
 3. stops the worker, checkpoints the database, closes writers, and fsyncs the
    run root;
 4. snapshots the exact remem store and source-host native files;
-5. seals all hashes and makes the store archive read-only;
-6. verifies a fresh private clone before launching a target.
+5. derives the curated target-transfer projection and proves raw transcript,
+   capture/session rows, auxiliary indexes, WAL/SHM, host-native, credential,
+   and private-path surfaces are absent while the complete current schema,
+   referential integrity, production open, and MCP preflight remain valid;
+6. seals both hashes and makes both objects read-only;
+7. verifies a fresh projection clone before launching a target.
 
 Failure to quiesce, seal, clone, or verify produces an ordinary failure or
 security record. The runner cannot continue with a regenerated or partially
@@ -233,8 +298,11 @@ copied store.
 
 ### 4. Fan Out Conditions
 
-Targets run serially in fresh HOME/config/session roots. Each condition gets a
-fresh fixture reset and only its declared memory surface.
+Targets run serially in fresh HOME/config/session roots and in the exact
+plan-hashed counterbalanced order. Each condition gets a fresh fixture reset
+and only its declared memory surface. The runner records planned/realized
+position and timestamps; skipped, reordered, or duplicated positions make the
+comparison insufficient.
 
 #### `no_memory`
 
@@ -256,7 +324,10 @@ does not present this arm as a populated cross-host native baseline.
 
 A source-side exporter creates a sanitized host-neutral envelope after the
 first source episode and updates it after every later episode. The final
-envelope is frozen before the target task is revealed.
+envelope is frozen before the target task is revealed. Each invocation uses
+the exporter-only isolation root defined by the source state machine; no remem
+or host-native capture runs there, the source store/native/workspace mounts are
+read-only, and before/after manifests must match.
 
 The runner exposes the envelope through the same versioned system/context
 adapter for Claude Code and Codex. The target task prompt remains identical;
@@ -268,10 +339,13 @@ transcripts, tool logs, hidden paths, or the foreign-project canary.
 
 #### `remem_shared`
 
-The target receives a fresh verified clone of the sealed automatic-capture
-store. Retrieval runs through the production SessionStart/MCP/Context Bundle
-path. Direct memory inserts, gold seeding, manual saves, and special eval-only
-retrieval are rejected by attribution validation.
+The target receives a fresh verified clone of the sealed curated transfer
+projection, never the full automatic-capture store. Retrieval runs through the
+production SessionStart/MCP/Context Bundle path. The raw MCP/CLI surfaces and
+ordinary-search raw fallback may exist in the binary, but the projection
+contains no source raw rows or transcript files for them to return. Direct
+memory inserts, gold seeding, manual saves, manual candidate review, and
+special eval-only retrieval are rejected by attribution validation.
 
 #### Source-Native Import Diagnostic
 
@@ -281,13 +355,20 @@ before cleanup:
 - Codex source: supported Codex rollout-summary input;
 - Claude Code source: supported Claude topic-file input.
 
-Both diagnostic arms start from the same automatic-capture store clone and the
-same sealed source-native snapshot. The without arm does not import. The with
-arm invokes the shipped importer/ingestion path: Codex input uses the existing
+Both diagnostic arms start in separate preparation roots from byte-identical
+clones of the same full automatic-capture store and the same sealed
+source-native snapshot; neither full clone is target-visible. The without arm
+does not import or apply an import review mutation, then derives and verifies a
+raw-free target projection using the primary derivation/sanitizer. The with arm
+invokes the shipped importer/ingestion path: Codex input uses the existing
 dry-run plan digest, while Claude input is bound to the sealed native snapshot
-and runner plan because its shipped ingestion path has no dry-run digest. The
-arm then applies a pre-registered target-blind review/promotion decision while
-preserving `host_native_import` origin and external trust.
+and runner plan because its shipped ingestion path has no dry-run digest. It
+then applies a pre-registered target-blind review/promotion decision with its
+time/turns/cost recorded, preserves `host_native_import` origin and external
+trust, and derives and verifies its own raw-free target projection with the
+same sanitizer. The import and review mutation is the only allowed difference
+before projection; both targets receive fresh projection clones and never a
+full source-store clone.
 
 Empty, unsupported, unsealed, or different native inputs make the pair
 insufficient. No target-host native preparation and no raw source transcript
@@ -352,8 +433,29 @@ identity plumbing.
 
 ## Metrics and Verdict Rules
 
-The report uses all selected attempts under one pre-registered attempt policy;
-it cannot choose successful retries after seeing outcomes.
+The attempt policy is `pre_prompt_transient_v1` and applies independently to
+each source preparation unit and each target tuple:
+
+- maximum three immutable `source_attempt_id` values before any dependent
+  prompt reveal, and maximum three immutable `target_attempt_id` values per
+  target tuple;
+- retry before the relevant target prompt is revealed only for
+  `transient_auth_unavailable`, `provider_unavailable`,
+  `host_bootstrap_failed`, `runner_io_before_prompt`, or
+  `pre_prompt_timeout`;
+- the first prompt-revealed target attempt is selected for the claim regardless
+  of its outcome, and no later claim retry is allowed;
+- semantic failure, unresolved result, post-reveal timeout, scorer result,
+  security/scope event, and cleanup failure are never retry-eligible;
+- when all three target attempts fail before reveal, the tuple is selected as
+  `ordinary_failure` / `resolved = false`;
+- when all three source attempts fail before any dependent prompt reveal, the
+  dependent tuples are recorded as not started due to source failure and the
+  candidate report is `partial_non_security` / `INSUFFICIENT`.
+
+The report validates this rule from immutable lifecycle timestamps and reason
+codes. It includes every attempt in operational reliability/cost tables and
+cannot choose a successful retry after seeing outcomes.
 
 `memory_hurt` is the paired predicate:
 
@@ -366,16 +468,30 @@ AND remem attribution proves an injected/cited/used memory caused the error
 Its denominator is all complete valid `no_memory`/`remem_shared` pairs in the
 direction. Missing causal attribution makes the result insufficient.
 
-`stale_memory_followed` requires a cited/used stale or superseded item and a
-causal wrong action. `wrong_project_injection` and
-`source_private_session_leak` are zero-tolerance.
+The `stale_memory_followed` denominator is every complete valid
+`remem_shared` tuple in the direction whose hashed candidate inventory,
+captured from its sealed target-transfer projection immediately before the
+production freshness/validity filter, has at least one query-relevant
+stale/superseded challenge item that would otherwise match. Projection
+sanitization cannot remove a registered challenge based on freshness or
+validity. The inventory is evaluator-only evidence and is never a target memory
+surface. The numerator additionally requires that item to be cited/used and
+cause a wrong action. Missing inventory-stage proof, challenge inventory, or
+causal attribution makes the result insufficient. The report also shows all
+36 `remem_shared` tuples per direction so the applicable set cannot be hidden.
+Each `stale_superseded_decision` task registers a challenge for all three runs,
+so a claim-bearing report requires at least three applicable tuples per
+direction. A missing expected match or a smaller/empty applicable set forces
+`INSUFFICIENT`; it is not a passing zero.
+`wrong_project_injection` and `source_private_session_leak` are
+zero-tolerance.
 
 Verdict precedence is:
 
 1. verified security breach or exceeded stop-loss -> `FAIL`;
 2. missing production user-scope prerequisite, incomplete matrix, invalid
-   pair, missing attribution, or non-security partial manifest ->
-   `INSUFFICIENT`;
+   pair, missing attribution, missing required stop-loss applicable data, or
+   non-security partial manifest -> `INSUFFICIENT`;
 3. complete evidence and all safety checks pass -> statistical wording rules
    decide `PASS` or directional/insufficient wording.
 
@@ -435,8 +551,9 @@ These are sequential handoffs, not permission to run live hosts:
    - extend offline validation to exact 288/144 plans and partial manifests.
 2. **Isolation, source seal, and runner**
    - reuse coding-bench process/HOME restrictions;
-   - implement same-canonical-path sequencing, quiesced store sealing,
-     byte-identical fan-out, attempts, cleanup, and cost caps.
+   - implement same-canonical-path sequencing, quiesced full-store sealing,
+     raw-free target projection, byte-identical projection fan-out,
+     counterbalanced ordering, fixed attempts, cleanup, and cost caps.
 3. **Condition surfaces**
    - implement no-memory, target-native negative control, maintained export,
      production remem, and source-native import diagnostic boundaries.
@@ -444,7 +561,9 @@ These are sequential handoffs, not permission to run live hosts:
    - implement attribution, complete/partial manifests, paired bootstrap,
      deterministic JSON/Markdown, hash binding, and sanitized bundles.
 5. **Evidence and status**
-   - run separately authorized smoke;
+   - run a separately authorized smoke that exercises both directions and all
+     six required primary/native-import surfaces, including both importer
+     with/without paths;
    - only after smoke review, optionally authorize the full matrix;
    - publish PASS/FAIL/INSUFFICIENT artifacts and update every current-status
      document in the same result PR.
@@ -477,9 +596,18 @@ Future executable-version focused coverage must include:
 - source episode single-execution, store seal/clone/hash drift, interruption,
   and new-attempt behavior;
 - same canonical project path positive transfer and decoy path exclusion;
-- condition-surface contamination and target-native source-seal denial;
-- maintained export cost and source-native with/without import pairing;
+- full-store denial, raw-free projection, `search_raw`, and sparse-search
+  fallback leakage negatives;
+- exporter source-store/native/workspace immutability, condition-surface
+  contamination, and target-native source-seal denial;
+- counterbalanced schedule equality and planned/realized-order drift;
+- maintained export cost and source-native with/without import pairing,
+  including raw-free projection validation for both diagnostic arms;
 - typed attribution absence and failed-run denominator retention;
+- automatic-only primary review, exact source/target attempt references, and
+  exact pre-prompt retry selection;
+- required stale challenge pre-filter inventory and empty-applicable-set
+  rejection;
 - complete, non-security partial, and security partial reports;
 - deterministic Markdown regeneration and hash-bound verdict;
 - user-scope `not_testable` rejection of fabricated zero;
