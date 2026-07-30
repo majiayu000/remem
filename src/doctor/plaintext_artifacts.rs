@@ -101,7 +101,15 @@ fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readabl
     let mut plaintext = Vec::new();
     let mut issues = Vec::new();
     scan_sibling_artifacts(data_dir, db_path, &mut plaintext, &mut issues);
-    scan_backup_artifacts(data_dir, &mut plaintext, &mut issues);
+    scan_directory(
+        &data_dir.join("backups"),
+        true,
+        true,
+        false,
+        |_| true,
+        &mut plaintext,
+        &mut issues,
+    );
     let live_state = inspect_live_database(db_path, live_db_readable, &mut issues);
     plaintext.sort_by(|left, right| left.path.cmp(&right.path));
     plaintext.dedup_by(|left, right| left.path == right.path);
@@ -173,6 +181,7 @@ fn scan_sibling_artifacts(
         data_dir,
         false,
         false,
+        false,
         |name| {
             name.to_str().is_some_and(|name| {
                 name == bak_name
@@ -192,27 +201,12 @@ fn scan_sibling_artifacts(
         plaintext,
         issues,
     );
-    let mut ignored_probe_issues = Vec::new();
     scan_directory(
         data_dir,
         false,
         true,
+        true,
         |name| name != OsStr::new(db_file_name),
-        plaintext,
-        &mut ignored_probe_issues,
-    );
-}
-
-fn scan_backup_artifacts(
-    data_dir: &Path,
-    plaintext: &mut Vec<PlaintextArtifact>,
-    issues: &mut Vec<String>,
-) {
-    scan_directory(
-        &data_dir.join("backups"),
-        true,
-        true,
-        |_| true,
         plaintext,
         issues,
     );
@@ -222,6 +216,7 @@ fn scan_directory(
     directory: &Path,
     missing_ok: bool,
     ignore_child_directories: bool,
+    ignore_short_files: bool,
     is_candidate: impl Fn(&OsStr) -> bool,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
@@ -275,13 +270,20 @@ fn scan_directory(
         if !is_candidate(&entry.file_name()) {
             continue;
         }
-        inspect_candidate(&entry, ignore_child_directories, plaintext, issues);
+        inspect_candidate(
+            &entry,
+            ignore_child_directories,
+            ignore_short_files,
+            plaintext,
+            issues,
+        );
     }
 }
 
 fn inspect_candidate(
     entry: &DirEntry,
     ignore_directories: bool,
+    ignore_short_files: bool,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
 ) {
@@ -330,7 +332,7 @@ fn inspect_candidate(
         ));
         return;
     }
-    match inspect_regular_file(&path, &path_metadata) {
+    match inspect_regular_file(&path, &path_metadata, ignore_short_files) {
         Ok((FileHeader::Plaintext, size_bytes)) => {
             plaintext.push(PlaintextArtifact { path, size_bytes });
         }
@@ -371,7 +373,7 @@ fn inspect_live_database(
         ));
         return LiveDatabaseState::Unverified;
     }
-    match inspect_regular_file(db_path, &path_metadata) {
+    match inspect_regular_file(db_path, &path_metadata, false) {
         Ok((FileHeader::Plaintext, _)) => LiveDatabaseState::Plaintext,
         Ok((FileHeader::NonPlaintext, _)) if live_db_readable => LiveDatabaseState::Encrypted,
         Ok((FileHeader::NonPlaintext, _)) => LiveDatabaseState::Unverified,
@@ -385,6 +387,7 @@ fn inspect_live_database(
 fn inspect_regular_file(
     path: &Path,
     path_metadata: &Metadata,
+    ignore_short_file: bool,
 ) -> Result<(FileHeader, u64), String> {
     let mut file =
         File::open(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
@@ -398,16 +401,20 @@ fn inspect_regular_file(
         ));
     }
     let mut header = [0_u8; SQLITE_PLAINTEXT_HEADER.len()];
-    file.read_exact(&mut header).map_err(|error| {
-        if error.kind() == io::ErrorKind::UnexpectedEof {
-            format!(
-                "cannot confirm {} because it is shorter than the SQLite header",
-                path.display()
-            )
-        } else {
-            format!("cannot read header from {}: {error}", path.display())
+    let short_file = match file.read_exact(&mut header) {
+        Ok(()) => false,
+        Err(error) if ignore_short_file && error.kind() == io::ErrorKind::UnexpectedEof => true,
+        Err(error) => {
+            return Err(if error.kind() == io::ErrorKind::UnexpectedEof {
+                format!(
+                    "cannot confirm {} because it is shorter than the SQLite header",
+                    path.display()
+                )
+            } else {
+                format!("cannot read header from {}: {error}", path.display())
+            });
         }
-    })?;
+    };
     let current_metadata = fs::symlink_metadata(path)
         .map_err(|error| format!("cannot recheck metadata for {}: {error}", path.display()))?;
     if current_metadata.file_type().is_symlink()
@@ -419,7 +426,7 @@ fn inspect_regular_file(
             path.display()
         ));
     }
-    let header = if &header == SQLITE_PLAINTEXT_HEADER {
+    let header = if !short_file && &header == SQLITE_PLAINTEXT_HEADER {
         FileHeader::Plaintext
     } else {
         FileHeader::NonPlaintext
@@ -438,6 +445,9 @@ fn same_file(left: &Metadata, right: &Metadata) -> bool {
     let _ = (left, right);
     true
 }
+
+#[cfg(all(test, unix))]
+mod regression_tests;
 
 #[cfg(test)]
 mod tests {
@@ -713,17 +723,6 @@ mod tests {
         );
         assert!(detail.contains("did not delete any files"));
         assert!(detail.contains("alone does not protect"));
-        cleanup(&dir);
-    }
-
-    #[test]
-    fn short_artifact_is_an_incomplete_inspection_warning() {
-        let dir = temp_dir("short-artifact");
-        write_non_plaintext_db(&dir.join("remem.db"));
-        fs::write(dir.join("remem.db.bak"), b"short").unwrap();
-        let result = check(&dir, true);
-        assert_eq!(result.status, Status::Warn);
-        assert!(result.detail.contains("shorter than the SQLite header"));
         cleanup(&dir);
     }
 
