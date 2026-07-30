@@ -9,6 +9,7 @@ pub enum JobIdentityKind {
     Ordinary,
     Dream,
     CompileRules,
+    Cleanup,
 }
 
 impl JobIdentityKind {
@@ -17,6 +18,7 @@ impl JobIdentityKind {
             Self::Ordinary => "ordinary",
             Self::Dream => "dream",
             Self::CompileRules => "compile_rules",
+            Self::Cleanup => "cleanup",
         }
     }
 }
@@ -474,6 +476,7 @@ fn identity_kind(job_type: &str) -> JobIdentityKind {
     match job_type {
         "dream" => JobIdentityKind::Dream,
         "compile_rules" => JobIdentityKind::CompileRules,
+        "cleanup" => JobIdentityKind::Cleanup,
         _ => JobIdentityKind::Ordinary,
     }
 }

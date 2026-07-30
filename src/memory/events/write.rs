@@ -14,8 +14,9 @@ pub fn insert_event(
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "INSERT INTO events \
-         (session_id, project, event_type, summary, detail, files, exit_code, created_at_epoch) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+         (session_id, project, event_type, summary, detail, files, exit_code,
+          created_at_epoch, retention_class) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'ephemeral')",
         params![session_id, project, event_type, summary, detail, files, exit_code, now],
     )?;
     Ok(conn.last_insert_rowid())

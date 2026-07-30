@@ -14,6 +14,8 @@ struct AffectedPreference {
     global: bool,
 }
 
+const MEMORY_ID_QUERY_BATCH_SIZE: usize = 500;
+
 const PREFERENCE_AUTHORITY_PROJECT_SQL: &str = "CASE
        WHEN COALESCE(m.scope, 'project') = 'global' THEN m.project
        ELSE COALESCE(
@@ -54,38 +56,41 @@ pub(crate) fn enqueue_for_memory_ids(conn: &Connection, memory_ids: &[i64]) -> R
         return Ok(());
     }
 
-    let placeholders = std::iter::repeat_n("?", unique.len())
-        .collect::<Vec<_>>()
-        .join(", ");
-    let preference_check_sql = format!(
-        "SELECT EXISTS(
-             SELECT 1 FROM memories
-             WHERE memory_type = 'preference' AND id IN ({placeholders})
-         )"
-    );
-    let has_preferences: bool = conn.query_row(
-        &preference_check_sql,
-        params_from_iter(unique.iter()),
-        |row| row.get(0),
-    )?;
-    if !has_preferences {
-        return Ok(());
+    let mut affected = Vec::new();
+    for memory_id_batch in unique.chunks(MEMORY_ID_QUERY_BATCH_SIZE) {
+        let placeholders = std::iter::repeat_n("?", memory_id_batch.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let preference_check_sql = format!(
+            "SELECT EXISTS(
+                 SELECT 1 FROM memories
+                 WHERE memory_type = 'preference' AND id IN ({placeholders})
+             )"
+        );
+        let has_preferences: bool = conn.query_row(
+            &preference_check_sql,
+            params_from_iter(memory_id_batch.iter()),
+            |row| row.get(0),
+        )?;
+        if !has_preferences {
+            continue;
+        }
+        let sql = format!(
+            "SELECT {PREFERENCE_AUTHORITY_PROJECT_SQL},
+                    COALESCE(m.scope, 'project') = 'global'
+             FROM memories m
+             JOIN memory_preference_reinforcements r ON r.memory_id = m.id
+             WHERE m.memory_type = 'preference' AND m.id IN ({placeholders})"
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let rows = stmt.query_map(params_from_iter(memory_id_batch.iter()), |row| {
+            Ok(AffectedPreference {
+                project: row.get(0)?,
+                global: row.get(1)?,
+            })
+        })?;
+        affected.extend(crate::db::query::collect_rows(rows)?);
     }
-    let sql = format!(
-        "SELECT {PREFERENCE_AUTHORITY_PROJECT_SQL},
-                COALESCE(m.scope, 'project') = 'global'
-         FROM memories m
-         JOIN memory_preference_reinforcements r ON r.memory_id = m.id
-         WHERE m.memory_type = 'preference' AND m.id IN ({placeholders})"
-    );
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map(params_from_iter(unique.iter()), |row| {
-        Ok(AffectedPreference {
-            project: row.get(0)?,
-            global: row.get(1)?,
-        })
-    })?;
-    let affected = crate::db::query::collect_rows(rows)?;
     enqueue_affected(conn, affected)
 }
 
@@ -344,6 +349,44 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(registered, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn memory_id_queries_cover_preferences_across_bounded_batches() -> Result<()> {
+        let _dir = ScopedTestDataDir::new("preference-enqueue-bounded-ids");
+        crate::runtime_config::init_config()?;
+        crate::runtime_config::set_config_value("rule_compilation.enabled", "true")?;
+        let conn = crate::db::open_db()?;
+        let preference_id = (MEMORY_ID_QUERY_BATCH_SIZE as i64 * 80) + 1;
+        conn.execute(
+            "INSERT INTO memories
+             (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch,
+              status, scope)
+             VALUES (?1, '/later-batch', 'Preference', 'Use cargo nextest',
+                     'preference', 1, 1, 'active', 'project')",
+            [preference_id],
+        )?;
+        conn.execute(
+            "INSERT INTO memory_preference_reinforcements
+             (memory_id, reinforcement_count, last_reinforced_at_epoch,
+              created_at_epoch, updated_at_epoch, machine_checkable)
+             VALUES (?1, 3, 1, 1, 1, 1)",
+            [preference_id],
+        )?;
+        let ids = (1..=preference_id).collect::<Vec<_>>();
+
+        enqueue_for_memory_ids(&conn, &ids)?;
+
+        let queued: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM jobs
+             WHERE job_type = 'compile_rules'
+               AND project = '/later-batch'
+               AND state = 'pending'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(queued, 1);
         Ok(())
     }
 }

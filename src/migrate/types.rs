@@ -375,6 +375,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "git_commit_staleness_index",
         sql: include_str!("../migrations/v074_git_commit_staleness_index.sql"),
     },
+    Migration {
+        version: 75,
+        name: "automatic_cleanup",
+        sql: include_str!("../migrations/v075_automatic_cleanup.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

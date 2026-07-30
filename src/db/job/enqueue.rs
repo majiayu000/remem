@@ -34,6 +34,7 @@ enum ActiveIdentity {
     Ordinary,
     Dream,
     CompileRules,
+    Cleanup,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,7 +60,7 @@ pub fn enqueue_job(
     payload_json: &str,
     priority: i64,
 ) -> Result<i64> {
-    reject_summary(job_type)?;
+    reject_direct_job_type(job_type)?;
     if !conn.is_autocommit() {
         return enqueue_job_in_transaction(
             conn,
@@ -96,7 +97,7 @@ pub(crate) fn enqueue_job_in_transaction(
     payload_json: &str,
     priority: i64,
 ) -> Result<i64> {
-    reject_summary(job_type)?;
+    reject_direct_job_type(job_type)?;
     enqueue_job_core(
         conn,
         host,
@@ -160,7 +161,7 @@ fn enqueue_job_core(
     let identity = active_identity(job_type);
     let normalized_session = match identity {
         ActiveIdentity::Ordinary => session_id,
-        ActiveIdentity::Dream | ActiveIdentity::CompileRules => None,
+        ActiveIdentity::Dream | ActiveIdentity::CompileRules | ActiveIdentity::Cleanup => None,
     };
     if !test_skip_initial_identity_lookup() {
         if let Some(id) =
@@ -284,10 +285,21 @@ fn reject_summary(job_type: JobType) -> Result<()> {
     Ok(())
 }
 
+fn reject_direct_job_type(job_type: JobType) -> Result<()> {
+    reject_summary(job_type)?;
+    if job_type == JobType::Cleanup {
+        bail!(
+            "Cleanup jobs must be scheduled through maybe_enqueue_cleanup_job so maintenance policy cannot be caller-controlled"
+        );
+    }
+    Ok(())
+}
+
 fn active_identity(job_type: JobType) -> ActiveIdentity {
     match job_type {
         JobType::Dream => ActiveIdentity::Dream,
         JobType::CompileRules => ActiveIdentity::CompileRules,
+        JobType::Cleanup => ActiveIdentity::Cleanup,
         JobType::Observation | JobType::Summary | JobType::Compress => ActiveIdentity::Ordinary,
     }
 }
@@ -331,6 +343,16 @@ fn find_active_canonical(
                 |row| row.get(0),
             )
             .optional(),
+        ActiveIdentity::Cleanup => conn
+            .query_row(
+                "SELECT id FROM jobs
+                 WHERE job_type = 'cleanup'
+                   AND state IN ('pending', 'processing')
+                 ORDER BY id ASC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional(),
     };
     canonical.context("read active job canonical")
 }
@@ -352,6 +374,10 @@ fn is_identity_unique_conflict(error: &SqliteError, identity: ActiveIdentity) ->
         ActiveIdentity::CompileRules => {
             message.contains("idx_jobs_active_compile_rules_unique")
                 || message.contains("UNIQUE constraint failed: jobs.project, jobs.state")
+        }
+        ActiveIdentity::Cleanup => {
+            message.contains("idx_jobs_active_cleanup_unique")
+                || message.contains("UNIQUE constraint failed: jobs.job_type")
         }
     }
 }

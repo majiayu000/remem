@@ -202,22 +202,20 @@ mod tests {
 
     #[test]
     fn worker_lock_path_absolutizes_relative_data_dir() -> anyhow::Result<()> {
-        let _data_dir = ScopedTestDataDir::new("worker-lock-relative-data-dir");
         let relative = PathBuf::from(format!(
             ".remem-worker-lock-relative-{}-{}",
             std::process::id(),
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         ));
-        if relative.exists() {
-            std::fs::remove_dir_all(&relative)?;
-        }
-        std::env::set_var("REMEM_DATA_DIR", &relative);
         let expected = std::env::current_dir()?.join(&relative).join("worker.lock");
 
-        assert_eq!(worker_lock_path()?, expected);
-        if relative.exists() {
-            std::fs::remove_dir_all(relative)?;
-        }
+        let actual = db::with_data_dir(&relative, worker_lock_path)?;
+
+        assert_eq!(actual, expected);
+        assert!(
+            !relative.exists(),
+            "resolving the worker lock path must not create its directory"
+        );
         Ok(())
     }
 
