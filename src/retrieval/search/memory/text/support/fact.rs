@@ -17,19 +17,6 @@ struct FactRow {
     confidence: f64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-enum RelationKind {
-    Affect,
-    Block,
-    Delete,
-    Fix,
-    Maintain,
-    Own,
-    Supersede,
-    Use,
-    Verify,
-}
-
 #[allow(clippy::too_many_arguments)]
 pub(super) fn structured_fact_scope(
     conn: &Connection,
@@ -190,49 +177,29 @@ fn semantic_claims_match(row: &FactRow, fact_text: &str, claim_terms: &[String])
                 fact_text,
                 std::slice::from_ref(term),
             ) > 0
-                || (is_relation_only_claim_term(term) && predicate_compatible(term, &row.predicate))
+                || (super::super::super::claim::is_relation_only_claim_term(term)
+                    && predicate_compatible(term, &row.predicate))
         })
 }
 
+#[cfg(test)]
 fn is_relation_only_claim_term(term: &str) -> bool {
-    let normalized = term
-        .trim()
-        .trim_matches(|character: char| !character.is_alphanumeric())
-        .to_lowercase();
-    if normalized.is_empty() || !normalized.chars().all(char::is_alphanumeric) {
-        return false;
-    }
-    if normalized.chars().any(super::super::super::claim::is_cjk) {
-        return matches!(
-            normalized.as_str(),
-            "修复"
-                | "删除"
-                | "拥有"
-                | "替代"
-                | "使用"
-                | "维护"
-                | "影响"
-                | "验证"
-                | "负责"
-                | "阻塞"
-        );
-    }
-    expressed_relation_kinds(&normalized).len() == 1
+    super::super::super::claim::is_relation_only_claim_term(term)
 }
 
 pub(super) fn relation_claim_matches_text(claim_term: &str, text: &str) -> bool {
-    let claim_relations = expressed_relation_kinds(claim_term);
+    let claim_relations = super::super::super::claim::expressed_relation_kinds(claim_term);
     if claim_relations.len() != 1 {
         return false;
     }
-    let text_relations = expressed_relation_kinds(text);
+    let text_relations = super::super::super::claim::expressed_relation_kinds(text);
     claim_relations
         .iter()
         .all(|relation| text_relations.contains(relation))
 }
 
 fn predicate_compatible(query_text: &str, predicate: &str) -> bool {
-    let query_relations = expressed_relation_kinds(query_text);
+    let query_relations = super::super::super::claim::expressed_relation_kinds(query_text);
     if query_relations.len() > 1 {
         return false;
     }
@@ -259,99 +226,13 @@ fn predicate_directly_expressed(query_text: &str, predicate: &str) -> bool {
     })
 }
 
-fn predicate_relation_kinds(predicate: &str) -> HashSet<RelationKind> {
+fn predicate_relation_kinds(predicate: &str) -> HashSet<super::super::super::claim::RelationKind> {
     let normalized = predicate.trim().to_lowercase().replace('_', " ");
-    let mut relations = expressed_relation_kinds(&normalized);
-    if relations.contains(&RelationKind::Maintain) {
-        relations.insert(RelationKind::Own);
+    let mut relations = super::super::super::claim::expressed_relation_kinds(&normalized);
+    if relations.contains(&super::super::super::claim::RelationKind::Maintain) {
+        relations.insert(super::super::super::claim::RelationKind::Own);
     }
     relations
-}
-
-fn expressed_relation_kinds(text: &str) -> HashSet<RelationKind> {
-    let mut relations = HashSet::new();
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Fix,
-        text,
-        &["fix", "repair"],
-        &["修复"],
-    );
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Verify,
-        text,
-        &[
-            "approve",
-            "okayed",
-            "sign",
-            "signer",
-            "verification",
-            "verifier",
-            "verify",
-        ],
-        &["验证"],
-    );
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Supersede,
-        text,
-        &["replace", "supersede"],
-        &["替代"],
-    );
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Block,
-        text,
-        &["block"],
-        &["阻塞"],
-    );
-    insert_relation_if_present(&mut relations, RelationKind::Use, text, &["use"], &["使用"]);
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Affect,
-        text,
-        &["affect"],
-        &["影响"],
-    );
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Delete,
-        text,
-        &["delete", "remove"],
-        &["删除"],
-    );
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Maintain,
-        text,
-        &["maintain"],
-        &["维护"],
-    );
-    insert_relation_if_present(
-        &mut relations,
-        RelationKind::Own,
-        text,
-        &["own", "responsibility", "responsible"],
-        &["负责", "拥有"],
-    );
-    relations
-}
-
-fn insert_relation_if_present(
-    relations: &mut HashSet<RelationKind>,
-    relation: RelationKind,
-    text: &str,
-    english_terms: &[&str],
-    cjk_terms: &[&str],
-) {
-    let english_match = english_terms.iter().any(|term| {
-        super::super::super::claim::claim_text_match_count(text, &[(*term).to_string()]) > 0
-    });
-    let cjk_match = cjk_terms.iter().any(|term| text.contains(term));
-    if english_match || cjk_match {
-        relations.insert(relation);
-    }
 }
 
 fn is_concrete_binding_value(value: &str) -> bool {

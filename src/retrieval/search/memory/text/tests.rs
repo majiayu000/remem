@@ -141,6 +141,56 @@ fn handles_predicate_rejects_unrelated_entity_content() -> Result<()> {
 }
 
 #[test]
+fn indexed_title_case_relation_does_not_override_query_subject() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::memory::tests_helper::setup_memory_schema(&conn);
+    let relation_memory = insert_scope_fixture_memory(
+        &conn,
+        "/repo",
+        "Handles escalation",
+        "Handles release escalation for another service.",
+        "project",
+    )?;
+    let expected = insert_scope_fixture_memory(
+        &conn,
+        "/repo",
+        "Rust ownership",
+        "Rust is handled by Team Ferris.",
+        "project",
+    )?;
+    let other_subject = insert_scope_fixture_memory(
+        &conn,
+        "/repo",
+        "Rust tooling",
+        "Rust uses Cargo for builds.",
+        "project",
+    )?;
+    crate::retrieval::entity::link_entities(&conn, relation_memory, &["Handles".to_string()])?;
+    crate::retrieval::entity::link_entities(&conn, expected, &["Rust".to_string()])?;
+    crate::retrieval::entity::link_entities(&conn, other_subject, &["Rust".to_string()])?;
+
+    let result = search_with_query_weights(
+        &conn,
+        "Who Handles Rust?",
+        Some("/repo"),
+        None,
+        5,
+        0,
+        false,
+        None,
+        false,
+        confidence_test_weights(),
+    )?;
+
+    assert_eq!(
+        result.iter().map(|memory| memory.id).collect::<Vec<_>>(),
+        vec![expected],
+        "{result:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn common_title_entities_cannot_bridge_an_unrelated_candidate() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     crate::memory::tests_helper::setup_memory_schema(&conn);

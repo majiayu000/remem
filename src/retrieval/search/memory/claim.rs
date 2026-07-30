@@ -6,6 +6,19 @@ use rusqlite::Connection;
 #[cfg(test)]
 use crate::memory::Memory;
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub(super) enum RelationKind {
+    Affect,
+    Block,
+    Delete,
+    Fix,
+    Maintain,
+    Own,
+    Supersede,
+    Use,
+    Verify,
+}
+
 pub(super) fn entity_scope_candidates(query_text: &str, project: Option<&str>) -> Vec<String> {
     let project_terms = project_entity_terms(project);
     crate::retrieval::entity::extract_entities("", query_text)
@@ -143,6 +156,79 @@ fn claim_term_aliases(term: &str) -> &'static [&'static str] {
         }
         _ => &[],
     }
+}
+
+pub(super) fn is_relation_only_claim_term(term: &str) -> bool {
+    let normalized = term
+        .trim()
+        .trim_matches(|character: char| !character.is_alphanumeric())
+        .to_lowercase();
+    if normalized.is_empty() || !normalized.chars().all(char::is_alphanumeric) {
+        return false;
+    }
+    if normalized.chars().any(is_cjk) {
+        return matches!(
+            normalized.as_str(),
+            "修复"
+                | "删除"
+                | "拥有"
+                | "替代"
+                | "使用"
+                | "维护"
+                | "影响"
+                | "验证"
+                | "负责"
+                | "阻塞"
+        );
+    }
+    expressed_relation_kinds(&normalized).len() == 1
+}
+
+pub(super) fn expressed_relation_kinds(text: &str) -> HashSet<RelationKind> {
+    let mut relations = HashSet::new();
+    for (relation, english_terms, cjk_terms) in [
+        (RelationKind::Fix, &["fix", "repair"][..], &["修复"][..]),
+        (
+            RelationKind::Verify,
+            &[
+                "approve",
+                "okayed",
+                "sign",
+                "signer",
+                "verification",
+                "verifier",
+                "verify",
+            ][..],
+            &["验证"][..],
+        ),
+        (
+            RelationKind::Supersede,
+            &["replace", "supersede"][..],
+            &["替代"][..],
+        ),
+        (RelationKind::Block, &["block"][..], &["阻塞"][..]),
+        (RelationKind::Use, &["use"][..], &["使用"][..]),
+        (RelationKind::Affect, &["affect"][..], &["影响"][..]),
+        (
+            RelationKind::Delete,
+            &["delete", "remove"][..],
+            &["删除"][..],
+        ),
+        (RelationKind::Maintain, &["maintain"][..], &["维护"][..]),
+        (
+            RelationKind::Own,
+            &["own", "responsibility", "responsible"][..],
+            &["负责", "拥有"][..],
+        ),
+    ] {
+        let english_match = english_terms
+            .iter()
+            .any(|term| claim_text_match_count(text, &[(*term).to_string()]) > 0);
+        if english_match || cjk_terms.iter().any(|term| text.contains(term)) {
+            relations.insert(relation);
+        }
+    }
+    relations
 }
 
 fn text_contains_phrase_boundary(text: &str, phrase: &str) -> bool {
@@ -295,7 +381,7 @@ pub(super) fn select_entity_anchors(
     let selected = if distinctive.is_empty() {
         lookups
             .iter()
-            .filter(|(_, _, ids)| !ids.is_empty())
+            .filter(|(_, term, ids)| !ids.is_empty() && !is_relation_only_claim_term(term))
             .min_by(|left, right| {
                 left.2
                     .len()
@@ -484,6 +570,74 @@ mod tests {
         assert!(has_distinctive_entity_shape("incident-17"));
         assert!(!has_distinctive_entity_shape("Maintains"));
         assert!(!has_distinctive_entity_shape("Current"));
+    }
+
+    #[test]
+    fn fallback_anchor_excludes_indexed_relation_candidate() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::memory::tests_helper::setup_memory_schema(&conn);
+        let relation_memory = crate::memory::insert_memory_full(
+            &conn,
+            None,
+            "/repo",
+            None,
+            "Handles escalation",
+            "Handles release escalation for another service.",
+            "decision",
+            None,
+            None,
+            "project",
+            None,
+        )?;
+        let subject_memory = crate::memory::insert_memory_full(
+            &conn,
+            None,
+            "/repo",
+            None,
+            "Rust ownership",
+            "Rust is handled by Team Ferris.",
+            "decision",
+            None,
+            None,
+            "project",
+            None,
+        )?;
+        let other_subject_memory = crate::memory::insert_memory_full(
+            &conn,
+            None,
+            "/repo",
+            None,
+            "Rust tooling",
+            "Rust uses Cargo for builds.",
+            "decision",
+            None,
+            None,
+            "project",
+            None,
+        )?;
+        crate::retrieval::entity::link_entities(&conn, relation_memory, &["Handles".to_string()])?;
+        crate::retrieval::entity::link_entities(&conn, subject_memory, &["Rust".to_string()])?;
+        crate::retrieval::entity::link_entities(
+            &conn,
+            other_subject_memory,
+            &["Rust".to_string()],
+        )?;
+
+        let candidates = entity_scope_candidates("Who Handles Rust?", Some("/repo"));
+        let (terms, ids) = select_entity_anchors(
+            &conn,
+            &candidates,
+            Some("/repo"),
+            None,
+            None,
+            5,
+            false,
+            false,
+        )?;
+
+        assert_eq!(terms, vec!["Rust"]);
+        assert_eq!(ids, vec![subject_memory, other_subject_memory]);
+        Ok(())
     }
 
     #[test]
