@@ -1,7 +1,7 @@
 # Current Memory Contracts Technical Spec
 
 Status: Current contract
-Issues: Refs #381, #383, #384, #385, #390
+Issues: Refs #381, #383, #384, #385, #390, #948
 
 ## Current Implementation Truth
 
@@ -38,6 +38,7 @@ introduce a replacement storage model or a second retrieval stack.
 | Citation feedback | `memory_citation_events` | One event per assistant message hash/source. |
 | Usage feedback | `memory_usage_events` | Links cited memory IDs to injected item rows. |
 | Source-anchor staleness | `MemoryStalenessLabel` | Exposed through API/search/context metadata. |
+| Commit-file staleness lookup | `git_commits`, `git_commit_files` | `git_commits.changed_files` remains the captured payload; the normalized relation and commit-epoch expression index are migration-managed lookup data. |
 | A/B outcome evidence | `issue385-coding-agent-ab` | Separate end-to-end benchmark contract. |
 
 ## Storage Contracts
@@ -108,6 +109,41 @@ injected items:
   `context_injection_items`.
 - Missing or unmatched citations are data and must be recorded.
 
+### Commit Source Anchors
+
+`git_commits.changed_files` remains the captured commit payload.
+`git_commit_files` is a migration-managed lookup relation derived from that
+payload; it is not a second source of commit truth.
+
+Required invariants:
+
+- Migration backfill and database triggers keep every valid string entry in
+  `changed_files` synchronized with `git_commit_files`.
+- Invalid JSON, non-array payloads, and non-string paths never produce partial
+  lookup data. Historical backfill failures identify the offending commit ID
+  and SHA; post-migration writes are rejected atomically by validation
+  triggers before derived paths change.
+- Deleting or updating a commit removes obsolete derived paths atomically.
+- The range expression
+  `COALESCE(authored_at_epoch, updated_at_epoch, created_at_epoch)` is backed by
+  an exact `(project, expression, id)` index. The query and index expressions
+  must remain identical so SQLite can use the range term.
+- Later-commit ordering uses `(commit_epoch, id)` as a stable tuple. Equal
+  timestamps must not make later inserted commits invisible. Indexed lookup
+  uses disjoint `commit_epoch > anchor_epoch` and
+  `commit_epoch = anchor_epoch AND id > anchor_id` branches so either boundary
+  is a database seek rather than a post-scan filter.
+- Source-anchor lookup starts from the indexed session-link rows and resolves
+  their commit primary keys. Commit-epoch ordering must not turn it into a scan
+  of unlinked project history.
+- File overlap preserves both directions: a touched ancestor invalidates a
+  remembered descendant, and a touched descendant invalidates a remembered
+  ancestor.
+- Branch matching preserves the existing rule for the active branch and
+  branchless commits.
+- No hard row or time limit may change a source-anchor result. Database errors
+  remain `error`, never `untracked`.
+
 ## Retrieval And Ranking Contract
 
 Search is a fused channel plan. This spec does not replace it.
@@ -142,6 +178,8 @@ Required behavior:
 - Suppressed duplicate output is visible through `context_injections`.
 - Source-anchor errors are logged and rendered as error labels or surfaced as
   load errors; they are not silently treated as `untracked`.
+- Source-anchor loading records a distinct `load_staleness_labels` phase in
+  context render statistics and debug output.
 
 ## Automatic Lifecycle Maintenance Contract
 
@@ -362,6 +400,22 @@ cargo test -q temporal --lib
 cargo test -q staleness --lib
 cargo test -q retrieval::search --lib
 ```
+
+Staleness performance coverage must also include:
+
+- an `EXPLAIN QUERY PLAN` assertion that the later-commit lookup uses the
+  commit-epoch range index;
+- a deterministic SQLite VM-step comparison showing that adding a large
+  pre-anchor history, including same-epoch rows below the anchor ID, does not
+  materially increase later-commit lookup work;
+- a deterministic SQLite VM-step comparison showing that adding a large
+  unlinked project history does not materially increase source-anchor lookup
+  work for either the normalized relation or legacy JSON fallback;
+- migration tests for backfill, trigger synchronization, invalid payload
+  rollback, and schema convergence;
+- an ignored, manually runnable large-dataset SessionStart benchmark that
+  prints `load_staleness_labels` timing without a fixed wall-clock pass/fail
+  threshold.
 
 ### API label or public error changes
 

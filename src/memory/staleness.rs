@@ -1,14 +1,16 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rusqlite::{params, types::ToSql, Connection, OptionalExtension};
 use serde::Serialize;
 
 use super::Memory;
 use capabilities::StalenessCapabilities;
-use path::{file_path_overlaps, parse_file_list, parse_json_file_array};
+use commit_queries::{later_commit_touches_file, source_commit_anchor_for_file_sessions};
+use path::parse_file_list;
 
 mod capabilities;
+mod commit_queries;
 mod path;
 mod util;
 
@@ -24,13 +26,6 @@ pub struct MemoryStalenessLabel {
     pub label: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct SourceAnchor {
-    id: i64,
-    epoch: i64,
-    branch: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -215,13 +210,21 @@ fn source_anchor_for_memory(
             memory_branch.as_deref(),
             *max_epoch,
             file,
+            capabilities.git_commit_files_exists,
         )?
         else {
             continue;
         };
         anchored_any = true;
         let branch_filter = memory_branch.as_deref().or(anchor.branch.as_deref());
-        if later_commit_touches_file(conn, &project, &anchor, branch_filter, file)? {
+        if later_commit_touches_file(
+            conn,
+            &project,
+            &anchor,
+            branch_filter,
+            file,
+            capabilities.git_commit_files_exists,
+        )? {
             return Ok("verify-before-trust");
         }
     }
@@ -230,121 +233,6 @@ fn source_anchor_for_memory(
     } else {
         Ok("untracked")
     }
-}
-
-fn source_commit_anchor_for_file_sessions(
-    conn: &Connection,
-    project: &str,
-    session_ids: &[String],
-    branch_filter: Option<&str>,
-    max_epoch: i64,
-    touched_file: &str,
-) -> Result<Option<SourceAnchor>> {
-    let mut latest = None;
-    for session_id in session_ids {
-        let Some(anchor) = source_commit_anchor_for_session(
-            conn,
-            project,
-            session_id,
-            branch_filter,
-            max_epoch,
-            touched_file,
-        )?
-        else {
-            continue;
-        };
-        if latest.as_ref().is_none_or(|current: &SourceAnchor| {
-            (anchor.epoch, anchor.id) > (current.epoch, current.id)
-        }) {
-            latest = Some(anchor);
-        }
-    }
-    Ok(latest)
-}
-
-fn source_commit_anchor_for_session(
-    conn: &Connection,
-    project: &str,
-    session_id: &str,
-    branch_filter: Option<&str>,
-    max_epoch: i64,
-    touched_file: &str,
-) -> Result<Option<SourceAnchor>> {
-    let mut stmt = conn.prepare(
-        "SELECT c.id,
-                COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch),
-                c.branch,
-                c.changed_files
-         FROM git_commits c
-         JOIN git_commit_sessions l ON l.commit_id = c.id
-         WHERE c.project = ?1
-           AND (l.memory_session_id = ?2 OR l.session_id = ?2)
-           AND (?3 IS NULL OR c.branch = ?3 OR c.branch IS NULL)
-           AND COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch) <= ?4
-         ORDER BY COALESCE(c.authored_at_epoch, c.updated_at_epoch, c.created_at_epoch) DESC,
-                  c.id DESC
-         ",
-    )?;
-    let rows = stmt.query_map(
-        params![project, session_id, branch_filter, max_epoch],
-        |row| {
-            Ok((
-                SourceAnchor {
-                    id: row.get(0)?,
-                    epoch: row.get(1)?,
-                    branch: row.get(2)?,
-                },
-                row.get::<_, String>(3)?,
-            ))
-        },
-    )?;
-    for row in rows {
-        let (anchor, raw_changed_files) = row?;
-        let changed_files = parse_json_file_array(&raw_changed_files)
-            .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
-        if changed_files
-            .iter()
-            .any(|changed_file| file_path_overlaps(changed_file, touched_file, project))
-        {
-            return Ok(Some(anchor));
-        }
-    }
-    Ok(None)
-}
-
-fn later_commit_touches_file(
-    conn: &Connection,
-    project: &str,
-    anchor: &SourceAnchor,
-    branch_filter: Option<&str>,
-    touched_file: &str,
-) -> Result<bool> {
-    let mut stmt = conn.prepare(
-        "SELECT changed_files
-         FROM git_commits
-         WHERE project = ?1
-           AND (
-             COALESCE(authored_at_epoch, updated_at_epoch, created_at_epoch) > ?2
-             OR (
-               COALESCE(authored_at_epoch, updated_at_epoch, created_at_epoch) = ?2
-               AND id > ?3
-             )
-           )
-           AND (?4 IS NULL OR branch = ?4 OR branch IS NULL)",
-    )?;
-    let mut rows = stmt.query(params![project, anchor.epoch, anchor.id, branch_filter])?;
-    while let Some(row) = rows.next()? {
-        let raw: String = row.get(0)?;
-        let changed_files = parse_json_file_array(&raw)
-            .with_context(|| "parse git commit changed_files for source-anchor staleness")?;
-        if changed_files
-            .iter()
-            .any(|changed_file| file_path_overlaps(changed_file, touched_file, project))
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 fn source_project_for_memory(

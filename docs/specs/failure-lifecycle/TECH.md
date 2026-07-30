@@ -81,7 +81,9 @@ caps backoff at 900 seconds and does not silently archive transient residual
 evidence. Known-host rows keep retrying at the bounded rate; non-archived
 unknown-host rows remain actionable for explicit host repair. Archived rows
 excluded by host or class are `admin-required` and use the exact recovery path
-below.
+below. Doctor separately reports due and deferred known-host archived transient
+rows; deferred rows include the earliest `next_retry_epoch` and no immediate
+once-worker command.
 
 Recovery paths are surface-specific. Any retry/requeue path that targets an
 archived row must either clear `archived_at_epoch` in the same transaction
@@ -92,8 +94,11 @@ archived source; no pending work may retain an archived marker.
   legacy enqueue, claim, lease-worker, or DTO APIs. An ordinary worker considers
   the bridge only after the current extraction worker reports no ready work.
   `worker --once` may run at most one legacy batch in its process lifetime; a
-  daemon may run at most one batch every 60 seconds. Each batch selects at most
-  25 oldest rows with a known `claude-code` or `codex-cli` host and one of
+  daemon may run at most one batch every 60 seconds. A current task discovered
+  during preflight yields the bridge. A yield before any row migrates does not
+  consume the once/interval admission, so the same process retries after current
+  work drains; a partial-progress yield does consume it. Each batch selects at
+  most 25 oldest rows with a known `claude-code` or `codex-cli` host and one of
   these states: `pending`, expired `processing`, a due non-archived transient
   `failed` row, or a historical archived transient row admitted through the
   same controlled recovery predicate. Permanent and unknown-host rows are not
@@ -120,7 +125,9 @@ archived source; no pending work may retain an archived marker.
   and aborts the remaining batch. The bridge cannot safely infer row-local
   permanence from a shared replay error, so it never changes the source to
   permanent. Archived transient state is cleared only on successful migration,
-  never on selection or a failed attempt.
+  never on selection or a failed attempt. While its retry epoch is in the
+  future, an archived row remains visible in doctor as deferred rather than
+  disappearing from both recoverable and admin-required counts.
 
   Archived failed rows excluded from automatic recovery use `remem pending
   recover-archived --id <positive-id> [--host claude-code|codex-cli]

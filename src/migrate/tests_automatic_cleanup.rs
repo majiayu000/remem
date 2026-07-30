@@ -5,17 +5,17 @@ use super::{run_migrations, validate_schema_invariants, MIGRATIONS};
 
 fn setup_v073() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
-    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 74) {
+    for migration in MIGRATIONS.iter().filter(|migration| migration.version < 75) {
         conn.execute_batch(migration.sql)?;
     }
     Ok(conn)
 }
 
-fn apply_v074(conn: &Connection) -> Result<()> {
+fn apply_v075(conn: &Connection) -> Result<()> {
     let migration = MIGRATIONS
         .iter()
-        .find(|migration| migration.version == 74)
-        .expect("v074 migration must be registered");
+        .find(|migration| migration.version == 75)
+        .expect("v075 migration must be registered");
     conn.execute_batch(migration.sql)?;
     Ok(())
 }
@@ -51,7 +51,7 @@ fn insert_raw_job(
 }
 
 #[test]
-fn v074_backfills_only_known_ephemeral_events_and_defaults_unknown_to_audit() -> Result<()> {
+fn v075_backfills_only_known_ephemeral_events_and_defaults_unknown_to_audit() -> Result<()> {
     let conn = setup_v073()?;
     let ephemeral_types = [
         "file_edit",
@@ -69,7 +69,7 @@ fn v074_backfills_only_known_ephemeral_events_and_defaults_unknown_to_audit() ->
         insert_event(&conn, event_type, 100)?;
     }
 
-    apply_v074(&conn)?;
+    apply_v075(&conn)?;
 
     for event_type in ephemeral_types {
         let retention: String = conn.query_row(
@@ -99,7 +99,7 @@ fn v074_backfills_only_known_ephemeral_events_and_defaults_unknown_to_audit() ->
 }
 
 #[test]
-fn v074_prevents_deleting_api_mutation_audit_provenance() -> Result<()> {
+fn v075_prevents_deleting_api_mutation_audit_provenance() -> Result<()> {
     let conn = setup_v073()?;
     let audit_id = insert_event(&conn, "memory_governance", 100)?;
     let disposable_id = insert_event(&conn, "bash", 100)?;
@@ -113,7 +113,7 @@ fn v074_prevents_deleting_api_mutation_audit_provenance() -> Result<()> {
         [audit_id],
     )?;
 
-    apply_v074(&conn)?;
+    apply_v075(&conn)?;
 
     let audit_index_columns = conn
         .prepare("SELECT name FROM pragma_index_info('idx_api_mutation_requests_audit')")?
@@ -158,9 +158,9 @@ fn v074_prevents_deleting_api_mutation_audit_provenance() -> Result<()> {
 }
 
 #[test]
-fn v074_enforces_global_cleanup_identity_and_ledger_shape() -> Result<()> {
+fn v075_enforces_global_cleanup_identity_and_ledger_shape() -> Result<()> {
     let conn = setup_v073()?;
-    apply_v074(&conn)?;
+    apply_v075(&conn)?;
     let first = insert_raw_job(
         &conn,
         "worker-a",
@@ -236,7 +236,7 @@ fn v074_enforces_global_cleanup_identity_and_ledger_shape() -> Result<()> {
 }
 
 #[test]
-fn v074_schema_drift_is_reported() -> Result<()> {
+fn v075_schema_drift_is_reported() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     run_migrations(&conn)?;
     assert!(validate_schema_invariants(&conn)?.is_empty());
@@ -249,14 +249,14 @@ fn v074_schema_drift_is_reported() -> Result<()> {
     assert!(
         errors
             .iter()
-            .any(|error| error.contains("v074_automatic_cleanup")
+            .any(|error| error.contains("v075_automatic_cleanup")
                 && error.contains("events_preserve_api_mutation_audit")),
         "got: {errors:?}"
     );
     assert!(
         errors
             .iter()
-            .any(|error| error.contains("v074_automatic_cleanup")
+            .any(|error| error.contains("v075_automatic_cleanup")
                 && error.contains("idx_api_mutation_requests_audit")),
         "got: {errors:?}"
     );

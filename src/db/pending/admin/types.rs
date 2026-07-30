@@ -44,3 +44,10 @@ impl AdminRequiredArchivedLegacyPendingRow {
         })
     }
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct ArchivedTransientLegacyPendingStats {
+    pub(crate) due: usize,
+    pub(crate) deferred: usize,
+    pub(crate) earliest_deferred_retry_epoch: Option<i64>,
+}

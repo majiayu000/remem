@@ -808,7 +808,9 @@ Current capture no longer writes or claims the retired
 ordinary worker can drain residual rows into the current capture/extraction
 pipeline. `remem worker --once` admits at most one batch per process; a daemon
 admits at most one batch every 60 seconds; each batch contains at most 25
-oldest eligible rows.
+oldest eligible rows. If current extraction work appears during legacy
+preflight, a zero-progress yield keeps that admission available after current
+work drains; a partial-progress yield consumes it.
 
 Automatic candidates must have a known Claude Code or Codex host and be
 pending, expired-processing, due transient failures, or controlled historical
@@ -817,6 +819,9 @@ event and extraction task, marks the legacy row migrated, and clears its old
 failure/archive state. Any replay error rolls back current-pipeline writes,
 records exponential backoff capped at 900 seconds, and stops that batch. The
 bridge does not guess that a shared replay failure is row-local permanent.
+Doctor keeps archived known-host transient rows visible during that backoff,
+shows the earliest `next_retry_epoch`, and omits immediate `worker --once`
+guidance until a row is due.
 Rows already classified permanent and unknown-host rows remain available
 through `remem pending` for inspection and explicit admin recovery; an unknown
 host must be repaired before replay. The bridge does not restore the legacy

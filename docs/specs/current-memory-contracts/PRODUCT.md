@@ -1,7 +1,7 @@
 # Current Memory Contracts Product Spec
 
 Status: Current contract
-Issues: Refs #381, #383, #384, #385, #390, #945
+Issues: Refs #381, #383, #384, #385, #390, #945, #948
 
 ## Problem
 
@@ -117,6 +117,17 @@ The source-anchor states are:
 
 Search, detail, list, current-state, and context injection surfaces must not
 silently turn `error` into `untracked`.
+
+Source-anchor checks on SessionStart must scale with the candidate memories and
+commits newer than their source anchors, rather than repeatedly scanning and
+decoding the project's full commit history. This optimization must preserve the
+same branch, path-overlap, and per-file-anchor semantics. It must not impose a
+hard commit limit that can incorrectly turn `verify-before-trust` into
+`tracked`.
+
+Context diagnostics must report source-anchor loading as a distinct
+`load_staleness_labels` phase so a slow database lookup is distinguishable from
+search, reranking, and rendering.
 
 ### Injection Accountability
 
@@ -244,6 +255,13 @@ After this contract is implemented and verified:
   - declared-but-empty production surfaces.
 - Deterministic eval gates cover current-state, temporal fact, staleness,
   injection audit, and usage feedback contracts.
+- The staleness query plan uses an indexed commit-epoch range and avoids
+  per-candidate decoding of the complete project commit history.
+- A deterministic work counter proves that adding old commits before a source
+  anchor does not materially increase the newer-commit lookup work.
+- Normal context rendering records the `load_staleness_labels` phase, and a
+  large-dataset benchmark reports that phase separately without using a
+  machine-dependent wall-clock threshold as a CI gate.
 - Usage ranking remains default-off until a committed eval report justifies
   changing the default.
 - Worker cleanup uses one global in-flight job identity and a persisted

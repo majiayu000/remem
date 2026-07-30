@@ -108,9 +108,30 @@ fn archived_counts_separate_auto_recovery_from_admin_recovery() -> Result<()> {
     insert_archived(crate::runtime_config::CODEX_HOST, "transient")?;
     insert_archived(crate::runtime_config::CODEX_HOST, "permanent")?;
     insert_archived("unknown", "transient")?;
+    let deferred_id = crate::db::test_support::insert_legacy_pending_fixture(
+        &conn,
+        crate::runtime_config::CODEX_HOST,
+        "s-deferred",
+        "alpha",
+        "tool",
+        None,
+        None,
+        None,
+    )?;
+    conn.execute(
+        "UPDATE pending_observations
+         SET status = 'failed', failure_class = 'transient',
+             archived_at_epoch = ?2, next_retry_epoch = ?3
+         WHERE id = ?1",
+        params![deferred_id, now - 1, now + 900],
+    )?;
 
     assert_eq!(count_recoverable_archived_legacy_pending(&conn)?, 1);
     assert_eq!(count_admin_required_archived_legacy_pending(&conn)?, 2);
+    let stats = crate::db::pending::admin::query_archived_transient_legacy_pending(&conn)?;
+    assert_eq!(stats.due, 1);
+    assert_eq!(stats.deferred, 1);
+    assert_eq!(stats.earliest_deferred_retry_epoch, Some(now + 900));
     Ok(())
 }
 

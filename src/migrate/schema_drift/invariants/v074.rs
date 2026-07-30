@@ -1,56 +1,22 @@
 use super::SchemaInvariant;
 
+const VERSION: i64 = 74;
+const MIGRATION: &str = "git_commit_staleness_index";
+
 pub(in crate::migrate) const V074_SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
-    SchemaInvariant::column(74, "automatic_cleanup", "events", "retention_class"),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_events_retention_created"),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_api_mutation_requests_audit"),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_memories_cleanup_expiry"),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_memories_cleanup_archive"),
-    SchemaInvariant::index(
-        74,
-        "automatic_cleanup",
-        "idx_workstreams_cleanup_inactivity",
-    ),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_observations_cleanup_sources"),
-    SchemaInvariant::index(
-        74,
-        "automatic_cleanup",
-        "idx_compressed_sources_cleanup_age",
+    SchemaInvariant::table(VERSION, MIGRATION, "git_commit_files"),
+    SchemaInvariant::index(VERSION, MIGRATION, "idx_git_commits_project_commit_epoch"),
+    SchemaInvariant::trigger(
+        VERSION,
+        MIGRATION,
+        "git_commits_validate_changed_files_insert",
     ),
     SchemaInvariant::trigger(
-        74,
-        "automatic_cleanup",
-        "events_preserve_api_mutation_audit",
+        VERSION,
+        MIGRATION,
+        "git_commits_validate_changed_files_update",
     ),
-    SchemaInvariant::table(74, "automatic_cleanup", "maintenance_runs"),
-    SchemaInvariant::column(74, "automatic_cleanup", "maintenance_runs", "job_id"),
-    SchemaInvariant::column(74, "automatic_cleanup", "maintenance_runs", "trigger"),
-    SchemaInvariant::column(
-        74,
-        "automatic_cleanup",
-        "maintenance_runs",
-        "policy_version",
-    ),
-    SchemaInvariant::column(
-        74,
-        "automatic_cleanup",
-        "maintenance_runs",
-        "started_at_epoch",
-    ),
-    SchemaInvariant::column(
-        74,
-        "automatic_cleanup",
-        "maintenance_runs",
-        "finished_at_epoch",
-    ),
-    SchemaInvariant::column(74, "automatic_cleanup", "maintenance_runs", "outcome"),
-    SchemaInvariant::column(74, "automatic_cleanup", "maintenance_runs", "counts_json"),
-    SchemaInvariant::column(74, "automatic_cleanup", "maintenance_runs", "error"),
-    SchemaInvariant::index(
-        74,
-        "automatic_cleanup",
-        "idx_maintenance_runs_trigger_outcome_finished",
-    ),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_maintenance_runs_job"),
-    SchemaInvariant::index(74, "automatic_cleanup", "idx_jobs_active_cleanup_unique"),
+    SchemaInvariant::trigger(VERSION, MIGRATION, "git_commits_sync_files_insert"),
+    SchemaInvariant::trigger(VERSION, MIGRATION, "git_commits_sync_files_update"),
+    SchemaInvariant::trigger(VERSION, MIGRATION, "git_commits_sync_files_delete"),
 ];

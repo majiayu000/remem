@@ -75,12 +75,14 @@ fn post_migration_insert_defaults_to_safe_and_rejects_unknown_status() -> Result
 }
 
 #[test]
-fn migration_remains_registered_after_later_schema_versions() {
-    let migration = super::types::MIGRATIONS
-        .iter()
-        .find(|migration| migration.version == 73)
-        .expect("v073 migration must remain registered");
-    assert_eq!(migration.name, "session_summary_poisoning");
+fn v073_is_registered_and_named_stably() {
+    assert_eq!(
+        MIGRATIONS
+            .iter()
+            .find(|migration| migration.version == 73)
+            .map(|migration| migration.name),
+        Some("session_summary_poisoning")
+    );
 }
 
 #[test]

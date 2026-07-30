@@ -370,7 +370,10 @@ A once worker admits at most one batch in its process lifetime. A daemon admits
 at most one batch every 60 seconds. Each batch contains at most 25 oldest rows
 with a known `claude-code` or `codex-cli` host: pending rows, expired processing
 rows, due transient failures, and controlled historical archived transient
-failures. Permanent and unknown-host rows are not automatic candidates.
+failures. Permanent and unknown-host rows are not automatic candidates. If
+current work appears during preflight, a zero-progress yield keeps the
+once/interval admission available after that work drains; a partial-progress
+yield consumes the admission and preserves the per-process/per-interval cap.
 
 For each selected row, one transaction records the deterministic legacy
 `captured_event`, enqueues its current `ObservationExtract` task, marks the
@@ -387,15 +390,18 @@ The transaction reloads and revalidates each candidate before writing, and
 capture receives the explicit precomputed branch value, including an explicit
 no-branch result. No Git subprocess runs while the SQLite write lock is held.
 
-Doctor reports archived failed rows excluded from the automatic bridge as
-`admin-required`. The check queries those candidates independently of the
-global failed-row listing and prints a bounded oldest-first set with real IDs,
-stored hosts, failure classes, archive times, and concrete preview/apply
-commands. A stored `host = unknown` prints both explicit
-`--host claude-code|codex-cli` choices. The exact command rejects rows that are
-not both failed and archived, replays only the requested ID in one transaction,
-and clears failure/archive state only after the current event and task commit.
-Any failure rolls back current-pipeline writes and preserves the source row.
+Doctor reports due and deferred known-host archived transient rows separately.
+A deferred row remains a capture-liveness failure with its earliest retry epoch,
+but does not receive immediate once-worker guidance. Archived failed rows
+excluded from the automatic bridge are `admin-required`; the check queries
+those candidates independently of the global failed-row listing and prints a
+bounded oldest-first set with real IDs, stored hosts, failure classes, archive
+times, and concrete preview/apply commands. A stored `host = unknown` prints
+both explicit `--host claude-code|codex-cli` choices. The exact command rejects
+rows that are not both failed and archived, replays only the requested ID in
+one transaction, and clears failure/archive state only after the current event
+and task commit. Any failure rolls back current-pipeline writes and preserves
+the source row.
 
 ## Memory Lifecycle
 
@@ -439,9 +445,10 @@ session_summaries ──→ memories (auto-promoted)
   `archived_at_epoch`. Transient extraction/replay/job failures receive
   bounded automatic retries. Eligible legacy pending rows use the idle-only,
   25-row drain bridge; once workers admit one batch and daemons admit one batch
-  per 60 seconds. Archived permanent or unknown-host legacy rows are
-  doctor-visible as `admin-required` and use exact `recover-archived`; no
-  automatic path deletes them.
+  per 60 seconds, except a zero-progress yield retains that admission. Deferred
+  archived transient rows remain doctor-visible with their next retry; archived
+  permanent or unknown-host legacy rows are `admin-required` and use exact
+  `recover-archived`. No automatic path deletes them.
 
 ## Rate Limiting
 

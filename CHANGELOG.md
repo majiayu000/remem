@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.31` for GH-945: workers now schedule one
+- Staged source version `0.6.32` for GH-945: workers now schedule one
   database-global lifecycle cleanup after a durable 24-hour cooldown and claim
   it through a dedicated lane. Each run atomically expires memory TTLs, advances
   inactive workstreams, removes only explicitly ephemeral old events, archives
@@ -16,6 +16,12 @@
   archived failures. A maintenance ledger and doctor check expose success,
   redacted failure, retry, overdue, and stalled-lease state; bounded SQL batches
   keep large ID sets below SQLite parameter limits.
+- Staged source version `0.6.31` for GH-948: indexed source-anchor staleness
+  lookup. Schema v074 adds a commit-epoch expression index and a
+  trigger-maintained commit-file relation; link-first and split epoch/ID
+  queries preserve branch, path-overlap, and equal-timestamp semantics without
+  scanning pre-anchor project history. SessionStart now reports a dedicated
+  `load_staleness_labels` phase and includes a 50,376-commit ignored benchmark.
 - Staged source version `0.6.30` for GH-943: ordinary workers now drain
   eligible residual `pending_observations` into the current capture/extraction
   pipeline only when no current extraction task is ready. The bridge admits at
@@ -25,8 +31,11 @@
   plus replay savepoints, prepares Git metadata before taking the SQLite write
   lock, revalidates the source snapshot after locking, and records capped
   exponential backoff without rewriting first-failure/archive history on
-  replay errors. Doctor reports automatic backlog with executable `remem
-  worker --once` guidance and marks archived permanent/unknown-host rows
+  replay errors. A zero-progress yield to newly arrived current work keeps the
+  once/interval admission available, while partial progress consumes it.
+  Doctor keeps deferred archived transient rows visible with their earliest
+  retry epoch, reports due automatic backlog with executable `remem worker
+  --once` guidance, and marks archived permanent/unknown-host rows
   `admin-required`, listing a bounded oldest-first candidate set with concrete
   exact-ID recovery commands instead of relying on the global recent-failure
   list. The new exact `remem pending recover-archived --id` command supports
@@ -52,16 +61,17 @@
   contents; no LLM or network call on any router path. Wiring the plan
   into retrieval execution, rerank mechanics (GH-851), and per-intent
   golden-fixture ablation remain follow-up work on GH-934.
-- Staged source version `0.6.26` for GH-933 Phase A: read-only CurrentTruth
-  projection module (`remem_ai::truth`). Versioned Evidence/Claim/Relation/
-  CurrentTruth read DTOs, a three-dimension lifecycle mapping (publication /
-  validity / retention plus policy visibility) covering every stored status
-  value of memories, observations, user-context claims, and memory
-  candidates, and a deterministic resolution policy: scope and branch
-  isolation, `as_of` filtering, explicit supersedes over recency, verified
-  evidence over model-generated, `Contradicted` for unresolved conflicts, and
-  abstention instead of guessing. No writer, schema, or context-path changes;
-  Context Bundle wiring is Phase B. Contract: `docs/specs/GH933/`.
+- Released in `0.6.26` for GH-933 Phase A: read-only CurrentTruth
+  projection module (`remem::truth`). Versioned Evidence/Claim/Relation/
+  CurrentTruth read DTOs, a baseline lifecycle mapping (publication /
+  validity / retention plus policy visibility) for memories, observations,
+  user-context claims, and memory candidates, and a deterministic resolution
+  policy: project/branch claim filtering, `as_of` filtering, explicit
+  supersedes over recency, verified evidence over model-generated,
+  `Contradicted` for unresolved conflicts, and abstention instead of guessing.
+  No writer, schema, or context-path changes; pending v2 hardening and later
+  Context Bundle work remain tracked by GH-933. Contract:
+  `docs/specs/GH933/`.
 - Staged source version `0.6.25` for GH-932: Context Bundle v1 internal
   contract. New `src/context_bundle/` module with versioned
   `ContextRequest` / `ContextPlan` / `ContextBundle` / `ContextAudit`

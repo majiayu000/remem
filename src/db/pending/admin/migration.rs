@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Context, Result};
 use rusqlite::{named_params, params, Connection, OptionalExtension, TransactionBehavior};
 use serde::Serialize;
@@ -127,20 +129,7 @@ pub fn count_legacy_migration_candidates(
 }
 
 pub fn count_recoverable_archived_legacy_pending(conn: &Connection) -> Result<usize> {
-    let count: i64 = conn.query_row(
-        "SELECT COUNT(*)
-         FROM pending_observations
-         WHERE host IN (?1, ?2)
-           AND status = 'failed'
-           AND COALESCE(failure_class, 'transient') = 'transient'
-           AND archived_at_epoch IS NOT NULL",
-        params![
-            crate::runtime_config::CLAUDE_HOST,
-            crate::runtime_config::CODEX_HOST
-        ],
-        |row| row.get(0),
-    )?;
-    Ok(count.max(0) as usize)
+    Ok(super::query::query_archived_transient_legacy_pending(conn)?.due)
 }
 
 pub fn count_admin_required_archived_legacy_pending(conn: &Connection) -> Result<usize> {
@@ -303,12 +292,17 @@ pub(super) fn replay_prepared_legacy_row_into_capture(
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct AutoLegacyMigrationOutcome {
     pub migrated: usize,
+    pub yielded_to_current_work: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum AutoCandidateOutcome {
-    Migrated,
+    Migrated {
+        extraction_task_id: i64,
+        captured_event_id: i64,
+    },
     Skipped,
+    YieldedToCurrentWork,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -342,10 +336,30 @@ pub(super) fn auto_migrate_actionable_legacy_pending_with_detector(
 ) -> Result<AutoLegacyMigrationOutcome> {
     let candidate_ids = select_auto_actionable_ids(conn, limit)?;
     let mut outcome = AutoLegacyMigrationOutcome::default();
+    let mut migrated_tasks = HashSet::new();
     for row_id in candidate_ids {
-        match auto_migrate_candidate_with_detector(conn, row_id, detector) {
-            Ok(AutoCandidateOutcome::Migrated) => outcome.migrated += 1,
+        if current_extraction_work_is_ready(conn, &migrated_tasks)? {
+            outcome.yielded_to_current_work = true;
+            break;
+        }
+        match auto_migrate_candidate_with_detector(
+            conn,
+            row_id,
+            detector,
+            &migrated_tasks,
+        ) {
+            Ok(AutoCandidateOutcome::Migrated {
+                extraction_task_id,
+                captured_event_id,
+            }) => {
+                outcome.migrated += 1;
+                migrated_tasks.insert((extraction_task_id, captured_event_id));
+            }
             Ok(AutoCandidateOutcome::Skipped) => {}
+            Ok(AutoCandidateOutcome::YieldedToCurrentWork) => {
+                outcome.yielded_to_current_work = true;
+                break;
+            }
             Err(error) => {
                 return Err(error).with_context(|| {
                     format!(
@@ -357,6 +371,36 @@ pub(super) fn auto_migrate_actionable_legacy_pending_with_detector(
         }
     }
     Ok(outcome)
+}
+
+fn current_extraction_work_is_ready(
+    conn: &Connection,
+    migrated_tasks: &HashSet<(i64, i64)>,
+) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp();
+    let mut stmt = conn.prepare(
+        "SELECT id, status, high_watermark_event_id, next_retry_epoch
+         FROM extraction_tasks
+         WHERE (status = 'pending'
+                AND (next_retry_epoch IS NULL OR next_retry_epoch <= ?1))
+            OR status = 'processing'",
+    )?;
+    let rows = stmt.query_map([now], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, Option<i64>>(2)?,
+            row.get::<_, Option<i64>>(3)?,
+        ))
+    })?;
+    for task in rows {
+        match task? {
+            (task_id, status, Some(event_id), None)
+                if status == "pending" && migrated_tasks.contains(&(task_id, event_id)) => {}
+            _ => return Ok(true),
+        }
+    }
+    Ok(false)
 }
 
 fn select_auto_actionable_ids(conn: &Connection, limit: i64) -> Result<Vec<i64>> {
@@ -387,6 +431,7 @@ fn auto_migrate_candidate_with_detector(
     conn: &mut Connection,
     row_id: i64,
     detector: &mut dyn FnMut(&str) -> Option<String>,
+    migrated_tasks: &HashSet<(i64, i64)>,
 ) -> Result<AutoCandidateOutcome> {
     let preflight_now = chrono::Utc::now().timestamp();
     let Some(preflight_row) = load_auto_actionable_row(conn, row_id, preflight_now)? else {
@@ -394,10 +439,17 @@ fn auto_migrate_candidate_with_detector(
     };
     normalize_capture_host(&preflight_row.legacy.host)?;
     let prepared = prepare_legacy_replay_with_detector(&preflight_row.legacy, detector);
+    if current_extraction_work_is_ready(conn, migrated_tasks)? {
+        return Ok(AutoCandidateOutcome::YieldedToCurrentWork);
+    }
 
     let mut tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .context("begin legacy pending auto-migration transaction")?;
+    if current_extraction_work_is_ready(&tx, migrated_tasks)? {
+        tx.commit()?;
+        return Ok(AutoCandidateOutcome::YieldedToCurrentWork);
+    }
     let eligibility_now = chrono::Utc::now().timestamp();
     let Some(row) = load_auto_actionable_row(&tx, row_id, eligibility_now)? else {
         tx.commit()?;
@@ -428,33 +480,38 @@ fn auto_migrate_candidate_with_detector(
             }
         }
     };
-    if let Err(error) = replay {
-        let retry = mark_legacy_row_for_transient_retry(
-            &tx,
-            row_id,
-            eligibility_now,
-            &format!("{error:#}"),
-        )
-        .with_context(|| format!("record legacy pending retry state id={row_id}"))?
-        .ok_or_else(|| {
-            anyhow::anyhow!("legacy pending row changed inside immediate transaction id={row_id}")
-        })?;
-        tx.commit()
-            .context("commit legacy pending retry transition")?;
-        crate::log::error(
-            "failure_lifecycle",
-            &format!(
-                "surface=pending_observation class=transient outcome=deferred id={row_id} attempt={} backoff_secs={} next_retry_epoch={}",
-                retry.attempt_count, retry.backoff_secs, retry.next_retry_epoch
-            ),
-        );
-        return Err(error).with_context(|| {
-            format!(
-                "legacy pending auto-migration scheduled retry id={row_id} attempt={} backoff_secs={}",
-                retry.attempt_count, retry.backoff_secs
+    let migration = match replay {
+        Ok(migration) => migration,
+        Err(error) => {
+            let retry = mark_legacy_row_for_transient_retry(
+                &tx,
+                row_id,
+                eligibility_now,
+                &format!("{error:#}"),
             )
-        });
-    }
+            .with_context(|| format!("record legacy pending retry state id={row_id}"))?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "legacy pending row changed inside immediate transaction id={row_id}"
+                )
+            })?;
+            tx.commit()
+                .context("commit legacy pending retry transition")?;
+            crate::log::error(
+                "failure_lifecycle",
+                &format!(
+                    "surface=pending_observation class=transient outcome=deferred id={row_id} attempt={} backoff_secs={} next_retry_epoch={}",
+                    retry.attempt_count, retry.backoff_secs, retry.next_retry_epoch
+                ),
+            );
+            return Err(error).with_context(|| {
+                format!(
+                    "legacy pending auto-migration scheduled retry id={row_id} attempt={} backoff_secs={}",
+                    retry.attempt_count, retry.backoff_secs
+                )
+            });
+        }
+    };
 
     let completed_at = chrono::Utc::now().timestamp();
     let changed = mark_auto_migrated(&tx, row_id, eligibility_now, completed_at)?;
@@ -465,7 +522,10 @@ fn auto_migrate_candidate_with_detector(
         }
         1 => {
             tx.commit()?;
-            Ok(AutoCandidateOutcome::Migrated)
+            Ok(AutoCandidateOutcome::Migrated {
+                extraction_task_id: migration.extraction_task_id,
+                captured_event_id: migration.captured_event_id,
+            })
         }
         changed => bail!(
             "legacy pending auto-migration invariant violated: id={row_id} affected_rows={changed}"

@@ -40,6 +40,8 @@ pub(super) struct LoadedContext {
     pub owner_traces: Vec<OwnerTrace>,
     pub owner_counts: OwnerCounts,
     pub diagnostics: ContextDiagnostics,
+    /// Measurable sub-phases inside `load_context_data`.
+    pub load_phase_timings: Vec<crate::perf::PhaseTiming>,
     /// Shared rerank stage outcome for the SessionStart implicit query
     /// (GH-851); `None` only in fixtures that bypass `load_context_data`.
     pub rerank: Option<crate::retrieval::rerank::RerankExplain>,

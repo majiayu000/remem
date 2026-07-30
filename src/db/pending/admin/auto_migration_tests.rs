@@ -162,6 +162,193 @@ fn auto_migration_commits_prior_rows_and_rolls_back_the_failing_row() {
 }
 
 #[test]
+fn auto_migration_yields_when_current_extraction_work_appears_between_rows() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let first_id = insert_legacy_row(&conn, "first-yield", now - 200);
+    let second_id = insert_legacy_row(&conn, "second-yield", now - 100);
+    conn.execute(
+        "UPDATE pending_observations
+         SET cwd = '/tmp/remem-auto-yield'
+         WHERE id IN (?1, ?2)",
+        params![first_id, second_id],
+    )
+    .expect("legacy rows should have probeable cwd");
+    conn.execute_batch(&format!(
+        "CREATE TRIGGER enqueue_current_work_after_first_legacy
+         AFTER UPDATE OF status ON pending_observations
+         WHEN NEW.id = {first_id} AND NEW.status = 'migrated'
+         BEGIN
+             INSERT INTO extraction_tasks(
+                 task_kind, host_id, workspace_id, project_id, session_row_id,
+                 priority, status, idempotency_key, cursor_event_id,
+                 high_watermark_event_id, attempts, next_retry_epoch,
+                 lease_owner, lease_expires_epoch, last_error,
+                 created_at_epoch, updated_at_epoch
+             )
+             SELECT task_kind, host_id, workspace_id, project_id, session_row_id,
+                    priority, 'pending', 'current-work-between-legacy-rows',
+                    NULL, high_watermark_event_id, 0, NULL, NULL, NULL, NULL,
+                    NEW.updated_at_epoch, NEW.updated_at_epoch
+             FROM extraction_tasks
+             WHERE id = (
+                 SELECT MAX(id)
+                 FROM extraction_tasks
+             );
+         END;"
+    ))
+    .expect("current-work injection trigger should install");
+    let mut detector_calls = 0;
+    let mut detector = |_cwd: &str| {
+        detector_calls += 1;
+        None
+    };
+
+    let outcome = super::migration::auto_migrate_actionable_legacy_pending_with_detector(
+        &mut conn,
+        10,
+        &mut detector,
+    )
+    .expect("first eligible row should migrate");
+
+    assert_eq!(outcome.migrated, 1);
+    assert!(outcome.yielded_to_current_work);
+    assert_eq!(
+        detector_calls, 1,
+        "new current work must stop the batch before another Git probe"
+    );
+    let states: Vec<(i64, String)> = conn
+        .prepare(
+            "SELECT id, status
+             FROM pending_observations
+             WHERE id IN (?1, ?2)
+             ORDER BY id",
+        )
+        .expect("legacy states should prepare")
+        .query_map(params![first_id, second_id], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .expect("legacy states should query")
+        .collect::<rusqlite::Result<_>>()
+        .expect("legacy states should collect");
+    assert_eq!(
+        states,
+        vec![
+            (first_id, "migrated".to_string()),
+            (second_id, "pending".to_string())
+        ]
+    );
+}
+
+#[test]
+fn auto_migration_yields_when_legacy_task_starts_processing_between_rows() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let first_id = insert_legacy_row(&conn, "first-processing", now - 200);
+    let second_id = insert_legacy_row(&conn, "second-processing", now - 100);
+    conn.execute(
+        "UPDATE pending_observations
+         SET cwd = '/tmp/remem-auto-processing'
+         WHERE id IN (?1, ?2)",
+        params![first_id, second_id],
+    )
+    .expect("legacy rows should have probeable cwd");
+    conn.execute_batch(&format!(
+        "CREATE TRIGGER claim_first_legacy_task
+         AFTER UPDATE OF status ON pending_observations
+         WHEN NEW.id = {first_id} AND NEW.status = 'migrated'
+         BEGIN
+             UPDATE extraction_tasks
+             SET status = 'processing',
+                 lease_owner = 'current-worker',
+                 lease_expires_epoch = NEW.updated_at_epoch + 300
+             WHERE id = (
+                 SELECT MAX(id)
+                 FROM extraction_tasks
+             );
+         END;"
+    ))
+    .expect("processing transition trigger should install");
+    let mut detector_calls = 0;
+    let mut detector = |_cwd: &str| {
+        detector_calls += 1;
+        None
+    };
+
+    let outcome = super::migration::auto_migrate_actionable_legacy_pending_with_detector(
+        &mut conn,
+        10,
+        &mut detector,
+    )
+    .expect("first eligible row should migrate");
+
+    assert_eq!(outcome.migrated, 1);
+    assert!(outcome.yielded_to_current_work);
+    assert_eq!(detector_calls, 1);
+    let second_state: String = conn
+        .query_row(
+            "SELECT status FROM pending_observations WHERE id = ?1",
+            [second_id],
+            |row| row.get(0),
+        )
+        .expect("second legacy row should exist");
+    assert_eq!(second_state, "pending");
+}
+
+#[test]
+fn auto_migration_yields_when_legacy_task_retry_becomes_due_between_rows() {
+    let mut conn = setup_conn();
+    let now = chrono::Utc::now().timestamp();
+    let first_id = insert_legacy_row(&conn, "first-retry-due", now - 200);
+    let second_id = insert_legacy_row(&conn, "second-retry-due", now - 100);
+    conn.execute(
+        "UPDATE pending_observations
+         SET cwd = '/tmp/remem-auto-retry-due'
+         WHERE id IN (?1, ?2)",
+        params![first_id, second_id],
+    )
+    .expect("legacy rows should have probeable cwd");
+    conn.execute_batch(&format!(
+        "CREATE TRIGGER defer_first_legacy_task_until_now
+         AFTER UPDATE OF status ON pending_observations
+         WHEN NEW.id = {first_id} AND NEW.status = 'migrated'
+         BEGIN
+             UPDATE extraction_tasks
+             SET next_retry_epoch = NEW.updated_at_epoch
+             WHERE id = (
+                 SELECT MAX(id)
+                 FROM extraction_tasks
+             );
+         END;"
+    ))
+    .expect("retry transition trigger should install");
+    let mut detector_calls = 0;
+    let mut detector = |_cwd: &str| {
+        detector_calls += 1;
+        None
+    };
+
+    let outcome = super::migration::auto_migrate_actionable_legacy_pending_with_detector(
+        &mut conn,
+        10,
+        &mut detector,
+    )
+    .expect("first eligible row should migrate");
+
+    assert_eq!(outcome.migrated, 1);
+    assert!(outcome.yielded_to_current_work);
+    assert_eq!(detector_calls, 1);
+    let second_state: String = conn
+        .query_row(
+            "SELECT status FROM pending_observations WHERE id = ?1",
+            [second_id],
+            |row| row.get(0),
+        )
+        .expect("second legacy row should exist");
+    assert_eq!(second_state, "pending");
+}
+
+#[test]
 fn auto_detector_runs_without_writer_lock_and_changed_snapshot_is_skipped() -> Result<()> {
     let db_path = db::test_support::unique_temp_db_path("auto-detector-lock");
     let seed_conn = Connection::open(&db_path)?;
@@ -254,6 +441,87 @@ fn auto_detector_runs_without_writer_lock_and_changed_snapshot_is_skipped() -> R
         |row| Ok((row.get(0)?, row.get(1)?)),
     )?;
     assert_eq!(counts, (0, 0));
+    drop(observer);
+    db::test_support::cleanup_temp_db_files(&db_path);
+    Ok(())
+}
+
+#[test]
+fn auto_migration_yields_when_current_work_arrives_during_git_probe() -> Result<()> {
+    let db_path = db::test_support::unique_temp_db_path("auto-detector-current-work");
+    let seed_conn = Connection::open(&db_path)?;
+    for migration in MIGRATIONS {
+        seed_conn.execute_batch(migration.sql)?;
+    }
+    let id = insert_legacy_row(
+        &seed_conn,
+        "auto-current-work",
+        chrono::Utc::now().timestamp() - 60,
+    );
+    seed_conn.execute(
+        "UPDATE pending_observations
+         SET cwd = '/tmp/remem-auto-current-work'
+         WHERE id = ?1",
+        [id],
+    )?;
+    drop(seed_conn);
+
+    let (entered_tx, entered_rx) = mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = mpsc::sync_channel(0);
+    let worker_path = db_path.clone();
+    let handle = std::thread::spawn(move || {
+        let mut conn = Connection::open(worker_path)?;
+        conn.busy_timeout(Duration::from_secs(5))?;
+        let mut detector = move |_cwd: &str| {
+            entered_tx.send(()).expect("announce detector entry");
+            resume_rx.recv().expect("resume detector");
+            None
+        };
+        super::migration::auto_migrate_actionable_legacy_pending_with_detector(
+            &mut conn,
+            1,
+            &mut detector,
+        )
+    });
+
+    entered_rx.recv_timeout(Duration::from_secs(5))?;
+    let observer = Connection::open(&db_path)?;
+    observer.busy_timeout(Duration::from_secs(5))?;
+    db::record_captured_event(
+        &observer,
+        &db::CaptureEventInput {
+            host: crate::runtime_config::CODEX_HOST,
+            session_id: "current-during-git-probe",
+            project: "alpha",
+            cwd: None,
+            event_type: "message",
+            role: Some("user"),
+            tool_name: None,
+            content: "current capture must win",
+            task_kind: Some(db::ExtractionTaskKind::ObservationExtract),
+        },
+    )?;
+    resume_tx.send(())?;
+    let outcome = handle.join().expect("auto migration thread should join")?;
+
+    assert_eq!(outcome.migrated, 0);
+    assert!(outcome.yielded_to_current_work);
+    let state: String = observer.query_row(
+        "SELECT status FROM pending_observations WHERE id = ?1",
+        [id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(state, "pending");
+    let counts: (i64, i64) = observer.query_row(
+        "SELECT
+             (SELECT COUNT(*) FROM captured_events
+              WHERE event_id = ?1),
+             (SELECT COUNT(*) FROM extraction_tasks
+              WHERE status = 'pending')",
+        params![format!("legacy-pending-{id}")],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(counts, (0, 1));
     drop(observer);
     db::test_support::cleanup_temp_db_files(&db_path);
     Ok(())
