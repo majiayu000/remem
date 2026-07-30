@@ -146,7 +146,10 @@ non-off provider is selected.
   request, and every runtime file is requested directly through
   `Repo::with_revision`; the downloader never resolves upstream `main`.
   Presets without an approved immutable revision (currently `bge-m3`) fail
-  closed before download.
+  closed before download. The CLI help, README, and runtime error distinguish
+  automatic download availability from recognition of an already installed,
+  verified BGE cache; only `multilingual-e5-small` is advertised as
+  automatically downloadable.
 - A per-model download lock serializes downloads, but network transfer and the
   verified readiness probe run in a fresh owner-only staging cache without
   blocking active model readers. Shipped presets accept only the official
