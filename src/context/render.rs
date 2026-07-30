@@ -419,7 +419,7 @@ fn render_context_output_from_inputs(
     {
         return Ok(RenderedContext {
             output: empty_context_output(request),
-            stats: stats::empty_stats(request),
+            stats: stats::empty_stats_with_load(request, &loaded, load_timing, preference_timing),
             audit_items: Vec::new(),
             data_version,
             has_load_errors,
@@ -472,6 +472,7 @@ fn render_context_output_from_inputs(
     stats::absorb_evidence(
         &mut stats,
         load_timing,
+        &loaded.load_phase_timings,
         preference_timing,
         loaded.rerank.as_ref(),
     );

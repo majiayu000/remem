@@ -388,6 +388,14 @@ fn find_active_job_canonical(
                 |row| row.get(0),
             )
             .optional(),
+        crate::db::JobIdentityKind::Cleanup => conn
+            .query_row(
+                "SELECT id FROM jobs WHERE id <> ?1 AND job_type = 'cleanup'
+                   AND state IN ('pending', 'processing') ORDER BY id ASC LIMIT 1",
+                params![source_id],
+                |row| row.get(0),
+            )
+            .optional(),
     };
     canonical.context("read active job recovery canonical")
 }
@@ -487,6 +495,7 @@ fn job_identity_kind(job_type: &str) -> crate::db::JobIdentityKind {
     match job_type {
         "dream" => crate::db::JobIdentityKind::Dream,
         "compile_rules" => crate::db::JobIdentityKind::CompileRules,
+        "cleanup" => crate::db::JobIdentityKind::Cleanup,
         _ => crate::db::JobIdentityKind::Ordinary,
     }
 }
@@ -511,6 +520,10 @@ fn is_job_identity_conflict(
         crate::db::JobIdentityKind::CompileRules => {
             message.contains("idx_jobs_active_compile_rules_unique")
                 || message.contains("UNIQUE constraint failed: jobs.project, jobs.state")
+        }
+        crate::db::JobIdentityKind::Cleanup => {
+            message.contains("idx_jobs_active_cleanup_unique")
+                || message.contains("UNIQUE constraint failed: jobs.job_type")
         }
     }
 }
