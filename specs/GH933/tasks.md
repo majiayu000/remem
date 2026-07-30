@@ -51,15 +51,19 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
 - [ ] `GH933-A2R` — Durable route/lifecycle ledgers and route-writer cutover.
   - Owner files: next `src/migrations/vNNN_current_truth_history_ledgers.sql`,
     `src/migrate/run.rs` + focused backfill helper/tests,
-    `src/memory/store/write.rs`, `src/cli/actions/markdown_archive.rs`,
-    `src/memory/scope_cleanup/mutate.rs`, affected eval/test fixtures, and
-    route guard/schema tests.
+    `src/memory/{store/write,operation,lifecycle}.rs`,
+    `src/memory_candidate/apply.rs`, `src/cli/actions/{import,markdown_archive}.rs`,
+    `src/pack_import/active_import.rs`, `src/memory/scope_cleanup/mutate.rs`,
+    affected eval/test fixtures, request-map/route guard/schema tests.
   - Add append-only route and lifecycle versions with contiguous memory-local
     version/predecessor chains, complete state snapshots（route 必含
     `memory_type` 与 raw nullable `topic_key`，NULL/empty 不合并）, coverage metadata,
     memory/self `ON DELETE RESTRICT`, and no FK/cascade to deletable `events`.
-    Audit IDs are copied diagnostics only. 两 ledger 保存 TECH-defined
-    `source_fingerprint`，并有 `(memory_id,source_kind,source_fingerprint)` unique。
+    Audit IDs are copied diagnostics only. 两 ledger 保存 `source_fingerprint
+    TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint
+    NOT GLOB '*[^0-9a-f]*')`，并有
+    `(memory_id,source_kind,source_fingerprint)` unique，无 NULL bypass。
+    同 migration 建 append-only request/result + cross-memory result mapping。
     Add the TECH-named route indexes plus
     lifecycle `(memory_id,effective_at_epoch,id)` and coverage/operation indexes.
   - In one foreground migration transaction, copy only exhaustive durable proof.
@@ -67,25 +71,37 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     migration-time `forward_only`; never infer absence or earlier eligibility.
     Materialize A→B→C only when every transition is proved. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
-  - Route INSERT trigger covers the six production creation families. Existing
+  - 六类 INSERT 在 mutation 前取得/derive 稳定 request/operation ID，canonical
+    entrypoint 先查 writer+ID/request hash，Route INSERT trigger 再建 v1；
+    committed response-loss/concurrent duplicate 从 cross-memory mapping 返回
+    exact winner，禁止使用 post-insert memory/operation row ID 作 retry identity。
+    Existing
     save upsert, Markdown restore/update and scope cleanup use the canonical
     route-transition service to stage the exact next route/identity snapshot
     only when NULL-safe OLD/NEW tuple（含 type/raw key）changes; same-value assignments pass.
-    Validated Markdown project→global uses `source_kind=markdown_import`.
+    normal-save selector 必须同 type，只实现 reachable raw-key transition；
+    type transition 仅 stable-`source_id` Markdown path。Validated Markdown
+    project→global uses `source_kind=markdown_import`.
     Scope cleanup also writes its same-status
     lifecycle version and event mirror in the transaction. Reject wrong/missing stages and direct bypasses; rollback
     all pieces together. Lifecycle INSERT trigger writes its baseline.
-  - Implement TECH's canonical binary framing and every governed ledger writer discriminator.
-    Exact committed retry returns the terminal version/result IDs；different
-    requests conflict unless declared semantic no-op；generated operation/audit
-    IDs are outputs, never fingerprint input。
+  - Implement TECH's canonical binary framing and every governed writer
+    discriminator。save request/result hash 必含 source/actor/session、content/
+    title/files、完整 identity/provenance 与 derived persisted fields，same identity
+    新 content 是不同请求。Markdown 用 stable source binding 或
+    `export-version+canonical archive-relative path+synthesized topic` no-source
+    identity 与 post-render semantic form，重算 importer-owned hash 并忽略 metadata rewrite。
+    Exact retry returns mapped response/result IDs；same ID/different payload
+    conflicts；generated memory/ledger/operation/audit IDs are outputs。
   - Verify indexed `EXPLAIN` plans, rollback/idempotence, partial/forward-only
     backfill, pre-floor global failure, A→B→C intermediate discovery, all six
     inserts/three updates, no-op/change/same-second guards, terminal drift,
-    normal-save type/key before/equal/after，Markdown project→global + type/key
-    before/equal/after plus atomic rollback and missing-predecessor/legacy-gap
-    errors；every governed ledger writer's pre-commit crash、committed-response-loss exact retry、
-    different-request conflict、concurrent winner and event-cleanup independence.
+    normal-save same-type raw-key before/equal/after，stable-source-ID Markdown
+    project→global+type/key before/equal/after plus atomic rollback and missing-
+    predecessor/legacy-gap errors；strict fingerprint DDL/NULL negative、six-
+    insert pre-write mapping、full-content save、metadata-rewrite Markdown，以及
+    every governed writer's pre-commit crash、committed-response-loss exact retry、
+    different-payload conflict、concurrent winner and event-cleanup independence.
 
 - [ ] `GH933-A3` — Adapter and resolver hardening.
   - Owner files: `src/truth/adapter.rs`, `src/truth/lifecycle.rs`,
@@ -102,8 +118,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     semantics，以及 user-claim-only compatibility wrapper；wrapper 仅 bounded
     读取 applicable `user_claim`/`pattern` suppressions 与显式 memory ref。
     explicit history 从 A2R 的 indexed route-state candidates 加完整 chain
-    重建 owner/target/scope/type/raw nullable topic key；Project/Owner membership
-    与 SubjectIdentity 使用 cutoff state，equality 用 new state。normalized memory scope 是 per-version
+    重建 owner/target/scope/type/raw nullable topic key；candidate/result 先对
+    initial route state 校验，后续 operation/Project/Owner membership 与
+    SubjectIdentity 使用 operation/cutoff state，不要求 current identity 等于
+    candidate。equality 用 new state。normalized memory scope 是 per-version
     route state；gap/fork/coverage/terminal drift 返回 routing integrity error，
     但完整 validated scope transition 不报错。
   - Implement total user source-kind/ref grammar；candidate-derived claim 必须
@@ -167,10 +185,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     exact confidence/persisted copied fields（不含未持久化 derived title）与
     result operation；candidate input scope 按 validated completion route 映射为
     user=global/other=project，workspace positive 必须通过。后续 owner/project/
-    scope transition 只接受 indexed ledger 的完整 anchor/adjacency/terminal chain，
-    其他 mutation fail closed。effective memory
-    knowledge 选择 earliest current-compatible ingestion proof，再取 canonical
-    noop/route/ack 的 max；noop 验证 result owner/type 而不要求 input topic 等于
+    scope/type/raw-key transition 只接受 indexed ledger 的完整 anchor/adjacency/
+    terminal chain，其他 mutation fail closed。effective memory
+    knowledge 选择 earliest operation-epoch-compatible ingestion proof，再取
+    canonical noop/route/ack 的 max；noop 验证自身 epoch 的 result identity 而不要求 input topic 等于
     result topic。无 proof 的 procedure memory 仅 current-snapshot
     可用，explicit historical 排除/Unknown。epoch 比较为秒级 `<=`，同秒绝对
     顺序留给 Phase C attachment sequence。projection data statements 全程
@@ -192,11 +210,13 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     replayability serde、
     duplicate capture timestamp/history stability、post-cutoff Observation
     stale/compressed integrity error、post-cutoff entity add/replace negative、
-    Project/Owner route before/equal/after、normal-save identity transition、
-    Markdown project→global/type/key 与 `markdown_import`/rollback/gap、
+    Project/Owner/candidate initial-vs-cutoff route before/equal/after、
+    normal-save same-type raw-key transition、stable-source-ID Markdown
+    project→global/type/key 与 `markdown_import`/rollback/gap、
     A→B→C 与 coverage error、general/Web/
     scope archive/cleanup durable lifecycle before/equal/after、30-day event
-    cleanup invariance、all-governed-writer fingerprint/crash/retry 与 broken-ledger error、late-insert fact、六种
+    cleanup invariance、all-governed-writer strict-fingerprint/mapping/crash/retry
+    与 broken-ledger error、late-insert fact、六种
     edge mapping 与 unknown-kind error、
     WAL concurrent-writer single-snapshot、authorizer transaction-control/
     `total_changes` tests；`cargo test truth -- --nocapture`.

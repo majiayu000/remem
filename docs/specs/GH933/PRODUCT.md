@@ -114,37 +114,46 @@ pending v2 requirements below.
    durable API operation record. Audit events are optional mirrors, not proof.
    Both history ledgers are retained indefinitely with restrictive memory/self
    links and no FK/cascade to the 30-day `events` table.
-   Every append has a canonical writer-specific request discriminator and a
-   SHA-256 transition fingerprint over the ledger/version domain, memory ID,
-   predecessor ID/version, request discriminator and complete typed OLD/NEW
-   state. A per-memory/source uniqueness constraint makes an exact retry reuse
-   the committed terminal version. Save, Markdown, general/Web governance and
-   every scope-cleanup action define their discriminator in `TECH.md`; insert
-   and migration baselines use their stable row/migration identity. A crash
-   before commit leaves no state, ledger or mirror. If commit succeeds but the
-   response is lost, the same request returns the prior durable result without
-   appending a version, event, operation or later knowledge time. Same-second
-   distinct transitions remain ordered by predecessor/version; a different
-   request or stale predecessor conflicts instead of masquerading as a retry.
+   Every append has a non-null canonical writer-specific request discriminator
+   and strict lowercase 64-hex SHA-256 transition fingerprint over the ledger
+   domain/version, memory, predecessor, complete typed request and complete
+   durable OLD/NEW result. Before any database mutation, each writer obtains a
+   stable request/operation ID; it is never a generated memory, ledger, audit or
+   operation-row ID. A durable request/result map binds that writer+ID and full
+   request hash to the exact response plus every affected memory/version/result,
+   including the six INSERT families, so replay never has to rediscover a target
+   from a post-insert ID. Save hashes source/actor, session, placement/scope/
+   branch, raw type/key, title, content, files, reference/provenance inputs and
+   every derived durable result; same identity with different content is a
+   different request. Markdown hashes its parsed post-render semantic document
+   and stable source binding or canonical no-source archive identity, recomputing
+   importer-owned metadata so the success rewrite cannot change retry identity.
+   A crash before commit leaves no state,
+   ledger, request map or mirror. After commit/response loss, an exact retry or
+   concurrent duplicate returns the committed winner; reuse of its request ID
+   with different bytes conflicts. It appends no duplicate version, event,
+   operation or knowledge time. Same-second distinct transitions remain ordered
+   by predecessor/version.
    Every previous status must equal the prior new status and the terminal status
    must equal the current row. The new status is effective at transition
    equality; an unsupported/unrecorded transition, gap, fork or contradiction returns
    `unreconstructable_memory_lifecycle`. Because backup/Markdown imports preserve source timestamps,
    `updated_at_epoch` alone is not ingestion proof: the earliest
-   current-compatible canonical result operation, candidate completion and
+   route-at-operation-compatible canonical result operation, candidate completion and
    validated acknowledgement define memory knowledge; an unproven memory is
    current-snapshot-only and cannot enter explicit historical results. This
    covers canonical procedure memories that currently lack an operation record.
    After ingestion, a canonical no-op with validated result provenance records
    later trust/ack rewrites and advances knowledge time but cannot prove initial
    ingestion; its request topic may legitimately differ from the result topic.
-   Candidate completion scope must match its validated completion route.
-   Subsequent candidate-linked route or scope changes need the same complete
-   route-ledger chain; each version links its predecessor and the terminal
-   snapshot must equal the current row. Validated later transitions use
-   scope-at-t; missing or discontinuous history fails with the routing-history
-   error, while unexplained routing, scope, content or provenance drift fails
-   closed.
+   Candidate completion is validated against its initial route-ledger state,
+   including owner/project/scope/type/raw topic key. Every later read folds the
+   complete chain to the query cutoff and validates candidate/result identity
+   against that cutoff state, not against today’s type/key/owner. Thus a proved
+   owner, project, scope, memory-type or topic-key transition is legal; the
+   terminal snapshot must still equal the current row. Missing/discontinuous/
+   forward-only history returns the routing-history error, while an unexplained
+   route mutation or content/provenance drift fails closed.
    Captured-event identity `(host_id, session_id, event_id)` is immutable across
    idempotent replay: a duplicate cannot replace its original creation,
    insertion/knowledge or reference/source epoch. Replay may append separately
@@ -262,11 +271,13 @@ pending v2 requirements below.
       cross-scope negative tests. The indexed route-ledger migration materializes
       creation plus every validated reroute, an A→B→C fixture discovers B without
       a creation/current B candidate, and Project/Owner before/equal/after uses
-      route-at-t including `memory_type` and raw nullable `topic_key`. Normal-save
-      and Markdown existing-row identity changes have before/equal/after tests.
-      A Markdown project→global fixture changes type/key and proves old Project
-      membership/identity before, new Owner membership/identity at and after
-      equality, `source_kind=markdown_import`, atomic rollback, and a
+      route-at-t including `memory_type` and raw nullable `topic_key`. A real
+      normal-save same-type raw-key transition has before/equal/after tests;
+      type transition is not fabricated because all current save target selectors
+      require the requested type. A stable-source-ID Markdown project→global
+      fixture changes type/key and proves old Project membership/identity before,
+      new Owner membership/identity at and after equality,
+      `source_kind=markdown_import`, atomic rollback, and a
       missing-predecessor or legacy gap error. Backfill gaps, forward-only
       pre-floor reads and incomplete writer chains fail closed. All six current
       insert families, the three existing-row route writers, same-value no-ops,
@@ -277,11 +288,13 @@ pending v2 requirements below.
 - [ ] Effective reference epoch, one-read-snapshot behavior, replayability enum,
       immutable duplicate-capture time and source/knowledge boundaries are
       golden-locked; current-only output is never labeled exact.
-- [ ] Candidate-backed memory validates completion and a contiguous route ledger,
-      rejects unexplained post-candidate mutation, and keeps the candidate trust
-      cap while mapping workspace/user input scope through the writer route and
-      not requiring an unavailable candidate title. Operation-less procedure
-      memory is current-snapshot-only; explicit history excludes/Unknown.
+- [ ] Candidate-backed memory validates completion against the initial route
+      identity, then uses the complete owner/project/scope/type/raw-key state at
+      each cutoff rather than requiring current identity to equal the candidate.
+      Missing/forked/forward-only chains and terminal drift fail closed; proved
+      transitions retain the candidate trust cap. Workspace/user input scope maps
+      through the writer route without requiring an unavailable candidate title.
+      Operation-less procedure memory is current-snapshot-only; history excludes/Unknown.
 - [ ] Versioned edit and in-place mutation histories have separate
       before/equal/after tests. One globally ordered lifecycle chain covers
       general and Web governance plus scope-cleanup archive and cleanup-plan
@@ -289,9 +302,12 @@ pending v2 requirements below.
       ledger mismatches return `unreconstructable_memory_lifecycle`. Its
       memory/time index is used, and deleting 30-day events leaves both ledgers,
       Web proof and serialized historical output unchanged. Every governed route/lifecycle writer's
-      fingerprint, exact-retry reuse, different-request conflict, same-second
-      ordering, crash-before-commit rollback and commit-success/response-loss
-      retry are covered without duplicate mirrors or knowledge advancement.
+      strict fingerprint, stable pre-write request ID, complete result mapping,
+      exact-retry reuse, different-payload conflict, same-second ordering,
+      crash-before-commit rollback and commit-success/response-loss/concurrent
+      retry are covered without duplicate memories, mirrors or knowledge
+      advancement. Save fixtures distinguish equal identity/different content;
+      Markdown retry stays equal across importer metadata rewrite.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all

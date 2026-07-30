@@ -361,10 +361,10 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   `projects.project_path` exact match；只有 project_id NULL 时才可 fallback 到
   非空 legacy `observations.project`，两者都有时必须一致，并应用同一 branch
   predicate。subject selector 与 scope 不一致 contextual error。
-- explicit `as_of=t` 从持久 `memory_route_ledger` 恢复 Project/Owner membership 与 `SubjectIdentity`。逻辑列为 `id,memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,audit_event_id(no FK),source_ref,source_fingerprint,coverage_kind/start_epoch`，完整 placement/source/target/owner、`memory_type`、raw nullable `topic_key`、topic/routing/context/branch snapshot 与 per-version normalized scope；NULL key 与 empty key 不合并。memory/self FK `ON DELETE RESTRICT`，version/predecessor 与 `(memory_id,source_kind,source_fingerprint)` unique。
+- explicit `as_of=t` 从持久 `memory_route_ledger` 恢复 Project/Owner membership 与 `SubjectIdentity`。逻辑列为 `id,memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,audit_event_id(no FK),source_ref=pre-write request ID(or migration identity),source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'),coverage_kind/start_epoch`，完整 placement/source/target/owner、`memory_type`、raw nullable `topic_key`、topic/routing/context/branch snapshot 与 per-version normalized scope；NULL key 与 empty key 不合并。memory/self FK `ON DELETE RESTRICT`，version/predecessor 与 `(memory_id,source_kind,source_fingerprint)` unique，无 NULL bypass。
 - memory/time、owner、target、legacy placement 与 coverage indexes 支持先 UNION scope candidate、再按 ID chunk 读完整链；A→B→C 的 B 即使不在 creation/current route 仍可发现。
 - foreground migration 与 Rust post-hook 共用 `BEGIN IMMEDIATE`，只复制 exhaustive durable creation/result/scope-cleanup proof；旧 save/Markdown 或已清理 events 不能猜。其他 row 仅 migration-time `forward_only`；pre-floor 在 scope filtering 前全局报 `unreconstructable_routing_history`。每个 memory 有 terminal、完整链匹配 current 且 incomplete counts 可见后才 mark applied。
-- cutover `AFTER INSERT` trigger 覆盖 store、lifecycle、candidate、CLI、Markdown、pack 六类。save upsert、Markdown restore/update、scope cleanup 共用 route-transition service，NULL-safe 比较实际 OLD/NEW placement/branch/scope/source/target/owner/type/raw-key/topic-domain/routing/context；真实变化在同 savepoint/transaction/epoch append+update，同值不写。save/Markdown 原地 identity change 因此可重建；Markdown project→global 用 `markdown_import`，scope cleanup 同时写 mirror。
+- canonical insert entrypoint 先取得稳定 request ID/hash，cutover `AFTER INSERT` trigger 覆盖 store、lifecycle、candidate、CLI、Markdown、pack 六类。save upsert、Markdown restore/update、scope cleanup 共用 route-transition service，NULL-safe 比较实际 OLD/NEW placement/branch/scope/source/target/owner/type/raw-key/topic-domain/routing/context；真实变化在同 savepoint/transaction/epoch append+update，同值不写。normal-save selector 必须同 type，只允许 reachable raw-key transition；type change 仅 Markdown validated stable-`source_id` path。Markdown project→global 用 `markdown_import`，scope cleanup 同时写 mirror。
 - guard 拒绝 changed tuple 的 missing/wrong-head/NEW-mismatch stage，任一步失败全 rollback，ledger update/delete 禁止。source kind closed 为 `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup`；diagnostic event 不参与 proof。fold `(effective_at_epoch,id)` 中 `epoch<=t` 的完整 route/identity；invalid scope、missing predecessor/source、gap/fork/time/terminal/coverage gap fail closed，合法 scope/identity transition 不报错。
 
 ### Observation evidence
@@ -464,18 +464,17 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   legacy pair 完整可推导时才 fallback `memory.project`。missing、foreign、
   ambiguous 或 routed-but-source-missing 均 contextual error。
 - malformed `memories.evidence_event_ids`、user `source_refs_json` 或 dangling
-  event ref 不得静默成功。非空 `source_candidate_id` 是 claimed binding：
-  candidate 必须是 `auto_promoted|approved|edited`，candidate/memory
-  evidence、content/type/topic/confidence exact，candidate scope 是 validated
-  input。completion memory scope 必须等于 validated route 的
-  `CandidateRoute::memory_scope()`：user owner 为 global，其他为 project；
-  candidate scope 与 derived title 都不是 copied-equality fields。必须有
+  event ref 不得静默成功。非空 `source_candidate_id` 必须解析
+  `auto_promoted|approved|edited` candidate，evidence/content/confidence exact。
+  route-ledger initial state（不是 today row）必须 exact candidate/result owner/
+  project/scope/type/raw key，scope 等于 validated `CandidateRoute::memory_scope()`：
+  user owner 为 global，其他为 project；candidate scope/derived title 非 copied field。
   `memory_operation_log(source='memory_candidate',source_candidate_id=candidate.id,
-  result_memory_id=memory.id)` completion；workspace/pack positive fixtures
-  锁定 scope mapping/title exclusion。completion scope 必须匹配 initial route；
-  后续 owner/project/scope 只可通过完整 route-at-t chain 改变；chain/coverage
-  error 使用 `unreconstructable_routing_history`，其他 unexplained drift 使用
-  `unverifiable_post_candidate_mutation`。refs 绑定 candidate
+  result_memory_id=memory.id)` 绑定 initial state；workspace/pack fixture 锁定规则。
+  cutoff fold 完整 chain 并按该 version 校验 membership/identity，合法 owner/project/
+  scope/type/raw-key transition 可通过；current 还要求 terminal full tuple=current。
+  chain/coverage/terminal error 用 `unreconstructable_routing_history`，其他 content/
+  provenance drift 用 `unverifiable_post_candidate_mutation`。refs 绑定 candidate
   creation，completion/cleanup knowledge 独立要求 reference-eligible。无 candidate
   时 compatible result operation 绑定 refs；两者都没有时 `as_of=None` 以
   `reference_epoch` 绑定 current refs，explicit historical 排除/Unknown。
@@ -486,8 +485,9 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
 - 所有 Phase A 读取共享 projection 的 `reference_epoch` 与 SQLite snapshot。
 - `effective_memory_knowledge_epoch` 统一用于 memory ClaimView、SourceRef 与
   SourceTrustClass。proof 是 validated candidate completion+route，或
-  `memory-operation-planner-v1 add|update|conflict` exact result/current
-  owner/type/topic。canonical noop 还要求 planner/result/current owner/type、
+  `memory-operation-planner-v1 add|update|conflict` exact result 与 operation
+  epoch 的 route/identity；later legal route 不抹除 proof。canonical noop 要求
+  planner/result 与 noop epoch identity、
   empty transitions、`noop_reason='already represented by active memory'`，以及
   `direct/save_memory/NULL` 或 exact candidate source + matching noop candidate；
   input/result topic 可不同。noop 只证明 transition。epoch 是 earliest
@@ -496,20 +496,20 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   history 排除/Unknown，current 用 reference epoch。source time 仍为
   `COALESCE(reference_time_epoch,created_at_epoch)` 且不能 future；direct noop、
   governance ack、candidate ack 分别用 operation/memory/candidate update。
-- Explicit history 只读 `memory_lifecycle_ledger(id,memory_id,lifecycle_version,previous_lifecycle_id,effective_at_epoch,previous_status,new_status,source_kind/action,source_operation_id,audit_event_id(no FK),source_fingerprint,coverage_kind/start_epoch)`；memory/self FK RESTRICT，version/predecessor 与 `(memory_id,source_kind,source_fingerprint)` unique，indexes 为 memory/time、coverage/memory 与 partial unique operation。
+- Explicit history 只读 `memory_lifecycle_ledger(id,memory_id,lifecycle_version,previous_lifecycle_id,effective_at_epoch,previous_status,new_status,source_kind/action,source_operation_id,audit_event_id(no FK),source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'),coverage_kind/start_epoch)`；memory/self FK RESTRICT，version/predecessor 与 `(memory_id,source_kind,source_fingerprint)` unique（无 NULL bypass），indexes 为 memory/time、coverage/memory 与 partial unique operation。
 - source kind closed 为 `insert|legacy_backfill|memory_governance|web_governance|scope_cleanup`；actions 覆盖 general delete/reject/stale/same-status ack、Web archive/restore、scope archive、cleanup-plan active/stale 与 reroute same-status。baseline 的 predecessor/status NULL、new=current、action=baseline；migration 只复制 exhaustive proof。
 - general/Web/scope archive/cleanup-plan 原子更新 status+append；scope reroute 在 route transaction append same-status；event 仅 mirror。其他合法 status writer 不装 global guard，terminal drift fail closed。链 previous=prior new、terminal=current，按 `(epoch,id)` fold且 equality 用 new；forward-only pre-floor、unsupported/unrecorded/gap/fork/drift/Web durable API mismatch 均报 `unreconstructable_memory_lifecycle`。
 - 两 ledger indefinite retention、无 events FK/cascade、排除于 event cleanup；memory/self RESTRICT。未来 purge 需 reviewed tombstone migration；cleanup regression 锁定两 ledger/Web proof/output、零 delete 与 `foreign_key_check`。
-- 两 ledger 的 `source_fingerprint` 是 ordered binary frame 的 lowercase SHA-256：field-name length+bytes、type tag、value length+bytes；integer signed big-endian、real IEEE-754 big-endian、string raw UTF-8、NULL≠empty。输入为 schema/ledger version、memory/source/action、predecessor ID/version、canonical request discriminator 与完整 typed OLD/NEW state。nested tuple/request hash 复用该 frame；named text normalization 把 CRLF 转 LF 并 trim 外围 ASCII whitespace，target set bytewise sort/dedupe，archive path 是 archive-root-relative POSIX、移除 lexical dots 且拒绝 parent escape；source-content hash 使用 exact file bytes。
+- 两 ledger 的 `source_fingerprint` 是 ordered binary frame 的 lowercase SHA-256：field-name length+bytes、type tag、value length+bytes；integer signed big-endian、real IEEE-754 big-endian、string raw UTF-8、NULL≠empty。输入为 schema/ledger version、memory/source/action、predecessor ID/version、stable request ID、完整 request/result fingerprint 与 typed OLD/NEW。request hash 覆盖全部 caller durable input，result hash 覆盖 canonical response 与所有 persisted/derived field；nested tuple 同 frame，named text CRLF→LF/trim ASCII outer，set bytewise sort/dedupe。
 
 | Writer | Canonical request discriminator |
 | --- | --- |
-| insert / legacy backfill | memory ID+creation epoch / migration version+memory ID |
-| save / Markdown | typed requested route/identity tuple+stable writer source/actor / normalized archive-relative path+source-content hash+typed route/identity metadata |
+| insert / legacy backfill | pre-write request/operation ID+完整 canonical insert request / migration version+memory ID+完整 baseline |
+| save / Markdown | pre-write operation ID+source/actor/session/project/scope/branch+raw type/key+title/content/files/reference/provenance+full durable result / stable source binding(`source_id`+creation/reference，prior source hash 仅 lookup precondition)或 no-source identity(export version+archive-root-relative POSIX path，移除 lexical dots/拒绝 parent escape+synthesized persisted topic)+post-render semantic doc/full result；canonical form 重算 requested title/content/type/key 的 `source_content_hash`，排除 raw JSON/importer rewrite |
 | general / Web governance | action+actor+normalized reason+acknowledgment pattern+sorted target set / durable operation idempotency identity+canonical request hash |
 | scope reroute / archive / cleanup | action+object ref+normalized owner/target/topic/routing/context/reason / action+object ref+normalized reason / planner version+canonical plan/group snapshot hash |
-
-- Generated operation/audit IDs 是 output。state、ledger、durable result、mirror 同 transaction；pre-commit crash 全 rollback。commit-success/response-loss exact retry 用重复 discriminator+terminal predecessor 重算 fingerprint，相同则返回原 version/result IDs，不新增 row/event/knowledge；different/stale request 除 declared semantic no-op 外冲突。predecessor/version 排 same-second distinct transitions；migration/insert/concurrent retry 复用 committed winner。
+- append-only `memory_write_requests(writer_kind,request_id,request/result strict-64hex,response)` 与 `memory_write_request_results(writer_kind,request_id,ordinal,memory_id,route/lifecycle/operation/result refs)` 以 writer+pre-write ID 保存 exact cross-memory map；每个 successful INSERT 恰有一个 v1 binding。
+- 所有 writer 在 DB mutation 前取得/derive opaque request ID；DB-generated memory/ledger/audit/operation row ID 是 output。`BEGIN IMMEDIATE` 先 lookup：same hash 即使后来又 transition 也返回 stored winner，same ID/different bytes 冲突；miss 时 state/ledger/map/mirror 原子 commit，pre-commit crash 全 rollback。concurrent loser 复用 winner，不新增 memory/version/event/operation/knowledge；retry key 不是 post-insert ID 或重算 terminal predecessor。
 - UserContextClaim source 是 `COALESCE(valid_from_epoch,created_at_epoch)`；
   descendants 保留 provenance-root SourceRefs，transition 只改 state knowledge。
 - Captured event 的 source 与 original insertion 都须 reference-eligible。
@@ -728,8 +728,10 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 - [ ] `python3 scripts/ci/check_version_bump.py origin/main HEAD`
 - [ ] Full PR preflight with the exact intended PR body.
 - [ ] Final-head bounded/performance artifact command above.
-- [ ] 六类 route INSERT、三类 UPDATE、no-op/change guard、indexed A→B→C、
-      normal-save type/key 与 Markdown project→global/type/key before/equal/after、
+- [ ] 六类 route INSERT 的 pre-write ID/cross-memory winner、三类 UPDATE、
+      normal-save same-type raw-key 与 stable-source-ID Markdown project→global/
+      type/key before/equal/after、candidate initial-vs-cutoff identity、
+      metadata-rewrite-stable retry/full-content save/strict fingerprint DDL、
       `markdown_import`、rollback/gap；all-writer fingerprint/crash/retry、
       backfill/forward-only、durable lifecycle、event-cleanup invariance、
       fact created-at、six edge mappings、unknown/unsupported fail-closed。
