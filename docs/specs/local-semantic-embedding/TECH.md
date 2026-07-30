@@ -138,7 +138,15 @@ non-off provider is selected.
   dimensions, upstream model/source URL, regular-file sizes and SHA-256
   checksums, plus every active HF snapshot symlink's exact relative target and
   resolved blob. hf-hub LFS source SHA-256 is also verified when the cache
-  exposes a 64-hex source etag.
+  exposes a 64-hex source etag. The default E5 download is code-pinned to
+  Hugging Face revision `614241f622f53c4eeff9890bdc4f31cfecc418b3`, the
+  immutable source of the evaluated content digest
+  `3970612d6f31b81d1dc30ddac0099da273b5753d1a07412e8390cf799e7836a6`.
+  The revision literal must validate as a 40- or 64-hex commit before any
+  request, and every runtime file is requested directly through
+  `Repo::with_revision`; the downloader never resolves upstream `main`.
+  Presets without an approved immutable revision (currently `bge-m3`) fail
+  closed before download.
 - A per-model download lock serializes downloads, but network transfer and the
   verified readiness probe run in a fresh owner-only staging cache without
   blocking active model readers. Shipped presets accept only the official
