@@ -114,22 +114,26 @@ pending v2 requirements below.
    durable API operation record. Audit events are optional mirrors, not proof.
    Both history ledgers are retained indefinitely with restrictive memory/self
    links and no FK/cascade to the 30-day `events` table.
-   Every append has a non-null canonical writer-specific request discriminator
+   Every append has a nonblank canonical writer-specific request discriminator
    and strict lowercase 64-hex SHA-256 transition fingerprint over the ledger
-   domain/version, memory, predecessor, complete typed request and complete
-   durable OLD/NEW result. Before any database mutation, each writer obtains a
-   stable request/operation ID; it is never a generated memory, ledger, audit or
-   operation-row ID. A durable request/result map binds that writer+ID and full
-   request hash to the exact response plus every affected memory/version/result,
-   including the six INSERT families, so replay never has to rediscover a target
-   from a post-insert ID. Save hashes source/actor, session, placement/scope/
-   branch, raw type/key, title, content, files, reference/provenance inputs and
-   every derived durable result; same identity with different content is a
-   different request. Markdown hashes its parsed post-render semantic document
-   and stable source binding or canonical no-source archive identity, recomputing
-   importer-owned metadata so the success rewrite cannot change retry identity.
-   A crash before commit leaves no state,
-   ledger, request map or mirror. After commit/response loss, an exact retry or
+   domain/version, memory, predecessor, request hash, result ordinal and exact
+   typed OLD/NEW state. It does not pretend to hash a final response that does
+   not yet exist when the INSERT trigger writes v1. Before any mutation, each
+   writer appends an immutable request intent keyed by its stable request/
+   operation ID; generated memory, ledger, audit and operation-row IDs are
+   outputs. Every successful transaction appends exact cross-memory result
+   bindings and an immutable final commit seal containing the full result hash
+   and response; a deferred constraint forbids committing an unsealed intent.
+   Save hashes every raw `SaveMemoryRequest` value—including local-copy,
+   claim and poisoning-ack options—without generic newline/trim folding, plus
+   the exact final response and every persisted/derived result. Same identity
+   with different content is a different request. Markdown hashes the exact
+   persisted semantic fields and stable source binding or canonical no-source
+   archive identity; only parser-canonicalized fields normalize, and
+   importer-owned metadata rewrites cannot change retry identity.
+   A crash before commit leaves no committed database state, ledger, request
+   map or mirror; local-copy staging has explicit recovery. After commit/
+   response loss, an exact retry or
    concurrent duplicate returns the committed winner; reuse of its request ID
    with different bytes conflicts. It appends no duplicate version, event,
    operation or knowledge time. Same-second distinct transitions remain ordered
@@ -146,10 +150,11 @@ pending v2 requirements below.
    After ingestion, a canonical no-op with validated result provenance records
    later trust/ack rewrites and advances knowledge time but cannot prove initial
    ingestion; its request topic may legitimately differ from the result topic.
-   Candidate completion is validated against its initial route-ledger state,
-   including owner/project/scope/type/raw topic key. Every later read folds the
-   complete chain to the query cutoff and validates candidate/result identity
-   against that cutoff state, not against today’s type/key/owner. Thus a proved
+   Candidate completion is validated once against its initial route-ledger
+   state, including owner/project/scope/type/raw topic key. Every later read
+   folds the complete chain to the query cutoff for membership and emitted
+   `SubjectIdentity`; it does not recompare the immutable candidate identity
+   against that later state or today’s row. Thus a proved
    owner, project, scope, memory-type or topic-key transition is legal; the
    terminal snapshot must still equal the current row. Missing/discontinuous/
    forward-only history returns the routing-history error, while an unexplained
@@ -288,9 +293,9 @@ pending v2 requirements below.
 - [ ] Effective reference epoch, one-read-snapshot behavior, replayability enum,
       immutable duplicate-capture time and source/knowledge boundaries are
       golden-locked; current-only output is never labeled exact.
-- [ ] Candidate-backed memory validates completion against the initial route
-      identity, then uses the complete owner/project/scope/type/raw-key state at
-      each cutoff rather than requiring current identity to equal the candidate.
+- [ ] Candidate-backed memory validates completion only against the initial
+      route identity, then uses each cutoff state solely for membership and
+      emitted `SubjectIdentity`; it never rematches candidate identity at cutoff.
       Missing/forked/forward-only chains and terminal drift fail closed; proved
       transitions retain the candidate trust cap. Workspace/user input scope maps
       through the writer route without requiring an unavailable candidate title.
@@ -302,10 +307,10 @@ pending v2 requirements below.
       ledger mismatches return `unreconstructable_memory_lifecycle`. Its
       memory/time index is used, and deleting 30-day events leaves both ledgers,
       Web proof and serialized historical output unchanged. Every governed route/lifecycle writer's
-      strict fingerprint, stable pre-write request ID, complete result mapping,
-      exact-retry reuse, different-payload conflict, same-second ordering,
-      crash-before-commit rollback and commit-success/response-loss/concurrent
-      retry are covered without duplicate memories, mirrors or knowledge
+      strict fingerprint/nonblank request-ID DDL, intent→trigger-v1→final-seal
+      order, complete result mapping, unsealed-commit rejection, exact retry,
+      different-payload conflict, same-second ordering, crash-before-commit and
+      commit-success/response-loss/concurrent retry are covered without duplicate memories, mirrors or knowledge
       advancement. Save fixtures distinguish equal identity/different content;
       Markdown retry stays equal across importer metadata rewrite.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only

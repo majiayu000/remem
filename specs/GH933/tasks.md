@@ -52,6 +52,7 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - Owner files: next `src/migrations/vNNN_current_truth_history_ledgers.sql`,
     `src/migrate/run.rs` + focused backfill helper/tests,
     `src/memory/{store/write,operation,lifecycle}.rs`,
+    `src/memory/service/{types,save}.rs` and API/MCP save request adapters,
     `src/memory_candidate/apply.rs`, `src/cli/actions/{import,markdown_archive}.rs`,
     `src/pack_import/active_import.rs`, `src/memory/scope_cleanup/mutate.rs`,
     affected eval/test fixtures, request-map/route guard/schema tests.
@@ -63,7 +64,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint
     NOT GLOB '*[^0-9a-f]*')`，并有
     `(memory_id,source_kind,source_fingerprint)` unique，无 NULL bypass。
-    同 migration 建 append-only request/result + cross-memory result mapping。
+    同 migration 建 append-only request intent/result bindings/final commit seal；
+    request ID 必须 executable DDL nonblank，request/result fingerprint 都用
+    TEXT NOT NULL + exact lowercase-64hex CHECK，deferred seal FK 禁止 pending commit。
     Add the TECH-named route indexes plus
     lifecycle `(memory_id,effective_at_epoch,id)` and coverage/operation indexes.
   - In one foreground migration transaction, copy only exhaustive durable proof.
@@ -72,7 +75,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     Materialize A→B→C only when every transition is proved. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
   - 六类 INSERT 在 mutation 前取得/derive 稳定 request/operation ID，canonical
-    entrypoint 先查 writer+ID/request hash，Route INSERT trigger 再建 v1；
+    entrypoint 先查 sealed writer+ID/request hash，miss append immutable intent；
+    memory INSERT 带 writer/request/result-ordinal origin tuple，Route trigger 用
+    strict request hash+ordinal+exact typed NEW 立即建 v1，不等待 final response；
+    全部 downstream IDs/response 完成后 append mappings，再 append final seal。
     committed response-loss/concurrent duplicate 从 cross-memory mapping 返回
     exact winner，禁止使用 post-insert memory/operation row ID 作 retry identity。
     Existing
@@ -86,11 +92,16 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     lifecycle version and event mirror in the transaction. Reject wrong/missing stages and direct bypasses; rollback
     all pieces together. Lifecycle INSERT trigger writes its baseline.
   - Implement TECH's canonical binary framing and every governed writer
-    discriminator。save request/result hash 必含 source/actor/session、content/
-    title/files、完整 identity/provenance 与 derived persisted fields，same identity
-    新 content 是不同请求。Markdown 用 stable source binding 或
-    `export-version+canonical archive-relative path+synthesized topic` no-source
-    identity 与 post-render semantic form，重算 importer-owned hash 并忽略 metadata rewrite。
+    discriminator。string 默认 exact raw UTF-8，不做 generic CRLF/outer-trim；
+    只有 writer 实际 persisted canonical form 才规范化。save request hash 枚举
+    `SaveMemoryRequest` 全部 text/title/project/session/host/topic/type/files/scope/
+    reference+created epoch/branch/local path+toggle/claim source/ack pattern 字段、
+    Option presence 与 derived values；files 保留 order/duplicate。result hash 必含
+    exact final response、memory/operation/route/lifecycle/claim/ack/local-copy/
+    next-step outputs。same identity 新 content 是不同请求。Markdown 用 stable
+    source binding 或 `export-version+canonical archive-relative path+synthesized
+    topic` no-source identity 与 post-render semantic form，只忽略 importer-owned
+    metadata rewrite，byte-preserved fields 仍 exact。
     Exact retry returns mapped response/result IDs；same ID/different payload
     conflicts；generated memory/ledger/operation/audit IDs are outputs。
   - Verify indexed `EXPLAIN` plans, rollback/idempotence, partial/forward-only
@@ -98,8 +109,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     inserts/three updates, no-op/change/same-second guards, terminal drift,
     normal-save same-type raw-key before/equal/after，stable-source-ID Markdown
     project→global+type/key before/equal/after plus atomic rollback and missing-
-    predecessor/legacy-gap errors；strict fingerprint DDL/NULL negative、six-
-    insert pre-write mapping、full-content save、metadata-rewrite Markdown，以及
+    predecessor/legacy-gap errors；strict fingerprint DDL/NULL/uppercase/nonhex/
+    blank-request-ID negative、unsealed deferred-FK failure、six-insert intent→
+    immediate-v1→complete-result-seal mapping、full-response/full-content save、
+    local-copy/claim/ack/files-order/raw-CRLF collision negatives、metadata-rewrite Markdown，以及
     every governed writer's pre-commit crash、committed-response-loss exact retry、
     different-payload conflict、concurrent winner and event-cleanup independence.
 
@@ -119,9 +132,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     读取 applicable `user_claim`/`pattern` suppressions 与显式 memory ref。
     explicit history 从 A2R 的 indexed route-state candidates 加完整 chain
     重建 owner/target/scope/type/raw nullable topic key；candidate/result 先对
-    initial route state 校验，后续 operation/Project/Owner membership 与
-    SubjectIdentity 使用 operation/cutoff state，不要求 current identity 等于
-    candidate。equality 用 new state。normalized memory scope 是 per-version
+    initial route state 校验一次；后续 operation/Project/Owner membership 与
+    emitted SubjectIdentity 使用 operation/cutoff state，但不得拿 immutable
+    candidate identity 再与 cutoff/current state exact-match。equality 用 new state。normalized memory scope 是 per-version
     route state；gap/fork/coverage/terminal drift 返回 routing integrity error，
     但完整 validated scope transition 不报错。
   - Implement total user source-kind/ref grammar；candidate-derived claim 必须
