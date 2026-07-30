@@ -550,13 +550,14 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 
 ### 明文残留诊断
 
-`remem doctor` 的 `Plaintext residue` 检查会扫描
-`REMEM_DATA_DIR/remem.db` 根层旁的数据库残留，以及
-`REMEM_DATA_DIR/backups/` 下一级的备份文件。该检查只读，绝不会删除数据。
-发现明文副本时，如果当前数据库已确认为加密库，该项会报告 `Fail`，且
-`remem doctor` 以退出码 2 结束；如果当前数据库是明文库，或无法确认其加密
-状态，该项报告 `Warn`。因 I/O 错误而无法检查的目录项或文件会被明确报告，
-并阻止该项报告 `Ok`。
+`remem doctor` 的 `Plaintext residue` 检查会按内容检查
+`REMEM_DATA_DIR` 根层的每个普通文件，包括名称任意或没有扩展名的自定义
+备份输出；当 `REMEM_DATA_DIR/backups/` 是真实目录而不是符号链接时，还会
+检查其下一级的普通文件。该检查只读，绝不会删除数据。发现明文副本时，
+如果当前数据库已确认为加密库，该项会报告 `Fail`，且 `remem doctor`
+以退出码 2 结束；如果当前数据库是明文库，或无法确认其加密状态，该项报告
+`Warn`。因 I/O 错误而无法检查的目录项或候选文件会被明确报告，并阻止该项
+报告 `Ok`。
 
 请根据检查状态选择处置路径：
 
@@ -564,10 +565,14 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
   `remem status` 确认当前数据库可以打开，再运行 `remem admin backup` 创建
   一份新的加密备份；完成后才能人工删除列出的明文副本，或仅将其保留在
   加密存储中。
-- 如果当前数据库是明文库而报告 `Warn`，先运行 `remem encrypt`；然后反复
-  运行 `remem status` 和 `remem doctor`，直到数据库可以打开且 doctor 确认
-  它已加密。在这两项检查成功前，不要创建备份，也不要把任何备份称为加密
-  备份；确认后再按 `Fail` 路径处置。
+- 如果当前数据库是明文库而报告 `Warn`，先检查
+  `REMEM_DATA_DIR/remem.db.bak` 或 `REMEM_DATA_DIR/remem.db.enc` 是否会阻塞
+  加密。若存在其中任一文件，先确认 `REMEM_DATA_DIR/backups/` 是真实目录而
+  不是符号链接，再为每个文件选择未被占用的目标名称，并在不覆盖任何文件的
+  前提下将阻塞文件移入该目录。然后运行 `remem encrypt`，并反复运行
+  `remem status` 和 `remem doctor`，直到数据库可以打开且 doctor 确认它已
+  加密。只有这两项检查成功后，才能运行 `remem admin backup` 创建新的加密
+  备份；最后再人工删除旧的明文副本，或仅将其保留在加密存储中。
 - 如果因当前数据库缺失或无法验证、密钥问题或 I/O 错误而报告 `Warn`，不要
   备份或删除任何文件。先修复当前数据库、密钥或可读性问题；只有在
   `remem status` 成功且 `remem doctor` 确认加密后，才能继续备份和处置。
