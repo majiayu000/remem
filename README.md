@@ -1230,6 +1230,48 @@ scripts/smoke_native_web_api.sh
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token file permissions (`0600`)
 
+### Plaintext residue diagnostics
+
+The `Plaintext residue` check in `remem doctor` inspects every regular file at
+the root of `REMEM_DATA_DIR` by content, including custom backup outputs with
+arbitrary names or no extension. It also recursively inspects regular files
+throughout `REMEM_DATA_DIR/backups/` when `backups/` and its descendants are
+real directories rather than symlinks. The check is read-only and never
+deletes data. When it finds a
+plaintext copy while the live database is confirmed encrypted, it reports
+`Fail` and `remem doctor` exits with code 2. If the live database is plaintext
+or its encryption state cannot be confirmed, the finding is `Warn`. An entry
+or candidate file that cannot be inspected because of an I/O error is reported
+and prevents the check from reporting `Ok`.
+
+Handle a finding according to its status:
+
+- `Fail` means doctor has confirmed that the live database is encrypted and a
+  plaintext copy exists. Run `remem status` to verify that the live database
+  opens, run `remem admin backup` to create a new encrypted backup, and only
+  then manually delete the listed plaintext copies or retain them solely in
+  encrypted storage.
+- For `Warn` with a plaintext live database, first check whether
+  `REMEM_DATA_DIR/remem.db.bak` or `REMEM_DATA_DIR/remem.db.enc` is blocking
+  encryption. If either exists, verify that `REMEM_DATA_DIR/backups/` is an
+  actual directory and not a symlink, choose unused destination names there,
+  and move each blocker without overwriting another file. Then run
+  `remem encrypt` and use `remem status` to confirm that the live database
+  opens. Run `remem doctor` and verify that the Plaintext residue detail says
+  the live database is encrypted and readable; this check is expected to remain
+  `Fail` while the preserved copies are still present. Then run
+  `remem admin backup` to create a new encrypted backup, manually delete the
+  older plaintext copies or retain them solely in encrypted storage, and rerun
+  `remem doctor` until Plaintext residue passes.
+- For `Warn` caused by a missing or unverified live database, key problems, or
+  I/O errors, do not back up or delete anything. First repair the live database,
+  key, or readability problem. Continue with backup and disposal only after
+  `remem status` succeeds and `remem doctor` confirms encryption.
+
+Moving a copy outside `REMEM_DATA_DIR` only removes it from this scan; it does
+not protect the data. Remem does not promise secure erasure of manually deleted
+files.
+
 ## Architecture Docs
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full internals and data flow.

@@ -215,6 +215,8 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v071_raw_session_identity.sql",
     "src/migrations/v072_memory_retrieval_enrichment.sql",
     "src/migrations/v073_session_summary_poisoning.sql",
+    "src/migrations/v074_git_commit_staleness_index.sql",
+    "src/migrations/v075_automatic_cleanup.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
