@@ -80,9 +80,8 @@ An executable task adds to the v1 skeleton:
 - for `stale_superseded_decision`, at least one deterministic
   stale/superseded challenge per run with its production state and expected
   query-relevant pre-filter match assertion;
-- target-invisible `causal_oracle_v1` rules covering every scorer-recognized
-  wrong-action class, each bound to a unique memory/content/state hash and a
-  deterministic artifact matcher;
+- target-invisible `causal_oracle_v1` rules covering every scorer-recognized wrong-action class,
+  each binding a unique memory/content/state hash, artifact matcher, and one plan-hashed proof method plus its closed outcome table;
 - source-native snapshot policy for the diagnostic arm;
 - per-host executable/profile requirements;
 - `status: "ready"` and `todo: []`.
@@ -230,24 +229,28 @@ Retry never changes prompts, evidence, conflict rules, schema, or caps.
 
 ### Causal Oracle
 
-Each task's evaluator-only `causal_oracle_v1` is fixed and hashed before target
-reveal. A rule contains `rule_id`, a logical memory selector, allowed
-wrong-action artifact type, deterministic matcher, required scorer assertion,
-and allowed evidence fields. After source sealing and before target reveal,
-the selector resolves uniquely to `(projection_logical_hash, memory_id,
-content_hash, state_hash)`; absence or ambiguity is `missing_evidence`. No two
-rules may map the same wrong action.
+Each task's evaluator-only `causal_oracle_v1` is fixed and hashed before target reveal. A rule
+fixes `rule_id`, logical memory selector, wrong-action artifact type/matcher, scorer assertion,
+allowed evidence fields, and exactly one plan-hashed `proof_method`: `pre_action_use_v1` or
+`action_counterfactual_v1`. The selector resolves after source sealing and before reveal to a
+unique `(projection_logical_hash, memory_id, content_hash, state_hash)`; absence, ambiguity, or two rules mapping one wrong action is `missing_evidence`.
 
-A closed record contains the resolved tuple, first matching
-`wrong_action_event_id/order`, protocol/rule hashes, matcher/scorer results,
-ambiguity reason, and status. `proven` requires retrieval and
-`context_injection_items.status = injected` before that mutation, plus a
-`memory_usage_events.context_injection_item_id` referencing the same row.
-A matched later `memory_citation_events` row, registered matcher, and scorer
-failure corroborate the chain; Stop telemetry alone cannot establish
-pre-action exposure. Missing ordering is `missing_evidence`. A no-memory
-surface is `not_proven/no_memory_surface`; post-hoc labels/correlation are not
-proof, and sanitized inputs support clean recomputation.
+`pre_action_use_v1` fixes a target-authored event type, deterministic parser, memory-use predicate,
+and ordering fields. The append-only host event is captured before dispatch/execution, resolves the
+same memory tuple, and satisfies `use_event_order < wrong_action_event_order`; runner-authored injection, rendering, and retrieval-result events prove exposure only.
+
+`action_counterfactual_v1` fixes a transform, allowed changed bytes/fields, pre-action fixture recipe,
+isolated factual/counterfactual commands, assertions, and outcome table. From the same hashed state,
+the factual replay executes the exact recorded action and the other changes only the registered
+memory-derived input. `proven` requires factual matcher/scorer failure and a transformed replay where
+the matcher is false and the required assertion passes. The same registered failure is
+`not_proven/refuted_counterfactual`; non-unique transforms, unsupported side effects, replay
+drift/errors, different failures, or conflicting results are `missing_evidence`.
+
+The closed record binds method/intervention hashes, resolved tuple, use and first-wrong-action event IDs/orders, replay hashes, matcher/scorer results, reason, and status. A Stop-created `memory_usage_events` row and its `memory_citation_events` parent are post-action corroboration only
+and cannot satisfy either proof method. Missing, ambiguous, competing, or post-hoc evidence becomes
+`missing_evidence` and, after security-breach precedence, comparative `INSUFFICIENT`; a no-memory
+surface is `not_proven/no_memory_surface`. Sanitized inputs support clean recomputation.
 
 ### Run Record
 
@@ -617,11 +620,10 @@ AND remem_shared.resolved = false
 AND causal_oracle_v1.status = proven
 ```
 
-Its denominator is all complete valid `no_memory`/`remem_shared` pairs in the
-direction. The causal record must bind the same memory reference across
-exposure, structured citation/use, wrong-action matcher, and scorer failure.
-Missing, ambiguous, competing, or post-hoc causal attribution makes the metric
-and verdict insufficient.
+Its denominator is all complete valid `no_memory`/`remem_shared` pairs in the direction. The
+causal record must bind the same memory across exposure,
+pre-action use or registered counterfactual, wrong-action matcher, and scorer
+failure. Missing, ambiguous, competing, or post-hoc attribution makes the metric and verdict insufficient.
 
 The `stale_memory_followed` denominator is every complete valid
 `remem_shared` tuple in the direction whose hashed candidate inventory,
@@ -771,7 +773,7 @@ Future executable-version focused coverage must include:
 - counterbalanced schedule equality and planned/realized-order drift;
 - maintained-export cost and native import pairing, including neutral counts,
   complete Inserted-to-memory lineage, and raw-free projections;
-- causal-oracle positive/ambiguous/missing cases and failed-run retention;
+- causal-oracle pre-action/counterfactual positive, refuted, Stop-only, ambiguous/missing cases, and failed-run retention;
 - automatic-only primary review, exact source/target attempt references, and
   exact pre-prompt retry selection;
 - required stale challenge pre-filter inventory and empty-applicable-set

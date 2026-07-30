@@ -96,8 +96,9 @@ primary comparative claim.
    query-relevant stale/superseded challenge, its production state, and its
    expected pre-filter match assertion for every run. Every task also
    pre-registers target-invisible `causal_oracle_v1` rules covering each
-   scorer-recognized wrong-action class with a unique memory/state hash and
-   deterministic artifact matcher.
+   scorer-recognized wrong-action class with a unique memory/state hash,
+   deterministic artifact matcher, and exactly one target-blind proof method
+   with its parser/intervention and outcome table.
 3. The complete primary matrix is exactly
    `24 tasks * 4 conditions * 3 runs = 288` unique tuples.
 4. The complete source-native import diagnostic is exactly
@@ -275,13 +276,26 @@ Every scorer-recognized wrong action has a closed causal record: `proven`,
 `not_proven`, or `missing_evidence`. It resolves the registered selector before
 target reveal to `(projection_logical_hash, memory_id, content_hash,
 state_hash)` and records the deterministic first matching
-`wrong_action_event_id/order`. `proven` requires retrieval/injection before
-that mutation and a `memory_usage_events.context_injection_item_id` pointing to
-the same injected row. A matched later citation, deterministic wrong-action
-matcher, and failing scorer assertion corroborate the chain; Stop telemetry
-alone cannot prove pre-action exposure. Missing order, ambiguity, competition,
-or post-hoc human/LLM judgment makes the metric/verdict `INSUFFICIENT`. A
-no-memory surface records `not_proven/no_memory_surface`.
+`wrong_action_event_id/order`. Before any target reveal, its rule chooses
+exactly one proof method: either a deterministic parser for a target-authored
+memory-use event recorded before the wrong action is dispatched/applied, or a
+deterministic action counterfactual whose transform, allowed byte/field delta,
+pre-action fixture, commands, assertions, and outcome table are all plan
+hashed. The counterfactual replays the exact recorded action and a copy with
+only the registered memory-derived input removed/replaced from the same hashed
+pre-action state. It proves causation only when the factual replay reproduces
+the registered wrong action/scorer failure and the transformed replay removes
+that action and passes the required assertion.
+
+Injection/retrieval records prove exposure, not use.
+`memory_usage_events` and citations derived from the final Stop output are
+post-action corroboration only. A valid counterfactual with the same registered
+failure records `not_proven/refuted_counterfactual`; a no-memory surface records
+`not_proven/no_memory_surface`. Missing or non-unique events/order, an
+unsupported or non-exact transform, conflicting outcomes, competition between
+memories, or any post-hoc human/LLM label records `missing_evidence` and, absent
+a verified security breach, makes the comparative metric/verdict
+`INSUFFICIENT`.
 
 Origin is a closed set:
 `remem_canonical_capture`, `host_native_import`,
@@ -357,8 +371,8 @@ on complete-valid denominators are:
 
 `memory_hurt` counts a paired tuple only when `no_memory` resolves the task,
 `remem_shared` does not, and `causal_oracle_v1` returns `proven` for the same
-injected/cited/used memory and wrong action. Its denominator is all complete,
-valid paired
+exposed memory and wrong action under the registered proof method. Its
+denominator is all complete, valid paired
 `no_memory`/`remem_shared` tuples in that direction. Missing causal attribution
 makes the metric and verdict insufficient; it does not shrink the denominator.
 
