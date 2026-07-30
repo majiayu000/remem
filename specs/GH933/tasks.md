@@ -48,9 +48,32 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - Verify: DTO golden、public API test、line-count check、`cargo fmt --check`,
     `cargo check`.
 
+- [ ] `GH933-A2R` — Durable route ledger migration and writer cutover.
+  - Owner files: next `src/migrations/vNNN_current_truth_route_ledger.sql`,
+    `src/migrate/run.rs` + focused backfill helper/tests,
+    `src/memory/scope_cleanup/{mutate,plan}.rs`, and route guard/schema tests.
+  - Add append-only `memory_route_ledger` state versions with contiguous
+    `(memory_id,route_version,previous_route_id)`, complete route snapshots,
+    exact source-event binding, coverage metadata, and named memory/owner/target/
+    legacy-placement/coverage indexes.
+  - In one foreground migration transaction, reconstruct creation plus every
+    legacy reroute. Materialize all A→B→C states; unresolved history gets only a
+    migration-time `forward_only` state and coverage floor, never fabricated
+    earlier eligibility. Do not mark the migration applied until row counts,
+    terminal snapshots, complete chains and reported incomplete counts validate.
+  - Install an `AFTER INSERT ON memories` trigger that writes version one with
+    the SQLite statement epoch, covering every creation/import without per-writer
+    calls. Reroute uses one atomic event+ledger+guarded-row transaction and one
+    epoch. Reject unmatched direct route mutation; rollback all pieces together.
+  - Verify indexed `EXPLAIN` plans, migration rollback/idempotence, exact/partial
+    backfill, forward-only pre-floor global failure, A→B→C intermediate-B
+    discovery, multiple reroutes/same-second ordering, guard rejection and
+    terminal/current mismatch failure.
+
 - [ ] `GH933-A3` — Adapter and resolver hardening.
   - Owner files: `src/truth/adapter.rs`, `src/truth/lifecycle.rs`,
-    `src/truth/projection.rs` plus A2-owned tests after A2 stops writing；
+    `src/truth/projection.rs` plus A2-owned tests after A2/A2R stop writing；
+    `src/memory/governance.rs` and cleanup lifecycle tests after A2R handoff；
     `src/memory/poisoning.rs` 仅暴露 pure classifier；`src/db/capture.rs` 只允许
     duplicate `(host_id, session_id, event_id)` row timestamp no-op 与
     content-boundary/preview helper。
@@ -60,11 +83,10 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     memory+user-claim union、global/legacy fallback、Project/Owner branch
     semantics，以及 user-claim-only compatibility wrapper；wrapper 仅 bounded
     读取 applicable `user_claim`/`pattern` suppressions 与显式 memory ref。
-    explicit history 从 canonical creation proof 加完整 timestamped
-    `scope_cleanup` previous→new chain 重建 owner/target route；Project/Owner
-    membership 与 SubjectIdentity 使用 cutoff route，equality 用 new route。
-    normalized memory scope 是 creation-proof invariant；gap/fork/contradiction
-    返回 `unreconstructable_routing_history`。
+    explicit history 从 A2R 的 indexed route-state candidates 加完整 chain
+    重建 owner/target；Project/Owner membership 与 SubjectIdentity 使用 cutoff
+    route，equality 用 new state。normalized memory scope 是 creation-proof
+    invariant；gap/fork/coverage/terminal drift 返回 routing integrity error。
   - Implement total user source-kind/ref grammar；candidate-derived claim 必须
     exact-match authoritative candidate/result copied fields、nested provenance
     与 preserved edit fields；验证 owner/host/project/session、provenance-root
@@ -112,17 +134,19 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     authoritative candidate/result/timestamp pattern 重建 replacement/no-op
     multi-active co-predecessors，并拒绝 unexplained unlinked Superseded row；
     非 governance/versioned 的 post-cutoff in-place mutation 保守排除/Unknown。
-    对 `govern_memories` 与 Web archive/restore，strict-parse timestamped
-    `memory_governance` previous→new status chain 并连续到 current row；Web 必须
-    exact bind operation/audit/schema-1 ledger。equality 用 new status，gap/fork/
-    contradiction/ledger mismatch 返回 `unreconstructable_memory_lifecycle`。
+    先 union `memory_governance` 与 `scope_cleanup` events，再以同一
+    `(created_at_epoch,event.id)` order 重建 lifecycle。closed mapping 覆盖
+    `govern_memories`、Web archive/restore、scope archive、cleanup-plan
+    canonical→active/duplicates→stale 与 route-only same-status；链连续到 current。
+    Web exact bind operation/audit/schema-1；unsupported/unrecorded/gap/fork/
+    terminal drift/ledger mismatch 返回 `unreconstructable_memory_lifecycle`。
   - Fail closed on unknown status、malformed/dangling/foreign/future-binding
     evidence and inconsistent routing/ownership；所有 SQL parameterized。
     memory candidate evidence 还要求 completed status、origin trust cap、
     exact confidence/persisted copied fields（不含未持久化 derived title）与
     result operation；candidate input scope 按 validated route 映射为 user=global/
-    other=project，workspace positive 必须通过。route drift 只接受 anchor/adjacency/
-    terminal 都完整的 scope-cleanup chain，scope 不变，其他 mutation fail closed。effective memory
+    other=project，workspace positive 必须通过。route drift 只接受 indexed ledger
+    的完整 anchor/adjacency/terminal chain，scope 不变，其他 mutation fail closed。effective memory
     knowledge 选择 earliest current-compatible ingestion proof，再取 canonical
     noop/route/ack 的 max；noop 验证 result owner/type 而不要求 input topic 等于
     result topic。无 proof 的 procedure memory 仅 current-snapshot
@@ -146,8 +170,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     replayability serde、
     duplicate capture timestamp/history stability、post-cutoff Observation
     stale/compressed integrity error、post-cutoff entity add/replace negative、
-    Project/Owner route before/equal/after 与 incomplete-chain error、general/Web
-    lifecycle before/equal/after 与 broken-ledger error、late-insert fact、六种
+    Project/Owner route before/equal/after、A→B→C 与 coverage error、general/Web/
+    scope archive/cleanup lifecycle before/equal/after 与 broken-ledger error、late-insert fact、六种
     edge mapping 与 unknown-kind error、
     WAL concurrent-writer single-snapshot、authorizer transaction-control/
     `total_changes` tests；`cargo test truth -- --nocapture`.
@@ -157,7 +181,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - Run seed-933 corpus: 901 target memories、1,802 relations、901 evidence refs、
     900-link high fanout，以及 4,505 unrelated memories、9,010 relations、
     4,505 evidence refs。
-  - Assert bind chunks `<=900`、indexed scoped plans、zero unrelated returned rows、
+  - Assert bind chunks `<=900`、route owner/target/legacy/coverage 与其他 indexed
+    scoped plans、zero unrelated returned rows、
     documented data-statement formula、autocommit transaction-control count=2 /
     caller-transaction count=0，以及 unrelated corpus 前后 target output 相同；
     facts、raw edges、governance/scope-cleanup events 也必须 scoped/index-bounded。
@@ -221,7 +246,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   cargo test truth
   ```
 
-- [ ] `GH933-C1` — Benchmark and record an architecture decision:
+- [ ] `GH933-C1` — Benchmark and record an architecture decision for general
+  Claim writers beyond the Phase A route/lifecycle history substrate:
   `converge_writers` or `retain_read_projection`。A convergence choice requires
   a separate migration/dual-write/backfill/cutover/rollback contract；a no-go
   decision records limitations and long-term owner。
@@ -243,8 +269,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   capture helper、version metadata and PR body。Read-only reviewers may run in parallel。
 - A2 completes and hands off test paths before A3 writes them；A4 is read-only；
   A5 starts after implementation and verifier stop writing。
-- Do not add migration、writer、`src/context/**` or public network surface to
-  Phase A without first updating the normative current contract and reviewing
-  the expanded scope。
+- Phase A migration/writer ownership is limited to A2R plus A3's reviewed
+  lifecycle instrumentation. Do not add other schema/writers、`src/context/**`
+  or public network surface without updating the normative contract/review。
 - External GitHub comments、review-thread resolution、labels、merge、release and
   issue closure remain separate actions。This task plan does not authorize them。

@@ -24,7 +24,7 @@ CI 与显式人工 merge 授权推进。
 | Adapter | 多段读取 memories/evidence/edges/user claims，无统一 snapshot；不读 Observation/policy | 补齐 Observation/suppression，并把全 projection 固定在一个 read snapshot |
 | Trust | 任意 tool event 会被标为 Verified，resolver 对 evidence 取 max | external tool output 可被提权；v2 必须复用 canonical source classification 与 cap |
 | Observation status | writer 可写 `poisoning_quarantined`，lifecycle mapper 尚未列出 | quarantined prompt-injection 内容必须被显式 suppress，不能进入 catalog/truth |
-| Temporal history | capture replay 覆盖时间；Observation/user mutation 缺完整 history | replay 时间必须 immutable；不可重建的历史 lifecycle 显式失败 |
+| Temporal history | route discovery 只有 creation/current 候选；capture replay 覆盖时间；部分 mutation 缺 history | indexed route ledger/backfill；replay 时间 immutable；不可重建历史显式失败 |
 | Relations | loader 全扫 edge table 后在 Rust 过滤；canonical heterogeneous pairwise conflict 使用 fallback operation metadata | relation lookup 必须 bounded；合法 heterogeneous operation 不得误报损坏 |
 | Suppression | suppression row 有时间，`memory_entities` link 没有 | owner-safe intervals；entity current-only，历史 link 不可证明即失败 |
 | Tests | `src/truth/tests.rs` 已有 679 行 | 加测试前先拆为 `src/truth/tests/**`，任何单文件保持少于 800 行 |
@@ -361,18 +361,29 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   `projects.project_path` exact match；只有 project_id NULL 时才可 fallback 到
   非空 legacy `observations.project`，两者都有时必须一致，并应用同一 branch
   predicate。subject selector 与 scope 不一致 contextual error。
-- explicit `as_of=t` 的 Project/Owner membership 与 `SubjectIdentity` 使用
-  route-at-t。候选 memory 由 canonical candidate/result-operation creation proof
-  加 current route bounded 发现；`scope_cleanup` 只按 stable memory ID/source
-  projects 读取。event 必须 exact type `scope_cleanup`、strict-match
-  `object_ref='memory:<id>'`，并包含 writer 的
-  source/target project、owner scope/key、topic domain、routing confidence/reason、
-  context class 八个 previous/new fields。按 `(created_at_epoch,id)` 排序，首个
-  previous=creation route、相邻 new=previous、terminal new=current row；折叠
-  epoch `<=t`，equality 使用 new route。writer 不 snapshot/mutate memory scope，
-  所以 creation-proof normalized scope 是 invariant。missing/forked/
-  contradictory/dangling/scope-changing chain 返回
-  `unreconstructable_routing_history`，不 fallback current route。
+- explicit `as_of=t` 通过持久 `memory_route_ledger` 的 route-state versions
+  恢复 Project/Owner membership 与 `SubjectIdentity`。逻辑列为
+  `id,memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,
+  source_event_id,coverage_kind,coverage_start_epoch`，以及完整 placement/source/
+  target/owner/topic/routing/context/memory-scope/branch snapshot；version、
+  predecessor 和 source event 均 unique/连续。按 memory/time、owner、target、
+  legacy placement 与 coverage 分别建 index，候选先 UNION scope indexes，再按
+  ID chunk 读取完整链。因此 A→B→C 的 B 即使不在 creation/current route 仍可发现。
+- foreground SQL migration 建表/index；同一 `BEGIN IMMEDIATE` 的 Rust post-hook
+  验证 creation/result route 与全部 legacy `scope_cleanup` reroute，按
+  `(created_at_epoch,event.id)` backfill creation 和每个中间 state。完整链标
+  `complete`；无法证明时只保存 migration-time current state，标
+  `forward_only` 与 coverage floor。任何更早 explicit history 必须在 scoped
+  discovery 前经 indexed coverage probe 全局返回
+  `unreconstructable_routing_history`，因为 unknown prior route 可能命中 query。
+  migration 仅在每个 memory 有 terminal state、完整链/terminal 校验通过且
+  forward-only counts 可见后标 applied。
+- cutover 后 `AFTER INSERT ON memories` trigger 用 SQLite statement epoch 自动写
+  version 1，覆盖所有 creation/import 而不依赖 voluntary call；reroute 用一个 sampled epoch 在
+  同一 transaction 写 audit event、next full version 与 guarded memory update。
+  database guard 拒绝没有 staged matching next version 的 route-field update；
+  ledger append-only。fold `(effective_at_epoch,id)` 且 `epoch<=t`，equality 用
+  new state。gap/fork/event/time/terminal/scope drift 一律 fail closed。
 
 ### Observation evidence
 
@@ -503,18 +514,19 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   history 排除/Unknown，current 用 reference epoch。source time 仍为
   `COALESCE(reference_time_epoch,created_at_epoch)` 且不能 future；direct noop、
   governance ack、candidate ack 分别用 operation/memory/candidate update。
-- Explicit memory lifecycle 加载 ID/project-bounded `memory_governance` events，
-  strict-parse memory/action/previous/new status，按 `(created_at_epoch,id)` 排序，
-  从 validated creation/result status 连续 join 到 current status。
-  `delete/reject/stale` 到对应 terminal status；ack 是 same-status；
-  archive/restore 是 active→archived/archived→active。每个 Web event 必须 exact
-  bind 唯一 `api_mutation_requests` operation、memory resource/ID、action、
-  schema-1、audit row；response 的 operation/audit/memory/action/before/after/
-  version/occurred-at/replayed=false、ledger/event time、project 与
-  `api:<operation_id>` session 都匹配，并验证
-  terminal archive marker/restore clearing。折叠 epoch `<=t`，equality 用 new；
-  gap/fork/contradiction/unknown/ledger mismatch 返回
-  `unreconstructable_memory_lifecycle`。
+- Explicit memory lifecycle 先 UNION ID/project-bounded `memory_governance` 与
+  `scope_cleanup` events，再统一按 `(created_at_epoch,event.id)` 排序，不能拼接
+  两条局部链。closed mapping 覆盖 general delete/reject/stale、same-status ack、
+  Web active→archived/archive 与 archived→active/restore、scope archive 到
+  archived，以及 cleanup plan canonical→active/duplicates→stale；route-only
+  reroute 必须 same-status。event 必须 exact-match memory/object ref、project、
+  action、previous/new 与 writer shape。
+- 链从 validated creation/result status 开始，每个 previous=prior new，
+  terminal=current；同秒按 event ID，所有 `epoch<=t` 在 equality 生效。Web
+  另外 exact bind 唯一 `api_mutation_requests` operation/resource/action/schema-1/
+  audit/response/time/project/session 及 archive marker/restore clearing。status
+  update 与 event 同 transaction。unsupported/unrecorded、gap/fork/terminal drift
+  或 Web mismatch 返回 `unreconstructable_memory_lifecycle`，不得倒投 current。
 - UserContextClaim source 是 `COALESCE(valid_from_epoch,created_at_epoch)`；
   descendants 保留 provenance-root SourceRefs，transition 只改 state knowledge。
 - Captured event 的 source 与 original insertion 都须 reference-eligible。
@@ -615,8 +627,8 @@ AND (
 
 ### Bounded read behavior
 
-- claims、raw edge validation、captured events、facts、suppressions 与
-  memory-governance/scope-cleanup events 全部以 scoped IDs/owner/project/index
+- claims、route coverage/discovery/history、raw edges、events、facts、
+  suppressions 与 lifecycle events 全部以 scoped IDs/owner/project/named index
   查询，stable ascending bind chunk `<=900`，不允许无关 table scan 后
   `Vec::contains`。第一条 claim SELECT 到 resolve 共享一个 snapshot。
 - seed-933：target 901 memories、1,802 relations、901 evidence refs、900-link
@@ -682,13 +694,13 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 - Golden diff 逐字段 allowlist 仅包括：
   1. version 1→2、public entrypoint/export、TruthScope、typed subject、exact selector、
      effective epoch/replayability；
-  2. EvidenceView v2 fields/integrity、ClaimView temporal-field replacement、
-     Observation catalog/read-scan/trust/explicit attachment/fact insertion gate；
-  3. NULL/exact-empty topic singleton、owner/scope/type isolation、canonical owner/target
-     Project inclusion、historical route reconstruction、Owner memory+claim union、
-     global/legacy fallback 与 user-claim-only compatibility wrapper；
-  4. versioned edit、candidate multi-row/no-op 与 audited memory governance
-     historical recovery、in-place mutation conservative exclusion；
+  2. EvidenceView/ClaimView temporal fields、Observation catalog/read-scan/trust/
+     attachment 与 fact actual `created_at_epoch` eligibility gate；
+  3. identity isolation、canonical Project inclusion、indexed historical
+     route/backfill（含 intermediate route 与 forward-only fail-closed）、Owner
+     union、global/legacy fallback 与 compatibility wrapper；
+  4. versioned edit/candidate reconstruction、统一排序的 general/Web/
+     scope-cleanup lifecycle recovery 与 unsupported mutation conservative handling；
   5. policy suppression owner/time visibility；
   6. canonical stored+recomputed source-trust cap、all-source binding-time
      checks、first-party explicit-user rules、candidate/result/edit invariants、
@@ -716,9 +728,9 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
   reference epoch；current truth、decisions、conflicts 分开渲染；旧 path 有明确
   rollback；projection failure 必须 error-visible。worktree/task selector、
   budget/cache/historical explanation 也在 Phase B 细化。
-- Phase C 才评估 writer convergence。是否收敛由 benchmark 与架构审阅决定；
-  migration、dual-write、backfill、cutover 和 generated-enrichment writer
-  firewall 需要独立 contract。Phase A DTO 不自动授权 schema 改动。
+- Phase C 评估 narrow Phase A history substrate 之外的一般 Claim-writer
+  convergence；是否收敛由 benchmark/架构审阅决定，其他 migration、cutover 与
+  generated-enrichment firewall 需要独立 contract。
 
 ## Test Plan
 
@@ -733,15 +745,17 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 - [ ] `python3 scripts/ci/check_version_bump.py origin/main HEAD`
 - [ ] Full PR preflight with the exact intended PR body.
 - [ ] Final-head bounded/performance artifact command above.
-- [ ] Focused before/equal/after route/lifecycle tests、Web ledger/gap/fork errors、
-      late-inserted fact rejection、six edge mappings 与 unknown-kind error。
+- [ ] Indexed A→B→C、backfill/forward-only/writer guard；统一 lifecycle
+      general/Web/scope archive/cleanup active/stale；fact created-at gate、six
+      edge mappings、unknown/unsupported fail-closed。
 - [ ] Fresh exact-head CI and independent review.
 
 ## Rollback
 
-Phase A 不新增 schema/backfill。若 v2 有问题，整体回滚 truth module、
-duplicate-capture timestamp guard、tests/docs 与 0.7.0 metadata；不得只回退
-一份 manifest。已发布 0.6.x artifacts 不可改写。
+Projection 仍 data-SELECT-only，但 Phase A 新增 reviewed route ledger/backfill/
+writer guards。回滚可停用 v2 consumer，但保留 additive ledger/instrumentation；
+不得 drop history。恢复 pre-migration DB 需停写并证明不丢 backup 后写入；0.6.x
+不能打开 newer schema。
 
 Phase B 保留旧 context path 并按独立 rollout/rollback design 切换；projection
 失败不得静默输出缺失 context。Phase C 如果引入 migration/dual-write，必须在
@@ -749,11 +763,15 @@ Phase B 保留旧 context path 并按独立 rollout/rollback design 切换；pro
 
 ## Implementation Change Set
 
-Phase A v2 implementation 预计修改以下路径；除 duplicate capture timestamp
-immutability 外，不得静默扩大到 writer、schema 或 context：
+Phase A v2 implementation 预计修改以下路径；除 reviewed history substrate 与
+duplicate timestamp guard 外，不得静默扩大到一般 writer 或 context：
 
 - `src/truth.rs`
 - `src/db/capture.rs`（duplicate row timestamp no-op + pure preview helper）
+- `src/migrations/vNNN_current_truth_route_ledger.sql`
+- `src/migrate/run.rs` 与 route-ledger backfill helper
+- `src/memory/governance.rs`
+- `src/memory/scope_cleanup/{mutate,plan}.rs`
 - `src/memory/poisoning.rs`（只暴露 pure classifier）
 - `src/truth/adapter.rs`
 - `src/truth/lifecycle.rs`
@@ -775,5 +793,5 @@ immutability 外，不得静默扩大到 writer、schema 或 context：
 - `npm/remem/package.json`
 - `server.json`
 
-如果实现证明需要新 index/migration、writer、Context Bundle 或新的 public network
-surface，停止该 implementation PR，先更新当前 contract 并重新审阅范围。
+如果实现需要上述 route/lifecycle contract 以外的新 schema/writer、Context
+Bundle 或 public network surface，停止 implementation，先更新 contract/review。

@@ -9,9 +9,11 @@ Phase A v1 was merged in PR #939 and publicly released in `remem-ai` 0.6.26;
 of GH-933.
 
 This document defines the pending Phase A v2 hardening contract. Its checkboxes
-remain open until implementation and fresh verification land. Phase B Context
-Bundle consumption, worktree/task scope, and Phase C writer decisions remain
-later work, so GH-933 stays open.
+remain open until implementation and fresh verification land. Phase A now
+includes the narrow route-ledger migration/backfill and route/lifecycle writer
+instrumentation required for exact history. Phase B Context Bundle consumption,
+worktree/task scope, and Phase C general writer convergence remain later work,
+so GH-933 stays open.
 
 The issue packet under `specs/GH933/` is historical planning evidence. This
 file and `TECH.md` are the normative current contract.
@@ -64,12 +66,19 @@ pending v2 requirements below.
    routing + branch and can include owner Q via `target_project=P`. A compatible
    selector with no row yields an empty truth list, not synthesized Unknown.
    Owner/memory-scope values are closed domains; trimmed `" global "` is global.
-   Explicit history reconstructs owner, target and invariant memory scope at the
-   cutoff from the canonical creation proof plus a complete timestamped
-   scope-cleanup chain; Project/Owner membership and SubjectIdentity use that
-   route, with the new route effective at transition equality. Missing, forked,
-   contradictory or scope-changing history returns
-   `unreconstructable_routing_history`, never current-route fallback.
+   Explicit history discovers candidates from a persistent, scope-indexed route
+   ledger, then reconstructs owner, target and invariant memory scope at the
+   cutoff from its complete version chain. Every creation/import commits its
+   canonical row and first route version atomically; reroute additionally
+   commits its audit evidence in the same transaction. The
+   migration backfills every validated legacy `scope_cleanup` transition, so an
+   A→B→C memory remains discoverable for a cutoff in B even when neither its
+   creation nor current route is B. Rows whose pre-migration chain cannot be
+   proved receive forward-only coverage; a query before that coverage floor
+   fails with `unreconstructable_routing_history` before scope filtering.
+   Project/Owner membership and SubjectIdentity use route-at-t, with the new
+   route effective at transition equality. Missing, forked, contradictory or
+   scope-changing history never falls back to the current route.
 
 3. **Auditable reference time and snapshot.** An explicit `as_of` is used
    directly and is `Exact`. A query without one samples “now” once. Every output
@@ -87,11 +96,16 @@ pending v2 requirements below.
    co-predecessors even though only one row may have an explicit successor
    link. In-place suppress/unsuppress/delete mutations without a historical row
    are conservatively excluded/Unknown; current bytes must not be projected
-   backward. Memory status changes written by `govern_memories` or Web
-   archive/restore are instead reconstructed from a complete, continuous
-   `memory_governance` audit chain; Web transitions also require their exact
-   operation/audit ledger binding. The new status is effective at transition
-   equality; missing, forked or contradictory history returns
+   backward. Memory status changes written by `govern_memories`, Web
+   archive/restore, `scope_cleanup::archive_objects`, or either side of
+   `apply_memory_cleanup_plan` (canonical→active and duplicate→stale) are instead
+   reconstructed from one complete chain. The projection unions
+   `memory_governance` and `scope_cleanup` events before applying the single
+   `(created_at_epoch,event_id)` order; every previous status must equal the
+   prior new status and the terminal status must equal the current row. Web
+   transitions also require their exact operation/audit ledger binding. The new
+   status is effective at transition equality; an unsupported action/status,
+   missing writer event, gap, fork or contradiction returns
    `unreconstructable_memory_lifecycle`. Because backup/Markdown imports preserve source timestamps,
    `updated_at_epoch` alone is not ingestion proof: the earliest
    current-compatible canonical result operation, candidate completion and
@@ -101,11 +115,11 @@ pending v2 requirements below.
    After ingestion, a canonical no-op with validated result provenance records
    later trust/ack rewrites and advances knowledge time but cannot prove initial
    ingestion; its request topic may legitimately differ from the result topic.
-   Candidate-linked route changes need a complete scope-cleanup event chain;
-   each previous/new owner snapshot must join the next and the terminal snapshot
-   must equal the current row. The real writer does not store or mutate scope in
-   those snapshots, so normalized memory scope is a creation-proof-validated
-   invariant; unexplained routing, scope, content or provenance drift fails closed.
+   Candidate-linked route changes need the same complete route-ledger chain;
+   each version links its predecessor and the terminal snapshot must equal the
+   current row. The reroute writer does not mutate memory scope, so normalized
+   scope is a creation-proof-validated invariant; unexplained routing, scope,
+   content or provenance drift fails closed.
    Captured-event identity `(host_id, session_id, event_id)` is immutable across
    idempotent replay: a duplicate cannot replace its original creation,
    insertion/knowledge or reference/source epoch. Replay may append separately
@@ -199,9 +213,10 @@ pending v2 requirements below.
     both outputs use the deterministic full-field shape in `TECH.md`. Uniform
     conflict pairs must form a matching; an A-B plus A-C survivor graph errors.
 
-11. **Bounded reads.** Raw edges, evidence, facts, suppression and governance/
-    scope-cleanup events use scoped/indexed SQL and stable ID chunks of at most
-    900. Large unrelated
+11. **Bounded reads.** Historical candidate discovery uses the route ledger's
+    owner, target and legacy-placement indexes; route chains, raw edges,
+    evidence, facts, suppression and governance/scope-cleanup events use
+    scoped/indexed SQL and stable ID chunks of at most 900. Large unrelated
     projects do not change target query counts, returned rows or output. The full
     projection runs in one deferred SQLite read snapshot; transaction control is
     read orchestration, not a canonical-data write.
@@ -219,23 +234,27 @@ pending v2 requirements below.
 - [ ] Typed owner/scope/type identity, repo owner/target Project routing,
       non-repo reroute exclusion, Owner memory+claim union, global/legacy
       fallback, NULL/exact-empty singleton and branch semantics have positive and
-      cross-scope negative tests. Historical Project/Owner before/equal/after
-      fixtures use the cutoff route and incomplete chains fail closed; the legacy user-claim wrapper stays
+      cross-scope negative tests. The indexed route-ledger migration materializes
+      creation plus every validated reroute, an A→B→C fixture discovers B without
+      a creation/current B candidate, and Project/Owner before/equal/after uses
+      route-at-t. Backfill gaps, forward-only pre-floor reads and incomplete
+      writer chains fail closed; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.
 - [ ] Effective reference epoch, one-read-snapshot behavior, replayability enum,
       immutable duplicate-capture time and source/knowledge boundaries are
       golden-locked; current-only output is never labeled exact.
-- [ ] Candidate-backed memory validates completion and contiguous route events,
+- [ ] Candidate-backed memory validates completion and a contiguous route ledger,
       rejects unexplained post-candidate mutation, and keeps the candidate trust
       cap while mapping workspace/user input scope through the writer route and
       not requiring an unavailable candidate title. Operation-less procedure
       memory is current-snapshot-only; explicit history excludes/Unknown.
 - [ ] Versioned edit and in-place mutation histories have separate
-      before/equal/after tests; validated general and Web governance chains
-      restore memory lifecycle, while gaps/forks/ledger mismatches return
-      `unreconstructable_memory_lifecycle`.
+      before/equal/after tests. One globally ordered lifecycle chain covers
+      general and Web governance plus scope-cleanup archive and cleanup-plan
+      active/stale transitions; gaps, forks, unsupported transitions and Web
+      ledger mismatches return `unreconstructable_memory_lifecycle`.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
@@ -292,8 +311,9 @@ pending v2 requirements below.
       branch scope.
 - [ ] Archived evidence can support an explicitly designed historical
       explanation without entering current context by default.
-- [ ] Phase C records a benchmark-backed decision to converge writers or retain
-      the read projection; convergence, if chosen, has migration and rollback.
+- [ ] Phase C records a benchmark-backed decision for general Claim-writer
+      convergence beyond Phase A's route/lifecycle history substrate;
+      convergence, if chosen, has migration and rollback.
 - [ ] Session-summary refs become usable only after an immutable complete
       generated-surface binding (or equivalent snapshot) is persisted.
 - [ ] Absolute attachment ordering, if required, uses a durable sequence rather

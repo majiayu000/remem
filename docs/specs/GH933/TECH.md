@@ -8,10 +8,15 @@ Phase A v2 implementation contract.
 Truth v1 shipped publicly in `remem-ai` 0.6.26/0.6.27. The Cargo library target
 is `remem`, so the public API is `remem::truth`.
 
-The Phase A v2 projection remains a read-only adapter over existing tables:
+The Phase A v2 projection call remains read-only. Exact historical routing
+requires a narrow durable history substrate and its canonical writers:
 
 ```text
 src/db/capture.rs (duplicate-event timestamp immutability + pure preview helper)
+src/migrations/vNNN_current_truth_route_ledger.sql
+src/migrate/run.rs + route-ledger backfill helper
+src/memory/governance.rs
+src/memory/scope_cleanup/{mutate,plan}.rs
 src/truth.rs
 src/truth/adapter.rs
 src/truth/lifecycle.rs
@@ -21,8 +26,10 @@ src/truth/tests/**
 tests/truth_public_api.rs
 ```
 No projection query may write/migrate/call external systems/change Context
-Bundle; duplicate captures preserve row timestamps, and no other writer changes.
-Split `src/truth/tests.rs` before v2 tests; every source file stays below 800 lines.
+Bundle. The foreground schema migration/backfill and atomic route/lifecycle
+instrumentation below are the only additional writer scope; duplicate captures
+also preserve row timestamps. Split `src/truth/tests.rs` before v2 tests; every
+source file stays below 800 lines.
 
 ## Public v2 Types
 
@@ -342,17 +349,28 @@ probe includes placement/owner/target references to P and rejects partial
 pairs. Blank full-pair target is absent; `target_project` never expands legacy
 or non-repo membership.
 
-For explicit `as_of=t`, Project/Owner membership and emitted `SubjectIdentity` use route-at-t. Candidate discovery is bounded by canonical candidate/result
-creation proof plus current route; `scope_cleanup` reads are stable-ID/source-project
-bounded. Events require `event_type='scope_cleanup'`, `object_ref='memory:<id>'`
-and complete previous/new snapshots of the writer's eight fields:
-source/target project, owner scope/key, topic domain, routing confidence/reason
-and context class. Order by `(created_at_epoch,events.id)`; first previous
-equals creation route, adjacent new/previous snapshots match, and terminal new
-equals current row. Fold epochs `<=t`, so equality uses new. Since the writer
-neither snapshots nor mutates `memories.scope`, normalized creation-proof scope
-is invariant. Missing/forked/contradictory/dangling/scope-changing history is
-`unreconstructable_routing_history`; never fall back to current route.
+For explicit `as_of=t`, Project/Owner membership and emitted `SubjectIdentity` use route-at-t from this logical schema (the migration uses the next available version):
+
+```text
+memory_route_ledger(
+  id PK AUTOINCREMENT, memory_id FK, route_version, previous_route_id FK,
+  effective_at_epoch, source_kind, source_event_id FK,
+  coverage_kind[complete|forward_only], coverage_start_epoch,
+  placement_project, source_project, target_project, owner_scope, owner_key,
+  topic_domain, routing_confidence, routing_reason, context_class, memory_scope, branch,
+  UNIQUE(memory_id,route_version), UNIQUE(previous_route_id),
+  UNIQUE(source_event_id))
+```
+
+Each row is a complete route state. `previous_route_id` belongs to the same memory; versions start at one and are contiguous. `source_kind` is the closed `insert|legacy_backfill|scope_cleanup` set, with an exact unique event required for scope-cleanup. `memory_scope` is normalized `project|global`. Required indexes are `(memory_id,effective_at_epoch,id)`, owner and target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, a partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)` index for NULL/NULL owners, and `(coverage_kind,coverage_start_epoch)`.
+
+The foreground SQL migration creates this schema; a Rust post-hook in the same `BEGIN IMMEDIATE` validates creation/result route plus every legacy `scope_cleanup` reroute ordered `(created_at_epoch,events.id)`, then inserts creation and every intermediate state. Thus A→B→C indexes A, B and C. Complete creation/adjacency/terminal proof sets `complete`; otherwise only the migration-time current snapshot is stored as `forward_only` at that coverage floor—never invented history.
+
+Before scoped discovery, an indexed probe returns `unreconstructable_routing_history` when any forward-only floor is after `t`, because that unknown prior route could match. Migration is marked applied only after every memory has one terminal row, complete chains validate, forward-only counts are reported, and terminal snapshots match `memories`.
+
+After cutover, an `AFTER INSERT ON memories` trigger inserts version one with the SQLite statement epoch, so every creation/import is covered in the canonical row transaction without voluntary writer calls. `scope_cleanup::reroute_objects` writes its audit event, next full version and guarded `memories` update with one epoch in one transaction; failure rolls all back. A database guard rejects route-field updates without a staged next version that links the current head and matches the new row; update/delete of ledger rows is forbidden.
+
+Candidate discovery UNIONs the owner, target and legacy indexes before stable ID chunking; the per-ID chain is folded through `effective_at_epoch<=t` in `(epoch,id)` order. Gaps/forks, event mismatch, nonmonotonic time, terminal drift or scope change return `unreconstructable_routing_history`, never current fallback.
 
 ## Lifecycle and Observation Mapping
 
@@ -367,20 +385,11 @@ allowlists before projection. Unknown values return table/canonical-ref/raw
 value context. A mapper’s generic Candidate/Unknown fallback is not a silent
 adapter success.
 
-Explicit memory history loads ID/project-bounded `memory_governance` events,
-strict-parses memory/action/previous/new status and orders by
-`(created_at_epoch,events.id)`. The chain starts at validated creation/result
-status, joins every previous to prior new and ends at current status.
-`delete/reject/stale` map to `deleted/rejected/stale`; acknowledgment is a
-validated same-status event; Web archive/restore are active→archived and
-archived→active. Every Web event binds its operation and event ID to exactly
-one `api_mutation_requests` row matching operation, `resource_kind=memory`,
-resource ID, action, schema-1 and audit ID. Response operation/audit/memory/
-action/before/after/version/occurred-at plus `replayed=false`, ledger/event time,
-project and `api:<operation_id>` session all match. Validate
-the terminal archive marker (or its clearing after restore). Fold epochs
-`<=t`; missing/broken/forked/contradictory/unknown/ledger-mismatched history is
-contextual `unreconstructable_memory_lifecycle`.
+Explicit memory history unions ID/project-bounded `memory_governance` and `scope_cleanup` events before one `(created_at_epoch,events.id)` order; per-source chains are never concatenated. Closed mappings are general `delete|reject|stale→deleted|rejected|stale`, same-status acknowledgment, Web active→archived/archive and archived→active/restore, scope-cleanup `archive` from the recorded recognized status to archived, and `memory-cleanup` canonical→active plus each duplicate→stale. Route-only reroute is same-status. Every event exact-matches memory/object ref, project, action, statuses and writer shape.
+
+The chain starts at validated creation/result status, joins every previous to prior new, and ends at current status. Event ID orders same-second transitions; all events with `epoch<=t` apply at equality. Every Web event also binds one exact `api_mutation_requests` operation, memory resource/ID, action, schema-1, audit ID and matching response fields/time/project/session, including archive marker or restore clearing.
+
+Each writer commits status and event together. Unknown/unsupported/unrecorded transitions, broken adjacency, fork, terminal drift or Web mismatch return `unreconstructable_memory_lifecycle`; current status is never projected backward. Candidate replacement remains its separately validated multi-row transition.
 
 A scoped Observation with `created_at_epoch=NULL` is a contextual integrity
 error because the public knowledge-time field is non-null; human-readable
@@ -534,7 +543,7 @@ links error. Event source/insertion must not exceed binding/reference.
   plus matching noop candidate; input/result topics may differ. It proves only
   the transition.
   Knowledge is the max of earliest ingestion proof, eligible noops, memory
-  update, candidate completion/ack, route events and complete/current memory
+  update, candidate completion/ack, route-ledger versions and complete/current memory
   ack; partial/stale ack errors. No proof means historical exclusion/Unknown
   and current `reference_epoch`. Memory source remains
   `COALESCE(reference_time_epoch,created_at_epoch)` and cannot be future.
@@ -699,9 +708,9 @@ scope/time/lifecycle eligibility
 ```
 ## Bounded SQL Contract
 
-Claims, raw edge validation, captured evidence, facts, suppressions and
-memory-governance/scope-cleanup events use scoped IDs/owners/projects and
-existing indexes, never unrelated scans plus `Vec::contains`.
+Claims, route coverage/discovery/history, raw edge validation, captured
+evidence, facts, suppressions and lifecycle events use scoped IDs/owners/
+projects and the named indexes, never unrelated scans plus `Vec::contains`.
 One SQLite snapshot covers the first scoped-claim SELECT through final resolve.
 Autocommit owns deferred BEGIN and terminal COMMIT/ROLLBACK; an existing caller
 transaction is reused without nested control or committing caller work.
@@ -733,34 +742,21 @@ structural booleans. The Rust test validates it; latency stays informational.
 Any later commit/base sync invalidates the record.
 ## Versioning and Golden Diff
 
-v2 ships in 0.7.0 or the next explicit breaking boundary. Sync Cargo, lockfile,
-plugin, runtime release manifest, npm wrapper, `server.json`, changelog, README
-and architecture docs. The migration guide explicitly covers ClaimView
-`created_at_epoch`/`updated_at_epoch` becoming version-specific
-`source_time_epoch`/`knowledge_time_epoch`, including edit transitions,
-in-place mutation limits and recency using the selected ClaimView’s effective
-knowledge epoch.
+v2 ships in 0.7.0 or the next explicit breaking boundary. Sync Cargo, lockfile, plugin, runtime manifest, npm wrapper, `server.json`, changelog, README and architecture docs. The guide covers ClaimView `created_at_epoch`/`updated_at_epoch` becoming version-specific source/knowledge epochs, edit transitions, in-place limits and recency.
 
 `tests/truth_public_api.rs` acts as an external crate and compiles
 `use remem::truth::{...}` for Project and Owner queries.
 
 Allowed v1→v2 golden differences:
 
-1. version, public entrypoint/export, TruthScope, typed subject/exact selector
-   and effective epoch/replayability;
-2. EvidenceView fields/integrity, ClaimView temporal-field replacement, and
-   Observation catalog/read-scan/nullable-epoch/trust/attachment;
-3. NULL/exact-empty singleton plus owner/scope/type isolation, canonical owner/target
-   Project inclusion, stale non-repo placement exclusion, Owner memory+claim
-   union, global/legacy fallback and user-claim-only compatibility wrapper;
-4. versioned-edit and candidate multi-row/no-op reconstruction plus
-   conservative in-place mutation handling;
+1. version, exports, TruthScope, typed subject/exact selector and effective epoch/replayability;
+2. EvidenceView/ClaimView temporal fields and Observation catalog/read-scan/nullable-epoch/trust/attachment;
+3. identity isolation, canonical Project inclusion, indexed historical route/backfill (intermediate states and forward-only failure), Owner union, global/legacy fallback and wrapper;
+4. edit/candidate reconstruction, globally ordered general/Web/scope-cleanup lifecycle recovery and conservative unsupported mutation handling;
 5. suppression owner/time visibility;
-6. canonical stored+recomputed source-trust cap, all-source binding-time
-   checks, first-party explicit-user rules, candidate/result/edit invariants,
-   summary-provenance fail-closed and full-blob escalation fix;
-7. valid heterogeneous conflict error→neutral;
-8. approved cross-topic output and overlapping-pair error;
+6. source-trust cap, binding-time checks, first-party rules, candidate/edit invariants, summary failure and full-blob fix;
+7. fact attachment's actual `created_at_epoch` eligibility gate;
+8. total six-kind edge mapping/direction, heterogeneous conflict error→neutral and cross-topic/overlap output;
 9. approved malformed/dangling/unknown fail-closed/error output.
 
 Everything else, including branch semantics and resolver order, must remain
@@ -782,19 +778,12 @@ python3 scripts/ci/check_pr_preflight.py --base origin/main \
   --pr-body-file /tmp/pr-body.md
 ```
 
-Focused regressions cover governance before/equal/after plus broken/Web-ledger
-chains; route before/equal/after for Project and Owner plus incomplete chains;
-fact insertion-vs-learned time; and all six edge mappings plus unknown raw kind.
+Focused regressions cover indexed A→B→C, backfill/forward-only failure and writer guard; globally ordered general/Web/scope archive/cleanup lifecycle; fact insertion time; and six edge mappings.
 Also require WAL snapshot regression, final-head bounded/performance record,
 fresh exact-head CI, independent review and human merge authorization.
 
 ## Phase Boundaries and Rollback
 
-Phase B separately defines Context Bundle mapping, one shared render epoch,
-worktree/task selectors, error-visible failure, budget/cache/historical output
-and old-path rollback. Phase C separately decides writer convergence and any
-migration/dual-write/backfill/cutover/firewall work.
+Phase B defines Context Bundle, shared render epoch, selectors, visible failure, budget/cache/history and rollback. Phase C decides general Claim-writer convergence beyond Phase A's narrow history substrate.
 
-Phase A v2 has no schema/backfill and its projection remains data-SELECT-only.
-Roll back truth code, the duplicate-capture timestamp guard, tests, docs,
-changelog and breaking-version metadata together. Published 0.6.x stays immutable.
+Projection stays data-SELECT-only; Phase A includes the reviewed ledger/backfill/guards. Rollback disables v2 consumption but retains ledger instrumentation. Restoring a pre-migration database requires downtime and proof no later writes are lost. Published 0.6.x cannot use the newer schema.
