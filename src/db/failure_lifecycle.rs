@@ -251,7 +251,7 @@ pub fn archive_eligible_failures(
             surface: "pending_observation",
             table: "pending_observations",
             failed_predicate: "status = 'failed'",
-            eligible_extra: "1 = 1",
+            eligible_extra: "COALESCE(failure_class, 'transient') = 'permanent'",
         },
         cutoff,
         now_epoch,
@@ -333,20 +333,32 @@ pub fn purge_archived_failures_at(
     if !failure_columns_available(conn)? {
         return Ok(ArchivedFailurePurgePlan::default());
     }
+    if !conn.is_autocommit() {
+        return purge_archived_failures_in_transaction(conn, now_epoch, horizon_days);
+    }
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let purged = purge_archived_failures_in_transaction(&tx, now_epoch, horizon_days)?;
+    tx.commit()?;
+    Ok(purged)
+}
+
+fn purge_archived_failures_in_transaction(
+    conn: &Connection,
+    now_epoch: i64,
+    horizon_days: i64,
+) -> Result<ArchivedFailurePurgePlan> {
     let cutoff = cutoff_epoch(now_epoch, horizon_days);
-    let tx = conn.unchecked_transaction()?;
     let pending_observations = purge_simple_surface(
-        &tx,
+        conn,
         "pending_observation",
         "pending_observations",
         "status = 'failed'",
         cutoff,
         now_epoch,
     )?;
-    let extraction_replay_ranges = purge_archived_replay_ranges(&tx, cutoff, now_epoch)?;
-    let extraction_tasks = purge_archived_extraction_tasks(&tx, cutoff, now_epoch)?;
-    let jobs = purge_simple_surface(&tx, "job", "jobs", "state = 'failed'", cutoff, now_epoch)?;
-    tx.commit()?;
+    let extraction_replay_ranges = purge_archived_replay_ranges(conn, cutoff, now_epoch)?;
+    let extraction_tasks = purge_archived_extraction_tasks(conn, cutoff, now_epoch)?;
+    let jobs = purge_simple_surface(conn, "job", "jobs", "state = 'failed'", cutoff, now_epoch)?;
     Ok(ArchivedFailurePurgePlan {
         pending_observations,
         extraction_replay_ranges,

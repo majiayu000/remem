@@ -1,7 +1,9 @@
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use rusqlite::{params, Connection};
 
-use super::types::FailedPendingRow;
+use super::types::{
+    AdminRequiredArchivedLegacyPendingRow, ArchivedTransientLegacyPendingStats, FailedPendingRow,
+};
 
 pub fn list_failed(
     conn: &Connection,
@@ -38,6 +40,68 @@ pub fn list_failed(
         rows_out.push(row?);
     }
     Ok(rows_out)
+}
+
+pub(crate) fn list_admin_required_archived_legacy_pending(
+    conn: &Connection,
+    limit: i64,
+) -> Result<Vec<AdminRequiredArchivedLegacyPendingRow>> {
+    let limit = limit.max(1);
+    let mut stmt = conn.prepare(
+        "SELECT id, host, failure_class, archived_at_epoch
+         FROM pending_observations
+         WHERE status = 'failed'
+           AND archived_at_epoch IS NOT NULL
+           AND NOT (
+               host IN (?1, ?2)
+               AND COALESCE(failure_class, 'transient') = 'transient'
+           )
+         ORDER BY archived_at_epoch ASC, id ASC
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(
+        params![
+            crate::runtime_config::CLAUDE_HOST,
+            crate::runtime_config::CODEX_HOST,
+            limit
+        ],
+        AdminRequiredArchivedLegacyPendingRow::from_row,
+    )?;
+    rows.collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(Into::into)
+}
+
+pub(crate) fn query_archived_transient_legacy_pending(
+    conn: &Connection,
+) -> Result<ArchivedTransientLegacyPendingStats> {
+    let now = chrono::Utc::now().timestamp();
+    let (due, deferred, earliest_deferred_retry_epoch): (i64, i64, Option<i64>) = conn.query_row(
+        "SELECT
+             COALESCE(SUM(CASE
+                 WHEN next_retry_epoch IS NULL OR next_retry_epoch <= ?3 THEN 1 ELSE 0 END), 0),
+             COALESCE(SUM(CASE WHEN next_retry_epoch > ?3 THEN 1 ELSE 0 END), 0),
+             MIN(CASE WHEN next_retry_epoch > ?3 THEN next_retry_epoch END)
+         FROM pending_observations
+         WHERE host IN (?1, ?2)
+           AND status = 'failed'
+           AND COALESCE(failure_class, 'transient') = 'transient'
+           AND archived_at_epoch IS NOT NULL",
+        params![
+            crate::runtime_config::CLAUDE_HOST,
+            crate::runtime_config::CODEX_HOST,
+            now,
+        ],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    ensure!(
+        deferred == 0 || earliest_deferred_retry_epoch.is_some(),
+        "deferred archived transient pending observations have no next retry epoch"
+    );
+    Ok(ArchivedTransientLegacyPendingStats {
+        due: due.max(0) as usize,
+        deferred: deferred.max(0) as usize,
+        earliest_deferred_retry_epoch,
+    })
 }
 
 pub fn count_failed_retry_candidates(

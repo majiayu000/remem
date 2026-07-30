@@ -1,6 +1,5 @@
 use anyhow::{bail, Context, Result};
 use chrono::Local;
-use serde::Serialize;
 use std::io::Read;
 use std::path::Path;
 
@@ -9,7 +8,11 @@ use super::encrypt_state::{
     initialize_missing_database_with_key, inspect_existing_key_database, ExistingKeyDatabaseState,
 };
 use crate::cli::types::MemoryGovernanceCliAction;
+use crate::maintenance::{CleanupPlan, CleanupPolicy, CleanupReport};
 use crate::{db, memory};
+
+#[cfg(test)]
+type CleanupRetentionDays = crate::maintenance::CleanupRetentionDays;
 
 pub(in crate::cli) async fn run_dream(
     project: Option<&str>,
@@ -188,54 +191,30 @@ fn run_rekey_raw() -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-struct CleanupRetentionDays {
-    old_events: i64,
-    compressed_source_observations: i64,
-    stale_memories: i64,
-    archived_failures: i64,
-    workstream_auto_pause: i64,
-    workstream_auto_abandon: i64,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-struct CleanupPlan {
-    expired_memories_to_stale: usize,
-    inactive_workstreams_to_pause: usize,
-    long_paused_workstreams_to_abandon: usize,
-    old_events_to_delete: usize,
-    compressed_source_observations_to_delete: usize,
-    stale_memories_to_archive: usize,
-    archived_failures_to_purge: db::ArchivedFailurePurgePlan,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-struct CleanupApplied {
-    expired_memories_marked_stale: usize,
-    inactive_workstreams_paused: usize,
-    long_paused_workstreams_abandoned: usize,
-    old_events_deleted: usize,
-    compressed_source_observations_deleted: usize,
-    stale_memories_archived: usize,
-    archived_failures_purged: db::ArchivedFailurePurgePlan,
-}
-
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-struct CleanupReport {
-    dry_run: bool,
-    retention_days: CleanupRetentionDays,
-    plan: CleanupPlan,
-    applied: Option<CleanupApplied>,
-}
-
 pub(in crate::cli) fn run_cleanup(
     dry_run: bool,
     json: bool,
     archived_failures: Option<i64>,
 ) -> Result<()> {
+    let policy = CleanupPolicy::manual(archived_failures)?;
     let conn = db::open_db()?;
     let now_epoch = chrono::Utc::now().timestamp();
-    let report = build_cleanup_report(&conn, now_epoch, dry_run, archived_failures)?;
+    let report = if dry_run {
+        CleanupReport {
+            dry_run: true,
+            retention_days: policy.retention_days(),
+            plan: crate::maintenance::preview_cleanup(&conn, now_epoch, policy)?,
+            applied: None,
+        }
+    } else {
+        let execution = crate::maintenance::execute_manual_cleanup(&conn, now_epoch, policy)?;
+        CleanupReport {
+            dry_run: false,
+            retention_days: policy.retention_days(),
+            plan: execution.plan,
+            applied: Some(execution.applied),
+        }
+    };
     if json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
@@ -281,125 +260,6 @@ pub(in crate::cli) fn run_cleanup(
         }
     }
     Ok(())
-}
-
-fn build_cleanup_report(
-    conn: &rusqlite::Connection,
-    now_epoch: i64,
-    dry_run: bool,
-    archived_failure_days: Option<i64>,
-) -> Result<CleanupReport> {
-    let purge_archived_failures = archived_failure_days.is_some();
-    let archived_failure_days = archived_failure_days.unwrap_or(db::ARCHIVED_FAILURE_PURGE_DAYS);
-    let retention_days = CleanupRetentionDays {
-        old_events: memory::OLD_EVENT_RETENTION_DAYS,
-        compressed_source_observations: memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
-        stale_memories: memory::STALE_MEMORY_ARCHIVE_DAYS,
-        archived_failures: archived_failure_days,
-        workstream_auto_pause: crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
-        workstream_auto_abandon: crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
-    };
-    let plan = build_cleanup_plan(
-        conn,
-        now_epoch,
-        purge_archived_failures.then_some(archived_failure_days),
-    )?;
-    let applied = if dry_run {
-        None
-    } else {
-        Some(apply_cleanup_plan(
-            conn,
-            now_epoch,
-            purge_archived_failures.then_some(archived_failure_days),
-        )?)
-    };
-    Ok(CleanupReport {
-        dry_run,
-        retention_days,
-        plan,
-        applied,
-    })
-}
-
-fn build_cleanup_plan(
-    conn: &rusqlite::Connection,
-    now_epoch: i64,
-    archived_failure_days: Option<i64>,
-) -> Result<CleanupPlan> {
-    Ok(CleanupPlan {
-        expired_memories_to_stale: memory::lifecycle::count_expired_active_memories(
-            conn, now_epoch,
-        )?,
-        inactive_workstreams_to_pause: crate::workstream::count_auto_pause_all_inactive_at(
-            conn,
-            now_epoch,
-            crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
-        )?,
-        long_paused_workstreams_to_abandon: crate::workstream::count_auto_abandon_all_inactive_at(
-            conn,
-            now_epoch,
-            crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
-        )?,
-        old_events_to_delete: memory::count_old_events_at(
-            conn,
-            now_epoch,
-            memory::OLD_EVENT_RETENTION_DAYS,
-        )?,
-        compressed_source_observations_to_delete:
-            memory::count_compressed_source_observations_to_delete_at(
-                conn,
-                now_epoch,
-                memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
-            )?,
-        stale_memories_to_archive: memory::count_stale_memories_to_archive_at(
-            conn,
-            now_epoch,
-            memory::STALE_MEMORY_ARCHIVE_DAYS,
-        )?,
-        archived_failures_to_purge: match archived_failure_days {
-            Some(days) => db::count_archived_failures_to_purge_at(conn, now_epoch, days)?,
-            None => db::ArchivedFailurePurgePlan::default(),
-        },
-    })
-}
-
-fn apply_cleanup_plan(
-    conn: &rusqlite::Connection,
-    now_epoch: i64,
-    archived_failure_days: Option<i64>,
-) -> Result<CleanupApplied> {
-    Ok(CleanupApplied {
-        expired_memories_marked_stale: memory::lifecycle::expire_active_memories(conn, now_epoch)?,
-        inactive_workstreams_paused: crate::workstream::auto_pause_all_inactive_at(
-            conn,
-            now_epoch,
-            crate::workstream::DEFAULT_AUTO_PAUSE_DAYS,
-        )?,
-        long_paused_workstreams_abandoned: crate::workstream::auto_abandon_all_inactive_at(
-            conn,
-            now_epoch,
-            crate::workstream::DEFAULT_AUTO_ABANDON_DAYS,
-        )?,
-        old_events_deleted: memory::cleanup_old_events_at(
-            conn,
-            now_epoch,
-            memory::OLD_EVENT_RETENTION_DAYS,
-        )?,
-        compressed_source_observations_deleted: memory::cleanup_compressed_source_observations_at(
-            conn,
-            now_epoch,
-            memory::COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS,
-        )?,
-        stale_memories_archived: memory::archive_stale_memories_at(
-            conn,
-            now_epoch,
-            memory::STALE_MEMORY_ARCHIVE_DAYS,
-        )?,
-        archived_failures_purged: match archived_failure_days {
-            Some(days) => db::purge_archived_failures_at(conn, now_epoch, days)?,
-            None => db::ArchivedFailurePurgePlan::default(),
-        },
-    })
 }
 
 fn print_cleanup_plan(plan: &CleanupPlan) {
