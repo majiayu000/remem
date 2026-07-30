@@ -96,12 +96,16 @@ fn subdirectory_and_symlink_fail_discovery() {
     );
     std::fs::remove_dir_all(&dir).expect("cleanup");
 
-    let dir = fixture_dir("symlink");
-    std::fs::write(dir.join(VALID_NAME_A), record("/tmp", "Body.")).expect("write");
-    std::os::unix::fs::symlink(dir.join(VALID_NAME_A), dir.join(VALID_NAME_B)).expect("symlink");
-    let err = discover_source(&dir).expect_err("symlink must fail");
-    assert!(format!("{err:#}").contains("symlink"), "{err:#}");
-    std::fs::remove_dir_all(dir).expect("cleanup");
+    #[cfg(unix)]
+    {
+        let dir = fixture_dir("symlink");
+        std::fs::write(dir.join(VALID_NAME_A), record("/tmp", "Body.")).expect("write");
+        std::os::unix::fs::symlink(dir.join(VALID_NAME_A), dir.join(VALID_NAME_B))
+            .expect("symlink");
+        let err = discover_source(&dir).expect_err("symlink must fail");
+        assert!(format!("{err:#}").contains("symlink"), "{err:#}");
+        std::fs::remove_dir_all(dir).expect("cleanup");
+    }
 }
 
 #[test]

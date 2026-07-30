@@ -1,6 +1,6 @@
 [package]
 name = "remem-ai"
-version = "0.6.34"
+version = "0.6.35"
 edition = "2021"
 description = "Local-first coding agent memory for Claude Code and OpenAI Codex"
 license = "MIT"
@@ -48,13 +48,33 @@ libc = "0.2"
 sha2 = "0.10"
 ring = "0.17"
 fastembed = { version = "5.17.2", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls"], optional = true }
+hf-hub = { version = "0.5.0", default-features = false, features = ["ureq", "rustls-tls"], optional = true }
+ndarray = { version = "0.17.2", default-features = false, optional = true }
+ort = { version = "=2.0.0-rc.12", default-features = false, features = ["ndarray", "std", "api-24"], optional = true }
+tokenizers = { version = "0.22.2", default-features = false, features = ["onig"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemServices",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 
 [features]
 default = ["local-onnx"]
-local-onnx = ["dep:fastembed"]
+local-onnx = [
+    "dep:fastembed",
+    "dep:hf-hub",
+    "dep:ndarray",
+    "dep:ort",
+    "dep:tokenizers",
+]
 
 [profile.release]
 opt-level = "z"

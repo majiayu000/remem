@@ -1,4 +1,5 @@
 target/
+eval/provider-comparison/reference-data/
 .claude/worktrees/
 eval/locomo/__pycache__/
 eval/local/results/

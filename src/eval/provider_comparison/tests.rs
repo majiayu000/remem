@@ -16,6 +16,16 @@ fn provider_comparison_reports_required_rows_without_api_or_local_model() -> Res
         let report = run_provider_comparison_dataset_locked(options, dataset)?;
 
         assert_eq!(report.providers.len(), 3);
+        assert_eq!(
+            report.build_profile,
+            if cfg!(debug_assertions) {
+                "debug"
+            } else {
+                "release"
+            }
+        );
+        assert_eq!(report.target_os, std::env::consts::OS);
+        assert_eq!(report.target_arch, std::env::consts::ARCH);
         let feature_hash = provider_row(&report.providers, "feature-hash")
             .context("feature-hash row should exist")?;
         let local = provider_row(&report.providers, "local").context("local row should exist")?;
@@ -30,11 +40,11 @@ fn provider_comparison_reports_required_rows_without_api_or_local_model() -> Res
             Some(1)
         );
         assert!(!local.available);
-        assert!(local
-            .unavailable_reason
-            .as_deref()
-            .unwrap_or_default()
-            .contains("local embedding model"));
+        let local_reason = local.unavailable_reason.as_deref().unwrap_or_default();
+        #[cfg(feature = "local-onnx")]
+        assert!(local_reason.contains("local embedding model"));
+        #[cfg(not(feature = "local-onnx"))]
+        assert!(local_reason.contains("local semantic embedding runtime"));
         assert_eq!(
             local.model_id.as_deref(),
             Some("fastembed-intfloat-multilingual-e5-small-v1")
@@ -63,13 +73,101 @@ fn existing_slice_budget_checks_each_slice_not_only_aggregate() {
     baseline_with_abstention
         .existing_slice_details
         .insert("abstention".to_string(), category_without_metrics());
+    let mut same_with_abstention = same.clone();
+    same_with_abstention
+        .existing_slice_details
+        .insert("abstention".to_string(), category_without_metrics());
+    let mut failed_abstention = category_without_metrics();
+    failed_abstention.abstention_passed = 0;
+    let mut regressed_abstention = same.clone();
+    regressed_abstention
+        .existing_slice_details
+        .insert("abstention".to_string(), failed_abstention);
 
     assert!(existing_slices_within_budget(&baseline, &same));
     assert!(existing_slices_within_budget(
         &baseline_with_abstention,
+        &same_with_abstention
+    ));
+    assert!(!existing_slices_within_budget(
+        &baseline_with_abstention,
         &same
     ));
+    assert!(!existing_slices_within_budget(
+        &baseline_with_abstention,
+        &regressed_abstention
+    ));
     assert!(!existing_slices_within_budget(&baseline, &regressed));
+}
+
+#[test]
+fn cold_start_latency_blocks_default_flip_even_when_warm_queries_fit() {
+    let mut feature_hash = row_with_existing_slice_scores(&[("paraphrase", 0.0)]);
+    feature_hash.provider = "feature-hash";
+    feature_hash.provider_comparison_slice = Some(category_with_evidence(0.0));
+
+    let mut local = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    local.provider = "local";
+    local.provider_comparison_slice = Some(category_with_evidence(1.0));
+    local.cold_start_embedding_latency_ms = Some(COLD_START_EMBEDDING_LATENCY_BUDGET_MS + 1.0);
+
+    let mut api = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    api.provider = "api";
+
+    let decision = build_default_decision(&[feature_hash, local, api]);
+
+    assert!(!decision.change_default);
+    assert!(!decision.criteria.cold_start_embedding_latency_within_budget);
+    assert!(decision.criteria.query_embedding_latency_within_budget);
+    assert!(decision.criteria.paraphrase_slice_improves);
+    assert!(decision
+        .blockers
+        .iter()
+        .any(|blocker| blocker.contains("cold-start embedding latency")));
+}
+
+#[test]
+fn paraphrase_improvement_is_an_independent_default_flip_gate() {
+    let mut feature_hash = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    feature_hash.provider = "feature-hash";
+    feature_hash.provider_comparison_slice = Some(category_with_evidence(0.0));
+
+    let mut local = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    local.provider = "local";
+    local.provider_comparison_slice = Some(category_with_evidence(1.0));
+
+    let mut api = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    api.provider = "api";
+
+    let decision = build_default_decision(&[feature_hash, local, api]);
+
+    assert!(!decision.change_default);
+    assert!(!decision.criteria.paraphrase_slice_improves);
+    assert!(decision.criteria.provider_comparison_slice_improves);
+    assert!(decision
+        .blockers
+        .iter()
+        .any(|blocker| blocker.contains("paraphrase evidence recall")));
+}
+
+#[test]
+fn all_default_flip_quality_gates_require_both_improving_slices() {
+    let mut feature_hash = row_with_existing_slice_scores(&[("paraphrase", 0.0)]);
+    feature_hash.provider = "feature-hash";
+    feature_hash.provider_comparison_slice = Some(category_with_evidence(0.0));
+
+    let mut local = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    local.provider = "local";
+    local.provider_comparison_slice = Some(category_with_evidence(1.0));
+
+    let mut api = row_with_existing_slice_scores(&[("paraphrase", 1.0)]);
+    api.provider = "api";
+
+    let decision = build_default_decision(&[feature_hash, local, api]);
+
+    assert!(decision.change_default, "{decision:#?}");
+    assert!(decision.criteria.paraphrase_slice_improves);
+    assert!(decision.criteria.provider_comparison_slice_improves);
 }
 
 #[test]
@@ -115,13 +213,13 @@ fn optional_provider_probe_failures_become_unavailable_rows() -> Result<()> {
 }
 
 #[test]
-fn forced_provider_config_resets_provider_specific_model_fields() {
+fn forced_provider_config_resets_provider_specific_model_fields() -> Result<()> {
     let defaults = EmbeddingConfig::default();
     let mut local_base = defaults.clone();
     local_base.provider = EmbeddingProvider::Local;
     local_base.model = "multilingual-e5-small".to_string();
 
-    let api_config = forced_provider_config(&local_base, EmbeddingProvider::OpenAi);
+    let api_config = forced_provider_config(&local_base, EmbeddingProvider::OpenAi)?;
     assert_eq!(api_config.provider, EmbeddingProvider::OpenAi);
     assert_eq!(api_config.model, defaults.model);
     assert_eq!(api_config.dimensions, defaults.dimensions);
@@ -134,14 +232,19 @@ fn forced_provider_config_resets_provider_specific_model_fields() {
     };
     api_base.fallback = Some(EmbeddingProvider::FeatureHash);
 
-    let local_config = forced_provider_config(&api_base, EmbeddingProvider::Local);
+    let local_config = forced_provider_config(&api_base, EmbeddingProvider::Local)?;
     assert_eq!(local_config.provider, EmbeddingProvider::Local);
     assert_eq!(
         configured_model_id(EmbeddingProvider::Local, &local_config).as_deref(),
         Some("fastembed-intfloat-multilingual-e5-small-v1")
     );
+    assert_eq!(
+        local_config.model,
+        "fastembed-intfloat-multilingual-e5-small-v1"
+    );
     assert_eq!(local_config.dimensions, None);
     assert_eq!(local_config.fallback, None);
+    Ok(())
 }
 
 #[test]
@@ -163,12 +266,74 @@ fn available_rows_record_observed_embedding_profile() {
         },
         "observed-model".to_string(),
         3072,
+        None,
+        12.0,
         empty_run_evaluation(),
         true,
     );
 
     assert_eq!(row.model_id.as_deref(), Some("observed-model"));
+    assert_eq!(row.model_artifact_sha256, None);
     assert_eq!(row.dimensions, Some(3072));
+    assert_eq!(row.cold_start_embedding_latency_ms, Some(12.0));
+}
+
+#[test]
+fn provider_config_summary_redacts_configured_model_directory() {
+    let config = EmbeddingConfig {
+        model_dir: Some("/Users/alice/private-models".to_string()),
+        ..EmbeddingConfig::default()
+    };
+
+    let summary = ProviderConfigSummary::from_config(&config, false);
+    let json = serde_json::to_string(&summary).expect("serialize provider config summary");
+
+    assert_eq!(summary.model_dir.as_deref(), Some("<configured>"));
+    assert!(json.contains("<configured>"));
+    assert!(!json.contains("/Users/alice"));
+    assert!(!json.contains("private-models"));
+}
+
+#[test]
+fn unavailable_rows_redact_configured_model_directory_from_reason() {
+    let config = EmbeddingConfig {
+        provider: EmbeddingProvider::Local,
+        model_dir: Some("/Users/alice/private-models".to_string()),
+        ..EmbeddingConfig::default()
+    };
+    let status = EmbeddingProviderStatus {
+        configured_provider: "local".to_string(),
+        fallback_provider: None,
+        active_provider: "local".to_string(),
+        active_model_id: None,
+        active_dimensions: None,
+        degraded: true,
+        disabled: false,
+        unavailable_reason: None,
+        degradation_reason: None,
+        model_dir: None,
+    };
+    let rows = [
+        row_from_status_unavailable(
+            EmbeddingProvider::Local,
+            &config,
+            status,
+            "local model missing in /Users/alice/private-models/e5/model.onnx".to_string(),
+            false,
+        ),
+        unavailable_row(
+            EmbeddingProvider::Local,
+            &config,
+            "local model missing in /Users/alice/private-models/e5/model.onnx",
+            false,
+        ),
+    ];
+    for row in rows {
+        let json = serde_json::to_string(&row).expect("serialize unavailable provider row");
+        assert!(json.contains("<model-dir>"), "{json}");
+        assert!(!json.contains("/Users/alice"), "{json}");
+        assert!(!json.contains("private-models"), "{json}");
+    }
 }
 
 #[test]
@@ -210,6 +375,7 @@ fn row_with_existing_slice_scores(scores: &[(&str, f64)]) -> ProviderComparisonR
         active_provider: "test".to_string(),
         fallback_provider: None,
         model_id: Some("test-model".to_string()),
+        model_artifact_sha256: None,
         dimensions: Some(1),
         available: true,
         degraded: false,
@@ -226,6 +392,7 @@ fn row_with_existing_slice_scores(scores: &[(&str, f64)]) -> ProviderComparisonR
             timeout_secs: 1,
             api_calls_allowed: false,
         },
+        cold_start_embedding_latency_ms: Some(1.0),
         query_embedding_latency_p95_ms: Some(1.0),
         query_embedding_latency_samples: 1,
         overall: None,
