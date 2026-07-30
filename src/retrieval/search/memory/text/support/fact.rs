@@ -237,8 +237,13 @@ fn predicate_relation_kinds(predicate: &str) -> HashSet<super::super::super::cla
 
 fn is_concrete_binding_value(value: &str) -> bool {
     let normalized = value.trim().to_lowercase();
+    let min_len = if normalized.chars().any(super::super::super::claim::is_cjk) {
+        2
+    } else {
+        3
+    };
     normalized.chars().any(char::is_alphanumeric)
-        && normalized.chars().count() >= 3
+        && normalized.chars().count() >= min_len
         && !matches!(
             normalized.as_str(),
             "active"
@@ -256,7 +261,10 @@ fn is_concrete_binding_value(value: &str) -> bool {
 
 #[cfg(test)]
 mod predicate_tests {
-    use super::{is_relation_only_claim_term, predicate_compatible, query_binding_terms, FactRow};
+    use super::{
+        is_concrete_binding_value, is_relation_only_claim_term, predicate_compatible,
+        query_binding_terms, FactRow,
+    };
 
     #[test]
     fn binding_terms_exclude_general_title_case_query_candidates() {
@@ -276,6 +284,13 @@ mod predicate_tests {
             ),
             vec!["HarborMint"]
         );
+    }
+
+    #[test]
+    fn concrete_binding_values_allow_two_character_cjk_names_only() {
+        assert!(is_concrete_binding_value("林舟"));
+        assert!(!is_concrete_binding_value("林"));
+        assert!(!is_concrete_binding_value("Li"));
     }
 
     #[test]

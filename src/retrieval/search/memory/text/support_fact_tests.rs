@@ -132,6 +132,28 @@ fn structured_fact_scope_binds_cjk_subject_inside_unspaced_query() -> Result<()>
 }
 
 #[test]
+fn structured_fact_scope_binds_two_character_cjk_object() -> Result<()> {
+    let conn = fact_scope_fixture()?;
+    let query = "林舟验证了什么？";
+    let core_terms = crate::retrieval::query_expand::core_tokens(query);
+    let claim_terms = super::super::super::claim::claim_terms(&core_terms, Some("/repo"), &[]);
+    let scope = structured_fact_scope(
+        &conn,
+        &[5],
+        query,
+        &[],
+        &claim_terms,
+        0.6,
+        Some("/repo"),
+        crate::retrieval::temporal::FactTimeMode::Current,
+    )?;
+
+    assert_eq!(scope.bound_ids, HashSet::from([5]));
+    assert_eq!(scope.supported_ids, HashSet::from([5]));
+    Ok(())
+}
+
+#[test]
 fn structured_fact_scope_rejects_missing_cjk_qualifier() -> Result<()> {
     let conn = fact_scope_fixture()?;
     let query = "谁验证了港湾服务欧洲生产环境？";
