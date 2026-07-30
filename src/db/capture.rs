@@ -39,6 +39,12 @@ struct IdentityIds {
     session_row_id: i64,
 }
 
+#[derive(Clone, Copy)]
+enum CaptureGitBranch<'a> {
+    DetectFromCwd,
+    Precomputed(Option<&'a str>),
+}
+
 pub fn record_captured_event(
     conn: &Connection,
     input: &CaptureEventInput<'_>,
@@ -52,7 +58,16 @@ pub fn record_captured_event_with_id(
     event_id_override: Option<&str>,
 ) -> Result<CaptureEventOutcome> {
     let now = chrono::Utc::now().timestamp();
-    record_captured_event_inner(conn, input, event_id_override, now, now, None, None)
+    record_captured_event_inner(
+        conn,
+        input,
+        event_id_override,
+        now,
+        now,
+        None,
+        None,
+        CaptureGitBranch::DetectFromCwd,
+    )
 }
 
 pub fn record_captured_event_with_id_and_reference_time(
@@ -71,6 +86,7 @@ pub fn record_captured_event_with_id_and_reference_time(
         now,
         reference_time_epoch,
         None,
+        CaptureGitBranch::DetectFromCwd,
     )
 }
 
@@ -91,6 +107,7 @@ pub fn record_captured_event_with_id_and_reference_time_and_git_evidence(
         now,
         reference_time_epoch,
         Some(git_evidence),
+        CaptureGitBranch::DetectFromCwd,
     )
 }
 
@@ -109,6 +126,27 @@ pub fn record_captured_event_with_id_and_created_at(
         now,
         Some(created_at_epoch),
         None,
+        CaptureGitBranch::DetectFromCwd,
+    )
+}
+
+pub(crate) fn record_captured_event_with_id_and_created_at_and_precomputed_git_branch(
+    conn: &Connection,
+    input: &CaptureEventInput<'_>,
+    event_id_override: Option<&str>,
+    created_at_epoch: i64,
+    git_branch: Option<&str>,
+) -> Result<CaptureEventOutcome> {
+    let now = chrono::Utc::now().timestamp();
+    record_captured_event_inner(
+        conn,
+        input,
+        event_id_override,
+        created_at_epoch,
+        now,
+        Some(created_at_epoch),
+        None,
+        CaptureGitBranch::Precomputed(git_branch),
     )
 }
 
@@ -120,6 +158,7 @@ fn record_captured_event_inner(
     now: i64,
     reference_time_epoch: Option<i64>,
     git_evidence: Option<&[crate::git_util::GitCommitEvidence]>,
+    git_branch: CaptureGitBranch<'_>,
 ) -> Result<CaptureEventOutcome> {
     let inserted_at = now;
     let sanitized_content = redact_capture_content(input.content);
@@ -136,7 +175,10 @@ fn record_captured_event_inner(
             evidence
         })
         .collect::<Vec<_>>();
-    let git_branch = input.cwd.and_then(crate::db::detect_git_branch);
+    let git_branch = match git_branch {
+        CaptureGitBranch::DetectFromCwd => input.cwd.and_then(crate::db::detect_git_branch),
+        CaptureGitBranch::Precomputed(git_branch) => git_branch.map(ToString::to_string),
+    };
     with_capture_savepoint(conn, || {
         let identity = upsert_identity(conn, input, git_branch.as_deref(), now)?;
         let existing_event_row_id: Option<i64> = conn

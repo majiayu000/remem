@@ -1,11 +1,12 @@
 # Failure Lifecycle Product Spec
 
 Status: Current contract
-Date: 2026-07-02
+Date: 2026-07-28
 
 Tracking:
 - Spec/tracking issue: #681
-- Related: #426/#660 (extraction replay machinery), #374 (doctor probes), #365 (honest failure marking)
+- Related: #426/#660 (extraction replay machinery), #374 (doctor probes),
+  #365 (honest failure marking), #943 (legacy pending drain bridge)
 
 ## Problem
 
@@ -29,7 +30,9 @@ surface that #381/#383 evidence collection depends on.
 - Failures carry a class (transient vs permanent) so the system and the user
   know what is worth retrying.
 - Transient failures auto-recover through the existing replay machinery with
-  bounded, logged retries — no manual `remem worker --once` babysitting.
+  bounded, logged retries. The retired pending-observation queue is drained
+  into that current pipeline only while current extraction work is idle; it
+  is not revived as a second queue.
 - Failures that exhaust retries or are permanent leave the headline counters
   after a retention window, without losing audit history.
 - Doctor and status answer "what needs my attention now" with an actionable
@@ -49,13 +52,38 @@ surface that #381/#383 evidence collection depends on.
 
 - `remem status` / `remem doctor` split failure reporting into
   `actionable total`, `actionable 7d`, and `archived history`; FAIL/WARN
-  severity keys off actionable total (all non-archived failures), and shows
-  the oldest actionable failure age.
+  severity normally keys off actionable total (all non-archived failures), and
+  shows the oldest actionable failure age. Doctor's capture-liveness check also
+  fails for archived legacy rows that remain in the automatic bridge.
 - `remem status --json` exposes per-class counts (transient/permanent),
   attempt counts, and archived totals.
-- Worker logs every automatic retry with class, attempt number, and backoff;
-  exhaustion and archiving transitions are logged at error/info respectively
-  (U-29: no silent state changes).
+- Ordinary workers drain eligible legacy pending rows only when no current
+  extraction task is ready. A once worker may drain at most one batch per
+  process; a daemon may drain at most one batch of 25 every 60 seconds. Current
+  work appearing during preflight yields immediately; a zero-progress yield
+  does not consume that admission, while a migrated row or recorded retry
+  transition does.
+- Eligible legacy rows have a known Claude Code or Codex host and are pending,
+  expired-processing, or due transient failures. The same controlled path may
+  recover historical archived transient rows. Permanent and unknown-host rows
+  are never automatic candidates.
+- Doctor splits known-host archived transient failures into recoverable-now
+  and deferred-backoff counts. Deferred rows remain failure-visible with the
+  earliest `next_retry_epoch`, without immediate `worker --once` guidance.
+- Doctor reports archived failed legacy rows excluded from the automatic bridge
+  as `admin-required`. Operators inspect the row, preview exact recovery with
+  `remem pending recover-archived --id <id> --dry-run`, and apply by removing
+  `--dry-run`; an unknown stored host requires an explicit Claude Code or Codex
+  host on both commands.
+- A successful drain atomically records the idempotent captured event,
+  enqueues the current extraction task, marks the legacy source migrated, and
+  clears its old failure/archive state. It never automatically deletes a row.
+- Successful drain batches log their surface, outcome, and migrated count.
+  A failed replay logs surface, transient class, attempt, outcome, and capped
+  backoff, then stops the rest of that batch. The bridge does not infer a
+  row-local permanent classification from a shared replay error. Exhaustion
+  and archiving transitions on the other recovery surfaces are logged at
+  error/info respectively (U-29: no silent state changes).
 - A rejected lease-owned job transition never becomes an in-memory success.
   A missing target fails loudly and remains absent, so it contributes no
   processing or stuck row to status/doctor. For an existing wrong-owner,
@@ -89,9 +117,34 @@ surface that #381/#383 evidence collection depends on.
 ## Acceptance Criteria
 
 - Seeded transient extraction/job failure auto-recovers through replay/requeue
-  with backoff; attempts and class visible in logs and `remem status --json`.
-  Legacy pending-observation failures are archive-only unless a production
-  consumer is reintroduced.
+  with backoff; attempts and class are visible in logs and
+  `remem status --json`.
+- With no ready current extraction work, an ordinary worker selects at most 25
+  oldest eligible known-host legacy rows: pending, expired-processing, due
+  transient failed, or controlled historical archived transient rows. It
+  migrates each successful row atomically into `captured_events` plus an
+  `ObservationExtract` task and clears legacy failure/archive state.
+- A once worker runs at most one legacy drain batch per process. A daemon runs
+  at most one batch per 60 seconds. Ready current extraction work always wins,
+  so a historical backlog cannot displace current capture processing. A yield
+  before any migration leaves the admission available after current work
+  drains; a partial-progress yield consumes it and preserves the 25-row cap.
+- A process-level fault-injection test starts a worker, kills it while failed
+  legacy backlog is durable, restarts it, proves the singleton can be
+  reacquired, and asserts that backlog reaches zero.
+- A shared or transient drain error rolls back the current row, records
+  exponential backoff capped at 900 seconds, and stops the batch. Other replay
+  errors take the same conservative path instead of being guessed permanent.
+  Rows already classified permanent and unknown-host rows remain unchanged and
+  admin-visible.
+- An archived known-host transient row remains doctor-visible throughout its
+  backoff window with its earliest retry epoch, but doctor does not prescribe
+  an immediate once-worker drain until at least one row is due.
+- The bridge adds no legacy enqueue or claim API and never automatically
+  deletes legacy rows. `recover-archived` accepts only one exact failed,
+  archived legacy row; dry-run performs no writes, unknown host requires
+  `--host claude-code|codex-cli`, success atomically replays and clears
+  failure/archive state, and failure preserves the source.
 - Seeded permanent failure never auto-retries and archives after the window;
   headline counters drop while the row remains queryable until explicit
   cleanup and aggregate history remains queryable after cleanup.
@@ -127,25 +180,41 @@ surface that #381/#383 evidence collection depends on.
   the claimed task. Any non-successful exact attempt, including expired exact
   worker ownership after interruption, returns the task and range to archived
   quarantine rather than exposing default-profile work to a daemon.
-- Doctor on a store with 1000 archived + 2 fresh failures reports the 2
-  actionable failures prominently, archived count secondary, and exits with
-  the severity driven by the 2.
+- Doctor on a store with 1000 ordinary archived-history rows + 2 fresh failures
+  reports the 2 actionable failures prominently, archived count secondary, and
+  exits with the severity driven by the 2. Archived legacy rows that require
+  exact recovery are separately reported as `admin-required`.
 - Migration back-classifies existing failed extraction tasks, replay ranges,
   pending observations, and jobs (best-effort by error string, exhausted by
-  default) so long-running installs converge without manual surgery or retry
-  storms.
+  default). Historical archived transient pending rows are the deliberate
+  drain-only exception: they can re-enter only through the idle, 25-row,
+  once-per-process or once-per-60-seconds bridge, with exponential backoff and
+  current extraction priority. Non-archived transient legacy rows remain
+  actionable until known-host drain success or explicit unknown-host repair;
+  they are not silently archived by attempt count. Archived permanent or
+  unknown-host rows use exact `recover-archived`.
 - `docs/memory-lifecycle.md` or `docs/ARCHITECTURE.md` documents the failure
   lifecycle states.
 
 ## Risks
 
-- Misclassification: a permanent failure labeled transient wastes bounded
-  retries (capped, acceptable); a transient labeled permanent archives
-  something recoverable — mitigated by conservative mapping (unknown
-  defaults to transient) and by archived rows remaining recoverable through
-  explicit tooling: the locked exact worker for replay ranges and `remem
-  pending` paths for the other supported failure surfaces, including failed
-  jobs.
+- Misclassification: on current recovery surfaces, a transient labeled
+  permanent can archive something recoverable, mitigated by conservative
+  mapping and explicit recovery tooling. The legacy pending bridge makes the
+  safer opposite tradeoff: it never changes a replay failure to permanent, so
+  a persistently bad row retries no faster than the 900-second cap and remains
+  doctor-visible for `remem pending` repair.
 - Retention window hides a recurring failure that re-fires after archiving:
   mitigated because each new occurrence is a fresh actionable row; only
   stale rows age out.
+- A large historical pending backlog could create extraction work and AI cost:
+  mitigated by current-work priority, a 25-row batch, once-only behavior for
+  short-lived workers, a 60-second daemon interval, and exponential backoff.
+- Restoring an archived transient row could blur audit state: mitigated by
+  clearing failure/archive fields only in the same transaction that records
+  its idempotent current-pipeline replacement; failed attempts preserve the
+  source state.
+- An operator could recover the wrong archived legacy row or assign the wrong
+  host: mitigated by positive exact ID, mandatory dry-run guidance, rejection
+  of non-failed/non-archived targets, and mandatory explicit host for stored
+  unknown identity.
