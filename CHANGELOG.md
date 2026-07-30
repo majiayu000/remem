@@ -3,7 +3,7 @@
 ## Unreleased
 
 ### Added
-- Staged source version `0.6.33` for the GH-934 post-merge corrective:
+- Staged source version `0.6.34` for the GH-934 post-merge corrective:
   Retrieval Router plans now preserve the caller's `include_superseded`
   temporal scope across explicit, keyword-fallback, and default-fallback
   intents. Filters, freshness policy, and history-channel validity share the
