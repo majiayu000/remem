@@ -336,7 +336,7 @@ remem uses host-specific hook strategies:
 Claude Code workflow
         |
         |- SessionStart      -> Inject memories + preferences
-        |- UserPromptSubmit  -> Register session, flush stale queues
+        |- UserPromptSubmit  -> Register session, capture prompt + inject context
         |- PreToolUse(Bash)  -> Evaluate compiled preference rules
         |- PostToolUse       -> Capture tool operations (queued, <1ms)
         '- Stop              -> Summarize in background (~6ms return)
@@ -736,6 +736,11 @@ remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --includ
 remem worker --once --replay-range-id 308 --acknowledge-quarantine --include-archived --profile claude
 remem pending quarantine-extraction-ranges --id 308 --dry-run
 remem pending migrate-legacy --dry-run
+remem pending migrate-legacy
+remem pending recover-archived --id 42 --dry-run
+remem pending recover-archived --id 42
+remem pending recover-archived --id 42 --host claude-code --dry-run
+remem pending recover-archived --id 42 --host claude-code
 remem pending purge-failed --dry-run --older-than-days 7
 remem govern --action stale --dry-run --json <id>
 remem review list
@@ -787,6 +792,43 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+### Legacy pending recovery
+
+Current capture no longer writes or claims the retired
+`pending_observations` queue. When no current extraction task is ready, an
+ordinary worker can drain residual rows into the current capture/extraction
+pipeline. `remem worker --once` admits at most one batch per process; a daemon
+admits at most one batch every 60 seconds; each batch contains at most 25
+oldest eligible rows. If current extraction work appears during legacy
+preflight, a zero-progress yield keeps that admission available after current
+work drains; a partial-progress yield consumes it.
+
+Automatic candidates must have a known Claude Code or Codex host and be
+pending, expired-processing, due transient failures, or controlled historical
+archived transient failures. A success atomically records the current captured
+event and extraction task, marks the legacy row migrated, and clears its old
+failure/archive state. Any replay error rolls back current-pipeline writes,
+records exponential backoff capped at 900 seconds, and stops that batch. The
+bridge does not guess that a shared replay failure is row-local permanent.
+Doctor keeps archived known-host transient rows visible during that backoff,
+shows the earliest `next_retry_epoch`, and omits immediate `worker --once`
+guidance until a row is due.
+Rows already classified permanent and unknown-host rows remain available
+through `remem pending` for inspection and explicit admin recovery; an unknown
+host must be repaired before replay. The bridge does not restore the legacy
+enqueue/claim API and never automatically deletes rows.
+
+Archived failed legacy rows that are not eligible for the automatic bridge are
+reported by doctor as `admin-required`. Doctor lists a bounded, oldest-first
+set of those candidates directly, including each real ID, stored host, failure
+class, archive time, and concrete `remem pending recover-archived` preview and
+apply commands. A row stored with `host = unknown` is shown with both explicit
+`--host claude-code` and `--host codex-cli` variants so the operator can choose
+the correct identity. `recover-archived` rejects non-failed or non-archived
+rows, replays only the requested ID in one transaction, and clears
+failure/archive state only after the current event and extraction task commit;
+an error leaves the source row unchanged.
 
 Use the exact-ID extraction-range commands when recovering one known failure:
 preview the retry or quarantine first, apply it only after the preview succeeds,

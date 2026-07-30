@@ -717,6 +717,20 @@ pub(in crate::cli) enum PendingAction {
         #[arg(long)]
         json: bool,
     },
+    /// Recover exactly one archived failed legacy pending row.
+    RecoverArchived {
+        /// Archived failed pending observation ID to recover.
+        #[arg(long, value_parser = clap::value_parser!(i64).range(1..))]
+        id: i64,
+        /// Capture host fallback required when the archived row has a legacy/unknown host.
+        #[arg(long, value_parser = ["claude-code", "codex-cli"])]
+        host: Option<String>,
+        /// Validate the exact candidate without writing.
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// List exhausted extraction event ranges.
     ListExtractionRanges {
         /// List exactly one range by ID, including terminal replay evidence.

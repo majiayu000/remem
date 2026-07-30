@@ -224,6 +224,38 @@ fn archive_moves_old_failures_out_of_actionable_stats() -> Result<()> {
 }
 
 #[test]
+fn archive_keeps_old_transient_pending_observations_actionable() -> Result<()> {
+    let conn = setup_conn()?;
+    let now = 2_000_000;
+    let old = now - 20 * SECONDS_PER_DAY;
+    let transient_id = seed_pending_failure(&conn, old, "transient")?;
+    let permanent_id = seed_pending_failure(&conn, old, "permanent")?;
+
+    let archived = archive_eligible_failures(&conn, now, FAILURE_RETENTION_DAYS)?;
+
+    assert_eq!(archived.pending_observations, 1);
+    let transient_archived_at: Option<i64> = conn.query_row(
+        "SELECT archived_at_epoch FROM pending_observations WHERE id = ?1",
+        [transient_id],
+        |row| row.get(0),
+    )?;
+    let permanent_archived_at: Option<i64> = conn.query_row(
+        "SELECT archived_at_epoch FROM pending_observations WHERE id = ?1",
+        [permanent_id],
+        |row| row.get(0),
+    )?;
+    assert_eq!(transient_archived_at, None);
+    assert_eq!(permanent_archived_at, Some(now));
+
+    let stats = query_failure_lifecycle_stats(&conn, now)?;
+    assert_eq!(stats.pending_observation.actionable_total, 1);
+    assert_eq!(stats.pending_observation.transient, 1);
+    assert_eq!(stats.pending_observation.permanent, 0);
+    assert_eq!(stats.pending_observation.archived, 1);
+    Ok(())
+}
+
+#[test]
 fn archive_counts_quarantined_replay_ranges_in_history() -> Result<()> {
     let conn = setup_conn()?;
     let now = 2_000_000;
