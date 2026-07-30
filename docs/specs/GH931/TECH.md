@@ -48,11 +48,87 @@ The Rust runner (`src/eval/coding_bench`) needs:
 5. Report additions: failure `stage` attribution (6-stage enum), curator
    maintenance metrics, and paired task-cluster bootstrap statistics.
 
+## Completion implementation contract (pending)
+
+The implementation must preserve these fail-closed boundaries:
+
+1. Canonical identity includes `run_phase` and `matrix_namespace`.
+   `issue385-v1/official-v1` contains the only 144 claim-bearing keys; reviewed
+   smoke policy entries derive disjoint namespaces that cannot be promoted or
+   passed by the caller. All phases reserve against the same authoritative
+   ledger and cumulative cap.
+2. The production-clock tranche inventories semantic capture/candidate/
+   promotion writes plus the complete SessionStart, PromptSubmit, visibility,
+   temporal/fact, graph, usage, rerank, staleness, audit, and explain graph.
+   Normal adapters construct one system evaluation clock; the benchmark uses
+   registered `evaluation_as_of` through every layer. Its MCP router exposes
+   only `search` and `get_observations`; search has no raw fallback and detail
+   accepts only same-connection-issued `source=memory` IDs. All other tools are
+   rejected before DB access.
+   Focused tests and a static check reject `Utc::now`, `SystemTime::now`, and
+   SQLite `strftime(..., 'now')` when they can affect target-visible selection,
+   ordering, labels, or access feedback. Approval expiry, cost accounting,
+   timeouts, and supervisor monotonic duration use a separately inventoried
+   real security/operational clock and cannot consume the virtual clock.
+3. `src/eval/coding_bench.rs` declares each child only in the same compiling
+   milestone that creates it; no handoff leaves a missing module or stale enum
+   consumer. The default-branch
+   approval binds the OS-anchored host supervisor plus exact executable/profile/fixture/registration
+   hashes, tuples/namespaces, pricing and hard caps, the sole ledger-writer App
+   identity/signing key, exact update-authority and no-bypass integrity
+   rulesets, and pinned Sigstore TUF/Rekor trust material. Unknown, duplicate,
+   expired, unmerged, unsigned, wrong-writer, rolled-back, or drifted inputs
+   fail before provider/host/agent work.
+4. The ledger writer signs canonical envelopes over the prior head, sequence,
+   policy, execution identity, originator role, and event digest. After each
+   non-force remote compare-and-swap, it submits a digest-only DSSE checkpoint
+   to the Sigstore Rekor public-good log and verifies its inclusion proof,
+   signed checkpoint, consistency proof, operator/log identity, and strictly
+   increasing log index before accepting the transition or dispatch. Active
+   shard URLs and rotated keys come only from approval-pinned TUF
+   `TrustedRoot`/`SigningConfig`, never a hard-coded URL. A fresh clone trusts
+   neither its local ref nor the current GitHub tip without the verified Rekor
+   bundle chain. This rejects rollback/proof inconsistency relative to pinned
+   and previously observed checkpoints; without separately approved
+   witness/gossip evidence it does not claim detection of a malicious Rekor
+   operator's self-consistent split view. Receipts therefore fix
+   `view_assurance=operator_consistency_only`.
+5. The registered scorer-only `memory_harm_rules` closed set deterministically
+   classifies every `remem_e2e` tuple as `memory_caused`,
+   `independent_cause`, or `no_wrong_action` from sealed evidence.
+   Zero/multiple matches or incomplete traces make the gate `INSUFFICIENT`.
+6. `remem bench coding --verify-live-approval-only` validates the real
+   default-branch policy and exact plan while performing zero agent/provider
+   calls. Live smoke, official execution, and report recomputation use the same
+   no-symlink handle from a read-only content-addressed mount; the supervisor
+   hashes and executes that same handle on every invocation. The
+   fixed root-owned supervisor obtains digests from authority, performs
+   `openat(O_NOFOLLOW)`, same-fd hash/fstat, and Linux
+   `execveat(AT_EMPTY_PATH)` or a reviewed equivalent, then signs a
+   caller-unforgeable attestation; unsupported platforms fail closed. Claim-bearing
+   report recomputation uses `remem bench report --root ...`.
+7. The target has no public network. The pinned Codex main process alone may
+   reach a private loopback provider adapter with no network; that adapter
+   forwards fixed-schema frames over inherited pipes. Tool subprocesses cannot
+   reach loopback/Unix sockets, and a feasibility test blocks unsupported
+   agent/platform combinations.
+8. E2E events use stable IDs and production `ObservationExtract` tasks. One
+   normal worker drains only ObservationExtract → MemoryCandidate →
+   GraphCandidate to quiescence; exact replay, unexpected/residual/failed
+   tasks, SessionRollup/UserContext/background jobs, and native-memory effects
+   are invalid for this registered adapter.
+
+Detailed task ownership and negative-test expectations are retained in
+`specs/GH931/tasks.md` as planning evidence. That file does not replace this
+current contract or mechanically authorize implementation.
+
 ## Validation commands
 
 ```bash
 python3 eval/coding-bench/validate_schemas.py
 python3 eval/claims/claim_gate.py check
 python3 eval/claims/claim_gate.py --self-test
-cargo run -- bench coding --suite issue385-v1 --dry-run --json-out /tmp/dry.json
+cargo run -- bench coding --suite issue385-v1 --dry-run \
+  --json-out /tmp/gh931-dry.json | tee /tmp/gh931-dry.txt
+grep -q '^planned_runs: 144$' /tmp/gh931-dry.txt
 ```

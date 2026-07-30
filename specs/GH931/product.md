@@ -83,16 +83,33 @@ stale/irrelevant memory harm。
    `remem`、`curated_file` 不得作为 alias 被接受。已有旧 report 必须标注
    legacy schema 并禁止进入新 claim denominator。
 4. **B-004** v1 primary plan 必须是
-   `16 tasks × 3 conditions × 3 runs = 144` 个唯一 tuple；少一个、重复一个、
-   或以失败重试覆盖原 tuple 都不得产生 complete verdict。
+   `16 tasks × 3 conditions × 3 runs = 144` 个唯一 tuple；official canonical
+   matrix key 固定为
+   `(matrix_namespace=issue385-v1/official-v1, task_id, condition, run_index)`。
+   少一个、重复一个、或以失败重试覆盖原 tuple 都不得产生 complete verdict。
+   live smoke 必须由 reviewed approval policy 分配
+   `run_phase=smoke` 与不属于 `issue385-v1/official-v1` 的独立
+   `matrix_namespace`；caller 不能选择/覆盖 namespace，smoke key、attempt 和
+   artifact 永久不能转成 official evidence。smoke 与 official 仍共享同一个
+   authoritative cumulative-budget ledger，不得用新 ledger/ref 绕过总上限。
 5. **B-005** 同一 `(task_id, run_index)` 的三条件必须共享 fixture revision、
-   target prompt、hidden score、timeout、sandbox policy、实际执行的 remem/
-   agent-runner binary digest，以及分别记录的 target-agent、extraction、
+   target prompt、hidden score、timeout、sandbox policy、approval-pinned
+   OS/security-owner-anchored host supervisor 及实际执行的 remem/agent-runner
+   binary digest，以及分别记录的
+   target-agent、extraction、
    enrichment、review/promotion、retrieval runtime/profile hashes；condition
    memory surface 是唯一允许差异。registration 还必须固定一个 UTC
-   `evaluation_as_of` 与 virtual-clock policy；所有 paired condition 的 temporal
-   parsing、age/staleness、retrieval/rendering 必须使用该时钟，读取真实当前时间
-   或 clock drift 使 pair 无效。
+   `evaluation_as_of` 与 virtual-clock policy；所有 paired condition 的
+   capture/candidate/promotion timestamps、TTL/active-memory decisions、
+   SessionStart、PromptSubmit、MCP search/get-detail、memory expiry、temporal
+   parsing/fact validity、age/staleness、usage、graph、rerank、audit/explain 与
+   access feedback 必须显式使用同一个 evaluation clock。benchmark MCP
+   tool set 闭集只能含 `search`/`get_observations`，其他 read/write/raw/
+   workstream tools 必须不可见。能影响 target-visible
+   selection/content/order 的 Rust wall clock 或 SQLite `now` 读取、clock drift
+   都使 pair 无效。approval expiry、budget、timeout 与 supervisor duration
+   必须使用独立的真实 security/operational clock，不能被 virtual clock 延长或
+   回退。
 6. **B-006** condition 执行顺序必须由 live outcome 前锁定在
    `registration_projection` 的 condition-order seed、PRNG algorithm/version
    和完整 canonical tuple permutation 派生；planner 重算的顺序/digest 必须
@@ -149,12 +166,13 @@ stale/irrelevant memory harm。
     state；不得读取真实用户 HOME、其他 condition/run 的数据或旧 host session。
     target agent 及其 tool subprocess 只能访问 task repo，不得获得 service/
     coordinator 的 auth、DB、artifact、ledger 或 private-root 路径；允许的
-    SessionStart/MCP 内容只能经受控 broker 提供。target agent 与 tool
-    subprocess 必须 deny-all outbound network（含 DNS、loopback、cloud metadata
-    与 public Git host）；模型/provider 流量只能经 service-side protocol broker
-    发送，broker 不接受任意 URL/fetch/tool tunneling。task repo 必须是仅含
-    approved fixture 的 detached tree，不含 benchmark/gold/hidden files或
-    可用 remote URL。
+    SessionStart/MCP 内容只能经受控 broker 提供。target namespace 必须拒绝
+    DNS、public/RFC1918/metadata 与 Unix socket；仅 pinned Codex 主进程可连接
+    namespace 内无外网的 private-loopback provider adapter，adapter 再通过
+    supervisor 预建的 bounded pipe 访问 mount 外 broker。tool subprocess 连
+    loopback 也必须被 OS policy 拒绝；平台无法证明该区分时禁止 live run。
+    broker 不接受任意 URL/fetch/tool tunneling。task repo 必须是仅含 approved fixture
+    的 detached tree，不含 benchmark/gold/hidden files 或可用 remote URL。
 15. **B-015** auth/config 只能通过显式 live-run bootstrap 进入 service-private
     root；stdout/stderr 必须在任何 disk/artifact write 前流式检测与脱敏，
     credential bytes 不得以 raw、ignored、temporary、report 或 git artifact
@@ -170,9 +188,10 @@ stale/irrelevant memory harm。
     artifact 或显式 suite error，不能静默丢弃。
 18. **B-018** 每次尝试有唯一 `attempt_id`；任何 curator/treatment reviewer
     interaction、billable preparation 或 target work 开始前，trusted supervisor
-    必须先把绑定 matrix key、projection hash、budget reservation 与 timing
-    policy 的 `pre_target_work_started` transition 以 CAS append 到 anchored
-    authoritative remote ledger。human interaction start/end、frozen output
+    必须先把绑定包含 `run_phase`/`matrix_namespace` 的 canonical matrix key、
+    projection hash、budget reservation 与 timing policy 的
+    `pre_target_work_started` transition 以 CAS append 到 anchored authoritative
+    remote ledger。human interaction start/end、frozen output
     digest 与消耗由 supervisor 继续 append；abandon/crash 必须封为
     `abandoned_before_target`、保留或按批准上限保守计入人工成本并封闭该
     run index，不能从 fresh clone 重做。target process spawn 前还必须 durable
@@ -205,12 +224,44 @@ stale/irrelevant memory harm。
     tool/cache ceilings；provider/API 不能硬性执行或 broker 无法在超限前终止时
     禁止 dispatch。随后在 authoritative shared ledger durably reserve 该计算值，
     crash/abandoned reservation 仍按上限计费。
+    verify、smoke、official run 与 report 的每次 invocation 都必须由固定、
+    root-owned immutable host supervisor 从 authority 取得 expected digest 并执行
+    `openat(O_NOFOLLOW)`、same-fd hash/fstat 和 same-handle exec；runner 以同一
+    primitive 启动 agent，artifact 验证 OS/security-owner-key attestation。
+    caller path/digest、一次 path hash或“先验后开”不构成验证。
     每个 reservation 前，隔离 authority broker 必须 fresh 重验 approval 未过期、
-    merge/review 仍有效、ledger 从 genesis 的 authenticated ancestry 和保护该
-    ref 的 active non-bypassable ruleset：禁止 delete/force push、bypass actor
-    为空并覆盖管理员与 automation；任一 approval/protection/audit/history drift
-    都 fail closed。resume、换 clone/`execution_id`、并发或拆单都不得重复领取
-    预算。
+    merge/review 仍有效、ledger 从 genesis 的 authenticated ancestry、Sigstore
+    Rekor public-good transparency log 的 latest verified bundle chain，以及
+    保护 exact ref 的两个 active GitHub rulesets。update-authority ruleset 只启用
+    `Restrict updates`，并只把 approval-pinned ledger-writer GitHub App 列为
+    唯一 bypass/update actor；用户、admins、Actions 与其他 apps 都不得更新。
+    integrity ruleset 的 bypass actor 列表必须为空，并对所有 actor 独立执行
+    restrict deletion、block force push、require signed commits。两个 ruleset
+    的 ID、canonical hash、target ref 和 active state 都进入 approval；writer
+    App 对前者的 bypass 不适用于后者，也不能替代 ancestry/signature/Rekor
+    验证。任一 approval/protection/log/history drift 都 fail closed。
+    authoritative ledger 的每个 transition、reservation 和 terminal seal 只能
+    由 dedicated ledger-writer broker workload identity append；trusted
+    supervisor / isolated authority broker 的 originator role attestation 必须
+    进入 canonical payload。append envelope 必须由 writer 以 approval-pinned
+    key 做 cryptographic signature，覆盖 previous ledger head、monotonic
+    sequence、canonical payload、`approval_key`、`execution_id` 和 originator
+    role。remote CAS 成功后，writer 必须把只含 repo/ref/sequence/tip/
+    ledger digest/previous Rekor bundle digest 的 signed DSSE checkpoint 提交到
+    Sigstore Rekor public-good transparency log；active shard URL、operator/log
+    identity 和验证 key 只能从 approval-pinned TUF `TrustedRoot`/
+    `SigningConfig` 解析，禁止 hard-code rotating endpoint。Rekor inclusion
+    proof、signed checkpoint、consistency proof 与严格递增 log index 验证并
+    durable 保存前，不得接受 transition 或 dispatch。verifier 在每次状态迁移
+    和 report 时都重验 writer signature chain、Rekor bundle/consistency chain、
+    TUF trust/key rotation、identity/role permission 与两个 exact rulesets。
+    匿名/普通 Git credential、未授权/已撤销 identity、signature/bundle 缺失或
+    不匹配、相对 pinned/previous checkpoint 的 rollback/consistency failure、
+    writer allowlist/rules drift 一律 fail closed。Rekor 是相对 GitHub/writer
+    的 external operator anchor；无独立 witness/gossip 时不能声称检测一个恶意
+    log operator 为本客户端持续提供的自洽 split view，该威胁若进入 live
+    approval 必须先另行批准 witness quorum。resume、换 clone/`execution_id`、
+    并发或拆单都不得重复领取预算。
 
 ### Attribution、失败分解与 claim
 
@@ -247,18 +298,34 @@ stale/irrelevant memory harm。
     treatment；缺 treatment log 或 control 总分钟为 0 时 verdict 为
     `INSUFFICIENT`。
 27. **B-027** stop-loss 只对 48 个预注册 `remem_e2e` primary tuples 计算。
-    `memory_hurt` numerator 是 paired `no_memory` resolved=1、`remem_e2e`
-    resolved=0 且 attribution 证明 injected/cited/used memory 导致错误动作的
-    tuple；`stale_memory_followed` numerator 是 agent cited/used stale/
-    superseded item 并据此采取错误动作的 tuple；两者 denominator 都是 48。
-    任一 tuple 的 required attribution 缺失使 gate `INSUFFICIENT`，不得从分母
-    删除或填 0；任一 rate 超过 2%/1% 优先使正向 claim FAIL。
+    `registration_projection` 必须为每个 task 预注册并 hash 一个 scorer-only
+    `memory_harm_rules` 闭集；每条规则绑定 source provenance fact/content hash、
+    canonical cited/used event predicate、严格 happens-before 关系、normalized
+    tool action/patch/scorer failure fingerprint，以及在 `evaluation_as_of` 时
+    是否 stale/superseded。规则必须预注册互斥的 `memory_caused`、
+    `independent_cause`、`no_wrong_action` 分类、deterministic evaluation order
+    与 verifier algorithm/version；`no_wrong_action` 只能由完整 sealed trace
+    证明没有预注册 wrong-action predicate 命中，不能从缺日志推断。target agent
+    不得看到规则内容。
+    verifier 对每个 `remem_e2e` tuple 只能消费 ledger-sealed event/patch/scorer
+    evidence 并必须得到恰好一个 terminal classification。`memory_hurt`
+    numerator 是 paired `no_memory` resolved=1、`remem_e2e` resolved=0 且
+    classification=`memory_caused` 的 tuple；`stale_memory_followed` numerator
+    是 classification=`memory_caused` 且唯一规则标记 stale/superseded 的 tuple，
+    不以 paired `no_memory` outcome 为前提。`independent_cause` 或
+    `no_wrong_action` 可机械记为相应 numerator false。零匹配、多匹配、
+    evidence/hash/trace 缺失或无法唯一分类时必须标记
+    `ambiguous_causality` 并使 gate `INSUFFICIENT`，不得记作 false、从分母删除
+    或填 0。两者 denominator 都是 48，任一 rate 超过 2%/1% 优先使正向 claim
+    FAIL。
 28. **B-028** registry 的 immutable `registration_projection` 必须在任何使用
     official 16-task fixture 的 live smoke/official run 前锁定 dataset、所有
     executable/profile hashes、timeout、runs、metric、failure/missing rules、
-    exclusions、`evaluation_as_of`/virtual-clock policy、condition-order seed/
-    PRNG version/完整 tuple permutation、bootstrap seed/algorithm、threshold 和
-    wording templates。它只能在 CLI/docs/version-sync 完成并从 exact final
+    exclusions、official `run_phase`/`matrix_namespace`、smoke namespace
+    non-collision policy、`evaluation_as_of`/virtual-clock policy、
+    condition-order seed/PRNG version/完整 tuple permutation、bootstrap
+    seed/algorithm、threshold 和 wording templates。它只能在
+    CLI/docs/version-sync 完成并从 exact final
     implementation head reproducibly build、记录最终 remem/agent binary hashes
     后冻结；实现期 synthetic registry 不能冒充 final registration。
     run artifact 只绑定该 projection digest；后续 mutable
@@ -270,14 +337,16 @@ stale/irrelevant memory harm。
     预注册 directional/insufficient wording；PASS 时 CI 也必须逐条要求 public
     text 与 `result_bindings.allowed_wording` 精确匹配并携带对应 report link，
     不得仅因存在某个 PASS 就放行任意幅度或范围的 superiority claim。
-30. **B-030** readiness、spec approval、live-run auth/cost、security、
-    final review、merge、public wording 和 release 均保持独立人工门禁。
+30. **B-030** current-contract approval、live-run auth/cost、security、final
+    review、merge、public wording 和 release 均保持独立人工门禁。
 
 ## 验收标准
 
 - [ ] Rust/CLI 只使用新 condition ID，旧 reports 被明确隔离为 legacy。
 - [ ] 16-task × 3 primary × 3 runs 的 offline plan 精确为 144，dry-run 零
   agent/network/provider access。
+- [ ] smoke/official `matrix_namespace` 纳入 canonical key、approval、artifact
+  与 ledger record；smoke 永不封闭 official key，二者仍共享同一累计预算 ledger。
 - [ ] `remem_e2e` 真实自动链路通过正向与禁止 shortcut 的负向测试。
 - [ ] `curated_file_budgeted` protocol、freeze hash、人工成本和超预算负例通过。
 - [ ] 同 task 三 repetitions 的 control/treatment preparation 在任一 target
@@ -286,11 +355,16 @@ stale/irrelevant memory harm。
 - [ ] condition/run 隔离、timeout、cleanup、resume、attempt integrity 和
   hidden-test/deny-network 边界有 deterministic tests。
 - [ ] pre-target work、target start 与 terminal artifact digest 都由 authoritative
-  ledger CAS seal；每个 billable dispatch 前重验 authority/ruleset/ancestry 并
-  硬性执行 input/output/reasoning/cache/tool token ceilings。
+  ledger CAS seal；每次 append 与 report 都验证 dedicated writer signature、
+  originator role、TUF/Rekor bundle chain 与两个 exact rulesets；每个 billable
+  dispatch 前重验 authority/rulesets/TUF/Rekor/ancestry 并硬性执行 input/
+  output/reasoning/cache/tool token ceilings。
 - [ ] 6-stage / 12-enum failure attribution 与完整 source-to-use refs 可验证。
 - [ ] 144-run official artifacts 有 committed sanitized run-record bundle 与
   source manifest；paired report、成本、attribution 与 stop-loss 可独立复算。
+- [ ] `memory_hurt` / `stale_memory_followed` 只由预注册的 closed causal rules
+  对 sealed evidence 机械分类；任一 paired regression 的缺失、多义或未覆盖
+  因果证据使 verdict 为 `INSUFFICIENT`。
 - [ ] claim registry 在 official run 前锁定，wording 只引用 hash-bound verdict。
 - [ ] registration 在 final binary/version 完成后锁定 executable hashes、
   `evaluation_as_of`、PRNG/version 与完整 condition permutation；clock/order

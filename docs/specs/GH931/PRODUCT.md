@@ -34,6 +34,60 @@ increasing stale/irrelevant memory harm.
   forbidden wording, and a supporting report hash. `INSUFFICIENT` wording must
   be explicitly directional. Thresholds lock before the first official run.
 
+## Completion contract (implementation pending)
+
+This current contract owns the completion requirements. The longer
+`specs/GH931/` packet is supporting historical planning evidence, not a
+workflow gate or authorization source.
+
+- The claim-bearing matrix is exactly 144 keys in
+  `issue385-v1/official-v1`: 16 tasks × 3 primary conditions × 3 runs.
+  Smoke approvals must assign policy-derived, non-colliding
+  `run_phase=smoke` namespaces; smoke artifacts can never become official
+  evidence. Smoke and official work still share one cumulative-budget ledger.
+- Every paired condition uses the same registered `evaluation_as_of`. Semantic
+  capture/candidate/promotion timestamps, TTL/active-memory decisions, and all
+  SessionStart, PromptSubmit, search/detail, temporal, staleness, usage, graph,
+  rerank, and explain paths receive that clock. The benchmark MCP router
+  exposes only `search` and `get_observations`; ambient Rust/SQLite time and
+  every other MCP tool are rejected. Real security and duration clocks remain
+  separate.
+- `remem_e2e` uses the production capture → extraction → candidate/review →
+  promotion → retrieval path. Any treatment-side human work is target-blind,
+  frozen before target reveal, supervisor-timed, and included in maintenance
+  cost. Direct seed, preload, or target-aware repair is invalid.
+- Target agents and tools receive no repository authority, benchmark/scorer
+  files, or public network. Only the pinned Codex process may reach a private
+  loopback provider adapter; it has no network and forwards bounded frames over
+  supervisor-created pipes. Tool subprocesses cannot reach loopback or Unix
+  sockets. Unsupported process isolation fails closed, and hidden scoring uses
+  a separate clean tree.
+- Live execution requires a default-branch, independently reviewed approval
+  entry bound to an OS/security-owner-anchored host supervisor and exact
+  binaries, profiles, fixtures, tuples,
+  pricing, token/call/cost caps, ledger writer, two rulesets, and TUF/Rekor
+  trust material.
+  A validation-only mode must verify the real entry without starting an agent
+  or provider call. A fixed root-owned supervisor obtains expected digests from
+  authority, uses `openat(O_NOFOLLOW)` plus same-fd/same-handle execution, and
+  signs an attestation with a caller-inaccessible key for every process.
+- Ledger records are signed by a dedicated writer identity. One active GitHub
+  ruleset restricts updates to that App; a second active ruleset has no bypass
+  actors and blocks deletion/force-push while requiring signed commits. After
+  every remote compare-and-swap, the ledger tip is externally anchored outside
+  GitHub by an operator-signed Sigstore Rekor checkpoint discovered via
+  pinned TUF trust metadata. Missing, inconsistent, rolled-back, forked-ledger,
+  unsigned, wrong-writer, or ruleset/log-trust drift fails closed. Without a
+  separately approved witness quorum, this does not claim detection of a
+  malicious Rekor operator's self-consistent split view.
+- `memory_hurt` and `stale_memory_followed` are computed only by a
+  pre-registered, hashed, scorer-only closed causal classifier over sealed
+  traces. Missing or ambiguous classification makes the claim
+  `INSUFFICIENT`; it is never treated as no harm.
+- Contract review, security review, live auth/cost approval, exact public
+  wording, final review, merge, issue closure, and release remain separate
+  human decisions. No scaffold or dry-run result authorizes a public outcome.
+
 ## Acceptance mapping (v1 scaffold)
 
 | Issue acceptance item | Scaffold artifact |

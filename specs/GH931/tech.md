@@ -8,105 +8,163 @@ GH-931
 
 `specs/GH931/product.md`
 
-<!-- specrail-planned-changes
-{
-  "version": 1,
-  "issue": 931,
-  "complete": true,
-  "paths": [
-    "specs/GH931/product.md",
-    "specs/GH931/tech.md",
-    "specs/GH931/tasks.md",
-    "workflow.yaml",
-    ".gitignore",
-    "README.md",
-    "README.zh-CN.md",
-    "CHANGELOG.md",
-    "docs/ARCHITECTURE.md",
-    "docs/specs/README.md",
-    "docs/specs/GH931/PRODUCT.md",
-    "docs/specs/GH931/TECH.md",
-    "docs/specs/issue385-coding-agent-ab/PRODUCT.md",
-    "docs/specs/issue385-coding-agent-ab/TECH.md",
-    "docs/specs/public-memory-benchmark/PRODUCT.md",
-    "docs/specs/public-memory-benchmark/TECH.md",
-    "eval/coding-bench/README.md",
-    "eval/coding-bench/benchmark-charter.json",
-    "eval/coding-bench/conditions.json",
-    "eval/coding-bench/curated-file-budgeted-protocol.md",
-    "eval/coding-bench/fixtures/tasks.json",
-    "eval/coding-bench/schemas/conditions.schema.json",
-    "eval/coding-bench/schemas/curator-log.schema.json",
-    "eval/coding-bench/schemas/flagship-run.schema.json",
-    "eval/coding-bench/schemas/flagship-report.schema.json",
-    "eval/coding-bench/schemas/evidence-source-manifest.schema.json",
-    "eval/coding-bench/schemas/live-run-approval.schema.json",
-    "eval/coding-bench/examples/curator-log.example.json",
-    "eval/coding-bench/validate_schemas.py",
-    "eval/coding-bench/live-run-approvals.json",
-    "eval/coding-bench/evidence/flagship-e2e-v1/frozen-control-content.jsonl",
-    "eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl",
-    "eval/coding-bench/evidence/flagship-e2e-v1/source-manifest.json",
-    "eval/coding-bench/reports/flagship-e2e-v1.json",
-    "eval/coding-bench/reports/flagship-e2e-v1.md",
-    "eval/claims/claims-registry.schema.json",
-    "eval/claims/registry.json",
-    "eval/claims/claim_gate.py",
-    "src/eval/coding_bench.rs",
-    "src/eval/coding_bench/artifact.rs",
-    "src/eval/coding_bench/approval.rs",
-    "src/eval/coding_bench/condition.rs",
-    "src/eval/coding_bench/failure.rs",
-    "src/eval/coding_bench/fixture.rs",
-    "src/eval/coding_bench/isolation.rs",
-    "src/eval/coding_bench/run_plan.rs",
-    "src/eval/coding_bench/runner.rs",
-    "src/eval/coding_bench/score.rs",
-    "src/eval/coding_bench/tests.rs",
-    "src/eval/coding_bench/types.rs",
-    "src/cli/eval_types.rs",
-    "src/cli/actions/eval.rs",
-    "src/cli/tests_eval.rs",
-    "scripts/ci/check_public_claims.py",
-    "Cargo.toml",
-    "Cargo.lock",
-    "npm/remem/package.json",
-    "plugins/remem/.codex-plugin/plugin.json",
-    "plugins/remem/runtimes/remem-releases.json",
-    "server.json"
-  ],
-  "spec_refs": [
-    "specs/GH931/product.md",
-    "specs/GH931/tech.md",
-    "docs/specs/GH931/PRODUCT.md",
-    "docs/specs/GH931/TECH.md",
-    "docs/specs/issue385-coding-agent-ab/PRODUCT.md",
-    "docs/specs/issue385-coding-agent-ab/TECH.md",
-    "docs/specs/public-memory-benchmark/PRODUCT.md",
-    "docs/specs/public-memory-benchmark/TECH.md"
-  ]
-}
--->
+## Implementation Scope Manifest
 
-该 manifest 是 GH-931 从 spec、runner implementation 到 official
-report/wording 的累计路径边界，不要求单个 PR 触及全集。每个 linked PR 的
-路径必须是其子集，最终 closure audit 对固定 baseline 后的 linked PR union
-做精确核对。若实现证明需要新路径，先更新本 manifest 并重新取得
-spec/security approval；spec lane 不预创建或伪造 report。
+根据 current-main governance，root `specs/GH931/` packet 是历史规划证据，
+current implementation contract 以 `docs/specs/` 下对应文件为准。下面是
+GH-931 从 contract、runner 到 official report/wording 的累计 implementation
+scope reference；它不要求单个 linked PR 触及全集，也不是自动 allowlist、
+执行前置条件或授权机制。linked PR 应记录实际触及的清单子集；最终 closure
+audit 对固定 baseline 后的 linked PR union 与任何已说明的 scope deviation
+做精确核对。
 
-`workflow.yaml` 是必须先落地、单独复审的 sensitive-registry prerequisite，
-不是允许普通实现 lane 顺手改治理配置。该 prerequisite 必须把
-`specs/GH931/*`、live approval schema/registry、`approval.rs` 和 public-claim
-authority 纳入 `enforcement.sensitive_registry`；在它合入 default branch 前，
-不得实现 live authorization、运行 official matrix 或发布 claim。因为
-`workflow.yaml` 本身已是 trusted sensitive path，本 complete manifest 的
-approved-tech classification 必须为 `enforcement_sensitive=true`；当前只改
-`specs/GH931/*` 的 spec PR 则仍应声明 `enforcement_sensitive=false`。
+Contract 与用户文档：
+
+```text
+specs/GH931/product.md
+specs/GH931/tech.md
+specs/GH931/tasks.md
+README.md
+README.zh-CN.md
+CHANGELOG.md
+docs/ARCHITECTURE.md
+docs/specs/README.md
+docs/specs/GH931/PRODUCT.md
+docs/specs/GH931/TECH.md
+docs/specs/issue385-coding-agent-ab/PRODUCT.md
+docs/specs/issue385-coding-agent-ab/TECH.md
+docs/specs/public-memory-benchmark/PRODUCT.md
+docs/specs/public-memory-benchmark/TECH.md
+```
+
+Benchmark registry、fixture、schema 与 evidence：
+
+```text
+.gitignore
+eval/coding-bench/README.md
+eval/coding-bench/benchmark-charter.json
+eval/coding-bench/checkpoint-protocol.md
+eval/coding-bench/conditions.json
+eval/coding-bench/curated-file-budgeted-protocol.md
+eval/coding-bench/{evaluation-clock-scope.json,production-drain-scope.json}
+eval/coding-bench/fixtures/rekor-v2/{trusted-root.json,signing-config.json,bundle.json}
+eval/coding-bench/fixtures/tasks.json
+eval/coding-bench/schemas/checkpoint-receipt.schema.json
+eval/coding-bench/schemas/conditions.schema.json
+eval/coding-bench/schemas/curator-log.schema.json
+eval/coding-bench/schemas/flagship-run.schema.json
+eval/coding-bench/schemas/flagship-report.schema.json
+eval/coding-bench/schemas/evidence-source-manifest.schema.json
+eval/coding-bench/schemas/live-run-approval.schema.json
+eval/coding-bench/examples/checkpoint-receipt.example.json
+eval/coding-bench/examples/curator-log.example.json
+eval/coding-bench/validate_schemas.py
+eval/coding-bench/live-run-approvals.json
+eval/coding-bench/evidence/flagship-e2e-v1/frozen-control-content.jsonl
+eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl
+eval/coding-bench/evidence/flagship-e2e-v1/source-manifest.json
+eval/coding-bench/reports/flagship-e2e-v1.json
+eval/coding-bench/reports/flagship-e2e-v1.md
+eval/claims/claims-registry.schema.json
+eval/claims/registry.json
+eval/claims/claim_gate.py
+```
+
+Rust runner、production clock readers 与 CLI：
+
+```text
+src/eval/coding_bench.rs
+src/eval/coding_bench/checkpoint.rs
+src/eval/coding_bench/checkpoint/{client.rs,proof.rs,tests.rs,trust.rs}
+src/eval/coding_bench/{artifact.rs,approval.rs,condition.rs,failure.rs,fixture.rs,isolation.rs}
+src/eval/coding_bench/{provider_adapter.rs,run_plan.rs,runner.rs,score.rs,tests.rs,types.rs,verified_exec.rs}
+src/bin/remem-bench-supervisor.rs
+src/clock.rs
+src/lib.rs
+src/context.rs
+src/context/{types.rs,render.rs,render_inputs.rs,query.rs,audit.rs,fact_labels.rs}
+src/context/{hybrid_context.rs,prompt_submit.rs}
+src/context/render/eval.rs
+src/mcp/server.rs
+src/mcp/{mod.rs,types.rs}
+src/mcp/server/{benchmark.rs,errors.rs,runtime.rs,search_tools.rs,context_tools.rs}
+src/memory/{types.rs,dedup.rs,graph_contract.rs,lifecycle.rs}
+src/memory/dedup.rs
+src/memory/dedup/{access.rs,funnel.rs,hash.rs}
+src/memory/graph_contract.rs
+src/memory/edge.rs
+src/memory/lifecycle.rs
+src/memory/procedure/{mod.rs,trace_store.rs}
+src/memory/service/types.rs
+src/memory/store/write.rs
+src/memory_candidate.rs
+src/memory_candidate/{apply.rs,review.rs,review/approval.rs}
+src/graph_candidate/{mod.rs,review.rs,source.rs,conflict_bridge.rs,tests.rs}
+src/graph_candidate/tests/review_regressions.rs
+src/db/{capture.rs,capture/extraction_task.rs,extraction/enqueue.rs}
+src/extraction_worker.rs
+src/observation_extract.rs
+src/memory/{lesson.rs,preference.rs}
+src/memory/{preference/query.rs,preference/render.rs,service/search.rs,store/read.rs}
+src/db/observation.rs
+src/retrieval/search.rs
+src/retrieval/search/memory.rs
+src/retrieval/search/memory/runner.rs
+src/retrieval/search/memory/listing.rs
+src/retrieval/search/memory/text.rs
+src/retrieval/search/memory/text/graph.rs
+src/retrieval/search/memory/source_anchor.rs
+src/retrieval/search/memory/usage_rank.rs
+src/retrieval/search_multihop.rs
+src/retrieval/search_multihop/search.rs
+src/retrieval/search_multihop/expand.rs
+src/retrieval/rerank.rs
+src/retrieval/vector.rs
+src/retrieval/vector_candidates.rs
+src/retrieval/memory_search.rs
+src/retrieval/memory_search/fts.rs
+src/retrieval/memory_search/like.rs
+src/retrieval/entity.rs
+src/retrieval/entity/search.rs
+src/retrieval/entity/search/runner.rs
+src/retrieval/entity/search/lookup.rs
+src/retrieval/entity/search/sql.rs
+src/retrieval/graph/query.rs
+src/retrieval/graph/traverse.rs
+src/retrieval/temporal.rs
+src/retrieval/temporal/parse.rs
+src/retrieval/temporal/fact_keys.rs
+src/retrieval/temporal/fact_labels.rs
+src/retrieval/temporal/search.rs
+src/cli/eval_types.rs
+src/cli/actions/eval.rs
+src/cli/tests_eval.rs
+```
+
+Public-claim CI 与 version surfaces：
+
+```text
+scripts/ci/check_public_claims.py
+scripts/ci/check_evaluation_clock_scope.py
+Cargo.toml
+Cargo.lock
+npm/remem/package.json
+plugins/remem/.codex-plugin/plugin.json
+plugins/remem/runtimes/remem-releases.json
+server.json
+```
+
+若实现证明需要新路径，在 linked PR 中说明原因，并同步 current
+`docs/specs/GH931/` contract；本 historical packet 可随之刷新以保留追踪性，
+但不机械阻止实现。maintainer 仍需人工 review exact scope/diff；涉及 live
+credential、protected ledger、network isolation、public claim authority 或
+security boundary 时还必须取得独立 security review。spec lane 不预创建或
+伪造 report，也不授权 live run、public wording 或 merge。
 
 ## Codebase Context
 
 以下事实已在
-`origin/main@5627a74942a41f51bdc03518fce726dbf1b46098` 核对：
+`origin/main@441d7da1325ab3b9eea39c10753d37131c062dbc` 核对：
 
 | Area | Files | Current behavior | Why relevant |
 | --- | --- | --- | --- |
@@ -120,7 +178,7 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 | Context output | `src/context/render/eval.rs`, `src/context.rs` | `session_start_eval_snapshot` 可在 isolated DB 上渲染生产 SessionStart 结果。 | E2E retrieval 出口；不得追加 benchmark gold details。 |
 | Curator scaffold | `curated-file-budgeted-protocol.md`, curator schema/example | target-blind protocol 与 log shape 已定义，runner 未验证 freeze hash/预算。 | 接入真实 budgeted primary condition。 |
 | Claim gate | `eval/claims/{registry.json,claim_gate.py}` | 三个 claim 均 `INSUFFICIENT`，registry `locked=false`，无 supporting report。 | 首个 official run 前锁定；无证据继续 fail closed。 |
-| Public claim CI | `scripts/ci/check_public_claims.py` | 只基于旧 public baseline gate 扫 public surfaces。 | 接入 GH-931 hash-bound verdict，属于 enforcement-sensitive 路径。 |
+| Public claim CI | `scripts/ci/check_public_claims.py` | 只基于旧 public baseline gate 扫 public surfaces。 | 接入 GH-931 hash-bound verdict，属于 security-sensitive manual review 路径。 |
 | Live authorization | `eval/coding-bench/` | 当前没有 default-branch approval registry、approval schema 或跨命令 usage ledger。 | caller-provided ID/caps 不是授权；B-020/B-030 要求 trusted registry 与累计预算。 |
 
 ## 设计方案
@@ -137,25 +195,68 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
 - 已提交的 `baseline.json` / `fix-remem-smoke.json` 保持 immutable historical
   artifact。loader 根据 schema/version 明确标记 legacy，禁止把旧 ID 翻译后
   混入 flagship report。
+- T2 必须在一个始终可编译的 milestone 中同步迁移 `types` 与所有 exhaustive
+  `artifact/condition/runner/tests` consumer，再按依赖顺序移交后续 owner；
+  不允许留下“等下一 task 补 match arm”的红 build。
 - `conditions.json` 的 `runner_status` 随实现从 pending/scaffold 更新为
   `implemented`；validator 对 Rust/registry ID drift fail closed。
 
 ### 2. Isolation、fixture 和 live boundary（B-005-B-006、B-014-B-020）
 
-- `src/eval/coding_bench.rs` 是现有 child-module authority；本 tranche 由 T3
-  在该 parent 中显式声明并测试 `mod approval;`，再由 runner 调用。parent 与
-  `approval.rs` 同时位于 complete planned manifest/single-writer ownership，
-  禁止通过未声明 parent edit 或平行 duplicate module 绕过 wiring。
-- `CodingBenchRunIdentity` 绑定 task、condition、run index、attempt、
+- `src/eval/coding_bench.rs` 是现有 child-module authority；T3 原子创建并声明
+  `approval`、`provider_adapter`、`verified_exec`，T3A 顺序接收 parent 后再
+  原子创建并声明 `checkpoint`。每个 handoff commit 都通过 `cargo check`；
+  T6 才拥有 runner/integration-test wiring，禁止 duplicate module 绕过接线。
+- `CodingBenchRunIdentity` 绑定 policy-derived `run_phase`、
+  `matrix_namespace`、task、condition、run index、attempt、
   fixture/prompt/score/timeout/sandbox hash、registered condition-order position、
-  seed/PRNG/version/permutation digest，以及从 approved
-  commit reproducibly build 后以 absolute path 调用的 remem binary digest、
+  seed/PRNG/version/permutation digest。official namespace 固定为
+  `issue385-v1/official-v1`；smoke namespace 由 reviewed approval entry 分配，
+  caller 不得传入或覆盖，且永远不能被 report builder 解释为 official。
+  identity 还绑定 OS/security-owner-anchored host supervisor identity，以及从 approved commit
+  reproducibly build 后放入 read-only content-addressed mount 的 remem digest、
   target agent executable/version/profile digest，以及分别 canonicalized 的
   extraction provider/model/prompt/reasoning、enrichment、review/promotion 和
   retrieval config/policy hashes；这些 pair fields 不得折叠为一个 `model`。
   identity 还绑定 registration 的 UTC `evaluation_as_of` 与 virtual-clock policy
   hash；harness 将同一时钟注入 production temporal parser、age/staleness、
-  retrieval/rendering 与 target environment，禁止读取 wall-clock “now”。
+  retrieval/rendering 与 target environment，禁止语义路径读取 wall-clock
+  “now”。
+- T4 新增 immutable `src/clock.rs::EvaluationClock`，并维护
+  `eval/coding-bench/evaluation-clock-scope.json`。普通 SessionStart/
+  PromptSubmit/MCP outer adapter 每次 request 只 snapshot 一次 system time；
+  benchmark coordinator 只从 validated run identity 构造固定
+  `evaluation_as_of`。clock 不进入 target 可控参数、env、process/thread global
+  或 DB global。inner API 必须显式传 `&EvaluationClock`/bound epoch，不能提供
+  隐式 system default。
+- SessionStart 传播链固定为
+  `condition -> context::session_start_eval_snapshot_at -> render/eval ->
+  render -> render_inputs -> query -> hybrid/fact/lesson/preference -> audit`；
+  `LoadedContext.render_reference_epoch` 是所有 render section 与 audit 的唯一
+  reference time。MCP 链固定为
+  `MemoryServer(clock) -> search/context tools -> memory service ->
+  search/list/multihop -> temporal/fact/entity/vector/graph/usage/source-anchor/
+  rerank/explain`。`get_observations` 的 fact validity 与 access feedback 也必须
+  消费同一值，因为 `last_accessed_epoch` 会影响后续 usage ranking。
+- 所有 benchmark-reachable memory expiry/filter SQL 使用 bound evaluation epoch，
+  禁止 `strftime(..., 'now')`；relative date/current-year、current fact validity、
+  lesson stale-after、summary age、preference expiry、graph validity、usage
+  recency、source-anchor demotion、rerank 与 explain staleness 都有跨层固定时钟
+  tests。`check_evaluation_clock_scope.py` 同时拒绝语义函数中的 `Utc::now()`、
+  `Local::now()`、`SystemTime::now()` 与 SQLite `now`，并验证 machine-readable
+  inventory 与 planned paths 一致。
+- production capture 的 semantic event time、candidate/dedup、promotion、
+  TTL/validity 与 graph writes 同样显式接收该 clock；queue lease/retry 和纯
+  operation audit 保留 real clock，但必须证明不能改变最终 content/order。
+- benchmark 使用独立 closed MCP router，`tools/list` 只有 `search` 与
+  `get_observations`；search 禁止 raw fallback，detail 只接受本连接 search
+  签发的 `source=memory` IDs。其他 tool/alias/field 在 DB access 前拒绝。
+- 真实 approval expiry、ruleset/TUF freshness、budget、timeout、supervisor
+  `CLOCK_MONOTONIC` duration、纯 operation-log/poisoning/embedding-write timestamp
+  属于独立 security/operational clock，不能由 `evaluation_as_of` 控制，也不能
+  影响 target-visible selection/content/order。当前 evaluation snapshot 以
+  `invocation=None` 绕过 injection gate；scope inventory 必须锁定这个调用事实，
+  后续若 benchmark 接入 gate，先将其 output-affecting clock 纳入 T4。
 - 每次 run 创建新的 repo、HOME、CODEX_HOME、REMEM_DATA_DIR 和 artifact
   root；env 从 allowlist 构造。真实 HOME/session/config/memory path 不挂载。
 - provider/host/GitHub authority auth 只由 coordinator/service 的独立 OS
@@ -163,14 +264,16 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   repo，不继承 service env，也不能读 coordinator 的 auth、REMEM_DATA_DIR、
   ledger、artifact 或 private-root path；SessionStart/MCP 只通过最小权限 broker
   返回已审计 context，不暴露 DB/file socket。
-- target agent/tool namespace 使用 deny-all egress policy，显式覆盖 DNS、
-  loopback、RFC1918/cloud metadata 和 public Git hosts；它只可连接本地
-  service-side model protocol broker。broker 只转发固定 provider RPC schema，
-  拒绝 URL、socket、fetch 与 tool-tunneling payload。task repo 从 approved
-  fixture materialize 为 detached tree，删除 remotes，且不含主仓库的
-  `eval/coding-bench`、target prompts、gold memories 或 hidden scorer files。
-  network canary 与尝试 fetch public repository 的 negative test 必须在 agent
-  和每类 tool subprocess 都失败。
+- target namespace 拒绝 DNS、public/RFC1918/metadata 与 Unix sockets。
+  当前 pinned Codex CLI 仍使用 HTTP `model_provider`，因此 T3 提供 namespace
+  内 private-loopback adapter：仅 Codex 主进程可连接，adapter 自身无 network，
+  只经 sandbox 前创建的 bounded inherited pipes 与 mount 外 provider broker
+  交换 fixed-schema RPC。tool subprocess 的 loopback/public/Unix-socket 均由
+  OS policy 拒绝；adapter 拒绝 URL/fetch/tool-tunneling。capability test 若不能
+  同时证明 model call 可用和 child-tool 零网络，则该平台/agent version 不可
+  live。task repo 是无 remote 的 detached fixture tree，且不含 public harness、
+  prompt/gold/hidden scorer files；agent browser/public-fetch 与各类 tool canary
+  必须失败。
 - supervisor 从 client/agent/provider pipes 读取 bounded frames，先以 exact
   secret fingerprints + structured credential patterns 做 streaming
   detect/redact，确认 sanitized 后才允许写 artifact。命中 secret 时原 frame
@@ -186,9 +289,11 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   tests。
 - artifact 采用 temp-write + fsync + atomic rename；`attempt_id` 唯一，完成
   文件不覆盖。任何 human curator/reviewer、billable preparation 或 target work
-  前，supervisor 先将 `(matrix_key,attempt_id,projection_hash,budget_receipt,
-  timing_policy)` 的 `pre_target_work_started` CAS append 到 anchored protected
-  remote ledger。human interaction 的 supervisor-owned `CLOCK_MONOTONIC`
+  前，supervisor 先将
+  `(run_phase,matrix_namespace,matrix_key,attempt_id,projection_hash,
+  budget_receipt,timing_policy)` 的 `pre_target_work_started` CAS append 到
+  anchored protected remote ledger。human interaction 的 supervisor-owned
+  `CLOCK_MONOTONIC`
   start/end、actor assignment、input/output digest 与 frozen surface digest
   继续 append；caller/curator 不能提交 elapsed。crash/abandon recovery 追加
   `abandoned_before_target`，按已观察 duration 或 reviewed interaction ceiling
@@ -208,53 +313,105 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   `approval_key = sha256(repo_id || approval_pr_number ||
   canonical_policy_digest)`，字段在 review 前可知且不自引用。policy 绑定
   approved/expires 时间、exact executable/profile/fixture/
-  `registration_projection`/timeout/sandbox hashes、allowed tuples、
-  credential-bootstrap ref（无 secret bytes）和累计 agent/LLM/cost hard caps。
+  `registration_projection`/timeout/sandbox hashes、policy-derived
+  `run_phase`/`matrix_namespace`、allowed tuples、credential-bootstrap ref
+  （无 secret bytes）和累计 agent/LLM/cost hard caps。policy 还绑定 exact
+  ledger ref/genesis、ledger-writer GitHub App installation/repository identity、
+  signature algorithm/key ID/public-key digest、update-authority 与 no-bypass
+  integrity 两个 ruleset 的 ID/hash，以及 approval-pinned Sigstore TUF
+  `TrustedRoot`/`SigningConfig` digests、Rekor operator/log IDs、accepted API/
+  DSSE entry versions 和 minimum reviewed Rekor bundle/checkpoint。
   policy 还内嵌 immutable canonical pricing snapshot：`currency=USD`、provider/
   model SKU、effective timestamp、input/output/cache/tool-token 单价、每个
   call-kind 的最大 input/output/cache/tool tokens 与 decimal 向上取整 scale。
   currency conversion 不允许；SKU/price 变化必须新建 reviewed policy。
 - verifier 启动一个隔离的 authority broker：仅该 broker 可读取最小
-  repo-scoped GitHub credential 并访问 approval/ruleset/ledger APIs；它不得读取 provider/host
-  credential、启动 agent 或执行 benchmark。它 fresh 验证 approval PR 的
+  repo-scoped GitHub credential 并访问 approval/ruleset/ledger read APIs；它不得读取
+  provider/host/ledger-writer credential、启动 agent 或执行 benchmark。它 fresh
+  验证 approval PR 的
   approved head tree 中 registry blob 的 canonical policy digest 与 key 匹配、
   PR 已 merge 到 default branch、
   APPROVED review 未 dismissed 且 reviewer association 符合 maintainer。
   provider/host auth 由另一个 principal 独立 bootstrap；authority broker 的
   credential 不进入该 principal、agent 或 artifact，但 broker 保持隔离存活，
   并在每个 reservation/transition/terminal seal 前重新验证 approval expiry、
-  merge/review、registry blob、ruleset/audit 与 ledger ancestry。GitHub
-  unavailable、过期、drift、hash/tuple/cap mismatch 均 fail closed。
+  merge/review、registry blob、两个 ruleset、TUF trust、Rekor bundle chain 与
+  ledger ancestry。GitHub/Rekor unavailable、过期、drift、hash/tuple/cap mismatch
+  均 fail closed。
+- ledger append 由另一个隔离 OS principal 上的 dedicated ledger-writer broker
+  独占。其 reviewed GitHub App installation/repository/ref identity、record
+  signature algorithm 与 public key ID 固定在 approval policy；短期 credential
+  不能被 authority broker、provider principal、runner、agent 或 tool 读取。
+  exact `refs/heads/remem-live-ledger` 同时受两个 active ruleset 保护：
+  update-authority ruleset 只启用 `Restrict updates`，并只把该 App 列为唯一
+  bypass actor；用户、admins、Actions、其他 apps 和通用 automation 都不在
+  bypass list。integrity ruleset 的 bypass list 为空，并对所有 actor restrict
+  deletion、block force push、require signed commits。writer App 对前者的
+  bypass 不能绕过后者，也不能作为 ledger correctness 证据；authority broker
+  仍拒绝任何 non-fast-forward、Rekor chain 不连续或 signature 不符的 history。
+  每个 append commit 包含 canonical signed
+  record envelope（repo/ref、schema version、monotonic sequence、parent OID、
+  previous record digest、approval/policy digest、event payload digest、
+  writer key ID/signature）；authority broker 必须从 pinned public key 验证完整
+  signature/digest chain，才可接受 reservation、transition、terminal seal 或
+  report input。
 - cumulative budget 的 trust root 是 repo-scoped protected
-  `refs/heads/remem-live-ledger`，不是 clone-local git common dir。每次 billable
-  host/LLM call 前，service broker 不接受 caller cost，而以 reviewed
-  call-kind token ceilings × pinned rates 做 checked-decimal conservative
-  calculation，并按 policy scale 向上取整。unknown SKU/rate、token ceiling
-  缺失、overflow 或 price snapshot drift 均 fail closed。broker 在 dispatch
-  前用 canonical provider tokenizer 验证 serialized input/cache/tool payload，
-  并把 output/reasoning/tool/cache ceiling 写入 provider 的 hard-limit fields；
-  API/SKU 不支持硬限制或无法在超限前中断时 fail closed。runner 随后要求
-  authority broker fresh 重验 approval/ruleset/audit/genesis ancestry，并以当前
+  `refs/heads/remem-live-ledger` 与 GitHub 外部的 Sigstore Rekor public-good
+  log，不是 clone-local ref/reflog、GitHub organization audit log、git common
+  dir 或自建但未 provision 的 service。T3A 的
+  `checkpoint-protocol.md`/schema/example/`checkpoint.rs` 固定 digest-only
+  signed DSSE payload、Sigstore bundle、inclusion/consistency proof、TUF key/
+  shard rotation、retry/recovery 与 privacy contract；receipt 固定
+  `view_assurance=operator_consistency_only`，且只提交
+  `(repo,ref,sequence,tip,ledger_digest,previous_bundle_digest)`，不提交 artifact、
+  prompt、credential 或 private evidence。
+  active Rekor shard URL 与 operator/log public keys 必须从 approval-pinned TUF
+  `TrustedRoot`/`SigningConfig` 验证后发现，禁止硬编码会轮换的 endpoint。每个
+  Git CAS 后取得的 bundle 必须验证 entry payload/signature、inclusion proof、
+  signed tree checkpoint、从 reviewed minimum checkpoint 的 consistency proof
+  和相对 previous bundle 严格递增的 log index；其他 Rekor entries 可占用中间
+  index，因此不要求全局 index 连续。CAS 成功而提交中断时，recovery 只能为该
+  exact already-signed tip 补交/定位同 digest entry，未取得 verified durable
+  bundle 前不得 dispatch；duplicate/forked sequence 或不同 payload 一律失败。
+  authority broker 在 startup 及每个 reservation/attempt transition/terminal
+  seal 前 fresh fetch remote ref、两个 rulesets、TUF metadata 与 latest Rekor
+  bundle，验证 current tip 是 genesis、minimum reviewed tip 和 latest anchored
+  tip 的完整后代，并验证从 anchored tip 到 current tip 的每个 record
+  signature/sequence/parent/digest。Rekor/TUF unavailable、bundle/proof 缺失、
+  checkpoint rollback/consistency-proof mismatch、tip 回退/分叉、ruleset/writer/signature/
+  ancestry mismatch 均 fail closed；fresh clone 不能以 clone-local 或仅当前
+  GitHub tip 重置历史。
+  上述保证只覆盖相对 approval-pinned/previous-observed checkpoint 的 rollback、
+  proof inconsistency 与 ledger fork；Rekor 是 external operator anchor，不是
+  independent witness。未另行批准 witness/gossip quorum 时，不声称检测恶意
+  log operator 向本客户端持续提供的自洽 split view。
+- 每次 billable host/LLM call 前，service broker 不接受 caller cost，而以
+  reviewed call-kind token ceilings × pinned rates 做 checked-decimal
+  conservative calculation，并按 policy scale 向上取整。unknown SKU/rate、
+  token ceiling 缺失、overflow 或 price snapshot drift 均 fail closed。broker
+  在 dispatch 前用 canonical provider tokenizer 验证 serialized
+  input/cache/tool payload，并把 output/reasoning/tool/cache ceiling 写入
+  provider 的 hard-limit fields；API/SKU 不支持硬限制或无法在超限前中断时
+  fail closed。runner 随后要求 authority broker 完成上述 fresh remote
+  rulesets/TUF/Rekor/ancestry/signature validation，再请求 ledger-writer broker
+  以当前
   remote ledger tip 为 parent 创建包含
   `(approval_key,reservation_id,call_kind,token_ceilings,pricing_snapshot_hash,
   computed_worst_case_cost,
   execution_id,tuple,attempt)` 的 append-only reservation commit，并以
   non-force fast-forward ref update 作为 compare-and-swap；并发 sibling update
   失败后必须 refetch/recompute。reservation durable 后才允许 call；完成后追加
-  settlement commit；settlement 记录 broker-metered actual tokens/cost 并验证
-  每类 usage 不超过 ceiling；超限为 security/cost breach，停止后续 calls，但
-  crash/timeout/abandoned reservation 永久按 computed worst-case 计入累计值。
+  settlement commit。每次 remote CAS 成功后，writer 必须提交上述 Rekor DSSE
+  checkpoint 并取得 verified durable Sigstore bundle；bundle durability 未确认
+  时不得 dispatch 或接受 transition。
+  settlement 记录 broker-metered actual
+  tokens/cost 并验证每类 usage 不超过 ceiling；超限为 security/cost breach，
+  停止后续 calls，但 crash/timeout/abandoned reservation 永久按 computed
+  worst-case 计入累计值。
   ledger ref 缺失、non-FF/force history、reconciliation drift、
   reservation reuse 或预算耗尽均 fail closed。resume、新 clone/
   `execution_id`、并发和拆单共享同一 remote total；只有新的 independently
-  reviewed policy 可增加预算。approval policy 固定 `ledger_genesis_oid` 与
-  expected GitHub ruleset ID/hash；每次 reservation/attempt transition/terminal
-  seal 必须通过 GitHub API
-  fresh 验证 ruleset active、禁止 ref deletion/force push、无 bypass actors、
-  覆盖 admins/apps/automation，并验证 current tip 是 genesis 的完整后代。
-  ruleset/audit evidence 缺失、曾被禁用或 protection hash 漂移均 fail closed，
-  从而使 fresh clone 不能只信任一个被回退的当前 tip。ledger credential 只在
-  authority broker 中可见，provider principal、agent 与 tool 永远不可见。
+  reviewed policy 可增加预算。
 
 ### 3. `remem_e2e` production adapter（B-008-B-010、B-017、B-021-B-022）
 
@@ -265,10 +422,13 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   `record_captured_event*` 写 isolated project/session；summary 与
   `memories[].text` 只供 post-run verifier，缺 raw answer evidence 的 task
   schema invalid。
-- 按 production Stop/rollup contract enqueue `extraction_tasks`，使用真实 worker
-  processing path和配置的 LLM provider做 extraction、candidate 与
-  review/promotion policy。bounded drain 超时或任务失败即记录对应 stage，不
-  降级。
+- 每个 raw event 提供 stable event ID，并以 production
+  `CaptureEventInput(task_kind=ObservationExtract)` enqueue；禁止
+  `run_claimed_exact`（它会抑制 candidate follow-up）。isolated DB 上单个 normal
+  `run_next` worker 按 registered
+  ObservationExtract→MemoryCandidate→GraphCandidate closure drain 至
+  quiescent；unexpected/failed/residual/capped task 直接失败，不启动 SessionRollup/
+  UserContext/background job 或 native-memory side effect。
 - E2E condition 编译期/测试期禁止调用
   `save_seed_memory`、`render_seeded_remem_context` 和手工 memory save surface。
   diagnostic `RememPreloaded` 保留现有函数但名字、artifact 与 prompt 都明确
@@ -332,14 +492,16 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   搜索最早有充分 causal evidence 的 stage，恰好输出一个 root 6-stage/
   12-enum code；后续 missing/ignored signals 放入 `consequences`，不改变 root。
   无充分 root evidence 时 suite error 为 `unclassified`，不得按检查顺序猜测。
-- flagship run schema 固定 run identity、registered clock/order fields、
+- flagship run schema 固定 `run_phase`/`matrix_namespace` canonical matrix key、
+  run identity、registered clock/order fields、
   `pre_target_work_started`/human interaction/target/terminal ledger receipts、
   condition surface、runtime/score result、stage failure、tokens/wall time、
   supervisor-timed curator/treatment cost、closed
   `treatment_review_input_projection` + input/output/freeze hashes、
-  frozen-control content digest、memory-harm 和 attribution DAG/hash；unknown
-  fields fail closed。T2 独占 schema ownership，T4 只实现 condition producer，
-  T6 验证/汇总，不得靠未授权 schema edit 接线。
+  frozen-control content digest、`memory_harm_rules` digest、closed causal
+  classifier result/reason 和 attribution DAG/hash；unknown fields fail closed。
+  T2 独占 schema ownership，T4 只实现 condition producer，T6 验证/汇总，
+  不得靠未授权 schema edit 接线。
 - official evidence writer 将每个 scanner-passed sanitized attempt/run 追加到
   `eval/coding-bench/evidence/flagship-e2e-v1/run-records.jsonl`，并生成
   `source-manifest.json`：记录 144 个 matrix keys、全部 attempt hashes、schema/
@@ -368,7 +530,9 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   T7 完成 CLI、docs、version sync 且从 exact final implementation head
   reproducibly build/记录最终 remem 与 agent executable hashes 后，才独占
   `registry.json` 并在任何 official-fixture live smoke 前锁定
-  dataset/version/hash、condition IDs、pair fields、timeout/runs、estimand、
+  dataset/version/hash、condition IDs、official
+  `run_phase=official`/`matrix_namespace=issue385-v1/official-v1`、smoke
+  namespace non-collision policy、pair fields、timeout/runs、estimand、
   failure/missing/stop-loss denominator、exclusions、UTC
   `evaluation_as_of`/virtual-clock policy、condition-order seed/PRNG algorithm+
   version/完整 canonical tuple permutation+digest、bootstrap algorithm/version/
@@ -376,9 +540,22 @@ approved-tech classification 必须为 `enforcement_sensitive=true`；当前只�
   order；run 只绑定 projection digest。gate 后只更新
   result bindings 的 PASS/FAIL/INSUFFICIENT、report hash 和 exact
   maintainer-approved wording，不改变 projection digest。
-- stop-loss verifier 固定扫描 48 个 `remem_e2e` tuples；按 product B-027 的
-  paired causal predicates计算 numerator，denominator 恒为 48。任何 required
-  attribution missing 都使 gate insufficient，不能删除 tuple 或当 0。
+- stop-loss verifier 固定扫描 48 个 `remem_e2e` tuples。registration 为每个
+  task hash-bind scorer-only `memory_harm_rules` 闭集及 verifier
+  algorithm/version；每条规则包含 source provenance fact/content hash、
+  canonical cited/used event predicate、严格 happens-before、normalized tool
+  action/patch/scorer-failure fingerprint、`evaluation_as_of` 下的
+  stale/superseded bit 与 deterministic evaluation order，并分类为互斥的
+  `memory_caused`、`independent_cause` 或 `no_wrong_action`。
+  `no_wrong_action` 只能由完整 sealed trace 证明没有 wrong-action predicate
+  命中。target repo/agent 不得读取规则。verifier 对每个 tuple 只消费
+  ledger-sealed event、patch、scorer 与 attribution DAG evidence，并要求恰好
+  一个 terminal classification：paired `no_memory resolved=1` /
+  `remem_e2e resolved=0` 且 `memory_caused` 才计入 `memory_hurt`；任何
+  `memory_caused` 的 stale/superseded rule 都计入
+  `stale_memory_followed`，不依赖 no-memory outcome。零/多匹配、
+  hash/evidence/trace 缺失或无法唯一分类输出 `ambiguous_causality` 并使 gate
+  `INSUFFICIENT`。两个 denominator 恒为 48，不能删除 tuple 或填 0。
 - claim gate 先检查 matrix/artifact/stop-loss，再检查 effect/CI/cost。report
   hash、registry supporting report 与 Markdown/JSON 必须一致。
 - `check_public_claims.py` 在原 baseline policy基础上读取 GH-931 result
@@ -396,14 +573,35 @@ remem bench coding --suite issue385-v1 --matrix primary --dry-run \
 remem bench coding --suite issue385-v1 --matrix primary \
   --approval-key <key> --confirm-live-run --max-agent-calls <n> \
   --max-llm-calls <n> --max-estimated-cost-usd <usd> --json-out <path>
+remem bench coding --suite issue385-v1 --approval-key <key> \
+  --verify-live-approval-only --json-out <path>
+remem bench coding --suite issue385-v1 --condition <primary-id> \
+  --task <task-id> --runs-per-condition 1 \
+  --approval-key <key> --confirm-live-run --max-agent-calls <n> \
+  --max-llm-calls <n> --max-estimated-cost-usd <usd> --json-out <path>
 remem bench coding --suite issue385-v1 --condition remem_preloaded ...
-remem bench coding-report --input <artifact-root> \
+remem bench report --root <artifact-root> \
   --json-out <path> --markdown-out <path>
 ```
 
-- 实际 CLI 名称可在实现时遵守现有 `BenchAction::Coding/Report` 结构，但必须
-  保留显式 matrix、output、live confirmation 和 hard caps 语义；若路径变更，
-  先更新 planned-path manifest。
+- `--verify-live-approval-only` 使用 authority credential 读取 default-branch
+  registry、review/merge、two-ruleset/TUF/Rekor 与 exact binary/profile/tuple/cap
+  bindings，但在 provider/host credential bootstrap、agent spawn 和 billable
+  dispatch 前退出；输出 policy-derived `run_phase`、namespaces、exact tuples、
+  caps、binary digests 与 `authorized` verdict。caller 字符串不能让它 PASS。
+- verify/smoke/official/report 只由固定
+  `/usr/local/libexec/remem-bench-supervisor` 执行。独立 security owner 将其
+  provision 为 root-owned immutable service；approval 绑定 OS code-sign/
+  fs-verity/unit measurement 与不可由 caller 使用的 attestation public key。
+  supervisor 自 authority 取 expected digest（不接受 caller 值），再对 remem/
+  agent `openat(O_NOFOLLOW)`、same-fd hash/fstat，并用 Linux
+  `execveat(AT_EMPTY_PATH)` 或 reviewed equivalent 执行。artifact 验证其签名
+  attestation；wrong supervisor/direct invocation 失败。平台不能保证时 fail
+  closed，shell `shasum` 不是执行证明。
+- 保留现有 `BenchAction::Coding/Report` 结构与 `bench report --root` command
+  contract；新增参数必须保留显式 matrix、output、live confirmation 和 hard
+  caps 语义。若路径偏离 implementation-scope reference，在 linked PR 说明并
+  同步 current contract。
 - README/docs 在 report PASS 前只描述方法与无公开 outcome；report 通过后也
   只能引用 gate 允许且带 report link 的 wording。
 - 用户可见 ID/CLI 变更在一个 integration PR 中按 version-sync contract 同步
@@ -420,10 +618,10 @@ remem bench coding-report --input <artifact-root> \
 | B-008-B-010 E2E path | raw-event fixture、capture/extraction adapter、run schema、treatment-review projection、worker drain、context render | answer-bearing raw event→capture→use DAG；T2 schema 强制 closed review projection/input-output/timing/ledger fields；同 task 三 repetition 在首个 target 前 batch-freeze；target/outcome 注入、暴露 actor 复用、post-reveal review、seed/save/preload 与 drain failure 均失败。 |
 | B-011-B-013 curator/diagnostics | curator projection/schema、supervisor timing、content-addressed control bundle | allowlisted projection 可重建；elapsed 只能来自 supervisor monotonic receipts；committed frozen bytes 可重算 mounted hash；跨-run target exposure、gold/target/hidden/scorer 注入、missing bytes/receipt、freeze/hash/budget 负例失败；diagnostic 不进入 primary。 |
 | B-014-B-016 isolation/security | service/agent privilege split、deny-egress broker、streaming redactor、scorer-only tree | agent/tool 无 auth/DB/private-root/network/public-repo access；provider broker 拒绝 fetch/tunnel；secret-before-write、symlink/hardlink/import bootstrap tamper 全失败。 |
-| B-017-B-020 failure/retry/dry-run | parent-wired approval module、pre-target/target/terminal transitions、pricing broker、per-call authority、anchored CAS ledger | human/prep 前 durable attempt；abandoned pre-target work 保留/保守计时且不可重做；dispatch 前验证 actual input 并硬设 output/reasoning/cache/tool caps；每个 reservation fresh 重验 expiry/ruleset/audit/ancestry；terminal artifact digest 由 supervisor seal；drift/crash/rollback/race/超额 negatives 均失败，dry-run 零 spawn/network/auth。 |
+| B-017-B-020 failure/retry/dry-run | parent-wired approval/checkpoint modules、pre-target/target/terminal transitions、pricing broker、per-call authority、anchored CAS ledger | human/prep 前 durable attempt；abandoned pre-target work 保留/保守计时且不可重做；dispatch 前验证 actual input 并硬设 output/reasoning/cache/tool caps；每次 fresh 重验 expiry/two-ruleset/TUF/Rekor/signature/ancestry；terminal digest seal；wrong writer、rules/log rollback/proof inconsistency、crash/race/超额 negatives 均失败，dry-run 零 external call。 |
 | B-021-B-022 attribution/taxonomy | artifact/ref resolver/failure | 每类 ref 缺失、跨 run/project、unknown stage/code 失败；overlapping failures 按 earliest causal root 稳定，downstream consequences 单列。 |
 | B-023-B-024 report/bootstrap | sanitized evidence/control bundles、terminal ledger attestations、source manifest、report builder | 144 records；每个 record/manifest digest 与 authoritative terminal seal 一致，control bytes 可独立检查；三-run arithmetic mean、target-started failure=0、pre-target missing=insufficient；16-task percentile bootstrap golden。 |
-| B-025-B-029 claim gates | post-final-binary registration projection、result bindings、gate/public CI | T6 synthetic registry 后 T7 才以 final binary/clock/order permutation 冻结 live registration；superiority/non-inferiority、48-run stop-loss、trusted treatment review cost、post-smoke mutation 与 PASS wording/report-link negatives。 |
+| B-025-B-029 claim gates | post-final-binary registration projection、closed causal-rule verifier、result bindings、gate/public CI | T6 synthetic registry 后 T7 才以 final binary/clock/order permutation 冻结 live registration；superiority/non-inferiority、48-run stop-loss、trusted treatment review cost、唯一 `memory_caused`/`independent_cause` 匹配正例，零/多匹配、sealed evidence/hash 缺失、post-smoke mutation 与 PASS wording/report-link negatives。 |
 | B-030 human gates | CLI/live authorization/handoff | 缺 approval/confirm/hard caps 在 agent/provider 调用前失败；spec 不自批。 |
 
 ## 数据流
@@ -440,10 +638,11 @@ remem bench coding-report --input <artifact-root> \
        remem_e2e: captured_events -> extraction_tasks -> worker
                   -> candidate/review/promotion -> memory/projection
                   -> production SessionStart/MCP retrieval
-  -> per-call authority/ruleset/ledger revalidation + token hard limits
+  -> per-call authority/two-ruleset/TUF/Rekor/ledger revalidation + token hard limits
   -> target coding agent
   -> hidden deterministic scoring
   -> failure-stage + attribution resolution
+  -> registered closed memory-harm causal classifier
   -> immutable run artifact/hash -> authoritative terminal ledger seal
   -> scanner-passed sanitized run/control bundles + source manifest
   -> task-level paired aggregation/bootstrap
@@ -516,6 +715,12 @@ auth bytes、host session 与 hidden content 不进入可提交 artifact。
 - [ ] Repository gates:
 
   ```bash
+  GH931_EXACT_HEAD="$(git rev-parse HEAD)"
+  test "$(gh pr view "$PR_NUMBER" --json headRefOid --jq .headRefOid)" = \
+    "$GH931_EXACT_HEAD"
+  python3 scripts/ci/check_pr_preflight.py \
+    --base origin/main --pr-body-file /tmp/pr-body.md
+  test "$(git rev-parse HEAD)" = "$GH931_EXACT_HEAD"
   cargo fmt --check
   cargo check
   cargo clippy --all-targets -- -D warnings
@@ -524,8 +729,23 @@ auth bytes、host session 与 hidden content 不进入可提交 artifact。
   ```
 
 - [ ] Live manual verification: only after SP931-T9 receives separate
-  auth/network/cost approval; first smoke one task per primary condition, then
-  full 144. Smoke artifacts are excluded from official denominator.
+  auth/network/cost approval。首轮 smoke 固定为三个 disjoint canonical keys：
+  `(smoke/<approval-pr>/no_memory, no_memory,
+  ticket-key-memory-convention, 1)`、
+  `(smoke/<approval-pr>/curated_file_budgeted, curated_file_budgeted,
+  slug-normalizer-contract, 1)`、
+  `(smoke/<approval-pr>/remem_e2e, remem_e2e,
+  workstream-title-continuity, 1)`，tuple 依次表示
+  `(matrix_namespace, condition, task, run_index)`。namespace 只能由 approval
+  policy 派生；每个 key 用独立 `--condition` + `--task` +
+  `--runs-per-condition 1` invocation。三者与
+  `issue385-v1/official-v1` 不相交，但所有 reservation/terminal records 仍写入
+  同一个 `refs/heads/remem-live-ledger` 并共享累计预算。每次 dispatch 前必须
+  先完成 `--verify-live-approval-only`，验证 exact namespace/tuple 且
+  `planned_runs == 1`。不得用 `--task-set smoke --matrix primary` 代替，因为其
+  Cartesian product 是 9 tuples。三个 smoke 全部终态通过并获人工 review 后才
+  可创建独立 full approval 并运行 144；smoke artifacts 排除在 official
+  denominator 外。
 
 ## 回滚方案
 
@@ -540,8 +760,12 @@ auth bytes、host session 与 hidden content 不进入可提交 artifact。
 
 ## Human Gates
 
-GH-931 当前 `ready_to_spec` 已获 maintainer 授权；本文件不构成
-`spec_approval`。实施还需要 exact product/tech diff approval、
-`ready_to_implement`、enforcement-sensitive planned-path approval 和当时
-exact head 的 implement route evidence。live auth/provider/cost、最终 PR
-review、claim wording、merge、issue close 和 release 仍需分别批准。
+本 historical packet 只提供 planning/reference evidence，不自动批准或阻止
+implementation。每个 implementation lane 开始前由 maintainer 人工 review
+current product/tech contract、actual scope 与 exact diff；live credential、
+authority/ledger writer、network isolation、hidden scorer 或 public-claim
+boundary 还需要独立 security review。任何 live smoke/official run 都必须在
+exact executable/policy/caps 上取得单独的 auth/network/cost approval；public
+wording 需要 maintainer 对 report-bound exact UTF-8 text 明示批准。最终 PR
+review、merge、issue close 和 release 各自独立，测试或 preflight 通过不能替代
+这些人工决定。
