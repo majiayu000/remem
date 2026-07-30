@@ -1,0 +1,252 @@
+# GH933 Migration Rehearsal
+
+Refs #933.
+
+## Status
+
+This is the mandatory evidence plan for the Phase A v2 cutover in
+`MIGRATION-CUTOVER.md`. It is pending. A successful run is valid only for one
+exact implementation HEAD and base SHA; any code, migration, dependency, or
+schema change invalidates it.
+
+The rehearsal never runs against the operator's live database. It uses a
+byte-for-byte clone plus separately generated empty/current/legacy fixtures.
+Production cutover remains human-authorized under `ROLLOUT.md`.
+
+## Immutable Inputs
+
+Record before execution:
+
+- exact `git rev-parse HEAD` and merge base;
+- Rust, Cargo, rusqlite, libsqlite3/SQLCipher, OS, and filesystem versions;
+- source schema/user versions, database size, WAL mode, row counts, and
+  SHA-256 of database, `-wal`, and `-shm` inputs;
+- exact migration SQL SHA-256 and `sqlite_schema` fingerprint;
+- local-copy root device/mount type and whether directory/file fsync is
+  supported; and
+- an encrypted, fsynced, read-only-test-opened pre-cutover backup and digest.
+
+The run uses release mode where production does. Test clocks and fault points
+are explicit; no randomized seed is left unrecorded.
+
+## Required Commands
+
+The implementation PR adds focused targets with these stable entrypoints:
+
+```bash
+cargo test gh933_sha256_frame_vectors -- --nocapture
+cargo test gh933_retry_ledger_ddl -- --nocapture
+cargo test gh933_writer_coverage -- --nocapture
+cargo test gh933_idempotency_matrix -- --nocapture
+cargo test gh933_local_copy_crash_matrix -- --nocapture
+cargo test gh933_migration_rehearsal --release -- --ignored --nocapture
+cargo test truth -- --nocapture
+cargo test --test truth_public_api
+cargo test
+cargo clippy --all-targets -- -D warnings
+```
+
+The ignored release rehearsal writes canonical JSON to
+`GH933_REHEARSAL_JSON_OUT`. The harness refuses a dirty worktree, missing output
+path, non-release build, or HEAD mismatch.
+
+## SHA-256/UDF Acceptance
+
+The independent encoder, Rust helper, and SQLite UDF must return the same
+lowercase digest for every golden frame. Tests assert the exact input frame
+bytes, not only equality between two implementations.
+
+Negative cases must reject: zero/odd arguments; non-TEXT, blank, non-ASCII, or
+duplicate field names; unsupported SQLite value type; changed pair order; NULL
+substituted for empty TEXT/BLOB; integer/real type substitution; and a
+non-finite REAL entering from a DTO. Every owned production/migration/test
+connection runs a known-vector self-test after keying and before schema access.
+
+Apply the actual migration with the UDF unregistered and with an intentionally
+wrong same-name UDF. The first fails `no such function`; the second fails the
+known-vector preflight. Neither writes `user_version`, request rows, history,
+or memory bytes. `cargo tree -e features -i rusqlite` must show `functions`.
+
+## Executable DDL Matrix
+
+The test extracts the installed SQL from `sqlite_schema` and executes it against
+an isolated SQLite database with `foreign_keys=ON`; it does not use a relaxed
+copy. For every table, index, and trigger in `MIGRATION-CUTOVER.md`, assert exact
+presence and normalized SQL equivalence.
+
+Positive cases cover all ten typed binding kinds and every allowed outcome:
+
+| Binding | Required positive shape |
+| --- | --- |
+| `insert_origin` | inserted/backfilled memory plus exact route/lifecycle v1 |
+| `route_transition` | changed memory plus one matching next route |
+| `lifecycle_transition` | changed/acknowledged memory plus matching next lifecycle |
+| `memory_outcome` | inserted/updated/reinforced/noop memory |
+| `operation_outcome` | existing operation-log ID |
+| `claim_outcome` | created/reused existing claim; disabled/failed without ID |
+| `poisoning_ack` | acknowledged memory or explicit not-required/failed |
+| `local_copy_outcome` | written path+digest or disabled/failed |
+| `audit_outcome` | recorded scalar event ID or explicit not-required/failed |
+| `response_aux` | exactly one canonical returned-result object |
+
+For each row, recompute the binding fingerprint independently and verify the
+ordered predecessor chain and final seal digest. Then run these negative cases,
+each in a fresh transaction, and assert the named statement fails and leaves
+every table/count/digest unchanged:
+
+1. blank/space/uppercase-invalid writer/request identities and short, uppercase,
+   nonhex, or overlong fingerprints;
+2. invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra
+   object key, negative ordinal, duplicate pair, unsorted pair, or zero/multiple
+   `response_aux` entries;
+3. result absent from manifest, result out of manifest order, wrong predecessor,
+   wrong fingerprint, unknown outcome, and every cross-kind typed-column leak;
+4. each kind with one required ID/path/digest removed, a forbidden ID added,
+   dangling FK, duplicate route/lifecycle binding, or noncanonical JSON;
+5. seal with zero, missing, unexpected, or shape-invalid results; wrong terminal
+   chain, response schema/JSON, request fingerprint, or result fingerprint;
+6. inserted memory without an `insert_origin`, mismatched writer/request/ordinal,
+   wrong memory ID, route/lifecycle ID, non-v1 row, predecessor, or source tuple;
+7. transition result bound to another memory/request/ordinal/writer, or a Web
+   lifecycle with missing/wrong-type API operation binding;
+8. result inserted after seal and duplicate request/result/seal insertion; and
+9. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
+   both before and after seal, plus mutation of a memory origin tuple.
+
+Explicitly prove that an intent cannot commit without a seal and a seal cannot
+commit without all manifested results. `PRAGMA foreign_key_check` is empty after
+every positive case.
+
+## Writer and Retry Matrix
+
+Exercise the six current memory insert families and the three existing-row
+transition writers named in `TECH.md`. For each, assert intent precedes mutation,
+INSERT creates route/lifecycle v1 in the same transaction, every declared result
+is typed, seal is last, and an injected error at each statement rolls everything
+back. Same-value assignments append no transition.
+One cleanup operation may bind distinct memories; repeating its operation/memory
+pair is rejected.
+
+Direct save acceptance is:
+
+| Sequence | Expected durable effect |
+| --- | --- |
+| key A + payload P | one execution and sealed response |
+| key A + exact P after response loss | same response; zero new rows/files/epochs |
+| concurrent key A + exact P | one winner; loser returns winner |
+| key A + payload Q | conflict before any mutation |
+| key B + byte-identical P | second execution |
+| lesson key C + P, then key D + P | reinforcement/operation/claim evidence advances twice |
+
+Repeat with all Option-presence, CR/LF, outer-whitespace, list-order/duplicate,
+local-copy, claim, acknowledgement, adapter-default, and reference-time
+differences. Each behavior-bearing difference changes request fingerprint; key
+or credential changes alone do not. Search database, journal, logs, traces,
+errors, and response artifacts to prove no raw/normalized caller key appears.
+
+Markdown retry remains stable across its own metadata rewrite, but different
+stable source/no-source archive identities remain distinct.
+
+## Migration Fixtures
+
+Run foreground migration on:
+
+- empty current schema;
+- one row for each status/scope/owner/topic NULL/empty/exact-value boundary;
+- real anonymized legacy clone with pruned events and unsupported historical
+  writers, requiring forward-only floors;
+- surviving exhaustive evidence that legitimately reconstructs A→B→C;
+- 100,000-memory scale fixture with FTS, graph, claims, operations, and WAL;
+- malformed owner pair, status, chain, FK, FTS/schema object, or source version;
+  and
+- injected interruption before/after every migration stage and before COMMIT.
+
+Positive fixtures preserve every unrelated column/index/trigger/FTS result,
+create deterministic migration IDs, exact typed origins and seals, and match
+terminal rows. Two independent migrations of identical bytes produce identical
+logical rows/fingerprints excluding SQLite-assigned IDs documented as outputs.
+
+Malformed fixtures fail closed without advancing `user_version`. Restart after
+an interrupted transaction sees the exact old schema and succeeds once; a
+second migration invocation is a no-op. Postflight requires
+`integrity_check='ok'`, empty `foreign_key_check`, no unsealed intent, exact
+manifest/result equality, contiguous ledgers, and current-row terminal equality.
+
+## Local-Copy Crash Matrix
+
+Fault injection kills the process, without unwinding, after every boundary:
+
+| Boundary | No DB seal recovery | Matching DB seal recovery |
+| --- | --- | --- |
+| `reserved`: journal write/fdatasync | prior target unchanged | not reachable |
+| journal rename/directory fsync | prior target; owned temp removed | not reachable |
+| stage write/fdatasync | prior target; stage removed | not reachable |
+| `staged` journal fsync | prior target; stage removed | not reachable |
+| `swap_intent` journal fsync | exact prior target restored | not reachable |
+| `backed_up`: target→backup rename/fsync | backup restored | not reachable |
+| stage→target rename | prior target/absence restored by digests | not reachable |
+| target/parent fsync and `swapped` | prior target/absence restored | not reachable |
+| each DB mutation/result before seal | prior target/absence restored | not reachable |
+| seal INSERT before SQLite COMMIT | rollback; prior target restored | not reachable |
+| SQLite COMMIT before journal `sealed` | keep exact after digest; cleanup | same |
+| `sealed` journal write/fsync | keep exact after digest; cleanup | same |
+| backup/stage unlink and parent fsync | keep exact after digest; finish cleanup | same |
+| journal unlink/directory fsync | keep exact after digest; no journal | same |
+
+Run every boundary with prior target absent and present, an identical target,
+multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
+database counts, stored response, journal/artifact counts, and doctor status.
+
+Tamper separately with journal JSON, request fingerprint, target/backup/stage
+path, type, inode alias, and each digest; remove/invalidate the DB; create an
+unexpected combination of target and backup. Every ambiguous case leaves all
+user-visible files and journal untouched, returns
+`local_copy_reconciliation_ambiguous`, logs at error with only opaque identity,
+and makes doctor nonhealthy.
+
+Inject cleanup permission/fsync failure after commit. The stored `written`
+response remains the replay response, pending journal state is durable/visible,
+exact retry reconciles before returning, and later doctor cleanup removes only
+owned artifacts. There is no warning-only or swallowed cleanup failure.
+
+## Evidence Artifact
+
+The JSON artifact schema v1 contains:
+
+```json
+{
+  "schema_version": 1,
+  "head_sha": "<40 lowercase hex>",
+  "base_sha": "<40 lowercase hex>",
+  "migration_sql_sha256": "<64 lowercase hex>",
+  "source_database_sha256": "<64 lowercase hex>",
+  "backup_database_sha256": "<64 lowercase hex>",
+  "tool_versions": {},
+  "fixture_counts": {},
+  "schema_fingerprint_before": "<64 lowercase hex>",
+  "schema_fingerprint_after": "<64 lowercase hex>",
+  "forward_only_route_count": 0,
+  "forward_only_lifecycle_count": 0,
+  "ddl_negative_cases": {},
+  "idempotency_cases": {},
+  "crash_boundaries": {},
+  "integrity_check": "ok",
+  "foreign_key_violations": [],
+  "raw_key_leaks": 0,
+  "passed": true
+}
+```
+
+Every case maps to pass/fail plus expected and actual state fingerprints. The
+artifact is canonical JSON, SHA-256 signed in CI provenance, attached to the PR,
+and reviewed independently. Missing, skipped, flaky-retried-without-root-cause,
+or head-mismatched cases make `"passed": false`.
+
+## Stop Conditions
+
+Stop cutover and return to implementation on any UDF mismatch, schema drift,
+unsealed intent, permissive UPDATE/DELETE, missing/extra result, origin mismatch,
+raw-key leak, silent cleanup error, ambiguous reconciliation mutation, FK or
+integrity error, unexplained forward-only count, nondeterministic rerun, or
+failure outside documented rollback. Passing this rehearsal is necessary but
+does not authorize merge or production migration.

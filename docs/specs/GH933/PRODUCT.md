@@ -16,7 +16,9 @@ worktree/task scope, and Phase C general writer convergence remain later work,
 so GH-933 stays open.
 
 The issue packet under `specs/GH933/` is historical planning evidence. This
-file and `TECH.md` are the normative current contract.
+five-file `docs/specs/GH933/` set is the normative current contract.
+`MIGRATION-CUTOVER.md` defines executable persistence/recovery;
+`MIGRATION-REHEARSAL.md` and `ROLLOUT.md` define proof and human gates.
 
 ## Problem
 
@@ -117,27 +119,35 @@ pending v2 requirements below.
    Every append has a nonblank canonical writer-specific request discriminator
    and strict lowercase 64-hex SHA-256 transition fingerprint over the ledger
    domain/version, memory, predecessor, request hash, result ordinal and exact
-   typed OLD/NEW state. It does not pretend to hash a final response that does
-   not yet exist when the INSERT trigger writes v1. Before any mutation, each
-   writer appends an immutable request intent keyed by its stable request/
-   operation ID; generated memory, ledger, audit and operation-row IDs are
-   outputs. Every successful transaction appends exact cross-memory result
-   bindings and an immutable final commit seal containing the full result hash
-   and response; a deferred constraint forbids committing an unsealed intent.
-   Save hashes every raw `SaveMemoryRequest` value—including local-copy,
-   claim and poisoning-ack options—without generic newline/trim folding, plus
-   the exact final response and every persisted/derived result. Same identity
-   with different content is a different request. Markdown hashes the exact
-   persisted semantic fields and stable source binding or canonical no-source
-   archive identity; only parser-canonicalized fields normalize, and
-   importer-owned metadata rewrites cannot change retry identity.
-   A crash before commit leaves no committed database state, ledger, request
-   map or mirror; local-copy staging has explicit recovery. After commit/
-   response loss, an exact retry or
-   concurrent duplicate returns the committed winner; reuse of its request ID
-   with different bytes conflicts. It appends no duplicate version, event,
-   operation or knowledge time. Same-second distinct transitions remain ordered
-   by predecessor/version.
+   typed OLD/NEW state. The write connection registers the versioned deterministic
+   `remem_sha256_frame_v1` SQLite function before migration or mutation; a
+   missing/wrong function fails the INSERT rather than weakening the hash.
+   Before any mutation, each writer appends an immutable request intent with an
+   exact typed-result manifest. Generated memory, ledger, audit and operation IDs
+   are outputs. Every successful transaction fills that manifest, then appends
+   the immutable final response/result seal; deferred constraints and seal
+   guards reject unsealed, missing, extra or mismatched bindings. Intent, result
+   and seal rows reject UPDATE and DELETE.
+   Caller-facing save requires an explicit `idempotency_key`. Adapters validate
+   it, derive a namespaced opaque request ID and never persist or log the raw key.
+   The key and transport credentials are identity, not request payload, so the
+   request fingerprint covers every other raw `SaveMemoryRequest` value,
+   deterministic defaults and exact effective adapter inputs—including
+   local-copy, claim and poisoning-ack options—without generic newline/trim
+   folding. Same key plus equal payload replays; same key plus different payload
+   conflicts; a different key with byte-identical payload is a distinct write
+   and preserves intentional lesson reinforcement. Markdown uses a stable source
+   or canonical no-source archive identity and remains stable across its
+   importer-owned metadata rewrite.
+   Local-copy mutation uses a fsynced write-ahead journal outside the database.
+   The journal records only opaque IDs, constrained paths and before/after
+   digests. Recovery restores the exact prior file when no matching seal exists,
+   or keeps the sealed target and finishes cleanup when it does; ambiguous paths,
+   bytes or seals fail closed. A crash before commit therefore leaves no
+   committed database state or user-file mutation after reconciliation. After
+   commit/response loss, an exact-key retry returns the committed winner without
+   another file write, version, event, operation, claim or knowledge epoch.
+   Same-second distinct transitions remain ordered by predecessor/version.
    Every previous status must equal the prior new status and the terminal status
    must equal the current row. The new status is effective at transition
    equality; an unsupported/unrecorded transition, gap, fork or contradiction returns
@@ -313,6 +323,22 @@ pending v2 requirements below.
       commit-success/response-loss/concurrent retry are covered without duplicate memories, mirrors or knowledge
       advancement. Save fixtures distinguish equal identity/different content;
       Markdown retry stays equal across importer metadata rewrite.
+- [ ] Save requires a validated caller idempotency key. Same key/equal payload
+      replays the byte-equivalent durable response; same key/different payload
+      conflicts before mutation; different keys with an identical lesson payload
+      execute twice and preserve reinforcement, operation and claim evidence.
+      Raw keys/credentials never enter logs, fingerprints, response JSON or
+      retained tables.
+- [ ] The exact cutover DDL rejects UPDATE/DELETE on intent/result/seal rows,
+      malformed or duplicate manifests, missing/extra/shape-invalid result
+      bindings, orphan/mismatched INSERT origins and seal-before-complete. It
+      rejects a write connection without the approved SHA-256 UDF. Golden frame
+      vectors match Rust, trigger and migration backfill bytes.
+- [ ] The local-copy crash matrix covers journal reservation, staged-file fsync,
+      swap intent, backup rename, target rename, every database point through
+      commit, cleanup and journal deletion. No-seal recovery restores prior bytes;
+      sealed recovery keeps the exact new digest; tampering and indeterminate
+      state remain visible and untouched.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
