@@ -13,41 +13,59 @@ fn test_event_insert_and_query() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);
 
-    insert_event(
-        &conn,
-        "session-1",
-        "proj",
-        "file_edit",
-        "Edit src/db.rs",
-        None,
-        Some(r#"["src/db.rs"]"#),
-        None,
-    )
-    .unwrap();
-    insert_event(
-        &conn,
-        "session-1",
-        "proj",
-        "bash",
-        "Run `cargo test` (exit 0)",
-        None,
-        None,
-        Some(0),
-    )
-    .unwrap();
+    let retention_cases = [
+        ("file_edit", "ephemeral"),
+        ("file_create", "ephemeral"),
+        ("bash", "ephemeral"),
+        ("search", "ephemeral"),
+        ("agent", "ephemeral"),
+        ("tool_result", "ephemeral"),
+        ("cursor_tool_failure", "ephemeral"),
+        ("memory_governance", "audit"),
+        ("scope_cleanup", "audit"),
+        ("future_event", "audit"),
+    ];
+    for (event_type, _) in retention_cases {
+        insert_event(
+            &conn,
+            "session-1",
+            "proj",
+            event_type,
+            event_type,
+            None,
+            None,
+            (event_type == "bash").then_some(0),
+        )
+        .unwrap();
+    }
 
     let events = get_session_events(&conn, "session-1").unwrap();
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), retention_cases.len());
     assert_eq!(events[0].event_type, "file_edit");
-    assert_eq!(events[1].exit_code, Some(0));
+    assert_eq!(
+        events
+            .iter()
+            .find(|event| event.event_type == "bash")
+            .and_then(|event| event.exit_code),
+        Some(0)
+    );
     let retention_classes = conn
-        .prepare("SELECT retention_class FROM events ORDER BY id")
+        .prepare("SELECT event_type, retention_class FROM events ORDER BY id")
         .unwrap()
-        .query_map([], |row| row.get::<_, String>(0))
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
         .unwrap()
         .collect::<rusqlite::Result<Vec<_>>>()
         .unwrap();
-    assert_eq!(retention_classes, vec!["ephemeral", "ephemeral"]);
+    assert_eq!(
+        retention_classes,
+        retention_cases
+            .map(|(event_type, retention_class)| {
+                (event_type.to_string(), retention_class.to_string())
+            })
+            .to_vec()
+    );
 }
 
 #[test]
@@ -100,25 +118,41 @@ fn test_cleanup_old_events() {
 
     let now = chrono::Utc::now().timestamp();
     let old = now - (31 * 86400);
-    conn.execute(
-        "INSERT INTO events
-         (session_id, project, event_type, summary, created_at_epoch, retention_class)
-         VALUES ('s1', 'proj', 'file_edit', 'old edit', ?1, 'ephemeral')",
-        params![old],
+    let disposable_id = insert_event(
+        &conn,
+        "s1",
+        "proj",
+        "bash",
+        "old command",
+        None,
+        None,
+        Some(0),
+    )
+    .unwrap();
+    let audit_id = insert_event(
+        &conn,
+        "s2",
+        "proj",
+        "memory_governance",
+        "old governance action",
+        None,
+        None,
+        None,
     )
     .unwrap();
     conn.execute(
-        "INSERT INTO events (session_id, project, event_type, summary, created_at_epoch)
-         VALUES ('s2', 'proj', 'file_edit', 'new edit', ?1)",
-        params![now],
+        "UPDATE events SET created_at_epoch = ?1 WHERE id IN (?2, ?3)",
+        params![old, disposable_id, audit_id],
     )
     .unwrap();
 
     assert_eq!(cleanup_old_events(&conn, 30).unwrap(), 1);
-    let remaining: i64 = conn
-        .query_row("SELECT COUNT(*) FROM events", [], |row| row.get(0))
+    let remaining: (i64, String) = conn
+        .query_row("SELECT id, retention_class FROM events", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
         .unwrap();
-    assert_eq!(remaining, 1);
+    assert_eq!(remaining, (audit_id, "audit".to_string()));
 }
 
 #[test]
