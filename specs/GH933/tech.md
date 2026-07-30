@@ -361,36 +361,11 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   `projects.project_path` exact match；只有 project_id NULL 时才可 fallback 到
   非空 legacy `observations.project`，两者都有时必须一致，并应用同一 branch
   predicate。subject selector 与 scope 不一致 contextual error。
-- explicit `as_of=t` 通过持久 `memory_route_ledger` 的 route-state versions
-  恢复 Project/Owner membership 与 `SubjectIdentity`。逻辑列为
-  `id,memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,
-  audit_event_id(no FK),source_ref,coverage_kind,coverage_start_epoch`，以及完整
-  placement/source/target/owner/topic/routing/context/branch snapshot 与 per-version normalized `project|global` memory scope；
-  memory/self FK 均 `ON DELETE RESTRICT`，version/predecessor unique/连续。按
-  memory/time、owner、target、
-  legacy placement 与 coverage 分别建 index，候选先 UNION scope indexes，再按
-  ID chunk 读取完整链。因此 A→B→C 的 B 即使不在 creation/current route 仍可发现。
-- foreground SQL migration 建表/index；同一 `BEGIN IMMEDIATE` 的 Rust post-hook
-  可把仍存在且验证通过的 creation/result 与 `scope_cleanup` evidence 复制为
-  intermediate states；但旧 `save_memory`/Markdown route update 没有 exhaustive
-  durable log，`events` 也可能已被 30-day cleanup 删除。因此只有 exhaustive
-  durable proof 才标 `complete`，其他 row 只保存 migration-time current state
-  并从该 epoch `forward_only`。更早 history 在 scope discovery 前全局返回
-  `unreconstructable_routing_history`，因为 unknown prior route 可能命中 query。
-  migration 仅在每个 memory 有 terminal state、完整链/terminal 校验通过且
-  forward-only counts 可见后标 applied。
-- cutover 后 `AFTER INSERT` trigger 覆盖六类 INSERT：store、lifecycle、candidate apply、CLI import、Markdown import、pack import。
-  三类 existing-row route writer——store save upsert、Markdown restore/update、
-  scope cleanup——统一走 canonical route-transition service；按 OLD/NEW placement/
-  branch/scope/source/target/owner/topic/routing/context tuple 判定。同值 assignment
-  不写 version 且合法通过；真变化必须在同一 savepoint/transaction/epoch append
-  matching next snapshot 再 guarded update；validated Markdown project→global 用 `source_kind=markdown_import`，scope cleanup 同时写 audit mirror。
-- database guard 只在上述 tuple 真变化时触发，拒绝 missing/wrong-head/NEW-mismatch
-  stage；任何失败全 rollback，ledger update/delete 禁止。source kind closed 为
-  `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup`；event ID/ref
-  只是复制的 diagnostic，不参与 proof。fold `(effective_at_epoch,id)` 且
-  `epoch<=t`，scope 决定 membership/SubjectIdentity；invalid scope、missing predecessor/source、
-  gap/fork/time/terminal/legacy coverage gap fail closed，完整 scope transition 不报错。
+- explicit `as_of=t` 从持久 `memory_route_ledger` 恢复 Project/Owner membership 与 `SubjectIdentity`。逻辑列为 `id,memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,audit_event_id(no FK),source_ref,source_fingerprint,coverage_kind/start_epoch`，完整 placement/source/target/owner、`memory_type`、raw nullable `topic_key`、topic/routing/context/branch snapshot 与 per-version normalized scope；NULL key 与 empty key 不合并。memory/self FK `ON DELETE RESTRICT`，version/predecessor 与 `(memory_id,source_kind,source_fingerprint)` unique。
+- memory/time、owner、target、legacy placement 与 coverage indexes 支持先 UNION scope candidate、再按 ID chunk 读完整链；A→B→C 的 B 即使不在 creation/current route 仍可发现。
+- foreground migration 与 Rust post-hook 共用 `BEGIN IMMEDIATE`，只复制 exhaustive durable creation/result/scope-cleanup proof；旧 save/Markdown 或已清理 events 不能猜。其他 row 仅 migration-time `forward_only`；pre-floor 在 scope filtering 前全局报 `unreconstructable_routing_history`。每个 memory 有 terminal、完整链匹配 current 且 incomplete counts 可见后才 mark applied。
+- cutover `AFTER INSERT` trigger 覆盖 store、lifecycle、candidate、CLI、Markdown、pack 六类。save upsert、Markdown restore/update、scope cleanup 共用 route-transition service，NULL-safe 比较实际 OLD/NEW placement/branch/scope/source/target/owner/type/raw-key/topic-domain/routing/context；真实变化在同 savepoint/transaction/epoch append+update，同值不写。save/Markdown 原地 identity change 因此可重建；Markdown project→global 用 `markdown_import`，scope cleanup 同时写 mirror。
+- guard 拒绝 changed tuple 的 missing/wrong-head/NEW-mismatch stage，任一步失败全 rollback，ledger update/delete 禁止。source kind closed 为 `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup`；diagnostic event 不参与 proof。fold `(effective_at_epoch,id)` 中 `epoch<=t` 的完整 route/identity；invalid scope、missing predecessor/source、gap/fork/time/terminal/coverage gap fail closed，合法 scope/identity transition 不报错。
 
 ### Observation evidence
 
@@ -521,29 +496,20 @@ fixtures 覆盖 missing/safe/quarantined/acknowledged。
   history 排除/Unknown，current 用 reference epoch。source time 仍为
   `COALESCE(reference_time_epoch,created_at_epoch)` 且不能 future；direct noop、
   governance ack、candidate ack 分别用 operation/memory/candidate update。
-- Explicit memory lifecycle 只读 durable `memory_lifecycle_ledger`：
-  `id,memory_id,lifecycle_version,previous_lifecycle_id,effective_at_epoch,previous_status,new_status,source_kind/action,source_operation_id,audit_event_id(no FK),source_fingerprint,coverage_kind/start_epoch`。
-  memory/self FK `ON DELETE RESTRICT`；version/predecessor unique/连续；indexes 为 memory/time、coverage/memory 与 partial unique operation。source kind closed 为
-  `insert|legacy_backfill|memory_governance|web_governance|scope_cleanup`；action/
-  transition closed mapping 保留 general delete/reject/stale、same-status ack、
-  Web archive/restore、scope archive、cleanup-plan active/stale 与 route same-status。
-  v1/forward-only baseline 均为 `previous_lifecycle_id/status=NULL,new_status=inserted/current,source_action=baseline`，source kind 分别 `insert|legacy_backfill`；migration 只复制 exhaustive proof。
-- general/Web governance、scope archive 与 cleanup-plan active/stale 在同一
-  transaction 更新 status 并 append next row；scope reroute 在 route transaction
-  append same-status row；event 仅 optional audit mirror。
-  save/Markdown、candidate/TTL/supersede、preference removal、stale archive 等
-  status writer 保持合法但 exact history unsupported；不装 global status guard，
-  terminal drift 必须 fail closed。链按 `(effective_at_epoch,id)` fold，
-  previous=上一 new、terminal=current，equality 用 new；scoped forward-only floor
-  晚于 `t` 返回 `unreconstructable_memory_lifecycle`。Web row 复制 binding 并 exact match durable
-  `api_mutation_requests` resource/action/schema/response/status/time；`audit_id`
-  仅 correlation。unsupported/unrecorded、gap/fork/terminal drift/Web mismatch
-  一律 fail closed。
-- route/lifecycle ledger indefinite retention，完全排除于 `cleanup_old_events`，
-  且不对可删 `events` 建 FK/cascade；event 删除或 ID reuse 不改变 proof。
-  cleanup 受 `ON DELETE RESTRICT` 约束不得删 canonical memory/history；未来 purge
-  必须另作 reviewed tombstone/compaction migration。`cleanup_old_events_at` regression
-  验证两 ledger/Web proof/output 不变、零 ledger delete 与 `foreign_key_check`。
+- Explicit history 只读 `memory_lifecycle_ledger(id,memory_id,lifecycle_version,previous_lifecycle_id,effective_at_epoch,previous_status,new_status,source_kind/action,source_operation_id,audit_event_id(no FK),source_fingerprint,coverage_kind/start_epoch)`；memory/self FK RESTRICT，version/predecessor 与 `(memory_id,source_kind,source_fingerprint)` unique，indexes 为 memory/time、coverage/memory 与 partial unique operation。
+- source kind closed 为 `insert|legacy_backfill|memory_governance|web_governance|scope_cleanup`；actions 覆盖 general delete/reject/stale/same-status ack、Web archive/restore、scope archive、cleanup-plan active/stale 与 reroute same-status。baseline 的 predecessor/status NULL、new=current、action=baseline；migration 只复制 exhaustive proof。
+- general/Web/scope archive/cleanup-plan 原子更新 status+append；scope reroute 在 route transaction append same-status；event 仅 mirror。其他合法 status writer 不装 global guard，terminal drift fail closed。链 previous=prior new、terminal=current，按 `(epoch,id)` fold且 equality 用 new；forward-only pre-floor、unsupported/unrecorded/gap/fork/drift/Web durable API mismatch 均报 `unreconstructable_memory_lifecycle`。
+- 两 ledger indefinite retention、无 events FK/cascade、排除于 event cleanup；memory/self RESTRICT。未来 purge 需 reviewed tombstone migration；cleanup regression 锁定两 ledger/Web proof/output、零 delete 与 `foreign_key_check`。
+- 两 ledger 的 `source_fingerprint` 是 ordered binary frame 的 lowercase SHA-256：field-name length+bytes、type tag、value length+bytes；integer signed big-endian、real IEEE-754 big-endian、string raw UTF-8、NULL≠empty。输入为 schema/ledger version、memory/source/action、predecessor ID/version、canonical request discriminator 与完整 typed OLD/NEW state。nested tuple/request hash 复用该 frame；named text normalization 把 CRLF 转 LF 并 trim 外围 ASCII whitespace，target set bytewise sort/dedupe，archive path 是 archive-root-relative POSIX、移除 lexical dots 且拒绝 parent escape；source-content hash 使用 exact file bytes。
+
+| Writer | Canonical request discriminator |
+| --- | --- |
+| insert / legacy backfill | memory ID+creation epoch / migration version+memory ID |
+| save / Markdown | typed requested route/identity tuple+stable writer source/actor / normalized archive-relative path+source-content hash+typed route/identity metadata |
+| general / Web governance | action+actor+normalized reason+acknowledgment pattern+sorted target set / durable operation idempotency identity+canonical request hash |
+| scope reroute / archive / cleanup | action+object ref+normalized owner/target/topic/routing/context/reason / action+object ref+normalized reason / planner version+canonical plan/group snapshot hash |
+
+- Generated operation/audit IDs 是 output。state、ledger、durable result、mirror 同 transaction；pre-commit crash 全 rollback。commit-success/response-loss exact retry 用重复 discriminator+terminal predecessor 重算 fingerprint，相同则返回原 version/result IDs，不新增 row/event/knowledge；different/stale request 除 declared semantic no-op 外冲突。predecessor/version 排 same-second distinct transitions；migration/insert/concurrent retry 复用 committed winner。
 - UserContextClaim source 是 `COALESCE(valid_from_epoch,created_at_epoch)`；
   descendants 保留 provenance-root SourceRefs，transition 只改 state knowledge。
 - Captured event 的 source 与 original insertion 都须 reference-eligible。
@@ -763,7 +729,8 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
 - [ ] Full PR preflight with the exact intended PR body.
 - [ ] Final-head bounded/performance artifact command above.
 - [ ] 六类 route INSERT、三类 UPDATE、no-op/change guard、indexed A→B→C、
-      Markdown project→global before/equal/after、`markdown_import`、rollback/gap；
+      normal-save type/key 与 Markdown project→global/type/key before/equal/after、
+      `markdown_import`、rollback/gap；all-writer fingerprint/crash/retry、
       backfill/forward-only、durable lifecycle、event-cleanup invariance、
       fact created-at、six edge mappings、unknown/unsupported fail-closed。
 - [ ] Fresh exact-head CI and independent review.

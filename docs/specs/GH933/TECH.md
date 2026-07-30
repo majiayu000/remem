@@ -350,16 +350,19 @@ For explicit `as_of=t`, Project/Owner membership and emitted `SubjectIdentity` u
 memory_route_ledger(
   id PK AUTOINCREMENT, memory_id FK ON DELETE RESTRICT, route_version,
   previous_route_id FK ON DELETE RESTRICT, effective_at_epoch, source_kind, audit_event_id scalar(no FK), source_ref,
+  source_fingerprint,
   coverage_kind[complete|forward_only], coverage_start_epoch,
   placement_project, source_project, target_project, owner_scope, owner_key,
-  topic_domain, routing_confidence, routing_reason, context_class, memory_scope, branch,
-  UNIQUE(memory_id,route_version), UNIQUE(previous_route_id))
+  memory_type, topic_key nullable, topic_domain, routing_confidence, routing_reason,
+  context_class, memory_scope, branch,
+  UNIQUE(memory_id,route_version), UNIQUE(previous_route_id),
+  UNIQUE(memory_id,source_kind,source_fingerprint))
 ```
-Each row is a complete route state. Versions start at one, are contiguous, and link a predecessor from the same memory. `source_kind` is the closed `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup` set; audit IDs/refs are copied diagnostics, never history dependencies. `memory_scope` is per-version normalized `project|global` route state. Required indexes are `(memory_id,effective_at_epoch,id)`, owner and target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)`, and `(coverage_kind,coverage_start_epoch)`.
+Each row is a complete route/identity state. Versions start at one, are contiguous, and link a same-memory predecessor. `source_kind` is the closed `insert|legacy_backfill|save_upsert|markdown_import|scope_cleanup` set; audit IDs/refs are diagnostics only. `memory_scope` is normalized per version; `topic_key` preserves raw NULL versus exact-empty bytes, and the cutoff version supplies both `memory_type` and topic key to `SubjectIdentity`. Required indexes are `(memory_id,effective_at_epoch,id)`, owner/target variants of `(owner_scope,<key>,memory_scope,branch,effective_at_epoch,memory_id)`, partial legacy `(placement_project,memory_scope,branch,effective_at_epoch,memory_id)`, and `(coverage_kind,coverage_start_epoch)`.
 The foreground migration and Rust post-hook share one `BEGIN IMMEDIATE`. They may copy validated surviving creation/result and `scope_cleanup` evidence into creation and intermediate A→B→C states, but pre-cutover `save_memory` and Markdown updates had no exhaustive durable route log and `events` may already be pruned. Therefore `complete` is allowed only with exhaustive durable proof; otherwise only the migration-time current snapshot is `forward_only` at that floor. Missing evidence never invents history.
 Before scoped discovery, an indexed probe returns `unreconstructable_routing_history` when any forward-only floor is after `t`, because that unknown prior route could match. Migration is marked applied only after every memory has one terminal row, complete chains validate, forward-only counts are reported, and terminal snapshots match `memories`.
 After cutover, an `AFTER INSERT ON memories` trigger inserts version one with the SQLite statement epoch. This covers the six current insert families in `memory/store/write.rs`, `memory/lifecycle.rs`, `memory_candidate/apply.rs`, `cli/actions/import.rs`, `markdown_archive.rs`, and `pack_import/active_import.rs`, plus future inserts.
-All three production existing-row route writers use one reviewed canonical route-transition service: `memory::store::update_existing_memory`, Markdown `update_markdown_memory`, and `scope_cleanup::update_owner`. It compares the actual OLD/NEW placement/project, branch, scope, source/target, owner, topic/routing/context tuple. A no-op route assignment needs no version; a real change appends the exact next snapshot and performs the row update in the same savepoint/transaction and epoch. A validated Markdown project→global change uses `source_kind=markdown_import`; scope cleanup also writes its audit mirror there. Eval/test seeds must insert their final route initially or use the explicit fixture helper.
+All three production existing-row route writers use one reviewed canonical route-transition service: `memory::store::update_existing_memory`, Markdown `update_markdown_memory`, and `scope_cleanup::update_owner`. It NULL-safely compares actual OLD/NEW placement/project, branch, scope, source/target, owner, `memory_type`, raw `topic_key`, topic-domain/routing/context. A no-op needs no version; a real change appends the exact next snapshot and updates the row in one savepoint/transaction/epoch. Thus both save and Markdown in-place identity changes are versioned. A validated Markdown project→global change uses `source_kind=markdown_import`; scope cleanup also writes its audit mirror. Eval/test seeds insert their final route initially or use the fixture helper.
 A database guard runs only when that tuple actually changes and rejects a missing, wrong-head, or NEW-mismatching staged version, so legal no-op save/Markdown writes pass while bypasses cannot leave history holes. Any piece failing rolls back all pieces; ledger update/delete is forbidden.
 Candidate discovery UNIONs the owner, target and legacy indexes before stable ID chunking; the per-ID chain is folded through `effective_at_epoch<=t` in `(epoch,id)` order, including scope for membership and SubjectIdentity. Invalid scope, a missing predecessor/source, gap/fork, nonmonotonic time, terminal drift, or legacy/forward-only coverage gap returns `unreconstructable_routing_history`, never current fallback; a complete scope transition does not.
 
@@ -371,10 +374,7 @@ Keep existing lifecycle mappings and add:
 | --- | --- | --- | --- | --- |
 | observations/poisoning_quarantined | Candidate | Unknown | Live | Suppressed |
 
-Actual memory, user-claim and Observation adapters validate their raw status
-allowlists before projection. Unknown values return table/canonical-ref/raw
-value context. A mapper’s generic Candidate/Unknown fallback is not a silent
-adapter success.
+Actual memory, user-claim and Observation adapters validate raw-status allowlists before projection. Unknown values return table/canonical-ref/raw-value context; a mapper’s generic Candidate/Unknown fallback is not adapter success.
 
 Explicit memory history reads this independent durable projection:
 
@@ -384,18 +384,26 @@ memory_lifecycle_ledger(
   previous_lifecycle_id FK ON DELETE RESTRICT, effective_at_epoch, previous_status, new_status, source_kind, source_action,
   source_operation_id, audit_event_id scalar(no FK), source_fingerprint,
   coverage_kind[complete|forward_only], coverage_start_epoch,
-  UNIQUE(memory_id,lifecycle_version), UNIQUE(previous_lifecycle_id))
+  UNIQUE(memory_id,lifecycle_version), UNIQUE(previous_lifecycle_id),
+  UNIQUE(memory_id,source_kind,source_fingerprint))
 ```
 Required indexes are `(memory_id,effective_at_epoch,id)`, `(coverage_kind,coverage_start_epoch,memory_id)`, and a partial unique `source_operation_id`. `source_kind` is closed to `insert|legacy_backfill|memory_governance|web_governance|scope_cleanup`; closed actions/transitions remain general delete/reject/stale, same-status acknowledgment, Web archive/restore, scope archive, cleanup-plan canonical-active/duplicate-stale, and route-only same-status. Version one and a forward-only baseline have `previous_lifecycle_id=NULL`, `previous_status=NULL`, `new_status=<inserted/current status>`, and `source_action='baseline'`; their source kind is `insert` or `legacy_backfill`.
 General/Web governance and scope-cleanup archive/cleanup-plan writers append the next row with the status update in one transaction; `scope_cleanup::reroute_objects` appends a same-status row in its route transaction. Events are optional mirrors. Save/Markdown, candidate/TTL/supersede, preference removal, and stale-archive status writers remain legal but unsupported for exact history: terminal drift fails closed rather than a global guard breaking current behavior. Candidate replacement remains separately validated.
 The chain starts at its validated baseline, joins `previous_status` to the prior `new_status`, ends at current status, and folds `(effective_at_epoch,id)` with equality applying the new status. A scoped memory with a forward-only floor after `t` returns `unreconstructable_memory_lifecycle`. Web rows copy the operation binding and exact-match durable `api_mutation_requests` resource/action/schema/response/status/time; its `audit_id` is correlation only. Unknown/unsupported/unrecorded transitions, gaps, forks, terminal drift, or Web mismatch return the same error.
 Both ledgers have indefinite retention, are excluded from `cleanup_old_events`, and have no FK/cascade to `events`; event deletion or ID reuse cannot change proof. Memory/self FKs use `ON DELETE RESTRICT`, so cleanup cannot erase canonical history. A future purge requires a separately reviewed tombstone/compaction migration, never cascade. Regression calls `cleanup_old_events_at` past 30 days and proves identical route/lifecycle output, intact Web proof, zero ledger deletes, and `foreign_key_check`.
 
-A scoped Observation with `created_at_epoch=NULL` is a contextual integrity
-error because the public knowledge-time field is non-null; human-readable
-`created_at` is not a canonical epoch fallback. This is covered separately from
-`reference_time_epoch=NULL`, which validly falls back to the required creation
-epoch.
+Both ledgers use one retry protocol. `source_fingerprint` is lowercase SHA-256 over an ordered binary frame: field-name length+bytes, type tag and value length+bytes; integers are signed big-endian, reals IEEE-754 big-endian, strings raw UTF-8, and NULL differs from empty. It covers schema/ledger version, memory/source kind+action, predecessor ID/version, canonical request discriminator and complete typed OLD/NEW state. Nested tuples/request hashes use the same frame; named text normalization converts CRLF to LF and trims outer ASCII whitespace, target sets sort/deduplicate bytewise, and an archive path is archive-root-relative POSIX with lexical dots removed and parent escape rejected. Source-content hashes cover exact file bytes.
+
+| Writer | Canonical request discriminator |
+| --- | --- |
+| insert / legacy backfill | memory ID + row creation epoch / migration version + memory ID |
+| save / Markdown | typed requested route/identity tuple + stable writer source/actor / normalized archive-relative path + source-content hash + typed route/identity metadata |
+| general / Web governance | action + actor + normalized reason + acknowledgment pattern + sorted target set / durable operation idempotency identity + canonical request hash |
+| scope reroute / archive / cleanup plan | action + object ref + normalized owner/target/topic/routing/context/reason / action + object ref + normalized reason / planner version + canonical plan/group snapshot hash |
+
+Generated audit/operation IDs are outputs, not discriminator inputs. State, ledger, durable operation result and any mirror commit atomically; pre-commit failure/crash rolls all back. After commit/response loss, exact retry recomputes the terminal row from its predecessor and repeated discriminator; an equal fingerprint returns its version/result IDs without a new row/event/knowledge epoch. A different fingerprint is a semantic no-op only where declared, otherwise it conflicts. Predecessor/version orders distinct same-second transitions; insert/migration reruns and concurrent duplicates reuse the committed winner.
+
+A scoped Observation with `created_at_epoch=NULL` is a contextual integrity error because public knowledge time is non-null; human-readable `created_at` is not a fallback. Separately, `reference_time_epoch=NULL` validly falls back to required creation.
 
 Active Observation mapping:
 
@@ -737,17 +745,13 @@ GH933_PERF_JSON_OUT=/tmp/gh933-truth-perf-v2.json \
   cargo test truth_performance_contract --release -- --ignored --nocapture
 ```
 
-Use five warmups and 50 measured runs. JSON schema version 1 includes exact
-head SHA, seed/counts, chunk size, Rust/SQLite versions, plans, data/transaction
-statement, bind and row counts, serialized bytes, p50/p95, fingerprints and
-structural booleans. The Rust test validates it; latency stays informational.
-Any later commit/base sync invalidates the record.
+Use five warmups and 50 measured runs. JSON schema v1 includes exact head SHA, seed/counts, chunk size, Rust/SQLite versions, plans, statement/bind/row counts, bytes, p50/p95, fingerprints and structural booleans.
+The Rust test validates it; latency is informational, and any later commit/base sync invalidates the record.
 ## Versioning and Golden Diff
 
 v2 ships in 0.7.0 or the next explicit breaking boundary. Sync Cargo, lockfile, plugin, runtime manifest, npm wrapper, `server.json`, changelog, README and architecture docs. The guide covers ClaimView `created_at_epoch`/`updated_at_epoch` becoming version-specific source/knowledge epochs, edit transitions, in-place limits and recency.
 
-`tests/truth_public_api.rs` acts as an external crate and compiles
-`use remem::truth::{...}` for Project and Owner queries.
+`tests/truth_public_api.rs` acts as an external crate and compiles `use remem::truth::{...}` for Project and Owner queries.
 
 Allowed v1→v2 golden differences:
 
@@ -780,11 +784,11 @@ python3 scripts/ci/check_pr_preflight.py --base origin/main \
   --pr-body-file /tmp/pr-body.md
 ```
 
-Focused regressions cover all six route inserts, three route-update writers,
-no-op versus changed-route guards, indexed A→B→C, and Markdown project→global
-before/equal/after with `markdown_import`, atomic rollback and gap failure;
-also backfill/forward-only failure, event cleanup invariance, durable
-general/Web/scope archive/cleanup lifecycle, fact insertion time, and six edge mappings.
+Focused regressions cover six route inserts; three update writers; raw nullable
+topic/type before/equal/after; no-op/change guards; indexed A→B→C; Markdown
+project→global type/key change with `markdown_import`, rollback and gap failure;
+backfill/forward-only; event cleanup; durable governance/scope lifecycle; every
+fingerprint/retry/crash/same-second case; fact insertion time; and six edge mappings.
 Also require WAL snapshot regression, final-head bounded/performance record,
 fresh exact-head CI, independent review and human merge authorization.
 

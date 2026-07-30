@@ -83,11 +83,13 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    selected claims 可应用的 `user_claim`/`pattern` suppression 与显式引用 memory，
    不枚举 memory-only suppression。explicit historical query 必须先从持久、
    scope-indexed `memory_route_ledger` 发现候选，再从完整 state-version chain
-   恢复 cutoff 时的 owner/target/scope route；A→B→C 的 B 必须可发现，即使 creation/
-   current 都不是 B。六类 production INSERT 由 trigger 建 v1；normal save
+   恢复 cutoff 时的 owner/target/scope、`memory_type` 与原始 nullable
+   `topic_key`；ledger 保留 NULL/空字符串区别，映射时两者仍按 singleton 规则。
+   A→B→C 的 B 必须可发现，即使 creation/current 都不是 B。六类 production INSERT 由 trigger 建 v1；normal save
    upsert、Markdown existing-row import 与 scope cleanup 三类 UPDATE 统一走
    canonical route-transition service，在实际
-   placement/branch/scope/source/target/owner/topic/routing/context tuple 变化时同 transaction
+   placement/branch/scope/source/target/owner/memory-type/topic-key/topic-domain/
+   routing/context tuple 变化时同 transaction
    append route version；Markdown 使用 `source_kind=markdown_import`，同值
    assignment 合法；scope cleanup 还 append same-status lifecycle version 与
    audit mirror，其他 bypass 由 guard 拒绝。
@@ -149,6 +151,15 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    status；unsupported/unrecorded action/status、
    gap/fork/contradiction/ledger mismatch 返回
    `unreconstructable_memory_lifecycle`。
+   两 ledger 的每次 append 都用 writer-specific canonical request discriminator，
+   并对 ledger/version domain、memory、source/action、predecessor 与完整 typed
+   OLD/NEW state 做 SHA-256 fingerprint；per-memory/source unique。insert/backfill、
+   save、Markdown、general/Web governance，以及 scope reroute/archive/cleanup
+   plan 的 discriminator 由 TECH 精确定义，生成的 operation/audit ID 不是输入。
+   pre-commit crash 全回滚；commit 成功但 response 丢失后的 exact retry 必须复用
+   terminal version/result IDs，不能新增 version/event/knowledge epoch。different
+   request/stale predecessor 冲突；same-second distinct transitions 按 predecessor/
+   version 排序。
    user-context `edit` 是例外的版本化路径：
    writer 保留旧 row、在 transition epoch 将其标为 `superseded`，并插入带
    `supersedes_claim_id` 的新 row；`as_of` 早于 transition 时必须从这条完整
@@ -402,7 +413,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       lifecycle order 与 before/equal/after 均覆盖；unsupported/unrecorded、
       gap/fork/Web ledger mismatch 返回指定 lifecycle error。读取使用
       lifecycle memory/time index；30-day event cleanup 后两 ledger、Web proof
-      与 serialized history 完全不变。
+      与 serialized history 完全不变。每类 writer 还覆盖 fingerprint、exact
+      retry reuse、different-request conflict、same-second order、crash-before-
+      commit 与 commit-success/response-loss retry，且不重复 mirror/knowledge。
       duplicate captured-event replay 前后 timestamp/历史输出不变与
       replayability serde golden 均覆盖。
 - [ ] captured-event trust 使用 canonical source classification；WebFetch、
@@ -451,8 +464,9 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
       memory/memory-only suppression 不改变其 result/error domain。Project 与
       indexed route ledger 的 migration/backfill、coverage probe、atomic writer
       guard 与 A→B→C intermediate-B discovery 均有 regression；Project/Owner 的
-      route before/equal/after 使用历史 owner/target/scope。Markdown existing-row
-      project→global 覆盖 cutoff 前旧 Project identity、equality/之后新 Owner
+      route before/equal/after 使用历史 owner/target/scope/type/raw nullable key。
+      normal save 与 Markdown identity update 均有 before/equal/after；Markdown
+      project→global 同时改变 type/key，覆盖 cutoff 前旧 Project identity、equality/之后新 Owner
       identity、`markdown_import`、atomic rollback 与 missing-predecessor/legacy
       gap error；incomplete/forward-only pre-floor chain 不能使用 current。
       六类 INSERT、normal save/Markdown/scope-cleanup 三类 UPDATE、同值 no-op、
@@ -557,11 +571,14 @@ mapping、read adapter、deterministic resolution 和 18 个 truth tests。它�
   add/replace；缺少完整 transition/link history 时历史查询必须显式失败。
 - memory 在 cutoff 前后经过 general governance 或 Web archive/restore；完整
   audit/ledger chain 恢复 old/new status，gap/fork/contradiction 必须显式失败。
+- 任一 writer 在 transaction commit 前 crash，或 commit 已成功但 response 丢失
+  后 exact retry；前者零残留，后者复用同 ledger/result，不推进 knowledge。
 - fact 在 cutoff 后实际插入但 caller 把 learned time 回填到 cutoff 前；不得附着。
 - scoped `memory_edges` 存在 typo/newer edge type，或 known `derived_from` 只有
   provenance endpoint；前者 contextual error，后者不得伪造 Claim endpoint。
-- Markdown existing-row import 把 memory 从 project 改为 global，或 scope
-  cleanup 改路由；before/equal/after 必须使用完整旧/新 route（含 scope），
+- Markdown existing-row import 把 memory 从 project 改为 global 并改变
+  type/raw nullable key，normal save 改 identity，或 scope cleanup 改路由；
+  before/equal/after 必须使用完整旧/新 route/identity，
   缺 predecessor/legacy coverage 不得 fallback current row。
 - writer 在 claims 与 relation/evidence/suppression 分段读取之间提交；进行中的
   projection 只能看到 transaction 开始后的一个 SQLite snapshot。

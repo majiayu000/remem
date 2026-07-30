@@ -67,13 +67,15 @@ pending v2 requirements below.
    selector with no row yields an empty truth list, not synthesized Unknown.
    Owner/memory-scope values are closed domains; trimmed `" global "` is global.
    Explicit history discovers candidates from a persistent, scope-indexed route
-   ledger, then reconstructs owner, target and versioned memory scope at the
-   cutoff from its complete version chain. A trigger covers every creation/
+   ledger, then reconstructs owner, target, versioned memory scope, memory type
+   and the raw nullable topic key at the cutoff from its complete version chain.
+   NULL and exact-empty topic keys stay distinct in the ledger even though both
+   map to the same `memory:<id>` singleton rule. A trigger covers every creation/
    import. The three existing-row writers—normal save upsert, Markdown restore/
    import, and scope cleanup—use one canonical route-transition service to
-   atomically append a route version whenever their
-   actual placement/branch/scope/source/target/owner/topic/routing/context tuple changes; same-value
-   assignments remain legal no-ops. Markdown transitions use
+   atomically append a route version whenever their actual placement/branch/
+   scope/source/target/owner/memory-type/topic-key/topic-domain/routing/context
+   tuple changes; same-value assignments remain legal no-ops. Markdown transitions use
    `source_kind=markdown_import`; scope cleanup also appends its same-status
    lifecycle version and audit mirror. A guard rejects every other direct change.
    A validated A→B→C chain remains discoverable in B. Because legacy save and
@@ -112,6 +114,18 @@ pending v2 requirements below.
    durable API operation record. Audit events are optional mirrors, not proof.
    Both history ledgers are retained indefinitely with restrictive memory/self
    links and no FK/cascade to the 30-day `events` table.
+   Every append has a canonical writer-specific request discriminator and a
+   SHA-256 transition fingerprint over the ledger/version domain, memory ID,
+   predecessor ID/version, request discriminator and complete typed OLD/NEW
+   state. A per-memory/source uniqueness constraint makes an exact retry reuse
+   the committed terminal version. Save, Markdown, general/Web governance and
+   every scope-cleanup action define their discriminator in `TECH.md`; insert
+   and migration baselines use their stable row/migration identity. A crash
+   before commit leaves no state, ledger or mirror. If commit succeeds but the
+   response is lost, the same request returns the prior durable result without
+   appending a version, event, operation or later knowledge time. Same-second
+   distinct transitions remain ordered by predecessor/version; a different
+   request or stale predecessor conflicts instead of masquerading as a retry.
    Every previous status must equal the prior new status and the terminal status
    must equal the current row. The new status is effective at transition
    equality; an unsupported/unrecorded transition, gap, fork or contradiction returns
@@ -248,9 +262,11 @@ pending v2 requirements below.
       cross-scope negative tests. The indexed route-ledger migration materializes
       creation plus every validated reroute, an A→B→C fixture discovers B without
       a creation/current B candidate, and Project/Owner before/equal/after uses
-      route-at-t. A Markdown existing-row project→global fixture proves old
-      Project membership/identity before, new Owner membership/identity at and
-      after equality, `source_kind=markdown_import`, atomic rollback, and a
+      route-at-t including `memory_type` and raw nullable `topic_key`. Normal-save
+      and Markdown existing-row identity changes have before/equal/after tests.
+      A Markdown project→global fixture changes type/key and proves old Project
+      membership/identity before, new Owner membership/identity at and after
+      equality, `source_kind=markdown_import`, atomic rollback, and a
       missing-predecessor or legacy gap error. Backfill gaps, forward-only
       pre-floor reads and incomplete writer chains fail closed. All six current
       insert families, the three existing-row route writers, same-value no-ops,
@@ -272,7 +288,10 @@ pending v2 requirements below.
       active/stale transitions; gaps, forks, unsupported transitions and Web
       ledger mismatches return `unreconstructable_memory_lifecycle`. Its
       memory/time index is used, and deleting 30-day events leaves both ledgers,
-      Web proof and serialized historical output unchanged.
+      Web proof and serialized historical output unchanged. Every governed route/lifecycle writer's
+      fingerprint, exact-retry reuse, different-request conflict, same-second
+      ordering, crash-before-commit rollback and commit-success/response-loss
+      retry are covered without duplicate mirrors or knowledge advancement.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
