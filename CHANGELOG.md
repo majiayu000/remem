@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.35` for the GH-934 post-merge corrective:
+  Retrieval Router plans now preserve the caller's `include_superseded`
+  temporal scope across explicit, keyword-fallback, and default-fallback
+  intents. Filters, freshness policy, and history-channel validity share the
+  same caller-controlled value, so intent classification cannot silently
+  expand access to superseded evidence.
 - Staged source version `0.6.34` for GH-946: `Auto` now prefers an explicitly
   downloaded, verified `multilingual-e5-small` local embedding model over
   feature-hash when no remem-specific API key is configured. Provider/model

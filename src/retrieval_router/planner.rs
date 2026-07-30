@@ -20,7 +20,7 @@ use super::domain::{
 use super::intent::resolve_intent;
 
 /// Bump when the intent mapping tables or policy adjustments change.
-pub const RETRIEVAL_ROUTER_POLICY_VERSION: &str = "retrieval_router_v1";
+pub const RETRIEVAL_ROUTER_POLICY_VERSION: &str = "retrieval_router_v2";
 
 // Reason codes for deterministic policy adjustments.
 const REASON_HIGH_RISK_TRUSTED_ONLY: &str = "high_risk_trusted_only";
@@ -181,13 +181,9 @@ fn rerank_policy_for(intent: ContextIntent) -> RerankPolicy {
 }
 
 fn freshness_policy_for(intent: ContextIntent, request: &ContextRequest) -> FreshnessPolicy {
-    let history_intent = matches!(
-        intent,
-        ContextIntent::ExplainDecision | ContextIntent::ExploreHistory
-    );
     FreshnessPolicy {
         prefer_current: true,
-        include_superseded: request.include_superseded || history_intent,
+        include_superseded: request.include_superseded,
         max_age_days: match intent {
             ContextIntent::ResumeWork => Some(30),
             _ => None,
