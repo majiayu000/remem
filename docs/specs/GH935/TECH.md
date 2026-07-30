@@ -45,8 +45,10 @@ benchmark framework:
 
 ## Contract Objects
 
-All JSON uses snake_case and closed enums. Unknown fields are rejected on
-claim-bearing artifacts unless a schema version explicitly permits them.
+All claim-bearing JSON uses snake_case, closed enums, and `canonical_json_rfc8785_v1`: parsed I-JSON is serialized exactly by RFC 8785 JCS.
+JCS fixes recursive raw-property sorting by unsigned UTF-16 code units, ECMAScript primitive serialization, preserved array order, no Unicode normalization, and zero token whitespace.
+Output is UTF-8 with no BOM or trailing newline. Schemas reject unknown/duplicate keys, lone surrogates, NaN/Infinity, and numbers outside finite IEEE-754 binary64.
+Precision-sensitive integers outside `[-(2^53-1), 2^53-1]` use schema-typed strings matching `0|[1-9][0-9]*|-[1-9][0-9]*`. The plan binds the algorithm/version.
 
 ### Executable Task
 
@@ -72,25 +74,22 @@ target-visible hidden paths, and any canary copied into prompts or gold facts.
 
 ### Source Seal
 
-One source seal exists per
-`(direction, task_id, run_index, source_attempt_id)`. It
-contains:
+One source seal exists per `(direction, task_id, run_index, source_attempt_id)` and contains:
 
 - task/fixture, executable, profile, model, schema, and migration hashes;
-- source host/session/event IDs and transcript/tool-event/Git hashes;
+- `condition_neutral_episode_evidence_v1`, binding source host/session/event IDs,
+  transcript/tool-event/Git/workspace hashes, and the source-native manifest or typed native absence;
 - canonical project path and the exact `project_from_cwd` value;
 - terminal extraction/review state and queue counts;
 - a sorted data-only manifest for the quiesced full source
   `REMEM_DATA_DIR`, with typed exclusions for `.key`, environment-provided
   keys, WAL/SHM, sockets, and other runtime-only secret/process files;
-- a deterministic data-only full-store archive hash, length, and creation
-  policy; excluded secret/process entries are recorded by type, never value;
-- target-transfer projection logical hash, sealed SQLCipher ciphertext hash,
-  sorted manifest, non-secret `projection_key_id`, derivation/rekey/provisioning
-  policy versions, and proof that source raw/capture/session rows, auxiliary
-  index entries, and files are absent;
-- `native_neutral_base_v1` hash, derivation policy, zero native
-  candidate/active/provenance counts, and referential-integrity proof;
+- a deterministic data-only full-store archive hash, length, and creation policy, or
+  `remem_preparation_failed(stage, reason)` typed absence; exclusions record type, never value;
+- target-transfer projection logical/ciphertext hashes, sorted manifest, non-secret
+  `projection_key_id`, policy versions, forbidden-surface proof, or matching typed absence;
+- `native_neutral_base_v1` hash, policy, zero native candidate/active/provenance
+  counts, referential-integrity proof, or typed diagnostic-preparation absence;
 - source-host native file manifest/hash, or typed absence;
 - `maintained_export_v1` hash plus every cycle input/state/usage/budget; a
   commit carries prior/output/freeze hashes, while failure carries a typed
@@ -162,21 +161,11 @@ closure, then proves native candidate/active/provenance counts are zero,
 foreign keys and schema are valid, and production open succeeds. Both native
 diagnostic arms start from byte-identical neutral-base clones.
 
-Cross-clone continuation is deliberately unsupported. A `source_attempt_id`
-owns the immutable full-store seal and projection; each dependent target has a
-separate `target_attempt_id`. The runner never regenerates an object under an
-existing seal. Before any dependent target prompt is revealed, it may start a
-new source attempt from scratch only when the failure has one of the five exact
-`pre_prompt_transient_v1` retry reason codes and the source-preparation
-three-attempt limit has not been exhausted. Archive absence, hash mismatch,
-integrity or security
-failure, cleanup failure, and interruption after prompt reveal are not
-retry-eligible: they preserve the immutable partial record and yield
-`partial_non_security`/`INSUFFICIENT` or, for a verified security breach,
-`partial_security`/`FAIL`. This avoids pretending a machine-local archive is a
-durable cross-clone object. A future cross-clone mode would require a
-separately specified encrypted immutable store, retention policy, access
-protocol, and independently verified fetch path.
+Cross-clone continuation is unsupported. A `source_attempt_id` owns immutable evidence/preparation results; every target has a separate `target_attempt_id`, and sealed objects are never regenerated.
+Before any dependent prompt and before condition-neutral evidence seals, a new source attempt may start only for the five exact `pre_prompt_transient_v1` reasons and within the three-attempt limit.
+For an attempt that ultimately has that seal, any remem-only archive, extraction, projection, rekey, clone, or verification failure is a non-retryable condition failure under the fan-out rule, not a source retry.
+Records remain immutable. A verified security breach is `partial_security`/`FAIL`; cleanup that makes isolation unsafe is `partial_non_security`/`INSUFFICIENT`.
+Cross-clone support requires a separate encrypted retention/fetch contract.
 
 ### Maintained Export Protocol
 
@@ -235,13 +224,12 @@ a no-memory surface is `not_proven/no_memory_surface`. Sanitized inputs support 
 
 ### Source Attempt Record
 
-Before auth, extraction, quiescing, or projection work, the outer runner creates an
-append-only lifecycle journal for `cross-host-source-attempt-v2`. Finalization seals
-`source_attempt_id`, preparation unit and input/plan/executable hashes, lifecycle
-timestamps, terminal status/reason, nullable seal/snapshot hashes with typed absence,
-cost counters, cleanup, and leak-scan outcomes. Failure before Source Seal is therefore
-evidenced. Recovery appends an interruption/cleanup event and seals a new record; it
-never rewrites the journal or a prior record.
+Before auth or preparation, the outer runner creates an append-only
+`cross-host-source-attempt-v2` journal. Finalization seals IDs/input hashes,
+lifecycle timestamps, nullable condition-neutral evidence hash/sealed-at boundary,
+terminal reason, typed preparation absences, cost, cleanup, and leak scans.
+This distinguishes failure before common evidence from later condition failure.
+Recovery appends and seals a new record; it never rewrites history.
 
 Every manifest lists all source-attempt record hashes, even without a target attempt;
 target runs bind the matching ID and hash. Missing/non-terminal journals, hash drift,
@@ -300,7 +288,7 @@ new manifest that references them; it never overwrites them.
 
 ### Report and Verdict
 
-The canonical JSON report includes:
+The `canonical_json_rfc8785_v1` report includes:
 
 - planned, recorded, selected, failed, missing, and not-started counts;
 - direction-first primary and diagnostic tables;
@@ -316,13 +304,14 @@ The canonical JSON report includes:
 
 Markdown is rendered deterministically from canonical JSON. The verdict binds:
 
-- JSON report hash;
+- SHA-256 of the exact canonical JSON bytes;
 - Markdown report hash;
 - renderer version/hash;
 - evidence-manifest and sanitized-record-bundle hashes.
 
-Verification regenerates Markdown and compares it byte-for-byte before any
-public surface may link the report.
+Verification regenerates Markdown byte-for-byte before publication. Plan-hashed
+vectors must match an independent RFC 8785 implementation for nested key order,
+arrays, escapes/non-ASCII, numeric edges, invalid I-JSON, BOM, and trailing LF.
 
 ## Execution State Machine
 
@@ -373,19 +362,15 @@ substitutable because production project identity is path-based.
 
 ### 3. Run and Seal the Source Once
 
-The source host executes all chronological source episodes before seeing the
-target task. remem uses normal automatic capture. At each episode boundary, the
-runner drains and quiesces capture, records source-store, source-native, and
-workspace manifests and, unless export already failed, launches the
-target-blind exporter in a separate exporter-only HOME/config/session. It has
-remem hooks, automatic
-capture, and host-native persistence disabled; it receives read-only mounts of
-only `maintained_export_v1`'s canonical `evidence_projection_v1` and can write
-only the envelope and its usage log. It uses the exact plan-hashed input/rules;
-the first terminal failure marks later cycles
-`not_started_after_prior_failure` and launches no exporter for them. The runner
-proves protected manifests unchanged; mutation/protocol drift invalidates
-every dependent condition. After the final episode, the runner:
+The source host executes all episodes before target reveal. At each boundary,
+the outer runner records transcript/tool-event/Git/workspace evidence independently,
+drains remem capture as separate preparation, and runs the target-blind exporter
+unless it already failed. Exporter hooks/capture/native persistence are disabled;
+read-only `maintained_export_v1` evidence is its only input and envelope/usage its
+only output. Terminal export failure marks later cycles
+`not_started_after_prior_failure`; protected-manifest mutation or protocol drift
+invalidates all dependents. After the final episode, the runner stable-reads native
+inputs or typed absence, seals `condition_neutral_episode_evidence_v1`, then:
 
 1. records the final committed envelope/freeze hash, or typed terminal failure
    with no output/freeze hash;
@@ -396,20 +381,25 @@ every dependent condition. After the final episode, the runner:
    recorded as zero while automatic pipeline cost remains attributed to remem;
 3. stops the worker, checkpoints the database, closes writers, and fsyncs the
    run root;
-4. snapshots the exact data-only remem store and source-host native files while
-   retaining the source key only in the runner-private secret root;
+4. snapshots the exact data-only remem store while retaining the source key
+   only in the runner-private secret root;
 5. derives and verifies `native_neutral_base_v1` without altering the primary
    full store;
 6. derives the curated logical projection, SQLCipher exports/rekeys it under a
    fresh projection key, and proves forbidden surfaces absent while schema and
    referential integrity remain valid;
-7. seals all store/native hashes plus committed export hashes or typed failure;
+7. seals all preparation and committed-export hashes or typed failures;
 8. verifies sealed/clone ciphertext hashes before any open, then performs
    production-open/MCP checks on a disposable clone.
 
-Failure to quiesce, seal, clone, or verify produces an ordinary failure or
-security record. The runner cannot continue with a regenerated or partially
-copied store.
+Failure when condition-neutral evidence cannot seal is a source-attempt failure.
+If it seals, any remem-only capture/extraction/quiesce/store/projection/rekey/clone/open
+failure is `remem_preparation_failed`; absent a verified breach, `no_memory`,
+`target_host_native`, and `exported_file` run, while the affected `remem_shared`
+tuple gets one terminal `target_attempt_id`, `ordinary_failure`,
+`resolved = false`, typed absences, and no retry.
+Diagnostic-only preparation failure affects only its pair. Artifacts are never
+regenerated/partially copied; verified security breach keeps global precedence.
 
 ### 4. Fan Out Conditions
 
@@ -473,30 +463,30 @@ before cleanup:
 - Codex source: supported Codex rollout-summary input;
 - Claude Code source: supported Claude topic-file input.
 
-Implementation adds `remem import claude-memories --source <sealed-root>` with the
-Codex importer's dry-run/`--expect-plan-digest` boundary. Its required
-`claude-native-snapshot-v1` manifest assigns every stable-read topic file a
-`native_record_id`, relative path, source-project identity, byte hash, and snapshot
-hash. Discovery rejects symlinks, unknown entries, drift, unsafe/malformed content,
-or hash mismatch as one failed batch. JSON apply returns one `import_attempt_id` and
-`Inserted(candidate_id)`, `Duplicate`, or `Quarantined` per native record; only a
-complete Inserted lineage is eligible. The new importer reuses external-candidate
-persistence beside the Codex importer, never hook-only `sync_native_memory`.
+Implementation adds `remem import claude-memories --source <sealed-root> --authorized-project <project-id>` with dry-run/`--expect-plan-digest`; Codex diagnostic import gets the same filter.
+`claude-native-snapshot-v1` binds each stable-read file's record ID, path,
+source-project identity, byte/snapshot hash, and `project_relation` of
+`authorized_project` or `foreign_project_canary`. The plan derives relation via
+production identity, requires at least one of each, and batch-rejects any unknown
+relation/entry, symlink, drift, unsafe/malformed content, or hash mismatch.
+JSON apply returns `import_attempt_id` and each record's closed `status`
+(`inserted`, `excluded_wrong_project`, `duplicate`, `quarantined`) plus nullable
+`candidate_id`; persistence reuses the external-candidate path, never hook-only
+`sync_native_memory`.
 
 Both diagnostic arms start in separate preparation roots from byte-identical
 `native_neutral_base_v1` clones and the same sealed source-native snapshot.
 Before toggling, each clone must have zero native candidate, active-memory, and
 transitive-provenance rows; neither base is target-visible. The without arm
 does not import or review, then derives/rekeys its projection. The with arm
-invokes the shipped importer: Codex input uses its dry-run plan digest; Claude
-input is bound to the sealed snapshot and runner plan. For every sealed
-`native_record_id`, it must return `Inserted(candidate_id)`, record
-`import_attempt_id -> native_record_id -> candidate_id`, apply the registered
-review with `promoted = true`, and produce a `memory_id` whose
-`source_candidate_id = candidate_id`. It records the immutable chain,
-time/turns/cost, `host_native_import` origin, and external trust before deriving
-and rekeying its projection. Duplicate, quarantine, noop, pre-existing-memory
-reuse, or any lineage mismatch makes the pair `INSUFFICIENT`.
+invokes the shipped importer: Codex uses its dry-run digest; Claude binds the
+sealed snapshot and plan. Each `authorized_project` record returns `inserted`
+with `candidate_id`, complete import/candidate/promoted-review/memory lineage,
+cost, origin, and trust. Each registered canary returns
+`excluded_wrong_project`, null `candidate_id`, production-filter proof, and zero
+candidate/review/memory rows. Only registered canaries may be excluded; any
+relation/outcome mismatch, duplicate, quarantine, noop, reused memory, or broken
+lineage makes the pair `INSUFFICIENT`.
 The import/review mutation is the only allowed difference before projection;
 both targets receive fresh projection clones and never a full source-store or
 neutral-base clone.
@@ -568,29 +558,30 @@ identity plumbing.
 
 ## Metrics and Verdict Rules
 
-The attempt policy is `pre_prompt_transient_v1` and applies independently to
-each source preparation unit and each target tuple:
+`pre_prompt_transient_v1` applies independently to every source unit and tuple:
 
-- maximum three immutable `source_attempt_id` values before any dependent
-  prompt reveal, and maximum three immutable `target_attempt_id` values per
-  target tuple;
+- maximum three immutable source attempts before any dependent reveal and three
+  immutable target attempts per tuple;
 - retry before the relevant target prompt is revealed only for
   `transient_auth_unavailable`, `provider_unavailable`,
   `host_bootstrap_failed`, `runner_io_before_prompt`, or
   `pre_prompt_timeout`;
-- the first prompt-revealed target attempt is selected for the claim regardless
-  of its outcome, and no later claim retry is allowed;
+- the first prompt-revealed attempt is selected regardless of outcome; the only
+  no-reveal selection is one non-retryable condition-preparation attempt after
+  common-source success, and neither form permits a later claim retry;
 - semantic failure, unresolved result, post-reveal timeout, scorer result,
   security/scope event, and cleanup failure are never retry-eligible;
-- when all three target attempts fail before reveal, the tuple is selected as
-  `ordinary_failure` / `resolved = false`;
-- when all three source attempts fail before any dependent prompt reveal, the
-  dependent tuples are recorded as not started due to source failure and the
-  candidate report is `partial_non_security` / `INSUFFICIENT`.
+- after three eligible pre-reveal failures, `selected_claim_attempt = null`, the
+  tuple is `missing_pre_prompt_exhausted` with `resolved = null`, no scorer runs,
+  and the report is `partial_non_security` / `INSUFFICIENT`; no false/zero is
+  imputed and the registered denominator does not shrink;
+- when all three source attempts fail before condition-neutral evidence seals,
+  dependent tuples are not started and the candidate report is
+  `partial_non_security` / `INSUFFICIENT`.
 
-The report validates this rule from immutable lifecycle timestamps and reason
-codes. It includes every attempt in operational reliability/cost tables and
-cannot choose a successful retry after seeing outcomes.
+Immutable timestamps/reasons validate selection. Every attempt remains in
+reliability/cost tables; successful retries cannot be selected post hoc.
+Condition-attributable preparation failure differs from infrastructure exhaustion.
 
 The primary statistical family has four registered comparisons:
 `remem_shared` versus `no_memory` and `exported_file`, separately in both
@@ -724,17 +715,17 @@ These are sequential handoffs, not permission to run live hosts:
 
 1. **Executable contracts and fixtures**
    - bump charter/schemas, build 24 deterministic tasks, and validate
-     export/causal protocols, exact 288/144 plans, and partial manifests.
+     export/causal protocols, exact 288/144 plans, canonical JSON, and partial manifests.
 2. **Isolation, source seal, and runner**
    - reuse coding-bench isolation and implement same-path sequencing, sealing,
-     neutral derivation, rekey/provisioning, fan-out, attempts, cleanup, and caps.
+     neutral evidence, remem-failure fan-out, null exhaustion, cleanup, and caps.
 3. **Condition surfaces**
    - implement no-memory, target-native negative control, maintained export,
      production remem, and source-native import diagnostic boundaries;
-   - add Claude snapshot import, digest, batch rules, and lineage before its arm.
+   - add Claude import, authorized/canary outcomes, digest, batch rules, and lineage.
 4. **Artifacts, report, and verdict**
-   - implement causal records, manifests, exact bootstrap/verdict, deterministic
-     rendering, and sanitized bundles.
+   - implement causal records, manifests, bootstrap/verdict, RFC 8785 vectors,
+     deterministic rendering, and sanitized bundles.
 5. **Evidence and status**
    - separately authorize a smoke of both directions and all six surfaces;
    - only after smoke review, optionally authorize the full matrix;
@@ -762,24 +753,24 @@ Future executable-version focused coverage must include:
 
 - exact 288/144 tuple planning, missing/duplicate rejection, and dry-run zero
   host spawns;
-- source episode single-execution, seal/clone/hash drift, interruption,
-  new-attempt behavior, and retry-safe tuple/attempt key lifetime;
+- source episode single-execution, condition-neutral seal, remem-preparation
+  failure fan-out, interruption, retries, and tuple/attempt key lifetime;
 - same canonical project path positive transfer and decoy path exclusion;
 - pre-open sealed/clone hash checks, disposable-open preflight, full-store
   denial, raw-free searches, and correct/wrong/source/missing-key checks;
 - exporter immutability, atomic commit/retry/failure scope, fixed protocol and
   budget rules, condition isolation, and target-native source-seal denial;
 - counterbalanced schedule equality and planned/realized-order drift;
-- maintained-export cost and native import pairing, including neutral counts, Claude
-  snapshot/hash/drift rejection, complete Inserted-to-memory lineage, and raw-free projections;
+- native import pairing with neutral counts, Claude snapshot/drift rejection,
+  authorized inserted lineage, canary typed exclusion/zero rows, and raw-free projections;
 - causal-oracle pre-action/counterfactual positive, refuted, Stop-only, ambiguous/missing cases, and failed-run retention;
-- automatic-only primary review, exact source/target attempt references, and
-  exact pre-prompt retry selection;
+- automatic-only review, exact attempt refs, preparation/infrastructure
+  classification, and pre-prompt exhaustion with null resolved/no scorer;
 - required stale challenge pre-filter inventory and empty-applicable-set
   rejection;
 - source failure before seal with immutable lifecycle/cost/cleanup evidence, plus
   complete, non-security partial, and security partial reports;
-- deterministic Markdown regeneration and hash-bound verdict;
+- cross-implementation RFC 8785 byte vectors, deterministic Markdown, and hash-bound verdict;
 - fixed bootstrap framing/rejection/quantile vectors, adjusted regression, and
   PASS/FAIL/INSUFFICIENT edges;
 - secret-channel topology and raw/hex/versioned key residue scans;

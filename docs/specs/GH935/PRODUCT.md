@@ -72,12 +72,18 @@ production store without changing the primary `remem_shared` evidence. That
 base has no `claude_native`/`codex_native` candidate or transitive provenance.
 Both arms start from byte-identical neutral-base clones and derive independent
 raw-free target projections. The with arm alone imports the same sealed
-source-native snapshot. Every claim-bearing native record must preserve the
-immutable chain `import_attempt_id -> native_record_id -> inserted candidate_id
--> promoted review outcome -> memory_id`, with `promoted = true` and
-`memory.source_candidate_id = candidate_id`. Duplicate, quarantine, promotion
-noop, pre-existing-memory reuse, or lineage mismatch makes the pair
-`INSUFFICIENT`.
+source-native snapshot. Before import, the sealed plan classifies every native
+record by production project identity as either `authorized_project` or the
+plan-registered `foreign_project_canary`. Every authorized-project record must
+return `status = "inserted"` and preserve the immutable chain
+`import_attempt_id -> native_record_id -> candidate_id -> promoted review
+outcome -> memory_id`, with `promoted = true` and
+`memory.source_candidate_id = candidate_id`. Every registered foreign-project
+canary must instead return `status = "excluded_wrong_project"` with a null
+`candidate_id` and zero candidate, review, or memory rows. Each pair requires
+at least one authorized inserted record. A relation/outcome mismatch,
+duplicate, quarantine, promotion noop, pre-existing-memory reuse, or lineage
+mismatch makes the pair `INSUFFICIENT`.
 
 Other diagnostic conditions may remain for debugging, but they never enter a
 primary comparative claim.
@@ -115,30 +121,38 @@ primary comparative claim.
 ### 2. One Source Episode, Many Target Conditions
 
 For each `(direction, task_id, run_index)`, the source episode sequence runs
-once. After automatic extraction reaches a terminal state, the runner seals:
+once. When the host episodes succeed, the runner first durably seals
+`condition_neutral_episode_evidence_v1` over the transcript/tool-event, Git,
+workspace, fixture, and source-native manifest or typed native absence. This
+common-source-success boundary does not depend on remem materialization and
+cannot be rewritten by a later condition failure. After automatic extraction
+and condition preparation reach terminal states, the source record also seals:
 
-- source transcript/tool-event and Git evidence hashes;
+- the condition-neutral evidence hash;
 - the canonical project identity and fixture revision;
 - a quiesced, content-addressed full source `REMEM_DATA_DIR` snapshot and
   sorted data-only manifest; the source SQLCipher key remains in a separate
-  runner-private secret root;
+  runner-private secret root; or a typed `remem_preparation_failed` absence;
 - a deterministic logical target-transfer projection derived from that
   snapshot, plus its independently rekeyed SQLCipher ciphertext hash and
   non-secret projection key ID,
   preserving the current database schema and production state flags while
   containing the curated rows needed to exercise production candidate
   filtering—including registered stale/superseded challenge rows—and no source
-  transcript/session/capture rows or archives;
+  transcript/session/capture rows or archives; or the matching typed absence;
 - a sealed `native_neutral_base_v1` hash and proof that source-native
-  candidates and their transitive provenance closure are absent;
+  candidates and their transitive provenance closure are absent, or a typed
+  diagnostic-preparation absence;
 - the source-host native-memory snapshot, when present;
 - executable, model, profile, schema, and migration versions.
 
-Every dependent condition uses that exact source-episode seal. Each
-`remem_shared` target receives a fresh byte-identical private clone of the
-sealed target-transfer projection; the full source store is never target
-visible. Re-running a source episode for only one condition, regenerating
-either store, or accepting a mismatched derivation/hash invalidates the pair.
+Every dependent condition uses that exact source-episode record. A
+`remem_shared` target receives a fresh byte-identical private clone only when
+the sealed target-transfer projection exists; a typed preparation absence
+terminates that condition under the failure rule below. The full source store
+is never target visible. Re-running a source episode for only one condition,
+regenerating either store, or accepting a mismatched derivation/hash invalidates
+the pair.
 All initial clones of one projection are byte-identical and use one
 projection-scoped key distinct from the source key. A plan-hashed
 `projection_secret_channel_v1` starts the trusted remem sidecar outside the host
@@ -197,11 +211,12 @@ identity.
   configuration. Each arm starts from a fresh `native_neutral_base_v1` clone
   whose native candidate/active/provenance counts are zero, then derives and
   verifies its own raw-free target projection. Only the with arm performs the
-  import and target-blind review/promotion mutation before projection; the
-  importer must report `Inserted`, while `Duplicate` makes the pair
-  `INSUFFICIENT`. Each native record must resolve the full
-  import/candidate/review/memory lineage described above; quarantine, noop, or
-  pre-existing memory reuse is also insufficient.
+  import and target-blind review/promotion mutation before projection. Its
+  closed per-record result must match the presealed project relation:
+  authorized records resolve the full inserted candidate/review/memory lineage,
+  while each registered foreign-project canary is excluded with no persisted
+  candidate. An unknown relation, wrong outcome, duplicate, quarantine, noop,
+  or pre-existing-memory reuse is insufficient.
 
 The target task prompt is byte-identical across conditions. A condition may
 add only its declared, separately hashed memory envelope or production
@@ -253,24 +268,35 @@ source preparation unit and to each dependent target tuple:
   `host_bootstrap_failed`, `runner_io_before_prompt`, or
   `pre_prompt_timeout`;
 - the first target attempt that reveals the prompt is the sole claim-bearing
-  attempt, regardless of success, failure, timeout, or unresolved outcome;
+  prompt attempt, regardless of outcome; the only no-reveal selection is one
+  non-retryable condition-preparation attempt created after common-source
+  success under the rule below;
 - semantic/task failure, post-reveal timeout, security breach, scope leak,
   scoring result, or cleanup failure cannot be retried into a better claim
   outcome;
-- if all three target attempts fail before prompt reveal, the tuple is an
-  `ordinary_failure` with `resolved = false`;
-- if all three source attempts fail before any dependent prompt reveal, the
-  dependent tuples are recorded as not started and the candidate report is
-  `INSUFFICIENT`.
+- if all three target attempts exhaust eligible failures before prompt reveal,
+  there is no selected claim attempt: the tuple is
+  `missing_pre_prompt_exhausted`, `resolved = null`, and the candidate report is
+  `partial_non_security` / `INSUFFICIENT`; no hidden score runs and no false or
+  zero value is imputed;
+- if all three source attempts fail before condition-neutral evidence is
+  sealed, dependent tuples are recorded as not started and the candidate report
+  is `partial_non_security` / `INSUFFICIENT`.
 
 Every target record references exactly one `source_attempt_id` and has its own
 `target_attempt_id`. All attempts remain immutable and visible in operational
-metrics.
+reliability and cost metrics, including attempts exhausted before prompt reveal.
 
-For `remem_shared`, capture, extraction, review/promotion, selection, and
-citation/use each contain either a resolvable reference or a typed
-`absent_due_to`. An upstream failure may make downstream references absent,
-but the failed run remains in the denominator.
+If condition-neutral evidence successfully seals, any failure confined to remem capture,
+extraction, quiescing, full-store materialization, projection/rekey, clone, or
+pre-open verification is `remem_preparation_failed`, never a source failure or
+pre-prompt transient. Unless a verified security breach takes precedence, the
+runner continues unaffected `no_memory`, `target_host_native`, and
+`exported_file` conditions and records the affected `remem_shared` tuple as
+one terminal `target_attempt_id`: `ordinary_failure`, `resolved = false`, with
+typed `absent_due_to` references and no retry. That condition-attributable
+failure remains in the registered denominator; target-infrastructure exhaustion
+above remains missing rather than failed.
 
 Every scorer-recognized wrong action has a closed causal record: `proven`,
 `not_proven`, or `missing_evidence`. It resolves the registered selector before
@@ -405,9 +431,10 @@ Empty metrics remain blank with a reason, never zero-filled.
 
 The release evidence contains all sanitized primary and diagnostic records,
 attempt history, manifests, scorer/version hashes, direction reports, and
-claim verdict. JSON is canonical. Markdown is deterministically rendered from
-that JSON; the verdict binds both hashes and the renderer version, and
-verification regenerates Markdown byte-for-byte.
+claim verdict. Every claim-bearing JSON artifact uses the versioned exact-byte
+`canonical_json_rfc8785_v1` contract defined in TECH. Markdown is
+deterministically rendered from that JSON; the verdict binds both hashes and
+the renderer version, and verification regenerates Markdown byte-for-byte.
 
 For `PASS`, `FAIL`, and `INSUFFICIENT`, the same reporting change updates:
 
@@ -461,15 +488,17 @@ decisions. This spec PR authorizes none of them.
   without launching hosts.
 - Source sealing, byte-identical fan-out, canonical project identity, condition
   isolation, counterbalanced ordering, encrypted/rekeyed target projection,
-  native-neutral ablation, maintained-export protocol, causal attribution,
-  fixed retry selection, failure retention, and leak redaction have positive
-  and negative tests.
+  native-neutral ablation, registered-native-canary exclusion, maintained-export
+  protocol, causal attribution, remem-preparation failure fan-out, pre-prompt
+  null/no-imputation, fixed retry selection, failure retention, and leak
+  redaction have positive and negative tests.
 - The production user-identity prerequisite is either implemented and tested,
   or every public comparative verdict is deterministically `INSUFFICIENT`.
 - A separately authorized smoke covers both directions and all six required
   primary and native-import surfaces before any full-matrix authorization.
-- Complete and both partial manifest forms regenerate deterministic JSON,
-  Markdown, and verdict artifacts.
+- Complete and both partial manifest forms regenerate byte-identical RFC 8785
+  JSON, Markdown, and verdict artifacts; canonicalization passes fixed
+  cross-implementation vectors.
 - The four registered direction/comparator intervals deterministically produce
   `PASS`, statistical-regression `FAIL`, or `INSUFFICIENT` under the exact
   bootstrap predicate.
