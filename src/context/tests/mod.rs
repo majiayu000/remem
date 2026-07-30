@@ -5,6 +5,7 @@ use rusqlite::{params, Connection};
 mod codex_hook_stdout;
 mod cursor_hook;
 mod diagnostics;
+mod engine_convergence;
 mod gate_pipeline;
 mod load;
 mod ownership;
