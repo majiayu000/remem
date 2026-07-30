@@ -1,11 +1,11 @@
-#[cfg(all(feature = "local-onnx", not(windows)))]
+#[cfg(feature = "local-onnx")]
 use std::path::{Path, PathBuf};
 #[cfg(all(feature = "local-onnx", not(windows)))]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(all(feature = "local-onnx", not(windows)))]
 use std::time::{Duration, Instant};
 
-#[cfg(all(feature = "local-onnx", not(windows)))]
+#[cfg(feature = "local-onnx")]
 use anyhow::Context;
 use rusqlite::params;
 
@@ -22,10 +22,10 @@ fn signal_prune_db_busy(_attempt: i32) -> bool {
     true
 }
 
-#[cfg(all(feature = "local-onnx", not(windows)))]
+#[cfg(feature = "local-onnx")]
 struct PruneRaceDir(PathBuf);
 
-#[cfg(all(feature = "local-onnx", not(windows)))]
+#[cfg(feature = "local-onnx")]
 impl PruneRaceDir {
     fn new() -> Result<Self> {
         let path = std::env::temp_dir().join(format!(
@@ -43,7 +43,7 @@ impl PruneRaceDir {
     }
 }
 
-#[cfg(all(feature = "local-onnx", not(windows)))]
+#[cfg(feature = "local-onnx")]
 impl Drop for PruneRaceDir {
     fn drop(&mut self) {
         if let Err(error) = std::fs::remove_dir_all(&self.0) {
@@ -53,6 +53,58 @@ impl Drop for PruneRaceDir {
             );
         }
     }
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_runtime_unavailable_defers_passage_write() -> Result<()> {
+    let conn = setup_vector_conn_with_provider("auto")?;
+    let fixture = PruneRaceDir::new()?;
+    let model_root = fixture.path().join("models");
+    crate::retrieval::embedding::install_test_local_embedding_model(&model_root)?;
+    unsafe { std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &model_root) };
+    insert_test_memory(&conn, 1)?;
+    ensure_vec_table(&conn)?;
+    let _failure = crate::retrieval::embedding::fail_next_test_model_embed_unavailable(
+        &model_root,
+        "synthetic passage model race",
+    )?;
+
+    upsert_memory_embedding(
+        &conn,
+        1,
+        "Credential store",
+        "SQLCipher encrypts secrets at rest.",
+        "architecture",
+        None,
+        "",
+    )?;
+
+    assert_eq!(embedding_count(&conn)?, 0);
+    Ok(())
+}
+
+#[test]
+#[cfg(feature = "local-onnx")]
+fn auto_provider_runtime_unavailable_rejects_generic_backfill_probe() -> Result<()> {
+    let _provider = ScopedEmbeddingProvider::new("auto");
+    let fixture = PruneRaceDir::new()?;
+    let model_root = fixture.path().join("models");
+    crate::retrieval::embedding::install_test_local_embedding_model(&model_root)?;
+    unsafe { std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &model_root) };
+    let _failure = crate::retrieval::embedding::fail_next_test_model_embed_unavailable(
+        &model_root,
+        "synthetic generic backfill model race",
+    )?;
+
+    let error = EmbeddingBackfillSession::start()
+        .expect_err("Generic profile probe must preserve typed local-unavailable");
+
+    assert!(
+        crate::retrieval::embedding::is_local_embedding_model_unavailable_error(&error),
+        "{error:#}"
+    );
+    Ok(())
 }
 
 #[test]

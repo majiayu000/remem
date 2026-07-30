@@ -78,6 +78,7 @@ pub(super) fn embed_local_with_auto_race_fallback(
         }
         Err(error)
             if config.provider == EmbeddingProvider::Auto
+                && kind == LocalEmbeddingInputKind::Query
                 && local_semantic::is_model_unavailable_error(&error) =>
         {
             let message = format!(
