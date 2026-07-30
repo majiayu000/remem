@@ -162,13 +162,14 @@ the later engine and injection-evaluation stages.
 
 ## Verification
 
-S1 implements these focused tests:
+S1 implements nine focused tests, grouped by guarantee:
 
-1. `injection_ordering_follows_search_weights` — runs injection twice over a
-   fixture with two explicit `SearchWeights` values and proves the returned
-   ordering changes. This proves only that explicit weights reach injection;
-   it does not prove that `eval-weight-grid` executes injection or that its
-   generated report is applied at runtime.
+1. `injection_ordering_follows_search_weights` plus the FTS/entity, temporal,
+   fact, LIKE fallback, vector/distance, and RRF-k focused tests make all eight
+   injection scoring fields individually observable on the retrieval/fusion
+   path. This proves only that explicit weights reach injection; it does not
+   prove that `eval-weight-grid` executes injection or that its generated
+   report is applied at runtime.
 2. `default_weights_are_the_production_path` — proves the zero-argument
    production wrapper is equivalent to explicit `SearchWeights::default()`.
 3. `hybrid_context_declares_no_private_scoring_constants` — rejects all eight
@@ -194,6 +195,6 @@ The issue-level completion verification remains:
   confidence gate off first, prove byte-identical injection output on the
   fixture, then flip each of the two behavior switches in its own commit with
   its own evaluation delta.
-- **`hybrid_context.rs` is 738 lines and `text.rs` is 710.** Moving the engine
+- **`hybrid_context.rs` is 767 lines and `text.rs` is 710.** Moving the engine
   out of `text.rs` must not push either past the 800-line ceiling; the engine
   lands in its own module rather than being appended to an existing one.

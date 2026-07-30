@@ -10,8 +10,8 @@ two independently maintained implementations:
 
 - `src/context/hybrid_context.rs`, used by SessionStart injection, which is what
   users actually receive.
-- `src/retrieval/search/memory/`, used by `remem search` and by every evaluation
-  harness.
+- `src/retrieval/search/memory/`, used by `remem search` and the retrieval
+  search/weight-grid evaluation harnesses.
 
 They have drifted. The search engine scores seven channels; injection scores
 five. Injection never sees the `graph` channel (weight 0.75) or the `usage`
