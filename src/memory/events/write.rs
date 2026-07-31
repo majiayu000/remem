@@ -1,16 +1,21 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+pub(super) const EPHEMERAL_EVENT_TYPES: [&str; 7] = [
+    "file_edit",
+    "file_create",
+    "bash",
+    "search",
+    "agent",
+    "tool_result",
+    "cursor_tool_failure",
+];
+
 fn event_retention_class(event_type: &str) -> &'static str {
-    match event_type {
-        "file_edit"
-        | "file_create"
-        | "bash"
-        | "search"
-        | "agent"
-        | "tool_result"
-        | "cursor_tool_failure" => "ephemeral",
-        _ => "audit",
+    if EPHEMERAL_EVENT_TYPES.contains(&event_type) {
+        "ephemeral"
+    } else {
+        "audit"
     }
 }
 

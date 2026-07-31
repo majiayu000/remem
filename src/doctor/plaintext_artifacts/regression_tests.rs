@@ -32,18 +32,24 @@ fn write_non_plaintext_db(path: &Path) {
 }
 
 #[cfg(unix)]
-fn write_hf_snapshot_pointer(dir: &Path, blob_plaintext: bool) -> (PathBuf, PathBuf) {
+fn write_hf_snapshot_pointer_in(
+    dir: &Path,
+    model_root: &Path,
+    revision_len: usize,
+    blob_digest_len: usize,
+    blob_plaintext: bool,
+) -> (PathBuf, PathBuf) {
     use std::os::unix::fs::symlink;
 
     let repo = dir
-        .join("models")
+        .join(model_root)
         .join("fastembed-test")
         .join("models--owner--repo");
-    let digest = "a".repeat(64);
+    let digest = "a".repeat(blob_digest_len);
     let blob = repo.join("blobs").join(&digest);
     let pointer = repo
         .join("snapshots")
-        .join("b".repeat(40))
+        .join("b".repeat(revision_len))
         .join("onnx")
         .join("model.onnx");
     fs::create_dir_all(blob.parent().expect("blob should have parent"))
@@ -58,6 +64,11 @@ fn write_hf_snapshot_pointer(dir: &Path, blob_plaintext: bool) -> (PathBuf, Path
     symlink(Path::new("../../../blobs").join(digest), &pointer)
         .expect("snapshot pointer should create");
     (pointer, blob)
+}
+
+#[cfg(unix)]
+fn write_hf_snapshot_pointer(dir: &Path, blob_plaintext: bool) -> (PathBuf, PathBuf) {
+    write_hf_snapshot_pointer_in(dir, Path::new("models"), 40, 64, blob_plaintext)
 }
 
 #[test]
@@ -161,11 +172,83 @@ fn internal_hf_snapshot_symlink_is_not_an_artifact_warning() {
 
 #[cfg(unix)]
 #[test]
+fn internal_hf_snapshot_symlinks_support_custom_model_roots_inside_data_dir() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let pointers = [
+        Path::new("custom-models"),
+        Path::new("nested/model-cache"),
+        Path::new(""),
+    ]
+    .map(|model_root| write_hf_snapshot_pointer_in(&dir, model_root, 40, 64, false).0);
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Ok, "{}", result.detail);
+    for pointer in pointers {
+        assert!(
+            !result.detail.contains(&pointer.display().to_string()),
+            "{}",
+            result.detail
+        );
+    }
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn internal_hf_snapshot_symlinks_accept_supported_revision_and_blob_digest_combinations() {
+    for (model_root, revision_len, blob_digest_len) in [
+        (Path::new("models"), 40, 40),
+        (Path::new("models"), 64, 64),
+        (Path::new("custom-models"), 40, 64),
+        (Path::new("custom-models"), 64, 40),
+    ] {
+        let dir = arbitrary_backup_test_dir();
+        let db_path = dir.join("remem.db");
+        write_non_plaintext_db(&db_path);
+        let (pointer, _) =
+            write_hf_snapshot_pointer_in(&dir, model_root, revision_len, blob_digest_len, false);
+
+        let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+        assert_eq!(
+            result.status,
+            Status::Ok,
+            "root={}, revision length {revision_len}, blob digest length {blob_digest_len}: {}",
+            model_root.display(),
+            result.detail
+        );
+        assert!(!result.detail.contains(&pointer.display().to_string()));
+        fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn hf_snapshot_blob_plaintext_is_detected_without_following_pointer() {
     let dir = arbitrary_backup_test_dir();
     let db_path = dir.join("remem.db");
     write_non_plaintext_db(&db_path);
     let (pointer, blob) = write_hf_snapshot_pointer(&dir, true);
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Fail, "{}", result.detail);
+    assert!(result.detail.contains(&blob.display().to_string()));
+    assert!(!result.detail.contains(&pointer.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn custom_model_root_plaintext_blob_is_detected_without_following_pointer() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (pointer, blob) =
+        write_hf_snapshot_pointer_in(&dir, Path::new("nested/model-cache"), 64, 64, true);
 
     let result = check_plaintext_artifacts_in(&dir, &db_path, true);
 
@@ -231,6 +314,121 @@ fn malformed_hf_snapshot_symlinks_keep_inspection_incomplete() {
     assert_eq!(result.status, Status::Warn, "{}", result.detail);
     assert!(result.detail.contains(&pointer.display().to_string()));
     fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn hf_snapshot_invalid_or_uppercase_revisions_keep_inspection_incomplete() {
+    for revision_len in [39, 41, 63, 65] {
+        let dir = arbitrary_backup_test_dir();
+        let db_path = dir.join("remem.db");
+        write_non_plaintext_db(&db_path);
+        let (pointer, _) =
+            write_hf_snapshot_pointer_in(&dir, Path::new("custom-models"), revision_len, 64, false);
+
+        let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+        assert_eq!(
+            result.status,
+            Status::Warn,
+            "revision length {revision_len}: {}",
+            result.detail
+        );
+        assert!(result.detail.contains(&pointer.display().to_string()));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    for revision_len in [40, 64] {
+        let dir = arbitrary_backup_test_dir();
+        let db_path = dir.join("remem.db");
+        write_non_plaintext_db(&db_path);
+        let (pointer, _) =
+            write_hf_snapshot_pointer_in(&dir, Path::new("custom-models"), revision_len, 64, false);
+        let revision_dir = pointer
+            .parent()
+            .and_then(Path::parent)
+            .expect("pointer should be nested under a revision directory");
+        let uppercase_revision_dir = revision_dir.with_file_name("B".repeat(revision_len));
+        fs::rename(revision_dir, &uppercase_revision_dir)
+            .expect("revision directory should rename");
+        let uppercase_pointer = uppercase_revision_dir.join("onnx/model.onnx");
+
+        let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+        assert_eq!(
+            result.status,
+            Status::Warn,
+            "uppercase revision length {revision_len}: {}",
+            result.detail
+        );
+        assert!(result
+            .detail
+            .contains(&uppercase_pointer.display().to_string()));
+        fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn hf_snapshot_lookalikes_without_adjacent_install_and_repo_dirs_warn() {
+    use std::os::unix::fs::symlink;
+
+    for relative_repo in [
+        Path::new("models--owner--repo"),
+        Path::new("custom-models/models--owner--repo"),
+        Path::new("custom-models/fastembed-test/not-a-hf-repo"),
+    ] {
+        let dir = arbitrary_backup_test_dir();
+        let db_path = dir.join("remem.db");
+        write_non_plaintext_db(&db_path);
+        let digest = "a".repeat(64);
+        let repo = dir.join(relative_repo);
+        let blob = repo.join("blobs").join(&digest);
+        let pointer = repo
+            .join("snapshots")
+            .join("b".repeat(40))
+            .join("onnx/model.onnx");
+        fs::create_dir_all(blob.parent().expect("blob should have parent"))
+            .expect("blob directory should create");
+        fs::create_dir_all(pointer.parent().expect("pointer should have parent"))
+            .expect("snapshot directory should create");
+        write_non_plaintext_db(&blob);
+        symlink(Path::new("../../../blobs").join(digest), &pointer)
+            .expect("snapshot lookalike should create");
+
+        let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+        assert_eq!(result.status, Status::Warn, "{}", result.detail);
+        assert!(result.detail.contains(&pointer.display().to_string()));
+        assert!(result.detail.contains("symbolic-link artifact"));
+        fs::remove_dir_all(&dir).ok();
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_custom_model_root_is_not_followed() {
+    use std::os::unix::fs::symlink;
+
+    let dir = arbitrary_backup_test_dir();
+    let external = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let (external_pointer, _) =
+        write_hf_snapshot_pointer_in(&external, Path::new("cache"), 40, 64, false);
+    symlink(external.join("cache"), dir.join("custom-models"))
+        .expect("custom model root symlink should create");
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Warn, "{}", result.detail);
+    assert!(result.detail.contains("custom-models"));
+    assert!(result.detail.contains("symbolic-link artifact"));
+    assert!(!result
+        .detail
+        .contains(&external_pointer.display().to_string()));
+    fs::remove_dir_all(&dir).ok();
+    fs::remove_dir_all(&external).ok();
 }
 
 #[cfg(unix)]
