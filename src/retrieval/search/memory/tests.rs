@@ -48,11 +48,14 @@ fn assert_score_identity(result: &SearchExplainResult) {
         .map(|contribution| contribution.score)
         .sum::<f64>();
     assert!(
-        (result.fusion_score - contribution_sum).abs() < 1e-12,
+        (result.fusion_score() - contribution_sum).abs() < 1e-12,
         "{result:#?}"
     );
+    let post_fusion_score_factor = result
+        .post_fusion_score_factor()
+        .expect("production explain results must have a positive fusion score");
     assert!(
-        (result.final_score - result.fusion_score * result.post_fusion_score_factor).abs() < 1e-12,
+        (result.final_score - result.fusion_score() * post_fusion_score_factor).abs() < 1e-12,
         "{result:#?}"
     );
 }
@@ -162,7 +165,7 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
                 .all(|contribution| contribution.score > 0.0)
     }));
     for result in &explain.results {
-        assert_eq!(result.post_fusion_score_factor, 1.0);
+        assert_eq!(result.post_fusion_score_factor(), Some(1.0));
         assert_score_identity(result);
     }
     Ok(())
@@ -222,7 +225,14 @@ fn search_explain_accounts_for_source_anchor_demotion() -> Result<()> {
         .context("stale memory should remain visible after demotion")?;
 
     assert_eq!(result.staleness.source_anchor, "verify-before-trust");
-    assert!((result.post_fusion_score_factor - 0.25).abs() < 1e-12);
+    assert!(
+        (result
+            .post_fusion_score_factor()
+            .expect("demoted result must retain a positive fusion score")
+            - 0.25)
+            .abs()
+            < 1e-12
+    );
     assert_score_identity(result);
     Ok(())
 }
@@ -308,11 +318,9 @@ fn like_fallback_only_participates_when_stronger_channels_are_empty() -> Result<
         .iter()
         .find(|contribution| contribution.channel == "like_fallback")
         .context("LIKE fallback contribution should be explained")?;
-    assert_eq!(contribution.normalized_score, None);
-    assert_eq!(
-        contribution.score,
-        contribution.weight * contribution.rrf_score
-    );
+    let expected = SearchWeights::default().like_fallback
+        / (SearchWeights::default().rrf_k + contribution.rank as f64);
+    assert!((contribution.score - expected).abs() < 1e-12);
     Ok(())
 }
 
@@ -348,12 +356,14 @@ fn semantic_vector_channel_recalls_paraphrase_without_lexical_overlap() -> Resul
         .iter()
         .find(|result| result.memory_id == id)
         .context("expected vector-recalled memory in explain results")?;
-    assert!(
-        result.contributions.iter().any(|contribution| {
-            contribution.channel == "vector" && contribution.normalized_score.is_some()
-        }),
-        "{result:#?}"
-    );
+    let vector = result
+        .contributions
+        .iter()
+        .find(|contribution| contribution.channel == "vector")
+        .context("vector contribution should be explained")?;
+    let pure_rrf =
+        SearchWeights::default().vector / (SearchWeights::default().rrf_k + vector.rank as f64);
+    assert!(vector.score > pure_rrf, "{result:#?}");
     Ok(())
 }
 

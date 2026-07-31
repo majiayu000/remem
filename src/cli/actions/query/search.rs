@@ -399,13 +399,17 @@ fn render_search_explain(explain: &SearchExplain) -> String {
     }
     output.push_str("  results:\n");
     for result in &explain.results {
+        let post_fusion_score_factor = result
+            .post_fusion_score_factor()
+            .map(|factor| format!("{factor:.3}"))
+            .unwrap_or_else(|| "n/a".to_string());
         output.push_str(&format!(
-            "    [{}] rank={} score={:.6} fusion_score={:.6} post_fusion_score_factor={:.3} evidence_confidence={:.2} visibility={} scope={} project={}\n",
+            "    [{}] rank={} score={:.6} fusion_score={:.6} post_fusion_score_factor={} evidence_confidence={:.2} visibility={} scope={} project={}\n",
             result.memory_id,
             result.final_rank,
             result.final_score,
-            result.fusion_score,
-            result.post_fusion_score_factor,
+            result.fusion_score(),
+            post_fusion_score_factor,
             result.evidence_confidence,
             result.visibility,
             result.scope,
@@ -417,21 +421,10 @@ fn render_search_explain(explain: &SearchExplain) -> String {
                 result
                     .contributions
                     .iter()
-                    .map(|contribution| {
-                        let signal = contribution
-                            .normalized_score
-                            .map(|score| format!("{score:.3}"))
-                            .unwrap_or_else(|| "rank-only".to_string());
-                        format!(
-                            "{}#{}={:.6}[weight={:.3},rrf={:.6},signal={}]",
-                            contribution.channel,
-                            contribution.rank,
-                            contribution.score,
-                            contribution.weight,
-                            contribution.rrf_score,
-                            signal
-                        )
-                    })
+                    .map(|contribution| format!(
+                        "{}#{}={:.6}",
+                        contribution.channel, contribution.rank, contribution.score
+                    ))
                     .collect::<Vec<_>>()
                     .join(", ")
             ));

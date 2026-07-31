@@ -106,6 +106,35 @@ fn raw_archive_time_bound_remains_public_and_uses_utc_midnight_for_dates() {
     assert_eq!(parse("2026-01-02").unwrap(), 1_767_312_000);
 }
 
+#[test]
+fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
+    let contribution = remem::retrieval::search::ChannelContribution {
+        channel: "entity".to_string(),
+        rank: 1,
+        score: 0.5,
+    };
+    let result = remem::retrieval::search::SearchExplainResult {
+        memory_id: 7,
+        final_rank: 1,
+        final_score: 0.25,
+        evidence_confidence: 1.0,
+        project: "public-api-project".to_string(),
+        scope: "project".to_string(),
+        visibility: "project-local".to_string(),
+        staleness: remem::memory::MemoryStalenessLabel {
+            status: "active".to_string(),
+            age: "fresh",
+            source_anchor: "untracked".to_string(),
+            label: "status=active; staleness=fresh; source_anchor=untracked".to_string(),
+            error: None,
+        },
+        contributions: vec![contribution],
+    };
+
+    assert_eq!(result.fusion_score(), 0.5);
+    assert_eq!(result.post_fusion_score_factor(), Some(0.5));
+}
+
 #[tokio::test]
 async fn exported_router_covers_auth_save_list_search_and_detail() -> anyhow::Result<()> {
     let data_dir = TempDataDir::new("public-api-router");

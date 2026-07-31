@@ -69,10 +69,6 @@ pub struct SearchExplainResult {
     pub memory_id: i64,
     pub final_rank: usize,
     pub final_score: f64,
-    /// Sum of the per-channel RRF contributions before post-fusion policies.
-    pub fusion_score: f64,
-    /// Multiplier applied after fusion, such as source-anchor demotion.
-    pub post_fusion_score_factor: f64,
     pub evidence_confidence: f64,
     pub project: String,
     pub scope: String,
@@ -81,15 +77,27 @@ pub struct SearchExplainResult {
     pub contributions: Vec<ChannelContribution>,
 }
 
+impl SearchExplainResult {
+    /// Sum of the per-channel RRF contributions before post-fusion policies.
+    pub fn fusion_score(&self) -> f64 {
+        self.contributions
+            .iter()
+            .map(|contribution| contribution.score)
+            .sum()
+    }
+
+    /// Multiplier applied after fusion, such as source-anchor demotion.
+    pub fn post_fusion_score_factor(&self) -> Option<f64> {
+        let fusion_score = self.fusion_score();
+        (fusion_score.is_finite() && fusion_score > 0.0)
+            .then_some(self.final_score / fusion_score)
+            .filter(|factor| factor.is_finite() && *factor >= 0.0)
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct ChannelContribution {
     pub channel: String,
     pub rank: usize,
-    pub weight: f64,
-    pub rrf_score: f64,
-    /// Present only when the channel supplies a calibrated strength signal.
-    /// Rank-only channels omit this field and use pure weighted RRF.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub normalized_score: Option<f64>,
     pub score: f64,
 }

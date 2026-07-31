@@ -108,11 +108,9 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
         .iter()
         .find(|contribution| contribution.channel == "fact")
         .context("fact contribution should be explained")?;
-    assert_eq!(contribution.normalized_score, None);
-    assert_eq!(
-        contribution.score,
-        contribution.weight * contribution.rrf_score
-    );
+    let expected =
+        SearchWeights::default().fact / (SearchWeights::default().rrf_k + contribution.rank as f64);
+    assert!((contribution.score - expected).abs() < 1e-12);
     assert_eq!(explain.filtered_result_count, 0);
     Ok(())
 }

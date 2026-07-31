@@ -7,9 +7,9 @@ use crate::memory::Memory;
 use anyhow::{bail, Result};
 use rusqlite::{types::ToSql, Connection};
 
-use super::super::super::common::{
-    calibrated_signal, reciprocal_rank_score, weighted_rank_score, WeightedRankedChannel,
-};
+#[cfg(test)]
+use super::super::super::common::reciprocal_rank_score;
+use super::super::super::common::{calibrated_signal, weighted_rank_score, WeightedRankedChannel};
 use super::super::ChannelContribution;
 #[cfg(test)]
 use super::super::SearchWeights;
@@ -64,9 +64,6 @@ pub(super) fn contributions_for(
         contributions.push(ChannelContribution {
             channel: channel.name.to_string(),
             rank: index + 1,
-            weight: channel.weight,
-            rrf_score: reciprocal_rank_score(plan.weights.rrf_k, index)?,
-            normalized_score,
             score: weighted_rank_score(
                 channel.weight,
                 plan.weights.rrf_k,
@@ -493,18 +490,12 @@ mod tests {
         let entity = &contributions[0];
         assert_eq!(entity.channel, "entity");
         assert_eq!(entity.rank, 2);
-        assert_eq!(entity.weight, 1.0);
-        assert_eq!(entity.normalized_score, None);
-        assert_eq!(entity.rrf_score, reciprocal_rank_score(60.0, 1)?);
-        assert_eq!(entity.score, entity.weight * entity.rrf_score);
+        assert_eq!(entity.score, reciprocal_rank_score(60.0, 1)?);
 
         let temporal = &contributions[1];
         assert_eq!(temporal.channel, "temporal");
         assert_eq!(temporal.rank, 1);
-        assert_eq!(temporal.weight, 0.1);
-        assert_eq!(temporal.normalized_score, None);
-        assert_eq!(temporal.rrf_score, reciprocal_rank_score(60.0, 0)?);
-        assert_eq!(temporal.score, temporal.weight * temporal.rrf_score);
+        assert_eq!(temporal.score, 0.1 * reciprocal_rank_score(60.0, 0)?);
         Ok(())
     }
 

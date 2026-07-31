@@ -313,9 +313,9 @@
   fallback, and graph channels now contribute pure weighted RRF instead of
   feeding reciprocal rank back as a synthetic normalized score. FTS, vector,
   and opt-in usage retain calibrated strength signals; equal-score FTS falls
-  back to rank-only fusion. Search explain output now decomposes every
-  contribution into weight, reciprocal-rank term, optional signal, and total
-  score.
+  back to rank-only fusion. Search explain output reports the computed
+  pre-/post-fusion score identity while preserving the existing public Rust
+  explain-struct field layout.
 - Staged source version `0.6.33` for GH-944: `remem doctor` now detects
   plaintext SQLite residue across the active data and backup locations,
   reports inspection failures instead of silently skipping them, and bases

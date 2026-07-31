@@ -723,8 +723,6 @@ fn build_explain(
                 memory_id: memory.id,
                 final_rank: index + 1,
                 final_score,
-                fusion_score,
-                post_fusion_score_factor,
                 evidence_confidence: candidate_confidence(memory, plan),
                 project: memory.project.clone(),
                 scope: memory.scope.clone(),
