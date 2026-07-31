@@ -131,6 +131,8 @@ fn mixed_cjk_and_ascii() {
 fn tokenize_mixed_test() {
     let tokens = tokenize_mixed("数据库加密test");
     assert_eq!(tokens, vec!["数据库加密", "test"]);
+    assert_eq!(tokenize_mixed("last_30_days"), vec!["last_30_days"]);
+    assert_eq!(tokenize_mixed("3_days_ago"), vec!["3_days_ago"]);
 }
 
 #[test]

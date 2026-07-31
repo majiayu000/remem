@@ -270,6 +270,27 @@ fn parse_exact_dates() -> Result<()> {
 }
 
 #[test]
+fn exact_date_consumes_the_parsed_occurrence() {
+    let query = "Service42 changed on 4 May 2026";
+    assert!(extract_temporal(query).is_some());
+    assert_eq!(
+        TemporalConstraint::query_without_temporal_expression(query).trim(),
+        "Service42 changed on"
+    );
+}
+
+#[test]
+fn snake_case_identifiers_are_not_temporal_expressions() {
+    for query in ["last_30_days", "3_days_ago"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
 fn parse_month_year_dates() -> Result<()> {
     let expected_start = chrono::NaiveDate::from_ymd_opt(2026, 5, 1)
         .ok_or_else(|| anyhow!("valid date should construct"))?

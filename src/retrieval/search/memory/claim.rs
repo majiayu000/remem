@@ -472,7 +472,6 @@ fn is_generic_query_term(term: &str) -> bool {
         term,
         "all"
             | "and"
-            | "about"
             | "are"
             | "did"
             | "does"
@@ -542,11 +541,12 @@ mod tests {
             "Has Project KestrelNook migrated NebulaLatch to Oracle Cloud?",
             Some("synthetic/kestrelnook"),
         );
-
+        let about = entity_scope_candidates("Who owns About?", Some("/repo"));
         assert!(terms.iter().any(|term| term == "NebulaLatch"));
         assert!(!terms.iter().any(|term| term == "KestrelNook"));
         assert!(!terms.iter().any(|term| term == "Project"));
         assert!(!terms.iter().any(|term| term == "Has"));
+        assert_eq!(about, vec!["About"]);
     }
 
     #[test]

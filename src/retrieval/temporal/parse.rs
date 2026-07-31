@@ -36,8 +36,7 @@ fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
     let lower = query.to_ascii_lowercase();
     let field = temporal_field_for_query(&lower);
 
-    if let Some((start_epoch, end_epoch, consumed_terms)) = parse_exact_date_or_month(&lower) {
-        let consumed_span = ordered_terms_span(&lower, &consumed_terms)?;
+    if let Some((start_epoch, end_epoch, consumed_span)) = parse_exact_date_or_month(&lower) {
         return Some(parsed_constraint(
             start_epoch,
             end_epoch,
@@ -132,19 +131,6 @@ fn has_word_boundaries(query: &str, span: &Range<usize>) -> bool {
             .is_none_or(|character| !is_word_character(character))
 }
 
-fn ordered_terms_span(query: &str, terms: &[&str]) -> Option<Range<usize>> {
-    let mut cursor = 0;
-    let mut start = None;
-    let mut end = 0;
-    for term in terms {
-        let term_start = cursor + query[cursor..].find(term)?;
-        start.get_or_insert(term_start);
-        end = term_start + term.len();
-        cursor = end;
-    }
-    Some(start?..end)
-}
-
 fn temporal_field_for_query(lower: &str) -> TemporalField {
     if lower.contains("updated")
         || lower.contains("update")
@@ -162,27 +148,31 @@ fn temporal_field_for_query(lower: &str) -> TemporalField {
     }
 }
 
-fn parse_exact_date_or_month(lower: &str) -> Option<(i64, i64, Vec<&str>)> {
+fn parse_exact_date_or_month(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     parse_separated_ymd(lower)
         .or_else(|| parse_chinese_ymd(lower))
         .or_else(|| parse_month_name_date(lower))
 }
 
-fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Vec<&str>)> {
+fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
+    let mut cursor = 0;
     for raw in lower.split_whitespace() {
+        let raw_start = cursor + lower[cursor..].find(raw)?;
+        cursor = raw_start + raw.len();
         let token =
             raw.trim_matches(|c: char| !(c.is_ascii_digit() || c == '-' || c == '/' || c == '.'));
         for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"] {
             if let Ok(date) = NaiveDate::parse_from_str(token, fmt) {
                 let (start, end) = day_range(date)?;
-                return Some((start, end, vec![token]));
+                let token_start = raw_start + raw.find(token)?;
+                return Some((start, end, token_start..token_start + token.len()));
             }
         }
     }
     None
 }
 
-fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64, Vec<&str>)> {
+fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     let year_idx = lower.find('年')?;
     let year_text = trailing_ascii_digits(&lower[..year_idx])?;
     let year_start = year_idx - year_text.len();
@@ -204,65 +194,68 @@ fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64, Vec<&str>)> {
             .next()
             .filter(|marker| matches!(marker, '日' | '号'))
             .map_or(0, char::len_utf8);
-        let expression = &lower[year_start..day_end + marker_len];
         let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-        Some((start, end, vec![expression]))
+        Some((start, end, year_start..day_end + marker_len))
     } else {
-        let expression = &lower[year_start..month_end];
         let (start, end) = month_range(year, month)?;
-        Some((start, end, vec![expression]))
+        Some((start, end, year_start..month_end))
     }
 }
 
-fn parse_month_name_date(lower: &str) -> Option<(i64, i64, Vec<&str>)> {
-    let parts: Vec<&str> = lower
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|part| !part.is_empty())
-        .collect();
+fn parse_month_name_date(lower: &str) -> Option<(i64, i64, Range<usize>)> {
+    let parts = query_words(lower);
     let current_year = chrono::Utc::now().year();
 
     for (idx, part) in parts.iter().enumerate() {
-        let month = match month_number(part) {
+        let month = match month_number(part.text) {
             Some(month) => month,
             None => continue,
         };
-        let next = parts.get(idx + 1).copied();
-        let next2 = parts.get(idx + 2).copied();
-        let previous = idx.checked_sub(1).and_then(|prev| parts.get(prev).copied());
+        let next = parts.get(idx + 1);
+        let next2 = parts.get(idx + 2);
+        let previous = idx.checked_sub(1).and_then(|prev| parts.get(prev));
 
-        if let (Some(day), Some(year)) = (previous.and_then(parse_day), next.and_then(parse_year)) {
+        if let (Some(day), Some(year)) = (
+            previous.and_then(|word| parse_day(word.text)),
+            next.and_then(|word| parse_year(word.text)),
+        ) {
             let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            return Some((start, end, vec![previous?, part, next?]));
+            return Some((start, end, previous?.span.start..next?.span.end));
         }
-        if let (Some(year), Some(day)) = (previous.and_then(parse_year), next.and_then(parse_day)) {
+        if let (Some(year), Some(day)) = (
+            previous.and_then(|word| parse_year(word.text)),
+            next.and_then(|word| parse_day(word.text)),
+        ) {
             let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            return Some((start, end, vec![previous?, part, next?]));
+            return Some((start, end, previous?.span.start..next?.span.end));
         }
-        if let Some(day) = next.and_then(parse_day) {
-            let year = next2.and_then(parse_year).unwrap_or(current_year);
+        if let Some(day) = next.and_then(|word| parse_day(word.text)) {
+            let year = next2
+                .and_then(|word| parse_year(word.text))
+                .unwrap_or(current_year);
             let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            let mut consumed = vec![part, next?];
-            if next2.and_then(parse_year).is_some() {
-                consumed.push(next2?);
-            }
-            return Some((start, end, consumed));
+            let last = next2
+                .filter(|word| parse_year(word.text).is_some())
+                .unwrap_or(next?);
+            return Some((start, end, part.span.start..last.span.end));
         }
-        if let Some(year) = next.and_then(parse_year) {
+        if let Some(year) = next.and_then(|word| parse_year(word.text)) {
             let (start, end) = month_range(year, month)?;
-            return Some((start, end, vec![part, next?]));
+            return Some((start, end, part.span.start..next?.span.end));
         }
-        if let Some(year) = previous.and_then(parse_year) {
+        if let Some(year) = previous.and_then(|word| parse_year(word.text)) {
             let (start, end) = month_range(year, month)?;
-            return Some((start, end, vec![previous?, part]));
+            return Some((start, end, previous?.span.start..part.span.end));
         }
-        if let Some(day) = previous.and_then(parse_day) {
-            let year = next.and_then(parse_year).unwrap_or(current_year);
+        if let Some(day) = previous.and_then(|word| parse_day(word.text)) {
+            let year = next
+                .and_then(|word| parse_year(word.text))
+                .unwrap_or(current_year);
             let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            let mut consumed = vec![previous?, part];
-            if next.and_then(parse_year).is_some() {
-                consumed.push(next?);
-            }
-            return Some((start, end, consumed));
+            let last = next
+                .filter(|word| parse_year(word.text).is_some())
+                .unwrap_or(part);
+            return Some((start, end, previous?.span.start..last.span.end));
         }
     }
 
@@ -422,7 +415,7 @@ fn query_words(query: &str) -> Vec<QueryWord<'_>> {
     let mut words = Vec::new();
     let mut start = None;
     for (index, character) in query.char_indices() {
-        if character.is_alphanumeric() {
+        if character.is_alphanumeric() || character == '_' {
             start.get_or_insert(index);
         } else if let Some(start) = start.take() {
             words.push(QueryWord {
