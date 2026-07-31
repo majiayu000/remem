@@ -127,9 +127,9 @@ every table/count/digest unchanged:
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field
-(v1 OLD values are typed NULL) plus request fingerprints. Insert valid v1/v2
-and mutate each OLD/NEW value while reusing the digest; each must abort. Recompute
-the full frame and only the valid predecessor/version/status/time chain passes.
+(v1 OLD values are typed NULL) plus request fingerprints. Reject v2+ route or
+lifecycle `insert|legacy_backfill` and lifecycle `baseline`; insert valid v1/v2,
+mutate each OLD/NEW value with reused digest, and only a valid chain may pass.
 For `memory_insert_v1_ledgers`, run every insert family, missing/wrong
 `insert_origin`, wrong UDF, invalid route/lifecycle value, and injected failure
 between its two INSERT statements. A parent INSERT yields exactly memory+route
@@ -220,7 +220,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
 | `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
 | `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove only proved stage/B link, while a mismatched link source is preserved visible | not reachable |
-| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; competitor-proof journal fsync and reverse compensation | exact exchange rolls back to D0; a post-exchange/pre-proof crash classifies C under `exchange_intent`; stable competitor is restored with J/B/S unsealed; drift preserves all | not reachable |
+| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; competitor-proof journal fsync and reverse compensation | exact normal exchange rolls back to D0 and removes S/B/J; only actual drift compensates to C with J/B/S unsealed; entry drift preserves all | not reachable |
 | absent-target S→target atomic no-replace and portable link/unlink | prior absence restored only without competitor; EEXIST preserves competitor/J/S as ambiguous | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
