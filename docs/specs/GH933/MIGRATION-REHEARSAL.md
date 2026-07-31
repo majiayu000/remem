@@ -74,7 +74,8 @@ Extract each installed SQL object from `sqlite_schema` and execute the exact
 never use a relaxed copy. Normalize only insignificant whitespace and identifier
 quoting, then require name/body equivalence for every object, explicitly
 `memory_route_ledger_fingerprint_guard`,
-`memory_lifecycle_ledger_fingerprint_guard`, and `memory_insert_v1_ledgers`.
+`memory_lifecycle_ledger_fingerprint_guard`, `memory_insert_v1_ledgers`, and
+`memory_route_tuple_update_guard`.
 
 Positive cases cover all ten typed binding kinds and every allowed outcome:
 
@@ -117,7 +118,10 @@ every table/count/digest unchanged:
    ASCII-whitespace-only, leading-whitespace, or trailing-whitespace key rejected;
 10. result inserted after seal and duplicate request/result/seal insertion; and
 11. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
-   both before and after seal, plus mutation of a memory origin tuple.
+   both before and after seal, plus mutation of a memory origin tuple; and
+12. a changed route tuple with no staged next row, wrong head, OLD mismatch, or
+   NEW mismatch; each aborts unchanged, while a matching terminal next row
+   permits the update and null-safe same-value assignments need no route row.
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field
@@ -169,7 +173,9 @@ stable source/no-source archive identities remain distinct.
 Run foreground migration on:
 
 - empty current schema;
-- one row for each status/scope/owner/topic NULL/empty/exact-value boundary;
+- one row for each exact memory status (`active`, `stale`, `superseded`,
+  `archived`, `deleted`, `rejected`) and scope/owner/topic
+  NULL/empty/exact-value boundary;
 - real anonymized legacy clone with pruned events and unsupported historical
   writers, requiring forward-only floors;
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
@@ -200,9 +206,9 @@ Fault injection kills the process, without unwinding, after every boundary:
 | `inspect_intent` fsync; owner-read lift/hash/restore/fsync | exact original mode/identity/bytes | not reachable |
 | `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
 | `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
-| `swap_intent` journal fsync before rename | target=before, backup absent, stage=after; keep target/remove stage | not reachable |
-| `backed_up`: target→backup no-replace or portable target/B link+unlink/fsync | backup restored; D0-link removes transient B link | not reachable |
-| S→target atomic no-replace and portable link/unlink | prior target/absence restored only without competitor; EEXIST preserves competitor/J/B/S as ambiguous | not reachable |
+| `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove only proved stage/B link, while a mismatched link source is preserved visible | not reachable |
+| present-target S↔target exchange, identity postcheck, competitor-proof journal fsync and reverse compensation | exact exchange rolls back to D0; stable competitor is restored to target with J/B/S unsealed; drift preserves all | not reachable |
+| absent-target S→target atomic no-replace and portable link/unlink | prior absence restored only without competitor; EEXIST preserves competitor/J/S as ambiguous | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
 | seal INSERT before SQLite COMMIT | rollback; prior target restored | not reachable |
@@ -216,8 +222,8 @@ At every table boundary and both sides of each listed syscall, use separate OS
 processes, not threads: the writer holds the retained L inode while a startup
 scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
 `inspect_intent`, `reserved`, `stage_building`, every U create/write/fsync,
-`stage_ready`, U→S, `staged`, `swap_intent`, target→B before/after `backed_up`,
-S→target before/after `swapped`, every DB
+`stage_ready`, U→S, `staged`, `swap_intent`, B-link before/after `backed_up`,
+present-target exchange/compensation or absent-target publish before/after `swapped`, every DB
 result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, and
 each recovery phase/action. Both contenders must return
 `local_copy_writer_in_progress` (or bounded-wait at startup), and an event trace
@@ -246,24 +252,34 @@ wrong-proof U/S, race a second writer (blocked by L), mutate U after IU capture,
 and forge wrong bytes at S: only a successful exact private-Q U proof may be
 classified as partial; wrong-byte S is never normal crash state.
 
-Run S→target races twice: originally absent, and present D0 after target→B.
-At the publish syscall have an independent process create a new target or
-rename-replace it. Linux `renameat2(RENAME_NOREPLACE)`, macOS
-`renameatx_np(RENAME_EXCL)`, and portable `linkat` must return EEXIST when the
-competitor wins, preserve its bytes/inode/mode exactly, retain J/B/S, and leave
-the DB unsealed with `local_copy_publish_collision`. If remem publishes first
-and the competitor replaces afterward, the pre-seal IU/D1 recheck detects drift
-and preserves the competitor/evidence. Assert zero plain rename and zero
-competitor overwrite in syscall traces.
+Race every source boundary with an independent process. Before B `linkat`,
+rename-replace target so B may capture C rather than I0: the target+B postcheck
+must reject before exchange or seal, preserve all names, and never classify C as
+D0. After a valid B pin but before present-target exchange, replace target with
+C: the exchange may move C to S, but remem must durably record `IC/MC/DC`,
+reverse-exchange only exact target=D1/S=C, prove C restored at target and D1 at
+S, and return `local_copy_publish_collision` with J/B/S and an unsealed DB.
+SIGKILL before/after the competitor-proof fsync and reverse exchange; recovery
+must finish the same compensation. Race the reverse itself: any changed source
+or postcondition preserves every entry as ambiguous, with no unlink or seal.
+If remem exchanges first and the competitor replaces afterward, the pre-seal
+IU/D1 recheck preserves the competitor/evidence.
+
+Separately race absent-target S→target. Linux `RENAME_NOREPLACE`, macOS
+`RENAME_EXCL`, and portable `linkat` must return EEXIST when the competitor
+wins, preserve it plus J/S, and leave the DB unsealed. Assert zero target→B
+rename, zero plain replacement rename, zero competitor unlink, and no cleanup of
+an identity-mismatched B/S in syscall traces.
 
 Run a real filesystem probe for readable 0644 and unreadable owner-writable 0200
 targets. Write known bytes before chmod; exercise journaled owner-read lift,
-double hash, exact mode restoration, and no-replace target→B→target. Assert
-dev/inode, uid/gid/mode/nlink/size/mtime, digest and bytes are preserved; T/U
-remain private-Q 0600, S is full D1 below P, and B remains 0644/0200. Exercise
-portable D0-link and D1-link nlink=2 checkpoints. Precreate B and assert the
-platform no-replace syscall fails before changing target. Run on every supported
-filesystem; unsupported primitives are a visible no-mutation compatibility error.
+double hash, exact mode restoration, B hard-link pin, S↔target exchange and
+reverse recovery. Assert dev/inode, uid/gid/mode/size/mtime, digest and bytes are
+preserved; target/B then B/S are the exact temporary nlink=2 I0 pair, T/U remain
+private-Q 0600, and B/S retain 0644/0200. Exercise D1-link checkpoints. Precreate
+B and assert link fails before exchange; probe Linux `RENAME_EXCHANGE` and macOS
+`RENAME_SWAP` before target mutation. Unsupported present-target exchange is a
+visible no-mutation compatibility error.
 
 Create distinct journal Q/locks directories at 0700 and a current-uid target
 parent P at 0755 on Q's device, including a missing descendant securely created
@@ -273,21 +289,21 @@ S inherits IU only after full-D1 atomic no-replace publication with exact
 symlink or
 non-directory components, Q alias, wrong parent uid, missing owner rwx,
 group/world-writable P, cross-device target, changed `(dev,ino)` or uid/gid/mode,
-and missing directory-fsync or atomic no-replace support. Replace/rename the
+and missing directory-fsync, atomic no-replace, or required exchange support. Replace/rename the
 parent after opening its dirfd at each revalidation boundary: operations must
 remain bound to the proved P and publish nothing at the replacement path, or
 fail visibly without mutation.
 
 Keep all 23 historical double-crash vectors as named regressions with identical
-final outcomes (old reserved+S is now `stage_ready`). The unsafe historical
-B-over-D1 step is replaced, not dropped: under durable `recover_before_file`,
-unlink only proved D1 target, fsync P, accept `(Ø,D0,Ø,Ø)`, then B→target
-no-replace, target fdatasync and P fsync. Inject after each new action/fsync and
-retain the original empty-target B restore, S unlink, absent-target D1 unlink,
-proved-B unlink and parent-fsync vectors; then add U/D0-link/D1-link states. Kill/restart at
-each, then kill again at every reachable later syscall (and iterate to a fixed
-point). Every protocol-generated path reaches exact D0/absence or D1 without
-ambiguity; every adjacent pre/post-durability state remains in the same phase.
+final outcomes (old reserved+S is now `stage_ready`). Replace the unsafe
+B-over-D1 recovery with durable `recover_before_file`: when target=D1 and
+B/S are the proved I0 pair, exchange exact target/S, verify target=D0/S=D1,
+unlink S then B with a P fsync after each; before exchange, remove proved S then
+B. Inject after each action/fsync and retain absent-target D1 unlink plus sealed
+S/B cleanup vectors; add U/D1-link, source-race and `compensate_intent` states.
+Kill/restart at each, then again at every reachable later syscall to a fixed
+point. Protocol states converge to D0/absence or D1; competitor states converge
+to a restored stable competitor or remain byte-preserving ambiguity.
 
 Also test canonical only, temp only (empty/partial/complete), both, the expected
 retained locks subtree, unknown name, wrong T/S uid/mode/link count, B
@@ -295,8 +311,9 @@ identity/metadata/digest drift, inode alias and path escape. Mutate each accepte
 physical cell to absent/D0/D1/wrong bytes;
 only listed states converge, while every failed proof remains intact/ambiguous.
 
-Tamper separately with journal JSON, nonce/IU, request fingerprint, target/backup/U/stage
-path, type, inode alias, and each digest; remove/invalidate the DB; create an
+Tamper separately with journal JSON, nonce/IU/IC, request fingerprint,
+target/backup/U/stage path, type, inode alias, metadata and each digest;
+remove/invalidate the DB; create an
 unexpected combination of target and backup. Every ambiguous case leaves all
 user-visible files and journal untouched, returns
 `local_copy_reconciliation_ambiguous`, logs at error with only opaque identity,

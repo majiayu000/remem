@@ -152,11 +152,14 @@ pending v2 requirements below.
    phase writes empty/partial bytes only to a proved 0600 build file below the
    private journal root. Only its fdatasynced D1 inode is atomically published
    no-replace as stage below the separately verified target parent, so partial S
-   is impossible. Backup proves the no-replace rename source plus original
-   identity, metadata and digest, retaining legal permissions such as 0200.
-   Final stage→target publication is also atomic no-replace; a competing file is
-   preserved and leaves the request visibly unsealed/ambiguous.
-   Durable recovery phases make every recovery rename/unlink/fsync reentrant.
+   is impossible. For an existing single-link target, a no-replace hard link
+   first pins the reverified original inode as backup, retaining identity,
+   metadata, digest and legal permissions such as 0200. Publication atomically
+   exchanges stage and target, then proves target=new and backup+stage=original;
+   an unsupported exchange fails before target mutation. If a concurrent writer
+   wins, its inode is durably identified and reverse-exchanged back to target;
+   any further drift preserves all names and leaves the request unsealed.
+   Durable recovery phases make every exchange/unlink/fsync reentrant.
    Recovery restores exact prior bytes without a seal or keeps the sealed target;
    every unlisted state fails closed untouched. A crash before commit leaves no
    committed database state or user-file mutation after reconciliation. After
@@ -354,11 +357,14 @@ pending v2 requirements below.
       vectors match Rust, trigger and migration backfill bytes. Literal
       `memory_route_ledger_fingerprint_guard`,
       `memory_lifecycle_ledger_fingerprint_guard`, and
-      `memory_insert_v1_ledgers` SQL is normalized against `sqlite_schema`;
+      `memory_insert_v1_ledgers` plus `memory_route_tuple_update_guard` SQL is
+      normalized against `sqlite_schema`; all six current memory statuses,
+      including `superseded`, are accepted while unknown values fail;
       every typed OLD/NEW field is hashed and memory+route-v1+lifecycle-v1 are
       one atomic statement outcome.
 - [ ] The local-copy crash matrix covers journal reservation, staged-file fsync,
-      swap intent, backup rename, atomic no-replace target publication, every database point through
+      swap intent, backup hard-link pin, present-target atomic exchange,
+      absent-target no-replace publication, every database point through
       commit, cleanup and journal deletion. No-seal recovery restores prior bytes;
       sealed recovery keeps the exact new digest; tampering and indeterminate
       state remain visible and untouched. Initial temp naming/scanning/ownership
@@ -371,8 +377,9 @@ pending v2 requirements below.
       identity, ownership, permissions, device, fsync/no-replace support and every
       stage proof are fault-tested independently of the private journal parent.
       Every stage-build create/chunk-write/fdatasync/publish checkpoint converges;
-      forged U/S proofs fail closed. Absent-target and present→backup races prove
-      final no-replace publication never overwrites a competing create/replace.
+      forged U/S proofs fail closed. Absent-target and link/exchange source races
+      prove a competing create/replace is never deleted, sealed, or misclassified
+      as the original; stable compensation restores it to target.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
