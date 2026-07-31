@@ -197,27 +197,32 @@ pending v2 requirements below.
    or retained on EEXIST accordingly. A target already different from G is
    collision evidence. Only an observed target=G is atomically evacuated to H
    no-replace. Thus recovery restores D0/absence only when uncontested while
-   retaining G; a seal keeps D1 at target and may remove N.
+   retaining G. A seal keeps D1 at target. When a prior file existed, sealed
+   cleanup first atomically renames its proved B pin no-replace to nonce-qualified
+   O in the private quarantine, fsyncs both parents, and retains O indefinitely;
+   old-D0-FD writes therefore remain named even after S is removed. A
+   prior-absent seal has no O.
    Before cleanup can remove the final protocol pin of any inode formerly
    exposed as target, it persists and fsyncs `cleanup_intent` with the source
-   phase, exact frozen namespace/name/identity/metadata/digest snapshot, and
-   ordered unlink list. The source phase must authorize every removal; each
-   inode that phase requires retained must still be named by the user target or
-   permanent G, while a committed obsolete predecessor may be discarded only
-   under the frozen snapshot. Every remaining prefix is revalidated before the
-   next unlink. Target replace/write/chmod and old-target-FD activity are
-   supported through the durable boundary. From that
+   phase, exact frozen namespace/name/identity and cleanup-relevant
+   metadata/digest snapshot, and one source-authorized ordered unlink list.
+   Every inode that may receive user bytes remains named by the user target or
+   permanent G/O; every remaining prefix is revalidated before the next unlink
+   and once more before J removal. Target replace/write/chmod and unretained
+   old-target-FD activity are supported through the durable boundary. From that
    boundary until J removal and lock release, the caller must keep the target
-   quiescent; detectable drift returns
+   and nonpermanent pins quiescent; detectable drift returns
    `local_copy_cleanup_concurrency_violation`, preserves every remaining pin
-   and J, and keeps doctor nonhealthy. Post-boundary activity violates this
-   contract and has no preservation guarantee. Every phase proves exact name
-   sets and is restartable across all required directory fsyncs. Journal,
+   and J, and keeps doctor nonhealthy. Post-boundary activity on those entries
+   violates this contract and has no preservation guarantee; phase-qualified
+   G/O content or mode drift remains safe because those names are permanent.
+   Every phase proves exact name sets and is restartable across all required
+   directory fsyncs. Journal,
    quarantine, and `.remem-save-*` names are remem-reserved; distinguishable
    identity/name/type/ownership/link tampering fails closed and security-visible,
    while active malicious unlink is outside the contract. For an inode already
    exposed as user target, phase-qualified same-inode mode/bytes/size/mtime/digest
-   drift is accepted wherever the protocol now names it B/S/C/H/N/G: an old
+   drift is accepted wherever the protocol now names it B/S/C/H/N/G/O: an old
    target-FD operation and a direct reserved-path operation are physically
    indistinguishable and cannot be attributed portably. Every unlisted state
    fails closed untouched.
@@ -433,14 +438,16 @@ pending v2 requirements below.
       durable prepublication new-pin intent/link/fsync, swap intent, backup
       hard-link pin, present-target atomic exchange, durable exchange/restore
       intents, restore pin, no-replace target evacuation/hold, and atomic
-      N→G quarantine rename with both parent fsyncs before any last D1 pin is
-      removed. It also covers the durable `cleanup_intent` snapshot, every
+      N→G rollback quarantine and matching-seal B→O predecessor quarantine,
+      each with both parent fsyncs before a final pin is removed. It also covers
+      the durable `cleanup_intent` snapshot, every
       revalidation/ordered unlink prefix, absent-target no-replace publication,
       every database point through commit, cleanup and journal deletion.
       No-seal recovery restores prior bytes
       or absence when uncontested while retaining the displaced D1 indefinitely
       under nonce-qualified G; collision keeps latest bytes at target or under
-      H/N/G with an explicit error. Sealed recovery keeps the new digest;
+      H/N/G with an explicit error. Sealed recovery keeps the new digest at
+      target and any displaced D0 indefinitely under O;
       tampering and indeterminate states stay visible. Temp naming/scanning/ownership
       and every legal target/backup/stage tuple have deterministic outcomes.
       Backup initially proves original identity/metadata/mode/digest, while each
@@ -448,7 +455,8 @@ pending v2 requirements below.
       normal rollback proves D0 `{target,B,S,C}` and D1 `{H,N}`, then atomically
       changes D1 to `{H,G}` and finally `{G}` without an unpinned window. A
       pre-boundary open-FD collision retains its inode and every recovery crash
-      converges; after the cleanup boundary the target remains quiescent.
+      converges; after the cleanup boundary the target and nonpermanent pins
+      remain quiescent while retained G/O may continue to receive old-FD drift.
       Portable absent publication includes the deterministic
       `{target,S,N}=D1`/nlink=3 link-before-unlink crash tuple. Prior-absent
       rollback is terminal only with target/H both absent and treats target≠G
@@ -472,17 +480,19 @@ pending v2 requirements below.
       prove a competing create/replace or open-FD write before
       `cleanup_intent` is never deleted, sealed, or misclassified; the durable
       hold either restores its observed entry no-replace or retains newer
-      post-choice bytes under H/N/G visibly. A race between cleanup snapshot
+      post-choice bytes under H/N/G/O visibly. A race between cleanup snapshot
       persistence and revalidation returns
       `local_copy_cleanup_concurrency_violation`; the harness keeps target
       quiescent after successful revalidation.
-      Completed G files are reported separately from pending journals, have no
-      automatic garbage collection, and a fresh attempt after unsealed rollback
-      uses a distinct stage nonce; sealed exact replay remains mutation-free.
+      The five exact cleanup sources and ordered lists reject every other
+      source/list/seal tuple and cover canonical-J/temp-J transition prefixes.
+      Completed G/O files are reported separately from pending journals, have
+      no automatic garbage collection, and a fresh attempt uses a distinct
+      stage nonce; sealed exact replay remains mutation-free.
       Tests limit pre-boundary supported concurrency to the user target.
       Distinguishable reserved-name identity/type/ownership/link mutation is a
       security-visible ambiguity. Phase-qualified mode/content drift of a
-      formerly exposed target inode under B/S/C/H/N/G is accepted through the
+      formerly exposed target inode under B/S/C/H/N/G/O is accepted through the
       cleanup boundary without claiming whether it came through an old target
       fd or reserved path.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
