@@ -5,6 +5,7 @@ use super::{
     canonical_observation_text, check_duplicate, find_hash_duplicates, mark_duplicate_accessed,
 };
 
+mod cache;
 const ENV_KEYS: &[&str] = &[
     "REMEM_CONFIG",
     "REMEM_EMBEDDINGS_PROVIDER",
@@ -337,41 +338,6 @@ fn check_duplicate_vector_stage_keeps_unrelated_observations_separate() -> Resul
         )?;
 
         assert_eq!(duplicate_id, None);
-        Ok(())
-    })
-}
-
-#[test]
-fn check_duplicate_cached_queries_rebind_project() -> Result<()> {
-    with_embedding_provider("feature-hash", || -> Result<()> {
-        let conn = Connection::open_in_memory()?;
-        setup_dedup_schema(&conn)?;
-
-        insert_observation(
-            &conn,
-            "project-a",
-            "The release workflow rotates archived changelog entries.",
-        )?;
-        let unrelated = check_duplicate(
-            &conn,
-            "project-a",
-            "Protect private secrets at rest with encryption.",
-            None,
-        )?;
-        assert_eq!(unrelated, None);
-
-        let expected = insert_observation(
-            &conn,
-            "project-b",
-            "SQLCipher encrypts private secrets at rest.",
-        )?;
-        let duplicate = check_duplicate(
-            &conn,
-            "project-b",
-            "Protect private secrets at rest with encryption.",
-            None,
-        )?;
-        assert_eq!(duplicate, Some(expected));
         Ok(())
     })
 }
