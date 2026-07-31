@@ -80,10 +80,10 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE memory_write_requests (
     writer_kind TEXT NOT NULL
       CHECK (length(writer_kind) BETWEEN 1 AND 64)
-      CHECK (writer_kind NOT GLOB '*[^0-9A-Za-z._:-]*'),
+      CHECK (writer_kind NOT GLOB '*[^0-9a-z._:-]*'),
     request_id TEXT NOT NULL
       CHECK (length(request_id) BETWEEN 1 AND 128)
-      CHECK (request_id NOT GLOB '*[^0-9A-Za-z._:-]*'),
+      CHECK (request_id NOT GLOB '*[^0-9a-z._:-]*'),
     request_fingerprint TEXT NOT NULL
       CHECK (length(request_fingerprint) = 64)
       CHECK (request_fingerprint NOT GLOB '*[^0-9a-f]*'),
@@ -709,26 +709,29 @@ uninterrupted `BEGIN IMMEDIATE`:
    wrong golden vector, disabled FK enforcement, or nonempty migration journal.
 2. Verify schema, checkpoint WAL after all writers stop, close every handle, copy
    the main database byte-for-byte, fsync file/directory, hash, and test-open it.
-3. Reopen the exact live database, register/self-test the UDF, enable FKs,
-   revalidate database/schema/backup identity, start `BEGIN IMMEDIATE`, create
-   the mutually referenced request/commit tables and intents, and capture one
-   migration epoch.
-4. Rebuild `memories` with its exact current objects and origin tuple, then
-   create ledgers/results. For each legacy ID, use
+3. Reopen the exact live database, register/self-test the UDF, revalidate
+   database/schema/backup identity, snapshot every dependent FK/table object,
+   set `foreign_keys=OFF` and verify it before starting `BEGIN IMMEDIATE`.
+4. Create `memories_rebuild` with the exact target schema, copy and validate all
+   rows, drop old `memories`, rename the rebuild, and recreate exact owned
+   indexes/triggers/FTS without altering dependent tables. Then create
+   ledgers/results. For each legacy ID, use
    `migration_vNNN:<memory_id>` with sorted `insert_origin`/`response_aux`
    manifest. Exhaustive durable evidence may form complete history; otherwise
    create only forward-only baselines. Never infer from current bytes/events.
-5. Append typed bindings and canonical response, seal every deterministic
-   migration request, install literal guards/insert triggers, recreate FTS and
-   indexes, run postflight, and commit.
+5. Append typed bindings/response/seals and install literal guards. Before
+   commit require row/count/digest/object equality, unchanged dependent DDL,
+   `integrity_check='ok'`, and empty `foreign_key_check`; commit, immediately
+   restore/verify `foreign_keys=ON`, then repeat both checks before any writer.
 
-Postflight requires zero unsealed requests, exact manifest/results, one valid
-terminal route/lifecycle per memory matching `memories`, valid origin/v1 maps,
-no schema drift, `integrity_check='ok'`, and empty `foreign_key_check`.
+Postflight also requires zero unsealed requests, exact manifest/results, one
+valid terminal route/lifecycle per memory matching `memories`, valid origin/v1
+maps, and no schema or dependent-row/object drift.
 
-Failure before step 3 leaves the live database unmodified; failure in steps 3–5
-rolls back that one transaction, and the old binary remains stopped. The operator
-restores the fsynced backup only after proving the failed
+Failure before step 3 leaves the live database unmodified; every precommit
+failure rolls back that one transaction. A postcommit FK-restore/check failure
+discards the connection and blocks writers. The operator restores the backup
+only after proving the failed
 database is closed. Once a v2 writer seals any non-migration request, rollback
 means disabling the v2 projection while retaining schema/history; running 0.6.x
 or restoring the old backup would lose writes and is forbidden.

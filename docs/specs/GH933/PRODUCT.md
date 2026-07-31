@@ -160,7 +160,7 @@ pending v2 requirements below.
    `exchange_intent` precedes atomic stage/target exchange and accepts its exact
    before, normal-after, or captured-competitor crash tuple; only then does the
    writer prove target=new and backup+stage=original.
-   an unsupported exchange fails before target mutation. If a concurrent writer
+   An unsupported exchange fails before target mutation. If a concurrent writer
    wins, its inode is durably identified and reverse-exchanged back to target;
    any further drift preserves all names and leaves the request unsealed.
    Durable recovery phases make every exchange/unlink/fsync reentrant.
@@ -318,7 +318,10 @@ pending v2 requirements below.
       missing-predecessor or legacy gap error. Backfill gaps, forward-only
       pre-floor reads and incomplete writer chains fail closed. All six current
       insert families, the three existing-row route writers, same-value no-ops,
-      changed-route staging and direct bypass rejection are covered; the legacy user-claim wrapper stays
+      changed-route staging and direct bypass rejection are covered. A
+      production-shaped FK fixture proves the `memories` rebuild preserves
+      dependent rows/DDL, validates before commit, restores enforcement, and
+      repeats `foreign_key_check`; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.

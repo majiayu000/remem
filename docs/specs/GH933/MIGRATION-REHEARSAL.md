@@ -185,24 +185,28 @@ Run foreground migration on:
 - real anonymized legacy clone with pruned events and unsupported historical
   writers, requiring forward-only floors;
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
-- 100,000-memory scale fixture with FTS, graph, claims, operations, and WAL;
+- 100,000-memory scale fixture with WAL plus nonempty claims, edges, facts,
+  embeddings, FTS and every other table whose FK references `memories`;
 - malformed owner pair, status, chain, FK, FTS/schema object, or source version;
   and
 - injected interruption before/after every migration stage and before COMMIT.
 
-Positive fixtures preserve every unrelated column/index/trigger/FTS result,
-create deterministic migration IDs, exact typed origins and seals, and match
-terminal rows. Two independent migrations of identical bytes produce identical
-logical rows/fingerprints excluding SQLite-assigned IDs documented as outputs.
+Positive fixtures preserve every dependent row and normalized table/FK/index/
+trigger/FTS definition byte-for-byte, create deterministic migration IDs, exact
+typed origins and seals, and match terminal rows. Two independent migrations of
+identical bytes produce identical logical rows/fingerprints excluding
+SQLite-assigned IDs documented as outputs.
 Trace transaction state: WAL checkpoint, handle close, byte backup, fsync/hash
 and backup test-open all complete with no migration write transaction; only then
-does the live database reopen and hold one `BEGIN IMMEDIATE` through postflight.
+does the live database reopen, verify FK OFF before one `BEGIN IMMEDIATE`, run
+`foreign_key_check` precommit, commit, restore/verify FK ON, and repeat the check.
 
 Malformed fixtures fail closed without advancing `user_version`. Restart after
 an interrupted transaction sees the exact old schema and succeeds once; a
 second migration invocation is a no-op. Postflight requires
-`integrity_check='ok'`, empty `foreign_key_check`, no unsealed intent, exact
-manifest/result equality, contiguous ledgers, and current-row terminal equality.
+`integrity_check='ok'` and empty `foreign_key_check` both before commit and after
+FK re-enable, no unsealed intent, exact manifest/result equality, contiguous
+ledgers, and current-row terminal equality.
 
 ## Local-Copy Crash Matrix
 
