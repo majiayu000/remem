@@ -7,6 +7,7 @@ use super::types::{Check, Status};
 use crate::db;
 
 mod hf_cache;
+mod path_safety;
 
 const SQLITE_PLAINTEXT_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
@@ -161,12 +162,13 @@ fn scan_data_directory(
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
 ) {
-    let mut directories = vec![data_dir.to_path_buf()];
-    while let Some(directory) = directories.pop() {
+    let mut directories = vec![(data_dir.to_path_buf(), false)];
+    while let Some((directory, inside_managed_backups)) = directories.pop() {
         scan_directory(
             &directory,
             data_dir,
             db_path,
+            inside_managed_backups,
             plaintext,
             issues,
             &mut directories,
@@ -178,9 +180,10 @@ fn scan_directory(
     directory: &Path,
     data_dir: &Path,
     db_path: &Path,
+    inside_managed_backups: bool,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
-    child_directories: &mut Vec<PathBuf>,
+    child_directories: &mut Vec<(PathBuf, bool)>,
 ) {
     let directory_metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
@@ -195,6 +198,13 @@ fn scan_directory(
     if directory_metadata.file_type().is_symlink() {
         issues.push(format!(
             "refusing to scan symbolic-link directory {}",
+            directory.display()
+        ));
+        return;
+    }
+    if path_safety::is_reparse_point(&directory_metadata) {
+        issues.push(format!(
+            "refusing to scan reparse-point directory {}",
             directory.display()
         ));
         return;
@@ -228,6 +238,8 @@ fn scan_directory(
             }
         };
         let path = entry.path();
+        let is_managed_backups_path = path_safety::is_managed_backups_path(data_dir, &path);
+        let path_is_inside_managed_backups = inside_managed_backups || is_managed_backups_path;
         let entry_type = match entry.file_type() {
             Ok(file_type) => file_type,
             Err(error) => {
@@ -244,31 +256,13 @@ fn scan_directory(
             {
                 continue;
             }
-            let description = if path == data_dir.join("backups") {
+            let description = if is_managed_backups_path {
                 "symbolic-link backup directory"
             } else {
                 "symbolic-link artifact"
             };
             issues.push(format!(
                 "refusing to inspect {description} {}",
-                path.display()
-            ));
-            continue;
-        }
-        if entry_type.is_dir() {
-            child_directories.push(path);
-            continue;
-        }
-        if path == db_path {
-            continue;
-        }
-        if path == data_dir.join("backups") {
-            issues.push(format!("scan path {} is not a directory", path.display()));
-            continue;
-        }
-        if !entry_type.is_file() {
-            issues.push(format!(
-                "artifact candidate {} is not a regular file",
                 path.display()
             ));
             continue;
@@ -283,6 +277,30 @@ fn scan_directory(
                 continue;
             }
         };
+        if path_safety::is_reparse_point(&path_metadata) {
+            issues.push(format!(
+                "refusing to inspect reparse-point artifact {}",
+                path.display()
+            ));
+            continue;
+        }
+        if entry_type.is_dir() {
+            child_directories.push((path, path_is_inside_managed_backups));
+            continue;
+        }
+        if path == db_path {
+            continue;
+        }
+        if is_managed_backups_path {
+            issues.push(format!("scan path {} is not a directory", path.display()));
+        }
+        if !entry_type.is_file() {
+            issues.push(format!(
+                "artifact candidate {} is not a regular file",
+                path.display()
+            ));
+            continue;
+        }
         if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
             issues.push(format!(
                 "artifact candidate {} changed before it could be inspected safely",
@@ -290,7 +308,8 @@ fn scan_directory(
             ));
             continue;
         }
-        let ignore_short_file = !is_named_database_artifact(db_path, &path);
+        let ignore_short_file =
+            !path_is_inside_managed_backups && !is_named_database_artifact(db_path, &path);
         match inspect_regular_file(&path, &path_metadata, ignore_short_file) {
             Ok((FileHeader::Plaintext, size_bytes)) => {
                 plaintext.push(PlaintextArtifact { path, size_bytes });
@@ -688,11 +707,13 @@ mod tests {
     fn non_directory_backups_path_warns_without_hiding_plaintext() {
         let dir = temp_dir("bad-backups");
         write_non_plaintext_db(&dir.join("remem.db"));
-        write_plaintext_db(&dir.join("remem.db.bak"));
-        fs::write(dir.join("backups"), b"not a directory").unwrap();
+        write_plaintext_db(&dir.join("backups"));
         let result = check(&dir, true);
         assert_eq!(result.status, Status::Fail);
-        assert!(result.detail.contains("remem.db.bak"));
+        assert!(result
+            .detail
+            .contains("confirmed plaintext database artifact(s)"));
+        assert!(result.detail.contains("backups"));
         assert!(result.detail.contains("is not a directory"));
         cleanup(&dir);
     }
