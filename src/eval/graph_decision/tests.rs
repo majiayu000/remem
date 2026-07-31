@@ -5,6 +5,18 @@ fn graph_decision_eval_wires_literal_graph_after_material_gain() -> Result<()> {
     let report = run_graph_decision_eval(GraphDecisionEvalOptions::default())?;
     assert_eq!(report.decision, GraphDecision::WireLiteralGraphTraversal);
     assert_eq!(
+        report.embedding_profile,
+        GraphDecisionEmbeddingProfile {
+            configured_provider: "feature-hash".to_string(),
+            active_provider: "feature-hash".to_string(),
+            fallback_provider: None,
+            model_id: crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL.to_string(),
+            dimensions: crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_DIMENSIONS,
+            degraded: false,
+            disabled: false,
+        }
+    );
+    assert_eq!(
         report.evaluated_channel,
         EvaluatedGraphChannel::LiteralGraphEdges
     );
@@ -66,6 +78,57 @@ fn graph_decision_eval_wires_literal_graph_after_material_gain() -> Result<()> {
         &report.standard.non_associative_by_slice,
         &degraded,
     ));
+    Ok(())
+}
+
+#[test]
+fn graph_decision_eval_ignores_and_restores_ambient_local_provider() -> Result<()> {
+    let _env_guard = crate::runtime_config::TEST_ENV_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("graph decision test environment lock poisoned"))?;
+    let keys = [
+        "REMEM_CONFIG",
+        "REMEM_EMBEDDINGS_PROVIDER",
+        "REMEM_EMBEDDINGS_FALLBACK",
+        "REMEM_EMBEDDINGS_MODEL_DIR",
+    ];
+    let saved = keys
+        .iter()
+        .map(|key| (*key, std::env::var_os(key)))
+        .collect::<Vec<_>>();
+    for key in keys {
+        unsafe { std::env::remove_var(key) };
+    }
+    let missing_model_dir = std::env::temp_dir().join(format!(
+        "remem-graph-decision-missing-model-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    unsafe {
+        std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "local");
+        std::env::set_var("REMEM_EMBEDDINGS_FALLBACK", "off");
+        std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", &missing_model_dir);
+    }
+
+    let result = run_graph_decision_eval(GraphDecisionEvalOptions::default());
+    let restored_provider = std::env::var("REMEM_EMBEDDINGS_PROVIDER").ok();
+    let restored_fallback = std::env::var("REMEM_EMBEDDINGS_FALLBACK").ok();
+    let restored_model_dir = std::env::var_os("REMEM_EMBEDDINGS_MODEL_DIR");
+    for (key, value) in saved {
+        match value {
+            Some(value) => unsafe { std::env::set_var(key, value) },
+            None => unsafe { std::env::remove_var(key) },
+        }
+    }
+
+    let report = result?;
+    assert_eq!(report.embedding_profile.active_provider, "feature-hash");
+    assert_eq!(restored_provider.as_deref(), Some("local"));
+    assert_eq!(restored_fallback.as_deref(), Some("off"));
+    assert_eq!(
+        restored_model_dir.as_deref(),
+        Some(missing_model_dir.as_os_str())
+    );
     Ok(())
 }
 

@@ -74,46 +74,57 @@ pub(in crate::cli) fn run_embedding_backfill(
     json: bool,
 ) -> Result<EmbeddingBackfillCliReport> {
     let conn = db::open_db()?;
+    run_embedding_backfill_with_connection(&conn, limit, batch_size, prune, json)
+}
+
+fn run_embedding_backfill_with_connection(
+    conn: &Connection,
+    limit: Option<i64>,
+    batch_size: i64,
+    prune: bool,
+    json: bool,
+) -> Result<EmbeddingBackfillCliReport> {
     let limit = limit.unwrap_or(i64::MAX).max(1);
     let batch_size = batch_size.max(1);
-    let pending_before = count_missing_embeddings(&conn)?;
+    let started = Instant::now();
+    let mut session = crate::retrieval::vector::EmbeddingBackfillSession::start()?;
+    let target = session.target().clone();
+    let pending_before = count_missing_embeddings(conn, &target)?;
     if !json {
         println!(
             "Backfilling/reindexing up to {limit} missing or stale memory embeddings, batch_size={batch_size}, pending_before={pending_before}..."
         );
+        println!(
+            "Embedding profile: model={} dimensions={}",
+            target.model, target.dimensions
+        );
     }
 
-    let started = Instant::now();
     let mut backfilled = 0usize;
     let mut remaining_limit = limit;
-    let mut printed_profile = false;
-    let mut last_backfilled_target = None;
     while remaining_limit > 0 {
         let batch_limit = remaining_limit.min(batch_size);
-        let report =
-            crate::retrieval::vector::reindex_memory_embeddings_with_report(&conn, batch_limit)?;
-        if !printed_profile && !report.model.is_empty() {
-            if !json {
-                println!(
-                    "Embedding profile: model={} dimensions={}",
-                    report.model, report.dimensions
-                );
-            }
-            printed_profile = true;
+        let report = crate::retrieval::vector::reindex_memory_embeddings_with_session_report(
+            conn,
+            batch_limit,
+            &mut session,
+        )?;
+        if report.model != target.model || report.dimensions != target.dimensions {
+            anyhow::bail!(
+                "backfill batch reported a profile other than the pinned target: expected model={} dimensions={}, got model={} dimensions={}",
+                target.model,
+                target.dimensions,
+                report.model,
+                report.dimensions
+            );
         }
         if report.processed == 0 {
             break;
         }
 
-        if !report.model.is_empty() && report.dimensions > 0 {
-            last_backfilled_target = Some(crate::retrieval::embedding::EmbeddingBackfillTarget {
-                model: report.model.clone(),
-                dimensions: report.dimensions,
-            });
-        }
         backfilled += report.processed;
         remaining_limit -= report.processed as i64;
-        let remaining = count_missing_embeddings(&conn)?;
+        let remaining = count_missing_embeddings(conn, &target)?;
         let elapsed_ms = report
             .timings
             .iter()
@@ -139,27 +150,13 @@ pub(in crate::cli) fn run_embedding_backfill(
         }
     }
 
-    let remaining = count_missing_embeddings(&conn)?;
-    let target = match last_backfilled_target {
-        Some(target) => target,
-        None => match crate::retrieval::embedding::configured_backfill_target() {
-            Ok(target) => target,
-            Err(error) if crate::retrieval::embedding::is_embedding_provider_off_error(&error) => {
-                crate::retrieval::embedding::EmbeddingBackfillTarget {
-                    model: "off".to_string(),
-                    dimensions: 0,
-                }
-            }
-            Err(error) => return Err(error),
-        },
-    };
-    let coverage = crate::retrieval::vector::active_embedding_coverage(&conn)?;
+    session.ensure_environment_unchanged("before finalizing backfill")?;
+    let remaining = count_missing_embeddings(conn, &target)?;
+    let coverage = crate::retrieval::vector::active_embedding_coverage_for_target(conn, &target)?;
     let prune_report = if prune {
-        if target.dimensions == 0 {
-            anyhow::bail!("cannot prune embedding profiles while embedding provider is off");
-        }
+        session.ensure_prune_preconditions()?;
         Some(crate::retrieval::vector::prune_inactive_memory_embeddings(
-            &conn, &target,
+            conn, &target,
         )?)
     } else {
         None
@@ -202,8 +199,11 @@ pub(in crate::cli) fn run_embedding_backfill(
     Ok(report)
 }
 
-fn count_missing_embeddings(conn: &Connection) -> Result<i64> {
-    crate::retrieval::vector::pending_memory_embedding_reindex_count(conn)
+fn count_missing_embeddings(
+    conn: &Connection,
+    target: &crate::retrieval::embedding::EmbeddingBackfillTarget,
+) -> Result<i64> {
+    crate::retrieval::vector::pending_memory_embedding_reindex_count_for_target(conn, target)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

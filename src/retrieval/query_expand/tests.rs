@@ -1,5 +1,5 @@
-use super::expand_query;
 use super::tokenize::tokenize_mixed;
+use super::{core_tokens, expand_query};
 
 #[test]
 fn expand_english_to_chinese() {
@@ -131,4 +131,32 @@ fn mixed_cjk_and_ascii() {
 fn tokenize_mixed_test() {
     let tokens = tokenize_mixed("数据库加密test");
     assert_eq!(tokens, vec!["数据库加密", "test"]);
+}
+
+#[test]
+fn core_tokens_preserve_unknown_cjk_qualifier_spans() {
+    let tokens = core_tokens("谁负责港湾服务欧洲生产环境？");
+
+    assert!(
+        tokens.contains(&"欧洲生产环境".to_string()),
+        "unknown CJK qualifiers must remain claim evidence: {tokens:?}"
+    );
+}
+
+#[test]
+fn core_tokens_preserve_short_mixed_script_qualifiers() {
+    let tokens = core_tokens("谁验证了港湾服务A区？");
+
+    assert!(
+        tokens.contains(&"A区".to_string()),
+        "short mixed-script qualifiers must remain one claim token: {tokens:?}"
+    );
+}
+
+#[test]
+fn compact_mixed_identifiers_do_not_cross_boundaries_or_leading_cjk() {
+    assert!(tokenize_mixed("A区").contains(&"A区".to_string()));
+    assert!(!tokenize_mixed("A 区").contains(&"A区".to_string()));
+    assert!(!tokenize_mixed("A-区").contains(&"A区".to_string()));
+    assert!(!tokenize_mixed("在EU").contains(&"在EU".to_string()));
 }

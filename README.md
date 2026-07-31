@@ -465,18 +465,61 @@ Vector retrieval is controlled by the `[embeddings]` section in
 
 ```toml
 [embeddings]
-provider = "local"        # api | local | feature-hash | off
+provider = "auto"         # auto | api | local | feature-hash | off
 fallback = "feature-hash" # optional; omit for fail-closed
 model = "text-embedding-3-small"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
-model_dir = ""            # future local model cache; defaults under REMEM_DATA_DIR
+model_dir = ""            # optional; defaults to REMEM_DATA_DIR/models
 ```
+
+`auto` resolves in this order: a remem-specific API key, the verified
+`multilingual-e5-small` local model, then the labeled `feature-hash` fallback.
+An ambient `OPENAI_API_KEY` alone does not opt `auto` into remote calls.
+remem never downloads model weights from a hook or search request; install the
+default local model explicitly:
+
+```bash
+remem embedding download --model multilingual-e5-small
+remem embedding status
+remem embedding backfill --limit 1000
+```
+
+Automatic download currently supports only `multilingual-e5-small`, whose
+evaluated immutable revision is pinned by remem. `bge-m3` remains recognized so
+an already installed verified cache can still be loaded, but
+`remem embedding download --model bge-m3` fails closed until remem publishes an
+approved immutable BGE revision.
+
+After the verified download, an `auto` configuration with no remem-specific
+API key activates the local model. Run the idempotent backfill after any
+provider/model switch—or after the downloaded artifact changes—so existing
+memories gain vectors in the new model space. The active local model id carries
+the verified artifact SHA-256, so vectors from different weight revisions are
+never mixed even when their preset name and dimensions match.
+
+Local ONNX initialization is a cold-start cost for short-lived commands. The
+checked-in release-mode reference run measured about 5.43 seconds for provider
+verification plus the first profile probe and 12 ms p95 for subsequent query
+embeddings. Long-lived MCP/API processes reuse one process-wide session; the
+report therefore records cold and warm latency separately instead of treating
+the warm number as end-to-end startup time.
 
 On Intel macOS (`darwin-x64`) release binaries, the `local` ONNX provider is
 not compiled in because ONNX Runtime ships no prebuilt library for that
 platform; embedding falls back to `feature-hash` (or `api` if configured), and
 `remem status` / `remem doctor` report the provider state explicitly.
+
+On Windows, local ONNX model operations accept only remem's default per-user
+model root. `embeddings.model_dir` and non-default `REMEM_DATA_DIR` roots fail
+closed: a shared/custom ancestor chain cannot provide the same reparse-point
+and file identity guarantees. A worker-exported `REMEM_DATA_DIR` that resolves
+to the default per-user directory remains supported. `auto` reports any real
+override as unavailable and uses the labeled feature-hash fallback; explicit
+`local` returns an actionable error. An older default model cache with
+inherited/wide ACLs is not silently trusted or chmod-like rewritten; remove or
+move that cache, then run `remem embedding download` again in the default
+location.
 
 Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
 `REMEM_EMBEDDINGS_PROVIDER`, `REMEM_EMBEDDINGS_FALLBACK`,
@@ -485,12 +528,22 @@ Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
 `REMEM_EMBEDDINGS_API_KEY_ENV`, `REMEM_EMBEDDINGS_DIMENSIONS`, and
 `REMEM_EMBEDDINGS_TIMEOUT_SECS`.
 
-`local` and `feature-hash` are separate provider states. Until the local
-semantic model runtime lands, both use `remem-local-feature-hash-v1`; selecting
-`feature-hash` explicitly labels the non-semantic fallback. `provider = "off"`
-disables query embeddings, vector fusion, vector writes, and embedding
-backfill. Existing stored vectors remain in SQLite but are ignored while the
-provider is off.
+`local` and `feature-hash` are separate provider states. `local` runs the
+verified fastembed/ONNX model; `feature-hash` explicitly selects
+`remem-local-feature-hash-v1`, the deterministic non-semantic fallback.
+`provider = "off"` disables query embeddings, vector fusion, vector writes,
+and embedding backfill. Existing stored vectors remain in SQLite but are
+ignored while the provider is off.
+
+The confidence gate admits a vector-only semantic fallback when no
+claim-supported grounded result survives. If the query names an explicit
+entity already stored in memory, that fallback must be directly bound to a
+matching visible memory or connected through a specific entity shared by
+already-fused visible candidates; common tags such as `API`, `remem`, `Claude`,
+and `Team` cannot form that bridge. The candidate must still pass the predicate
+claim check. Vector distance alone never turns an unsupported statement about
+a known entity into an answer, while the constrained bridge preserves valid
+owner-to-pager multi-hop recall.
 
 `remem status --json` exposes an `embedding` object with configured provider,
 active provider, active model id, degraded/disabled flags, and active-model
@@ -1182,6 +1235,34 @@ scripts/smoke_native_web_api.sh
 - REST API binds localhost only (`127.0.0.1`) and requires
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token file permissions (`0600`)
+
+### SQLite runtime tuning
+
+Runtime connections use WAL mode, foreign keys, a 5-second busy timeout,
+in-memory temporary storage, and a 64 MiB SQLite page-cache target per
+connection. The cache is demand-driven rather than preallocated, but concurrent
+connections can multiply both memory use and the time decrypted pages remain in
+RAM.
+
+Two environment variables provide strict, fail-closed overrides:
+
+- `REMEM_SQLITE_CACHE_KIB` accepts an integer from `1` through `1048576`.
+  SQLite interprets it as a KiB cache target for each connection.
+- `REMEM_SQLITE_SYNCHRONOUS` accepts only `full` or `normal`
+  (case-insensitive). The default is `full`.
+
+`normal` is an explicit latency/durability tradeoff. With WAL it preserves
+database consistency and committed transactions across an application-process
+crash, but a system crash or power loss can lose recent committed transactions.
+Keep the default `full` when power-loss durability matters. Temporary storage
+is always forced to memory because SQLCipher does not guarantee encryption for
+file-backed SQLite temporary storage.
+
+Reproduce the encrypted release-mode A/B latency harness with:
+
+```bash
+cargo test --release --test search_latency_benchmark sqlite_tuning_encrypted_release_ab_reports_latency -- --ignored --exact --nocapture --test-threads=1
+```
 
 ### Plaintext residue diagnostics
 

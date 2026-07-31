@@ -3,6 +3,80 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.41` for the post-merge doctor corrective:
+  plaintext-residue inspection now accepts only strictly validated internal
+  Hugging Face snapshot pointers whose same-repository blob is a regular file.
+  The pointer is never followed and the blob remains independently scanned;
+  malformed, broken, absolute, escaping, or blob-symlink aliases keep the
+  inspection explicitly incomplete instead of producing a false healthy
+  result.
+- Staged source version `0.6.40` for the post-merge event-retention
+  corrective: automatic cleanup deletes only the seven explicitly ephemeral
+  event kinds. Governance, scope-cleanup, and all future unknown event kinds
+  remain durable audit history by default instead of being silently classified
+  as disposable.
+- Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
+  scores from `SearchWeights` instead of eight private scoring constants in
+  `hybrid_context.rs` that duplicated it and had already drifted — the injection
+  path had no `graph` channel and no `usage` channel. Because
+  `eval-weight-grid` tunes `SearchWeights` and injection never read it, the
+  evaluation harness was optimizing a path users do not take. Channel SQL and
+  post-fusion behavior are unchanged; `docs/specs/GH953/TECH.md` stages the
+  remaining convergence work so each ranking-visible change lands with its own
+  evaluation delta.
+- Staged source version `0.6.38` for GH-951: the owner-trace exclusion query is
+  a `NOT ... OR ...` scan no index can serve, and it ran on every SessionStart
+  even though its only consumers are debug output and `governance_eval_snapshot`
+  (which passes `collect_diagnostics = true`). It is now gated, removing a full
+  table scan from the non-debug hot path. The indexed `id IN (...)` lookup stays
+  unconditional because `owner_counts` feeds `ContextRenderStats` and
+  `remem context --status`; only the per-row trace construction is gated. A test
+  asserts that a non-debug load keeps identical owner counts and memory
+  selection while reporting no traces.
+- Staged source version `0.6.37` for GH-949: every database connection now
+  applies tuned SQLite pragmas from one place. `cache_size=-65536` (64 MiB),
+  `synchronous=FULL`, and `temp_store=MEMORY` join the existing WAL,
+  foreign-key, and busy-timeout settings; SQLCipher disables mmap, so page
+  residency matters far more here than on a plaintext store, and every cache
+  miss otherwise costs a `pread` plus an AES decrypt. `FULL` preserves the
+  prior power-loss durability by default; `REMEM_SQLITE_SYNCHRONOUS=normal`
+  makes the WAL latency/durability tradeoff explicit. Read-only connections
+  take a narrower set that omits write-only pragmas. Both tuning overrides
+  fail before opening the database on invalid or non-Unicode values.
+  `REMEM_SQLITE_CACHE_KIB` accepts 1 through 1048576 KiB. The three
+  `open_configured_*` helpers no longer carry separate pragma strings.
+- Staged source version `0.6.36` for the GH-946 post-merge corrective:
+  automatic E5 downloads now use the exact immutable Hugging Face revision
+  evaluated by the checked-in provider evidence, while presets without an
+  approved revision fail before any network request. CLI help, README, and the
+  runtime error now distinguish automatically downloadable E5 from BGE support
+  through an already installed verified cache. Exact-entity retrieval also
+  grounds the irregular `build` / `built` / `builds` / `building` family
+  without matching unrelated predicates, and the graph-decision fingerprint is
+  regenerated against the corrected implementation.
+- Staged source version `0.6.35` for the GH-934 post-merge corrective:
+  Retrieval Router plans now preserve the caller's `include_superseded`
+  temporal scope across explicit, keyword-fallback, and default-fallback
+  intents. Filters, freshness policy, and history-channel validity share the
+  same caller-controlled value, so intent classification cannot silently
+  expand access to superseded evidence.
+- Staged source version `0.6.34` for GH-946: `Auto` now prefers an explicitly
+  downloaded, verified `multilingual-e5-small` local embedding model over
+  feature-hash when no remem-specific API key is configured. Provider/model
+  switches gain an actionable doctor backfill hint. The default-k provider
+  comparison now records the verified model artifact digest, preserves
+  abstention and existing-slice budgets, and shows the local paraphrase
+  improvement while separating cold-start latency from warm-query p95. A
+  two-stage evidence gate prevents unsupported vector-only tails without
+  suppressing semantic fallback behind weak lexical hits. Local manifests now
+  bind active HF snapshot symlinks and resolved blobs, released schema-v1
+  installs migrate offline, runtime sessions are process-wide singleflight,
+  and artifact-qualified model ids prevent old/new weight revisions from
+  silently sharing vector coverage. Windows model staging, private runtime
+  caches, and lock files now use protected owner-only ACLs, reject reparse
+  points, and verify 128-bit file identities under native Windows CI. Windows
+  custom/shared model roots fail closed instead of accepting a weaker trust
+  boundary.
 - Staged source version `0.6.32` for GH-945: workers now schedule one
   database-global lifecycle cleanup after a durable 24-hour cooldown and claim
   it through a dedicated lane. Each run atomically expires memory TTLs, advances
