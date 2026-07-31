@@ -321,7 +321,7 @@ picks a later better result:
 | `M = 0`, `R = 1`, `N = 0`, `T = 1` | `reveal_state = committed`; `resolved` is boolean only after the frozen-input scorer/oracle checks succeed, otherwise null. | This attempt is terminally `selected_claim_attempt`; no later attempt is allowed. Any null/unverified score makes the final manifest `partial_non_security` / `INSUFFICIENT`. |
 | `M = 0`, `R = 0`, `N = 1`, `T = 1`, exact retryable reason, budget remains | `reveal_state = proven_no_write`; `resolved = null`. | No attempt is selected yet; exactly the next authorized attempt may run. The checkpoint manifest is `partial_non_security` / `INSUFFICIENT` until a terminal selection exists. |
 | `M = 0`, `R = 0`, `N = 1`, `T = 1`, exact retryable reason, budget exhausted | Tuple is terminal `missing_pre_prompt_exhausted`; `resolved = null`. | `selected_claim_attempt = null`; no scorer or later attempt; final manifest is `partial_non_security` / `INSUFFICIENT`. |
-| `M = 0`, `R = 0`, `N = 1`, `T = 1`, registered non-retryable post-common-source preparation failure | Terminal `ordinary_failure`; `resolved = false`. | This no-reveal attempt is selected and remains in the denominator; no later attempt. It may appear in `complete` evidence if every other invariant holds. |
+| `M = 0`, `R = 0`, `N = 1`, `T = 1`, registered non-retryable post-common-source preparation failure (`terminal_reason="post_common_source_preparation_failed"`) | Terminal `ordinary_failure`; `resolved = false`. | This no-reveal attempt is selected and remains in the denominator; no later attempt. It may appear in `complete` evidence if every other invariant holds. |
 | Any other combination, including `M > 0`, `T != 1`, duplicates, both reveal/no-write, or neither | Verifier-derived tuple terminal `reveal_evidence_invalid`; `reveal_state = conservatively_revealed_invalid`; `resolved = null`; conflicting attempt artifacts remain immutable. | The current attempt ID is terminally selected, all later attempts and hidden scoring are forbidden, and the final manifest is `partial_non_security` / `INSUFFICIENT`, unless a verified breach overrides with `partial_security` / `FAIL`. |
 
 Every attempt terminal seal binds its reason, ordered journal root, every
@@ -599,19 +599,20 @@ inclusion/consistency, authenticated-state transition, and non-reuse proofs.
 An exact replay returns the same committed transition/proofs and never appends
 a second transition; a different root for the fingerprint is rejected.
 
-Third, the runner deterministically builds the closed RFC-8785
-`final_publication_envelope_v1` from the exact candidate, core members, and
-create-only registry receipt/certificate/proofs. Before visibility it commits a
-candidate-specific, hash-chained `final_envelope_freeze_v1` containing the
-candidate ID, registry proof/certificate hashes, exact envelope byte length,
-raw digest, and framed digest. An exact replay returns the same freeze; any
-same-candidate drift is rejected. Recovery after registry commit but before a
-local freeze must query that exact registry transition, rebuild from the
-immutable candidate, scan, and create-or-read this one freeze; it cannot select
-another proof, checkpoint, core, or envelope. Later checkpoints or signatures
-cannot change it. The envelope contains neither its own hash, freeze, nor
-visibility data. TECH supplies executable production-shape, arbitrary-history,
-visibility, freeze, completion, and tamper vectors with frozen digests.
+Third, the runner builds closed `final_publication_envelope_v1` from the exact
+candidate, members, and create-only registry result, then commits a candidate-
+specific `final_envelope_freeze_v1` binding proof/certificate hashes, envelope
+length/digests, prior freeze hash, and authenticated prior-ledger checkpoint.
+One `BEGIN IMMEDIATE`/`synchronous=FULL` transaction authenticates selected
+prior checkpoint/head, inserts record/index/signed post-checkpoint, then CASes
+both prior hashes; `changes()!=1` rolls every write back. Exact replay returns
+canonical bytes; byte/hash drift or stale head/checkpoint fails. Every crash
+before commit exposes only signed prior state; commit-before-ack exposes all.
+Lost-registry-response recovery verifies that transition, rebuilds/scans from
+the immutable candidate, and create-or-reads this freeze; no alternate proof,
+checkpoint, core, or envelope is selectable. The envelope excludes self-hash,
+freeze, and visibility. TECH freezes production-shape, arbitrary-history,
+visibility, freeze-ledger, completion, full-tainted, and tamper vectors.
 
 The charter independently pins `publication_visibility_authority_v1`:
 namespace/genesis, pure Ed25519 receipt/checkpoint keys, append-log/map
@@ -637,8 +638,8 @@ final-envelope freeze; then atomically seal visibility, verify its proof/read
 gate, and commit completion. `publication_complete_v1` is a closed,
 hash-chained record over the exact candidate, envelope freeze, both authority
 proofs/certificates, and verified read-set root. Its record bytes, unique
-`completion_id` index, and journal head commit in one durable transaction;
-uncommitted changes are externally invisible and committed changes are all
+`completion_id` index, and journal head commit in record -> index -> head order
+within one durable `BEGIN IMMEDIATE` transaction; uncommitted changes are externally invisible and committed changes are all
 visible. Exact replay returns the original record/hash, while same-ID drift or
 a stale previous head is rejected. Recovery may resume only the next step
 proven by both authorities.
