@@ -113,7 +113,7 @@ impl LocalEmbeddingPreset {
             | DEFAULT_LOCAL_SEMANTIC_MODEL => Ok(Self::MultilingualE5Small),
             "bge-m3" | "baai/bge-m3" | "fastembed-bge-m3-v1" => Ok(Self::BgeM3),
             other => bail!(
-                "unsupported local embedding model preset {other}; supported presets: multilingual-e5-small, bge-m3"
+                "unsupported local embedding model preset {other}; recognized local presets: multilingual-e5-small, bge-m3"
             ),
         }
     }

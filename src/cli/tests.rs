@@ -714,6 +714,23 @@ fn cli_help_mentions_context_gate_modes_and_command_descriptions() {
 }
 
 #[test]
+fn embedding_download_help_does_not_advertise_bge_as_downloadable() {
+    let embedding = Cli::command()
+        .find_subcommand("embedding")
+        .expect("embedding subcommand")
+        .clone();
+    let mut download = embedding
+        .find_subcommand("download")
+        .expect("embedding download subcommand")
+        .clone();
+    let help = download.render_long_help().to_string();
+
+    assert!(help.contains("Currently only multilingual-e5-small"));
+    assert!(help.contains("bge-m3 requires an existing verified cache"));
+    assert!(!help.contains("multilingual-e5-small or bge-m3"));
+}
+
+#[test]
 fn cli_parses_context_debug_option() {
     let cli = Cli::parse_from([
         "remem",
