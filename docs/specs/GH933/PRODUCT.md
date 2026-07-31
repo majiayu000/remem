@@ -167,7 +167,10 @@ pending v2 requirements below.
    phase writes empty/partial bytes only to a proved 0600 build file below the
    private journal root. Only its fdatasynced D1 inode is atomically published
    no-replace as stage below the separately verified target parent, so partial S
-   is impossible. For an existing single-link target, a no-replace hard link
+   is impossible. Before any target publication, durable `new_pin_intent` and
+   `new_pinned` phases no-replace hard-link that stage to N, prove S/N are the
+   complete two-name D1 set, and fsync the target parent. For an existing
+   single-link target, a no-replace hard link
    first pins the reverified original inode as backup, retaining identity,
    metadata, digest and legal permissions such as 0200. A durable
    `exchange_intent` precedes atomic stage/target exchange and accepts its exact
@@ -175,20 +178,29 @@ pending v2 requirements below.
    write crash tuple; only then does the writer prove target=new and backup+
    stage=unchanged original.
    An unsupported exchange fails before target mutation. Recovery never reverses
-   the exchange. It first hard-link-pins exact new and restore entries, then
-   no-replace evacuates whichever entry is currently at target into a durable
-   hold. It no-replace links the restore pin only while the hold is observed as
-   exact D1; otherwise it links the held entry. A target create during the brief
-   absence wins with EEXIST and is untouched. An open-FD write between the check
-   and link cannot be content-CASed portably: target may hold the restore entry
-   while newer bytes remain named by H/N. That visible collision retains every
-   pin, stays unsealed and keeps doctor nonhealthy; it never claims latest bytes
-   are at target. Only exact uncontested D0 is cleaned. Durable restore phases
-   make every link/rename/unlink/fsync reentrant. Without a seal, recovery
-   restores D0/absence when uncontested and otherwise preserves every incumbent
-   byte under a durable name; a seal keeps D1. Every unlisted state fails closed untouched.
-   A crash before commit leaves no committed database state or user-file mutation
-   after reconciliation. After commit/response loss, an exact-key retry returns the
+   the exchange. N already pins D1, so recovery pins only the restore entry,
+   no-replace evacuates whichever entry is currently at target into H, and
+   no-replace links the restore pin only while H is observed as exact D1;
+   otherwise it links H. A target create during the brief absence wins with
+   EEXIST and is untouched. An open-FD write between the check and link cannot be
+   content-CASed portably: target may hold the restore entry while newer bytes
+   remain named by H/N. That visible collision retains every pin, stays unsealed
+   and keeps doctor nonhealthy; it never claims latest bytes are at target.
+   For an uncontested no-seal rollback, N is atomically renamed no-replace to a
+   nonce-qualified 0600 file G in the private same-device quarantine directory,
+   both parent directories are fsynced, and G is retained indefinitely before H
+   or a target-derived D1 name is removed. Late writes through an already-open
+   D1 fd therefore remain visible through G. Recovery restores D0/absence at the
+   user target while retaining G; a seal keeps D1 at target and may remove N.
+   Every phase proves exact name sets and is restartable across both directory
+   fsyncs. Supported concurrency may replace or write the user target, including
+   through an open fd. Journal, quarantine, and `.remem-save-*` names are
+   remem-reserved; observed same-user tampering fails closed and security-visible,
+   but active malicious unlink of reserved pins is outside the preservation
+   contract. Every unlisted state fails closed untouched.
+   A crash before commit leaves no committed database state and restores the
+   user target, with any published D1 retained privately as G for recovery
+   evidence. After commit/response loss, an exact-key retry returns the
    committed winner without another file write, version, event, operation, claim,
    or knowledge epoch. Same-second transitions remain predecessor/version ordered.
    Every previous status must equal the prior new status and the terminal status
@@ -393,18 +405,23 @@ pending v2 requirements below.
       every typed OLD/NEW field is hashed and memory+route-v1+lifecycle-v1 are
       one atomic statement outcome.
 - [ ] The local-copy crash matrix covers journal reservation, staged-file fsync,
-      swap intent, backup hard-link pin, present-target atomic exchange,
-      durable exchange/restore intents, new/restore pins, no-replace target
-      evacuation/hold, absent-target no-replace
+      durable prepublication new-pin intent/link/fsync, swap intent, backup
+      hard-link pin, present-target atomic exchange, durable exchange/restore
+      intents, restore pin, no-replace target evacuation/hold, and atomic
+      N→G quarantine rename with both parent fsyncs before any last D1 pin is
+      removed. It also covers absent-target no-replace
       publication, every database point through
       commit, cleanup and journal deletion. No-seal recovery restores prior bytes
-      only when uncontested; collision keeps latest bytes at target or under H/N
-      with an explicit error. Sealed recovery keeps the new digest;
+      or absence when uncontested while retaining the displaced D1 indefinitely
+      under nonce-qualified G; collision keeps latest bytes at target or under
+      H/N/G with an explicit error. Sealed recovery keeps the new digest;
       tampering and indeterminate states stay visible. Temp naming/scanning/ownership
       and every legal target/backup/stage tuple have deterministic outcomes.
       Backup initially proves original identity/metadata/mode/digest, while each
       phase proves the exact known basename set and nlink for every pinned inode;
-      an open-FD collision retains its inode and every recovery crash converges.
+      normal rollback proves D0 `{target,B,S,C}` and D1 `{H,N}`, then atomically
+      changes D1 to `{H,G}` and finally `{G}` without an unpinned window. An
+      open-FD collision retains its inode and every recovery crash converges.
       Cross-process faults at every writer phase prove scanner and doctor cannot
       recover a live request, including durable D1 before its database seal; after
       writer death exactly one anchor-verified lock owner reconciles. Lock-path
@@ -417,7 +434,12 @@ pending v2 requirements below.
       link/exchange/evacuation source races
       prove a competing create/replace or open-FD write is never deleted, sealed,
       or misclassified; the durable hold either restores its observed entry
-      no-replace or retains newer post-choice bytes under H/N visibly.
+      no-replace or retains newer post-choice bytes under H/N/G visibly.
+      Completed G files are reported separately from pending journals, have no
+      automatic garbage collection, and exact retries use distinct stage nonces.
+      Tests limit supported concurrency to the user target; preexisting or
+      observed mutation of reserved names is a security-visible ambiguity rather
+      than an impossible guarantee against active same-user unlink.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
