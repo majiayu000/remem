@@ -5,6 +5,7 @@ use super::{
     canonical_observation_text, check_duplicate, find_hash_duplicates, mark_duplicate_accessed,
 };
 
+mod cache;
 const ENV_KEYS: &[&str] = &[
     "REMEM_CONFIG",
     "REMEM_EMBEDDINGS_PROVIDER",

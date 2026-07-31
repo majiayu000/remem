@@ -642,7 +642,7 @@ fn query_summary_batch(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT ss.id, \
              CASE \
                WHEN ss.request LIKE 'Captured event range %..%' THEN \
