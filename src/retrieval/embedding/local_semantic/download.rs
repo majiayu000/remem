@@ -4,9 +4,9 @@ use anyhow::{bail, Context, Result};
 use hf_hub::api::sync::{Api, ApiBuilder};
 use hf_hub::{Cache, Repo, RepoType};
 
-use super::{
-    LocalEmbeddingPreset, HUGGING_FACE_BASE_URL, HUGGING_FACE_ENDPOINT_ENV, TOKENIZER_RUNTIME_FILES,
-};
+use super::{LocalEmbeddingPreset, HUGGING_FACE_BASE_URL, HUGGING_FACE_ENDPOINT_ENV};
+
+const EVALUATED_E5_HUGGING_FACE_REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
 
 mod prepare;
 mod publish;
@@ -74,26 +74,9 @@ fn download_required_runtime_files(preset: LocalEmbeddingPreset, install_dir: &P
     }
     let canonical_install_dir = std::fs::canonicalize(install_dir)
         .with_context(|| format!("canonicalize local model cache {}", install_dir.display()))?;
+    let (pinned_repo, revision) = approved_download_repo(preset)?;
     let api = build_unauthenticated_download_api(&canonical_install_dir, HUGGING_FACE_BASE_URL)?;
-
-    let main_repo = Repo::new(preset.upstream_model().to_string(), RepoType::Model);
-    let main_api_repo = api.repo(main_repo.clone());
-    let bootstrap_file = TOKENIZER_RUNTIME_FILES[1];
-    let metadata = api
-        .metadata(&main_api_repo.url(bootstrap_file))
-        .with_context(|| {
-            format!(
-                "resolve immutable Hugging Face revision for {}",
-                preset.upstream_model()
-            )
-        })?;
-    let revision = validate_revision(metadata.commit_hash())?;
-    let pinned_repo = Repo::with_revision(
-        preset.upstream_model().to_string(),
-        RepoType::Model,
-        revision.clone(),
-    );
-    let pinned_api_repo = api.repo(pinned_repo.clone());
+    let pinned_api_repo = api.repo(pinned_repo);
 
     for runtime_file in preset.required_runtime_files() {
         let path = pinned_api_repo.get(runtime_file).with_context(|| {
@@ -124,7 +107,10 @@ fn download_required_runtime_files(preset: LocalEmbeddingPreset, install_dir: &P
     }
     validate_main_ref_destination(&canonical_install_dir, preset)?;
     Cache::new(canonical_install_dir)
-        .repo(main_repo)
+        .repo(Repo::new(
+            preset.upstream_model().to_string(),
+            RepoType::Model,
+        ))
         .create_ref(&revision)
         .with_context(|| {
             format!(
@@ -132,6 +118,26 @@ fn download_required_runtime_files(preset: LocalEmbeddingPreset, install_dir: &P
                 preset.upstream_model()
             )
         })
+}
+
+fn approved_download_repo(preset: LocalEmbeddingPreset) -> Result<(Repo, String)> {
+    let approved_revision = match preset {
+        LocalEmbeddingPreset::MultilingualE5Small => EVALUATED_E5_HUGGING_FACE_REVISION,
+        _ => bail!(
+            "automatic download for local embedding preset {} is unavailable because it has no approved immutable Hugging Face revision; use multilingual-e5-small or continue using an already installed verified {} cache",
+            preset.label(),
+            preset.label(),
+        ),
+    };
+    let revision = validate_revision(approved_revision)?;
+    Ok((
+        Repo::with_revision(
+            preset.upstream_model().to_string(),
+            RepoType::Model,
+            revision.clone(),
+        ),
+        revision,
+    ))
 }
 
 fn build_unauthenticated_download_api(cache_dir: &Path, endpoint: &str) -> Result<Api> {
