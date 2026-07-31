@@ -447,7 +447,8 @@ pending v2 requirements below.
       or absence when uncontested while retaining the displaced D1 indefinitely
       under nonce-qualified G; collision keeps latest bytes at target or under
       H/N/G with an explicit error. Sealed recovery keeps the new digest at
-      target and any displaced D0 indefinitely under O;
+      target and any structurally proved, phase-drifted predecessor I0*
+      indefinitely under O;
       tampering and indeterminate states stay visible. Temp naming/scanning/ownership
       and every legal target/backup/stage tuple have deterministic outcomes.
       Backup initially proves original identity/metadata/mode/digest, while each
@@ -485,7 +486,9 @@ pending v2 requirements below.
       `local_copy_cleanup_concurrency_violation`; the harness keeps target
       quiescent after successful revalidation.
       The five exact cleanup sources and ordered lists reject every other
-      source/list/seal tuple and cover canonical-J/temp-J transition prefixes.
+      source/list/seal tuple. Source J plus absent, empty, every partial-byte
+      prefix or complete temp J and canonical cleanup-J restart forms all have
+      deterministic outcomes; only a complete valid temp may advance.
       Completed G/O files are reported separately from pending journals, have
       no automatic garbage collection, and a fresh attempt uses a distinct
       stage nonce; sealed exact replay remains mutation-free.

@@ -250,7 +250,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
 | seal INSERT before SQLite COMMIT | rollback; prior target restored | not reachable |
 | SQLite COMMIT before journal `sealed` | matching seal is authoritative while J remains `swapped`; persist `sealed`, then reconcile | same |
-| `sealed`; prior-file `predecessor_quarantine_intent`; B→O no-replace; P and Q/quarantine fsync; `predecessor_quarantined` | not reachable without seal | target/N keep D1; exactly B or O plus S keeps D0 across every crash; O becomes permanent before S cleanup and receives all late old-D0-FD writes. Prior absence creates no O |
+| `sealed`; prior-file `predecessor_quarantine_intent`; B→O no-replace; P and Q/quarantine fsync; `predecessor_quarantined` | not reachable without seal | target/N keep exact D1; exactly B or O plus S keeps the same structural I0* across every crash while mode/content may drift; O becomes permanent before S cleanup and receives all late old-D0-FD writes. Prior absence creates no O |
 | `cleanup_intent` source-J/temp-J transition; snapshot/J fsync; post-persist revalidation; every ordered unlink/parent fsync and empty-prefix revalidation | exercise exact `[B]`, `[H,S,B,C]`, and `[H]` sources | exercise exact `[S,N]` and `[N]` sources. Before the boundary, injected target replacement/write/chmod is retained or collides; snapshot-to-revalidation mismatch returns `local_copy_cleanup_concurrency_violation` with J/pins. After successful revalidation target/nonpermanent pins stay quiescent; G/O-backed mode/content drift remains allowed and every crash resumes the exact prefix |
 | recovery-phase fsync and every C link, present/absent target→H rename, C/H→target link/rename, N→G or B→O rename, owned unlink/fdatasync and P/Q-quarantine fsync | restart the same phase/prefix and converge without pathname target unlink, overwrite, or pre-boundary loss of the last D1 name | restart same phase and converge with old D0 permanently under O |
 | journal unlink/directory fsync | keep exact after digest; no journal | same |
@@ -284,8 +284,10 @@ rollback file/no-seal `[H,S,B,C]`, predecessor-quarantined file/matching-seal
 `[S,N]`, after-absent/matching-seal `[N]`, and rollback absent/no-seal `[H]`.
 Permute or duplicate the list, substitute any source/`before_kind`/seal/name,
 or add/remove an entry and require no mutation. Crash the source-J→T→J
-transition at each write/fdatasync/rename/Q-fsync: accept only source J plus a
-complete exact cleanup T or canonical cleanup J with T absent/identical.
+transition at O_EXCL create, zero bytes, every JSON byte prefix,
+fdatasync/rename/Q-fsync: source J plus absent/empty/partial T discards T,
+fsyncs Q and retries without namespace mutation; only complete exact T may
+advance, while canonical cleanup J accepts T absent/identical.
 Explicitly hold the writer with durable D1 at S/N and at target/N but no DB seal;
 doctor must neither restore D0 nor delete D1/J/U/G/O/S/B/N/C/H.
 The lock must still be busy after each cleanup unlink and after J unlink but
@@ -341,12 +343,13 @@ then link the restore pin to target without overwriting an intervening create.
 Prove X is restored at target and D1 remains pinned, then return
 `local_copy_publish_collision` with J/B/S/N/C/H and an unsealed DB.
 Also keep the original target FD open after B is linked and overwrite/chmod I0
-before exchange, after exchange, before seal, after seal, on both sides of
-B→O, and after O is durable. No-seal restore must key on stable entry identity,
-return observed bytes through H or C when stably selected, otherwise retain
-newer bytes under H/N and never seal. Matching-seal recovery must preserve every
-observed old-D0 write under permanent O before it removes S; it must never
-misclassify drift as tampering or discard it.
+before exchange, after exchange before `swapped`, immediately before the last
+pre-seal verification, after that verification but before COMMIT, after seal,
+on both sides of B→O, and after O is durable. No-seal restore keys on structural
+I0* identity and retains newer bytes under H/N without sealing when target
+choice collides. Matching-seal execution accepts the same structural B/S I0*
+drift, may seal exact D1, and must preserve every observed old-D0 write under
+permanent O before removing S; it never calls drift tampering.
 SIGKILL after exchange before observation; before/after restore-intent, each C
 link+fsync, restore-ready, target→H, each C/H→target link, postcheck and P fsync.
 Between the final target=N check and target→H, replace target with X: H must
