@@ -29,6 +29,7 @@ pub mod identity;
 pub mod ingest;
 pub mod install;
 pub mod log;
+pub mod maintenance;
 pub mod mcp;
 pub mod memory;
 mod memory_candidate;

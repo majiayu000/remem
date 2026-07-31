@@ -4,6 +4,7 @@ use rusqlite::Connection;
 #[derive(Debug)]
 pub(super) struct StalenessCapabilities {
     pub(super) git_trace_tables_exist: bool,
+    pub(super) git_commit_files_exists: bool,
     pub(super) memories_exists: bool,
     pub(super) memories_source_project: bool,
     pub(super) memories_evidence_event_ids: bool,
@@ -28,6 +29,7 @@ impl StalenessCapabilities {
         let observations_exists = table_exists(conn, "observations")?;
         Ok(Self {
             git_trace_tables_exist: git_trace_tables_exist(conn)?,
+            git_commit_files_exists: table_exists(conn, "git_commit_files")?,
             memories_exists,
             memories_source_project: memories_exists
                 && column_exists(conn, "memories", "source_project")?,

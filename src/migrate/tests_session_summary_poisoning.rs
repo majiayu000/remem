@@ -75,8 +75,14 @@ fn post_migration_insert_defaults_to_safe_and_rejects_unknown_status() -> Result
 }
 
 #[test]
-fn migration_is_registered_as_latest() {
-    assert_eq!(super::latest_schema_version(), 73);
+fn v073_is_registered_and_named_stably() {
+    assert_eq!(
+        MIGRATIONS
+            .iter()
+            .find(|migration| migration.version == 73)
+            .map(|migration| migration.name),
+        Some("session_summary_poisoning")
+    );
 }
 
 #[test]

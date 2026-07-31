@@ -1,5 +1,7 @@
 # remem: Local-first Coding Agent Memory for Claude Code and OpenAI Codex
 
+[![MCP Toplist](https://mcptoplist.com/badge/io.github.majiayu000%2Fremem.svg)](https://mcptoplist.com/server/io.github.majiayu000%2Fremem)
+
 > Stop re-explaining your project every new coding-agent session.
 
 Language: **English** | [简体中文](README.zh-CN.md)
@@ -336,7 +338,7 @@ remem uses host-specific hook strategies:
 Claude Code workflow
         |
         |- SessionStart      -> Inject memories + preferences
-        |- UserPromptSubmit  -> Register session, flush stale queues
+        |- UserPromptSubmit  -> Register session, capture prompt + inject context
         |- PreToolUse(Bash)  -> Evaluate compiled preference rules
         |- PostToolUse       -> Capture tool operations (queued, <1ms)
         '- Stop              -> Summarize in background (~6ms return)
@@ -463,18 +465,55 @@ Vector retrieval is controlled by the `[embeddings]` section in
 
 ```toml
 [embeddings]
-provider = "local"        # api | local | feature-hash | off
+provider = "auto"         # auto | api | local | feature-hash | off
 fallback = "feature-hash" # optional; omit for fail-closed
 model = "text-embedding-3-small"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
-model_dir = ""            # future local model cache; defaults under REMEM_DATA_DIR
+model_dir = ""            # optional; defaults to REMEM_DATA_DIR/models
 ```
+
+`auto` resolves in this order: a remem-specific API key, the verified
+`multilingual-e5-small` local model, then the labeled `feature-hash` fallback.
+An ambient `OPENAI_API_KEY` alone does not opt `auto` into remote calls.
+remem never downloads model weights from a hook or search request; install the
+default local model explicitly:
+
+```bash
+remem embedding download --model multilingual-e5-small
+remem embedding status
+remem embedding backfill --limit 1000
+```
+
+After the verified download, an `auto` configuration with no remem-specific
+API key activates the local model. Run the idempotent backfill after any
+provider/model switch—or after the downloaded artifact changes—so existing
+memories gain vectors in the new model space. The active local model id carries
+the verified artifact SHA-256, so vectors from different weight revisions are
+never mixed even when their preset name and dimensions match.
+
+Local ONNX initialization is a cold-start cost for short-lived commands. The
+checked-in release-mode reference run measured about 5.43 seconds for provider
+verification plus the first profile probe and 12 ms p95 for subsequent query
+embeddings. Long-lived MCP/API processes reuse one process-wide session; the
+report therefore records cold and warm latency separately instead of treating
+the warm number as end-to-end startup time.
 
 On Intel macOS (`darwin-x64`) release binaries, the `local` ONNX provider is
 not compiled in because ONNX Runtime ships no prebuilt library for that
 platform; embedding falls back to `feature-hash` (or `api` if configured), and
 `remem status` / `remem doctor` report the provider state explicitly.
+
+On Windows, local ONNX model operations accept only remem's default per-user
+model root. `embeddings.model_dir` and non-default `REMEM_DATA_DIR` roots fail
+closed: a shared/custom ancestor chain cannot provide the same reparse-point
+and file identity guarantees. A worker-exported `REMEM_DATA_DIR` that resolves
+to the default per-user directory remains supported. `auto` reports any real
+override as unavailable and uses the labeled feature-hash fallback; explicit
+`local` returns an actionable error. An older default model cache with
+inherited/wide ACLs is not silently trusted or chmod-like rewritten; remove or
+move that cache, then run `remem embedding download` again in the default
+location.
 
 Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
 `REMEM_EMBEDDINGS_PROVIDER`, `REMEM_EMBEDDINGS_FALLBACK`,
@@ -483,12 +522,22 @@ Environment overrides keep the existing `REMEM_EMBEDDINGS_*` names, including
 `REMEM_EMBEDDINGS_API_KEY_ENV`, `REMEM_EMBEDDINGS_DIMENSIONS`, and
 `REMEM_EMBEDDINGS_TIMEOUT_SECS`.
 
-`local` and `feature-hash` are separate provider states. Until the local
-semantic model runtime lands, both use `remem-local-feature-hash-v1`; selecting
-`feature-hash` explicitly labels the non-semantic fallback. `provider = "off"`
-disables query embeddings, vector fusion, vector writes, and embedding
-backfill. Existing stored vectors remain in SQLite but are ignored while the
-provider is off.
+`local` and `feature-hash` are separate provider states. `local` runs the
+verified fastembed/ONNX model; `feature-hash` explicitly selects
+`remem-local-feature-hash-v1`, the deterministic non-semantic fallback.
+`provider = "off"` disables query embeddings, vector fusion, vector writes,
+and embedding backfill. Existing stored vectors remain in SQLite but are
+ignored while the provider is off.
+
+The confidence gate admits a vector-only semantic fallback when no
+claim-supported grounded result survives. If the query names an explicit
+entity already stored in memory, that fallback must be directly bound to a
+matching visible memory or connected through a specific entity shared by
+already-fused visible candidates; common tags such as `API`, `remem`, `Claude`,
+and `Team` cannot form that bridge. The candidate must still pass the predicate
+claim check. Vector distance alone never turns an unsupported statement about
+a known entity into an answer, while the constrained bridge preserves valid
+owner-to-pager multi-hop recall.
 
 `remem status --json` exposes an `embedding` object with configured provider,
 active provider, active model id, degraded/disabled flags, and active-model
@@ -736,6 +785,11 @@ remem pending retry-extraction-ranges --id 308 --acknowledge-quarantine --includ
 remem worker --once --replay-range-id 308 --acknowledge-quarantine --include-archived --profile claude
 remem pending quarantine-extraction-ranges --id 308 --dry-run
 remem pending migrate-legacy --dry-run
+remem pending migrate-legacy
+remem pending recover-archived --id 42 --dry-run
+remem pending recover-archived --id 42
+remem pending recover-archived --id 42 --host claude-code --dry-run
+remem pending recover-archived --id 42 --host claude-code
 remem pending purge-failed --dry-run --older-than-days 7
 remem govern --action stale --dry-run --json <id>
 remem review list
@@ -787,6 +841,51 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+The worker schedules one database-global lifecycle cleanup at most once per
+24-hour completed-attempt window. It first converges elapsed-TTL memories to
+`stale`, then applies the same atomic retention policy as `remem cleanup`.
+Audit events and live provenance are preserved. Automatic cleanup can never
+purge archived failures; that hard-delete boundary still requires an explicit
+positive `--archived-failures[=DAYS]` operator flag. `remem doctor` reports the
+latest automatic success and failure independently.
+
+### Legacy pending recovery
+
+Current capture no longer writes or claims the retired
+`pending_observations` queue. When no current extraction task is ready, an
+ordinary worker can drain residual rows into the current capture/extraction
+pipeline. `remem worker --once` admits at most one batch per process; a daemon
+admits at most one batch every 60 seconds; each batch contains at most 25
+oldest eligible rows. If current extraction work appears during legacy
+preflight, a zero-progress yield keeps that admission available after current
+work drains; a partial-progress yield consumes it.
+
+Automatic candidates must have a known Claude Code or Codex host and be
+pending, expired-processing, due transient failures, or controlled historical
+archived transient failures. A success atomically records the current captured
+event and extraction task, marks the legacy row migrated, and clears its old
+failure/archive state. Any replay error rolls back current-pipeline writes,
+records exponential backoff capped at 900 seconds, and stops that batch. The
+bridge does not guess that a shared replay failure is row-local permanent.
+Doctor keeps archived known-host transient rows visible during that backoff,
+shows the earliest `next_retry_epoch`, and omits immediate `worker --once`
+guidance until a row is due.
+Rows already classified permanent and unknown-host rows remain available
+through `remem pending` for inspection and explicit admin recovery; an unknown
+host must be repaired before replay. The bridge does not restore the legacy
+enqueue/claim API and never automatically deletes rows.
+
+Archived failed legacy rows that are not eligible for the automatic bridge are
+reported by doctor as `admin-required`. Doctor lists a bounded, oldest-first
+set of those candidates directly, including each real ID, stored host, failure
+class, archive time, and concrete `remem pending recover-archived` preview and
+apply commands. A row stored with `host = unknown` is shown with both explicit
+`--host claude-code` and `--host codex-cli` variants so the operator can choose
+the correct identity. `recover-archived` rejects non-failed or non-archived
+rows, replays only the requested ID in one transaction, and clears
+failure/archive state only after the current event and extraction task commit;
+an error leaves the source row unchanged.
 
 Use the exact-ID extraction-range commands when recovering one known failure:
 preview the retry or quarantine first, apply it only after the preview succeeds,
@@ -1130,6 +1229,48 @@ scripts/smoke_native_web_api.sh
 - REST API binds localhost only (`127.0.0.1`) and requires
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token file permissions (`0600`)
+
+### Plaintext residue diagnostics
+
+The `Plaintext residue` check in `remem doctor` inspects every regular file at
+the root of `REMEM_DATA_DIR` by content, including custom backup outputs with
+arbitrary names or no extension. It also recursively inspects regular files
+throughout `REMEM_DATA_DIR/backups/` when `backups/` and its descendants are
+real directories rather than symlinks. The check is read-only and never
+deletes data. When it finds a
+plaintext copy while the live database is confirmed encrypted, it reports
+`Fail` and `remem doctor` exits with code 2. If the live database is plaintext
+or its encryption state cannot be confirmed, the finding is `Warn`. An entry
+or candidate file that cannot be inspected because of an I/O error is reported
+and prevents the check from reporting `Ok`.
+
+Handle a finding according to its status:
+
+- `Fail` means doctor has confirmed that the live database is encrypted and a
+  plaintext copy exists. Run `remem status` to verify that the live database
+  opens, run `remem admin backup` to create a new encrypted backup, and only
+  then manually delete the listed plaintext copies or retain them solely in
+  encrypted storage.
+- For `Warn` with a plaintext live database, first check whether
+  `REMEM_DATA_DIR/remem.db.bak` or `REMEM_DATA_DIR/remem.db.enc` is blocking
+  encryption. If either exists, verify that `REMEM_DATA_DIR/backups/` is an
+  actual directory and not a symlink, choose unused destination names there,
+  and move each blocker without overwriting another file. Then run
+  `remem encrypt` and use `remem status` to confirm that the live database
+  opens. Run `remem doctor` and verify that the Plaintext residue detail says
+  the live database is encrypted and readable; this check is expected to remain
+  `Fail` while the preserved copies are still present. Then run
+  `remem admin backup` to create a new encrypted backup, manually delete the
+  older plaintext copies or retain them solely in encrypted storage, and rerun
+  `remem doctor` until Plaintext residue passes.
+- For `Warn` caused by a missing or unverified live database, key problems, or
+  I/O errors, do not back up or delete anything. First repair the live database,
+  key, or readability problem. Continue with backup and disposal only after
+  `remem status` succeeds and `remem doctor` confirms encryption.
+
+Moving a copy outside `REMEM_DATA_DIR` only removes it from this scan; it does
+not protect the data. Remem does not promise secure erasure of manually deleted
+files.
 
 ## Architecture Docs
 

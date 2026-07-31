@@ -5,6 +5,7 @@ use super::support::setup_entity_schema;
 use crate::retrieval::entity::{
     expand_via_entity_graph, expand_via_entity_graph_filtered, link_entities,
     refresh_memory_entities, search_by_entity, search_by_entity_filtered,
+    search_exact_entity_names_filtered,
 };
 
 #[test]
@@ -20,6 +21,42 @@ fn search_by_entity_fallback_matches_partial_name() {
 
     let ids = search_by_entity(&conn, "sql", Some("test/proj"), 10).unwrap();
     assert_eq!(ids, vec![1]);
+}
+
+#[test]
+fn exact_entity_name_search_never_uses_partial_word_fallback() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    setup_entity_schema(&conn);
+    conn.execute(
+        "INSERT INTO memories (id, project, memory_type, status)
+         VALUES (?1, ?2, 'discovery', 'active')",
+        params![1_i64, "test/proj"],
+    )?;
+    link_entities(&conn, 1, &["NebulaLatch".to_string()])?;
+
+    assert_eq!(
+        search_exact_entity_names_filtered(
+            &conn,
+            &["NebulaLatch".to_string()],
+            Some("test/proj"),
+            None,
+            None,
+            10,
+            false,
+        )?,
+        vec![1]
+    );
+    assert!(search_exact_entity_names_filtered(
+        &conn,
+        &["Nebula".to_string()],
+        Some("test/proj"),
+        None,
+        None,
+        10,
+        false,
+    )?
+    .is_empty());
+    Ok(())
 }
 
 #[test]

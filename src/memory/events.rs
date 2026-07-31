@@ -1,4 +1,6 @@
 mod cleanup;
+#[cfg(test)]
+mod cleanup_paging_tests;
 mod query;
 #[cfg(test)]
 mod tests;

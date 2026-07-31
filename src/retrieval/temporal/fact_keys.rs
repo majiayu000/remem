@@ -260,9 +260,12 @@ fn is_fact_stop_term(term: &str) -> bool {
             | "asof"
             | "before"
             | "current"
+            | "currently"
             | "during"
             | "from"
             | "latest"
+            | "recent"
+            | "recently"
             | "that"
             | "this"
             | "what"
@@ -271,6 +274,9 @@ fn is_fact_stop_term(term: &str) -> bool {
             | "which"
             | "who"
             | "with"
+            | "当前"
+            | "目前"
+            | "最近"
             | "截至"
             | "截止"
     )
@@ -712,6 +718,23 @@ mod tests {
         );
         assert_eq!(
             normalized_fact_terms(&["截至", "2026.01.15", "HarborMint"]),
+            vec!["harbormint"]
+        );
+    }
+
+    #[test]
+    fn normalized_terms_drop_nonsemantic_current_and_recent_modifiers() {
+        assert_eq!(
+            normalized_fact_terms(&[
+                "current",
+                "currently",
+                "recent",
+                "recently",
+                "当前",
+                "目前",
+                "最近",
+                "HarborMint",
+            ]),
             vec!["harbormint"]
         );
     }

@@ -1,5 +1,6 @@
 mod capture_capability;
 mod capture_liveness;
+mod cleanup;
 mod codex_native_memory;
 mod cursor_install;
 mod database;
@@ -11,6 +12,7 @@ mod mcp_processes;
 mod memory_poisoning;
 mod native_memory;
 mod pack_imports;
+mod plaintext_artifacts;
 mod procedure_exports;
 mod promotion_funnel;
 mod report;
