@@ -1,10 +1,13 @@
 use std::ffi::OsStr;
-use std::fs::{self, DirEntry, File, Metadata};
+use std::fs::{self, File, Metadata};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use super::types::{Check, Status};
 use crate::db;
+
+mod hf_cache;
+mod path_safety;
 
 const SQLITE_PLAINTEXT_HEADER: &[u8; 16] = b"SQLite format 3\0";
 
@@ -81,8 +84,7 @@ outside the remem data dir alone does not protect them"
     }
 }
 
-/// Detect plaintext SQLite residue next to the live database and throughout
-/// the managed backup directory.
+/// Detect plaintext SQLite residue throughout the managed data directory.
 ///
 /// The shared doctor connection is the source of truth for live-database
 /// readability. A non-plaintext header alone is not proof of encryption: a
@@ -102,8 +104,7 @@ pub(super) fn check_plaintext_artifacts(live_db_readable: bool) -> Check {
 fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readable: bool) -> Check {
     let mut plaintext = Vec::new();
     let mut issues = Vec::new();
-    scan_sibling_artifacts(data_dir, db_path, &mut plaintext, &mut issues);
-    scan_backup_artifacts(data_dir, &mut plaintext, &mut issues);
+    scan_data_directory(data_dir, db_path, &mut plaintext, &mut issues);
     let live_state = inspect_live_database(db_path, live_db_readable, &mut issues);
     plaintext.sort_by(|left, right| left.path.cmp(&right.path));
     plaintext.dedup_by(|left, right| left.path == right.path);
@@ -114,7 +115,7 @@ fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readabl
             return Check::new(
                 "Plaintext residue",
                 Status::Ok,
-                "no plaintext database artifacts found beside the live database or in the managed backups directory tree",
+                "no plaintext database artifacts found in the managed data directory tree",
             );
         }
         return Check::new(
@@ -155,93 +156,37 @@ fn check_plaintext_artifacts_in(data_dir: &Path, db_path: &Path, live_db_readabl
     Check::new("Plaintext residue", status, detail)
 }
 
-fn scan_sibling_artifacts(
+fn scan_data_directory(
     data_dir: &Path,
     db_path: &Path,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
 ) {
-    let Some(db_file_name) = db_path.file_name().and_then(OsStr::to_str) else {
-        issues.push(format!(
-            "cannot derive a UTF-8 database filename from {}",
-            db_path.display()
-        ));
-        return;
-    };
-    let bak_name = format!("{db_file_name}.bak");
-    let bak_prefix = format!("{db_file_name}.bak-");
-    let enc_name = format!("{db_file_name}.enc");
-    scan_directory(
-        data_dir,
-        false,
-        false,
-        false,
-        |name| {
-            name.to_str().is_some_and(|name| {
-                name == bak_name
-                    || name == enc_name
-                    || name.starts_with(&bak_prefix)
-                    || (name != db_file_name
-                        && Path::new(name)
-                            .extension()
-                            .and_then(OsStr::to_str)
-                            .is_some_and(|extension| {
-                                ["db", "db3", "sqlite", "sqlite3"]
-                                    .iter()
-                                    .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-                            }))
-            })
-        },
-        plaintext,
-        issues,
-        None,
-    );
-    scan_directory(
-        data_dir,
-        false,
-        true,
-        true,
-        |name| name != OsStr::new(db_file_name),
-        plaintext,
-        issues,
-        None,
-    );
-}
-
-fn scan_backup_artifacts(
-    data_dir: &Path,
-    plaintext: &mut Vec<PlaintextArtifact>,
-    issues: &mut Vec<String>,
-) {
-    let root = data_dir.join("backups");
-    let mut directories = vec![root.clone()];
-    while let Some(directory) = directories.pop() {
+    let mut directories = vec![(data_dir.to_path_buf(), false)];
+    while let Some((directory, inside_managed_backups)) = directories.pop() {
         scan_directory(
             &directory,
-            directory == root,
-            true,
-            false,
-            |_| true,
+            data_dir,
+            db_path,
+            inside_managed_backups,
             plaintext,
             issues,
-            Some(&mut directories),
+            &mut directories,
         );
     }
 }
 
 fn scan_directory(
     directory: &Path,
-    missing_ok: bool,
-    ignore_child_directories: bool,
-    ignore_short_files: bool,
-    is_candidate: impl Fn(&OsStr) -> bool,
+    data_dir: &Path,
+    db_path: &Path,
+    inside_managed_backups: bool,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
-    mut child_directories: Option<&mut Vec<PathBuf>>,
+    child_directories: &mut Vec<(PathBuf, bool)>,
 ) {
     let directory_metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
-        Err(error) if missing_ok && error.kind() == io::ErrorKind::NotFound => return,
         Err(error) => {
             issues.push(format!(
                 "cannot inspect directory {}: {error}",
@@ -253,6 +198,13 @@ fn scan_directory(
     if directory_metadata.file_type().is_symlink() {
         issues.push(format!(
             "refusing to scan symbolic-link directory {}",
+            directory.display()
+        ));
+        return;
+    }
+    if path_safety::is_reparse_point(&directory_metadata) {
+        issues.push(format!(
+            "refusing to scan reparse-point directory {}",
             directory.display()
         ));
         return;
@@ -285,94 +237,122 @@ fn scan_directory(
                 continue;
             }
         };
-        if !is_candidate(&entry.file_name()) {
+        let path = entry.path();
+        let is_managed_backups_path = path_safety::is_managed_backups_path(data_dir, &path);
+        let path_is_inside_managed_backups = inside_managed_backups || is_managed_backups_path;
+        let entry_type = match entry.file_type() {
+            Ok(file_type) => file_type,
+            Err(error) => {
+                issues.push(format!(
+                    "cannot determine file type for {}: {error}",
+                    path.display()
+                ));
+                continue;
+            }
+        };
+        if entry_type.is_symlink() {
+            if is_known_non_artifact_path(data_dir, db_path, &path)
+                || hf_cache::is_snapshot_pointer(data_dir, &path)
+            {
+                continue;
+            }
+            let description = if is_managed_backups_path {
+                "symbolic-link backup directory"
+            } else {
+                "symbolic-link artifact"
+            };
+            issues.push(format!(
+                "refusing to inspect {description} {}",
+                path.display()
+            ));
             continue;
         }
-        if let Some(directories) = child_directories.as_deref_mut() {
-            match entry.file_type() {
-                Ok(file_type) if file_type.is_dir() => {
-                    directories.push(entry.path());
-                    continue;
-                }
-                Ok(_) => {}
-                Err(error) => {
-                    issues.push(format!(
-                        "cannot determine file type for {}: {error}",
-                        entry.path().display()
-                    ));
-                    continue;
-                }
+        let path_metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                issues.push(format!(
+                    "cannot inspect metadata for {}: {error}",
+                    path.display()
+                ));
+                continue;
             }
+        };
+        if path_safety::is_reparse_point(&path_metadata) {
+            issues.push(format!(
+                "refusing to inspect reparse-point artifact {}",
+                path.display()
+            ));
+            continue;
         }
-        inspect_candidate(
-            &entry,
-            ignore_child_directories,
-            ignore_short_files,
-            plaintext,
-            issues,
-        );
+        if entry_type.is_dir() {
+            child_directories.push((path, path_is_inside_managed_backups));
+            continue;
+        }
+        if path == db_path {
+            continue;
+        }
+        if is_managed_backups_path {
+            issues.push(format!("scan path {} is not a directory", path.display()));
+        }
+        if !entry_type.is_file() {
+            issues.push(format!(
+                "artifact candidate {} is not a regular file",
+                path.display()
+            ));
+            continue;
+        }
+        if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
+            issues.push(format!(
+                "artifact candidate {} changed before it could be inspected safely",
+                path.display()
+            ));
+            continue;
+        }
+        let ignore_short_file =
+            !path_is_inside_managed_backups && !is_named_database_artifact(db_path, &path);
+        match inspect_regular_file(&path, &path_metadata, ignore_short_file) {
+            Ok((FileHeader::Plaintext, size_bytes)) => {
+                plaintext.push(PlaintextArtifact { path, size_bytes });
+            }
+            Ok((FileHeader::NonPlaintext, _)) => {}
+            Err(error) => issues.push(error),
+        }
     }
 }
 
-fn inspect_candidate(
-    entry: &DirEntry,
-    ignore_directories: bool,
-    ignore_short_files: bool,
-    plaintext: &mut Vec<PlaintextArtifact>,
-    issues: &mut Vec<String>,
-) {
-    let path = entry.path();
-    let entry_type = match entry.file_type() {
-        Ok(file_type) => file_type,
-        Err(error) => {
-            issues.push(format!(
-                "cannot determine file type for {}: {error}",
-                path.display()
-            ));
-            return;
-        }
+fn is_known_non_artifact_path(data_dir: &Path, db_path: &Path, path: &Path) -> bool {
+    if path == data_dir.join(".key") {
+        return true;
+    }
+    ["-wal", "-shm", "-journal"].iter().any(|suffix| {
+        let mut sidecar = db_path.as_os_str().to_os_string();
+        sidecar.push(suffix);
+        path == Path::new(&sidecar)
+    })
+}
+
+fn is_named_database_artifact(db_path: &Path, path: &Path) -> bool {
+    if path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            ["db", "db3", "sqlite", "sqlite3"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+    {
+        return true;
+    }
+    let Some(db_file_name) = db_path.file_name().and_then(OsStr::to_str) else {
+        return false;
     };
-    if entry_type.is_symlink() {
-        issues.push(format!(
-            "refusing to inspect symbolic-link artifact {}",
-            path.display()
-        ));
-        return;
-    }
-    if entry_type.is_dir() && ignore_directories {
-        return;
-    }
-    if !entry_type.is_file() {
-        issues.push(format!(
-            "artifact candidate {} is not a regular file",
-            path.display()
-        ));
-        return;
-    }
-    let path_metadata = match fs::symlink_metadata(&path) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            issues.push(format!(
-                "cannot inspect metadata for {}: {error}",
-                path.display()
-            ));
-            return;
-        }
-    };
-    if path_metadata.file_type().is_symlink() || !path_metadata.is_file() {
-        issues.push(format!(
-            "artifact candidate {} changed before it could be inspected safely",
-            path.display()
-        ));
-        return;
-    }
-    match inspect_regular_file(&path, &path_metadata, ignore_short_files) {
-        Ok((FileHeader::Plaintext, size_bytes)) => {
-            plaintext.push(PlaintextArtifact { path, size_bytes });
-        }
-        Ok((FileHeader::NonPlaintext, _)) => {}
-        Err(error) => issues.push(error),
-    }
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .is_some_and(|name| {
+            name == format!("{db_file_name}.bak")
+                || name == format!("{db_file_name}.enc")
+                || name.starts_with(&format!("{db_file_name}.bak-"))
+        })
 }
 
 fn inspect_live_database(
@@ -617,6 +597,21 @@ mod tests {
     }
 
     #[test]
+    fn scans_custom_backup_directories_anywhere_in_data_dir() {
+        let dir = temp_dir("custom-backup-tree");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        let nested = dir.join("archive").join("before-encryption");
+        fs::create_dir_all(&nested).unwrap();
+        write_plaintext_db(&nested.join("custom-output"));
+        let result = check(&dir, true);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result
+            .detail
+            .contains("archive/before-encryption/custom-output"));
+        cleanup(&dir);
+    }
+
+    #[test]
     fn plaintext_artifact_fails_only_for_readable_non_plaintext_live_db() {
         let dir = temp_dir("live-encrypted");
         write_non_plaintext_db(&dir.join("remem.db"));
@@ -712,11 +707,13 @@ mod tests {
     fn non_directory_backups_path_warns_without_hiding_plaintext() {
         let dir = temp_dir("bad-backups");
         write_non_plaintext_db(&dir.join("remem.db"));
-        write_plaintext_db(&dir.join("remem.db.bak"));
-        fs::write(dir.join("backups"), b"not a directory").unwrap();
+        write_plaintext_db(&dir.join("backups"));
         let result = check(&dir, true);
         assert_eq!(result.status, Status::Fail);
-        assert!(result.detail.contains("remem.db.bak"));
+        assert!(result
+            .detail
+            .contains("confirmed plaintext database artifact(s)"));
+        assert!(result.detail.contains("backups"));
         assert!(result.detail.contains("is not a directory"));
         cleanup(&dir);
     }
@@ -727,9 +724,9 @@ mod tests {
         use std::os::unix::fs::symlink;
 
         let dir = temp_dir("symlink");
+        let target_dir = temp_dir("symlink-target");
         write_non_plaintext_db(&dir.join("remem.db"));
-        fs::create_dir(dir.join("targets")).unwrap();
-        let target = dir.join("targets/target.sqlite");
+        let target = target_dir.join("target.sqlite");
         write_plaintext_db(&target);
         fs::create_dir(dir.join("backups")).unwrap();
         symlink(&target, dir.join("backups").join("linked.sqlite")).unwrap();
@@ -740,6 +737,27 @@ mod tests {
             .detail
             .contains("confirmed plaintext database artifact(s)"));
         cleanup(&dir);
+        cleanup(&target_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn configured_key_symlink_is_excluded_but_database_symlinks_warn() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_dir("key-symlink");
+        let target_dir = temp_dir("key-symlink-target");
+        write_non_plaintext_db(&dir.join("remem.db"));
+        fs::write(target_dir.join("key"), "configured-key").unwrap();
+        write_plaintext_db(&target_dir.join("backup"));
+        symlink(target_dir.join("key"), dir.join(".key")).unwrap();
+        symlink(target_dir.join("backup"), dir.join("custom.sqlite")).unwrap();
+        let result = check(&dir, true);
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.detail.contains("custom.sqlite"));
+        assert!(!result.detail.contains(".key"));
+        cleanup(&dir);
+        cleanup(&target_dir);
     }
 
     #[cfg(unix)]

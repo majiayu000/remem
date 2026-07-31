@@ -1266,12 +1266,18 @@ cargo test --release --test search_latency_benchmark sqlite_tuning_encrypted_rel
 
 ### Plaintext residue diagnostics
 
-The `Plaintext residue` check in `remem doctor` inspects every regular file at
-the root of `REMEM_DATA_DIR` by content, including custom backup outputs with
-arbitrary names or no extension. It also recursively inspects regular files
-throughout `REMEM_DATA_DIR/backups/` when `backups/` and its descendants are
-real directories rather than symlinks. The check is read-only and never
-deletes data. When it finds a
+The `Plaintext residue` check in `remem doctor` recursively inspects regular
+files throughout the managed `REMEM_DATA_DIR` tree by content, including
+custom backup outputs with arbitrary names or no extension. It never follows
+symlinks and, on Windows, rejects every filesystem reparse point before
+recursive descent. A file shorter than the SQLite header inside the managed
+`backups/` subtree is reported as an incomplete inspection; unrelated short
+operational files elsewhere are ignored unless their names identify them as
+database artifacts. Configured key and live-database sidecar paths retain their
+existing exclusions. A strictly validated internal Hugging Face cache snapshot pointer
+is omitted because its same-repository blob is a regular file that the tree
+scan inspects independently; any other artifact symlink makes the inspection
+incomplete. The check is read-only and never deletes data. When it finds a
 plaintext copy while the live database is confirmed encrypted, it reports
 `Fail` and `remem doctor` exits with code 2. If the live database is plaintext
 or its encryption state cannot be confirmed, the finding is `Warn`. An entry
