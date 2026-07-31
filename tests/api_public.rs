@@ -133,6 +133,9 @@ fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
 
     assert_eq!(result.fusion_score(), 0.5);
     assert_eq!(result.post_fusion_score_factor(), Some(0.5));
+    let serialized = serde_json::to_value(&result).expect("search explain should serialize");
+    assert_eq!(serialized["fusion_score"].as_f64(), Some(0.5));
+    assert_eq!(serialized["post_fusion_score_factor"].as_f64(), Some(0.5));
 }
 
 #[tokio::test]

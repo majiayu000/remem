@@ -385,6 +385,12 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
     );
     assert_eq!(parsed["multi_hop"]["entities_discovered"][0], "Mem0");
     assert_eq!(parsed["explain_details"]["query"], "needle");
+    let explain_result = &parsed["explain_details"]["results"][0];
+    assert_eq!(explain_result["fusion_score"].as_f64(), Some(0.016393));
+    assert_eq!(
+        explain_result["post_fusion_score_factor"].as_f64(),
+        Some(1.0)
+    );
     Ok(())
 }
 

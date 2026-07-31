@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SearchExplain {
@@ -64,7 +64,7 @@ pub struct ChannelHit {
     pub rank: usize,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct SearchExplainResult {
     pub memory_id: i64,
     pub final_rank: usize,
@@ -92,6 +92,27 @@ impl SearchExplainResult {
         (fusion_score.is_finite() && fusion_score > 0.0)
             .then_some(self.final_score / fusion_score)
             .filter(|factor| factor.is_finite() && *factor >= 0.0)
+    }
+}
+
+impl Serialize for SearchExplainResult {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("SearchExplainResult", 11)?;
+        state.serialize_field("memory_id", &self.memory_id)?;
+        state.serialize_field("final_rank", &self.final_rank)?;
+        state.serialize_field("final_score", &self.final_score)?;
+        state.serialize_field("evidence_confidence", &self.evidence_confidence)?;
+        state.serialize_field("project", &self.project)?;
+        state.serialize_field("scope", &self.scope)?;
+        state.serialize_field("visibility", &self.visibility)?;
+        state.serialize_field("staleness", &self.staleness)?;
+        state.serialize_field("contributions", &self.contributions)?;
+        state.serialize_field("fusion_score", &self.fusion_score())?;
+        state.serialize_field("post_fusion_score_factor", &self.post_fusion_score_factor())?;
+        state.end()
     }
 }
 

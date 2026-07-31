@@ -227,6 +227,17 @@ mod tests {
             explain_json["explain"]["results"][0]["staleness"]["status"],
             "active"
         );
+        let explain_result = &explain_json["explain"]["results"][0];
+        let final_score = explain_result["final_score"]
+            .as_f64()
+            .expect("explain final_score should be numeric");
+        let fusion_score = explain_result["fusion_score"]
+            .as_f64()
+            .expect("REST explain should serialize fusion_score");
+        let post_fusion_score_factor = explain_result["post_fusion_score_factor"]
+            .as_f64()
+            .expect("REST explain should serialize post_fusion_score_factor");
+        assert!((final_score - fusion_score * post_fusion_score_factor).abs() < 1e-12);
         Ok(())
     }
 
