@@ -302,6 +302,37 @@ fn date_shaped_identifiers_are_not_temporal_expressions() {
 }
 
 #[test]
+fn date_shaped_identifier_does_not_hide_later_exact_date() -> Result<()> {
+    let expected_start = chrono::NaiveDate::from_ymd_opt(2026, 6, 5)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp();
+
+    for (query, expected_semantic_query) in [
+        (
+            "release_2026-05-04_notes changed on 2026-06-05",
+            "release_2026-05-04_notes changed on",
+        ),
+        (
+            "release_2026年5月4日_notes changed on 2026年6月5日",
+            "release_2026年5月4日_notes changed on",
+        ),
+    ] {
+        let constraint =
+            extract_temporal(query).ok_or_else(|| anyhow!("later exact date should parse"))?;
+        assert_eq!(constraint.start_epoch, expected_start, "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query).trim(),
+            expected_semantic_query
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn snake_case_identifiers_are_not_temporal_expressions() {
     for query in ["last_30_days", "3_days_ago"] {
         assert!(extract_temporal(query).is_none(), "{query}");

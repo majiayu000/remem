@@ -150,14 +150,8 @@ fn temporal_field_for_query(lower: &str) -> TemporalField {
 
 fn parse_exact_date_or_month(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     parse_separated_ymd(lower)
-        .filter(|(_, _, span)| has_word_boundaries(lower, span))
-        .or_else(|| {
-            parse_chinese_ymd(lower)
-                .filter(|(_, _, span)| has_ascii_identifier_boundaries(lower, span))
-        })
-        .or_else(|| {
-            parse_month_name_date(lower).filter(|(_, _, span)| has_word_boundaries(lower, span))
-        })
+        .or_else(|| parse_chinese_ymd(lower))
+        .or_else(|| parse_month_name_date(lower))
 }
 
 fn has_ascii_identifier_boundaries(query: &str, span: &Range<usize>) -> bool {
@@ -175,7 +169,7 @@ fn has_ascii_identifier_boundaries(query: &str, span: &Range<usize>) -> bool {
 
 fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     let mut cursor = 0;
-    for raw in lower.split_whitespace() {
+    'words: for raw in lower.split_whitespace() {
         let raw_start = cursor + lower[cursor..].find(raw)?;
         cursor = raw_start + raw.len();
         let token =
@@ -184,7 +178,11 @@ fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
             if let Ok(date) = NaiveDate::parse_from_str(token, fmt) {
                 let (start, end) = day_range(date)?;
                 let token_start = raw_start + raw.find(token)?;
-                return Some((start, end, token_start..token_start + token.len()));
+                let span = token_start..token_start + token.len();
+                if !has_word_boundaries(lower, &span) {
+                    continue 'words;
+                }
+                return Some((start, end, span));
             }
         }
     }
@@ -192,33 +190,60 @@ fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
 }
 
 fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
-    let year_idx = lower.find('年')?;
-    let year_text = trailing_ascii_digits(&lower[..year_idx])?;
-    let year_start = year_idx - year_text.len();
-    let year = parse_u32(year_text)? as i32;
-    let after_year = &lower[year_idx + '年'.len_utf8()..];
-    let month_idx = after_year.find('月')?;
-    let month_text = after_year[..month_idx].trim();
-    let month = parse_u32(month_text)?;
-    let month_end = year_idx + '年'.len_utf8() + month_idx + '月'.len_utf8();
-    let after_month = &lower[month_end..];
-    let day_text = after_month.split(['日', '号']).next().unwrap_or("").trim();
+    for (year_idx, _) in lower.match_indices('年') {
+        let Some(year_text) = trailing_ascii_digits(&lower[..year_idx]) else {
+            continue;
+        };
+        let year_start = year_idx - year_text.len();
+        let Some(year) = parse_u32(year_text).map(|year| year as i32) else {
+            continue;
+        };
+        let after_year = &lower[year_idx + '年'.len_utf8()..];
+        let Some(month_idx) = after_year.find('月') else {
+            continue;
+        };
+        let month_text = after_year[..month_idx].trim();
+        let Some(month) = parse_u32(month_text) else {
+            continue;
+        };
+        let month_end = year_idx + '年'.len_utf8() + month_idx + '月'.len_utf8();
+        let after_month = &lower[month_end..];
+        let day_text = after_month.split(['日', '号']).next().unwrap_or("").trim();
 
-    if let Some(day) = parse_leading_u32(day_text) {
-        let day_digits = leading_ascii_digits(day_text)?;
-        let day_start = month_end + after_month.find(day_digits)?;
-        let day_end = day_start + day_digits.len();
-        let marker_len = lower[day_end..]
-            .chars()
-            .next()
-            .filter(|marker| matches!(marker, '日' | '号'))
-            .map_or(0, char::len_utf8);
-        let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-        Some((start, end, year_start..day_end + marker_len))
-    } else {
-        let (start, end) = month_range(year, month)?;
-        Some((start, end, year_start..month_end))
+        let candidate = if let Some(day) = parse_leading_u32(day_text) {
+            let Some(day_digits) = leading_ascii_digits(day_text) else {
+                continue;
+            };
+            let Some(day_offset) = after_month.find(day_digits) else {
+                continue;
+            };
+            let day_start = month_end + day_offset;
+            let day_end = day_start + day_digits.len();
+            let marker_len = lower[day_end..]
+                .chars()
+                .next()
+                .filter(|marker| matches!(marker, '日' | '号'))
+                .map_or(0, char::len_utf8);
+            let Some(date) = NaiveDate::from_ymd_opt(year, month, day) else {
+                continue;
+            };
+            let Some((start, end)) = day_range(date) else {
+                continue;
+            };
+            (start, end, year_start..day_end + marker_len)
+        } else {
+            let Some((start, end)) = month_range(year, month) else {
+                continue;
+            };
+            (start, end, year_start..month_end)
+        };
+
+        if has_ascii_identifier_boundaries(lower, &candidate.2) {
+            return Some(candidate);
+        }
     }
+
+    None
 }
 
 fn parse_month_name_date(lower: &str) -> Option<(i64, i64, Range<usize>)> {
@@ -234,47 +259,57 @@ fn parse_month_name_date(lower: &str) -> Option<(i64, i64, Range<usize>)> {
         let next2 = parts.get(idx + 2);
         let previous = idx.checked_sub(1).and_then(|prev| parts.get(prev));
 
-        if let (Some(day), Some(year)) = (
-            previous.and_then(|word| parse_day(word.text)),
-            next.and_then(|word| parse_year(word.text)),
-        ) {
-            let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            return Some((start, end, previous?.span.start..next?.span.end));
-        }
-        if let (Some(year), Some(day)) = (
-            previous.and_then(|word| parse_year(word.text)),
-            next.and_then(|word| parse_day(word.text)),
-        ) {
-            let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            return Some((start, end, previous?.span.start..next?.span.end));
-        }
-        if let Some(day) = next.and_then(|word| parse_day(word.text)) {
-            let year = next2
-                .and_then(|word| parse_year(word.text))
-                .unwrap_or(current_year);
-            let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            let last = next2
-                .filter(|word| parse_year(word.text).is_some())
-                .unwrap_or(next?);
-            return Some((start, end, part.span.start..last.span.end));
-        }
-        if let Some(year) = next.and_then(|word| parse_year(word.text)) {
-            let (start, end) = month_range(year, month)?;
-            return Some((start, end, part.span.start..next?.span.end));
-        }
-        if let Some(year) = previous.and_then(|word| parse_year(word.text)) {
-            let (start, end) = month_range(year, month)?;
-            return Some((start, end, previous?.span.start..part.span.end));
-        }
-        if let Some(day) = previous.and_then(|word| parse_day(word.text)) {
-            let year = next
-                .and_then(|word| parse_year(word.text))
-                .unwrap_or(current_year);
-            let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-            let last = next
-                .filter(|word| parse_year(word.text).is_some())
-                .unwrap_or(part);
-            return Some((start, end, previous?.span.start..last.span.end));
+        let candidate = (|| {
+            if let (Some(day), Some(year)) = (
+                previous.and_then(|word| parse_day(word.text)),
+                next.and_then(|word| parse_year(word.text)),
+            ) {
+                let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
+                return Some((start, end, previous?.span.start..next?.span.end));
+            }
+            if let (Some(year), Some(day)) = (
+                previous.and_then(|word| parse_year(word.text)),
+                next.and_then(|word| parse_day(word.text)),
+            ) {
+                let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
+                return Some((start, end, previous?.span.start..next?.span.end));
+            }
+            if let Some(day) = next.and_then(|word| parse_day(word.text)) {
+                let year = next2
+                    .and_then(|word| parse_year(word.text))
+                    .unwrap_or(current_year);
+                let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
+                let last = next2
+                    .filter(|word| parse_year(word.text).is_some())
+                    .unwrap_or(next?);
+                return Some((start, end, part.span.start..last.span.end));
+            }
+            if let Some(year) = next.and_then(|word| parse_year(word.text)) {
+                let (start, end) = month_range(year, month)?;
+                return Some((start, end, part.span.start..next?.span.end));
+            }
+            if let Some(year) = previous.and_then(|word| parse_year(word.text)) {
+                let (start, end) = month_range(year, month)?;
+                return Some((start, end, previous?.span.start..part.span.end));
+            }
+            if let Some(day) = previous.and_then(|word| parse_day(word.text)) {
+                let year = next
+                    .and_then(|word| parse_year(word.text))
+                    .unwrap_or(current_year);
+                let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
+                let last = next
+                    .filter(|word| parse_year(word.text).is_some())
+                    .unwrap_or(part);
+                return Some((start, end, previous?.span.start..last.span.end));
+            }
+            None
+        })();
+
+        if candidate
+            .as_ref()
+            .is_some_and(|(_, _, span)| has_word_boundaries(lower, span))
+        {
+            return candidate;
         }
     }
 
