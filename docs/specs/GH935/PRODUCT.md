@@ -2,7 +2,6 @@
 
 Status: Current contract; v1 infrastructure shipped, completion unimplemented
 Issue: #935 (refs #849, #852, #385)
-
 ## Current Truth
 
 PR #937 shipped `cross-host-v1` infrastructure under `eval/cross-host/`:
@@ -11,10 +10,9 @@ PR #937 shipped `cross-host-v1` infrastructure under `eval/cross-host/`:
 - 12 `skeleton_todo` tasks in each direction;
 - an artifact leak scanner and offline dry-run validator.
 
-There are still no executable fixtures, real-host runner, live benchmark runs,
-sanitized result bundle, statistical report, or public cross-host conclusion.
-The charter remains `infrastructure_only_no_runs`. This contract defines the
-remaining completion work; it is not outcome evidence and does not authorize a
+There are still no executable fixtures, runner, live runs, result bundle, or conclusion.
+The charter remains `infrastructure_only_no_runs`. This defines remaining work;
+it is not outcome evidence and does not authorize a
 live run.
 
 Root-level `specs/GH*/` packets are historical planning evidence. This
@@ -58,7 +56,7 @@ The four primary conditions remain:
 | `no_memory` | None. | Negative control. |
 | `target_host_native` | Only memory created by the target host in its fresh target environment. It must not ingest the source seal, source transcript, source-native files, or a projection of them. | No-cross-host-transfer control. It is not evidence that remem beats a native cross-host bridge. |
 | `exported_file` | A target-blind, sanitized export generated from the source episodes and delivered through one versioned host-neutral context envelope. | Claim-bearing manual-handoff baseline; generation and maintenance cost count. |
-| `remem_shared` | The source host's automatic capture, extraction, review/promotion, and the target host's normal production retrieval path. | Claim-bearing treatment. |
+| `remem_shared_startup` | The source host's automatic capture, extraction, review/promotion, followed by the target host's production SessionStart/Context Bundle selector only. Interactive MCP retrieval is excluded and this condition must never be described as the full normal production retrieval path. | Claim-bearing startup-treatment comparison; not a claim about the complete remem product path. |
 
 `target_host_native` may be empty in a fresh target HOME. That is intentional:
 it proves source history does not appear in an unrelated native store. Reports
@@ -70,7 +68,7 @@ The native-import diagnostic compares
 `remem_with_host_native_import`. In both arms, "host native" means the
 **source host's** native-memory snapshot. The target host never receives a raw
 source seal. The runner first derives `native_neutral_base_v1` from the full
-production store without changing the primary `remem_shared` evidence. That
+production store without changing the primary `remem_shared_startup` evidence. That
 base has no `claude_native`/`codex_native` candidate or transitive provenance.
 Both arms start from byte-identical neutral-base clones and derive independent
 raw-free target projections. The with arm alone imports the same sealed
@@ -152,7 +150,7 @@ and condition preparation reach terminal states, the source record also seals:
 - executable, model, profile, schema, and migration versions.
 
 Every dependent condition uses that exact source-episode record. A
-`remem_shared` target receives a fresh byte-identical private clone only when
+`remem_shared_startup` target receives a fresh byte-identical private clone only when
 the sealed target-transfer projection exists; a typed preparation absence
 terminates that condition under the failure rule below. The full source store
 is never target visible. Re-running a source episode for only one condition,
@@ -199,7 +197,8 @@ identity.
   a final/freeze hash. A whitelisted pre-prompt transient aborts the whole
   source attempt; another non-security/non-integrity failure makes
   `exported_file` an `ordinary_failure` while other conditions continue.
-- `remem_shared` uses the real automatic capture-to-retrieval path. Its primary
+- `remem_shared_startup` uses automatic capture-to-startup selection but not
+  interactive MCP retrieval. Its primary
   review policy is fixed as `automatic_only_v1`: only candidates activated by
   the shipped automatic promotion policy before the target task is known enter
   the transfer projection. Pending/quarantined candidates remain inactive;
@@ -233,8 +232,9 @@ task segment is byte-identical across conditions; the full stream may differ
 only inside that closure, supplied by the exported envelope or plan-selected
 production SessionStart/Context Bundle adapter. Claim-bearing v2 forbids a
 later interactive MCP/context delivery of condition-specific bytes; all such
-memory is in the committed initial stream. An opaque or nondeterministic host
-prelude that cannot be captured exactly makes that profile unsupported.
+memory is in the committed initial stream. Every surface must label it
+`remem_shared_startup`, say it measures only startup selection, and never
+generalize to remem's SessionStart-plus-MCP path. An uncapturable host prelude makes the profile unsupported.
 
 ### 4. Scope and Privacy
 
@@ -340,7 +340,7 @@ extraction, quiescing, full-store materialization, projection/rekey, clone, or
 pre-open verification is `remem_preparation_failed`, never a source failure or
 pre-prompt transient. Unless a verified security breach takes precedence, the
 runner continues unaffected `no_memory`, `target_host_native`, and
-`exported_file` conditions and records the affected `remem_shared` tuple as
+`exported_file`, recording the affected `remem_shared_startup` tuple as
 one terminal `target_attempt_id`: `ordinary_failure`, `resolved = false`, with
 typed `absent_due_to` references and no retry. That condition-attributable
 failure remains in the registered denominator; target-infrastructure exhaustion
@@ -373,7 +373,7 @@ below, makes the comparative metric/verdict `INSUFFICIENT`.
 
 Origin is a closed set:
 `remem_canonical_capture`, `host_native_import`,
-`generated_projection`, and `manual_save`. Primary `remem_shared` evidence may
+`generated_projection`, and `manual_save`. Primary `remem_shared_startup` evidence may
 not be relabeled from a diagnostic or manual origin.
 
 ### 6. Partial and Security Evidence
@@ -395,7 +395,7 @@ reporting stage.
 Reports show each direction first, then aggregate values. Aggregate improvement
 cannot hide a missing or regressing direction.
 
-The primary claim family is `remem_shared` versus both `no_memory` and
+The primary claim family is `remem_shared_startup` versus both `no_memory` and
 `exported_file` in each direction. `target_host_native` is not a superiority
 comparator. For direction `d` and comparator `c`, the registered estimand is:
 
@@ -403,7 +403,7 @@ comparator. For direction `d` and comparator `c`, the registered estimand is:
 delta[d,c] =
   (1 / 12) * sum_task(
     (1 / 3) * sum_run(
-      I[remem_shared.resolved] - I[c.resolved]
+      I[remem_shared_startup.resolved] - I[c.resolved]
     )
   )
 ```
@@ -443,8 +443,8 @@ exposure, and, once the production user-scope prerequisite makes the metric
 numeric, `wrong_user_injection > 0`. The private-byte predicate covers exact,
 hex, standard/URL-safe base64 with and without padding, percent/JSON escaping,
 the fixed archive/compression formats, normalization, and recursion limits in
-normative `private_byte_encoding_registry_v1`; a plan may add but never remove
-coverage. A scanner crash or unclassifiable candidate is not proof of absence and instead yields
+normative `private_byte_encoding_registry_v1` in [`VECTORS.md`](VECTORS.md); a plan
+may add but not remove coverage. Scanner failure, a limit breach, or an unclassifiable candidate yields
 `partial_non_security` / `INSUFFICIENT`. A verified predicate produces
 `security_breach` / `partial_security` / safety `FAIL` even with missing
 identity or an incomplete matrix. The non-security claim-bearing stop-losses
@@ -454,9 +454,9 @@ are:
 - `memory_hurt <= 2%`.
 
 `memory_hurt` counts a paired tuple only when `no_memory` resolves the task,
-`remem_shared` does not, and `causal_oracle_v1` returns `proven` for the same
+`remem_shared_startup` does not, and `causal_oracle_v1` returns `proven` for the same
 exposed memory and wrong action under the registered proof method. Its
-denominator is all 36 registered paired `no_memory`/`remem_shared` tuples in
+denominator is all 36 registered paired `no_memory`/`remem_shared_startup` tuples in
 that direction; a missing/invalid pair never shrinks it. Missing causal
 attribution makes the rate blank and verdict insufficient unless identity,
 manifest, pairs, and all non-causal evidence are otherwise valid and the count
@@ -464,7 +464,7 @@ of proven events divided by 36 exceeds 2%. Missing identity or partial evidence
 can never use this non-security override.
 
 `stale_memory_followed` uses a direction-specific applicable set: complete,
-valid `remem_shared` tuples whose hashed candidate inventory, captured from the
+valid `remem_shared_startup` tuples whose hashed candidate inventory, captured from the
 sealed target-transfer projection immediately before the production
 freshness/validity filter, contains at least one query-relevant
 stale/superseded challenge item that would otherwise match. Projection
@@ -474,7 +474,7 @@ The numerator is an applicable tuple where that item is cited or used and has
 a `causal_oracle_v1 = proven` record for the wrong action. Missing
 inventory-stage proof, challenge inventory, or causal evidence makes the metric
 and verdict insufficient unless already proven events divided by the maximum
-36 `remem_shared` tuples exceed 1% in an identity-valid, otherwise complete
+36 `remem_shared_startup` tuples exceed 1% in an identity-valid, otherwise complete
 direction whose only gap is causal/applicability evidence. Missing identity or
 partial evidence cannot use this override. Missing evidence does not remove a
 tuple from the denominator. Reports show both the applicable count and all 36
@@ -580,8 +580,9 @@ CAS/transparency namespace whose identity, genesis checkpoint/root, log key,
 independent witness keys/quorum, gossip rule, and maximum checkpoint age are
 fixed by the charter, never supplied by an execution root or bundle. It
 combines an append log with an authenticated state map keyed by the
-content-derived fingerprint over hidden-input root, scoring IR, oracle rules,
-and sanitizer/deriver bytes. The plan binds a fresh, independently obtained,
+content-derived fingerprint over hidden-input, scoring-IR, oracle-rule, sanitizer,
+and deriver digests under [`VECTORS.md`](VECTORS.md); identifiers,
+revisions, execution roots, and random values are invalid. The plan binds a fresh, independently obtained,
 quorum-witnessed prior checkpoint/root, its consistency proof from genesis,
 prior chain hash, authenticated `unused`/non-membership proof, and expected
 create-only CAS. Before any live host/provider call, preflight obtains the
@@ -626,8 +627,9 @@ create-only checkpoint certificate under the same fixed-set rule. Its
 transaction verifies private staging, then atomically publishes the map value,
 leaf, receipt, exact envelope, and every core object. One authenticated
 `read_visible(fingerprint, core_root, object_path)` gate rejects every request
-until the committed visible value, object root, and requested bytes agree;
-there is no staged, partial, direct-object, or receipt-only public state. TECH
+until the committed value, object root, and bytes agree. Each success returns a
+signed path/length/SHA-256 receipt; completion binds the ordered verified set
+under [`VECTORS.md`](VECTORS.md). No partial or receipt-only public state exists. TECH
 fixes non-empty multi-sibling/order and early-read state-machine vectors.
 Alternate authority/key, missing proof/quorum, or partial/different objects
 cannot upgrade a claim.
@@ -636,8 +638,8 @@ The persisted publication sequence is exactly four separately tested steps:
 freeze/scan/hash the core; CAS-retire it; create-or-read the candidate-specific
 final-envelope freeze; then atomically seal visibility, verify its proof/read
 gate, and commit completion. `publication_complete_v1` is a closed,
-hash-chained record over the exact candidate, envelope freeze, both authority
-proofs/certificates, and verified read-set root. Its record bytes, unique
+hash-chained record over the candidate, envelope freeze, authority proofs, and
+signed read-receipt root; pre-read metadata cannot substitute. Its record bytes, unique
 `completion_id` index, and journal head commit in record -> index -> head order
 within one durable `BEGIN IMMEDIATE` transaction; uncommitted changes are externally invisible and committed changes are all
 visible. Exact replay returns the original record/hash, while same-ID drift or
