@@ -134,7 +134,8 @@ pending v2 requirements below.
    its manifest-declared typed result, including exact integer/API operation and
    audit provenance, and seal blocks every later append.
    Deferred constraints reject unsealed/missing/extra/mismatched bindings.
-   Intent, result and seal rows reject UPDATE and DELETE.
+   Anchor, intent, result, seal and ledger rows reject UPDATE, DELETE, and every
+   conflict-path `INSERT OR REPLACE` even with recursive triggers disabled.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
    it, derive a namespaced opaque request ID and never persist or log the raw key.
    The key and transport credentials are identity, not request payload, so the
@@ -146,13 +147,17 @@ pending v2 requirements below.
    and preserves intentional lesson reinforcement. Markdown uses a stable source
    or canonical no-source archive identity and remains stable across its
    importer-owned metadata rewrite.
-   Local-copy mutation uses a fsynced write-ahead journal outside the database.
-   Its writer, startup scanner and doctor/reconciler serialize each request on
-   the same retained OS-visible exclusive lock. A candidate lock becomes a
-   protocol owner only after a short transaction exact-matches its fd/path inode
-   and file nonce to an immutable database anchor; path replacement therefore
-   cannot create a second verified owner. The writer proves this before request
-   or artifact access and holds the lock through seal plus cleanup/reconciliation.
+   Every direct save, even with local copy disabled, serializes its request on
+   the same retained OS-visible exclusive lock used by the startup scanner and
+   doctor/reconciler. A candidate lock becomes a protocol owner only after a
+   short transaction exact-matches its fd/path inode and file nonce to an
+   immutable database anchor; path replacement therefore cannot create a second
+   verified owner. An absent anchor is initialized only after a bounded
+   existence-only proof that the request and all exact artifacts are virgin;
+   any old state fails closed rather than being re-anchored. The writer proves
+   this before request lookup or mutation and holds the lock through seal plus
+   cleanup/reconciliation. Local-copy mutation then uses a fsynced write-ahead
+   journal outside the database.
    A direct save retries only lock acquisition for
    at most 5 seconds, then either acquires the lock and replays the sealed winner
    or reports the still-live writer; scanner/doctor contenders report immediately.
@@ -167,13 +172,14 @@ pending v2 requirements below.
    before, normal-after, captured replacement, or same-original-inode in-place-
    write crash tuple; only then does the writer prove target=new and backup+
    stage=unchanged original.
-   An unsupported exchange fails before target mutation. If a concurrent writer
-   wins by replacement or an already-open FD, the stable captured inode—not a
-   stale digest—is durably identified and reverse-exchanged back to target;
-   the compensation phase distinguishes its pre/post exchange tuples, including
-   the same-inode shape, so a second crash never repeats the reverse exchange.
-   Entry replacement during compensation preserves all names and stays unsealed.
-   Durable recovery phases make every exchange/unlink/fsync reentrant.
+   An unsupported exchange fails before target mutation. Recovery never reverses
+   the exchange. It first hard-link-pins exact new and restore entries, then
+   no-replace evacuates whichever entry is currently at target into a durable
+   hold. It no-replace links the restore pin only when the hold is still exact
+   D1; otherwise it restores the held replacement/latest bytes. A target create
+   during the brief absence wins with EEXIST and is untouched. Only the exact
+   uncontested D0 tuple is cleaned; every collision retains all pins and stays
+   unsealed. Durable restore phases make every link/rename/unlink/fsync reentrant.
    Without a seal, recovery restores D0/absence when uncontested or the latest
    captured incumbent inode on collision; a seal keeps D1. Every unlisted state fails closed untouched.
    A crash before commit leaves no committed database state or user-file mutation
@@ -383,7 +389,8 @@ pending v2 requirements below.
       one atomic statement outcome.
 - [ ] The local-copy crash matrix covers journal reservation, staged-file fsync,
       swap intent, backup hard-link pin, present-target atomic exchange,
-      durable exchange/compensation intents, absent-target no-replace
+      durable exchange/restore intents, new/restore pins, no-replace target
+      evacuation/hold, absent-target no-replace
       publication, every database point through
       commit, cleanup and journal deletion. No-seal recovery restores prior bytes
       or the latest stable captured inode; sealed recovery keeps the new digest;
@@ -399,9 +406,11 @@ pending v2 requirements below.
       identity, ownership, permissions, device, fsync/no-replace support and every
       stage proof are fault-tested independently of the private journal parent.
       Every stage-build create/chunk-write/fdatasync/publish checkpoint converges;
-      forged U/S proofs fail closed. Absent-target and link/exchange source races
+      forged U/S proofs fail closed. Absent-target and
+      link/exchange/evacuation source races
       prove a competing create/replace or open-FD write is never deleted, sealed,
-      or misclassified; stable-entry compensation restores its inode to target.
+      or misclassified; the durable hold restores its inode to target without
+      overwriting a newer create.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all

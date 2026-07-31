@@ -105,12 +105,13 @@ Keep the canary on the new binary for at least 72 hours and through:
 - one restart with automatic journal reconciliation, including the pre-rename
   `stage_building` partial-U, `stage_ready`, `swap_intent`, 0200-target/backup,
   B-link source recheck, durable `exchange_intent`, present-target exchange,
-  replacement/open-FD compensation pre/post tuples, temp cleanup, and a second
-  crash inside each recovery phase;
+  N/C restore pins, target→H no-replace evacuation, replacement/open-FD restore
+  tuples, ordered cleanup, and a second crash inside each recovery phase;
 - writer/scanner/doctor contention at every local-copy phase, including durable
   D1 before seal and live lock-path replacement; immutable fd/path/inode/nonce
   anchor proof admits at most one protocol owner, followed by single-owner
-  reconciliation after writer death;
+  reconciliation after writer death; local-copy-disabled saves and every
+  virgin-R negative state must use the same retained anchor;
 - normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup
   activity that exercises every supported writer;
 - event retention cleanup proving history remains intact; and
@@ -156,8 +157,8 @@ Metrics and structured logs use opaque request IDs only:
 | live-writer lock busy | expected briefly; any artifact/DB inspection or mutation by contender, or busy after owner death, stops |
 | target-parent confinement/identity/uid/mode/device/fsync/no-replace proof failure | any; no mutation |
 | partial/wrong-byte S or unproved stage-build U | any; preserve evidence |
-| `local_copy_publish_collision` | stop request; stable captured entry must be restored at target with its latest bytes, J/B/S preserved, and DB unsealed |
-| present-target exchange or compensation identity drift | any; preserve every entry and journal, never cleanup or seal |
+| `local_copy_publish_collision` | stop request; newest target wins or the durable H/C pin restores the captured latest bytes no-replace; J/B/S/N/C/H survive and DB stays unsealed |
+| present-target exchange, pin, evacuation, or restore identity drift | any; preserve every entry and journal, never cleanup or seal |
 | backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
 | recovery phase fails to converge after any repeated crash | any |
 | raw idempotency key/credential detected in retained output | any |
@@ -175,9 +176,9 @@ journal phase, and error code without content or raw path secrets.
 | transaction failed before commit | keep writers stopped, verify rollback, retry fixed binary or restore tested backup | partial manual DDL repair |
 | migration committed, zero non-migration seals | restore tested backup during downtime, then start 0.6.x | copy tables selectively |
 | any v2 write sealed | keep 0.7 writer/schema; disable v2 projection/read surface | old binary, down migration, dropping ledgers, restoring stale backup |
-| local-copy journal pending without seal | after R's L lock and immutable anchor proof, restore exact prior bytes if uncontested or the stable captured inode/latest bytes on collision | inspect/recover while L is busy or anchor-mismatched; blind deletion |
+| local-copy journal pending without seal | after R's L lock and immutable anchor proof, restore exact prior bytes through N/C/H if uncontested; otherwise retain the newest target/captured bytes and all pins | inspect/recover while L is busy or anchor-mismatched; blind deletion |
 | local-copy journal pending with seal | after acquiring R's retained L lock and exact anchor, retain exact sealed target and finish owned cleanup | restore prior target |
-| final publish collides by replacement/open FD | reverse-exchange the stable captured entry (not a stale digest) to target; preserve J/B/S unsealed, or all on entry drift | plain rename, overwrite, delete, or misclassify competitor as backup |
+| final publish collides by replacement/open FD | no-replace evacuate to H and link C only for exact D1, otherwise H; preserve J/B/S/N/C/H unsealed and let EEXIST target win | reverse exchange, plain overwrite rename, delete, or misclassify competitor as backup |
 | ambiguous journal/database state | stop writes, preserve all bytes/journal, escalate to database+security reviewers | automatic repair |
 
 Disabling projection changes only read routing/feature flags. It never removes
