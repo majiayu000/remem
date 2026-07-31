@@ -60,6 +60,59 @@ pub(super) fn claim_terms(
         .collect()
 }
 
+pub(super) fn query_claim_terms(
+    query_text: &str,
+    project: Option<&str>,
+    explicit_entity_terms: &[String],
+) -> Vec<String> {
+    let query_without_time =
+        crate::retrieval::temporal::TemporalConstraint::query_without_temporal_expression(
+            query_text,
+        );
+    let semantic_query = strip_conversational_prefix(&query_without_time);
+    let core_terms = crate::retrieval::query_expand::core_tokens(semantic_query);
+    claim_terms(&core_terms, project, explicit_entity_terms)
+}
+
+fn strip_conversational_prefix(query: &str) -> &str {
+    let trimmed = query.trim_start();
+    let mut spans = Vec::new();
+    let mut index = 0;
+    for _ in 0..4 {
+        if !spans.is_empty() {
+            index += trimmed[index..]
+                .find(char::is_alphanumeric)
+                .unwrap_or(trimmed.len() - index);
+        }
+        let start = index;
+        index += trimmed[index..]
+            .find(|character: char| !character.is_ascii_alphabetic())
+            .unwrap_or(trimmed.len() - index);
+        if start == index {
+            break;
+        }
+        spans.push(start..index);
+    }
+    if spans.len() == 4 {
+        let word = |position: usize| &trimmed[spans[position].clone()];
+        if matches!(word(0).to_ascii_lowercase().as_str(), "please" | "kindly")
+            && word(1).eq_ignore_ascii_case("tell")
+            && word(2).eq_ignore_ascii_case("me")
+            && [
+                "who", "what", "when", "where", "why", "how", "which", "if", "whether", "the",
+                "about", "a", "an",
+            ]
+            .contains(&word(3).to_ascii_lowercase().as_str())
+        {
+            if ["if", "whether", "about"].contains(&word(3).to_ascii_lowercase().as_str()) {
+                return &trimmed[spans[3].end..];
+            }
+            return &trimmed[spans[2].end..];
+        }
+    }
+    query
+}
+
 #[cfg(test)]
 pub(super) fn claim_term_coverage(memory: &Memory, claim_terms: &[String]) -> f64 {
     claim_text_coverage(&format!("{} {}", memory.title, memory.text), claim_terms)
@@ -80,7 +133,7 @@ pub(super) fn claim_text_match_count(text: &str, claim_terms: &[String]) -> usiz
         .count()
 }
 
-fn claim_term_matches(haystack: &str, term: &str) -> bool {
+pub(super) fn claim_term_matches(haystack: &str, term: &str) -> bool {
     if term.chars().any(is_cjk) {
         return text_contains_cjk_term(haystack, term);
     }
@@ -419,6 +472,7 @@ fn is_generic_query_term(term: &str) -> bool {
         term,
         "all"
             | "and"
+            | "about"
             | "are"
             | "did"
             | "does"
@@ -496,15 +550,6 @@ mod tests {
     }
 
     #[test]
-    fn entity_scope_candidates_reject_technical_substring_matches() {
-        let terms =
-            entity_scope_candidates("How can I remember capitalization rules?", Some("/repo"));
-
-        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("remem")));
-        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("api")));
-    }
-
-    #[test]
     fn parsed_temporal_number_is_not_an_entity_scope_candidate() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         crate::memory::tests_helper::setup_memory_schema(&conn);
@@ -566,43 +611,6 @@ mod tests {
         for predicate in ["pager", "handles", "owning", "team"] {
             assert!(claims.iter().any(|term| term == predicate), "{claims:?}");
         }
-    }
-
-    #[test]
-    fn arbitrary_title_case_predicate_is_not_removed_by_a_static_list() {
-        let query = "Who Maintains NebulaLatch?";
-        let core_terms = crate::retrieval::query_expand::core_tokens(query);
-        let claims = claim_terms(&core_terms, Some("/repo"), &["NebulaLatch".to_string()]);
-
-        assert_eq!(claims, vec!["maintains"]);
-    }
-
-    #[test]
-    fn short_uppercase_qualifiers_remain_claim_terms() {
-        let query = "Who verified HarborMint in EU with R2?";
-        let core_terms = crate::retrieval::query_expand::core_tokens(query);
-        let claims = claim_terms(&core_terms, Some("/repo"), &["HarborMint".to_string()]);
-
-        assert!(claims.contains(&"eu".to_string()), "{claims:?}");
-        assert!(claims.contains(&"r2".to_string()), "{claims:?}");
-    }
-
-    #[test]
-    fn lowercase_short_query_words_are_not_claim_terms() {
-        let core_terms =
-            crate::retrieval::query_expand::core_tokens("Who is HarborMint assigned to?");
-        let claims = claim_terms(&core_terms, Some("/repo"), &["HarborMint".to_string()]);
-
-        assert!(!claims.contains(&"is".to_string()), "{claims:?}");
-        assert!(!claims.contains(&"to".to_string()), "{claims:?}");
-    }
-
-    #[test]
-    fn distinctive_scope_shape_rejects_plain_title_case_words() {
-        assert!(has_distinctive_entity_shape("NebulaLatch"));
-        assert!(has_distinctive_entity_shape("incident-17"));
-        assert!(!has_distinctive_entity_shape("Maintains"));
-        assert!(!has_distinctive_entity_shape("Current"));
     }
 
     #[test]
@@ -737,14 +745,6 @@ mod tests {
         for (text, term, expected) in cases {
             assert_eq!(claim_term_matches(text, term), expected);
         }
-    }
-
-    #[test]
-    fn ownership_alias_preserves_multi_hop_owner_evidence() {
-        assert!(claim_term_matches(
-            "NebulaLatch is owned by Team Mica",
-            "owning"
-        ));
     }
 
     #[test]

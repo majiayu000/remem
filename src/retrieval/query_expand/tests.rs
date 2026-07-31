@@ -156,6 +156,7 @@ fn core_tokens_preserve_short_mixed_script_qualifiers() {
 #[test]
 fn compact_mixed_identifiers_do_not_cross_boundaries_or_leading_cjk() {
     assert!(tokenize_mixed("A区").contains(&"A区".to_string()));
+    assert!(!tokenize_mixed("42于").contains(&"42于".to_string()));
     assert!(!tokenize_mixed("A 区").contains(&"A区".to_string()));
     assert!(!tokenize_mixed("A-区").contains(&"A区".to_string()));
     assert!(!tokenize_mixed("在EU").contains(&"在EU".to_string()));

@@ -26,15 +26,138 @@ fn parse_last_week() {
 }
 
 #[test]
+fn latin_temporal_phrases_require_word_boundaries() {
+    for query in ["TodayWidget", "todayish", "last weekend"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+    assert!(extract_temporal("yesterday's decisions").is_some());
+}
+
+#[test]
 fn parse_n_days_ago_en() {
-    let constraint = extract_temporal("3 days ago").expect("temporal query should parse");
+    for (query, days, preserved) in [
+        ("3 days ago", 3, ""),
+        ("service 42, 30 days ago", 30, "service 42"),
+        ("service 42 30 days ago", 30, "service 42"),
+        ("service 42\t30 days ago", 30, "service 42"),
+        ("service 42\n30 days ago", 30, "service 42"),
+        ("service 42　30 days ago", 30, "service 42"),
+        ("incident 17—3 days ago", 3, "incident 17"),
+        ("incident 17–3 days ago", 3, "incident 17"),
+    ] {
+        let constraint = extract_temporal(query).expect("temporal query should parse");
+        let now = chrono::Utc::now().timestamp();
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+        assert!((now - constraint.start_epoch - days * 86_400).abs() < 2);
+        assert!(semantic_query.contains(preserved), "{semantic_query:?}");
+        assert!(!semantic_query.contains("days ago"), "{semantic_query:?}");
+    }
+}
+
+#[test]
+fn parse_last_n_days_consumes_adjacent_temporal_number() {
+    let query = "What changed for service 42 in the last 30 days?";
+    let constraint = extract_temporal(query).expect("temporal query should parse");
     let now = chrono::Utc::now().timestamp();
-    assert!((now - constraint.start_epoch - 3 * 86_400).abs() < 2);
+    let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+
+    assert!((now - constraint.start_epoch - 30 * 86_400).abs() < 2);
+    assert!(semantic_query.contains("service 42"));
+    assert!(!semantic_query.contains("last 30 days"));
+}
+
+#[test]
+fn malformed_or_unsafe_day_counts_are_not_parsed_or_removed() {
+    for query in [
+        "last 29.5 days",
+        "29．5 days ago",
+        "２．5 days ago",
+        "v２．5 days ago",
+        "last v2.5 days",
+        "last 2,000 days",
+        "2'030 days ago",
+        "2\u{a0}030 days ago",
+        "2\u{202f}030 days ago",
+        "2\u{2007}030 days ago",
+        "last 29/5 days",
+        "last 29_5 days",
+        "v2-5 days ago",
+        "last 0 days",
+        "0 days ago",
+        "+3 days ago",
+        "3+ days ago",
+        "last +3 days",
+        "last 3+ days",
+        "＋3 days ago",
+        "﹢3 days ago",
+        "3﹢ days ago",
+        "last ﹢3 days",
+        "last ＋3 days",
+        "last 3＋ days",
+        "last -3 days",
+        "-3 days ago",
+        "last - 3 days",
+        "- 3 days ago",
+        "last －3 days",
+        "－3 days ago",
+        "last ﹣3 days",
+        "﹣3 days ago",
+        "last 9223372036854775807 days",
+        "9223372036854775807 days ago",
+        "最近0天",
+        "最近百天",
+        "最近十一天",
+        "最近v2.5天",
+        "最近29．5天",
+        "最近２天",
+        "十三天前",
+        "一百三天前",
+        "２．5天前",
+        "0天前",
+        "+3天前",
+        "＋3天前",
+        "﹢3天前",
+        "最近-3天",
+        "-3天前",
+        "- 3天前",
+        "－3天前",
+        "－三天前",
+        "﹣3天前",
+        "﹣三天前",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
+fn quantified_recent_ranges_fail_closed() {
+    for query in ["最近3到5天", "最近3至5天"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
 }
 
 #[test]
 fn parse_n_days_ago_cn() {
-    assert!(extract_temporal("三天前").is_some());
+    for (query, days) in [("三天前", 3), ("两天前", 2), ("十天前", 10)] {
+        let constraint = extract_temporal(query).expect("single Chinese day count should parse");
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - days * 86_400).abs() < 2);
+        assert!(TemporalConstraint::query_without_temporal_expression(query)
+            .trim()
+            .is_empty());
+    }
     assert!(extract_temporal("7天前").is_some());
 }
 
@@ -50,6 +173,76 @@ fn parse_recently() {
         extract_temporal("recently SQLite").map(|constraint| constraint.field),
         Some(TemporalField::EventTime)
     );
+    for query in [
+        "最近的天气",
+        "最近每天",
+        "最近的部署每天",
+        "最近 v2 版本的天气",
+        "最近42号服务的天气",
+        "最近一次的天气",
+    ] {
+        let constraint = extract_temporal(query).expect("generic recent query should parse");
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - 3 * 86_400).abs() < 2);
+    }
+}
+
+#[test]
+fn consumed_span_strips_cjk_temporal_expression() {
+    for (query, expected) in [
+        ("今天有什么变化", "有什么变化"),
+        ("2026年5月4日有什么变化", "有什么变化"),
+        ("最近30天有什么变化", "有什么变化"),
+        ("最近三天有什么变化", "有什么变化"),
+        ("最近两天有什么变化", "有什么变化"),
+        ("最近十天有什么变化", "有什么变化"),
+    ] {
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query).trim(),
+            expected
+        );
+    }
+
+    for (query, days) in [
+        ("最近30天有什么变化", 30),
+        ("最近三天有什么变化", 3),
+        ("最近两天有什么变化", 2),
+        ("最近十天有什么变化", 10),
+    ] {
+        let constraint = extract_temporal(query).expect("recent range should parse");
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - days * 86_400).abs() < 2);
+    }
+}
+
+#[test]
+fn consumed_span_preserves_unicode_prefix_byte_offsets() {
+    for (query, temporal_text) in [
+        ("İ today changed", "today"),
+        ("İ changed in the last 30 days", "last 30 days"),
+    ] {
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+        assert!(semantic_query.starts_with("İ"), "{semantic_query:?}");
+        assert!(semantic_query.contains("changed"), "{semantic_query:?}");
+        assert!(
+            !semantic_query.contains(temporal_text),
+            "{semantic_query:?}"
+        );
+    }
+    for (query, temporal_text) in [
+        ("İ changed in the last 30 days—please", "last 30 days"),
+        ("İ changed in the last 30 days,please", "last 30 days"),
+        ("İ changed 3 days ago—please", "3 days ago"),
+    ] {
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+        assert!(semantic_query.starts_with("İ"), "{semantic_query:?}");
+        assert!(semantic_query.contains("changed"), "{semantic_query:?}");
+        assert!(semantic_query.contains("please"), "{semantic_query:?}");
+        assert!(
+            !semantic_query.contains(temporal_text),
+            "{semantic_query:?}"
+        );
+    }
 }
 
 #[test]

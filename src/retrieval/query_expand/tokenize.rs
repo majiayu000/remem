@@ -36,8 +36,9 @@ const CJK_QUERY_SEGMENTS: &[&str] = &[
     "谁",
 ];
 
-const CJK_COMPACT_IDENTIFIER_STOP_SEGMENTS: &[&str] =
-    &["与", "了", "吗", "和", "呢", "在", "是", "由", "的", "谁"];
+const CJK_COMPACT_IDENTIFIER_STOP_SEGMENTS: &[&str] = &[
+    "与", "了", "吗", "和", "呢", "在", "是", "由", "的", "谁", "于",
+];
 
 pub(super) fn is_cjk(c: char) -> bool {
     matches!(

@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.44` for the GH-946 query-scaffolding follow-up:
+  temporal parsing now returns exact consumed spans and removes only validated
+  time phrases from claim tokens. Conversational request scaffolding and
+  localized time expressions no longer inflate claim confidence, while
+  malformed, grouped, signed, zero, and overflowing counts fail closed.
 - Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
   scores from `SearchWeights` instead of eight private scoring constants in
   `hybrid_context.rs` that duplicated it and had already drifted — the injection
