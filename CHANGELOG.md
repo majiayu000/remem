@@ -3,6 +3,43 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.42` for GH-950: repeated static SQL on the
+  SessionStart summary paginator and observation hash/vector dedup funnel now
+  reuses rusqlite's per-connection prepared-statement cache. The four static
+  staleness statements were already cached; dynamic placeholder SQL and
+  one-shot queries remain uncached so they do not churn the bounded cache.
+- Staged source version `0.6.41` for the post-merge doctor corrective:
+  plaintext-residue inspection now accepts only strictly validated internal
+  Hugging Face snapshot pointers whose same-repository blob is a regular file.
+  The pointer is never followed and the blob remains independently scanned;
+  malformed, broken, absolute, escaping, or blob-symlink aliases keep the
+  inspection explicitly incomplete instead of producing a false healthy
+  result. Windows reparse points are rejected before recursive descent,
+  truncated files inside the managed backups tree remain fail-closed, and a
+  regular file occupying the `backups` path is still content-inspected.
+- Staged source version `0.6.40` for the post-merge event-retention
+  corrective: automatic cleanup deletes only the seven explicitly ephemeral
+  event kinds. Governance, scope-cleanup, and all future unknown event kinds
+  remain durable audit history by default instead of being silently classified
+  as disposable.
+- Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
+  scores from `SearchWeights` instead of eight private scoring constants in
+  `hybrid_context.rs` that duplicated it and had already drifted — the injection
+  path had no `graph` channel and no `usage` channel. Because
+  `eval-weight-grid` tunes `SearchWeights` and injection never read it, the
+  evaluation harness was optimizing a path users do not take. Channel SQL and
+  post-fusion behavior are unchanged; `docs/specs/GH953/TECH.md` stages the
+  remaining convergence work so each ranking-visible change lands with its own
+  evaluation delta.
+- Staged source version `0.6.38` for GH-951: the owner-trace exclusion query is
+  a `NOT ... OR ...` scan no index can serve, and it ran on every SessionStart
+  even though its only consumers are debug output and `governance_eval_snapshot`
+  (which passes `collect_diagnostics = true`). It is now gated, removing a full
+  table scan from the non-debug hot path. The indexed `id IN (...)` lookup stays
+  unconditional because `owner_counts` feeds `ContextRenderStats` and
+  `remem context --status`; only the per-row trace construction is gated. A test
+  asserts that a non-debug load keeps identical owner counts and memory
+  selection while reporting no traces.
 - Staged source version `0.6.37` for GH-949: every database connection now
   applies tuned SQLite pragmas from one place. `cache_size=-65536` (64 MiB),
   `synchronous=FULL`, and `temp_store=MEMORY` join the existing WAL,

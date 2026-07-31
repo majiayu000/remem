@@ -77,7 +77,7 @@ fn find_vector_duplicates(
     window_secs: i64,
 ) -> Result<Vec<i64>> {
     let cutoff = chrono::Utc::now().timestamp() - window_secs;
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT id, text, narrative, title, facts
          FROM observations
          WHERE project = ?1

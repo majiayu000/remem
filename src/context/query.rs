@@ -341,31 +341,43 @@ fn load_project_memories(
     });
     let mut owner_counts = OwnerCounts::default();
     for row in selected_rows {
-        let decision = startup_memory_owner_decision(
-            project,
-            &row.memory.project,
-            &row.memory.scope,
-            &row.owner,
-        );
         owner_counts.add_scope(row.owner.owner_scope.as_deref());
-        traces.push(OwnerTrace::memory(
-            row.memory.id,
-            &row.memory.title,
-            &row.owner,
-            true,
-            decision.reason,
-        ));
+        // Trace rows are debug-only, but `owner_counts` above feeds
+        // ContextRenderStats and `remem context --status`, so the query itself
+        // stays unconditional (it is an indexed `id IN (...)` lookup). Only the
+        // per-row trace construction is gated (GH951).
+        if collect_diagnostics {
+            let decision = startup_memory_owner_decision(
+                project,
+                &row.memory.project,
+                &row.memory.scope,
+                &row.owner,
+            );
+            traces.push(OwnerTrace::memory(
+                row.memory.id,
+                &row.memory.title,
+                &row.owner,
+                true,
+                decision.reason,
+            ));
+        }
     }
 
-    let excluded =
-        query_owner_exclusion_traces(conn, project, excluded_types, 30).unwrap_or_else(|e| {
-            crate::log::error(
-                "context",
-                &format!("failed to load owner exclusion trace rows for {project}: {e}"),
-            );
-            Vec::new()
-        });
-    traces.extend(excluded);
+    // The exclusion query is a `NOT ... OR ...` scan that no index can serve,
+    // and its only consumers are debug output and `governance_eval_snapshot`,
+    // which passes `collect_diagnostics = true`. Skipping it removes a full
+    // table scan from every non-debug SessionStart (GH951).
+    if collect_diagnostics {
+        let excluded = query_owner_exclusion_traces(conn, project, excluded_types, 30)
+            .unwrap_or_else(|e| {
+                crate::log::error(
+                    "context",
+                    &format!("failed to load owner exclusion trace rows for {project}: {e}"),
+                );
+                Vec::new()
+            });
+        traces.extend(excluded);
+    }
 
     ContextMemorySelection {
         memories: selected,
@@ -630,7 +642,7 @@ fn query_summary_batch(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<SessionSummaryQueryRow>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT ss.id, \
              CASE \
                WHEN ss.request LIKE 'Captured event range %..%' THEN \

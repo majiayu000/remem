@@ -194,8 +194,13 @@ operator-only archived-failure purge.
 Hard-delete eligibility is fail-closed:
 
 - legacy `events` rows have an explicit `ephemeral` or `audit` retention class;
-  cleanup selects only expired `ephemeral` rows, while referenced API mutation
-  audits are protected independently at the schema boundary;
+  cleanup selects only expired rows whose class is `ephemeral` **and** whose
+  event type belongs to the same closed allowlist, while referenced API
+  mutation audits are protected independently at the schema boundary. This
+  second check preserves pre-upgrade unknown event types that older writers
+  mislabeled as ephemeral. The current writer assigns `ephemeral` only to that
+  shared allowlist; every unregistered type defaults to `audit`. Adding a new
+  ephemeral type requires an explicit writer-contract and cleanup regression;
 - a compressed source requires an old matching link to an active replacement,
   an unchanged supported source snapshot/hash and no fact that still points at
   the source. New links use `observation-v2`, which covers every canonical
