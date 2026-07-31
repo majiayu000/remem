@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.37` for GH-949: every database connection now
+  applies tuned SQLite pragmas from one place. `cache_size=-65536` (64 MiB),
+  `synchronous=FULL`, and `temp_store=MEMORY` join the existing WAL,
+  foreign-key, and busy-timeout settings; SQLCipher disables mmap, so page
+  residency matters far more here than on a plaintext store, and every cache
+  miss otherwise costs a `pread` plus an AES decrypt. `FULL` preserves the
+  prior power-loss durability by default; `REMEM_SQLITE_SYNCHRONOUS=normal`
+  makes the WAL latency/durability tradeoff explicit. Read-only connections
+  take a narrower set that omits write-only pragmas. Both tuning overrides
+  fail before opening the database on invalid or non-Unicode values.
+  `REMEM_SQLITE_CACHE_KIB` accepts 1 through 1048576 KiB. The three
+  `open_configured_*` helpers no longer carry separate pragma strings.
 - Staged source version `0.6.36` for the GH-946 post-merge corrective:
   automatic E5 downloads now use the exact immutable Hugging Face revision
   evaluated by the checked-in provider evidence, while presets without an
