@@ -146,7 +146,10 @@ Exercise anchor DDL independently: only valid opaque R, INTEGER nonnegative dev
 and epoch, positive INTEGER ino, and lowercase 128-bit nonce insert. Nonnumeric
 TEXT/BLOB/REAL identity values, duplicate R/dev+ino, malformed nonce,
 UPDATE/DELETE/OR REPLACE fail unchanged. A short `BEGIN IMMEDIATE` race with
-different candidate inodes for one R commits at most one exact anchor.
+different candidate inodes for one R commits at most one exact anchor. Preseed
+another R with the candidate `(dev,ino)` and a zero-length crash-left L; the
+combined R-or-IL lookup must reject before nonce write, leaving L bytes/mtime
+and every anchor row unchanged.
 
 Explicitly prove that an intent cannot commit without a seal and a seal cannot
 commit without all manifested results. `PRAGMA foreign_key_check` is empty after
@@ -240,7 +243,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
 | `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
 | `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove only proved stage/B link, while a mismatched link source is preserved visible | not reachable |
-| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; `restore_intent`; N/C no-replace links and fsyncs; `restore_ready`; target→H no-replace; C/H→target no-replace; postcheck/P-fsync | exact normal exchange restores D0 through pins and removes H/N/S/B/C/J in order; replacement/open-FD drift restores or leaves the newest target and keeps every surviving pin/J; no reverse exchange | not reachable |
+| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; `restore_intent`; N/C no-replace links and fsyncs; `restore_ready`; target→H no-replace; C/H→target no-replace; postcheck/P-fsync | exact normal exchange restores D0 and cleans ordered pins; drift leaves newest bytes at target or durably under H/N with visible collision and no cleanup; no reverse exchange | not reachable |
 | absent-target S→target atomic no-replace and portable link/unlink | prior absence restored only without competitor; EEXIST preserves competitor/J/S as ambiguous | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
@@ -294,8 +297,10 @@ local-copy-disabled request must already own K, so a later same-key/different-
 payload call rejects after proof without any new anchor or artifact mutation.
 
 Run every boundary with prior target absent and present, an identical target,
-multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
-database counts, stored response, journal/artifact counts, and doctor status.
+multibyte bytes, and concurrent exact retries. Assert final target bytes/digest
+for uncontested states; collision cases instead assert target plus every pin's
+bytes/name set, explicit error, and nonhealthy doctor. Also assert database
+counts, stored response, journal/artifact counts, and doctor status.
 At every `stage_building` checkpoint use empty, one-byte, every chunk-prefix and
 full U. Exact nonce/private-Q/type/uid/0600/nlink proof converges automatically;
 wrong nonce/path/inode/uid/mode/type/link is preserved ambiguous. Precreate
@@ -314,17 +319,20 @@ Prove C is restored at target and D1 remains pinned, then return
 `local_copy_publish_collision` with J/B/S/N/C/H and an unsealed DB.
 Also keep the original target FD open after B is linked and overwrite/chmod I0
 before exchange, after exchange, and before seal. B/S may drift together from
-D0; restore must key on stable entry identity, return its latest bytes through H
-or C, preserve every pin/J, and never seal or misclassify the inode as D0.
+D0; restore must key on stable entry identity, return observed bytes through H
+or C when stably selected, otherwise retain newer bytes under H/N; preserve every
+pin/J, never seal, and never misclassify the inode as D0.
 SIGKILL after exchange before observation; before/after restore-intent, each N/C
 link+fsync, restore-ready, target→H, each C/H→target link, postcheck and P fsync.
 Between the final target=N check and target→H, replace target with X: H must
 capture X and H→target must restore X no-replace. Between evacuation and publish,
 create Y at target: EEXIST must leave Y untouched and retain X/H plus all pins.
 Write through open FDs to N/H before and after evacuation; a non-D1 H must be
-linked back instead of C. Replace any pin source between recheck and link and
-require postcheck ambiguity with no cleanup/seal. No trace may contain a recovery
-exchange or overwriting rename.
+linked back instead of C. Also write H/N after the exact-D1 decision but before
+C→target: require target=C, newer bytes still at H/N, durable
+`collision_preserved`, no cleanup/seal, and an explicit latest-not-at-target
+diagnostic. Replace any pin source between recheck and link and require
+postcheck ambiguity. No trace may contain a recovery exchange or overwrite.
 
 Separately race absent-target S→target. Linux `RENAME_NOREPLACE`, macOS
 `RENAME_EXCL`, and portable `linkat` must return EEXIST when the competitor
@@ -337,7 +345,10 @@ targets. Write known bytes before chmod; exercise journaled owner-read lift,
 double hash, exact mode restoration, B hard-link pin, S↔target exchange and
 N/C/H no-replace recovery. Assert dev/inode, uid/gid/mode/size/mtime, digest and bytes are
 preserved; target/B then B/S are the exact temporary nlink=2 I0 pair, T/U remain
-private-Q 0600, and B/S/C retain 0644/0200. Exercise D1-link checkpoints. Precreate
+private-Q 0600, and B/S/C retain 0644/0200. At restore entry require exact name
+sets `D0={target,B,S,C}`/nlink=4 and `D1={H,N}`/nlink=2, then `(4,1),(4,0),
+(3,0),(2,0),(1,0)` after H/N/S/B/C cleanup; unknown extra links fail closed.
+Exercise D1-link checkpoints. Precreate
 B and assert link fails before exchange; probe Linux `RENAME_EXCHANGE` and macOS
 `RENAME_SWAP` before target mutation. Unsupported present-target exchange is a
 visible no-mutation compatibility error.
@@ -366,11 +377,13 @@ exchange, retain the existing pre-exchange S-then-B cleanup states; retain
 absent-target D1 unlink plus sealed S/B cleanup vectors. For pre-exchange
 open-FD drift restart from `(I0*,I0*-link,Ø,Ø)` and `(I0*,Ø,Ø,Ø)`.
 For post-exchange drift, kill twice at every restore phase/link/rename/fsync and
-prove H=N+D1 selects C while any different or changed H selects H. Add U/D1-link
-and every source/target create-or-replace race state; no recovery exchange exists.
+prove observed H=N+D1 selects C while any already changed H selects H. Inject
+post-choice H/N writes and require target=C plus pinned latest bytes to enter
+collision, never cleanup. Add U/D1-link and every source/target race state; no
+recovery exchange exists.
 Kill/restart at each, then again at every reachable later syscall to a fixed
-point. Protocol states converge to D0/absence or D1; competitor states converge
-to a restored stable competitor or remain byte-preserving ambiguity.
+point. Protocol states converge to D0/absence or D1; competitor states keep the
+latest bytes at target or under proved pins and remain visibly unsealed.
 
 Also test canonical only, temp only (empty/partial/complete), both, the expected
 retained locks subtree, unknown name, wrong T/S uid/mode/link count, B

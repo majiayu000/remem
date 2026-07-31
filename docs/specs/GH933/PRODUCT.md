@@ -154,7 +154,9 @@ pending v2 requirements below.
    immutable database anchor; path replacement therefore cannot create a second
    verified owner. An absent anchor is initialized only after a bounded
    existence-only proof that the request and all exact artifacts are virgin;
-   any old state fails closed rather than being re-anchored. The writer proves
+   the serialized transaction also rejects an inode already anchored to another
+   request before writing the lock nonce. Any old state fails closed rather than
+   being re-anchored. The writer proves
    this before request lookup or mutation and holds the lock through seal plus
    cleanup/reconciliation. Local-copy mutation then uses a fsynced write-ahead
    journal outside the database.
@@ -175,13 +177,16 @@ pending v2 requirements below.
    An unsupported exchange fails before target mutation. Recovery never reverses
    the exchange. It first hard-link-pins exact new and restore entries, then
    no-replace evacuates whichever entry is currently at target into a durable
-   hold. It no-replace links the restore pin only when the hold is still exact
-   D1; otherwise it restores the held replacement/latest bytes. A target create
-   during the brief absence wins with EEXIST and is untouched. Only the exact
-   uncontested D0 tuple is cleaned; every collision retains all pins and stays
-   unsealed. Durable restore phases make every link/rename/unlink/fsync reentrant.
-   Without a seal, recovery restores D0/absence when uncontested or the latest
-   captured incumbent inode on collision; a seal keeps D1. Every unlisted state fails closed untouched.
+   hold. It no-replace links the restore pin only while the hold is observed as
+   exact D1; otherwise it links the held entry. A target create during the brief
+   absence wins with EEXIST and is untouched. An open-FD write between the check
+   and link cannot be content-CASed portably: target may hold the restore entry
+   while newer bytes remain named by H/N. That visible collision retains every
+   pin, stays unsealed and keeps doctor nonhealthy; it never claims latest bytes
+   are at target. Only exact uncontested D0 is cleaned. Durable restore phases
+   make every link/rename/unlink/fsync reentrant. Without a seal, recovery
+   restores D0/absence when uncontested and otherwise preserves every incumbent
+   byte under a durable name; a seal keeps D1. Every unlisted state fails closed untouched.
    A crash before commit leaves no committed database state or user-file mutation
    after reconciliation. After commit/response loss, an exact-key retry returns the
    committed winner without another file write, version, event, operation, claim,
@@ -393,11 +398,13 @@ pending v2 requirements below.
       evacuation/hold, absent-target no-replace
       publication, every database point through
       commit, cleanup and journal deletion. No-seal recovery restores prior bytes
-      or the latest stable captured inode; sealed recovery keeps the new digest;
+      only when uncontested; collision keeps latest bytes at target or under H/N
+      with an explicit error. Sealed recovery keeps the new digest;
       tampering and indeterminate states stay visible. Temp naming/scanning/ownership
       and every legal target/backup/stage tuple have deterministic outcomes.
-      Backup initially proves original identity/metadata/mode/digest, while an
-      open-FD collision retains its inode; every recovery-syscall crash converges.
+      Backup initially proves original identity/metadata/mode/digest, while each
+      phase proves the exact known basename set and nlink for every pinned inode;
+      an open-FD collision retains its inode and every recovery crash converges.
       Cross-process faults at every writer phase prove scanner and doctor cannot
       recover a live request, including durable D1 before its database seal; after
       writer death exactly one anchor-verified lock owner reconciles. Lock-path
@@ -409,8 +416,8 @@ pending v2 requirements below.
       forged U/S proofs fail closed. Absent-target and
       link/exchange/evacuation source races
       prove a competing create/replace or open-FD write is never deleted, sealed,
-      or misclassified; the durable hold restores its inode to target without
-      overwriting a newer create.
+      or misclassified; the durable hold either restores its observed entry
+      no-replace or retains newer post-choice bytes under H/N visibly.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
