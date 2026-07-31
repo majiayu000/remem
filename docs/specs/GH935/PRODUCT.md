@@ -572,7 +572,7 @@ length-prefixed path, byte length, and raw SHA-256 member digest; internal
 nodes have a separate domain, duplicate the final node at an odd level, and
 reject an empty tree. All lengths are unsigned 64-bit big-endian, digest inputs
 are raw 32-byte values, and serialized digests are 64-character lowercase hex.
-TECH owns the exact framing and cross-implementation fixed vectors. The root is
+TECH owns the exact framing, current unit vectors, and future cross-implementation vector requirements. The root is
 carried only by the later layer, so no core member hashes itself.
 
 `release_revision_registry_v1` is one public, append-only authoritative
@@ -613,7 +613,7 @@ Lost-registry-response recovery verifies that transition, rebuilds/scans from
 the immutable candidate, and create-or-reads this freeze; no alternate proof,
 checkpoint, core, or envelope is selectable. The envelope excludes self-hash,
 freeze, and visibility. TECH freezes production-shape, arbitrary-history,
-visibility, freeze-ledger, completion, full-tainted, and tamper vectors.
+visibility, freeze-ledger, completion, full-tainted, and tamper vector requirements.
 
 The charter independently pins `publication_visibility_authority_v1`:
 namespace/genesis, pure Ed25519 receipt/checkpoint keys, append-log/map

@@ -18,7 +18,8 @@ frame(x) = u64be(len(x)) || x
 H(tag, x...) = SHA-256(UTF8(tag) || 0x00 || frame(x[0]) || ... || frame(x[n]))
 raw32(h) = the 32 bytes represented by lowercase hex64 h
 raw64(h) = the 64 bytes represented by lowercase hex128 h
-dec = a JSON string matching 0|[1-9][0-9]*
+uint53 = a JSON number integer in 0..9007199254740991
+decstr = a JSON string matching 0|[1-9][0-9]* whose value is <= 2^64-1
 ```
 
 Every invalid hex length, non-lowercase serialized digest, integer overflow,
@@ -127,7 +128,7 @@ the generator, and byte-compares the result.
 | `{"b":1,"a":2}` | `{"a":2,"b":1}` |
 | `[333333333.33333329,1E30,4.50,2e-3,0.000000000000000000000000001]` | `[333333333.3333333,1e+30,4.5,0.002,1e-27]` |
 | `[-0,0.0,1e-7,0.000001]` | `[0,0,1e-7,0.000001]` |
-| `{"\u20ac":"euro","\r":"cr","\ufb33":"hebrew","1":"one","\ud83d\ude00":"emoji","\u0080":"control","\u00f6":"latin"}` | `{"\r":"cr","1":"one","\u0080":"control","ö":"latin","€":"euro","😀":"emoji","דּ":"hebrew"}` |
+| `{"\u20ac":"euro","\r":"cr","\ufb33":"hebrew","1":"one","\ud83d\ude00":"emoji","\u0080":"control","\u00f6":"latin"}` | 92 bytes, SHA-256 `7acda2e26c017c1fb18e67f65ff99a86905e900cf60fef6d6b754e60e7ac5746`; exact UTF-8 hex `7b225c72223a226372222c2231223a226f6e65222c22c280223a22636f6e74726f6c222c22c3b6223a226c6174696e222c22e282ac223a226575726f222c22f09f9880223a22656d6f6a69222c22efacb3223a22686562726577227d` |
 | `{"s":"quote:\\\" slash:/ backslash:\\\\ control:\\b\\f\\n\\r\\t"}` | `{"s":"quote:\\\" slash:/ backslash:\\\\ control:\\b\\f\\n\\r\\t"}` |
 
 Required rejection vectors are duplicate keys (`{"a":1,"a":2}`), `NaN`,
@@ -166,9 +167,18 @@ The limits are part of the verdict:
 | Expansion ratio | 100:1 |
 | Distinct derived candidates | 1024 |
 
-Reaching any limit yields `partial_non_security` / `INSUFFICIENT`; it never
+Attempting to exceed any numeric limit yields `partial_non_security` / `INSUFFICIENT`; it never
 proves absence. Plans may add a separately reported diagnostic transform, but
 claim-bearing v1 cannot remove, rename, or weaken a registered transform.
+
+For each gzip, zlib, ZIP, or ustar decoder invocation, `encoded_bytes` is the
+exact input length consumed by that decoder. `decoded_bytes` is the single
+decoded stream length for gzip/zlib, or the sum of direct regular-file entry
+payload lengths for ZIP/ustar; directories contribute zero. Checked arithmetic
+requires `decoded_bytes <= 100 * encoded_bytes` before emitting output.
+Accounting is aggregate per invocation, not per entry and not cumulative across
+a recursive chain; a nested archive is checked again as a new invocation.
+Equality at 100:1 is accepted and the first byte above it is insufficient.
 
 For private bytes `72 65 6d 65 6d 2f 70 72 69 76 61 74 65 00`:
 
@@ -222,6 +232,16 @@ isolate byte/count limits from expansion; all names and list order are literal.
 | Expansion >100:1 | ZIP deflate `ratio.bin = ASCII("A") * 1048576` | `1150` / `079f7e8feeb893a1747042a06b5d4e078544b26e97c889f756f9cfacd3d36ddf` |
 | 1025 candidates | Compact UTF-8 JSON array of `candidate-0000` through `candidate-1024`; each string token enters the transform worklist | `17426` / `0c97dee42739384c4c1191edf03e6a02608fa86672558c3199985f7683977fb5` |
 
+Ratio-boundary oracles distinguish the required accounting from per-entry or
+recursive cumulative alternatives:
+
+| Case | Exact bytes / construction | Required result |
+|---|---|---|
+| Equality | zlib level 6 of `ASCII("A") * 2600`: hex `789cedc18100000000c320b6f94b1de00a550100c01b73e29447`, 26 bytes, SHA-256 `ba1a4ef2174b60d80dc8947c16b176ac580cee17b4dbad4e8a9a14c128d18588` | accept: `2600 = 100 * 26` |
+| One over | zlib level 6 of `ASCII("A") * 2601`: hex `789cedc18100000000c320b6f94b5de008550100c03108799488`, 26 bytes, SHA-256 `fb9f5f975a91bf5ec290592d6e46d506f216ade1a1bd2586b023c1620a9b4f9e` | `INSUFFICIENT`: `2601 > 100 * 26` |
+| Aggregate, not per entry | 432-byte ZIP with deflate `bomb.bin = A*10000` and store `pad.bin = bytes(0..199)`, SHA-256 `def8a06ff7bda57f3f6dbfb31931f655c34f3f16a7c3de09532914b1b99ecc1f` | accept: direct aggregate `10200 <= 43200` |
+| Per invocation, not recursive cumulative | zlib-wrapped ZIP-store `nested.bin = A*10000`: outer 116 bytes/SHA-256 `16f149a2f323c30a9edbed21c75381bdecc206cb1e917915ad8fceb1f8e9ac33`, inner ZIP SHA-256 `563a2d5a04411106dfe28d616e84ecab44dbe8a54295b2784535379fefa0c73a` | accept: outer `10118 <= 11600`; inner `10000 <= 1011800` |
+
 The scanner must find the raw bytes after every positive vector and must return
 `INSUFFICIENT` for each one-over-limit fixture before scanning beyond the
 limit. A one-byte private-value mutation must not match.
@@ -233,7 +253,7 @@ successful `read_visible` call returns:
 
 ```text
 read_result_v1 = {
-  "byte_length": dec,
+  "byte_length": uint53,
   "path": canonical_path,
   "sha256": hex64
 }
@@ -266,16 +286,24 @@ read_verification_root_v1 =
 The receipt must contain exactly the final envelope and every core member, with
 no duplicate, missing, extra, aliased, or reordered path. The independent
 verifier reads each published byte through the gated API, recomputes each
-length/digest, verifies the authority signature and checkpoint, then recomputes
-the root. A runner-created list or a root over expected metadata is invalid.
+length/digest, verifies the authority signature, and then recomputes the root.
+A runner-created list or a root over expected metadata is invalid. Production
+acceptance separately requires the signed checkpoint/proof suite from `TECH.md`.
 
-The fixed vector uses these exact published/checkpoint bytes:
+The fixed vector uses these exact published and placeholder bytes:
 
 | Object | Exact UTF-8 hex | Length / SHA-256 |
 |---|---|---|
 | `core/a.json` | `636f72652d612d62797465730a` | `13` / `f12ca340de001b036a14b981e8e9afa8ab12dd3d3464016e7c5550386b309586` |
 | `final_publication_envelope_v1.json` | `66696e616c2d656e76656c6f70652d62797465730a` | `21` / `2bdc2c84169b6cbc8eec068af61dcaf655a41fdfe5e0e72ebdec590623d7328e` |
-| authenticated checkpoint fixture | `7669736962696c6974792d636865636b706f696e742d76310a` | `25` / `787ff79210c014c8c7dd37a7abc3ed0ee6a0be59d417150023bcd6d9f33772f5` |
+| checkpoint-hash placeholder (not a certificate) | `7669736962696c6974792d636865636b706f696e742d76310a` | `25` / `787ff79210c014c8c7dd37a7abc3ed0ee6a0be59d417150023bcd6d9f33772f5` |
+
+This fixed case is only a cryptographic unit vector for read-result, receipt,
+signature, and root framing. The placeholder contributes a bound checkpoint
+hash but supplies no certificate, authority/witness signature, consistency
+proof, or arbitrary-history freshness evidence. It cannot alone satisfy
+`publication_complete_v1`; production acceptance must validate every signed
+checkpoint and proof required by `TECH.md`.
 
 The one-member core-leaf framing produces `core_evidence_root =
 bf1150ae10aead450799c7357512ba521ba39956a128b843b9ddc6fa494757ad`.
@@ -284,17 +312,17 @@ The final-envelope framing produces
 the visibility object-set formula produces
 `7aa43ff551ddbd1b9bc04468012ae61436d4edeca20a0a43f0f2c9fb0b95bb80`.
 With fingerprint `1e13d405471fbd0f40f5379c71283681102ecb7572e32a9ccdf94c35f3211ccf`,
-the JCS receipt is exactly 661 bytes with SHA-256
-`d89694b8de346511096ae17652b4cd1a4dbc675c15bc6745f58f5439a83a6558`.
+the JCS receipt is exactly 657 bytes with SHA-256
+`eba7791918ad3abf39f4a69692daaf0eefdd821ce1d711f9f16af96eba69dc32`.
 
 The Ed25519 public-key SPKI is
 `302a300506032b6570032100ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c`;
 the receipt signature is
-`188c8deb0c2178e87fcb56d6164e4d57e8f792c501d5abcb3842413e96b89d945440eb82987af3959e0daae4c1eae057d9ac5c4376ca7763e0102f5d2cc4c60a`;
+`9053d37099c5b926df5afba0e7c9cc16a9fe322877e36cc08f3f92a73a571d3ce0fd4222fc0e2db125518434faa97492fab584203f9a6de2929f3fca40578802`;
 the final read root is
-`c1de1d05df376612093f9dde05c34af046304d2cfab845684381eb7c5c970748`.
+`321c6c70d353b3ae470b6ec078f93b97a7cf954d77c0049a2457e2359b85d72c`.
 
-Mutating either path, length, digest, checkpoint, receipt signature, or one
+Mutating either path, length, digest, checkpoint-hash placeholder, receipt signature, or one
 published byte must fail. Omitting the gated reads while retaining expected
 metadata must also fail.
 
@@ -315,15 +343,27 @@ completion_record_hash =
         JCS(publication_complete_v1)))
 ```
 
+For `P = "cross-host-v2/visibility"`, a valid completion input derives rather
+than chooses its receipt hash:
+
+```text
+visibility_receipt_hash =
+  hex(H(P + "/receipt-v1", JCS(visibility_seal_receipt_v1),
+        raw64(receipt_signature)))
+```
+
+The verifier validates the signature first and recomputes this value from the
+exact proof-suite receipt/signature before computing `completion_id`.
+
 `previous_completion_hash` is the exact `completion_record_hash` of the
 authenticated prior row. It is 64 zeroes only when the authenticated ledger
 head proves that no prior row exists. An exact replay requires the same
 `completion_id`, JCS bytes, and record hash; a duplicate ID with any drift or a
 non-genesis zero previous hash is rejected.
 
-The fixed vector uses the read-vector roots above. Each other nonzero fixture
-digest below is `SHA-256(UTF8(label || "\n"))`, where `label` is the literal
-left column:
+The unauthenticated hash-framing example below uses the read-vector roots above.
+Each other nonzero synthetic field digest is `SHA-256(UTF8(label || "\n"))`,
+where `label` is the literal left column:
 
 | Label / field | Digest |
 |---|---|
@@ -333,15 +373,17 @@ left column:
 | `registry-post-root-v1` / `registry_post_root` | `61fc54ea4e0c55f97a9ef9aabeffdde454852225c122cd490b20816abd423a2b` |
 | `visibility-checkpoint-certificate-v1` / `visibility_checkpoint_certificate_hash` | `ab1663b2e27cbd92d38475ecef8a8dd0ea640c60f64f60b27d7e9371e85b1f19` |
 | `visibility-proof-suite-v1` / `visibility_proof_suite_hash` | `047aaea1853002a8fcadecde9e591a33795674118b0703063883a8ff0c4c83ea` |
-| `visibility-receipt-v1` / `visibility_receipt_hash` | `e299de5a25f0e1c1ddfebaa769609c5c99ad20ac33dd66263d2c37872dc14f5f` |
+| `visibility-receipt-v1` / synthetic `visibility_receipt_hash` input | `e299de5a25f0e1c1ddfebaa769609c5c99ad20ac33dd66263d2c37872dc14f5f` |
 
-For the authenticated-empty-ledger case, `previous_completion_hash` is 64
-zeroes. With the fixed fingerprint, core root, final-envelope hash, object-set
-root, and read root above, the derived `completion_id` is
+For this unauthenticated hash-framing example, `previous_completion_hash` is 64
+zeroes. No authenticated ledger head or prior row is supplied, so this zero is
+not evidence of genesis and the example must fail full completion validation.
+With the fixed fingerprint, core root, final-envelope hash, object-set root, and
+read root above, the illustrative `completion_id` is
 `701dee4677c96de280fd29f3a8f37a92e260e7cec91c3a659cb7980a5dac53ab`.
 The closed `publication_complete_v1` object in the field order declared by
 `TECH.md` canonicalizes to 1349 JCS bytes and its `completion_record_hash` is
-`3534b7beb11963a26fa11802a24ce4a8aeaf99db0db4ba5d5249cbcf7eb1a2d7`.
+`7b0158d2c59c047326f886b58efe94c4bc915e82e6c1c20387057bb4a73b1300`.
 
 ## Implementation Verification
 
