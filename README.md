@@ -485,6 +485,12 @@ remem embedding status
 remem embedding backfill --limit 1000
 ```
 
+Automatic download currently supports only `multilingual-e5-small`, whose
+evaluated immutable revision is pinned by remem. `bge-m3` remains recognized so
+an already installed verified cache can still be loaded, but
+`remem embedding download --model bge-m3` fails closed until remem publishes an
+approved immutable BGE revision.
+
 After the verified download, an `auto` configuration with no remem-specific
 API key activates the local model. Run the idempotent backfill after any
 provider/model switch—or after the downloaded artifact changes—so existing
@@ -1229,6 +1235,34 @@ scripts/smoke_native_web_api.sh
 - REST API binds localhost only (`127.0.0.1`) and requires
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token file permissions (`0600`)
+
+### SQLite runtime tuning
+
+Runtime connections use WAL mode, foreign keys, a 5-second busy timeout,
+in-memory temporary storage, and a 64 MiB SQLite page-cache target per
+connection. The cache is demand-driven rather than preallocated, but concurrent
+connections can multiply both memory use and the time decrypted pages remain in
+RAM.
+
+Two environment variables provide strict, fail-closed overrides:
+
+- `REMEM_SQLITE_CACHE_KIB` accepts an integer from `1` through `1048576`.
+  SQLite interprets it as a KiB cache target for each connection.
+- `REMEM_SQLITE_SYNCHRONOUS` accepts only `full` or `normal`
+  (case-insensitive). The default is `full`.
+
+`normal` is an explicit latency/durability tradeoff. With WAL it preserves
+database consistency and committed transactions across an application-process
+crash, but a system crash or power loss can lose recent committed transactions.
+Keep the default `full` when power-loss durability matters. Temporary storage
+is always forced to memory because SQLCipher does not guarantee encryption for
+file-backed SQLite temporary storage.
+
+Reproduce the encrypted release-mode A/B latency harness with:
+
+```bash
+cargo test --release --test search_latency_benchmark sqlite_tuning_encrypted_release_ab_reports_latency -- --ignored --exact --nocapture --test-threads=1
+```
 
 ### Plaintext residue diagnostics
 
