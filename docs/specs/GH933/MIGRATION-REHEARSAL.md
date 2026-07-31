@@ -251,7 +251,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | seal INSERT before SQLite COMMIT | rollback; prior target restored | not reachable |
 | SQLite COMMIT before journal `sealed` | matching seal is authoritative while J remains `swapped`; persist `sealed`, then reconcile | same |
 | `sealed`; prior-file `predecessor_quarantine_intent`; B→O no-replace; P and Q/quarantine fsync; `predecessor_quarantined` | not reachable without seal | target/N keep exact D1; exactly B or O plus S keeps the same structural I0* across every crash while mode/content may drift; O becomes permanent before S cleanup and receives all late old-D0-FD writes. Prior absence creates no O |
-| `cleanup_intent` source-J/temp-J transition; snapshot/J fsync; post-persist revalidation; every ordered unlink/parent fsync and empty-prefix revalidation | exercise exact `[B]`, `[H,S,B,C]`, and `[H]` sources | exercise exact `[S,N]` and `[N]` sources. Before the boundary, injected target replacement/write/chmod is retained or collides; snapshot-to-revalidation mismatch returns `local_copy_cleanup_concurrency_violation` with J/pins. After successful revalidation target/nonpermanent pins stay quiescent; G/O-backed mode/content drift remains allowed and every crash resumes the exact prefix |
+| `cleanup_intent` source-J/Tc transition; independent J→V read lift; snapshot/J fsync; post-persist revalidation; every ordered unlink/parent fsync and empty-prefix revalidation | exercise exact `[B]`, `[H,S,B,C]`, and `[H]` sources | exercise exact `[S,N]` and `[N]` sources. Before the boundary, injected target replacement/write/chmod is retained or collides; recovery restores mode through a surviving alias before typed `local_copy_cleanup_concurrency_violation` with J/pins and nonhealthy doctor. After successful revalidation target/nonpermanent pins stay quiescent; G/O-backed mode/content drift remains allowed and every crash resumes the exact prefix |
 | recovery-phase fsync and every C link, present/absent target→H rename, C/H→target link/rename, N→G or B→O rename, owned unlink/fdatasync and P/Q-quarantine fsync | restart the same phase/prefix and converge without pathname target unlink, overwrite, or pre-boundary loss of the last D1 name | restart same phase and converge with old D0 permanently under O |
 | journal unlink/directory fsync | keep exact after digest; no journal | same |
 
@@ -278,20 +278,25 @@ require matching seal, recover-before/restore/rollback-quarantine/collision
 require none, and `cleanup_intent` admits only its five exact source tuples.
 Reject all other
 cross-products, any unknown phase, and any J `goal` or goal-like field.
-For each cleanup source, positively prove its exact `before_kind`, seal state,
+For each cleanup source, positively prove its exact source-J format/request
+fingerprints, epoch, `before_kind`, publication/seal state, D0/D1, canonical
+component paths, coherent per-name mode/size/mtime/digest bindings,
 namespace/nlink snapshot and ordered list: preexchange file/no-seal `[B]`,
 rollback file/no-seal `[H,S,B,C]`, predecessor-quarantined file/matching-seal
 `[S,N]`, after-absent/matching-seal `[N]`, and rollback absent/no-seal `[H]`.
 Permute or duplicate the list, substitute any source/`before_kind`/seal/name,
-or add/remove an entry and require no mutation. Crash the source-J→T→J
-transition at O_EXCL create, zero bytes, every JSON byte prefix,
-fdatasync/rename/Q-fsync: source J plus absent/empty/partial T discards T,
-fsyncs Q and retries without namespace mutation; only complete exact T may
-advance. Canonical cleanup J accepts T absent, a legacy distinct-inode
-byte-identical T to discard, or the exact same-inode J/T nlink-2 cleanup
-validation marker described below.
+forge one alias digest/mode/nlink while keeping its inode equal, or add/remove
+an entry and require rejection before J creation or chmod. Crash the
+source-J→Tc→J transition at O_EXCL create, zero bytes, arbitrary malformed and
+every JSON byte prefix, fdatasync/rename/Q-fsync: canonical source J plus
+absent or exact-owned nonce-qualified partial Tc discards Tc, fsyncs Q and
+retries without namespace mutation; only complete exact Tc may advance.
+Canonical cleanup J requires Tc absent. Independently crash J→V and require
+exact same-inode/bytes J/V nlink=2; also require V and partial Tc to coexist
+and recover without reclassifying or deleting Tc until original mode is
+durably restored.
 Explicitly hold the writer with durable D1 at S/N and at target/N but no DB seal;
-doctor must neither restore D0 nor delete D1/J/U/G/O/S/B/N/C/H.
+doctor must neither restore D0 nor delete D1/J/Tc/V/U/G/O/S/B/N/C/H.
 The lock must still be busy after each cleanup unlink and after J unlink but
 before Q fsync, and become acquirable only when the owner releases it afterward.
 
@@ -414,21 +419,26 @@ targets. Write known bytes before chmod; exercise journaled owner-read lift,
 double hash, exact mode restoration, B hard-link pin, S↔target exchange and
 prepublication N plus C/H no-replace recovery, N→G rollback quarantine and B→O
 matching-seal predecessor quarantine. Assert dev/inode, uid/gid/mode/size/mtime, digest and bytes are
-preserved; target/B then B/S are the exact temporary nlink=2 I0 pair, T/U remain
-private-Q 0600, and B/S/C retain 0644/0200. At restore entry require exact name
+preserved; initial `inspect_intent` must bind only target with B/S/U absent and
+carry the full component chain. Source J must carry all coherent bindings
+before any later read lift. Target/B then B/S are the exact temporary nlink=2
+I0 pair, T/Tc/V/U remain private-Q 0600, and B/S/C retain 0644/0200. At restore entry require exact name
 sets `D0={target,B,S,C}`/nlink=4 and `D1={H,N}`/nlink=2, then atomically
 `D1={H,G}`/nlink=2 and `{G}`/nlink=1, then persist/revalidate
 `cleanup_intent` before D0 becomes `(3,1),(2,1),(1,1)` after S/B/C cleanup; G
 remains. For the sealed path require D1 `{target,N}` and D0 `{B,S}`, then
 `{target,N}` plus `{O,S}` and finally target-only D1 plus permanent O. Unknown
 extra links fail closed.
-During every cleanup revalidation of an unreadable snapshot, validate J,
-atomically hard-link J→T and fsync Q before adding owner-read. Kill immediately
-after that chmod and require J/T to remain the exact same inode at nlink=2.
-Recovery accepts only the frozen original/single-read-bit mode, restores and
-fsyncs the original 0200 mode, unlinks T/fsyncs Q, and resumes the exact ordered
-prefix. With T absent, the same 0200→0600 change is ordinary cleanup drift and
-must preserve J and all remaining pins.
+During every unreadable source snapshot and cleanup revalidation, validate J,
+atomically no-replace hard-link J→V and fsync Q before adding owner-read. Kill
+immediately after chmod and require J/V exact same inode/bytes at nlink=2.
+Inject restore `fchmod`, inode `fsync`, and parent `fsync` failures: V remains,
+and retry fsyncs the original 0200 mode before V unlink/Q-fsync. Replace target
+after the lift while B survives, and separately write through an already-open
+target FD; recovery restores through the surviving alias without first
+requiring frozen size/mtime/digest, removes V only after durable restoration,
+then returns the exact typed concurrency error and nonhealthy doctor state.
+With V absent, the same 0200→0600 change is ordinary drift and is not restored.
 Exercise D1-link checkpoints. Precreate
 B and assert link fails before exchange; probe Linux `RENAME_EXCHANGE` and macOS
 `RENAME_SWAP` before target mutation. Unsupported present-target exchange is a
@@ -436,16 +446,22 @@ visible no-mutation compatibility error.
 
 Securely create distinct journal Q/locks and Q/quarantine directories at 0700 and a current-uid target
 parent P at 0755 on Q's device, including a missing descendant securely created
-via its parent dirfd. Prove L/J/T/U/G/O stay below Q, S/B/N/C/H/target stay below P, and
+via its parent dirfd. Prove L/J/T/Tc/V/U/G/O stay below Q, request-qualified
+S/B/N/C/H/target stay below P, and
 S inherits IU only after full-D1 atomic no-replace publication with exact
 0600/current-uid/regular/nlink=1/entry-FD identity. Reject root/`..` escape,
 symlink or
 non-directory components, Q alias, wrong parent uid, missing owner rwx,
-group/world-writable P, cross-device target, changed `(dev,ino)` or uid/gid/mode,
+group/world-writable intermediate or P, cross-device target, changed
+component-chain `(dev,ino)` or uid/gid/mode,
 and missing directory-fsync, atomic no-replace, or required exchange support. Replace/rename the
 parent after opening its dirfd at each revalidation boundary: operations must
 remain bound to the proved P and publish nothing at the replacement path, or
 fail visibly without mutation.
+Place two requests under the same P and prove their `.remem-save-R.*` siblings
+are distinct. Supply relative, raw `..`, symlink-ancestor and noncanonical root
+paths and require rejection before J. Forge a coherent inode group with one
+different digest and add one untracked hard link; both fail before J/chmod.
 On first use, crash before/after Q mkdir, Q-parent fsync, each child mkdir,
 child fsync, and Q fsync that records `locks` or `quarantine`; restart may use a
 directory only after both its own and parent-entry durability proofs pass.
@@ -474,7 +490,9 @@ publication, target D1 plus O for sealed prior-file, or target D1 without O for
 sealed prior-absence; competitor states keep the latest bytes at
 target or under proved pins and remain visibly unsealed.
 
-Also test canonical only, temp only (empty/partial/complete), both, the expected
+Also test canonical only, ordinary T only, source J with Tc
+(absent/empty/arbitrary partial/complete), source J with V, source J with Tc+V,
+cleanup J with V, cleanup J with stray Tc, the expected
 retained locks subtree, completed G/O reported separately from pending artifacts,
 distinct G/O names for fresh attempts after completed outcomes, mutation-free
 sealed exact replay, no automatic G/O cleanup, unknown phase/name, J goal fields,
@@ -495,12 +513,15 @@ remove/invalidate the DB; create an
 unexpected combination of target and backup. Every ambiguous case leaves all
 user-visible files and journal untouched, returns
 `local_copy_reconciliation_ambiguous`, logs at error with only opaque identity,
-and makes doctor nonhealthy.
+and exposes `doctor_healthy=false`. Cleanup snapshot mismatch instead returns
+`local_copy_cleanup_concurrency_violation` with the same nonhealthy state.
 
-Inject cleanup permission/fsync failure after commit. The stored `written`
+Inject cleanup permission/fsync failure after commit, plus read-lift restore
+fchmod/fsync failures before and after the visible mode returns to 0200. The stored `written`
 response remains the replay response, pending journal state is durable/visible,
 exact retry reconciles before returning, and later doctor cleanup removes only
-owned artifacts. There is no warning-only or swallowed cleanup failure.
+owned artifacts. V remains until a fresh restoration fsync succeeds. There is
+no warning-only, boolean-only public result, or swallowed cleanup failure.
 
 ## Evidence Artifact
 

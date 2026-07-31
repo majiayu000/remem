@@ -208,6 +208,22 @@ pending v2 requirements below.
    exposed as target, it persists and fsyncs `cleanup_intent` with the source
    phase, exact frozen namespace/name/identity and cleanup-relevant
    metadata/digest snapshot, and one source-authorized ordered unlink list.
+   Before that transition, the canonical source J records the request/stage
+   fingerprints, epoch, source phase, prior-kind/publication/seal state, D0/D1
+   digests, exact path/component proofs, and a complete coherent binding for
+   every source name. Exact alias groups, nlink, mode, size, mtime and digest
+   facts are validated before J creation or any read-bit lift.
+   Cleanup conversion uses a nonce-qualified private `Tc`, distinct from the
+   ordinary phase-update temp. While source J is canonical, any exact-owned
+   empty/partial/malformed `Tc` may be discarded and Q-fsynced, and only the
+   complete exact cleanup document may replace J; canonical cleanup J rejects
+   every stray `Tc`.
+   An unreadable source or cleanup snapshot arms a separate nonce-qualified
+   hard-link `V` to canonical J and fsyncs Q before adding owner-read. `V` may
+   coexist with partial `Tc`. Recovery restores and fsyncs the original mode
+   through any surviving exact data alias before removing `V`; restore failure
+   retains `V`, while replacement/content drift is reported only after mode
+   recovery. Without `V`, a single-read-bit difference is ordinary drift.
    Every inode that may receive user bytes remains named by the user target or
    permanent G/O; every remaining prefix is revalidated before the next unlink
    and once more before J removal. Target replace/write/chmod and unretained
@@ -220,7 +236,7 @@ pending v2 requirements below.
    G/O content or mode drift remains safe because those names are permanent.
    Every phase proves exact name sets and is restartable across all required
    directory fsyncs. Journal,
-   quarantine, and `.remem-save-*` names are remem-reserved; distinguishable
+   quarantine, and request-qualified `.remem-save-R.*` names are remem-reserved; distinguishable
    identity/name/type/ownership/link tampering fails closed and security-visible,
    while active malicious unlink is outside the contract. For an inode already
    exposed as user target, phase-qualified same-inode mode/bytes/size/mtime/digest
@@ -488,9 +504,15 @@ pending v2 requirements below.
       `local_copy_cleanup_concurrency_violation`; the harness keeps target
       quiescent after successful revalidation.
       The five exact cleanup sources and ordered lists reject every other
-      source/list/seal tuple. Source J plus absent, empty, every partial-byte
-      prefix or complete temp J and canonical cleanup-J restart forms all have
-      deterministic outcomes; only a complete valid temp may advance.
+      source/list/seal tuple. Source J plus absent or exact-owned arbitrary
+      partial `Tc`, complete `Tc`, independent same-inode `V`, and combined
+      `Tc`+`V` restart forms all have deterministic outcomes; only a complete
+      valid `Tc` may advance, and canonical cleanup J rejects stray `Tc`.
+      Faults in restore fchmod/fsync retain `V`; retry fsyncs the restored mode
+      before disarming it. Target replacement and open-FD content writes restore
+      through a surviving alias, then return the typed concurrency error with
+      `doctor_healthy=false`; journal identity ambiguity returns the distinct
+      reconciliation error with the same nonhealthy state.
       Completed G/O files are reported separately from pending journals, have
       no automatic garbage collection, and a fresh attempt uses a distinct
       stage nonce; sealed exact replay remains mutation-free.
