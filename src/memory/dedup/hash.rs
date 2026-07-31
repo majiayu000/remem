@@ -11,7 +11,7 @@ pub fn find_hash_duplicates(
 ) -> Result<Vec<i64>> {
     let cutoff = chrono::Utc::now().timestamp() - window_secs;
 
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT id, text, narrative, title, facts
          FROM observations
          WHERE project = ?1

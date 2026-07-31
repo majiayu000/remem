@@ -66,7 +66,7 @@ fn query_recent_summaries_scans_past_self_diagnostic_burst() {
     create_session_summary_schema(&conn);
     let project = "/tmp/vibeguard";
 
-    for idx in 0..30 {
+    for idx in 0..175 {
         insert_session_summary(
             &conn,
             project,

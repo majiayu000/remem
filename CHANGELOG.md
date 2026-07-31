@@ -8,6 +8,11 @@
   time phrases from claim tokens. Conversational request scaffolding and
   localized time expressions no longer inflate claim confidence, while
   malformed, grouped, signed, zero, and overflowing counts fail closed.
+- Staged source version `0.6.42` for GH-950: repeated static SQL on the
+  SessionStart summary paginator and observation hash/vector dedup funnel now
+  reuses rusqlite's per-connection prepared-statement cache. The four static
+  staleness statements were already cached; dynamic placeholder SQL and
+  one-shot queries remain uncached so they do not churn the bounded cache.
 - Staged source version `0.6.41` for the post-merge doctor corrective:
   plaintext-residue inspection now accepts only strictly validated internal
   Hugging Face snapshot pointers whose same-repository blob is a regular file.
