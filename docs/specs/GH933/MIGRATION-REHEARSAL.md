@@ -112,7 +112,9 @@ every table/count/digest unchanged:
 6. inserted memory without an `insert_origin`, mismatched writer/request/ordinal,
    wrong memory ID, route/lifecycle ID, non-v1 row, predecessor, or source tuple;
 7. transition result bound to another memory/request/ordinal/writer, route audit,
-   lifecycle integer/API operation or audit; Web missing/wrong-type API binding;
+   lifecycle integer/API operation or audit; unknown lifecycle action, invalid
+   action/status/source/version tuple, Web missing/wrong-type API binding, or a
+   `poisoning_ack` carrying audit provenance;
 8. route/lifecycle INSERT with no compatible manifest slot, either ledger
    appended after seal, and seal with an otherwise valid but unbound ledger row;
 9. all seven owner scopes accepted, but unknown scope, partial pair, empty,
@@ -160,7 +162,7 @@ Direct save acceptance is:
 | --- | --- |
 | key A + payload P | one execution and sealed response |
 | key A + exact P after response loss | same response; zero new rows/files/epochs |
-| concurrent key A + exact P | one winner; loser returns winner |
+| concurrent key A + exact P | if the winner releases L within 5,000 ms, loser acquires L and returns that winner; after timeout loser reports busy and a later exact retry returns the winner |
 | key A + payload Q | conflict before any mutation |
 | key B + byte-identical P | second execution |
 | lesson key C + P, then key D + P | reinforcement/operation/claim evidence advances twice |
@@ -170,6 +172,13 @@ local-copy, claim, acknowledgement, adapter-default, and reference-time
 differences. Each behavior-bearing difference changes request fingerprint; key
 or credential changes alone do not. Search database, journal, logs, traces,
 errors, and response artifacts to prove no raw/normalized caller key appears.
+For the local-copy row, hold L in one process and start a direct-save contender
+for the same R. Before release, prove repeated nonblocking attempts perform no
+artifact or R-scoped DB access; release within budget and require L revalidation,
+normal reconciliation, then exact stored-response replay. Separately advance an
+injected monotonic clock through 5,000 ms without release, require
+`local_copy_writer_in_progress`, then release and prove the next exact retry
+replays with zero new rows, files, or epochs. Scanner/doctor remain one-shot.
 
 Markdown retry remains stable across its own metadata rewrite, but different
 stable source/no-source archive identities remain distinct.
@@ -239,8 +248,8 @@ scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
 `exchange_intent` fsync, present-target exchange/compensation or absent-target
 publish before/after `swapped`, every DB
 result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, and
-each recovery phase/action. Both contenders must return
-`local_copy_writer_in_progress` (or bounded-wait at startup), and an event trace
+each recovery phase/action. Both scanner/doctor contenders must return
+`local_copy_writer_in_progress`, and an event trace
 must show no J/U/S/B/target open, classification or mutation and no R-scoped DB
 read/write. Snapshot bytes, inode, digest and phase must remain unchanged.
 Explicitly hold the writer with durable D1 at S and at target but no DB seal;
@@ -250,8 +259,9 @@ before Q fsync, and become acquirable only when the owner releases it afterward.
 
 SIGKILL the writer at every boundary so the kernel releases L, then race scanner
 and doctor as independent processes. Exactly one must acquire the same retained
-lock inode and reconcile through terminal fsync/J cleanup; the other stays busy
-or, after bounded wait, observes no work. Repeat with reversed process order.
+lock inode and reconcile through terminal fsync/J cleanup; the simultaneous
+other returns busy, while a separately launched later contender observes no
+work. Repeat with reversed process order.
 Reject alternate lock paths/inodes, process-local mutexes, lock-file replacement
 and PID/mtime stale-owner inference. Wrong lock/locks-dir path, identity, type,
 uid, mode or link count must return `local_copy_lock_unsafe` before R inspection.
@@ -318,7 +328,9 @@ final outcomes (old reserved+S is now `stage_ready`). Replace the unsafe
 B-over-D1 recovery with durable `recover_before_file`: when target=D1 and
 B/S are the proved I0 pair, exchange exact target/S, verify target=D0/S=D1,
 unlink S then B with a P fsync after each; before exchange, remove proved S then
-B. Inject after each action/fsync and retain absent-target D1 unlink plus sealed
+B. Accept and restart from the post-S `(D0,D0-link,Ø,Ø)`, post-B
+`(D0,Ø,Ø,Ø)`, and absent post-D1-unlink `(Ø,Ø,Ø,Ø)` states. Inject after each
+action/fsync and retain absent-target D1 unlink plus sealed
 S/B cleanup vectors; add U/D1-link, source-race and `compensate_intent` states.
 Kill/restart at each, then again at every reachable later syscall to a fixed
 point. Protocol states converge to D0/absence or D1; competitor states converge

@@ -150,8 +150,10 @@ pending v2 requirements below.
    Its writer, startup scanner and doctor/reconciler serialize each request on
    the same retained OS-visible exclusive lock. The writer acquires it before
    request-scoped database or artifact access and holds it through seal plus
-   cleanup or reconciliation; contenders report a live writer without inspecting
-   or recovering its artifacts. A journal-durable random-nonce `stage_building`
+   cleanup or reconciliation. A direct save retries only lock acquisition for
+   at most 5 seconds, then either acquires the lock and replays the sealed winner
+   or reports the still-live writer; scanner/doctor contenders report immediately.
+   No contender inspects or recovers request artifacts while unlocked. A journal-durable random-nonce `stage_building`
    phase writes empty/partial bytes only to a proved 0600 build file below the
    private journal root. Only its fdatasynced D1 inode is atomically published
    no-replace as stage below the separately verified target parent, so partial S
