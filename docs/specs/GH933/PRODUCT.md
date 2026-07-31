@@ -190,14 +190,24 @@ pending v2 requirements below.
    nonce-qualified 0600 file G in the private same-device quarantine directory,
    both parent directories are fsynced, and G is retained indefinitely before H
    or a target-derived D1 name is removed. Late writes through an already-open
-   D1 fd therefore remain visible through G. Recovery restores D0/absence at the
-   user target while retaining G; a seal keeps D1 at target and may remove N.
-   Every phase proves exact name sets and is restartable across both directory
-   fsyncs. Supported concurrency may replace or write the user target, including
-   through an open fd. Journal, quarantine, and `.remem-save-*` names are
-   remem-reserved; observed same-user tampering fails closed and security-visible,
-   but active malicious unlink of reserved pins is outside the preservation
-   contract. Every unlisted state fails closed untouched.
+   D1 fd therefore remain visible through G. For a prior-absent rollback,
+   recovery never unlinks the target pathname. After G is durable, an absent
+   target is terminal and a target already different from G is collision evidence.
+   Only an observed target=G is atomically evacuated to H no-replace; exact
+   H=G/D1 may then be removed, while a raced-in H is atomically renamed back to
+   target no-replace and EEXIST preserves target/H as a visible collision. Thus
+   restores D0/absence only when uncontested while retaining G; a seal keeps D1
+   at target and may remove N. Every phase proves exact name sets and is
+   restartable across all required directory fsyncs. Supported concurrency may
+   replace or write the user target, including through an open fd. Journal,
+   quarantine, and `.remem-save-*` names are remem-reserved; distinguishable
+   identity/name/type/ownership/link tampering fails closed and security-visible,
+   while active malicious unlink is outside the contract. For an inode already
+   exposed as user target, phase-qualified same-inode mode/bytes/size/mtime/digest
+   drift is accepted wherever the protocol now names it B/S/C/H/N/G: an old
+   target-FD operation and a direct reserved-path operation are physically
+   indistinguishable and cannot be attributed portably. Every unlisted state
+   fails closed untouched.
    A crash before commit leaves no committed database state and restores the
    user target, with any published D1 retained privately as G for recovery
    evidence. After commit/response loss, an exact-key retry returns the
@@ -422,6 +432,12 @@ pending v2 requirements below.
       normal rollback proves D0 `{target,B,S,C}` and D1 `{H,N}`, then atomically
       changes D1 to `{H,G}` and finally `{G}` without an unpinned window. An
       open-FD collision retains its inode and every recovery crash converges.
+      Portable absent publication includes the deterministic
+      `{target,S,N}=D1`/nlink=3 link-before-unlink crash tuple. Prior-absent
+      rollback treats target absent as terminal and target≠G as collision; only
+      observed target=G is evacuated to H rather than pathname-unlinked. Exact
+      H=G is removable, a raced-in H is restored no-replace, and EEXIST retains
+      both entries as collision evidence.
       Cross-process faults at every writer phase prove scanner and doctor cannot
       recover a live request, including durable D1 before its database seal; after
       writer death exactly one anchor-verified lock owner reconciles. Lock-path
@@ -436,10 +452,13 @@ pending v2 requirements below.
       or misclassified; the durable hold either restores its observed entry
       no-replace or retains newer post-choice bytes under H/N/G visibly.
       Completed G files are reported separately from pending journals, have no
-      automatic garbage collection, and exact retries use distinct stage nonces.
-      Tests limit supported concurrency to the user target; preexisting or
-      observed mutation of reserved names is a security-visible ambiguity rather
-      than an impossible guarantee against active same-user unlink.
+      automatic garbage collection, and a fresh attempt after unsealed rollback
+      uses a distinct stage nonce; sealed exact replay remains mutation-free.
+      Tests limit supported concurrency to the user target. Distinguishable
+      reserved-name identity/type/ownership/link mutation is a security-visible
+      ambiguity. Phase-qualified mode/content drift of a formerly exposed target
+      inode under B/S/C/H/N/G is accepted without claiming whether it came
+      through an old target fd or reserved path.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all

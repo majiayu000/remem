@@ -109,7 +109,9 @@ Keep the canary on the new binary for at least 72 hours and through:
   durable `exchange_intent`, present-target exchange, C restore pin, target→H
   no-replace evacuation, replacement/open-FD restore tuples including
   post-choice H/N drift, N→G no-replace quarantine with both parent fsyncs,
-  exact per-inode name-set/nlink cleanup, and a second crash inside each phase;
+  portable absent `{target,S,N}` nlink=3, prior-absent target→H
+  classify/unlink-or-restore without pathname target unlink, exact per-inode
+  name-set/nlink cleanup, and a second crash inside each persisted phase;
 - APFS target replacement before exchange, after exchange, and after evacuation
   proving N already retains D1, plus late open-FD writes before/after N→G that
   remain visible through G;
@@ -158,15 +160,15 @@ Metrics and structured logs use opaque request IDs only:
 | idempotency conflict | observe rate; stop on unexplained surge |
 | exact replay that mutates rows/files/knowledge epoch | any |
 | route/lifecycle gap, fork, terminal drift, or unexpected forward-only result | any |
-| journal `cleanup_pending` | page after 5 minutes or repeated retry |
+| sealed or terminal journal awaiting cleanup | page after 5 minutes or repeated retry |
 | per-request lock wrong inode/path/proof, replacement, or simultaneous owners | any |
 | live-writer lock busy | expected briefly; any artifact/DB inspection or mutation by contender, or busy after owner death, stops |
 | target-parent confinement/identity/uid/mode/device/fsync/no-replace proof failure | any; no mutation |
 | partial/wrong-byte S or unproved stage-build U | any; preserve evidence |
 | prepublication N identity/name-set/fsync failure | any; no target publication |
-| retained G identity/name mismatch, missing dual-parent fsync, or automatic G deletion | any; stop writes and preserve evidence |
+| retained G identity/name/type/owner/link mismatch, missing dual-parent fsync, or automatic G deletion | any; stop writes and preserve evidence |
 | completed G count/disk growth | report separately from pending journals; stop on unexplained growth or capacity risk |
-| remem-reserved Q or `.remem-save-*` name drift | any observed drift is security-visible ambiguity; supported concurrency is limited to the user target |
+| distinguishable remem-reserved identity/name/type/owner/link drift | any; phase-qualified mode/content drift of a formerly-target inode under B/S/C/H/N/G is accepted without source attribution |
 | `local_copy_publish_collision` | stop request; newest bytes stay at target or durably under H/N/G after an un-CASable post-choice write; report which, retain J/B/S/N/C/H/G, keep doctor nonhealthy and DB unsealed |
 | present-target exchange, pin, evacuation, or restore identity drift | any; preserve every entry and journal, never cleanup or seal |
 | backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
@@ -186,7 +188,7 @@ journal phase, and error code without content or raw path secrets.
 | transaction failed before commit | keep writers stopped, verify rollback, retry fixed binary or restore tested backup | partial manual DDL repair |
 | migration committed, zero non-migration seals | restore tested backup during downtime, then start 0.6.x | copy tables selectively |
 | any v2 write sealed | keep 0.7 writer/schema; disable v2 projection/read surface | old binary, down migration, dropping ledgers, restoring stale backup |
-| local-copy journal pending without seal | after R's L lock and immutable anchor proof, restore exact prior target/absence if uncontested; if D1 reached target, first rename N→G no-replace and fsync P plus Q/quarantine, then retain G indefinitely; otherwise retain target plus all pins and report whether latest is under H/N/G | inspect/recover while L is busy or anchor-mismatched; unlink the last D1 name; automatic G garbage collection |
+| local-copy journal pending without seal | after lock/anchor proof, restore prior target/absence if uncontested; after publication rename N→G and fsync both parents. For prior absence, absence is terminal, target≠G is collision, and only target=G evacuates to H; remove H only if H=G, otherwise restore it no-replace or preserve target/H on EEXIST | pathname unlink of user target; unlink last D1 name; inspect while busy; automatic G garbage collection |
 | local-copy journal pending with seal | after acquiring R's retained L lock and exact anchor, retain exact sealed target and finish S/B/N cleanup only after proving target remains D1 | restore prior target |
 | final publish collides by replacement/open FD | rely on prepublication N, no-replace evacuate to H and link C only for observed exact D1, otherwise H; post-choice drift may leave latest under H/N and must preserve/report every pin unsealed | reverse exchange, claim latest-at-target without proof, plain overwrite rename, delete, or misclassify competitor as backup |
 | ambiguous journal/database state | stop writes, preserve all bytes/journal, escalate to database+security reviewers | automatic repair |
