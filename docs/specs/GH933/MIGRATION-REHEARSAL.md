@@ -69,10 +69,12 @@ or memory bytes. `cargo tree -e features -i rusqlite` must show `functions`.
 
 ## Executable DDL Matrix
 
-The test extracts the installed SQL from `sqlite_schema` and executes it against
-an isolated SQLite database with `foreign_keys=ON`; it does not use a relaxed
-copy. For every table, index, and trigger in `MIGRATION-CUTOVER.md`, assert exact
-presence and normalized SQL equivalence.
+Extract each installed SQL object from `sqlite_schema` and execute the exact
+`MIGRATION-CUTOVER.md` block against isolated SQLite with `foreign_keys=ON`;
+never use a relaxed copy. Normalize only insignificant whitespace and identifier
+quoting, then require name/body equivalence for every object, explicitly
+`memory_route_ledger_fingerprint_guard`,
+`memory_lifecycle_ledger_fingerprint_guard`, and `memory_insert_v1_ledgers`.
 
 Positive cases cover all ten typed binding kinds and every allowed outcome:
 
@@ -116,6 +118,17 @@ every table/count/digest unchanged:
 10. result inserted after seal and duplicate request/result/seal insertion; and
 11. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
    both before and after seal, plus mutation of a memory origin tuple.
+
+For both fingerprint guards, enumerate every table column except row ID/digest
+and prove the literal frame has exactly one ordered `old_*` and `new_*` field
+(v1 OLD values are typed NULL) plus request fingerprints. Insert valid v1/v2
+and mutate each OLD/NEW value while reusing the digest; each must abort. Recompute
+the full frame and only the valid predecessor/version/status/time chain passes.
+For `memory_insert_v1_ledgers`, run every insert family, missing/wrong
+`insert_origin`, wrong UDF, invalid route/lifecycle value, and injected failure
+between its two INSERT statements. A parent INSERT yields exactly memory+route
+v1+lifecycle v1 or zero rows—never one ledger. Compare the three literal trigger
+bodies independently with normalized `sqlite_schema.sql`.
 
 Explicitly prove that an intent cannot commit without a seal and a seal cannot
 commit without all manifested results. `PRAGMA foreign_key_check` is empty after
@@ -185,11 +198,11 @@ Fault injection kills the process, without unwinding, after every boundary:
 | first deterministic temp create/write/fdatasync | prior target; owned temp found and removed | not reachable |
 | first temp→canonical rename/directory fsync | prior target; canonical-or-temp scan converges | not reachable |
 | `inspect_intent` fsync; owner-read lift/hash/restore/fsync | exact original mode/identity/bytes | not reachable |
-| stage write/fdatasync | prior target; stage removed | not reachable |
-| `staged` journal fsync | prior target; stage removed | not reachable |
+| `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
+| `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
 | `swap_intent` journal fsync before rename | target=before, backup absent, stage=after; keep target/remove stage | not reachable |
-| `backed_up`: target→backup rename/fsync | backup restored | not reachable |
-| stage→target rename | prior target/absence restored by digests | not reachable |
+| `backed_up`: target→backup no-replace or portable target/B link+unlink/fsync | backup restored; D0-link removes transient B link | not reachable |
+| S→target atomic no-replace and portable link/unlink | prior target/absence restored only without competitor; EEXIST preserves competitor/J/B/S as ambiguous | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
 | seal INSERT before SQLite COMMIT | rollback; prior target restored | not reachable |
@@ -202,15 +215,16 @@ Fault injection kills the process, without unwinding, after every boundary:
 At every table boundary and both sides of each listed syscall, use separate OS
 processes, not threads: the writer holds the retained L inode while a startup
 scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
-`inspect_intent`, `reserved`, stage creation/write, `staged`, `swap_intent`,
-target→B before/after `backed_up`, S→target before/after `swapped`, every DB
+`inspect_intent`, `reserved`, `stage_building`, every U create/write/fsync,
+`stage_ready`, U→S, `staged`, `swap_intent`, target→B before/after `backed_up`,
+S→target before/after `swapped`, every DB
 result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, and
 each recovery phase/action. Both contenders must return
 `local_copy_writer_in_progress` (or bounded-wait at startup), and an event trace
-must show no J/S/B/target open, classification or mutation and no R-scoped DB
+must show no J/U/S/B/target open, classification or mutation and no R-scoped DB
 read/write. Snapshot bytes, inode, digest and phase must remain unchanged.
 Explicitly hold the writer with durable D1 at S and at target but no DB seal;
-doctor must neither restore D0 nor delete D1/J/S/B.
+doctor must neither restore D0 nor delete D1/J/U/S/B.
 The lock must still be busy after each cleanup unlink and after J unlink but
 before Q fsync, and become acquirable only when the owner releases it afterward.
 
@@ -225,19 +239,38 @@ uid, mode or link count must return `local_copy_lock_unsafe` before R inspection
 Run every boundary with prior target absent and present, an identical target,
 multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
 database counts, stored response, journal/artifact counts, and doctor status.
+At every `stage_building` checkpoint use empty, one-byte, every chunk-prefix and
+full U. Exact nonce/private-Q/type/uid/0600/nlink proof converges automatically;
+wrong nonce/path/inode/uid/mode/type/link is preserved ambiguous. Precreate
+wrong-proof U/S, race a second writer (blocked by L), mutate U after IU capture,
+and forge wrong bytes at S: only a successful exact private-Q U proof may be
+classified as partial; wrong-byte S is never normal crash state.
+
+Run S→target races twice: originally absent, and present D0 after target→B.
+At the publish syscall have an independent process create a new target or
+rename-replace it. Linux `renameat2(RENAME_NOREPLACE)`, macOS
+`renameatx_np(RENAME_EXCL)`, and portable `linkat` must return EEXIST when the
+competitor wins, preserve its bytes/inode/mode exactly, retain J/B/S, and leave
+the DB unsealed with `local_copy_publish_collision`. If remem publishes first
+and the competitor replaces afterward, the pre-seal IU/D1 recheck detects drift
+and preserves the competitor/evidence. Assert zero plain rename and zero
+competitor overwrite in syscall traces.
+
 Run a real filesystem probe for readable 0644 and unreadable owner-writable 0200
 targets. Write known bytes before chmod; exercise journaled owner-read lift,
 double hash, exact mode restoration, and no-replace target→B→target. Assert
-dev/inode, uid/gid/mode/nlink/size/mtime, digest and bytes are preserved; T/S
-remain remem-created 0600 while B remains 0644/0200. Precreate B and assert the
+dev/inode, uid/gid/mode/nlink/size/mtime, digest and bytes are preserved; T/U
+remain private-Q 0600, S is full D1 below P, and B remains 0644/0200. Exercise
+portable D0-link and D1-link nlink=2 checkpoints. Precreate B and assert the
 platform no-replace syscall fails before changing target. Run on every supported
 filesystem; unsupported primitives are a visible no-mutation compatibility error.
 
 Create distinct journal Q/locks directories at 0700 and a current-uid target
-parent P at 0755, including a missing descendant securely created via its parent
-dirfd. Prove L/J/T stay below Q, S/B/target stay below P, and S's
-O_EXCL/O_NOFOLLOW/0600/current-uid/regular/nlink=1/entry-FD-inode/D1 checks pass
-without claiming a private parent. Reject root/`..` escape, symlink or
+parent P at 0755 on Q's device, including a missing descendant securely created
+via its parent dirfd. Prove L/J/T/U stay below Q, S/B/target stay below P, and
+S inherits IU only after full-D1 atomic no-replace publication with exact
+0600/current-uid/regular/nlink=1/entry-FD identity. Reject root/`..` escape,
+symlink or
 non-directory components, Q alias, wrong parent uid, missing owner rwx,
 group/world-writable P, cross-device target, changed `(dev,ino)` or uid/gid/mode,
 and missing directory-fsync or atomic no-replace support. Replace/rename the
@@ -245,11 +278,13 @@ parent after opening its dirfd at each revalidation boundary: operations must
 remain bound to the proved P and publish nothing at the replacement path, or
 fail visibly without mutation.
 
-Model the four persisted recovery phases and exhaustively traverse every allowed
-physical tuple. The 13 named post-action/pre-J-removal checkpoints are: phase
-fsync; B→empty-target rename, target fdatasync and parent fsync; B-over-D1 rename,
-replacement fdatasync and parent fsync; S unlink and parent fsync; absent-target
-D1 unlink and parent fsync; proved-B unlink and parent fsync. Kill/restart at
+Keep all 23 historical double-crash vectors as named regressions with identical
+final outcomes (old reserved+S is now `stage_ready`). The unsafe historical
+B-over-D1 step is replaced, not dropped: under durable `recover_before_file`,
+unlink only proved D1 target, fsync P, accept `(Ø,D0,Ø,Ø)`, then B→target
+no-replace, target fdatasync and P fsync. Inject after each new action/fsync and
+retain the original empty-target B restore, S unlink, absent-target D1 unlink,
+proved-B unlink and parent-fsync vectors; then add U/D0-link/D1-link states. Kill/restart at
 each, then kill again at every reachable later syscall (and iterate to a fixed
 point). Every protocol-generated path reaches exact D0/absence or D1 without
 ambiguity; every adjacent pre/post-durability state remains in the same phase.
@@ -260,7 +295,7 @@ identity/metadata/digest drift, inode alias and path escape. Mutate each accepte
 physical cell to absent/D0/D1/wrong bytes;
 only listed states converge, while every failed proof remains intact/ambiguous.
 
-Tamper separately with journal JSON, request fingerprint, target/backup/stage
+Tamper separately with journal JSON, nonce/IU, request fingerprint, target/backup/U/stage
 path, type, inode alias, and each digest; remove/invalidate the DB; create an
 unexpected combination of target and backup. Every ambiguous case leaves all
 user-visible files and journal untouched, returns
@@ -291,8 +326,11 @@ The JSON artifact schema v1 contains:
   "forward_only_route_count": 0,
   "forward_only_lifecycle_count": 0,
   "ddl_negative_cases": {},
+  "ddl_trigger_equivalence": {},
   "idempotency_cases": {},
   "crash_boundaries": {},
+  "stage_build_cases": {},
+  "publish_collision_cases": {},
   "lock_contention_cases": {},
   "target_parent_cases": {},
   "filesystem_probes": {},
@@ -314,6 +352,7 @@ or head-mismatched cases make `"passed": false`.
 Stop cutover and return to implementation on any UDF mismatch, schema drift,
 unsealed intent, permissive UPDATE/DELETE, missing/extra result, origin mismatch,
 raw-key leak, silent cleanup error, ambiguous reconciliation mutation, FK or
-integrity error, unexplained forward-only count, nondeterministic rerun, or
+integrity error, partial S, competitor overwrite, unexplained forward-only
+count, nondeterministic rerun, or
 failure outside documented rollback. Passing this rehearsal is necessary but
 does not authorize merge or production migration.

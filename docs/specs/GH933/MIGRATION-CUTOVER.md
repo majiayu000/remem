@@ -2,28 +2,16 @@
 Refs #933.
 ## Status and Authority
 
-This is the normative Phase A v2 migration, retry-ledger, hashing, and local-copy
-cutover contract referenced by `TECH.md`. It remains pending until implementation,
-`MIGRATION-REHEARSAL.md` evidence, and `ROLLOUT.md` gates pass. SQL is executable,
-not pseudocode; production must preserve every constraint and trigger body.
-
-The cutover is a breaking, maintenance-window migration. All 0.6.x writers are
-stopped before the foreground transaction begins and remain stopped until the
-new binary passes postflight. There is no mixed-writer mode and no down
-migration after a v2 write.
+This is the normative Phase A v2 migration, retry-ledger, hashing, and local-copy cutover contract referenced by `TECH.md`. It remains pending until implementation, `MIGRATION-REHEARSAL.md` evidence, and `ROLLOUT.md` gates pass. SQL is executable, not pseudocode; production preserves every constraint and trigger body.
+The breaking cutover runs in a maintenance window: all 0.6.x writers remain stopped from before the foreground transaction through new-binary postflight. There is no mixed-writer mode or down migration after a v2 write.
 ## Implementation Scope
 
 - `Cargo.toml`/`Cargo.lock`: enable rusqlite `functions`.
-- `src/db/sql_functions.rs` and every connection constructor: register the
-  versioned function after SQLCipher keying and before schema access or writes.
-- The migration SQL/runner install this DDL, rebuild `memories`, and backfill in
-  one `BEGIN IMMEDIATE`.
-- Every insert and named route/lifecycle update creates intent before mutation,
-  populates all declared bindings, and seals last.
-- `src/memory/service/types.rs`, `save.rs`, `local_copy.rs`, and all API/MCP
-  save adapters: require the caller key and implement the journal protocol.
-- `src/doctor/`: reconcile safe journals and report every pending or ambiguous
-  journal as a visible diagnostic.
+- `src/db/sql_functions.rs` and every connection constructor: register the versioned function after SQLCipher keying and before schema access or writes.
+- The migration SQL/runner install this DDL, rebuild `memories`, and backfill in one `BEGIN IMMEDIATE`.
+- Every insert and named route/lifecycle update creates intent before mutation, populates all declared bindings, and seals last.
+- `src/memory/service/{types,save,local_copy}.rs` and all API/MCP save adapters require the caller key and journal protocol.
+- `src/doctor/` reconciles safe journals and visibly reports every pending or ambiguous journal.
 - Run the migration/API/writer/DDL/UDF/retry/fault tests in the rehearsal.
 No connection may register different framing; no fallback hash is legal.
 ## Versioned SHA-256 Data Flow
@@ -34,8 +22,7 @@ No connection may register different framing; no fallback hash is legal.
 remem_sha256_frame_v1(name_0, value_0, name_1, value_1, ...)
 ```
 
-It rejects zero or odd argument counts, non-TEXT, blank, non-ASCII, or duplicate
-field names. For each pair, in call order, it feeds SHA-256:
+It rejects zero/odd argument counts and non-TEXT, blank, non-ASCII, or duplicate field names. For each ordered pair it feeds SHA-256:
 
 ```text
 u32_be(name UTF-8 byte length)
@@ -45,20 +32,10 @@ u64_be(value byte length)
 value bytes
 ```
 
-INTEGER is signed i64 big-endian. REAL is the exact IEEE-754 f64 bit pattern in
-big-endian order. TEXT is exact UTF-8; BLOB is exact bytes; NULL has length zero
-and differs from empty TEXT/BLOB. The return is exactly 64 lowercase hex
-characters. Registration is `DETERMINISTIC | INNOCUOUS`; failure aborts.
-
-Rust hashes requests before SQL; SQL chains results, hashes request/terminal
-result/schema/response, and INSERT triggers hash typed `NEW`.
-Golden vectors cover NULL/empty, i64 bounds, negative zero/non-finite rejection,
-multibyte/NUL TEXT, BLOB, order and duplicate names; independent Python matches.
+INTEGER is signed i64 big-endian; REAL is exact IEEE-754 f64 bits in big-endian; TEXT/BLOB use exact bytes; NULL has length zero and differs from empty. Return is exactly 64 lowercase hex; registration is `DETERMINISTIC | INNOCUOUS`, and failure aborts. Rust hashes requests before SQL; SQL chains results and hashes request/terminal/schema/response while triggers hash typed OLD/NEW. Golden vectors cover NULL/empty, i64 bounds, negative zero/non-finite rejection, multibyte/NUL TEXT, BLOB, pair order and duplicate names against independent Python.
 ## Caller Idempotency
 
-Every direct save entrypoint requires `idempotency_key`. The adapter trims ASCII
-outer whitespace once, then requires 1–128 bytes entirely in
-`[A-Za-z0-9._~-]`. It derives:
+Every direct save entrypoint requires `idempotency_key`; the adapter trims ASCII outer whitespace once, then requires 1–128 bytes in `[A-Za-z0-9._~-]` and derives:
 
 ```text
 request_id = "save_" || lower_hex(
@@ -66,11 +43,7 @@ request_id = "save_" || lower_hex(
 )
 ```
 
-Only `request_id` is retained; raw/normalized keys never enter serialization,
-database, journals, logs, errors, traces, metrics, or responses.
-
-Fingerprint excludes key/credentials and covers every other raw field, Option
-presence, list order/duplicates, reference time, defaults, and effective inputs:
+Only `request_id` is retained; raw/normalized keys never enter serialization, database, journals, logs, errors, traces, metrics, or responses. Fingerprint excludes key/credentials and covers every other raw field, Option presence, list order/duplicates, reference time, defaults, and effective inputs:
 
 | Existing row | Incoming key/payload | Result |
 | --- | --- | --- |
@@ -80,8 +53,7 @@ presence, list order/duplicates, reference time, defaults, and effective inputs:
 | any | different key/byte-identical payload | execute as a distinct request |
 | intent without seal | any retry after restart | impossible after DB rollback; journal reconciliation runs first |
 
-Different keys preserve the second lesson reinforcement, operation, claim, and
-knowledge transition.
+Different keys preserve the second lesson reinforcement, operation, claim, and knowledge transition.
 ## Final Schema Preconditions
 
 The migration rebuilds `memories` from the canonical current schema rather than
@@ -380,6 +352,14 @@ BEGIN
       AND json_extract(expected.value,'$.binding_kind') IN ('insert_origin','lifecycle_transition')
   ) THEN RAISE(ABORT, 'lifecycle ledger lacks typed manifest slot') END;
 END;
+CREATE TRIGGER memory_route_ledger_fingerprint_guard BEFORE INSERT ON memory_route_ledger BEGIN
+  SELECT CASE WHEN (NEW.route_version=1 AND (NEW.previous_route_id IS NOT NULL OR NEW.source_kind NOT IN ('insert','legacy_backfill'))) OR (NEW.route_version>1 AND NOT EXISTS (SELECT 1 FROM memory_route_ledger AS OLD WHERE OLD.id=NEW.previous_route_id AND OLD.memory_id=NEW.memory_id AND OLD.route_version=NEW.route_version-1 AND OLD.effective_at_epoch<=NEW.effective_at_epoch)) THEN RAISE(ABORT, 'invalid route predecessor') END;
+  SELECT CASE WHEN NEW.source_fingerprint IS NOT remem_sha256_frame_v1('domain','memory_route_ledger/v1','old_memory_id',(SELECT memory_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_route_version',(SELECT route_version FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_previous_route_id',(SELECT previous_route_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_effective_at_epoch',(SELECT effective_at_epoch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_kind',(SELECT source_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_audit_event_id',(SELECT audit_event_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_writer_kind',(SELECT source_writer_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_ref',(SELECT source_ref FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_result_ordinal',(SELECT source_result_ordinal FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=(SELECT source_writer_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id) AND request_id=(SELECT source_ref FROM memory_route_ledger WHERE id=NEW.previous_route_id)),'old_coverage_kind',(SELECT coverage_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_coverage_start_epoch',(SELECT coverage_start_epoch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_placement_project',(SELECT placement_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_project',(SELECT source_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_target_project',(SELECT target_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_owner_scope',(SELECT owner_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_owner_key',(SELECT owner_key FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_memory_type',(SELECT memory_type FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_topic_key',(SELECT topic_key FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_topic_domain',(SELECT topic_domain FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_routing_confidence',(SELECT routing_confidence FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_routing_reason',(SELECT routing_reason FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_context_class',(SELECT context_class FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_memory_scope',(SELECT memory_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_branch',(SELECT branch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'new_memory_id',NEW.memory_id,'new_route_version',NEW.route_version,'new_previous_route_id',NEW.previous_route_id,'new_effective_at_epoch',NEW.effective_at_epoch,'new_source_kind',NEW.source_kind,'new_audit_event_id',NEW.audit_event_id,'new_source_writer_kind',NEW.source_writer_kind,'new_source_ref',NEW.source_ref,'new_source_result_ordinal',NEW.source_result_ordinal,'new_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref),'new_coverage_kind',NEW.coverage_kind,'new_coverage_start_epoch',NEW.coverage_start_epoch,'new_placement_project',NEW.placement_project,'new_source_project',NEW.source_project,'new_target_project',NEW.target_project,'new_owner_scope',NEW.owner_scope,'new_owner_key',NEW.owner_key,'new_memory_type',NEW.memory_type,'new_topic_key',NEW.topic_key,'new_topic_domain',NEW.topic_domain,'new_routing_confidence',NEW.routing_confidence,'new_routing_reason',NEW.routing_reason,'new_context_class',NEW.context_class,'new_memory_scope',NEW.memory_scope,'new_branch',NEW.branch) THEN RAISE(ABORT, 'route fingerprint mismatch') END;
+END;
+CREATE TRIGGER memory_lifecycle_ledger_fingerprint_guard BEFORE INSERT ON memory_lifecycle_ledger BEGIN
+  SELECT CASE WHEN (NEW.lifecycle_version=1 AND (NEW.previous_lifecycle_id IS NOT NULL OR NEW.previous_status IS NOT NULL OR NEW.source_kind NOT IN ('insert','legacy_backfill') OR NEW.source_action<>'baseline')) OR (NEW.lifecycle_version>1 AND NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS OLD WHERE OLD.id=NEW.previous_lifecycle_id AND OLD.memory_id=NEW.memory_id AND OLD.lifecycle_version=NEW.lifecycle_version-1 AND OLD.new_status=NEW.previous_status AND OLD.effective_at_epoch<=NEW.effective_at_epoch)) THEN RAISE(ABORT, 'invalid lifecycle predecessor') END;
+  SELECT CASE WHEN NEW.source_fingerprint IS NOT remem_sha256_frame_v1('domain','memory_lifecycle_ledger/v1','old_memory_id',(SELECT memory_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_lifecycle_version',(SELECT lifecycle_version FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_previous_lifecycle_id',(SELECT previous_lifecycle_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_effective_at_epoch',(SELECT effective_at_epoch FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_previous_status',(SELECT previous_status FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_new_status',(SELECT new_status FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_kind',(SELECT source_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_action',(SELECT source_action FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_operation_id',(SELECT source_operation_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_api_operation_id',(SELECT source_api_operation_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_audit_event_id',(SELECT audit_event_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_writer_kind',(SELECT source_writer_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_ref',(SELECT source_ref FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_result_ordinal',(SELECT source_result_ordinal FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=(SELECT source_writer_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id) AND request_id=(SELECT source_ref FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id)),'old_coverage_kind',(SELECT coverage_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_coverage_start_epoch',(SELECT coverage_start_epoch FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'new_memory_id',NEW.memory_id,'new_lifecycle_version',NEW.lifecycle_version,'new_previous_lifecycle_id',NEW.previous_lifecycle_id,'new_effective_at_epoch',NEW.effective_at_epoch,'new_previous_status',NEW.previous_status,'new_new_status',NEW.new_status,'new_source_kind',NEW.source_kind,'new_source_action',NEW.source_action,'new_source_operation_id',NEW.source_operation_id,'new_source_api_operation_id',NEW.source_api_operation_id,'new_audit_event_id',NEW.audit_event_id,'new_source_writer_kind',NEW.source_writer_kind,'new_source_ref',NEW.source_ref,'new_source_result_ordinal',NEW.source_result_ordinal,'new_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref),'new_coverage_kind',NEW.coverage_kind,'new_coverage_start_epoch',NEW.coverage_start_epoch) THEN RAISE(ABORT, 'lifecycle fingerprint mismatch') END;
+END;
 CREATE TRIGGER memory_write_result_guard
 BEFORE INSERT ON memory_write_request_results
 BEGIN
@@ -668,6 +648,11 @@ BEGIN
     'response_json', NEW.response_json
   ) THEN RAISE(ABORT, 'request commit fingerprint mismatch') END;
 END;
+CREATE TRIGGER memory_insert_v1_ledgers AFTER INSERT ON memories BEGIN
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM memory_write_request_commits WHERE writer_kind=NEW.insert_writer_kind AND request_id=NEW.insert_request_id) OR NOT EXISTS (SELECT 1 FROM memory_write_requests AS request,json_each(request.expected_results_json) AS expected WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id AND json_extract(expected.value,'$.result_ordinal')=NEW.insert_result_ordinal AND json_extract(expected.value,'$.binding_kind')='insert_origin') THEN RAISE(ABORT, 'memory insert lacks open insert_origin') END;
+  INSERT INTO memory_route_ledger(memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,audit_event_id,source_writer_kind,source_ref,source_result_ordinal,source_fingerprint,coverage_kind,coverage_start_epoch,placement_project,source_project,target_project,owner_scope,owner_key,memory_type,topic_key,topic_domain,routing_confidence,routing_reason,context_class,memory_scope,branch) SELECT NEW.id,1,NULL,request.requested_at_epoch,CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,NULL,NEW.insert_writer_kind,NEW.insert_request_id,NEW.insert_result_ordinal,remem_sha256_frame_v1('domain','memory_route_ledger/v1','old_memory_id',NULL,'old_route_version',NULL,'old_previous_route_id',NULL,'old_effective_at_epoch',NULL,'old_source_kind',NULL,'old_audit_event_id',NULL,'old_source_writer_kind',NULL,'old_source_ref',NULL,'old_source_result_ordinal',NULL,'old_request_fingerprint',NULL,'old_coverage_kind',NULL,'old_coverage_start_epoch',NULL,'old_placement_project',NULL,'old_source_project',NULL,'old_target_project',NULL,'old_owner_scope',NULL,'old_owner_key',NULL,'old_memory_type',NULL,'old_topic_key',NULL,'old_topic_domain',NULL,'old_routing_confidence',NULL,'old_routing_reason',NULL,'old_context_class',NULL,'old_memory_scope',NULL,'old_branch',NULL,'new_memory_id',NEW.id,'new_route_version',1,'new_previous_route_id',NULL,'new_effective_at_epoch',request.requested_at_epoch,'new_source_kind',CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,'new_audit_event_id',NULL,'new_source_writer_kind',NEW.insert_writer_kind,'new_source_ref',NEW.insert_request_id,'new_source_result_ordinal',NEW.insert_result_ordinal,'new_request_fingerprint',request.request_fingerprint,'new_coverage_kind','complete','new_coverage_start_epoch',request.requested_at_epoch,'new_placement_project',NEW.project,'new_source_project',NEW.source_project,'new_target_project',NEW.target_project,'new_owner_scope',NEW.owner_scope,'new_owner_key',NEW.owner_key,'new_memory_type',NEW.memory_type,'new_topic_key',NEW.topic_key,'new_topic_domain',NEW.topic_domain,'new_routing_confidence',NEW.routing_confidence,'new_routing_reason',NEW.routing_reason,'new_context_class',NEW.context_class,'new_memory_scope',NEW.scope,'new_branch',NEW.branch),'complete',request.requested_at_epoch,NEW.project,NEW.source_project,NEW.target_project,NEW.owner_scope,NEW.owner_key,NEW.memory_type,NEW.topic_key,NEW.topic_domain,NEW.routing_confidence,NEW.routing_reason,NEW.context_class,NEW.scope,NEW.branch FROM memory_write_requests AS request WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id;
+  INSERT INTO memory_lifecycle_ledger(memory_id,lifecycle_version,previous_lifecycle_id,effective_at_epoch,previous_status,new_status,source_kind,source_action,source_operation_id,source_api_operation_id,audit_event_id,source_writer_kind,source_ref,source_result_ordinal,source_fingerprint,coverage_kind,coverage_start_epoch) SELECT NEW.id,1,NULL,request.requested_at_epoch,NULL,NEW.status,CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,'baseline',NULL,NULL,NULL,NEW.insert_writer_kind,NEW.insert_request_id,NEW.insert_result_ordinal,remem_sha256_frame_v1('domain','memory_lifecycle_ledger/v1','old_memory_id',NULL,'old_lifecycle_version',NULL,'old_previous_lifecycle_id',NULL,'old_effective_at_epoch',NULL,'old_previous_status',NULL,'old_new_status',NULL,'old_source_kind',NULL,'old_source_action',NULL,'old_source_operation_id',NULL,'old_source_api_operation_id',NULL,'old_audit_event_id',NULL,'old_source_writer_kind',NULL,'old_source_ref',NULL,'old_source_result_ordinal',NULL,'old_request_fingerprint',NULL,'old_coverage_kind',NULL,'old_coverage_start_epoch',NULL,'new_memory_id',NEW.id,'new_lifecycle_version',1,'new_previous_lifecycle_id',NULL,'new_effective_at_epoch',request.requested_at_epoch,'new_previous_status',NULL,'new_new_status',NEW.status,'new_source_kind',CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,'new_source_action','baseline','new_source_operation_id',NULL,'new_source_api_operation_id',NULL,'new_audit_event_id',NULL,'new_source_writer_kind',NEW.insert_writer_kind,'new_source_ref',NEW.insert_request_id,'new_source_result_ordinal',NEW.insert_result_ordinal,'new_request_fingerprint',request.request_fingerprint,'new_coverage_kind','complete','new_coverage_start_epoch',request.requested_at_epoch),'complete',request.requested_at_epoch FROM memory_write_requests AS request WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id;
+END;
 CREATE TRIGGER memory_origin_tuple_immutable BEFORE UPDATE OF
 insert_writer_kind, insert_request_id, insert_result_ordinal ON memories
 WHEN NEW.insert_writer_kind IS NOT OLD.insert_writer_kind
@@ -686,12 +671,7 @@ CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecyc
 CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
 ```
 
-The migration also has literal route/lifecycle fingerprint guards over every
-typed column except ID/digest and an `AFTER INSERT ON memories` guard requiring
-`insert_origin`, hashing exact `NEW`, and creating v1; missing UDF aborts.
-Templates, SQL concatenation, post-insert patches, and fallback hashes are
-forbidden. Rehearsal extracts trigger SQL, runs all insert families, and mutates
-every covered `NEW` field.
+`memory_route_ledger_fingerprint_guard` and `memory_lifecycle_ledger_fingerprint_guard` hash every typed OLD/NEW column except row ID/digest, including both request fingerprints; `memory_insert_v1_ledgers` requires the open `insert_origin` slot and creates route+lifecycle v1 inside the parent INSERT statement, so either both and the memory exist or none do. These literal bodies are the sole executable authority: no templates, SQL concatenation, post-insert patch, or fallback hash.
 
 ## Backfill and Foreground Cutover
 
@@ -724,14 +704,13 @@ means disabling the v2 projection while retaining schema/history; running 0.6.x
 or restoring the old backup would lose writes and is forbidden.
 
 ## Durable Local-Copy Journal
-The verified nonsymlink journal root `Q=${REMEM_DATA_DIR}/write-journal/save/` and `Q/locks/` are app-owned mode 0700. For opaque request `R`, names are exactly retained lock `L=Q/locks/R.lock`, canonical journal `J=Q/R.json`, journal temp `T=Q/.R.json.tmp`, and target-parent siblings `S=.remem-save-R.stage`, `B=.remem-save-R.backup`. Scanner grammar reserves exactly the proved `Q/locks/` subtree plus J/T names; L is not a journal artifact, is excluded from pending-artifact counts, and is never cleanup input.
-Resolve configured local-copy root and target parent `P` component-by-component from directory FDs with no-follow/beneath semantics. Convert an allowed absolute input to its root-relative descendant; reject an outside-root absolute path, unresolved `..` escape, symlink/non-directory component, alias to `Q`, a parent not owned by the current uid, lacking owner rwx, writable by group/world, or lacking directory fsync/atomic no-replace. Create missing descendants with dirfd-relative mkdir/open, then apply the same proof before artifacts. Mode 0755 is valid. `P`, target, S and B must share one device.
+The verified nonsymlink journal root `Q=${REMEM_DATA_DIR}/write-journal/save/` and `Q/locks/` are app-owned mode 0700. For opaque request `R`, names are retained lock `L=Q/locks/R.lock`, journal `J=Q/R.json`, journal temp `T=Q/.R.json.tmp`, private stage build `U=Q/.R.<nonce>.stage-build`, and target-parent siblings `S=.remem-save-R.stage`, `B=.remem-save-R.backup`. Scanner grammar reserves proved `Q/locks/` plus J/T/U; L is retained and excluded from pending-artifact counts.
+Resolve configured local-copy root and target parent `P` component-by-component from directory FDs with no-follow/beneath semantics. Convert an allowed absolute input to its root-relative descendant; reject outside-root/`..` escape, symlink/non-directory components, Q alias, wrong uid, missing owner rwx, group/world write, or missing fsync/no-replace. Securely create missing descendants. Mode 0755 is valid; Q, P, target, U, S and B must share one device.
 Keep the `P` fd open, operate on exact basenames relative to it, and record root-relative path, `IP=(dev,ino)` and `MP=(uid,gid,mode)`. Re-resolve and match `IP/MP` before publication or mutation and after reopening for recovery; replacement or permission drift is a visible no-mutation identity error, while already-open operations remain bound to the proved directory.
-Canonical J JSON records writer/request fingerprints, phase/recovery goal, paths, `IP/MP`, `before_kind`, D1/D0 (D0 null only in `inspect_intent`), epoch, present-target identity `I0=(dev,ino)`, and metadata `M0=(uid,gid,mode,nlink,size,mtime_ns)`; never content, key, token, or response.
+Canonical J records fingerprints, phase/goal, paths, `IP/MP`, `before_kind`, D1/D0, epoch, `I0=(dev,ino)`, `M0=(uid,gid,mode,nlink,size,mtime_ns)`, and for stage build a CSPRNG 128-bit lowercase-hex nonce plus optional `IU=(dev,ino)`; never content, key, token, or response.
 
 Create `L` initially with `O_CREAT|O_EXCL|O_NOFOLLOW` mode 0600 or reopen that exact current-uid regular single-link file through `Q/locks`; Phase A never unlinks or replaces it. A wrong L/locks-dir path, inode, type, uid, mode or link count is `local_copy_lock_unsafe` before any R inspection. The local-copy writer, startup scanner, doctor and reconciler all take an exclusive nonblocking OS lock on that same inode, not merely a process mutex or PID/age heuristic, before opening J/artifacts or reading/mutating R-scoped database state. Independently opened descriptors must contend across processes; add in-process serialization where the platform primitive needs it. Lock order is always L then database.
-The writer takes L before `inspect_intent`, J/T/S/B creation/publication, `BEGIN IMMEDIATE`, or any target mutation and holds it continuously through the matching committed seal, `sealed`, all cleanup/unlinks/fsyncs and J removal, or through terminal reconciliation. A safe visible ambiguous/no-mutation return may release it with durable evidence intact. A process crash releases only the OS lock, never L or evidence.
-If L is busy, scanner/doctor/reconciler returns `local_copy_writer_in_progress` (startup may bounded-wait) and must not inspect, classify, restore, delete or otherwise touch J/S/B/target or R-scoped DB rows. This includes durable D1 at S or target before the DB seal. After owner death, exactly one contender acquires L and reconciles; other contenders remain busy or subsequently observe no work.
+The writer takes L before `inspect_intent`, J/T/U/S/B, `BEGIN IMMEDIATE`, or target mutation and holds it through committed seal, cleanup/J fsync, terminal reconciliation, or a visible no-mutation ambiguity. Busy scanner/doctor/reconciler returns `local_copy_writer_in_progress` without inspecting J/U/S/B/target or R-scoped DB state; this includes D1 before seal. Crash releases only the OS lock, after which exactly one contender reconciles.
 
 Proof classes and parent locations are deliberately different:
 
@@ -739,43 +718,31 @@ Proof classes and parent locations are deliberately different:
 | --- | --- |
 | `L` | first-created/reopened only below `Q/locks`; exact stable inode/current uid/regular/nlink=1/mode 0600; never removed |
 | `T` | remem creates below private `Q` with `O_CREAT\|O_EXCL\|O_NOFOLLOW`, mode 0600; exact name/current uid/regular/nlink=1 |
-| `S` | remem creates relative to verified `P` with `O_CREAT\|O_EXCL\|O_NOFOLLOW`, exact mode 0600; exact basename/current uid/regular/nlink=1, no-follow entry/FD inode equality, and exact D1 |
+| `U` | after durable `stage_building`, remem creates the nonce name below private Q with T's creation proof; arbitrary bytes are owned partial build only under that exact proof |
+| `S` | only atomic no-replace publication of fully fdatasynced U after durable `stage_ready`; below verified P with `IU`, exact mode 0600/current uid/regular/nlink=1/entry identity/D1 |
 | `B` | not created and has no temp-mode invariant: durable `swap_intent`, then atomic no-replace target→`B`; it retains `I0`, `M0`, and `D0` |
 | target | exact basename below verified `P`; verified regular identity/metadata/digest or recorded absence; symlink, alias, and nonregular types are forbidden |
-Thus T's private-parent proof never stands in for S's target-parent proof. `B` legitimately retains target mode 0644, 0200, or another recorded mode; 0600 is not a backup invariant. No-replace must be one atomic platform primitive (`renameat2(RENAME_NOREPLACE)`/`renameatx_np(RENAME_EXCL)` equivalent); an existing B or unsupported filesystem errors before target mutation.
+Thus S never exists empty/partial and T/U private-parent proof never replaces S's P/IU/D1 proof. B retains recorded 0644/0200/etc., never a 0600 invariant. Target→B, U→S and S→target use `renameat2(RENAME_NOREPLACE)` on Linux, `renameatx_np(RENAME_EXCL)` on macOS, or portable `linkat` create-if-absent plus journal-accepted same-inode nlink=2 and source unlink/fsync; this transient link proof is `D0-link` for target/B and `D1-link` for U/S or S/target. Unsupported primitives fail before mutation; existence-check+plain-rename is forbidden.
 
-An unreadable owner-writable target (including 0200) is supported without a
-readability precondition. First persist `inspect_intent` with `I0/M0`, then use
-no-follow FDs to add only owner-read, hash twice with identical digest and stable
-identity/size/mtime, restore exact mode, fsync, and persist `reserved` with `D0`.
-`inspect_intent` accepts only target `I0` at original mode or that single
-temporary read-bit mode, with `B/S` absent; restart restores/fsyncs mode, removes
-`J`, fsyncs its directory, and repeats if `J` reappears. Unreadable
-non-owner-writable files error before chmod. The same journaled helper verifies
-a 0200 `B`; ctime is diagnostic, while all fields in `M0` must match.
+Unreadable owner-writable targets including 0200 need no readability precondition: persist `inspect_intent` with I0/M0, add only owner-read through no-follow FDs, double-hash under stable identity/size/mtime, restore exact mode, fsync, then persist `reserved` with D0. Recovery accepts only I0 at original/single-read-bit mode with B/S/U absent, restores/fsyncs mode and removes J reentrantly. Non-owner-writable errors before chmod; the same helper verifies 0200 B, with ctime diagnostic and all M0 fields exact.
 
-While holding L, each phase update fully writes/fdatasyncs new T, renames it over J, and fsyncs Q. With J absent and S/B absent, the scanner may remove an owned empty/partial T; with J present it removes owned T and uses J. A crash during that unlink may yield T present or absent and repeats safely. Any other J-absent artifact or proof failure is ambiguous.
+While holding L, each phase update writes/fdatasyncs T, renames it over J and fsyncs Q. With J absent and U/S/B absent the scanner may remove proved partial T; with J present it removes T and uses J. Any J-absent U/S/B or failed proof is ambiguous.
 
-Writer phases are `reserved`, `staged`, `swap_intent`, `backed_up`, `swapped`,
-DB commit, then `sealed`. File/no-seal phase→states are exactly:
-`reserved:(D0,Ø,Ø|D1)`; `staged:(D0,Ø,D1)`; `swap_intent:(D0,Ø,D1)|(Ø,D0,D1)`;
-`backed_up:(Ø,D0,D1)|(D1,D0,Ø)`; `swapped:(D1,D0,Ø)`. Absent/no-seal uses
-`reserved:(Ø,Ø,Ø|D1)`, `staged|swap_intent:(Ø,Ø,D1)`,
-`backed_up:(Ø,Ø,D1)|(D1,Ø,Ø)`, `swapped:(D1,Ø,Ø)`. Matching seal requires
-file `swapped:(D1,D0,Ø)` or `sealed:(D1,D0|Ø,Ø)`; absent is `(D1,Ø,Ø)`.
-Target→B is no-replace after `swap_intent`; S→target, target fdatasync and P fsync are durable.
-Exact retry creates no journal. Only the DB seal proves commit.
+After `reserved`, persist `stage_building` with nonce/D1 and `IU=NULL`, then O_EXCL-create U, fstat it and persist the same phase with IU before the first content byte; write injected chunks, fdatasync and double-check IU/D1, then persist `stage_ready`. A crash in the create→IU-fsync gap still owns U only through its exact nonce/private-Q/type/uid/mode/nlink proof. `stage_building` accepts U absent or any empty/partial/full bytes under that proof and no S; `stage_ready` accepts full U, full S with IU after no-replace U→S, or portable same-inode U+S/nlink=2. Existing before-goal recovery unlinks only proved U/S and fsyncs Q/P; wrong proof or wrong-byte S is ambiguous. Persist `staged` only after durable S=D1/U-absent.
+
+Writer phases are `reserved,stage_building,stage_ready,staged,swap_intent,backed_up,swapped`, DB commit, then `sealed`. In `(target,B,S,U)`, present/no-seal states are `reserved:(D0,Ø,Ø,Ø)`; `stage_building:(D0,Ø,Ø,U*)`; `stage_ready:(D0,Ø,Ø,D1)|(D0,Ø,D1,Ø|D1-link)`; `staged:(D0,Ø,D1,Ø)`; `swap_intent:(D0,Ø,D1,Ø)|(D0,D0-link,D1,Ø)|(Ø,D0,D1,Ø)`; `backed_up:(Ø,D0,D1,Ø)|(D1,D0,Ø|D1-link,Ø)`; `swapped:(D1,D0,Ø,Ø)`. Absent uses the same rows with initial D0/B removed. `U*` is absent/any bytes with exact building proof; link states require both names share the proved inode at nlink=2. Matching seal allows only swapped/sealed D1 with U/S absent.
+After target→B (if present), S→target is itself atomic no-replace. EEXIST or a competing create/replace never overwrites: preserve the competitor plus J/B/S, leave DB unsealed, return `local_copy_publish_collision`, and keep doctor nonhealthy. Reverify target IU/D1 after publication and immediately before seal; drift is the same ambiguity. Exact retry creates no journal; only the DB seal proves commit.
 
 Before filesystem recovery, validate the writer phase/physical tuple, persist
 and fsync exactly one recovery phase, then mutate. `Ø` means absent; every `D0`
 also requires `I0/M0` (or the documented temporary read bit while hashing):
 
-| Recovery phase | DB goal | Accepted `(target,B,S)` states | Idempotent normalization |
+| Recovery phase | DB goal | Accepted `(target,B,S,U)` states | Idempotent normalization |
 | --- | --- | --- | --- |
-| `recover_before_file` | no seal, prior file | `(D0,Ø,Ø\|D1)`, `(Ø,D0,D1)`, `(D1,D0,Ø)` | restore `B` no-replace into Ø or atomically over exact D1; unlink exact S |
-| `recover_before_absent` | no seal, prior absent | `(Ø,Ø,Ø\|D1)`, `(D1,Ø,Ø)` | unlink exact S/D1 target |
-| `recover_after_file` | matching seal, prior file | `(D1,D0,Ø)`, `(D1,Ø,Ø)` | keep D1; unlink proved B |
-| `recover_after_absent` | matching seal, prior absent | `(D1,Ø,Ø)` | keep D1 |
+| `recover_before_file` | no seal, prior file | `(D0,Ø,Ø,U*)`, `(D0,Ø,D1,Ø\|D1-link)`, `(D0,D0-link,D1,Ø)`, `(Ø,D0,D1\|Ø,Ø)`, `(D1,D0,Ø\|D1-link,Ø)` | remove proved U/S/link; unlink only proved D1 target, fsync P, then restore B no-replace; collision preserves all |
+| `recover_before_absent` | no seal, prior absent | `(Ø,Ø,Ø,U*)`, `(Ø,Ø,D1,Ø\|D1-link)`, `(D1,Ø,Ø\|D1-link,Ø)` | remove only proved U/S/D1; collision preserves all |
+| `recover_after_file` | matching seal, prior file | `(D1,D0\|Ø,Ø,Ø)` | keep D1; unlink proved B |
+| `recover_after_absent` | matching seal, prior absent | `(D1,Ø,Ø,Ø)` | keep D1 |
 
 The recovery phase remains unchanged through every rename/unlink, target
 fdatasync, and parent fsync. Each post-action/pre-fsync and post-fsync state is

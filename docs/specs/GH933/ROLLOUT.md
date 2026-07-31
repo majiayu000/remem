@@ -37,7 +37,8 @@ Exit requires:
   compatibility fallback or uninstrumented writer;
 - focused tests, full Rust test/clippy, plugin version sync, version-bump check,
   PR preflight, and public API compile pass at exact HEAD;
-- actual migration SQL and installed `sqlite_schema` match the reviewed DDL;
+- actual migration SQL and installed `sqlite_schema` match every reviewed
+  literal object, including both fingerprint guards and insert-v1 trigger;
 - security and database reviewers approve unresolved-risk lists; and
 - the PR remains unmerged until an independent final review.
 
@@ -60,6 +61,8 @@ Exit requires:
 - backup restore drill completed and timed;
 - cross-process lock-contention and target-parent evidence complete on every
   supported filesystem;
+- exhaustive stage-build checkpoints, final-publish collision races, and literal
+  DDL positive/negative/FK matrices pass;
 - migration duration and peak disk usage fit the maintenance budget with at
   least 2x measured free-space headroom;
 - all forward-only counts explained from source evidence; and
@@ -100,8 +103,8 @@ failure stops the canary immediately.
 Keep the canary on the new binary for at least 72 hours and through:
 
 - one restart with automatic journal reconciliation, including the pre-rename
-  `swap_intent` tuple, 0200-target/backup proof, initial temp cleanup, and a
-  second crash inside each persisted recovery phase;
+  `stage_building` partial-U, `stage_ready`, `swap_intent`, 0200-target/backup,
+  initial temp cleanup, and a second crash inside each recovery phase;
 - writer/scanner/doctor contention at every local-copy phase, including durable
   D1 before seal, followed by single-owner reconciliation after writer death;
 - normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup
@@ -148,6 +151,8 @@ Metrics and structured logs use opaque request IDs only:
 | per-request lock wrong inode/path/proof, replacement, or simultaneous owners | any |
 | live-writer lock busy | expected briefly; any artifact/DB inspection or mutation by contender, or busy after owner death, stops |
 | target-parent confinement/identity/uid/mode/device/fsync/no-replace proof failure | any; no mutation |
+| partial/wrong-byte S or unproved stage-build U | any; preserve evidence |
+| `local_copy_publish_collision` | stop request; competitor/J/B/S must be byte-exact and DB unsealed |
 | backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
 | recovery phase fails to converge after any repeated crash | any |
 | raw idempotency key/credential detected in retained output | any |
@@ -167,6 +172,7 @@ journal phase, and error code without content or raw path secrets.
 | any v2 write sealed | keep 0.7 writer/schema; disable v2 projection/read surface | old binary, down migration, dropping ledgers, restoring stale backup |
 | local-copy journal pending without seal | after acquiring R's retained L lock, reconcile to exact prior bytes | inspect/recover while L is busy; blind deletion |
 | local-copy journal pending with seal | after acquiring R's retained L lock, retain exact sealed target and finish owned cleanup | restore prior target |
+| final publish collides with new target | preserve competitor and J/B/S, keep request unsealed, escalate | plain rename, overwrite, or delete competitor |
 | ambiguous journal/database state | stop writes, preserve all bytes/journal, escalate to database+security reviewers | automatic repair |
 
 Disabling projection changes only read routing/feature flags. It never removes
