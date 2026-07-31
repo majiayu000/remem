@@ -264,6 +264,9 @@ fn claim_words_share_form(left: &str, right: &str) -> bool {
 fn claim_word_forms(word: &str) -> HashSet<String> {
     let word = word.to_lowercase();
     let mut forms = HashSet::from([word.clone()]);
+    if word == "built" {
+        insert_claim_form(&mut forms, "build");
+    }
     for suffix in ["ment", "ence", "ance", "ing"] {
         if let Some(stem) = word.strip_suffix(suffix) {
             insert_claim_form(&mut forms, stem);
@@ -713,6 +716,26 @@ mod tests {
                 claim_term_matches(preference, term),
                 "missing {term} in preference text"
             );
+        }
+    }
+
+    #[test]
+    fn exact_entity_claim_support_uses_irregular_build_lemma() {
+        let core_terms = crate::retrieval::query_expand::core_tokens("Who built NebulaLatch?");
+        let claims = claim_terms(&core_terms, Some("/repo"), &["NebulaLatch".to_string()]);
+        assert_eq!(claims, vec!["built"]);
+        let cases = [
+            ("Team Mica builds NebulaLatch.", "built", true),
+            ("Team Mica built NebulaLatch.", "build", true),
+            ("Team Mica built NebulaLatch.", "builds", true),
+            ("Team Mica is building NebulaLatch.", "built", true),
+            ("A prebuilt NebulaLatch bundle ships.", "built", false),
+            ("The NebulaLatch builder is Team Mica.", "built", false),
+            ("Team Mica audited NebulaLatch.", "built", false),
+        ];
+        assert_eq!(claim_term_coverage(&test_memory(cases[0].0), &claims), 1.0);
+        for (text, term, expected) in cases {
+            assert_eq!(claim_term_matches(text, term), expected);
         }
     }
 

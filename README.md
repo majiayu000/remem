@@ -485,6 +485,12 @@ remem embedding status
 remem embedding backfill --limit 1000
 ```
 
+Automatic download currently supports only `multilingual-e5-small`, whose
+evaluated immutable revision is pinned by remem. `bge-m3` remains recognized so
+an already installed verified cache can still be loaded, but
+`remem embedding download --model bge-m3` fails closed until remem publishes an
+approved immutable BGE revision.
+
 After the verified download, an `auto` configuration with no remem-specific
 API key activates the local model. Run the idempotent backfill after any
 provider/model switch—or after the downloaded artifact changes—so existing

@@ -4,7 +4,46 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 
-use super::build_unauthenticated_download_api;
+use super::{approved_download_repo, build_unauthenticated_download_api};
+use crate::retrieval::embedding::local_semantic::LocalEmbeddingPreset;
+
+const EVALUATED_E5_REVISION: &str = "614241f622f53c4eeff9890bdc4f31cfecc418b3";
+
+#[test]
+fn default_download_repo_uses_evaluated_immutable_revision() -> Result<()> {
+    let root = std::env::temp_dir().join(format!(
+        "remem-download-revision-test-{}-{}",
+        std::process::id(),
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    ));
+    let api = build_unauthenticated_download_api(&root, "http://127.0.0.1:9")?;
+    let (repo, revision) = approved_download_repo(LocalEmbeddingPreset::MultilingualE5Small)?;
+    let model_url = api.repo(repo).url("onnx/model.onnx");
+
+    assert_eq!(revision, EVALUATED_E5_REVISION);
+    assert!(model_url.contains(&format!("/resolve/{EVALUATED_E5_REVISION}/")));
+    assert!(!model_url.contains("/resolve/main/"), "{model_url}");
+    Ok(())
+}
+
+#[test]
+fn preset_without_approved_revision_fails_closed() {
+    let error = approved_download_repo(LocalEmbeddingPreset::BgeM3).unwrap_err();
+    let message = error.to_string();
+
+    assert!(
+        message.contains("automatic download"),
+        "unexpected error: {error:#}"
+    );
+    assert!(
+        message.contains("no approved immutable Hugging Face revision"),
+        "unexpected error: {error:#}"
+    );
+    assert!(
+        message.contains("already installed verified bge-m3 cache"),
+        "unexpected error: {error:#}"
+    );
+}
 
 #[test]
 fn download_client_does_not_send_parent_cache_token() -> Result<()> {
