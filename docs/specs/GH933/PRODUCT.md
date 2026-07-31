@@ -144,11 +144,12 @@ pending v2 requirements below.
    or canonical no-source archive identity and remains stable across its
    importer-owned metadata rewrite.
    Local-copy mutation uses a fsynced write-ahead journal outside the database.
-   Deterministic journal/temp/stage/backup names have closed scan and ownership
-   rules; an exhaustive target/backup/stage table covers phase-update lag,
-   including `swap_intent` before rename. Recovery restores exact prior bytes
-   without a seal or keeps the sealed target; every unlisted state fails closed
-   untouched. A crash before commit therefore leaves no
+   Journal temp/stage use remem-created 0600 proof; backup instead proves the
+   no-replace rename source plus original identity, metadata and digest, retaining
+   legal target permissions such as 0200. Durable recovery phases make every
+   recovery rename/unlink/fsync reentrant after a second or repeated crash.
+   Recovery restores exact prior bytes without a seal or keeps the sealed target;
+   every unlisted state fails closed untouched. A crash before commit leaves no
    committed database state or user-file mutation after reconciliation. After
    commit/response loss, an exact-key retry returns the committed winner without
    another file write, version, event, operation, claim or knowledge epoch.
@@ -348,6 +349,8 @@ pending v2 requirements below.
       sealed recovery keeps the exact new digest; tampering and indeterminate
       state remain visible and untouched. Initial temp naming/scanning/ownership
       and every legal target/backup/stage tuple have deterministic outcomes.
+      Backup retains original identity/metadata/mode/digest rather than 0600,
+      and persisted recovery phases converge after every recovery-syscall crash.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all

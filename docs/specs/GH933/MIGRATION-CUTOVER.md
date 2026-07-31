@@ -724,76 +724,76 @@ means disabling the v2 projection while retaining schema/history; running 0.6.x
 or restoring the old backup would lose writes and is forbidden.
 
 ## Durable Local-Copy Journal
-
 The verified nonsymlink journal root `${REMEM_DATA_DIR}/write-journal/save/` is
-app-owned mode 0700. For opaque request `R`, names are exactly canonical
-`J=R.json`, update temp `T=.R.json.tmp`, and target siblings
-`S=.remem-save-R.stage`, `B=.remem-save-R.backup`; no random/PID/time suffix is
-legal. Canonical JSON v1 contains writer/request identity/fingerprint, phase,
-all three paths, `before_kind=absent|file`, before/after SHA-256, epoch, and
-schema version—never content, raw key, token, claim source, or response.
+app-owned mode 0700. For opaque request `R`, names are exactly `J=R.json`,
+journal temp `T=.R.json.tmp`, and target siblings `S=.remem-save-R.stage`,
+`B=.remem-save-R.backup`. Canonical JSON records writer/request fingerprints,
+phase/recovery goal, paths, `before_kind`, D1/D0 (D0 null only in
+`inspect_intent`), epoch, present-target identity `I0=(dev,ino)`, and metadata
+`M0=(uid,gid,mode,nlink,size,mtime_ns)`; never content, key, token, or response.
+Proof classes are deliberately different:
 
-Every `T/S/B` is created `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600. Ownership means
-the exact deterministic name in its verified parent, regular file, current uid,
-mode 0600, link count one, no inode alias, and the per-request OS lock held.
-Startup, doctor, and pre-save scan both `*.json` and `.R.json.tmp`, reject every
-other entry, and lock `R`. If `J`, `S`, and `B` are absent, an owned `T` is the
-first reservation temp: no target mutation was permitted, so remove it and fsync
-even when empty/partial. If `J` exists, remove owned `T` and reconcile from `J`;
-the table covers a completed action whose next phase temp did not rename. Any
-other J-absent artifact or failed ownership proof is ambiguous and untouched.
-
-To record any phase, fully write/fdatasync `T`, rename it over `J`, then fsync
-the journal directory. Target swaps fsync files/parents. Process-wide and
-OS-visible per-request locks serialize save and reconciliation.
-
-The state machine is:
-
-| Phase | Durable action completed before phase is recorded |
+| Path | Required source and proof |
 | --- | --- |
-| `reserved` | before state/digest captured; journal fsynced; no target change |
-| `staged` | exact after bytes written to stage and `fdatasync`ed |
-| `swap_intent` | recovery intent fsynced before any target rename |
-| `backed_up` | prior target renamed to backup when present; parent fsynced |
-| `swapped` | stage renamed to target; target and parent fsynced |
-| `sealed` | matching DB commit seal observed after SQLite commit |
-| removed | backup/stage removed, parents fsynced, journal removed and journal dir fsynced |
+| `T` | remem creates with `O_CREAT\|O_EXCL\|O_NOFOLLOW`, mode 0600; exact name/private parent/current uid/regular/nlink=1 |
+| `S` | same creation proof as `T`, plus exact after digest `D1` |
+| `B` | not created and has no temp-mode invariant: durable `swap_intent`, then atomic no-replace target→`B`; it retains `I0`, `M0`, and `D0` |
+| target | verified regular identity/metadata/digest or recorded absence; symlink, alias, and nonregular types are forbidden |
+`B` therefore legitimately retains target mode 0644, 0200, or another recorded
+mode; 0600 is not a backup invariant. No-replace must be one atomic platform
+primitive (`renameat2(RENAME_NOREPLACE)`/`renameatx_np(RENAME_EXCL)` equivalent);
+an existing `B` or unsupported filesystem errors before target mutation.
 
-After global reconciliation the writer begins `BEGIN IMMEDIATE` and looks up
-the request. Equal sealed retry creates no journal. A miss appends intent,
-reaches `swapped`, writes results/seal, commits SQLite, records `sealed`, then
-cleans up. Only the database seal proves commit.
+An unreadable owner-writable target (including 0200) is supported without a
+readability precondition. First persist `inspect_intent` with `I0/M0`, then use
+no-follow FDs to add only owner-read, hash twice with identical digest and stable
+identity/size/mtime, restore exact mode, fsync, and persist `reserved` with `D0`.
+`inspect_intent` accepts only target `I0` at original mode or that single
+temporary read-bit mode, with `B/S` absent; restart restores/fsyncs mode, removes
+`J`, fsyncs its directory, and repeats if `J` reappears. Unreadable
+non-owner-writable files error before chmod. The same journaled helper verifies
+a 0200 `B`; ctime is diagnostic, while all fields in `M0` must match.
 
-Reconciliation opens the database read-only and validates schema, request/seal,
-paths, types, ownership, and digests. Let `D0` be exact before bytes, `D1` exact
-after bytes, and `Ø` absence. Evaluate the following exhaustive legal states
-top-to-bottom (digest equality does not make two rows ambiguous):
+Each phase update fully writes/fdatasyncs new `T`, renames it over `J`, and
+fsyncs the journal directory. Scanner locks `R`: with `J` absent and `S/B`
+absent it removes an owned empty/partial `T`; with `J` present it removes owned
+`T` and uses `J`. A crash during that unlink may yield `T` present or absent and
+repeats safely. Any other J-absent artifact or proof failure is ambiguous.
 
-| DB seal / before | Durable `J` phase | target | `B` | `S` | Recovery |
-| --- | --- | --- | --- | --- | --- |
-| none / file | `reserved` | `D0` | `Ø` | `Ø\|D1` | keep target; remove owned `S` |
-| none / file | `staged\|swap_intent` | `D0` | `Ø` | `D1` | keep target; remove owned `S` |
-| none / file | `swap_intent\|backed_up` | `Ø` | `D0` | `D1` | rename `B`→target; remove `S` |
-| none / file | `backed_up\|swapped` | `D1` | `D0` | `Ø` | rename `B` over target |
-| none / absent | `reserved` | `Ø` | `Ø` | `Ø\|D1` | remove owned `S` |
-| none / absent | `staged\|swap_intent\|backed_up` | `Ø` | `Ø` | `D1` | remove owned `S` |
-| none / absent | `backed_up\|swapped` | `D1` | `Ø` | `Ø` | remove target |
-| matching / file | `swapped` | `D1` | `D0` | `Ø` | keep target; remove owned `B` |
-| matching / file | `sealed` | `D1` | `D0\|Ø` | `Ø` | keep target; remove owned `B` |
-| matching / absent | `swapped\|sealed` | `D1` | `Ø` | `Ø` | keep target |
+Writer phases are `reserved`, `staged`, `swap_intent`, `backed_up`, `swapped`,
+DB commit, then `sealed`. File/no-seal phase→states are exactly:
+`reserved:(D0,Ø,Ø|D1)`; `staged:(D0,Ø,D1)`; `swap_intent:(D0,Ø,D1)|(Ø,D0,D1)`;
+`backed_up:(Ø,D0,D1)|(D1,D0,Ø)`; `swapped:(D1,D0,Ø)`. Absent/no-seal uses
+`reserved:(Ø,Ø,Ø|D1)`, `staged|swap_intent:(Ø,Ø,D1)`,
+`backed_up:(Ø,Ø,D1)|(D1,Ø,Ø)`, `swapped:(D1,Ø,Ø)`. Matching seal requires
+file `swapped:(D1,D0,Ø)` or `sealed:(D1,D0|Ø,Ø)`; absent is `(D1,Ø,Ø)`.
+Target→B is no-replace after `swap_intent`; S→target/target/parents are fsynced.
+Exact retry creates no journal. Only the DB seal proves commit.
 
-Thus the pre-rename `swap_intent` state target=`D0`, `B=Ø`, `S=D1` is explicitly
-safe. Each recovery fsyncs the affected file/parent before removing `J` and
-fsyncing the journal directory. Every unlisted combination—including a seal in
-an earlier phase, missing/mismatched DB result, wrong digest/type/path, escape,
-alias, or unowned artifact—is `local_copy_reconciliation_ambiguous`: preserve
-all bytes and journal, return/log an error with only opaque `R` and phase, and
-keep doctor nonhealthy.
-A crash may occur after any syscall or SQLite statement. After reconciliation,
-no seal means exact prior bytes/absence; a seal means exact new target bytes.
-Cleanup failure after commit cannot rewrite the sealed `written` response. It
-retains the journal, logs an error, and keeps doctor nonhealthy until cleanup.
-No swallowed error, blind delete, or PID/time heuristic is allowed.
+Before filesystem recovery, validate the writer phase/physical tuple, persist
+and fsync exactly one recovery phase, then mutate. `Ø` means absent; every `D0`
+also requires `I0/M0` (or the documented temporary read bit while hashing):
+
+| Recovery phase | DB goal | Accepted `(target,B,S)` states | Idempotent normalization |
+| --- | --- | --- | --- |
+| `recover_before_file` | no seal, prior file | `(D0,Ø,Ø\|D1)`, `(Ø,D0,D1)`, `(D1,D0,Ø)` | restore `B` no-replace into Ø or atomically over exact D1; unlink exact S |
+| `recover_before_absent` | no seal, prior absent | `(Ø,Ø,Ø\|D1)`, `(D1,Ø,Ø)` | unlink exact S/D1 target |
+| `recover_after_file` | matching seal, prior file | `(D1,D0,Ø)`, `(D1,Ø,Ø)` | keep D1; unlink proved B |
+| `recover_after_absent` | matching seal, prior absent | `(D1,Ø,Ø)` | keep D1 |
+
+The recovery phase remains unchanged through every rename/unlink, target
+fdatasync, and parent fsync. Each post-action/pre-fsync and post-fsync state is
+an adjacent accepted row above, so a second or repeated crash resumes the same
+normalization rather than reclassifying it ambiguous. After the terminal tuple
+is fsynced, unlink `J` and fsync its directory; another crash yields either the
+same terminal recovery row or no journal/artifacts. Rehearsal expands these
+transitions into all post-action states and kills after every recovery syscall.
+
+Every unlisted tuple, earlier-phase seal, missing/mismatched DB result, wrong
+digest/identity/metadata/path, escape, alias, or unproved artifact is
+`local_copy_reconciliation_ambiguous`: preserve all bytes/J, error with opaque
+`R`/phase, and keep doctor nonhealthy. No-seal converges to exact D0/absence;
+seal converges to D1. Cleanup failure never rewrites the sealed response.
 ## Completion Evidence
 
 Rehearsal must match SQL and prove UDFs, typed/sealed writers, retry/duplicate,

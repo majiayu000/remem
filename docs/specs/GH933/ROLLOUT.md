@@ -88,7 +88,7 @@ doctor, and one read-only truth smoke check.
 
 Enable one controlled save at a time: no-local-copy new memory; update/noop;
 intentional identical lesson with two keys; exact retry; conflict retry; then
-local-copy absent/present target. Verify stored responses, result bindings,
+local-copy absent/0644/0200 target. Verify stored responses, result bindings,
 files, and metrics after each. A failure stops the canary immediately.
 
 ## Phase 3 — Canary Observation
@@ -96,7 +96,8 @@ files, and metrics after each. A failure stops the canary immediately.
 Keep the canary on the new binary for at least 72 hours and through:
 
 - one restart with automatic journal reconciliation, including the pre-rename
-  `swap_intent` tuple and an owned initial journal-temp cleanup;
+  `swap_intent` tuple, 0200-target/backup proof, initial temp cleanup, and a
+  second crash inside each persisted recovery phase;
 - normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup
   activity that exercises every supported writer;
 - event retention cleanup proving history remains intact; and
@@ -138,7 +139,8 @@ Metrics and structured logs use opaque request IDs only:
 | exact replay that mutates rows/files/knowledge epoch | any |
 | route/lifecycle gap, fork, terminal drift, or unexpected forward-only result | any |
 | journal `cleanup_pending` | page after 5 minutes or repeated retry |
-| ambiguous journal/temp ownership or target/backup/stage reconciliation | any; never mutate |
+| backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
+| recovery phase fails to converge after any repeated crash | any |
 | raw idempotency key/credential detected in retained output | any |
 | migration latency/disk above approved budget | stop current cohort |
 

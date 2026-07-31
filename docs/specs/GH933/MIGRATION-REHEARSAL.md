@@ -184,6 +184,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | --- | --- | --- |
 | first deterministic temp create/write/fdatasync | prior target; owned temp found and removed | not reachable |
 | first temp→canonical rename/directory fsync | prior target; canonical-or-temp scan converges | not reachable |
+| `inspect_intent` fsync; owner-read lift/hash/restore/fsync | exact original mode/identity/bytes | not reachable |
 | stage write/fdatasync | prior target; stage removed | not reachable |
 | `staged` journal fsync | prior target; stage removed | not reachable |
 | `swap_intent` journal fsync before rename | target=before, backup absent, stage=after; keep target/remove stage | not reachable |
@@ -195,18 +196,33 @@ Fault injection kills the process, without unwinding, after every boundary:
 | SQLite COMMIT before journal `sealed` | keep exact after digest; cleanup | same |
 | `sealed` journal write/fsync | keep exact after digest; cleanup | same |
 | backup/stage unlink and parent fsync | keep exact after digest; finish cleanup | same |
+| recovery-phase fsync and every recovery rename/unlink/fdatasync/parent fsync | restart same phase and converge | restart same phase and converge |
 | journal unlink/directory fsync | keep exact after digest; no journal | same |
 
 Run every boundary with prior target absent and present, an identical target,
 multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
 database counts, stored response, journal/artifact counts, and doctor status.
-For every canonical phase, enumerate all legal rows in the cutover contract's
-target/backup/stage table, including physical action completion before the next
-phase-temp rename; assert the named action. Mutate each cell to every other
-absence/before/after/wrong-digest state and assert ambiguity. Test scanner
-restart with canonical only, temp only (empty, partial, complete), both, unknown
-filename, wrong uid/mode/link count, inode alias, and path escape. Only an owned
-deterministic temp may be removed; every failed ownership proof remains intact.
+Run a real filesystem probe for readable 0644 and unreadable owner-writable 0200
+targets. Write known bytes before chmod; exercise journaled owner-read lift,
+double hash, exact mode restoration, and no-replace target→B→target. Assert
+dev/inode, uid/gid/mode/nlink/size/mtime, digest and bytes are preserved; T/S
+remain remem-created 0600 while B remains 0644/0200. Precreate B and assert the
+platform no-replace syscall fails before changing target. Run on every supported
+filesystem; unsupported primitives are a visible no-mutation compatibility error.
+
+Model the four persisted recovery phases and exhaustively traverse every allowed
+physical tuple. The 13 named post-action/pre-J-removal checkpoints are: phase
+fsync; B→empty-target rename, target fdatasync and parent fsync; B-over-D1 rename,
+replacement fdatasync and parent fsync; S unlink and parent fsync; absent-target
+D1 unlink and parent fsync; proved-B unlink and parent fsync. Kill/restart at
+each, then kill again at every reachable later syscall (and iterate to a fixed
+point). Every protocol-generated path reaches exact D0/absence or D1 without
+ambiguity; every adjacent pre/post-durability state remains in the same phase.
+
+Also test canonical only, temp only (empty/partial/complete), both, unknown name,
+wrong T/S uid/mode/link count, B identity/metadata/digest drift, inode alias and
+path escape. Mutate each accepted physical cell to absent/D0/D1/wrong bytes;
+only listed states converge, while every failed proof remains intact/ambiguous.
 
 Tamper separately with journal JSON, request fingerprint, target/backup/stage
 path, type, inode alias, and each digest; remove/invalidate the DB; create an
@@ -241,6 +257,8 @@ The JSON artifact schema v1 contains:
   "ddl_negative_cases": {},
   "idempotency_cases": {},
   "crash_boundaries": {},
+  "filesystem_probes": {},
+  "recovery_second_crash_cases": {},
   "integrity_check": "ok",
   "foreign_key_violations": [],
   "raw_key_leaks": 0,
