@@ -175,8 +175,9 @@ pending v2 requirements below.
    metadata, digest and legal permissions such as 0200. A durable
    `exchange_intent` precedes atomic stage/target exchange and accepts its exact
    before, normal-after, captured replacement, or same-original-inode in-place-
-   write crash tuple; only then does the writer prove target=new and backup+
-   stage=unchanged original.
+   write crash tuple; only then does the writer prove target+N are exact D1 and
+   backup+stage are the same structural predecessor I0*, recording rather than
+   rejecting phase-qualified mutable drift for permanent retention under O.
    An unsupported exchange fails before target mutation. Recovery never reverses
    the exchange. N already pins D1, so recovery pins only the restore entry,
    no-replace evacuates whichever entry is currently at target into H, and

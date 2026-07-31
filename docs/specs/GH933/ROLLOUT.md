@@ -179,7 +179,7 @@ Metrics and structured logs use opaque request IDs only:
 | `local_copy_cleanup_concurrency_violation` | preserve every remaining pin/J, keep doctor nonhealthy, stop request and cohort, and report only opaque snapshot mismatch evidence |
 | target/nonpermanent-pin activity after durable cleanup boundary | caller-contract violation; stop cohort, preserve whatever remains, and make no preservation claim; G/O-backed mode/content drift is exempt because its permanent name remains |
 | present-target exchange, pin, evacuation, or restore identity drift | any; preserve every entry and journal, never cleanup or seal |
-| backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
+| backup source/identity/type/owner/link mismatch, pre-exposure metadata/digest mismatch, or ambiguous artifact proof | any; never mutate. Post-exposure phase-qualified mode/content/digest drift on proved same I0* follows the accepted-drift row above |
 | recovery phase fails to converge after any repeated crash | any |
 | raw idempotency key/credential detected in retained output | any |
 | migration latency/disk above approved budget | stop current cohort |
