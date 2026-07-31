@@ -61,9 +61,10 @@ Exit requires:
 - backup restore drill completed and timed;
 - cross-process lock-contention and target-parent evidence complete on every
   supported filesystem;
-- exhaustive stage-build, prepublication N-pin and N→G quarantine checkpoints,
-  final-publish collision races, and literal DDL positive/negative/FK matrices
-  pass;
+- exhaustive stage-build, exact shared nonce grammar, first-use Q-directory
+  durability, prepublication N-pin, N→G quarantine, durable cleanup snapshot
+  and revalidation checkpoints, final-publish collision races, and literal DDL
+  positive/negative/FK matrices pass;
 - migration duration and peak disk usage fit the maintenance budget with at
   least 2x measured free-space headroom;
 - all forward-only counts explained from source evidence; and
@@ -110,11 +111,13 @@ Keep the canary on the new binary for at least 72 hours and through:
   no-replace evacuation, replacement/open-FD restore tuples including
   post-choice H/N drift, N→G no-replace quarantine with both parent fsyncs,
   portable absent `{target,S,N}` nlink=3, prior-absent target→H
-  classify/unlink-or-restore without pathname target unlink, exact per-inode
+  classify/unlink-or-restore without pathname target unlink, durable
+  `cleanup_intent` snapshot/revalidation, exact ordered per-inode
   name-set/nlink cleanup, and a second crash inside each persisted phase;
 - APFS target replacement before exchange, after exchange, and after evacuation
   proving N already retains D1, plus late open-FD writes before/after N→G that
-  remain visible through G;
+  remain visible through G through the cleanup boundary; after successful
+  cleanup revalidation, the target remains quiescent through lock release;
 - writer/scanner/doctor contention at every local-copy phase, including durable
   D1 before seal and live lock-path replacement; immutable fd/path/inode/nonce
   anchor proof admits at most one protocol owner, followed by single-owner
@@ -168,8 +171,10 @@ Metrics and structured logs use opaque request IDs only:
 | prepublication N identity/name-set/fsync failure | any; no target publication |
 | retained G identity/name/type/owner/link mismatch, missing dual-parent fsync, or automatic G deletion | any; stop writes and preserve evidence |
 | completed G count/disk growth | report separately from pending journals; stop on unexplained growth or capacity risk |
-| distinguishable remem-reserved identity/name/type/owner/link drift | any; phase-qualified mode/content drift of a formerly-target inode under B/S/C/H/N/G is accepted without source attribution |
+| distinguishable remem-reserved identity/name/type/owner/link drift | any; phase-qualified mode/content drift of a formerly-target inode under B/S/C/H/N/G is accepted without source attribution only through durable `cleanup_intent` |
 | `local_copy_publish_collision` | stop request; newest bytes stay at target or durably under H/N/G after an un-CASable post-choice write; report which, retain J/B/S/N/C/H/G, keep doctor nonhealthy and DB unsealed |
+| `local_copy_cleanup_concurrency_violation` | preserve every remaining pin/J, keep doctor nonhealthy, stop request and cohort, and report only opaque snapshot mismatch evidence |
+| target/open-FD activity after durable cleanup boundary | caller-contract violation; stop cohort, preserve whatever remains, and make no preservation claim |
 | present-target exchange, pin, evacuation, or restore identity drift | any; preserve every entry and journal, never cleanup or seal |
 | backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
 | recovery phase fails to converge after any repeated crash | any |
@@ -188,9 +193,9 @@ journal phase, and error code without content or raw path secrets.
 | transaction failed before commit | keep writers stopped, verify rollback, retry fixed binary or restore tested backup | partial manual DDL repair |
 | migration committed, zero non-migration seals | restore tested backup during downtime, then start 0.6.x | copy tables selectively |
 | any v2 write sealed | keep 0.7 writer/schema; disable v2 projection/read surface | old binary, down migration, dropping ledgers, restoring stale backup |
-| local-copy journal pending without seal | after lock/anchor proof, restore prior target/absence if uncontested; after publication rename N→G and fsync both parents. For prior absence, absence is terminal, target≠G is collision, and only target=G evacuates to H; remove H only if H=G, otherwise restore it no-replace or preserve target/H on EEXIST | pathname unlink of user target; unlink last D1 name; inspect while busy; automatic G garbage collection |
-| local-copy journal pending with seal | after acquiring R's retained L lock and exact anchor, retain exact sealed target and finish S/B/N cleanup only after proving target remains D1 | restore prior target |
-| final publish collides by replacement/open FD | rely on prepublication N, no-replace evacuate to H and link C only for observed exact D1, otherwise H; post-choice drift may leave latest under H/N and must preserve/report every pin unsealed | reverse exchange, claim latest-at-target without proof, plain overwrite rename, delete, or misclassify competitor as backup |
+| local-copy journal pending without seal | after lock/anchor proof, restore prior target/absence if uncontested; after publication rename N→G and fsync both parents. For prior absence, terminal requires target/H both absent; classify H, leave target≠G as collision, and only evacuate target=G. Before final-pin cleanup, persist/revalidate `cleanup_intent` and keep target quiescent | pathname unlink of user target; cleanup without the boundary/quiet interval; inspect while busy; automatic G garbage collection |
+| local-copy journal pending with seal | after acquiring R's retained L lock and exact anchor, retain exact sealed target, persist/revalidate `cleanup_intent`, then finish S/B/N cleanup while target stays quiescent and D1 | restore prior target; cleanup without the boundary/quiet interval |
+| final publish collides by replacement/open FD | before the cleanup boundary, rely on prepublication N, no-replace evacuate to H and link C only for observed exact D1, otherwise H; post-choice drift may leave latest under H/N and must preserve/report every pin unsealed | reverse exchange, claim latest-at-target without proof, plain overwrite rename, delete, or post-boundary concurrency |
 | ambiguous journal/database state | stop writes, preserve all bytes/journal, escalate to database+security reviewers | automatic repair |
 
 Disabling projection changes only read routing/feature flags. It never removes

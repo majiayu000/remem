@@ -243,16 +243,16 @@ Fault injection kills the process, without unwinding, after every boundary:
 | `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
 | `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
 | `new_pin_intent`; S→N no-replace; S/N proof and P fsync; `new_pinned` | exact prior target; prepublication cleanup may remove only proved N then S | not reachable |
-| `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove only proved N/stage/B links, while a mismatched target source is preserved visible | not reachable |
-| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; `restore_intent`; C no-replace link/fsync; `restore_ready`; target→H no-replace; C/H→target no-replace; postcheck/P-fsync; `quarantine_intent`; N→G no-replace and P plus Q/quarantine fsync; `quarantined`; ordered cleanup | exact normal exchange restores D0 while G permanently retains D1; drift leaves newest bytes at target or durably under H/N/G with visible collision and no cleanup; no reverse exchange and no last-pin unlink | not reachable |
-| absent-target S→target atomic no-replace or portable link/unlink (including `{target,S,N}` nlink=3), followed on no-seal by N→G and observed target=G→H classify/unlink-or-restore | uncontested prior absence plus retained G; target≠G stays, H=G may unlink, H≠G restores no-replace, and EEXIST preserves target/H/G collision | not reachable |
+| `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove proved unexposed N/stage directly, but remove B only after target=B eligibility and durable `cleanup_intent`; a mismatched target source stays visible | not reachable |
+| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; `restore_intent`; C no-replace link/fsync; `restore_ready`; target→H no-replace; C/H→target no-replace; postcheck/P-fsync; `quarantine_intent`; N→G no-replace and P plus Q/quarantine fsync; `quarantined`; cleanup boundary | exact normal exchange restores D0 while G permanently retains D1, then persists `cleanup_intent` before H/S/B/C removal; pre-boundary drift leaves newest bytes at target or durably under H/N/G with visible collision; no reverse exchange or unbounded last-pin unlink | not reachable |
+| absent-target S→target atomic no-replace or portable link/unlink (including `{target,S,N}` nlink=3), followed on no-seal by N→G and observed target=G→H classify/unlink-or-restore | uncontested prior absence plus retained G is terminal only when target/H are absent; target≠G stays, H=G may unlink, H≠G restores no-replace, and EEXIST preserves target/H/G collision | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
 | seal INSERT before SQLite COMMIT | rollback; prior target restored | not reachable |
-| SQLite COMMIT before journal `sealed` | keep exact after digest; cleanup | same |
+| SQLite COMMIT before journal `sealed` | matching seal is authoritative while J remains `swapped`; persist `sealed`, then cleanup | same |
 | `sealed` journal write/fsync | keep exact after digest; cleanup | same |
-| backup/stage/N unlink and parent fsync | keep exact after digest; finish cleanup while target remains D1 | same |
-| recovery-phase fsync and every C link, present/absent target→H rename, C/H→target link/rename, N→G rename, owned unlink/fdatasync and P/Q-quarantine fsync | restart the same phase/prefix and converge without pathname target unlink, overwrite, or loss of the last D1 name | restart same phase and converge |
+| `cleanup_intent` snapshot write/fdatasync/J rename/Q fsync; post-persist revalidation; every ordered unlink and parent fsync | before the boundary, injected target replacement/write/chmod is retained or produces a visible collision; after snapshot persistence but before revalidation, mismatch returns `local_copy_cleanup_concurrency_violation` and preserves J/pins; after successful revalidation the harness holds target quiescent and every crash resumes the exact prefix | same |
+| recovery-phase fsync and every C link, present/absent target→H rename, C/H→target link/rename, N→G rename, owned unlink/fdatasync and P/Q-quarantine fsync | restart the same phase/prefix and converge without pathname target unlink, overwrite, or pre-boundary loss of the last D1 name | restart same phase and converge |
 | journal unlink/directory fsync | keep exact after digest; no journal | same |
 
 At every table boundary and both sides of each listed syscall, use separate OS
@@ -263,12 +263,19 @@ scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
 `new_pin_intent`, S→N, `new_pinned`, `exchange_intent` fsync,
 present-target exchange/restore pins or absent-target
 publish before/after `swapped`, every DB
-result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, and
+result and seal step, COMMIT-before-`sealed`, `sealed`, `cleanup_intent`,
+each cleanup/J fsync, and
 each recovery phase/action. Both scanner/doctor contenders must return
 `local_copy_writer_in_progress`, and an event trace
 must show no J/U/G/S/B/N/C/H/target open, classification or mutation and no R-scoped DB
 read/write except the immutable K lookup needed after candidate acquisition.
 Snapshot bytes, inode, digest and phase must remain unchanged.
+Enumerate every closed J phase against no seal, its matching seal, and a
+mismatched seal. The only COMMIT-before-J-`sealed` positive case is
+`swapped` plus matching seal; `sealed` and recover-after require matching seal,
+recover-before/restore/quarantine/collision require none, and
+`cleanup_intent` inherits its recorded source phase. Reject all other
+cross-products, any unknown phase, and any J `goal` or goal-like field.
 Explicitly hold the writer with durable D1 at S/N and at target/N but no DB seal;
 doctor must neither restore D0 nor delete D1/J/U/G/S/B/N/C/H.
 The lock must still be busy after each cleanup unlink and after J unlink but
@@ -309,6 +316,10 @@ wrong nonce/path/inode/uid/mode/type/link is preserved ambiguous. Precreate
 wrong-proof U/S, race a second writer (blocked by L), mutate U after IU capture,
 and forge wrong bytes at S: only a successful exact private-Q U proof may be
 classified as partial; wrong-byte S is never normal crash state.
+For the stage nonce, accept only one 128-bit CSPRNG value encoded as 32
+lowercase ASCII hex characters and reused exactly in U and G. Reject 31- and
+33-character values, uppercase, every nonhex boundary byte, and mismatched
+otherwise-valid U/G nonce values.
 
 Race every supported user-target boundary with an independent process. Before B `linkat`,
 rename-replace target so B may capture X rather than I0: the target+B postcheck
@@ -338,16 +349,26 @@ C→target: require target=C, newer bytes still at H/N, durable
 diagnostic. Precreate or mutate a remem-reserved name's distinguishable
 identity/type/owner/mode/link proof and require security-visible ambiguity.
 For any inode already exposed as target, phase-qualified same-inode
-mode/bytes/size/mtime/digest drift under B/S/C/H/N/G must be accepted without
-attributing whether it used an old target fd or reserved path. Active malicious
-reserved unlink is outside the contract. No trace may contain recovery exchange
-or overwrite.
+mode/bytes/size/mtime/digest drift under B/S/C/H/N/G through durable
+`cleanup_intent` must be accepted without attributing whether it used an old
+target fd or reserved path. Active malicious reserved unlink is outside the
+contract. No trace may contain recovery exchange or overwrite.
 
 On APFS, separately replace the user target before exchange, after exchange, and
 after evacuation. In every case N must already retain D1; the target competitor
-must be restored or preserved according to the phase, and no supported target
-race may orphan either inode. During uncontested rollback, write through the old
+must be restored or preserved according to the phase, and no supported
+pre-boundary target race may orphan either inode. During uncontested rollback,
+write through the old
 D1 fd opened from target before and after N→G and prove G exposes the latest bytes.
+For sealed target/N and restored D0 target/B/S/C, inject target
+replace/write/chmod before the cleanup snapshot and between its durable fsync
+and first revalidation. The former must become collision or be reflected in the
+snapshot; the latter must return `local_copy_cleanup_concurrency_violation`
+without removing N or the final D0 pin. Repeat before every ordered unlink,
+including pre-exchange B cleanup. After successful revalidation the harness
+keeps target quiescent through J removal and lock release; a post-boundary
+mutation is a caller-contract violation and is never counted as preservation
+evidence.
 
 Separately race absent-target S→target. Linux `RENAME_NOREPLACE`, macOS
 `RENAME_EXCL`, and portable `linkat` must return EEXIST when the competitor
@@ -355,8 +376,9 @@ wins, preserve it plus J/S, and leave the DB unsealed. Assert zero target→B
 rename, zero plain replacement rename, zero competitor unlink, and no cleanup of
 an identity-mismatched B/S in syscall traces. Kill portable publication after
 link and before S unlink; exact `{target,S,N}=D1`/nlink=3 must resume to
-target/N. After N→G, target absent is terminal and an already different target
-is collision evidence left untouched. Race replacement after observing
+target/N. After N→G, only target/H both absent is terminal; classify any H
+first, and leave an already different target as collision evidence. Race
+replacement after observing
 target=G but before evacuation: target→H must capture the competitor, then
 H→target no-replace restores it or EEXIST preserves both. When H=G, unlink only
 H even if a new target appeared. Kill on both sides of every observation,
@@ -369,14 +391,15 @@ prepublication N plus C/H no-replace recovery and N→G quarantine. Assert dev/i
 preserved; target/B then B/S are the exact temporary nlink=2 I0 pair, T/U remain
 private-Q 0600, and B/S/C retain 0644/0200. At restore entry require exact name
 sets `D0={target,B,S,C}`/nlink=4 and `D1={H,N}`/nlink=2, then atomically
-`D1={H,G}`/nlink=2 and `{G}`/nlink=1 before D0 becomes `(3,1),(2,1),(1,1)`
-after S/B/C cleanup; G remains. Unknown extra links fail closed.
+`D1={H,G}`/nlink=2 and `{G}`/nlink=1, then persist/revalidate
+`cleanup_intent` before D0 becomes `(3,1),(2,1),(1,1)` after S/B/C cleanup; G
+remains. Unknown extra links fail closed.
 Exercise D1-link checkpoints. Precreate
 B and assert link fails before exchange; probe Linux `RENAME_EXCHANGE` and macOS
 `RENAME_SWAP` before target mutation. Unsupported present-target exchange is a
 visible no-mutation compatibility error.
 
-Create distinct journal Q/locks and Q/quarantine directories at 0700 and a current-uid target
+Securely create distinct journal Q/locks and Q/quarantine directories at 0700 and a current-uid target
 parent P at 0755 on Q's device, including a missing descendant securely created
 via its parent dirfd. Prove L/J/T/U/G stay below Q, S/B/N/C/H/target stay below P, and
 S inherits IU only after full-D1 atomic no-replace publication with exact
@@ -388,6 +411,9 @@ and missing directory-fsync, atomic no-replace, or required exchange support. Re
 parent after opening its dirfd at each revalidation boundary: operations must
 remain bound to the proved P and publish nothing at the replacement path, or
 fail visibly without mutation.
+On first use, crash before/after Q mkdir, Q-parent fsync, each child mkdir,
+child fsync, and Q fsync that records `locks` or `quarantine`; restart may use a
+directory only after both its own and parent-entry durability proofs pass.
 
 Keep all 23 historical double-crash vectors as named regressions with identical
 final outcomes (old reserved+S is now `stage_ready`). Replace the unsafe
@@ -395,11 +421,12 @@ B-over-D1 recovery with durable `recover_before_file`: when target=D1 and
 B/S are the proved I0 pair and N already pins D1, persist restore intent; accept
 absent-C/C prefixes, then target present versus post-evacuation H, desired-C publish,
 incumbent-H restore, and EEXIST-target states. For exact D0, enumerate all six
-cleanup prefixes across quarantine intent, atomic N→G, H, S, B, and C cleanup,
-with P and Q/quarantine fsync at the defined boundaries. Before
+cleanup prefixes across quarantine intent, atomic N→G, H, durable
+`cleanup_intent`, S, B, and C cleanup, with P and Q/quarantine fsync at the
+defined boundaries. Before
 exchange, retain the existing pre-exchange S-then-B cleanup states; retain
 absent-target portable three-link, N→G, target→H, H=G unlink,
-H≠G restore/EEXIST plus sealed S/B/N cleanup vectors. For pre-exchange
+H≠G restore/EEXIST plus sealed cleanup-intent/S/B/N vectors. For pre-exchange
 open-FD drift restart from `(I0*,I0*-link,Ø,Ø)` and `(I0*,Ø,Ø,Ø)`.
 For post-exchange drift, kill twice at every restore phase/link/rename/fsync and
 prove observed H=N+D1 selects C while any already changed H selects H. Inject
@@ -414,17 +441,20 @@ target or under proved pins and remain visibly unsealed.
 Also test canonical only, temp only (empty/partial/complete), both, the expected
 retained locks subtree, completed G reported separately from pending artifacts,
 distinct G names for fresh attempts after published-D1 unsealed rollback, mutation-free
-sealed exact replay, no automatic G cleanup, unknown phase/name, wrong
-pre-exposure T/S/G uid/mode/link count, B
+sealed exact replay, no automatic G cleanup, unknown phase/name, J goal fields,
+every phase×seal cross-product, wrong
+pre-exposure T/U/S uid/mode/link count, post-exposure G
+identity/type/uid/link count, B
 identity/metadata/digest drift, inode alias and path escape. Mutate each accepted
 physical cell to absent/D0/D1/wrong bytes;
 only listed states converge, while every failed proof remains intact/ambiguous.
 
 Tamper separately with journal JSON, nonce/IU/IC/G identity, request fingerprint,
 target/backup/U/stage/quarantine path, type, inode alias, ownership/link, and
-pre-exposure mode/metadata/digest. Separately produce identical phase-qualified
-mode/bytes/size/mtime/digest drift on formerly-target B/S/C/H/N/G through an old
-target fd and its reserved name: both must be accepted without attribution. Then
+pre-exposure mode/metadata/digest. Before `cleanup_intent`, separately produce
+identical phase-qualified mode/bytes/size/mtime/digest drift on formerly-target
+B/S/C/H/N/G through an old target fd and its reserved name: both must be
+accepted without attribution. Then
 remove/invalidate the DB; create an
 unexpected combination of target and backup. Every ambiguous case leaves all
 user-visible files and journal untouched, returns
@@ -481,7 +511,8 @@ or head-mismatched cases make `"passed": false`.
 Stop cutover and return to implementation on any UDF mismatch, schema drift,
 unsealed intent, permissive UPDATE/DELETE, missing/extra result, origin mismatch,
 raw-key leak, silent cleanup error, ambiguous reconciliation mutation, FK or
-integrity error, partial S, competitor overwrite, unexplained forward-only
+integrity error, unexpected `local_copy_cleanup_concurrency_violation`, partial
+S, competitor overwrite, unexplained forward-only
 count, nondeterministic rerun, or
 failure outside documented rollback. Passing this rehearsal is necessary but
 does not authorize merge or production migration.

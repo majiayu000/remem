@@ -187,19 +187,32 @@ pending v2 requirements below.
    remain named by H/N. That visible collision retains every pin, stays unsealed
    and keeps doctor nonhealthy; it never claims latest bytes are at target.
    For an uncontested no-seal rollback, N is atomically renamed no-replace to a
-   nonce-qualified 0600 file G in the private same-device quarantine directory,
+   nonce-qualified file G in the private same-device quarantine directory,
    both parent directories are fsynced, and G is retained indefinitely before H
    or a target-derived D1 name is removed. Late writes through an already-open
    D1 fd therefore remain visible through G. For a prior-absent rollback,
-   recovery never unlinks the target pathname. After G is durable, an absent
-   target is terminal and a target already different from G is collision evidence.
-   Only an observed target=G is atomically evacuated to H no-replace; exact
-   H=G/D1 may then be removed, while a raced-in H is atomically renamed back to
-   target no-replace and EEXIST preserves target/H as a visible collision. Thus
-   restores D0/absence only when uncontested while retaining G; a seal keeps D1
-   at target and may remove N. Every phase proves exact name sets and is
-   restartable across all required directory fsyncs. Supported concurrency may
-   replace or write the user target, including through an open fd. Journal,
+   recovery never unlinks the target pathname. After G is durable, absence is
+   terminal only when both target and H are absent; an existing H is first
+   classified as G/D1 or a competing inode and is removed, restored no-replace,
+   or retained on EEXIST accordingly. A target already different from G is
+   collision evidence. Only an observed target=G is atomically evacuated to H
+   no-replace. Thus recovery restores D0/absence only when uncontested while
+   retaining G; a seal keeps D1 at target and may remove N.
+   Before cleanup can remove the final protocol pin of any inode formerly
+   exposed as target, it persists and fsyncs `cleanup_intent` with the source
+   phase, exact frozen namespace/name/identity/metadata/digest snapshot, and
+   ordered unlink list. The source phase must authorize every removal; each
+   inode that phase requires retained must still be named by the user target or
+   permanent G, while a committed obsolete predecessor may be discarded only
+   under the frozen snapshot. Every remaining prefix is revalidated before the
+   next unlink. Target replace/write/chmod and old-target-FD activity are
+   supported through the durable boundary. From that
+   boundary until J removal and lock release, the caller must keep the target
+   quiescent; detectable drift returns
+   `local_copy_cleanup_concurrency_violation`, preserves every remaining pin
+   and J, and keeps doctor nonhealthy. Post-boundary activity violates this
+   contract and has no preservation guarantee. Every phase proves exact name
+   sets and is restartable across all required directory fsyncs. Journal,
    quarantine, and `.remem-save-*` names are remem-reserved; distinguishable
    identity/name/type/ownership/link tampering fails closed and security-visible,
    while active malicious unlink is outside the contract. For an inode already
@@ -208,9 +221,11 @@ pending v2 requirements below.
    target-FD operation and a direct reserved-path operation are physically
    indistinguishable and cannot be attributed portably. Every unlisted state
    fails closed untouched.
-   A crash before commit leaves no committed database state and restores the
-   user target, with any published D1 retained privately as G for recovery
-   evidence. After commit/response loss, an exact-key retry returns the
+   An uncontested crash before commit leaves no committed database state and
+   restores the user target, with any published D1 retained privately as G for
+   recovery evidence. A collision instead retains J and every proved pin and
+   may intentionally leave the target unrestored. After commit/response loss,
+   an exact-key retry returns the
    committed winner without another file write, version, event, operation, claim,
    or knowledge epoch. Same-second transitions remain predecessor/version ordered.
    Every previous status must equal the prior new status and the terminal status
@@ -419,9 +434,10 @@ pending v2 requirements below.
       hard-link pin, present-target atomic exchange, durable exchange/restore
       intents, restore pin, no-replace target evacuation/hold, and atomic
       N→G quarantine rename with both parent fsyncs before any last D1 pin is
-      removed. It also covers absent-target no-replace
-      publication, every database point through
-      commit, cleanup and journal deletion. No-seal recovery restores prior bytes
+      removed. It also covers the durable `cleanup_intent` snapshot, every
+      revalidation/ordered unlink prefix, absent-target no-replace publication,
+      every database point through commit, cleanup and journal deletion.
+      No-seal recovery restores prior bytes
       or absence when uncontested while retaining the displaced D1 indefinitely
       under nonce-qualified G; collision keeps latest bytes at target or under
       H/N/G with an explicit error. Sealed recovery keeps the new digest;
@@ -430,14 +446,16 @@ pending v2 requirements below.
       Backup initially proves original identity/metadata/mode/digest, while each
       phase proves the exact known basename set and nlink for every pinned inode;
       normal rollback proves D0 `{target,B,S,C}` and D1 `{H,N}`, then atomically
-      changes D1 to `{H,G}` and finally `{G}` without an unpinned window. An
-      open-FD collision retains its inode and every recovery crash converges.
+      changes D1 to `{H,G}` and finally `{G}` without an unpinned window. A
+      pre-boundary open-FD collision retains its inode and every recovery crash
+      converges; after the cleanup boundary the target remains quiescent.
       Portable absent publication includes the deterministic
       `{target,S,N}=D1`/nlink=3 link-before-unlink crash tuple. Prior-absent
-      rollback treats target absent as terminal and target≠G as collision; only
-      observed target=G is evacuated to H rather than pathname-unlinked. Exact
-      H=G is removable, a raced-in H is restored no-replace, and EEXIST retains
-      both entries as collision evidence.
+      rollback is terminal only with target/H both absent and treats target≠G
+      as collision; an existing H is classified before terminal. Only observed
+      target=G is evacuated to H rather than pathname-unlinked. Exact H=G is
+      removable, a raced-in H is restored no-replace, and EEXIST retains both
+      entries as collision evidence.
       Cross-process faults at every writer phase prove scanner and doctor cannot
       recover a live request, including durable D1 before its database seal; after
       writer death exactly one anchor-verified lock owner reconciles. Lock-path
@@ -445,20 +463,28 @@ pending v2 requirements below.
       fd/path/inode/nonce proof before any request or artifact access. Target-parent traversal,
       identity, ownership, permissions, device, fsync/no-replace support and every
       stage proof are fault-tested independently of the private journal parent.
+      First-use Q/locks and Q/quarantine creation, child and parent directory
+      fsyncs, and the shared exact 32-lowercase-hex stage nonce grammar are
+      crash- and boundary-tested.
       Every stage-build create/chunk-write/fdatasync/publish checkpoint converges;
       forged U/S proofs fail closed. Absent-target and
       link/exchange/evacuation source races
-      prove a competing create/replace or open-FD write is never deleted, sealed,
-      or misclassified; the durable hold either restores its observed entry
-      no-replace or retains newer post-choice bytes under H/N/G visibly.
+      prove a competing create/replace or open-FD write before
+      `cleanup_intent` is never deleted, sealed, or misclassified; the durable
+      hold either restores its observed entry no-replace or retains newer
+      post-choice bytes under H/N/G visibly. A race between cleanup snapshot
+      persistence and revalidation returns
+      `local_copy_cleanup_concurrency_violation`; the harness keeps target
+      quiescent after successful revalidation.
       Completed G files are reported separately from pending journals, have no
       automatic garbage collection, and a fresh attempt after unsealed rollback
       uses a distinct stage nonce; sealed exact replay remains mutation-free.
-      Tests limit supported concurrency to the user target. Distinguishable
-      reserved-name identity/type/ownership/link mutation is a security-visible
-      ambiguity. Phase-qualified mode/content drift of a formerly exposed target
-      inode under B/S/C/H/N/G is accepted without claiming whether it came
-      through an old target fd or reserved path.
+      Tests limit pre-boundary supported concurrency to the user target.
+      Distinguishable reserved-name identity/type/ownership/link mutation is a
+      security-visible ambiguity. Phase-qualified mode/content drift of a
+      formerly exposed target inode under B/S/C/H/N/G is accepted through the
+      cleanup boundary without claiming whether it came through an old target
+      fd or reserved path.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
