@@ -75,7 +75,8 @@ never use a relaxed copy. Normalize only insignificant whitespace and identifier
 quoting, then require name/body equivalence for every object, explicitly
 `memory_route_ledger_fingerprint_guard`,
 `memory_lifecycle_ledger_fingerprint_guard`, `memory_insert_v1_ledgers`, and
-`memory_route_tuple_update_guard`, plus `memory_write_commit_guard`.
+`memory_route_tuple_update_guard`, `memory_write_commit_guard`,
+`memory_write_lock_anchors`, and both anchor append-only triggers.
 
 Positive cases cover all ten typed binding kinds and every allowed outcome:
 
@@ -120,7 +121,7 @@ every table/count/digest unchanged:
 9. all seven owner scopes accepted, but unknown scope, partial pair, empty,
    ASCII-whitespace-only, leading-whitespace, or trailing-whitespace key rejected;
 10. result inserted after seal and duplicate request/result/seal insertion; and
-11. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
+11. UPDATE and DELETE against lock anchor, request, result, seal, route, and lifecycle rows,
    both before and after seal, plus mutation of a memory origin tuple; and
 12. a changed route tuple with no staged next row, a sealed staged row, wrong
    head, OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching
@@ -137,6 +138,11 @@ For `memory_insert_v1_ledgers`, run every insert family, missing/wrong
 between its two INSERT statements. A parent INSERT yields exactly memory+route
 v1+lifecycle v1 or zero rows—never one ledger. Compare the five literal trigger
 bodies independently with normalized `sqlite_schema.sql`.
+
+Exercise anchor DDL independently: only valid opaque R, positive dev/ino,
+lowercase 128-bit nonce and nonnegative epoch insert; duplicate R or dev/ino,
+malformed nonce, UPDATE and DELETE fail unchanged. A short `BEGIN IMMEDIATE`
+race with different candidate inodes for one R commits at most one exact anchor.
 
 Explicitly prove that an intent cannot commit without a seal and a seal cannot
 commit without all manifested results. `PRAGMA foreign_key_check` is empty after
@@ -223,13 +229,14 @@ Fault injection kills the process, without unwinding, after every boundary:
 
 | Boundary | No DB seal recovery | Matching DB seal recovery |
 | --- | --- | --- |
+| L create/candidate lock; nonce write/fdatasync; locks-dir fsync; K insert/select/commit and fd/path/K/nonce recheck | retry may initialize or exact-match K, but cannot inspect request/artifacts first | not reachable |
 | first deterministic temp create/write/fdatasync | prior target; owned temp found and removed | not reachable |
 | first temp→canonical rename/directory fsync | prior target; canonical-or-temp scan converges | not reachable |
 | `inspect_intent` fsync; owner-read lift/hash/restore/fsync | exact original mode/identity/bytes | not reachable |
 | `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
 | `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
 | `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove only proved stage/B link, while a mismatched link source is preserved visible | not reachable |
-| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; competitor-proof journal fsync and reverse compensation | exact normal exchange rolls back to D0 and removes S/B/J; only actual drift compensates to C with J/B/S unsealed; entry drift preserves all | not reachable |
+| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; `compensate_intent` fsync; reverse exchange/postcheck/target-fdatasync/P-fsync | exact normal exchange rolls back to D0 and removes S/B/J; actual drift reaches phase-qualified IC-at-target without repeating reverse and keeps J/B/S; entry drift preserves all | not reachable |
 | absent-target S→target atomic no-replace and portable link/unlink | prior absence restored only without competitor; EEXIST preserves competitor/J/S as ambiguous | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
@@ -241,7 +248,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | journal unlink/directory fsync | keep exact after digest; no journal | same |
 
 At every table boundary and both sides of each listed syscall, use separate OS
-processes, not threads: the writer holds the retained L inode while a startup
+processes, not threads: the writer holds the anchor-verified retained L inode while a startup
 scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
 `inspect_intent`, `reserved`, `stage_building`, every U create/write/fsync,
 `stage_ready`, U→S, `staged`, `swap_intent`, B-link before/after `backed_up`,
@@ -251,7 +258,8 @@ result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, an
 each recovery phase/action. Both scanner/doctor contenders must return
 `local_copy_writer_in_progress`, and an event trace
 must show no J/U/S/B/target open, classification or mutation and no R-scoped DB
-read/write. Snapshot bytes, inode, digest and phase must remain unchanged.
+read/write except the immutable K lookup needed after candidate acquisition.
+Snapshot bytes, inode, digest and phase must remain unchanged.
 Explicitly hold the writer with durable D1 at S and at target but no DB seal;
 doctor must neither restore D0 nor delete D1/J/U/S/B.
 The lock must still be busy after each cleanup unlink and after J unlink but
@@ -259,12 +267,18 @@ before Q fsync, and become acquirable only when the owner releases it afterward.
 
 SIGKILL the writer at every boundary so the kernel releases L, then race scanner
 and doctor as independent processes. Exactly one must acquire the same retained
-lock inode and reconcile through terminal fsync/J cleanup; the simultaneous
+lock inode, exact-match K and reconcile through terminal fsync/J cleanup; the simultaneous
 other returns busy, while a separately launched later contender observes no
 work. Repeat with reversed process order.
-Reject alternate lock paths/inodes, process-local mutexes, lock-file replacement
-and PID/mtime stale-owner inference. Wrong lock/locks-dir path, identity, type,
-uid, mode or link count must return `local_copy_lock_unsafe` before R inspection.
+First prove the raw primitive's replacement hazard: A locks old L, rename-replace
+the path, and B locks the new inode concurrently. Race both anchor transactions
+with K absent in each DB ordering; at most one exact fd/path/K/nonce tuple becomes
+a verified owner, while the other returns `local_copy_lock_unsafe` before J or
+request-intent access. Repeat with preexisting K, replacement before/after every
+recheck, copied/wrong/empty nonce, inode alias/reuse, duplicate `(dev,ino)`, and
+scanner/doctor missing K. Reject alternate paths, process-local mutexes and
+PID/mtime inference; wrong lock/locks-dir identity/type/uid/mode/link count/content
+or anchor mutation/mismatch must fail after at most K lookup.
 
 Run every boundary with prior target absent and present, an identical target,
 multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
@@ -331,7 +345,12 @@ unlink S then B with a P fsync after each; before exchange, remove proved S then
 B. Accept and restart from the post-S `(D0,D0-link,Ø,Ø)`, post-B
 `(D0,Ø,Ø,Ø)`, and absent post-D1-unlink `(Ø,Ø,Ø,Ø)` states. Inject after each
 action/fsync and retain absent-target D1 unlink plus sealed
-S/B cleanup vectors; add U/D1-link, source-race and `compensate_intent` states.
+S/B cleanup vectors. For pre-exchange open-FD drift also restart from
+`(I0*,I0*-link,Ø,Ø)` and `(I0*,Ø,Ø,Ø)`. Persist `compensate_intent` before its
+reverse exchange, then kill before/after exchange, postcheck, target fdatasync
+and P fsync; pre `(D1,I0*,IC*,Ø)` reverses once, post `(IC*,I0*,D1,Ø)` never
+reverses again, and IC=I0 is distinguished solely by phase. Add U/D1-link and
+source-race states.
 Kill/restart at each, then again at every reachable later syscall to a fixed
 point. Protocol states converge to D0/absence or D1; competitor states converge
 to a restored stable competitor or remain byte-preserving ambiguity.

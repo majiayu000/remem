@@ -148,9 +148,12 @@ pending v2 requirements below.
    importer-owned metadata rewrite.
    Local-copy mutation uses a fsynced write-ahead journal outside the database.
    Its writer, startup scanner and doctor/reconciler serialize each request on
-   the same retained OS-visible exclusive lock. The writer acquires it before
-   request-scoped database or artifact access and holds it through seal plus
-   cleanup or reconciliation. A direct save retries only lock acquisition for
+   the same retained OS-visible exclusive lock. A candidate lock becomes a
+   protocol owner only after a short transaction exact-matches its fd/path inode
+   and file nonce to an immutable database anchor; path replacement therefore
+   cannot create a second verified owner. The writer proves this before request
+   or artifact access and holds the lock through seal plus cleanup/reconciliation.
+   A direct save retries only lock acquisition for
    at most 5 seconds, then either acquires the lock and replays the sealed winner
    or reports the still-live writer; scanner/doctor contenders report immediately.
    No contender inspects or recovers request artifacts while unlocked. A journal-durable random-nonce `stage_building`
@@ -167,7 +170,9 @@ pending v2 requirements below.
    An unsupported exchange fails before target mutation. If a concurrent writer
    wins by replacement or an already-open FD, the stable captured inode—not a
    stale digest—is durably identified and reverse-exchanged back to target;
-   entry replacement during compensation preserves all names and stays unsealed.
+   the compensation phase distinguishes its pre/post exchange tuples, including
+   the same-inode shape, so a second crash never repeats the reverse exchange.
+   Entry replacement during compensation preserves all names and stays unsealed.
    Durable recovery phases make every exchange/unlink/fsync reentrant.
    Without a seal, recovery restores D0/absence when uncontested or the latest
    captured incumbent inode on collision; a seal keeps D1. Every unlisted state fails closed untouched.
@@ -388,7 +393,9 @@ pending v2 requirements below.
       open-FD collision retains its inode; every recovery-syscall crash converges.
       Cross-process faults at every writer phase prove scanner and doctor cannot
       recover a live request, including durable D1 before its database seal; after
-      writer death exactly one lock owner reconciles. Target-parent traversal,
+      writer death exactly one anchor-verified lock owner reconciles. Lock-path
+      replacement may acquire a second kernel lock but fails immutable
+      fd/path/inode/nonce proof before any request or artifact access. Target-parent traversal,
       identity, ownership, permissions, device, fsync/no-replace support and every
       stage proof are fault-tested independently of the private journal parent.
       Every stage-build create/chunk-write/fdatasync/publish checkpoint converges;
