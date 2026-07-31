@@ -172,7 +172,8 @@ pending v2 requirements below.
    complete two-name D1 set, and fsync the target parent. For an existing
    single-link target, a no-replace hard link
    first pins the reverified original inode as backup, retaining identity,
-   metadata, digest and legal permissions such as 0200. A durable
+   metadata, digest and legal permissions such as 0200 across crash-safe
+   inspection and cleanup revalidation. A durable
    `exchange_intent` precedes atomic stage/target exchange and accepts its exact
    before, normal-after, captured replacement, or same-original-inode in-place-
    write crash tuple; only then does the writer prove target+N are exact D1 and

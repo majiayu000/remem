@@ -287,7 +287,9 @@ or add/remove an entry and require no mutation. Crash the source-J→T→J
 transition at O_EXCL create, zero bytes, every JSON byte prefix,
 fdatasync/rename/Q-fsync: source J plus absent/empty/partial T discards T,
 fsyncs Q and retries without namespace mutation; only complete exact T may
-advance, while canonical cleanup J accepts T absent/identical.
+advance. Canonical cleanup J accepts T absent, a legacy distinct-inode
+byte-identical T to discard, or the exact same-inode J/T nlink-2 cleanup
+validation marker described below.
 Explicitly hold the writer with durable D1 at S/N and at target/N but no DB seal;
 doctor must neither restore D0 nor delete D1/J/U/G/O/S/B/N/C/H.
 The lock must still be busy after each cleanup unlink and after J unlink but
@@ -420,6 +422,13 @@ sets `D0={target,B,S,C}`/nlink=4 and `D1={H,N}`/nlink=2, then atomically
 remains. For the sealed path require D1 `{target,N}` and D0 `{B,S}`, then
 `{target,N}` plus `{O,S}` and finally target-only D1 plus permanent O. Unknown
 extra links fail closed.
+During every cleanup revalidation of an unreadable snapshot, validate J,
+atomically hard-link J→T and fsync Q before adding owner-read. Kill immediately
+after that chmod and require J/T to remain the exact same inode at nlink=2.
+Recovery accepts only the frozen original/single-read-bit mode, restores and
+fsyncs the original 0200 mode, unlinks T/fsyncs Q, and resumes the exact ordered
+prefix. With T absent, the same 0200→0600 change is ordinary cleanup drift and
+must preserve J and all remaining pins.
 Exercise D1-link checkpoints. Precreate
 B and assert link fails before exchange; probe Linux `RENAME_EXCHANGE` and macOS
 `RENAME_SWAP` before target mutation. Unsupported present-target exchange is a
