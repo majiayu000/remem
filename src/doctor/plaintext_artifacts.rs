@@ -162,12 +162,13 @@ fn scan_data_directory(
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
 ) {
-    let mut directories = vec![data_dir.to_path_buf()];
-    while let Some(directory) = directories.pop() {
+    let mut directories = vec![(data_dir.to_path_buf(), false)];
+    while let Some((directory, inside_managed_backups)) = directories.pop() {
         scan_directory(
             &directory,
             data_dir,
             db_path,
+            inside_managed_backups,
             plaintext,
             issues,
             &mut directories,
@@ -179,9 +180,10 @@ fn scan_directory(
     directory: &Path,
     data_dir: &Path,
     db_path: &Path,
+    inside_managed_backups: bool,
     plaintext: &mut Vec<PlaintextArtifact>,
     issues: &mut Vec<String>,
-    child_directories: &mut Vec<PathBuf>,
+    child_directories: &mut Vec<(PathBuf, bool)>,
 ) {
     let directory_metadata = match fs::symlink_metadata(directory) {
         Ok(metadata) => metadata,
@@ -224,7 +226,6 @@ fn scan_directory(
             return;
         }
     };
-    let backups_path = data_dir.join("backups");
     for entry in entries {
         let entry = match entry {
             Ok(entry) => entry,
@@ -237,6 +238,8 @@ fn scan_directory(
             }
         };
         let path = entry.path();
+        let is_managed_backups_path = path_safety::is_managed_backups_path(data_dir, &path);
+        let path_is_inside_managed_backups = inside_managed_backups || is_managed_backups_path;
         let entry_type = match entry.file_type() {
             Ok(file_type) => file_type,
             Err(error) => {
@@ -253,7 +256,7 @@ fn scan_directory(
             {
                 continue;
             }
-            let description = if path == data_dir.join("backups") {
+            let description = if is_managed_backups_path {
                 "symbolic-link backup directory"
             } else {
                 "symbolic-link artifact"
@@ -282,13 +285,13 @@ fn scan_directory(
             continue;
         }
         if entry_type.is_dir() {
-            child_directories.push(path);
+            child_directories.push((path, path_is_inside_managed_backups));
             continue;
         }
         if path == db_path {
             continue;
         }
-        if path == backups_path {
+        if is_managed_backups_path {
             issues.push(format!("scan path {} is not a directory", path.display()));
         }
         if !entry_type.is_file() {
@@ -306,7 +309,7 @@ fn scan_directory(
             continue;
         }
         let ignore_short_file =
-            !path.starts_with(&backups_path) && !is_named_database_artifact(db_path, &path);
+            !path_is_inside_managed_backups && !is_named_database_artifact(db_path, &path);
         match inspect_regular_file(&path, &path_metadata, ignore_short_file) {
             Ok((FileHeader::Plaintext, size_bytes)) => {
                 plaintext.push(PlaintextArtifact { path, size_bytes });
