@@ -8,7 +8,7 @@ use crate::memory::{self, Memory};
 use crate::perf::{push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::common::{
-    calibrated_vector_similarity, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
+    calibrated_vector_hits, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
     WeightedRankedHit,
 };
 use super::{
@@ -512,17 +512,13 @@ fn build_query_search_plan(
                 .with_candidates_scanned(vector_outcome.candidates_scanned)
         } else {
             let candidates_scanned = vector_outcome.candidates_scanned;
-            let hits = vector_outcome
-                .hits
-                .into_iter()
-                .filter(|hit| hit.distance <= weights.max_vector_distance)
-                .map(|hit| {
-                    Ok(WeightedRankedHit::scored(
-                        hit.memory_id,
-                        calibrated_vector_similarity(hit.distance, weights.max_vector_distance)?,
-                    ))
-                })
-                .collect::<Result<Vec<_>>>()?;
+            let hits = calibrated_vector_hits(
+                vector_outcome
+                    .hits
+                    .into_iter()
+                    .map(|hit| (hit.memory_id, hit.distance)),
+                weights.max_vector_distance,
+            )?;
             let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
             NamedChannel::enabled_with_hits("vector", weights.vector, hits)
                 .with_candidates_scanned(candidates_scanned)

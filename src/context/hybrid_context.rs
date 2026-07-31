@@ -3,7 +3,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::memory::{self, Memory};
 use crate::retrieval::search::common::{
-    calibrated_vector_similarity, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
+    calibrated_vector_hits, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
     WeightedRankedHit,
 };
 use crate::retrieval::search::SearchWeights;
@@ -529,23 +529,10 @@ fn query_local_vector_channel(
         let embedding = crate::retrieval::vector::decode_embedding(&blob, dimensions)?;
         let distance =
             crate::retrieval::vector::cosine_distance(query_embedding.values(), &embedding)?;
-        if distance <= max_vector_distance {
-            hits.push((memory_id, distance));
-        }
+        hits.push((memory_id, distance));
     }
-    hits.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    hits.into_iter()
-        .map(|(id, distance)| {
-            Ok(WeightedRankedHit::scored(
-                id,
-                calibrated_vector_similarity(distance, max_vector_distance)?,
-            ))
-        })
-        .collect()
+    hits.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    calibrated_vector_hits(hits, max_vector_distance)
 }
 
 fn query_local_like_channel(

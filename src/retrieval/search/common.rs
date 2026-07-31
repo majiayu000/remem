@@ -128,6 +128,31 @@ pub(crate) fn calibrated_vector_similarity(distance: f32, max_vector_distance: f
     Ok(score.clamp(0.0, 1.0))
 }
 
+pub(crate) fn calibrated_vector_hits(
+    hits: impl IntoIterator<Item = (i64, f32)>,
+    max_vector_distance: f32,
+) -> Result<Vec<WeightedRankedHit>> {
+    ensure!(
+        max_vector_distance.is_finite(),
+        "max vector distance must be finite, got {max_vector_distance}"
+    );
+    let mut ranked = Vec::new();
+    for (id, distance) in hits {
+        ensure!(
+            distance.is_finite(),
+            "vector distance must be finite, got {distance}"
+        );
+        if max_vector_distance <= 0.0 || distance > max_vector_distance {
+            continue;
+        }
+        ranked.push(WeightedRankedHit::scored(
+            id,
+            calibrated_vector_similarity(distance, max_vector_distance)?,
+        ));
+    }
+    Ok(ranked)
+}
+
 pub(crate) fn weighted_rank_score(
     weight: f64,
     k: f64,
@@ -313,5 +338,24 @@ mod tests {
             .expect_err("zero threshold must not produce a NaN score");
 
         assert!(error.to_string().contains("finite and positive"));
+    }
+
+    #[test]
+    fn vector_hit_filter_rejects_non_finite_inputs_before_filtering() {
+        let threshold_error = calibrated_vector_hits([], f32::NAN)
+            .expect_err("a NaN threshold must fail even when there are no hits");
+        assert!(threshold_error
+            .to_string()
+            .contains("max vector distance must be finite"));
+
+        let distance_error = calibrated_vector_hits([(1, f32::NAN)], 1.0)
+            .expect_err("a NaN distance must not be silently filtered");
+        assert!(distance_error
+            .to_string()
+            .contains("vector distance must be finite"));
+
+        assert!(calibrated_vector_hits([(1, 0.25)], -1.0)
+            .expect("a finite closed threshold remains a disabled channel")
+            .is_empty());
     }
 }
