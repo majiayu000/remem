@@ -104,8 +104,9 @@ Keep the canary on the new binary for at least 72 hours and through:
 
 - one restart with automatic journal reconciliation, including the pre-rename
   `stage_building` partial-U, `stage_ready`, `swap_intent`, 0200-target/backup,
-  B-link source recheck, present-target exchange/compensation, initial temp
-  cleanup, and a second crash inside each recovery phase;
+  B-link source recheck, durable `exchange_intent`, present-target
+  exchange/compensation, initial temp cleanup, and a second crash inside each
+  recovery phase;
 - writer/scanner/doctor contention at every local-copy phase, including durable
   D1 before seal, followed by single-owner reconciliation after writer death;
 - normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup

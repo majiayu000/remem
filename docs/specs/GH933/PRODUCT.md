@@ -81,7 +81,9 @@ pending v2 requirements below.
    scope/source/target/owner/memory-type/topic-key/topic-domain/routing/context
    tuple changes; same-value assignments remain legal no-ops. Markdown transitions use
    `source_kind=markdown_import`; scope cleanup also appends its same-status
-   lifecycle version and audit mirror. A guard rejects every other direct change.
+   lifecycle version and audit mirror. A guard rejects every other direct change,
+   including reuse of a sealed staged row; seal itself requires terminal route
+   and lifecycle snapshots to exact-match the current memory.
    A validated A→B→C chain remains discoverable in B. Because legacy save and
    Markdown mutations were not exhaustively logged and 30-day audit events may
    be gone, migration marks history complete only with exhaustive durable proof;
@@ -154,8 +156,10 @@ pending v2 requirements below.
    no-replace as stage below the separately verified target parent, so partial S
    is impossible. For an existing single-link target, a no-replace hard link
    first pins the reverified original inode as backup, retaining identity,
-   metadata, digest and legal permissions such as 0200. Publication atomically
-   exchanges stage and target, then proves target=new and backup+stage=original;
+   metadata, digest and legal permissions such as 0200. A durable
+   `exchange_intent` precedes atomic stage/target exchange and accepts its exact
+   before, normal-after, or captured-competitor crash tuple; only then does the
+   writer prove target=new and backup+stage=original.
    an unsupported exchange fails before target mutation. If a concurrent writer
    wins, its inode is durably identified and reverse-exchanged back to target;
    any further drift preserves all names and leaves the request unsealed.
@@ -351,20 +355,23 @@ pending v2 requirements below.
       malformed or duplicate manifests, missing/extra/shape-invalid result
       bindings, orphan/mismatched INSERT origins, ledger appends without a typed
       manifest slot, ledger appends after seal, and seal when any ledger lacks
-      its typed result. Owner DDL accepts exactly seven scopes and rejects blank
+      its typed result or is nonterminal/current-row-mismatching. Owner DDL
+      accepts exactly seven scopes and rejects blank
       or untrimmed keys. It
       rejects a write connection without the approved SHA-256 UDF. Golden frame
       vectors match Rust, trigger and migration backfill bytes. Literal
       `memory_route_ledger_fingerprint_guard`,
       `memory_lifecycle_ledger_fingerprint_guard`, and
-      `memory_insert_v1_ledgers` plus `memory_route_tuple_update_guard` SQL is
+      `memory_insert_v1_ledgers`, `memory_route_tuple_update_guard`, plus
+      `memory_write_commit_guard` SQL is
       normalized against `sqlite_schema`; all six current memory statuses,
       including `superseded`, are accepted while unknown values fail;
       every typed OLD/NEW field is hashed and memory+route-v1+lifecycle-v1 are
       one atomic statement outcome.
 - [ ] The local-copy crash matrix covers journal reservation, staged-file fsync,
       swap intent, backup hard-link pin, present-target atomic exchange,
-      absent-target no-replace publication, every database point through
+      durable exchange/compensation intents, absent-target no-replace
+      publication, every database point through
       commit, cleanup and journal deletion. No-seal recovery restores prior bytes;
       sealed recovery keeps the exact new digest; tampering and indeterminate
       state remain visible and untouched. Initial temp naming/scanning/ownership

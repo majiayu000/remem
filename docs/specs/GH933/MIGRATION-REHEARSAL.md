@@ -75,7 +75,7 @@ never use a relaxed copy. Normalize only insignificant whitespace and identifier
 quoting, then require name/body equivalence for every object, explicitly
 `memory_route_ledger_fingerprint_guard`,
 `memory_lifecycle_ledger_fingerprint_guard`, `memory_insert_v1_ledgers`, and
-`memory_route_tuple_update_guard`.
+`memory_route_tuple_update_guard`, plus `memory_write_commit_guard`.
 
 Positive cases cover all ten typed binding kinds and every allowed outcome:
 
@@ -106,8 +106,9 @@ every table/count/digest unchanged:
    wrong fingerprint, unknown outcome, and every cross-kind typed-column leak;
 4. each kind with one required ID/path/digest removed, a forbidden ID added,
    dangling FK, duplicate route/lifecycle binding, or noncanonical JSON;
-5. seal with zero, missing, unexpected, or shape-invalid results; wrong terminal
-   chain, response schema/JSON, request fingerprint, or result fingerprint;
+5. seal with zero, missing, unexpected, or shape-invalid results; nonterminal or
+   current-row-mismatching route/lifecycle state, wrong chain, response
+   schema/JSON, request fingerprint, or result fingerprint;
 6. inserted memory without an `insert_origin`, mismatched writer/request/ordinal,
    wrong memory ID, route/lifecycle ID, non-v1 row, predecessor, or source tuple;
 7. transition result bound to another memory/request/ordinal/writer, or a Web
@@ -119,9 +120,10 @@ every table/count/digest unchanged:
 10. result inserted after seal and duplicate request/result/seal insertion; and
 11. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
    both before and after seal, plus mutation of a memory origin tuple; and
-12. a changed route tuple with no staged next row, wrong head, OLD mismatch, or
-   NEW mismatch; each aborts unchanged, while a matching terminal next row
-   permits the update and null-safe same-value assignments need no route row.
+12. a changed route tuple with no staged next row, a sealed staged row, wrong
+   head, OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching
+   open terminal next row permits the update and null-safe same-value
+   assignments need no route row.
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field
@@ -131,7 +133,7 @@ the full frame and only the valid predecessor/version/status/time chain passes.
 For `memory_insert_v1_ledgers`, run every insert family, missing/wrong
 `insert_origin`, wrong UDF, invalid route/lifecycle value, and injected failure
 between its two INSERT statements. A parent INSERT yields exactly memory+route
-v1+lifecycle v1 or zero rows—never one ledger. Compare the three literal trigger
+v1+lifecycle v1 or zero rows—never one ledger. Compare the five literal trigger
 bodies independently with normalized `sqlite_schema.sql`.
 
 Explicitly prove that an intent cannot commit without a seal and a seal cannot
@@ -145,6 +147,10 @@ transition writers named in `TECH.md`. For each, assert intent precedes mutation
 INSERT creates route/lifecycle v1 in the same transaction, every declared result
 is typed, seal is last, and an injected error at each statement rolls everything
 back. Same-value assignments append no transition.
+For route/lifecycle transitions, attempt seal before the memory update and
+require terminal mismatch with the transaction still recoverable; then perform
+the matching update/result/seal successfully. A sealed row cannot authorize a
+later bare memory update, and a request-owned nonterminal row cannot seal.
 One cleanup operation may bind distinct memories; repeating its operation/memory
 pair is rejected.
 
@@ -188,6 +194,9 @@ Positive fixtures preserve every unrelated column/index/trigger/FTS result,
 create deterministic migration IDs, exact typed origins and seals, and match
 terminal rows. Two independent migrations of identical bytes produce identical
 logical rows/fingerprints excluding SQLite-assigned IDs documented as outputs.
+Trace transaction state: WAL checkpoint, handle close, byte backup, fsync/hash
+and backup test-open all complete with no migration write transaction; only then
+does the live database reopen and hold one `BEGIN IMMEDIATE` through postflight.
 
 Malformed fixtures fail closed without advancing `user_version`. Restart after
 an interrupted transaction sees the exact old schema and succeeds once; a
@@ -207,7 +216,7 @@ Fault injection kills the process, without unwinding, after every boundary:
 | `stage_building` J fsync; U O_EXCL create; IU phase fsync before first byte; each chunk; fdatasync/D1 check | exact prior target; proved absent/empty/partial/full U removed; S never exists | not reachable |
 | `stage_ready`; U→S no-replace; portable U/S link; Q/P fsync; `staged` | exact prior target; only proved U/full-D1 S removed | not reachable |
 | `swap_intent`; B no-replace link, source recheck and P fsync; `backed_up` | exact target retained; remove only proved stage/B link, while a mismatched link source is preserved visible | not reachable |
-| present-target S↔target exchange, identity postcheck, competitor-proof journal fsync and reverse compensation | exact exchange rolls back to D0; stable competitor is restored to target with J/B/S unsealed; drift preserves all | not reachable |
+| durable `exchange_intent`; present-target S↔target exchange; identity postcheck; competitor-proof journal fsync and reverse compensation | exact exchange rolls back to D0; a post-exchange/pre-proof crash classifies C under `exchange_intent`; stable competitor is restored with J/B/S unsealed; drift preserves all | not reachable |
 | absent-target S→target atomic no-replace and portable link/unlink | prior absence restored only without competitor; EEXIST preserves competitor/J/S as ambiguous | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
 | each DB mutation/result before seal | prior target/absence restored | not reachable |
@@ -223,7 +232,8 @@ processes, not threads: the writer holds the retained L inode while a startup
 scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
 `inspect_intent`, `reserved`, `stage_building`, every U create/write/fsync,
 `stage_ready`, U→S, `staged`, `swap_intent`, B-link before/after `backed_up`,
-present-target exchange/compensation or absent-target publish before/after `swapped`, every DB
+`exchange_intent` fsync, present-target exchange/compensation or absent-target
+publish before/after `swapped`, every DB
 result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, and
 each recovery phase/action. Both contenders must return
 `local_copy_writer_in_progress` (or bounded-wait at startup), and an event trace
@@ -259,8 +269,9 @@ D0. After a valid B pin but before present-target exchange, replace target with
 C: the exchange may move C to S, but remem must durably record `IC/MC/DC`,
 reverse-exchange only exact target=D1/S=C, prove C restored at target and D1 at
 S, and return `local_copy_publish_collision` with J/B/S and an unsealed DB.
-SIGKILL before/after the competitor-proof fsync and reverse exchange; recovery
-must finish the same compensation. Race the reverse itself: any changed source
+SIGKILL after exchange before competitor observation, before/after the
+competitor-proof fsync, and before/after reverse exchange; `exchange_intent`
+recovery must first prove C, durably enter compensation, then finish it. Race the reverse itself: any changed source
 or postcondition preserves every entry as ambiguous, with no unlink or seal.
 If remem exchanges first and the competitor replaces afterward, the pre-seal
 IU/D1 recheck preserves the competitor/evidence.

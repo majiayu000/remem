@@ -629,6 +629,17 @@ BEGIN
           AND result.lifecycle_ledger_id=lifecycle.id
       )
   ) THEN RAISE(ABORT, 'lifecycle ledger lacks typed result binding') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM memory_route_ledger AS route JOIN memories AS memory ON memory.id=route.memory_id
+    WHERE route.source_writer_kind=NEW.writer_kind AND route.source_ref=NEW.request_id
+      AND (EXISTS (SELECT 1 FROM memory_route_ledger AS successor WHERE successor.previous_route_id=route.id)
+        OR route.placement_project IS NOT memory.project OR route.source_project IS NOT memory.source_project OR route.target_project IS NOT memory.target_project OR route.owner_scope IS NOT memory.owner_scope OR route.owner_key IS NOT memory.owner_key OR route.memory_type IS NOT memory.memory_type OR route.topic_key IS NOT memory.topic_key OR route.topic_domain IS NOT memory.topic_domain OR route.routing_confidence IS NOT memory.routing_confidence OR route.routing_reason IS NOT memory.routing_reason OR route.context_class IS NOT memory.context_class OR route.memory_scope IS NOT memory.scope OR route.branch IS NOT memory.branch)
+  ) THEN RAISE(ABORT, 'route terminal does not match memory at seal') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM memory_lifecycle_ledger AS lifecycle JOIN memories AS memory ON memory.id=lifecycle.memory_id
+    WHERE lifecycle.source_writer_kind=NEW.writer_kind AND lifecycle.source_ref=NEW.request_id
+      AND (EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS successor WHERE successor.previous_lifecycle_id=lifecycle.id) OR lifecycle.new_status IS NOT memory.status)
+  ) THEN RAISE(ABORT, 'lifecycle terminal does not match memory at seal') END;
   SELECT CASE WHEN NEW.result_fingerprint <> remem_sha256_frame_v1(
     'domain', 'memory_write_commit/v1',
     'writer_kind', NEW.writer_kind,
@@ -663,6 +674,7 @@ BEGIN
     JOIN memory_route_ledger AS old_route ON old_route.id=new_route.previous_route_id
     WHERE new_route.memory_id=OLD.id AND old_route.memory_id=OLD.id AND new_route.route_version=old_route.route_version+1
       AND NOT EXISTS (SELECT 1 FROM memory_route_ledger AS successor WHERE successor.previous_route_id=new_route.id)
+      AND NOT EXISTS (SELECT 1 FROM memory_write_request_commits AS commit_row WHERE commit_row.writer_kind=new_route.source_writer_kind AND commit_row.request_id=new_route.source_ref)
       AND old_route.placement_project IS OLD.project AND old_route.source_project IS OLD.source_project AND old_route.target_project IS OLD.target_project AND old_route.owner_scope IS OLD.owner_scope AND old_route.owner_key IS OLD.owner_key AND old_route.memory_type IS OLD.memory_type AND old_route.topic_key IS OLD.topic_key AND old_route.topic_domain IS OLD.topic_domain AND old_route.routing_confidence IS OLD.routing_confidence AND old_route.routing_reason IS OLD.routing_reason AND old_route.context_class IS OLD.context_class AND old_route.memory_scope IS OLD.scope AND old_route.branch IS OLD.branch
       AND new_route.placement_project IS NEW.project AND new_route.source_project IS NEW.source_project AND new_route.target_project IS NEW.target_project AND new_route.owner_scope IS NEW.owner_scope AND new_route.owner_key IS NEW.owner_key AND new_route.memory_type IS NEW.memory_type AND new_route.topic_key IS NEW.topic_key AND new_route.topic_domain IS NEW.topic_domain AND new_route.routing_confidence IS NEW.routing_confidence AND new_route.routing_reason IS NEW.routing_reason AND new_route.context_class IS NEW.context_class AND new_route.memory_scope IS NEW.scope AND new_route.branch IS NEW.branch
   ) THEN RAISE(ABORT, 'memory route update lacks matching staged next version') END;
@@ -685,19 +697,22 @@ CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecyc
 CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
 ```
 
-`memory_route_ledger_fingerprint_guard` and `memory_lifecycle_ledger_fingerprint_guard` hash every typed OLD/NEW column except row ID/digest, including both request fingerprints; `memory_insert_v1_ledgers` requires the open `insert_origin` slot and creates route+lifecycle v1 inside the parent INSERT statement, so either both and the memory exist or none do. These literal bodies are the sole executable authority: no templates, SQL concatenation, post-insert patch, or fallback hash.
+`memory_route_ledger_fingerprint_guard` and `memory_lifecycle_ledger_fingerprint_guard` hash every typed OLD/NEW column except row ID/digest, including both request fingerprints; `memory_insert_v1_ledgers` atomically creates both v1 rows; `memory_route_tuple_update_guard` requires an open exact next route; and `memory_write_commit_guard` requires request-owned ledger terminals to match current memory. These literal bodies are the sole executable authority: no templates, SQL concatenation, post-insert patch, or fallback hash.
 
 ## Backfill and Foreground Cutover
 
 The migration runner performs these steps under one exclusive maintenance
-window and one `BEGIN IMMEDIATE` transaction:
+window. Steps 1–2 precede any migration write transaction; steps 3–5 use one
+uninterrupted `BEGIN IMMEDIATE`:
 
 1. Register and self-test `remem_sha256_frame_v1`; reject a missing function,
    wrong golden vector, disabled FK enforcement, or nonempty migration journal.
 2. Verify schema, checkpoint WAL after all writers stop, close every handle, copy
    the main database byte-for-byte, fsync file/directory, hash, and test-open it.
-3. Create the mutually referenced request/commit tables and migration intents;
-   capture one migration epoch.
+3. Reopen the exact live database, register/self-test the UDF, enable FKs,
+   revalidate database/schema/backup identity, start `BEGIN IMMEDIATE`, create
+   the mutually referenced request/commit tables and intents, and capture one
+   migration epoch.
 4. Rebuild `memories` with its exact current objects and origin tuple, then
    create ledgers/results. For each legacy ID, use
    `migration_vNNN:<memory_id>` with sorted `insert_origin`/`response_aux`
@@ -711,8 +726,9 @@ Postflight requires zero unsealed requests, exact manifest/results, one valid
 terminal route/lifecycle per memory matching `memories`, valid origin/v1 maps,
 no schema drift, `integrity_check='ok'`, and empty `foreign_key_check`.
 
-If any step fails, SQLite rolls the transaction back and the old binary remains
-stopped. The operator restores the fsynced backup only after proving the failed
+Failure before step 3 leaves the live database unmodified; failure in steps 3–5
+rolls back that one transaction, and the old binary remains stopped. The operator
+restores the fsynced backup only after proving the failed
 database is closed. Once a v2 writer seals any non-migration request, rollback
 means disabling the v2 projection while retaining schema/history; running 0.6.x
 or restoring the old backup would lose writes and is forbidden.
@@ -736,8 +752,8 @@ Proof classes and parent locations are deliberately different:
 | `S` | only atomic no-replace publication of fully fdatasynced U after durable `stage_ready`; below verified P with `IU`, exact mode 0600/current uid/regular/nlink=1/entry identity/D1 |
 | `B` | after durable `swap_intent`, an atomic no-replace hard-link pin accepted only when target and B both still prove `I0/M0/D0`, the same inode, and nlink=2; later B/S may be that same proved pair |
 | target | exact basename below verified `P`; verified current-uid regular nlink=1 identity/metadata/digest or recorded absence; symlink, alias, and nonregular types are forbidden |
-Thus S never exists empty/partial and T/U private-parent proof never replaces S's P/IU/D1 proof. U→S and absent-target S→target use Linux `renameat2(RENAME_NOREPLACE)`, macOS `renameatx_np(RENAME_EXCL)`, or portable `linkat` create-if-absent plus proved same-inode nlink=2 and source unlink/fsync (`D1-link`). For a present target, after durable `swap_intent` create B with no-replace `linkat(target,B)`, reverify target+B are exactly the I0/D0 pair, fsync P, and persist `backed_up`; a source mismatch preserves J/B/S and returns a visible backup-source collision without changing the target entry. Then atomically exchange S and target with Linux `renameat2(RENAME_EXCHANGE)` or macOS `renameatx_np(RENAME_SWAP)` and prove target=IU/D1 plus B/S=I0/D0 before `swapped`. There is no portable or plain-rename fallback for present targets.
-If the exchange captured competitor C into S, persist `compensate_intent` with exact `IC/MC/DC` before a reverse exchange; only target=IU/D1 and S=C may be reversed, and success must prove C restored at target and D1 restored at S. Any precondition/postcondition drift preserves target/J/B/S, remains unsealed, and is `local_copy_reconciliation_ambiguous`; stable compensation returns `local_copy_publish_collision`. No unproved entry is unlinked or later classified as D0.
+Thus S never exists empty/partial and T/U private-parent proof never replaces S's P/IU/D1 proof. U→S and absent-target S→target use Linux `renameat2(RENAME_NOREPLACE)`, macOS `renameatx_np(RENAME_EXCL)`, or portable `linkat` create-if-absent plus proved same-inode nlink=2 and source unlink/fsync (`D1-link`). For a present target, after durable `swap_intent` create B with no-replace `linkat(target,B)`, reverify target+B are exactly the I0/D0 pair, fsync P, persist `backed_up`, then persist `exchange_intent` before atomically exchanging S and target with Linux `renameat2(RENAME_EXCHANGE)` or macOS `renameatx_np(RENAME_SWAP)`. Prove target=IU/D1 plus B/S=I0/D0 before `swapped`. There is no portable or plain-rename fallback for present targets.
+Durable `exchange_intent` accepts the exact pre-exchange tuple, normal exchanged tuple, or captured-competitor tuple `(target=D1,B=D0,S=C)`. In the last case, recovery first proves C and persists `compensate_intent` with exact `IC/MC/DC`, then reverse-exchanges only target=IU/D1 and S=C; success must prove C restored at target and D1 at S. Any precondition/postcondition drift preserves target/J/B/S, remains unsealed, and is `local_copy_reconciliation_ambiguous`; stable compensation returns `local_copy_publish_collision`. No unproved entry is unlinked or classified as D0.
 
 Unreadable owner-writable targets including 0200 need no readability precondition: persist `inspect_intent` with I0/M0, add only owner-read through no-follow FDs, double-hash under stable identity/size/mtime, restore exact mode, fsync, then persist `reserved` with D0. Recovery accepts only I0 at original/single-read-bit mode with B/S/U absent, restores/fsyncs mode and removes J reentrantly. Non-owner-writable errors before chmod; the same helper verifies 0200 B/S, allowing only the journaled nlink=2 pin while requiring every other M0 field and D0 exact.
 
@@ -745,7 +761,7 @@ While holding L, each phase update writes/fdatasyncs T, renames it over J and fs
 
 After `reserved`, persist `stage_building` with nonce/D1 and `IU=NULL`, then O_EXCL-create U, fstat it and persist the same phase with IU before the first content byte; write injected chunks, fdatasync and double-check IU/D1, then persist `stage_ready`. A crash in the create→IU-fsync gap still owns U only through its exact nonce/private-Q/type/uid/mode/nlink proof. `stage_building` accepts U absent or any empty/partial/full bytes under that proof and no S; `stage_ready` accepts full U, full S with IU after no-replace U→S, or portable same-inode U+S/nlink=2. Existing before-goal recovery unlinks only proved U/S and fsyncs Q/P; wrong proof or wrong-byte S is ambiguous. Persist `staged` only after durable S=D1/U-absent.
 
-Writer phases are `reserved,stage_building,stage_ready,staged,swap_intent,backed_up,swapped`, DB commit, then `sealed`; `compensate_intent` is an exceptional unsealed phase. In `(target,B,S,U)`, present states are `reserved:(D0,Ø,Ø,Ø)`; `stage_building:(D0,Ø,Ø,U*)`; `stage_ready:(D0,Ø,Ø,D1)|(D0,Ø,D1,Ø|D1-link)`; `staged:(D0,Ø,D1,Ø)`; `swap_intent:(D0,Ø,D1,Ø)|(D0,D0-link,D1,Ø)`; `backed_up:(D0,D0-link,D1,Ø)|(D1,D0-link,D0-link,Ø)`; `swapped:(D1,D0-link,D0-link,Ø)`; compensation is `(D1,D0,C,Ø)→(C,D0,D1,Ø)` with the exact proved links/identities. Absent uses the same build rows, then atomic no-replace `(Ø,Ø,D1,Ø)→(D1,Ø,Ø,Ø)`. `U*` is absent/any bytes with exact building proof. Matching seal allows only the normal D1 state; cleanup removes proved S then B after seal.
+Writer phases are `reserved,stage_building,stage_ready,staged,swap_intent,backed_up,exchange_intent,swapped`, DB commit, then `sealed`; `compensate_intent` is exceptional/unsealed. In `(target,B,S,U)`, present states are `reserved:(D0,Ø,Ø,Ø)`; `stage_building:(D0,Ø,Ø,U*)`; `stage_ready:(D0,Ø,Ø,D1)|(D0,Ø,D1,Ø|D1-link)`; `staged:(D0,Ø,D1,Ø)`; `swap_intent:(D0,Ø,D1,Ø)|(D0,D0-link,D1,Ø)`; `backed_up:(D0,D0-link,D1,Ø)`; `exchange_intent:(D0,D0-link,D1,Ø)|(D1,D0-link,D0-link,Ø)|(D1,D0,C,Ø)`; `swapped:(D1,D0-link,D0-link,Ø)`; compensation is `(D1,D0,C,Ø)→(C,D0,D1,Ø)` with exact proofs. Absent uses the build rows then atomic no-replace `(Ø,Ø,D1,Ø)→(D1,Ø,Ø,Ø)`. Matching seal allows only normal D1; cleanup removes proved S then B after seal.
 Every exchange is postvalidated before phase advance, cleanup, or seal. A competing create/replace is either left at target before mutation, captured in S then durably compensated back to target, or preserved with every artifact on ambiguous drift. Reverify target IU/D1 immediately before seal. Exact retry creates no journal; only the DB seal proves commit.
 
 Before filesystem recovery, validate the writer phase/physical tuple, persist
