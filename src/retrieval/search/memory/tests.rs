@@ -222,10 +222,16 @@ fn like_fallback_only_participates_when_stronger_channels_are_empty() -> Result<
         .iter()
         .find(|result| result.memory_id == 1)
         .context("LIKE fallback result should be explained")?;
-    assert!(result
+    let contribution = result
         .contributions
         .iter()
-        .any(|contribution| contribution.channel == "like_fallback" && contribution.score > 0.0));
+        .find(|contribution| contribution.channel == "like_fallback")
+        .context("LIKE fallback contribution should be explained")?;
+    assert_eq!(contribution.normalized_score, None);
+    assert_eq!(
+        contribution.score,
+        contribution.weight * contribution.rrf_score
+    );
     Ok(())
 }
 
@@ -262,10 +268,9 @@ fn semantic_vector_channel_recalls_paraphrase_without_lexical_overlap() -> Resul
         .find(|result| result.memory_id == id)
         .context("expected vector-recalled memory in explain results")?;
     assert!(
-        result
-            .contributions
-            .iter()
-            .any(|contribution| contribution.channel == "vector"),
+        result.contributions.iter().any(|contribution| {
+            contribution.channel == "vector" && contribution.normalized_score.is_some()
+        }),
         "{result:#?}"
     );
     Ok(())

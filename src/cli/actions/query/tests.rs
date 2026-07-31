@@ -108,6 +108,9 @@ fn sample_explain() -> SearchExplain {
             contributions: vec![ChannelContribution {
                 channel: "fts".to_string(),
                 rank: 1,
+                weight: 1.0,
+                rrf_score: 0.016393,
+                normalized_score: None,
                 score: 0.016393,
             }],
         }],
@@ -222,6 +225,7 @@ fn cli_search_render_includes_explain_without_memory_content_dump() {
     assert!(output.contains("fts: 1#1"));
     assert!(output.contains("visibility=project-local"));
     assert!(output.contains("contributions: fts#1=0.016393"));
+    assert!(output.contains("weight=1.000,rrf=0.016393,signal=rank-only"));
     assert!(!output.contains("second line"));
 }
 

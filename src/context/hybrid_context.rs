@@ -3,8 +3,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::memory::{self, Memory};
 use crate::retrieval::search::common::{
-    rank_normalized_score, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
-    WeightedRankedHit,
+    sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel, WeightedRankedHit,
 };
 use crate::retrieval::search::SearchWeights;
 
@@ -540,11 +539,8 @@ fn query_local_vector_channel(
     });
     Ok(hits
         .into_iter()
-        .enumerate()
-        .map(|(rank, (id, distance))| WeightedRankedHit {
-            id,
-            normalized_score: vector_similarity_score(distance, max_vector_distance)
-                .max(rank_normalized_score(rank)),
+        .map(|(id, distance)| {
+            WeightedRankedHit::scored(id, vector_similarity_score(distance, max_vector_distance))
         })
         .collect())
 }
@@ -739,26 +735,18 @@ fn fts_ranked_hits(hits: &[(i64, f64)]) -> Vec<WeightedRankedHit> {
         .fold(f64::NEG_INFINITY, f64::max);
     let spread = worst - best;
     hits.iter()
-        .enumerate()
-        .map(|(rank, (id, score))| WeightedRankedHit {
-            id: *id,
-            normalized_score: if spread.abs() < f64::EPSILON {
-                rank_normalized_score(rank)
+        .map(|(id, score)| {
+            if spread.abs() < f64::EPSILON {
+                WeightedRankedHit::rank_only(*id)
             } else {
-                ((worst - *score) / spread).clamp(0.0, 1.0)
-            },
+                WeightedRankedHit::scored(*id, ((worst - *score) / spread).clamp(0.0, 1.0))
+            }
         })
         .collect()
 }
 
 fn rank_ordered_hits(ids: Vec<i64>) -> Vec<WeightedRankedHit> {
-    ids.into_iter()
-        .enumerate()
-        .map(|(rank, id)| WeightedRankedHit {
-            id,
-            normalized_score: rank_normalized_score(rank),
-        })
-        .collect()
+    ids.into_iter().map(WeightedRankedHit::rank_only).collect()
 }
 
 fn vector_similarity_score(distance: f32, max_vector_distance: f32) -> f64 {

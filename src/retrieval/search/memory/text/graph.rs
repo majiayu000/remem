@@ -4,7 +4,7 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::perf::time_result;
-use crate::retrieval::search::common::{rank_normalized_score, WeightedRankedHit};
+use crate::retrieval::search::common::WeightedRankedHit;
 
 use super::super::{suppression_filter, SearchWeights};
 use super::NamedChannel;
@@ -57,11 +57,7 @@ pub(super) fn append_graph_channel(
     let hits = outcome
         .hits
         .into_iter()
-        .enumerate()
-        .map(|(rank, hit)| WeightedRankedHit {
-            id: hit.memory_id,
-            normalized_score: rank_normalized_score(rank),
-        })
+        .map(|hit| WeightedRankedHit::rank_only(hit.memory_id))
         .collect::<Vec<_>>();
     let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
     channels.push(graph_channel_after_suppression(
@@ -138,14 +134,8 @@ mod tests {
     #[test]
     fn graph_channel_after_suppression_preserves_unsuppressed_hits() {
         let hits = vec![
-            WeightedRankedHit {
-                id: 7,
-                normalized_score: 1.0,
-            },
-            WeightedRankedHit {
-                id: 9,
-                normalized_score: 0.5,
-            },
+            WeightedRankedHit::rank_only(7),
+            WeightedRankedHit::rank_only(9),
         ];
         let channel = graph_channel_after_suppression(hits, 0.75, 4);
         assert!(channel.is_enabled());

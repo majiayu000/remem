@@ -8,8 +8,7 @@ use crate::memory::{self, Memory};
 use crate::perf::{push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::common::{
-    paginate_memories, rank_normalized_score, sanitize_fts_query, weighted_ranked_fuse,
-    WeightedRankedHit,
+    paginate_memories, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedHit,
 };
 use super::{
     suppression_filter, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
@@ -64,14 +63,7 @@ struct NamedChannel {
 
 impl NamedChannel {
     fn enabled(name: &'static str, weight: f64, ids: Vec<i64>) -> Self {
-        let hits = ids
-            .into_iter()
-            .enumerate()
-            .map(|(rank, id)| WeightedRankedHit {
-                id,
-                normalized_score: rank_normalized_score(rank),
-            })
-            .collect();
+        let hits = ids.into_iter().map(WeightedRankedHit::rank_only).collect();
         Self::enabled_with_hits(name, weight, hits)
     }
 
@@ -521,9 +513,11 @@ fn build_query_search_plan(
                 .hits
                 .into_iter()
                 .filter(|hit| hit.distance <= weights.max_vector_distance)
-                .map(|hit| WeightedRankedHit {
-                    id: hit.memory_id,
-                    normalized_score: vector_similarity_score(hit.distance, weights),
+                .map(|hit| {
+                    WeightedRankedHit::scored(
+                        hit.memory_id,
+                        vector_similarity_score(hit.distance, weights),
+                    )
                 })
                 .collect::<Vec<_>>();
             let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;

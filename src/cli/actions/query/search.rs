@@ -415,10 +415,21 @@ fn render_search_explain(explain: &SearchExplain) -> String {
                 result
                     .contributions
                     .iter()
-                    .map(|contribution| format!(
-                        "{}#{}={:.6}",
-                        contribution.channel, contribution.rank, contribution.score
-                    ))
+                    .map(|contribution| {
+                        let signal = contribution
+                            .normalized_score
+                            .map(|score| format!("{score:.3}"))
+                            .unwrap_or_else(|| "rank-only".to_string());
+                        format!(
+                            "{}#{}={:.6}[weight={:.3},rrf={:.6},signal={}]",
+                            contribution.channel,
+                            contribution.rank,
+                            contribution.score,
+                            contribution.weight,
+                            contribution.rrf_score,
+                            signal
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join(", ")
             ));

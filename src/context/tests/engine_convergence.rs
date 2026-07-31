@@ -352,7 +352,10 @@ fn rrf_k_reaches_injection_fusion() {
 
     let mut weights = zero_injection_weights();
     weights.fts = 1.0;
-    weights.entity = 1.0;
+    // Entity is rank-only: it no longer receives a synthetic second rank
+    // boost. A calibrated weight in the crossover interval keeps this fixture
+    // sensitive to rrf_k under the production scoring contract.
+    weights.entity = 1.25;
     weights.rrf_k = 0.0;
     let small_k = ids_for_query(&conn, "postgres pooling", weights);
     weights.rrf_k = 60.0;
@@ -426,4 +429,12 @@ fn hybrid_context_declares_no_private_scoring_constants() {
             "injection must read {field} directly from SearchWeights"
         );
     }
+    assert!(
+        !source.contains("rank_normalized_score"),
+        "injection rank-only channels must not feed rank back as a score"
+    );
+    assert!(
+        source.contains("WeightedRankedHit::rank_only"),
+        "injection must mark channels without calibrated strength as rank-only"
+    );
 }

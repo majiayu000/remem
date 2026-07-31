@@ -139,8 +139,17 @@ fn run_usage_shadow_candidate(
                 weights,
             )?
             .into_iter()
-            .map(|hit| (hit.id, hit.normalized_score))
-            .collect()
+            .map(|hit| {
+                hit.normalized_score
+                    .map(|score| (hit.id, score))
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "usage channel hit {} is missing its calibrated score",
+                            hit.id
+                        )
+                    })
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?
         } else {
             BTreeMap::new()
         };

@@ -81,5 +81,11 @@ pub struct SearchExplainResult {
 pub struct ChannelContribution {
     pub channel: String,
     pub rank: usize,
+    pub weight: f64,
+    pub rrf_score: f64,
+    /// Present only when the channel supplies a calibrated strength signal.
+    /// Rank-only channels omit this field and use pure weighted RRF.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_score: Option<f64>,
     pub score: f64,
 }
