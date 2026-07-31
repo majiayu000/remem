@@ -144,10 +144,16 @@ pending v2 requirements below.
    or canonical no-source archive identity and remains stable across its
    importer-owned metadata rewrite.
    Local-copy mutation uses a fsynced write-ahead journal outside the database.
-   Journal temp/stage use remem-created 0600 proof; backup instead proves the
-   no-replace rename source plus original identity, metadata and digest, retaining
-   legal target permissions such as 0200. Durable recovery phases make every
-   recovery rename/unlink/fsync reentrant after a second or repeated crash.
+   Its writer, startup scanner and doctor/reconciler serialize each request on
+   the same retained OS-visible exclusive lock. The writer acquires it before
+   request-scoped database or artifact access and holds it through seal plus
+   cleanup or reconciliation; contenders report a live writer without inspecting
+   or recovering its artifacts. Journal temp is remem-created 0600 below the
+   private journal root. Stage instead has explicit O_EXCL/O_NOFOLLOW/0600,
+   current-uid/regular/single-link proof below a separately verified stable target
+   parent; backup proves the no-replace rename source plus original identity,
+   metadata and digest, retaining legal target permissions such as 0200.
+   Durable recovery phases make every recovery rename/unlink/fsync reentrant.
    Recovery restores exact prior bytes without a seal or keeps the sealed target;
    every unlisted state fails closed untouched. A crash before commit leaves no
    committed database state or user-file mutation after reconciliation. After
@@ -351,6 +357,11 @@ pending v2 requirements below.
       and every legal target/backup/stage tuple have deterministic outcomes.
       Backup retains original identity/metadata/mode/digest rather than 0600,
       and persisted recovery phases converge after every recovery-syscall crash.
+      Cross-process faults at every writer phase prove scanner and doctor cannot
+      recover a live request, including durable D1 before its database seal; after
+      writer death exactly one lock owner reconciles. Target-parent traversal,
+      identity, ownership, permissions, device, fsync/no-replace support and every
+      stage proof are fault-tested independently of the private journal parent.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all

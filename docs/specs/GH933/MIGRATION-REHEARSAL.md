@@ -199,6 +199,29 @@ Fault injection kills the process, without unwinding, after every boundary:
 | recovery-phase fsync and every recovery rename/unlink/fdatasync/parent fsync | restart same phase and converge | restart same phase and converge |
 | journal unlink/directory fsync | keep exact after digest; no journal | same |
 
+At every table boundary and both sides of each listed syscall, use separate OS
+processes, not threads: the writer holds the retained L inode while a startup
+scanner and a doctor/reconciler each attempt that exact lock. Cover pre-J,
+`inspect_intent`, `reserved`, stage creation/write, `staged`, `swap_intent`,
+target→B before/after `backed_up`, S→target before/after `swapped`, every DB
+result and seal step, COMMIT-before-`sealed`, `sealed`, each cleanup/J fsync, and
+each recovery phase/action. Both contenders must return
+`local_copy_writer_in_progress` (or bounded-wait at startup), and an event trace
+must show no J/S/B/target open, classification or mutation and no R-scoped DB
+read/write. Snapshot bytes, inode, digest and phase must remain unchanged.
+Explicitly hold the writer with durable D1 at S and at target but no DB seal;
+doctor must neither restore D0 nor delete D1/J/S/B.
+The lock must still be busy after each cleanup unlink and after J unlink but
+before Q fsync, and become acquirable only when the owner releases it afterward.
+
+SIGKILL the writer at every boundary so the kernel releases L, then race scanner
+and doctor as independent processes. Exactly one must acquire the same retained
+lock inode and reconcile through terminal fsync/J cleanup; the other stays busy
+or, after bounded wait, observes no work. Repeat with reversed process order.
+Reject alternate lock paths/inodes, process-local mutexes, lock-file replacement
+and PID/mtime stale-owner inference. Wrong lock/locks-dir path, identity, type,
+uid, mode or link count must return `local_copy_lock_unsafe` before R inspection.
+
 Run every boundary with prior target absent and present, an identical target,
 multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
 database counts, stored response, journal/artifact counts, and doctor status.
@@ -210,6 +233,18 @@ remain remem-created 0600 while B remains 0644/0200. Precreate B and assert the
 platform no-replace syscall fails before changing target. Run on every supported
 filesystem; unsupported primitives are a visible no-mutation compatibility error.
 
+Create distinct journal Q/locks directories at 0700 and a current-uid target
+parent P at 0755, including a missing descendant securely created via its parent
+dirfd. Prove L/J/T stay below Q, S/B/target stay below P, and S's
+O_EXCL/O_NOFOLLOW/0600/current-uid/regular/nlink=1/entry-FD-inode/D1 checks pass
+without claiming a private parent. Reject root/`..` escape, symlink or
+non-directory components, Q alias, wrong parent uid, missing owner rwx,
+group/world-writable P, cross-device target, changed `(dev,ino)` or uid/gid/mode,
+and missing directory-fsync or atomic no-replace support. Replace/rename the
+parent after opening its dirfd at each revalidation boundary: operations must
+remain bound to the proved P and publish nothing at the replacement path, or
+fail visibly without mutation.
+
 Model the four persisted recovery phases and exhaustively traverse every allowed
 physical tuple. The 13 named post-action/pre-J-removal checkpoints are: phase
 fsync; B→empty-target rename, target fdatasync and parent fsync; B-over-D1 rename,
@@ -219,9 +254,10 @@ each, then kill again at every reachable later syscall (and iterate to a fixed
 point). Every protocol-generated path reaches exact D0/absence or D1 without
 ambiguity; every adjacent pre/post-durability state remains in the same phase.
 
-Also test canonical only, temp only (empty/partial/complete), both, unknown name,
-wrong T/S uid/mode/link count, B identity/metadata/digest drift, inode alias and
-path escape. Mutate each accepted physical cell to absent/D0/D1/wrong bytes;
+Also test canonical only, temp only (empty/partial/complete), both, the expected
+retained locks subtree, unknown name, wrong T/S uid/mode/link count, B
+identity/metadata/digest drift, inode alias and path escape. Mutate each accepted
+physical cell to absent/D0/D1/wrong bytes;
 only listed states converge, while every failed proof remains intact/ambiguous.
 
 Tamper separately with journal JSON, request fingerprint, target/backup/stage
@@ -257,6 +293,8 @@ The JSON artifact schema v1 contains:
   "ddl_negative_cases": {},
   "idempotency_cases": {},
   "crash_boundaries": {},
+  "lock_contention_cases": {},
+  "target_parent_cases": {},
   "filesystem_probes": {},
   "recovery_second_crash_cases": {},
   "integrity_check": "ok",

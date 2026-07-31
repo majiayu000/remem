@@ -58,6 +58,8 @@ Exit requires:
 - two deterministic reruns on identical input with matching logical
   fingerprints;
 - backup restore drill completed and timed;
+- cross-process lock-contention and target-parent evidence complete on every
+  supported filesystem;
 - migration duration and peak disk usage fit the maintenance budget with at
   least 2x measured free-space headroom;
 - all forward-only counts explained from source evidence; and
@@ -73,8 +75,9 @@ operator consent. Before cutover:
 
 1. announce downtime and stop every CLI, app, hook, worker, MCP, and scheduled
    writer;
-2. prove no old process holds the database or local-copy root;
-3. reconcile journals to zero and require doctor healthy;
+2. prove no old process holds the database or any per-request local-copy lock;
+3. reconcile journals to zero (retained L files are not pending journals) and
+   require doctor healthy;
 4. create, fsync, hash, and read-only test-open the database backup;
 5. verify binary/checksum, exact approved HEAD, free space, and rollback owner;
 6. capture preflight schema, counts, WAL state, and filesystem evidence; and
@@ -89,7 +92,8 @@ doctor, and one read-only truth smoke check.
 Enable one controlled save at a time: no-local-copy new memory; update/noop;
 intentional identical lesson with two keys; exact retry; conflict retry; then
 local-copy absent/0644/0200 target. Verify stored responses, result bindings,
-files, and metrics after each. A failure stops the canary immediately.
+files, stable lock identity, target-parent proof and metrics after each. A
+failure stops the canary immediately.
 
 ## Phase 3 — Canary Observation
 
@@ -98,6 +102,8 @@ Keep the canary on the new binary for at least 72 hours and through:
 - one restart with automatic journal reconciliation, including the pre-rename
   `swap_intent` tuple, 0200-target/backup proof, initial temp cleanup, and a
   second crash inside each persisted recovery phase;
+- writer/scanner/doctor contention at every local-copy phase, including durable
+  D1 before seal, followed by single-owner reconciliation after writer death;
 - normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup
   activity that exercises every supported writer;
 - event retention cleanup proving history remains intact; and
@@ -139,6 +145,9 @@ Metrics and structured logs use opaque request IDs only:
 | exact replay that mutates rows/files/knowledge epoch | any |
 | route/lifecycle gap, fork, terminal drift, or unexpected forward-only result | any |
 | journal `cleanup_pending` | page after 5 minutes or repeated retry |
+| per-request lock wrong inode/path/proof, replacement, or simultaneous owners | any |
+| live-writer lock busy | expected briefly; any artifact/DB inspection or mutation by contender, or busy after owner death, stops |
+| target-parent confinement/identity/uid/mode/device/fsync/no-replace proof failure | any; no mutation |
 | backup source/identity/metadata/digest mismatch or ambiguous artifact proof | any; never mutate |
 | recovery phase fails to converge after any repeated crash | any |
 | raw idempotency key/credential detected in retained output | any |
@@ -156,8 +165,8 @@ journal phase, and error code without content or raw path secrets.
 | transaction failed before commit | keep writers stopped, verify rollback, retry fixed binary or restore tested backup | partial manual DDL repair |
 | migration committed, zero non-migration seals | restore tested backup during downtime, then start 0.6.x | copy tables selectively |
 | any v2 write sealed | keep 0.7 writer/schema; disable v2 projection/read surface | old binary, down migration, dropping ledgers, restoring stale backup |
-| local-copy journal pending without seal | run approved reconciliation to exact prior bytes | blind target/backup deletion |
-| local-copy journal pending with seal | retain exact sealed target and finish owned cleanup | restore prior target |
+| local-copy journal pending without seal | after acquiring R's retained L lock, reconcile to exact prior bytes | inspect/recover while L is busy; blind deletion |
+| local-copy journal pending with seal | after acquiring R's retained L lock, retain exact sealed target and finish owned cleanup | restore prior target |
 | ambiguous journal/database state | stop writes, preserve all bytes/journal, escalate to database+security reviewers | automatic repair |
 
 Disabling projection changes only read routing/feature flags. It never removes
@@ -169,7 +178,8 @@ proves no write loss.
 
 Stop the current phase on any telemetry threshold, unexplained test/rehearsal
 difference, missing approval, backup uncertainty, writer process left running,
-or inability to reconcile local-copy state. Preserve database, WAL, journal,
+lock/target-parent proof failure, or inability to reconcile local-copy state.
+Preserve database, WAL, journal,
 logs, exact binary, and evidence before investigation.
 
 Resume only from the last fully satisfied phase after root cause, reviewed fix,

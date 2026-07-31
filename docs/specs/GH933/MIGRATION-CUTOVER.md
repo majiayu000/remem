@@ -724,25 +724,25 @@ means disabling the v2 projection while retaining schema/history; running 0.6.x
 or restoring the old backup would lose writes and is forbidden.
 
 ## Durable Local-Copy Journal
-The verified nonsymlink journal root `${REMEM_DATA_DIR}/write-journal/save/` is
-app-owned mode 0700. For opaque request `R`, names are exactly `J=R.json`,
-journal temp `T=.R.json.tmp`, and target siblings `S=.remem-save-R.stage`,
-`B=.remem-save-R.backup`. Canonical JSON records writer/request fingerprints,
-phase/recovery goal, paths, `before_kind`, D1/D0 (D0 null only in
-`inspect_intent`), epoch, present-target identity `I0=(dev,ino)`, and metadata
-`M0=(uid,gid,mode,nlink,size,mtime_ns)`; never content, key, token, or response.
-Proof classes are deliberately different:
+The verified nonsymlink journal root `Q=${REMEM_DATA_DIR}/write-journal/save/` and `Q/locks/` are app-owned mode 0700. For opaque request `R`, names are exactly retained lock `L=Q/locks/R.lock`, canonical journal `J=Q/R.json`, journal temp `T=Q/.R.json.tmp`, and target-parent siblings `S=.remem-save-R.stage`, `B=.remem-save-R.backup`. Scanner grammar reserves exactly the proved `Q/locks/` subtree plus J/T names; L is not a journal artifact, is excluded from pending-artifact counts, and is never cleanup input.
+Resolve configured local-copy root and target parent `P` component-by-component from directory FDs with no-follow/beneath semantics. Convert an allowed absolute input to its root-relative descendant; reject an outside-root absolute path, unresolved `..` escape, symlink/non-directory component, alias to `Q`, a parent not owned by the current uid, lacking owner rwx, writable by group/world, or lacking directory fsync/atomic no-replace. Create missing descendants with dirfd-relative mkdir/open, then apply the same proof before artifacts. Mode 0755 is valid. `P`, target, S and B must share one device.
+Keep the `P` fd open, operate on exact basenames relative to it, and record root-relative path, `IP=(dev,ino)` and `MP=(uid,gid,mode)`. Re-resolve and match `IP/MP` before publication or mutation and after reopening for recovery; replacement or permission drift is a visible no-mutation identity error, while already-open operations remain bound to the proved directory.
+Canonical J JSON records writer/request fingerprints, phase/recovery goal, paths, `IP/MP`, `before_kind`, D1/D0 (D0 null only in `inspect_intent`), epoch, present-target identity `I0=(dev,ino)`, and metadata `M0=(uid,gid,mode,nlink,size,mtime_ns)`; never content, key, token, or response.
+
+Create `L` initially with `O_CREAT|O_EXCL|O_NOFOLLOW` mode 0600 or reopen that exact current-uid regular single-link file through `Q/locks`; Phase A never unlinks or replaces it. A wrong L/locks-dir path, inode, type, uid, mode or link count is `local_copy_lock_unsafe` before any R inspection. The local-copy writer, startup scanner, doctor and reconciler all take an exclusive nonblocking OS lock on that same inode, not merely a process mutex or PID/age heuristic, before opening J/artifacts or reading/mutating R-scoped database state. Independently opened descriptors must contend across processes; add in-process serialization where the platform primitive needs it. Lock order is always L then database.
+The writer takes L before `inspect_intent`, J/T/S/B creation/publication, `BEGIN IMMEDIATE`, or any target mutation and holds it continuously through the matching committed seal, `sealed`, all cleanup/unlinks/fsyncs and J removal, or through terminal reconciliation. A safe visible ambiguous/no-mutation return may release it with durable evidence intact. A process crash releases only the OS lock, never L or evidence.
+If L is busy, scanner/doctor/reconciler returns `local_copy_writer_in_progress` (startup may bounded-wait) and must not inspect, classify, restore, delete or otherwise touch J/S/B/target or R-scoped DB rows. This includes durable D1 at S or target before the DB seal. After owner death, exactly one contender acquires L and reconciles; other contenders remain busy or subsequently observe no work.
+
+Proof classes and parent locations are deliberately different:
 
 | Path | Required source and proof |
 | --- | --- |
-| `T` | remem creates with `O_CREAT\|O_EXCL\|O_NOFOLLOW`, mode 0600; exact name/private parent/current uid/regular/nlink=1 |
-| `S` | same creation proof as `T`, plus exact after digest `D1` |
+| `L` | first-created/reopened only below `Q/locks`; exact stable inode/current uid/regular/nlink=1/mode 0600; never removed |
+| `T` | remem creates below private `Q` with `O_CREAT\|O_EXCL\|O_NOFOLLOW`, mode 0600; exact name/current uid/regular/nlink=1 |
+| `S` | remem creates relative to verified `P` with `O_CREAT\|O_EXCL\|O_NOFOLLOW`, exact mode 0600; exact basename/current uid/regular/nlink=1, no-follow entry/FD inode equality, and exact D1 |
 | `B` | not created and has no temp-mode invariant: durable `swap_intent`, then atomic no-replace target→`B`; it retains `I0`, `M0`, and `D0` |
-| target | verified regular identity/metadata/digest or recorded absence; symlink, alias, and nonregular types are forbidden |
-`B` therefore legitimately retains target mode 0644, 0200, or another recorded
-mode; 0600 is not a backup invariant. No-replace must be one atomic platform
-primitive (`renameat2(RENAME_NOREPLACE)`/`renameatx_np(RENAME_EXCL)` equivalent);
-an existing `B` or unsupported filesystem errors before target mutation.
+| target | exact basename below verified `P`; verified regular identity/metadata/digest or recorded absence; symlink, alias, and nonregular types are forbidden |
+Thus T's private-parent proof never stands in for S's target-parent proof. `B` legitimately retains target mode 0644, 0200, or another recorded mode; 0600 is not a backup invariant. No-replace must be one atomic platform primitive (`renameat2(RENAME_NOREPLACE)`/`renameatx_np(RENAME_EXCL)` equivalent); an existing B or unsupported filesystem errors before target mutation.
 
 An unreadable owner-writable target (including 0200) is supported without a
 readability precondition. First persist `inspect_intent` with `I0/M0`, then use
@@ -754,11 +754,7 @@ temporary read-bit mode, with `B/S` absent; restart restores/fsyncs mode, remove
 non-owner-writable files error before chmod. The same journaled helper verifies
 a 0200 `B`; ctime is diagnostic, while all fields in `M0` must match.
 
-Each phase update fully writes/fdatasyncs new `T`, renames it over `J`, and
-fsyncs the journal directory. Scanner locks `R`: with `J` absent and `S/B`
-absent it removes an owned empty/partial `T`; with `J` present it removes owned
-`T` and uses `J`. A crash during that unlink may yield `T` present or absent and
-repeats safely. Any other J-absent artifact or proof failure is ambiguous.
+While holding L, each phase update fully writes/fdatasyncs new T, renames it over J, and fsyncs Q. With J absent and S/B absent, the scanner may remove an owned empty/partial T; with J present it removes owned T and uses J. A crash during that unlink may yield T present or absent and repeats safely. Any other J-absent artifact or proof failure is ambiguous.
 
 Writer phases are `reserved`, `staged`, `swap_intent`, `backed_up`, `swapped`,
 DB commit, then `sealed`. File/no-seal phase→states are exactly:
@@ -767,7 +763,7 @@ DB commit, then `sealed`. File/no-seal phase→states are exactly:
 `reserved:(Ø,Ø,Ø|D1)`, `staged|swap_intent:(Ø,Ø,D1)`,
 `backed_up:(Ø,Ø,D1)|(D1,Ø,Ø)`, `swapped:(D1,Ø,Ø)`. Matching seal requires
 file `swapped:(D1,D0,Ø)` or `sealed:(D1,D0|Ø,Ø)`; absent is `(D1,Ø,Ø)`.
-Target→B is no-replace after `swap_intent`; S→target/target/parents are fsynced.
+Target→B is no-replace after `swap_intent`; S→target, target fdatasync and P fsync are durable.
 Exact retry creates no journal. Only the DB seal proves commit.
 
 Before filesystem recovery, validate the writer phase/physical tuple, persist
