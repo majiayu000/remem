@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
+  scores from `SearchWeights` instead of eight private scoring constants in
+  `hybrid_context.rs` that duplicated it and had already drifted — the injection
+  path had no `graph` channel and no `usage` channel. Because
+  `eval-weight-grid` tunes `SearchWeights` and injection never read it, the
+  evaluation harness was optimizing a path users do not take. Channel SQL and
+  post-fusion behavior are unchanged; `docs/specs/GH953/TECH.md` stages the
+  remaining convergence work so each ranking-visible change lands with its own
+  evaluation delta.
 - Staged source version `0.6.38` for GH-951: the owner-trace exclusion query is
   a `NOT ... OR ...` scan no index can serve, and it ran on every SessionStart
   even though its only consumers are debug output and `governance_eval_snapshot`

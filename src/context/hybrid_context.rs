@@ -6,17 +6,12 @@ use crate::retrieval::search::common::{
     rank_normalized_score, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
     WeightedRankedHit,
 };
+use crate::retrieval::search::SearchWeights;
 
 use super::filters::{push_excluded_type_filter, push_owner_included_filter};
 
-const RRF_K: f64 = 60.0;
-const MAX_VECTOR_DISTANCE: f32 = 0.51;
-const FTS_WEIGHT: f64 = 2.5;
-const VECTOR_WEIGHT: f64 = 3.0;
-const ENTITY_WEIGHT: f64 = 1.25;
-const TEMPORAL_WEIGHT: f64 = 1.0;
-const FACT_WEIGHT: f64 = 1.4;
-const LIKE_FALLBACK_WEIGHT: f64 = 0.25;
+/// Injection-only: how deep each channel reads before fusion. Not a scoring
+/// knob, so it stays here rather than in [`SearchWeights`] (GH953).
 const MIN_HYBRID_FETCH_LIMIT: i64 = 20;
 
 struct ContextChannel {
@@ -32,6 +27,31 @@ pub(super) fn query_hybrid_context_memories(
     excluded_types: &[&str],
     limit: i64,
 ) -> Result<Vec<Memory>> {
+    query_hybrid_context_memories_with_weights(
+        conn,
+        project,
+        query,
+        current_branch,
+        excluded_types,
+        limit,
+        SearchWeights::default(),
+    )
+}
+
+/// Injection retrieval against explicit weights. `query_hybrid_context_memories`
+/// is the production caller and passes `SearchWeights::default()`; taking the
+/// weights as a parameter is what lets a test prove that an explicit
+/// `SearchWeights` value reaches this path. Applying a generated
+/// `eval-weight-grid` result remains later staged work (GH953).
+pub(super) fn query_hybrid_context_memories_with_weights(
+    conn: &Connection,
+    project: &str,
+    query: &str,
+    current_branch: Option<&str>,
+    excluded_types: &[&str],
+    limit: i64,
+    weights: SearchWeights,
+) -> Result<Vec<Memory>> {
     if limit <= 0 || query.trim().is_empty() {
         return Ok(vec![]);
     }
@@ -40,7 +60,7 @@ pub(super) fn query_hybrid_context_memories(
     let mut channels = Vec::new();
     push_channel(
         &mut channels,
-        FTS_WEIGHT,
+        weights.fts,
         query_local_fts_channel(
             conn,
             project,
@@ -52,7 +72,7 @@ pub(super) fn query_hybrid_context_memories(
     );
     push_channel(
         &mut channels,
-        ENTITY_WEIGHT,
+        weights.entity,
         query_local_entity_channel(
             conn,
             project,
@@ -64,7 +84,7 @@ pub(super) fn query_hybrid_context_memories(
     );
     push_channel(
         &mut channels,
-        TEMPORAL_WEIGHT,
+        weights.temporal,
         query_local_temporal_channel(
             conn,
             project,
@@ -76,7 +96,7 @@ pub(super) fn query_hybrid_context_memories(
     );
     push_channel(
         &mut channels,
-        FACT_WEIGHT,
+        weights.fact,
         query_local_fact_channel(
             conn,
             project,
@@ -88,14 +108,21 @@ pub(super) fn query_hybrid_context_memories(
     );
     push_channel(
         &mut channels,
-        VECTOR_WEIGHT,
-        query_local_vector_channel(conn, project, query, current_branch, excluded_types)?,
+        weights.vector,
+        query_local_vector_channel(
+            conn,
+            project,
+            query,
+            current_branch,
+            excluded_types,
+            weights.max_vector_distance,
+        )?,
     );
 
     if channels.is_empty() {
         push_channel(
             &mut channels,
-            LIKE_FALLBACK_WEIGHT,
+            weights.like_fallback,
             query_local_like_channel(
                 conn,
                 project,
@@ -117,7 +144,7 @@ pub(super) fn query_hybrid_context_memories(
             hits: &channel.hits,
         })
         .collect::<Vec<_>>();
-    let ids = weighted_ranked_fuse(&channel_inputs, RRF_K)
+    let ids = weighted_ranked_fuse(&channel_inputs, weights.rrf_k)
         .into_iter()
         .take(limit as usize)
         .map(|(id, _)| id)
@@ -450,6 +477,7 @@ fn query_local_vector_channel(
     query: &str,
     current_branch: Option<&str>,
     excluded_types: &[&str],
+    max_vector_distance: f32,
 ) -> Result<Vec<WeightedRankedHit>> {
     if !sqlite_table_available(conn, "memory_embeddings")? {
         return Ok(vec![]);
@@ -501,7 +529,7 @@ fn query_local_vector_channel(
         let embedding = crate::retrieval::vector::decode_embedding(&blob, dimensions)?;
         let distance =
             crate::retrieval::vector::cosine_distance(query_embedding.values(), &embedding)?;
-        if distance <= MAX_VECTOR_DISTANCE {
+        if distance <= max_vector_distance {
             hits.push((memory_id, distance));
         }
     }
@@ -515,7 +543,8 @@ fn query_local_vector_channel(
         .enumerate()
         .map(|(rank, (id, distance))| WeightedRankedHit {
             id,
-            normalized_score: vector_similarity_score(distance).max(rank_normalized_score(rank)),
+            normalized_score: vector_similarity_score(distance, max_vector_distance)
+                .max(rank_normalized_score(rank)),
         })
         .collect())
 }
@@ -732,7 +761,7 @@ fn rank_ordered_hits(ids: Vec<i64>) -> Vec<WeightedRankedHit> {
         .collect()
 }
 
-fn vector_similarity_score(distance: f32) -> f64 {
-    let threshold = f64::from(MAX_VECTOR_DISTANCE);
+fn vector_similarity_score(distance: f32, max_vector_distance: f32) -> f64 {
+    let threshold = f64::from(max_vector_distance);
     ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
 }
