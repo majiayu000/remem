@@ -29,12 +29,19 @@ fn default_download_repo_uses_evaluated_immutable_revision() -> Result<()> {
 #[test]
 fn preset_without_approved_revision_fails_closed() {
     let error = approved_download_repo(LocalEmbeddingPreset::BgeM3).unwrap_err();
+    let message = error.to_string();
 
     assert!(
-        error
-            .to_string()
-            .contains("has no approved immutable Hugging Face revision"),
-        "{error:#}"
+        message.contains("automatic download"),
+        "unexpected error: {error:#}"
+    );
+    assert!(
+        message.contains("no approved immutable Hugging Face revision"),
+        "unexpected error: {error:#}"
+    );
+    assert!(
+        message.contains("already installed verified bge-m3 cache"),
+        "unexpected error: {error:#}"
     );
 }
 

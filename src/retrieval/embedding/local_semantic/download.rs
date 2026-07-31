@@ -124,8 +124,9 @@ fn approved_download_repo(preset: LocalEmbeddingPreset) -> Result<(Repo, String)
     let approved_revision = match preset {
         LocalEmbeddingPreset::MultilingualE5Small => EVALUATED_E5_HUGGING_FACE_REVISION,
         _ => bail!(
-            "local embedding preset {} has no approved immutable Hugging Face revision",
-            preset.label()
+            "automatic download for local embedding preset {} is unavailable because it has no approved immutable Hugging Face revision; use multilingual-e5-small or continue using an already installed verified {} cache",
+            preset.label(),
+            preset.label(),
         ),
     };
     let revision = validate_revision(approved_revision)?;
