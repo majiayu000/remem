@@ -1,7 +1,5 @@
 # GH933 Migration and Cutover Contract
-
 Refs #933.
-
 ## Status and Authority
 
 This is the normative Phase A v2 migration, retry-ledger, hashing, and local-copy
@@ -13,28 +11,21 @@ The cutover is a breaking, maintenance-window migration. All 0.6.x writers are
 stopped before the foreground transaction begins and remain stopped until the
 new binary passes postflight. There is no mixed-writer mode and no down
 migration after a v2 write.
-
 ## Implementation Scope
 
-- `Cargo.toml` and `Cargo.lock`: enable rusqlite's `functions` feature.
-- `src/db/sql_functions.rs` and every production, migration, test, and fixture
-  connection constructor: register the versioned function after SQLCipher
-  keying and before any schema read, migration, or write.
-- `src/migrations/vNNN_current_truth_history_ledgers.sql` and
-  `src/migrate/run.rs`: install this DDL, rebuild `memories`, and backfill in one
-  `BEGIN IMMEDIATE`.
-- Every insert and the three route/lifecycle update families named in
-  `TECH.md`: create an intent before mutation, populate all declared bindings,
-  and seal last.
+- `Cargo.toml`/`Cargo.lock`: enable rusqlite `functions`.
+- `src/db/sql_functions.rs` and every connection constructor: register the
+  versioned function after SQLCipher keying and before schema access or writes.
+- The migration SQL/runner install this DDL, rebuild `memories`, and backfill in
+  one `BEGIN IMMEDIATE`.
+- Every insert and named route/lifecycle update creates intent before mutation,
+  populates all declared bindings, and seals last.
 - `src/memory/service/types.rs`, `save.rs`, `local_copy.rs`, and all API/MCP
   save adapters: require the caller key and implement the journal protocol.
 - `src/doctor/`: reconcile safe journals and report every pending or ambiguous
   journal as a visible diagnostic.
-- Migration, public API, writer, DDL-negative, UDF-vector, retry-concurrency,
-  and fault-injection tests named in `MIGRATION-REHEARSAL.md`.
-
+- Run the migration/API/writer/DDL/UDF/retry/fault tests in the rehearsal.
 No connection may register different framing; no fallback hash is legal.
-
 ## Versioned SHA-256 Data Flow
 
 `remem_sha256_frame_v1` is variadic and takes alternating names and values:
@@ -61,10 +52,8 @@ characters. Registration is `DETERMINISTIC | INNOCUOUS`; failure aborts.
 
 Rust hashes requests before SQL; SQL chains results, hashes request/terminal
 result/schema/response, and INSERT triggers hash typed `NEW`.
-
 Golden vectors cover NULL/empty, i64 bounds, negative zero/non-finite rejection,
 multibyte/NUL TEXT, BLOB, order and duplicate names; independent Python matches.
-
 ## Caller Idempotency
 
 Every direct save entrypoint requires `idempotency_key`. The adapter trims ASCII
@@ -93,7 +82,6 @@ presence, list order/duplicates, reference time, defaults, and effective inputs:
 
 Different keys preserve the second lesson reinforcement, operation, claim, and
 knowledge transition.
-
 ## Final Schema Preconditions
 
 The migration rebuilds `memories` from the canonical current schema rather than
@@ -111,12 +99,10 @@ FOREIGN KEY (insert_writer_kind, insert_request_id)
 
 Postflight compares all rebuilt columns/defaults/checks/FKs/indexes/FTS/triggers
 with a fresh same-binary database; any omission aborts.
-
 ## Executable Ledger DDL
 
 The block runs before any v2 writer. Isolated tests create FK parents with their
 production primary-key types.
-
 ```sql
 PRAGMA foreign_keys = ON;
 CREATE TABLE memory_write_requests (
@@ -177,9 +163,15 @@ CREATE TABLE memory_route_ledger (
     branch TEXT,
     CHECK (
       (owner_scope IS NULL AND owner_key IS NULL)
-      OR (
-        owner_scope IN ('user', 'workspace', 'repo', 'session')
-        AND owner_key IS NOT NULL AND length(owner_key) > 0
+      OR (owner_scope IS NOT NULL
+        AND owner_scope IN (
+          'user', 'workspace', 'repo', 'tool',
+          'domain', 'workstream', 'session'
+        )
+        AND owner_key IS NOT NULL
+        AND length(owner_key) > 0
+        AND owner_key = trim(
+          owner_key, char(9)||char(10)||char(11)||char(12)||char(13)||' ')
       )
     ),
     CHECK (memory_scope IN ('project', 'global')),
@@ -322,50 +314,71 @@ CREATE TABLE memory_write_request_commits (
 CREATE TRIGGER memory_write_request_manifest_guard
 BEFORE INSERT ON memory_write_requests
 BEGIN
-  SELECT CASE WHEN
-    NEW.expected_results_json <> json(NEW.expected_results_json)
-    OR json_array_length(NEW.expected_results_json) = 0
-  THEN RAISE(ABORT, 'invalid request result manifest') END;
+  SELECT CASE WHEN NEW.expected_results_json<>json(NEW.expected_results_json)
+    OR json_array_length(NEW.expected_results_json)=0
+    THEN RAISE(ABORT, 'invalid request result manifest') END;
   SELECT CASE WHEN EXISTS (
-    SELECT 1
-    FROM json_each(NEW.expected_results_json) AS item
-    WHERE item.type <> 'object'
-       OR json_type(item.value, '$.result_ordinal') <> 'integer'
-       OR json_extract(item.value, '$.result_ordinal') < 0
-       OR json_type(item.value, '$.binding_kind') <> 'text'
-       OR json_extract(item.value, '$.binding_kind') NOT IN (
-         'insert_origin', 'route_transition', 'lifecycle_transition',
-         'memory_outcome', 'operation_outcome', 'claim_outcome',
-         'poisoning_ack', 'local_copy_outcome', 'audit_outcome',
-         'response_aux'
+    SELECT 1 FROM json_each(NEW.expected_results_json) AS item
+    WHERE item.type<>'object' OR json_type(item.value,'$.result_ordinal')<>'integer'
+       OR json_extract(item.value,'$.result_ordinal')<0
+       OR json_type(item.value,'$.binding_kind')<>'text'
+       OR json_extract(item.value,'$.binding_kind') NOT IN (
+         'insert_origin','route_transition','lifecycle_transition','memory_outcome',
+         'operation_outcome','claim_outcome','poisoning_ack','local_copy_outcome',
+         'audit_outcome','response_aux'
        )
-       OR (SELECT count(*) FROM json_each(item.value)) <> 2
-       OR json(item.value) <> json_object(
-            'result_ordinal',
-            json_extract(item.value, '$.result_ordinal'),
-            'binding_kind',
-            json_extract(item.value, '$.binding_kind')
-          )
+       OR (SELECT count(*) FROM json_each(item.value))<>2
+       OR json(item.value)<>json_object(
+         'result_ordinal',json_extract(item.value,'$.result_ordinal'),
+         'binding_kind',json_extract(item.value,'$.binding_kind'))
   ) THEN RAISE(ABORT, 'invalid request result manifest entry') END;
   SELECT CASE WHEN EXISTS (
-    SELECT 1
-    FROM json_each(NEW.expected_results_json) AS earlier
+    SELECT 1 FROM json_each(NEW.expected_results_json) AS earlier
     JOIN json_each(NEW.expected_results_json) AS later
-      ON CAST(earlier.key AS INTEGER) < CAST(later.key AS INTEGER)
-    WHERE json_extract(earlier.value, '$.result_ordinal')
-            > json_extract(later.value, '$.result_ordinal')
-       OR (
-         json_extract(earlier.value, '$.result_ordinal')
-           = json_extract(later.value, '$.result_ordinal')
-         AND json_extract(earlier.value, '$.binding_kind')
-           >= json_extract(later.value, '$.binding_kind')
-       )
+      ON CAST(earlier.key AS INTEGER)<CAST(later.key AS INTEGER)
+    WHERE json_extract(earlier.value,'$.result_ordinal')>
+            json_extract(later.value,'$.result_ordinal')
+       OR (json_extract(earlier.value,'$.result_ordinal')=
+             json_extract(later.value,'$.result_ordinal')
+         AND json_extract(earlier.value,'$.binding_kind')>=
+             json_extract(later.value,'$.binding_kind'))
   ) THEN RAISE(ABORT, 'request result manifest is not strictly sorted') END;
   SELECT CASE WHEN (
-    SELECT count(*)
-    FROM json_each(NEW.expected_results_json)
-    WHERE json_extract(value, '$.binding_kind') = 'response_aux'
-  ) <> 1 THEN RAISE(ABORT, 'request manifest needs one response_aux') END;
+    SELECT count(*) FROM json_each(NEW.expected_results_json)
+    WHERE json_extract(value,'$.binding_kind')='response_aux'
+  )<>1 THEN RAISE(ABORT, 'request manifest needs one response_aux') END;
+END;
+CREATE TRIGGER memory_route_ledger_insert_guard
+BEFORE INSERT ON memory_route_ledger
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM memory_write_request_commits
+    WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref
+  ) THEN RAISE(ABORT, 'sealed request cannot append route ledger') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM memory_write_requests AS request,
+      json_each(request.expected_results_json) AS expected
+    WHERE request.writer_kind=NEW.source_writer_kind
+      AND request.request_id=NEW.source_ref
+      AND json_extract(expected.value,'$.result_ordinal')=NEW.source_result_ordinal
+      AND json_extract(expected.value,'$.binding_kind') IN ('insert_origin','route_transition')
+  ) THEN RAISE(ABORT, 'route ledger lacks typed manifest slot') END;
+END;
+CREATE TRIGGER memory_lifecycle_ledger_insert_guard
+BEFORE INSERT ON memory_lifecycle_ledger
+BEGIN
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM memory_write_request_commits
+    WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref
+  ) THEN RAISE(ABORT, 'sealed request cannot append lifecycle ledger') END;
+  SELECT CASE WHEN NOT EXISTS (
+    SELECT 1 FROM memory_write_requests AS request,
+      json_each(request.expected_results_json) AS expected
+    WHERE request.writer_kind=NEW.source_writer_kind
+      AND request.request_id=NEW.source_ref
+      AND json_extract(expected.value,'$.result_ordinal')=NEW.source_result_ordinal
+      AND json_extract(expected.value,'$.binding_kind') IN ('insert_origin','lifecycle_transition')
+  ) THEN RAISE(ABORT, 'lifecycle ledger lacks typed manifest slot') END;
 END;
 CREATE TRIGGER memory_write_result_guard
 BEFORE INSERT ON memory_write_request_results
@@ -375,151 +388,119 @@ BEGIN
     WHERE writer_kind = NEW.writer_kind AND request_id = NEW.request_id
   ) THEN RAISE(ABORT, 'request is already sealed') END;
   SELECT CASE WHEN NOT EXISTS (
-    SELECT 1
-    FROM memory_write_requests AS request,
-         json_each(request.expected_results_json) AS expected
-    WHERE request.writer_kind = NEW.writer_kind
-      AND request.request_id = NEW.request_id
-      AND json_extract(expected.value, '$.result_ordinal')
-            = NEW.result_ordinal
-      AND json_extract(expected.value, '$.binding_kind')
-            = NEW.binding_kind
+    SELECT 1 FROM memory_write_requests AS request,
+      json_each(request.expected_results_json) AS expected
+    WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id
+      AND json_extract(expected.value,'$.result_ordinal')=NEW.result_ordinal
+      AND json_extract(expected.value,'$.binding_kind')=NEW.binding_kind
   ) THEN RAISE(ABORT, 'result is absent from manifest') END;
   SELECT CASE WHEN EXISTS (
-    SELECT 1
-    FROM memory_write_requests AS request,
-         json_each(request.expected_results_json) AS expected
-    WHERE request.writer_kind = NEW.writer_kind
-      AND request.request_id = NEW.request_id
+    SELECT 1 FROM memory_write_requests AS request,
+      json_each(request.expected_results_json) AS expected
+    WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id
       AND (
-        json_extract(expected.value, '$.result_ordinal') < NEW.result_ordinal
-        OR (
-          json_extract(expected.value, '$.result_ordinal') = NEW.result_ordinal
-          AND json_extract(expected.value, '$.binding_kind') < NEW.binding_kind
-        )
+        json_extract(expected.value,'$.result_ordinal')<NEW.result_ordinal
+        OR (json_extract(expected.value,'$.result_ordinal')=NEW.result_ordinal
+          AND json_extract(expected.value,'$.binding_kind')<NEW.binding_kind)
       )
       AND NOT EXISTS (
         SELECT 1 FROM memory_write_request_results AS actual
-        WHERE actual.writer_kind = NEW.writer_kind
-          AND actual.request_id = NEW.request_id
-          AND actual.result_ordinal
-                = json_extract(expected.value, '$.result_ordinal')
-          AND actual.binding_kind
-                = json_extract(expected.value, '$.binding_kind')
+        WHERE actual.writer_kind=NEW.writer_kind AND actual.request_id=NEW.request_id
+          AND actual.result_ordinal=json_extract(expected.value,'$.result_ordinal')
+          AND actual.binding_kind=json_extract(expected.value,'$.binding_kind')
       )
   ) THEN RAISE(ABORT, 'result bindings must follow manifest order') END;
   SELECT CASE WHEN NEW.previous_binding_fingerprint IS NOT (
-    SELECT actual.binding_fingerprint
-    FROM memory_write_request_results AS actual
-    WHERE actual.writer_kind = NEW.writer_kind
-      AND actual.request_id = NEW.request_id
+    SELECT actual.binding_fingerprint FROM memory_write_request_results AS actual
+    WHERE actual.writer_kind=NEW.writer_kind AND actual.request_id=NEW.request_id
       AND (
-        actual.result_ordinal < NEW.result_ordinal
-        OR (
-          actual.result_ordinal = NEW.result_ordinal
-          AND actual.binding_kind < NEW.binding_kind
-        )
+        actual.result_ordinal<NEW.result_ordinal
+        OR (actual.result_ordinal=NEW.result_ordinal
+          AND actual.binding_kind<NEW.binding_kind)
       )
     ORDER BY actual.result_ordinal DESC, actual.binding_kind DESC
     LIMIT 1
   ) THEN RAISE(ABORT, 'result fingerprint predecessor mismatch') END;
   SELECT CASE WHEN NOT (
     (
-      NEW.binding_kind = 'insert_origin'
-      AND NEW.outcome_code IN ('inserted', 'backfilled')
+      NEW.binding_kind='insert_origin' AND NEW.outcome_code IN ('inserted','backfilled')
       AND NEW.memory_id IS NOT NULL AND NEW.route_ledger_id IS NOT NULL
       AND NEW.lifecycle_ledger_id IS NOT NULL AND NEW.operation_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.audit_event_id IS NULL
       AND NEW.local_copy_path IS NULL AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'route_transition'
-      AND NEW.outcome_code = 'changed'
+    ) OR (
+      NEW.binding_kind='route_transition' AND NEW.outcome_code='changed'
       AND NEW.memory_id IS NOT NULL AND NEW.route_ledger_id IS NOT NULL
       AND NEW.lifecycle_ledger_id IS NULL AND NEW.operation_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.local_copy_path IS NULL
       AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'lifecycle_transition'
-      AND NEW.outcome_code IN ('changed', 'acknowledged')
+    ) OR (
+      NEW.binding_kind='lifecycle_transition'
+      AND NEW.outcome_code IN ('changed','acknowledged')
       AND NEW.memory_id IS NOT NULL AND NEW.lifecycle_ledger_id IS NOT NULL
       AND NEW.route_ledger_id IS NULL AND NEW.claim_id IS NULL
       AND NEW.local_copy_path IS NULL AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'memory_outcome'
-      AND NEW.outcome_code IN ('inserted', 'updated', 'reinforced', 'noop')
+    ) OR (
+      NEW.binding_kind='memory_outcome'
+      AND NEW.outcome_code IN ('inserted','updated','reinforced','noop')
       AND NEW.memory_id IS NOT NULL AND NEW.route_ledger_id IS NULL
       AND NEW.lifecycle_ledger_id IS NULL AND NEW.operation_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.audit_event_id IS NULL
       AND NEW.local_copy_path IS NULL AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'operation_outcome'
-      AND NEW.outcome_code = 'recorded'
+    ) OR (
+      NEW.binding_kind='operation_outcome' AND NEW.outcome_code='recorded'
       AND NEW.operation_id IS NOT NULL AND NEW.memory_id IS NULL
       AND NEW.route_ledger_id IS NULL AND NEW.lifecycle_ledger_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.audit_event_id IS NULL
       AND NEW.local_copy_path IS NULL AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'claim_outcome'
-      AND NEW.outcome_code IN ('created', 'reused', 'disabled', 'failed')
+    ) OR (
+      NEW.binding_kind='claim_outcome'
+      AND NEW.outcome_code IN ('created','reused','disabled','failed')
       AND (
-        (NEW.outcome_code IN ('created', 'reused') AND NEW.claim_id IS NOT NULL)
-        OR (NEW.outcome_code IN ('disabled', 'failed') AND NEW.claim_id IS NULL)
+        (NEW.outcome_code IN ('created','reused') AND NEW.claim_id IS NOT NULL)
+        OR (NEW.outcome_code IN ('disabled','failed') AND NEW.claim_id IS NULL)
       )
       AND NEW.memory_id IS NULL AND NEW.route_ledger_id IS NULL
       AND NEW.lifecycle_ledger_id IS NULL AND NEW.operation_id IS NULL
       AND NEW.audit_event_id IS NULL AND NEW.local_copy_path IS NULL
       AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'poisoning_ack'
-      AND NEW.outcome_code IN ('acknowledged', 'not_required', 'failed')
+    ) OR (
+      NEW.binding_kind='poisoning_ack'
+      AND NEW.outcome_code IN ('acknowledged','not_required','failed')
       AND (
-        (NEW.outcome_code = 'acknowledged' AND NEW.memory_id IS NOT NULL)
-        OR (NEW.outcome_code <> 'acknowledged' AND NEW.memory_id IS NULL)
+        (NEW.outcome_code='acknowledged' AND NEW.memory_id IS NOT NULL)
+        OR (NEW.outcome_code<>'acknowledged' AND NEW.memory_id IS NULL)
       )
       AND NEW.route_ledger_id IS NULL AND NEW.lifecycle_ledger_id IS NULL
       AND NEW.operation_id IS NULL AND NEW.claim_id IS NULL
       AND NEW.local_copy_path IS NULL AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'local_copy_outcome'
-      AND NEW.outcome_code IN ('written', 'disabled', 'failed')
+    ) OR (
+      NEW.binding_kind='local_copy_outcome'
+      AND NEW.outcome_code IN ('written','disabled','failed')
       AND (
-        (
-          NEW.outcome_code = 'written'
-          AND NEW.local_copy_path IS NOT NULL
+        (NEW.outcome_code='written' AND NEW.local_copy_path IS NOT NULL
           AND NEW.local_copy_digest IS NOT NULL
         )
-        OR (
-          NEW.outcome_code IN ('disabled', 'failed')
-          AND NEW.local_copy_path IS NULL
+        OR (NEW.outcome_code IN ('disabled','failed') AND NEW.local_copy_path IS NULL
           AND NEW.local_copy_digest IS NULL
         )
       )
       AND NEW.memory_id IS NULL AND NEW.route_ledger_id IS NULL
       AND NEW.lifecycle_ledger_id IS NULL AND NEW.operation_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.audit_event_id IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'audit_outcome'
-      AND NEW.outcome_code IN ('recorded', 'not_required', 'failed')
+    ) OR (
+      NEW.binding_kind='audit_outcome'
+      AND NEW.outcome_code IN ('recorded','not_required','failed')
       AND (
-        (NEW.outcome_code = 'recorded' AND NEW.audit_event_id IS NOT NULL)
-        OR (NEW.outcome_code <> 'recorded' AND NEW.audit_event_id IS NULL)
+        (NEW.outcome_code='recorded' AND NEW.audit_event_id IS NOT NULL)
+        OR (NEW.outcome_code<>'recorded' AND NEW.audit_event_id IS NULL)
       )
       AND NEW.memory_id IS NULL AND NEW.route_ledger_id IS NULL
       AND NEW.lifecycle_ledger_id IS NULL AND NEW.operation_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.local_copy_path IS NULL
       AND NEW.local_copy_digest IS NULL
-    )
-    OR (
-      NEW.binding_kind = 'response_aux'
-      AND NEW.outcome_code = 'returned'
+    ) OR (
+      NEW.binding_kind='response_aux' AND NEW.outcome_code='returned'
       AND NEW.memory_id IS NULL AND NEW.route_ledger_id IS NULL
       AND NEW.lifecycle_ledger_id IS NULL AND NEW.operation_id IS NULL
       AND NEW.claim_id IS NULL AND NEW.audit_event_id IS NULL
@@ -553,35 +534,25 @@ CREATE TRIGGER memory_write_commit_guard
 BEFORE INSERT ON memory_write_request_commits
 BEGIN
   SELECT CASE WHEN EXISTS (
-    SELECT 1
-    FROM memory_write_requests AS request,
-         json_each(request.expected_results_json) AS expected
-    WHERE request.writer_kind = NEW.writer_kind
-      AND request.request_id = NEW.request_id
+    SELECT 1 FROM memory_write_requests AS request,
+      json_each(request.expected_results_json) AS expected
+    WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id
       AND NOT EXISTS (
         SELECT 1 FROM memory_write_request_results AS actual
-        WHERE actual.writer_kind = NEW.writer_kind
-          AND actual.request_id = NEW.request_id
-          AND actual.result_ordinal
-                = json_extract(expected.value, '$.result_ordinal')
-          AND actual.binding_kind
-                = json_extract(expected.value, '$.binding_kind')
+        WHERE actual.writer_kind=NEW.writer_kind AND actual.request_id=NEW.request_id
+          AND actual.result_ordinal=json_extract(expected.value,'$.result_ordinal')
+          AND actual.binding_kind=json_extract(expected.value,'$.binding_kind')
       )
   ) THEN RAISE(ABORT, 'request results are incomplete') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS actual
-    WHERE actual.writer_kind = NEW.writer_kind
-      AND actual.request_id = NEW.request_id
+    WHERE actual.writer_kind=NEW.writer_kind AND actual.request_id=NEW.request_id
       AND NOT EXISTS (
-        SELECT 1
-        FROM memory_write_requests AS request,
-             json_each(request.expected_results_json) AS expected
-        WHERE request.writer_kind = NEW.writer_kind
-          AND request.request_id = NEW.request_id
-          AND json_extract(expected.value, '$.result_ordinal')
-                = actual.result_ordinal
-          AND json_extract(expected.value, '$.binding_kind')
-                = actual.binding_kind
+        SELECT 1 FROM memory_write_requests AS request,
+          json_each(request.expected_results_json) AS expected
+        WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id
+          AND json_extract(expected.value,'$.result_ordinal')=actual.result_ordinal
+          AND json_extract(expected.value,'$.binding_kind')=actual.binding_kind
       )
   ) THEN RAISE(ABORT, 'request has unexpected results') END;
   SELECT CASE WHEN EXISTS (
@@ -590,30 +561,23 @@ BEGIN
       AND memory.insert_request_id = NEW.request_id
       AND NOT EXISTS (
         SELECT 1 FROM memory_write_request_results AS result
-        JOIN memory_route_ledger AS route
-          ON route.id = result.route_ledger_id
-        JOIN memory_lifecycle_ledger AS lifecycle
-          ON lifecycle.id = result.lifecycle_ledger_id
-        WHERE result.writer_kind = NEW.writer_kind
-          AND result.request_id = NEW.request_id
-          AND result.result_ordinal = memory.insert_result_ordinal
-          AND result.binding_kind = 'insert_origin'
-          AND result.memory_id = memory.id
-          AND route.memory_id = memory.id AND route.route_version = 1
+        JOIN memory_route_ledger AS route ON route.id=result.route_ledger_id
+        JOIN memory_lifecycle_ledger AS lifecycle ON lifecycle.id=result.lifecycle_ledger_id
+        WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id
+          AND result.result_ordinal=memory.insert_result_ordinal
+          AND result.binding_kind='insert_origin' AND result.memory_id=memory.id
+          AND route.memory_id=memory.id AND route.route_version=1
           AND route.previous_route_id IS NULL
-          AND route.source_kind IN ('insert', 'legacy_backfill')
-          AND route.source_writer_kind = NEW.writer_kind
-          AND route.source_ref = NEW.request_id
-          AND route.source_result_ordinal = memory.insert_result_ordinal
-          AND lifecycle.memory_id = memory.id
-          AND lifecycle.lifecycle_version = 1
+          AND route.source_kind IN ('insert','legacy_backfill')
+          AND route.source_writer_kind=NEW.writer_kind AND route.source_ref=NEW.request_id
+          AND route.source_result_ordinal=memory.insert_result_ordinal
+          AND lifecycle.memory_id=memory.id AND lifecycle.lifecycle_version=1
           AND lifecycle.previous_lifecycle_id IS NULL
-          AND lifecycle.previous_status IS NULL
-          AND lifecycle.source_action = 'baseline'
-          AND lifecycle.source_kind IN ('insert', 'legacy_backfill')
-          AND lifecycle.source_writer_kind = NEW.writer_kind
-          AND lifecycle.source_ref = NEW.request_id
-          AND lifecycle.source_result_ordinal = memory.insert_result_ordinal
+          AND lifecycle.previous_status IS NULL AND lifecycle.source_action='baseline'
+          AND lifecycle.source_kind IN ('insert','legacy_backfill')
+          AND lifecycle.source_writer_kind=NEW.writer_kind
+          AND lifecycle.source_ref=NEW.request_id
+          AND lifecycle.source_result_ordinal=memory.insert_result_ordinal
       )
   ) THEN RAISE(ABORT, 'insert origin lacks matching v1 ledgers') END;
   SELECT CASE WHEN EXISTS (
@@ -632,30 +596,59 @@ BEGIN
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS result
     JOIN memory_route_ledger AS route ON route.id = result.route_ledger_id
-    WHERE result.writer_kind = NEW.writer_kind
-      AND result.request_id = NEW.request_id
-      AND result.binding_kind = 'route_transition'
+    WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id
+      AND result.binding_kind='route_transition'
       AND (
-        route.memory_id IS NOT result.memory_id
-        OR route.source_writer_kind <> NEW.writer_kind
-        OR route.source_ref <> NEW.request_id
-        OR route.source_result_ordinal <> result.result_ordinal
+        route.memory_id IS NOT result.memory_id OR route.source_writer_kind<>NEW.writer_kind
+        OR route.source_ref<>NEW.request_id
+        OR route.source_result_ordinal<>result.result_ordinal
       )
   ) THEN RAISE(ABORT, 'route result binding mismatch') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS result
-    JOIN memory_lifecycle_ledger AS lifecycle
-      ON lifecycle.id = result.lifecycle_ledger_id
-    WHERE result.writer_kind = NEW.writer_kind
-      AND result.request_id = NEW.request_id
-      AND result.binding_kind = 'lifecycle_transition'
+    JOIN memory_lifecycle_ledger AS lifecycle ON lifecycle.id=result.lifecycle_ledger_id
+    WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id
+      AND result.binding_kind='lifecycle_transition'
       AND (
         lifecycle.memory_id IS NOT result.memory_id
-        OR lifecycle.source_writer_kind <> NEW.writer_kind
-        OR lifecycle.source_ref <> NEW.request_id
-        OR lifecycle.source_result_ordinal <> result.result_ordinal
+        OR lifecycle.source_writer_kind<>NEW.writer_kind
+        OR lifecycle.source_ref<>NEW.request_id
+        OR lifecycle.source_result_ordinal<>result.result_ordinal
       )
   ) THEN RAISE(ABORT, 'lifecycle result binding mismatch') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM memory_route_ledger AS route
+    WHERE route.source_writer_kind=NEW.writer_kind AND route.source_ref=NEW.request_id
+      AND NOT EXISTS (
+        SELECT 1 FROM memory_write_request_results AS result
+        JOIN memory_write_requests AS request
+          ON request.writer_kind=result.writer_kind AND request.request_id=result.request_id
+        JOIN json_each(request.expected_results_json) AS expected
+          ON json_extract(expected.value,'$.result_ordinal')=result.result_ordinal
+         AND json_extract(expected.value,'$.binding_kind')=result.binding_kind
+        WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id
+          AND result.result_ordinal=route.source_result_ordinal
+          AND result.binding_kind IN ('insert_origin','route_transition')
+          AND result.memory_id=route.memory_id AND result.route_ledger_id=route.id
+      )
+  ) THEN RAISE(ABORT, 'route ledger lacks typed result binding') END;
+  SELECT CASE WHEN EXISTS (
+    SELECT 1 FROM memory_lifecycle_ledger AS lifecycle
+    WHERE lifecycle.source_writer_kind=NEW.writer_kind AND lifecycle.source_ref=NEW.request_id
+      AND NOT EXISTS (
+        SELECT 1 FROM memory_write_request_results AS result
+        JOIN memory_write_requests AS request
+          ON request.writer_kind=result.writer_kind AND request.request_id=result.request_id
+        JOIN json_each(request.expected_results_json) AS expected
+          ON json_extract(expected.value,'$.result_ordinal')=result.result_ordinal
+         AND json_extract(expected.value,'$.binding_kind')=result.binding_kind
+        WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id
+          AND result.result_ordinal=lifecycle.source_result_ordinal
+          AND result.binding_kind IN ('insert_origin','lifecycle_transition')
+          AND result.memory_id=lifecycle.memory_id
+          AND result.lifecycle_ledger_id=lifecycle.id
+      )
+  ) THEN RAISE(ABORT, 'lifecycle ledger lacks typed result binding') END;
   SELECT CASE WHEN NEW.result_fingerprint <> remem_sha256_frame_v1(
     'domain', 'memory_write_commit/v1',
     'writer_kind', NEW.writer_kind,
@@ -681,35 +674,24 @@ WHEN NEW.insert_writer_kind IS NOT OLD.insert_writer_kind
   OR NEW.insert_request_id IS NOT OLD.insert_request_id
   OR NEW.insert_result_ordinal IS NOT OLD.insert_result_ordinal
 BEGIN SELECT RAISE(ABORT, 'memory insert origin is immutable'); END;
-CREATE TRIGGER memory_write_requests_no_update BEFORE UPDATE ON memory_write_requests
-BEGIN SELECT RAISE(ABORT, 'memory write requests are append-only'); END;
-CREATE TRIGGER memory_write_requests_no_delete BEFORE DELETE ON memory_write_requests
-BEGIN SELECT RAISE(ABORT, 'memory write requests are append-only'); END;
-CREATE TRIGGER memory_write_results_no_update BEFORE UPDATE ON memory_write_request_results
-BEGIN SELECT RAISE(ABORT, 'memory write results are append-only'); END;
-CREATE TRIGGER memory_write_results_no_delete BEFORE DELETE ON memory_write_request_results
-BEGIN SELECT RAISE(ABORT, 'memory write results are append-only'); END;
-CREATE TRIGGER memory_write_commits_no_update BEFORE UPDATE ON memory_write_request_commits
-BEGIN SELECT RAISE(ABORT, 'memory write commits are append-only'); END;
-CREATE TRIGGER memory_write_commits_no_delete BEFORE DELETE ON memory_write_request_commits
-BEGIN SELECT RAISE(ABORT, 'memory write commits are append-only'); END;
-CREATE TRIGGER memory_route_ledger_no_update BEFORE UPDATE ON memory_route_ledger
-BEGIN SELECT RAISE(ABORT, 'memory route ledger is append-only'); END;
-CREATE TRIGGER memory_route_ledger_no_delete BEFORE DELETE ON memory_route_ledger
-BEGIN SELECT RAISE(ABORT, 'memory route ledger is append-only'); END;
-CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecycle_ledger
-BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
-CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger
-BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
+CREATE TRIGGER memory_write_requests_no_update BEFORE UPDATE ON memory_write_requests BEGIN SELECT RAISE(ABORT, 'memory write requests are append-only'); END;
+CREATE TRIGGER memory_write_requests_no_delete BEFORE DELETE ON memory_write_requests BEGIN SELECT RAISE(ABORT, 'memory write requests are append-only'); END;
+CREATE TRIGGER memory_write_results_no_update BEFORE UPDATE ON memory_write_request_results BEGIN SELECT RAISE(ABORT, 'memory write results are append-only'); END;
+CREATE TRIGGER memory_write_results_no_delete BEFORE DELETE ON memory_write_request_results BEGIN SELECT RAISE(ABORT, 'memory write results are append-only'); END;
+CREATE TRIGGER memory_write_commits_no_update BEFORE UPDATE ON memory_write_request_commits BEGIN SELECT RAISE(ABORT, 'memory write commits are append-only'); END;
+CREATE TRIGGER memory_write_commits_no_delete BEFORE DELETE ON memory_write_request_commits BEGIN SELECT RAISE(ABORT, 'memory write commits are append-only'); END;
+CREATE TRIGGER memory_route_ledger_no_update BEFORE UPDATE ON memory_route_ledger BEGIN SELECT RAISE(ABORT, 'memory route ledger is append-only'); END;
+CREATE TRIGGER memory_route_ledger_no_delete BEFORE DELETE ON memory_route_ledger BEGIN SELECT RAISE(ABORT, 'memory route ledger is append-only'); END;
+CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
+CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
 ```
 
 The migration also has literal route/lifecycle fingerprint guards over every
 typed column except ID/digest and an `AFTER INSERT ON memories` guard requiring
-`insert_origin`, hashing exact `NEW`, and creating v1. Missing UDF aborts.
-
-Templates, runtime SQL concatenation, post-insert patches, and fallback hashes
-are forbidden. Rehearsal extracts actual trigger SQL, runs all six insert
-families, and mutates every covered `NEW` field.
+`insert_origin`, hashing exact `NEW`, and creating v1; missing UDF aborts.
+Templates, SQL concatenation, post-insert patches, and fallback hashes are
+forbidden. Rehearsal extracts trigger SQL, runs all insert families, and mutates
+every covered `NEW` field.
 
 ## Backfill and Foreground Cutover
 
@@ -743,17 +725,27 @@ or restoring the old backup would lose writes and is forbidden.
 
 ## Durable Local-Copy Journal
 
-Journal root is `${REMEM_DATA_DIR}/write-journal/save/`; each filename is
-`<opaque_request_id>.json`. Canonical JSON v1 contains only writer/request
-identity/fingerprint, phase, target/stage/backup paths, `before_kind`
-(`absent|file`), before/after SHA-256, epoch, and schema version. Paths must stay
-under the configured root and stage/backup are unique target siblings. Content,
-raw key/token/claim source/response, symlinks, escape, alias, and nonregular
-files are forbidden.
+The verified nonsymlink journal root `${REMEM_DATA_DIR}/write-journal/save/` is
+app-owned mode 0700. For opaque request `R`, names are exactly canonical
+`J=R.json`, update temp `T=.R.json.tmp`, and target siblings
+`S=.remem-save-R.stage`, `B=.remem-save-R.backup`; no random/PID/time suffix is
+legal. Canonical JSON v1 contains writer/request identity/fingerprint, phase,
+all three paths, `before_kind=absent|file`, before/after SHA-256, epoch, and
+schema version—never content, raw key, token, claim source, or response.
 
-Each phase writes/fdatasyncs a sibling temp, atomically renames it over the
-journal, and fsyncs its directory. Swaps fsync files/parents; process-wide and
-OS-visible per-request locks serialize save/reconciliation.
+Every `T/S/B` is created `O_CREAT|O_EXCL|O_NOFOLLOW`, mode 0600. Ownership means
+the exact deterministic name in its verified parent, regular file, current uid,
+mode 0600, link count one, no inode alias, and the per-request OS lock held.
+Startup, doctor, and pre-save scan both `*.json` and `.R.json.tmp`, reject every
+other entry, and lock `R`. If `J`, `S`, and `B` are absent, an owned `T` is the
+first reservation temp: no target mutation was permitted, so remove it and fsync
+even when empty/partial. If `J` exists, remove owned `T` and reconcile from `J`;
+the table covers a completed action whose next phase temp did not rename. Any
+other J-absent artifact or failed ownership proof is ambiguous and untouched.
+
+To record any phase, fully write/fdatasync `T`, rename it over `J`, then fsync
+the journal directory. Target swaps fsync files/parents. Process-wide and
+OS-visible per-request locks serialize save and reconciliation.
 
 The state machine is:
 
@@ -772,28 +764,36 @@ the request. Equal sealed retry creates no journal. A miss appends intent,
 reaches `swapped`, writes results/seal, commits SQLite, records `sealed`, then
 cleans up. Only the database seal proves commit.
 
-On startup, doctor, and before every local-copy save, reconciliation opens the
-database read-only first and validates journal schema, request fingerprint,
-paths, types, and digests:
+Reconciliation opens the database read-only and validates schema, request/seal,
+paths, types, ownership, and digests. Let `D0` be exact before bytes, `D1` exact
+after bytes, and `Ø` absence. Evaluate the following exhaustive legal states
+top-to-bottom (digest equality does not make two rows ambiguous):
 
-- No matching seal: `reserved`/`staged` removes only owned stage artifacts.
-  From `swap_intent` onward, restore backup atomically when `before_kind=file`;
-  when prior state was absent, remove target only if it exactly matches the
-  recorded after digest. Fsync restored target/parents, then remove journal.
-- Matching seal and request fingerprint: require target to equal the after
-  digest, keep it, remove owned backup/stage, fsync, then remove the journal.
-- Missing DB, mismatched fingerprint/result, target or backup digest mismatch,
-  path escape/type change, simultaneous unexpected target+backup bytes, or
-  inability to prove ownership is `local_copy_reconciliation_ambiguous`.
-  Reconciliation leaves all user-visible files and the journal untouched and
-  returns/logs an error with the opaque request ID and phase.
+| DB seal / before | Durable `J` phase | target | `B` | `S` | Recovery |
+| --- | --- | --- | --- | --- | --- |
+| none / file | `reserved` | `D0` | `Ø` | `Ø\|D1` | keep target; remove owned `S` |
+| none / file | `staged\|swap_intent` | `D0` | `Ø` | `D1` | keep target; remove owned `S` |
+| none / file | `swap_intent\|backed_up` | `Ø` | `D0` | `D1` | rename `B`→target; remove `S` |
+| none / file | `backed_up\|swapped` | `D1` | `D0` | `Ø` | rename `B` over target |
+| none / absent | `reserved` | `Ø` | `Ø` | `Ø\|D1` | remove owned `S` |
+| none / absent | `staged\|swap_intent\|backed_up` | `Ø` | `Ø` | `D1` | remove owned `S` |
+| none / absent | `backed_up\|swapped` | `D1` | `Ø` | `Ø` | remove target |
+| matching / file | `swapped` | `D1` | `D0` | `Ø` | keep target; remove owned `B` |
+| matching / file | `sealed` | `D1` | `D0\|Ø` | `Ø` | keep target; remove owned `B` |
+| matching / absent | `swapped\|sealed` | `D1` | `Ø` | `Ø` | keep target |
 
+Thus the pre-rename `swap_intent` state target=`D0`, `B=Ø`, `S=D1` is explicitly
+safe. Each recovery fsyncs the affected file/parent before removing `J` and
+fsyncing the journal directory. Every unlisted combination—including a seal in
+an earlier phase, missing/mismatched DB result, wrong digest/type/path, escape,
+alias, or unowned artifact—is `local_copy_reconciliation_ambiguous`: preserve
+all bytes and journal, return/log an error with only opaque `R` and phase, and
+keep doctor nonhealthy.
 A crash may occur after any syscall or SQLite statement. After reconciliation,
 no seal means exact prior bytes/absence; a seal means exact new target bytes.
 Cleanup failure after commit cannot rewrite the sealed `written` response. It
 retains the journal, logs an error, and keeps doctor nonhealthy until cleanup.
 No swallowed error, blind delete, or PID/time heuristic is allowed.
-
 ## Completion Evidence
 
 Rehearsal must match SQL and prove UDFs, typed/sealed writers, retry/duplicate,

@@ -83,7 +83,8 @@ operator consent. Before cutover:
 The operator runs the foreground migration once. No old writer starts afterward.
 Before enabling v2 reads or writes, require postflight `integrity_check`,
 `foreign_key_check`, schema fingerprint, origins/seals, terminal ledger equality,
-FTS query, doctor, and one read-only truth smoke check.
+ledger→manifest→typed-result equality, seven-owner/key CHECK probes, FTS query,
+doctor, and one read-only truth smoke check.
 
 Enable one controlled save at a time: no-local-copy new memory; update/noop;
 intentional identical lesson with two keys; exact retry; conflict retry; then
@@ -94,7 +95,8 @@ files, and metrics after each. A failure stops the canary immediately.
 
 Keep the canary on the new binary for at least 72 hours and through:
 
-- one restart with automatic journal reconciliation;
+- one restart with automatic journal reconciliation, including the pre-rename
+  `swap_intent` tuple and an owned initial journal-temp cleanup;
 - normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup
   activity that exercises every supported writer;
 - event retention cleanup proving history remains intact; and
@@ -131,12 +133,12 @@ Metrics and structured logs use opaque request IDs only:
 | --- | --- |
 | UDF registration/self-test/hash mismatch | any |
 | migration, integrity, FK, schema, or terminal-ledger error | any |
-| unsealed intent or manifest/result/seal guard rejection from canonical writer | any |
+| unsealed intent, post-seal ledger append, or manifest/result/ledger/seal guard rejection | any |
 | idempotency conflict | observe rate; stop on unexplained surge |
 | exact replay that mutates rows/files/knowledge epoch | any |
 | route/lifecycle gap, fork, terminal drift, or unexpected forward-only result | any |
 | journal `cleanup_pending` | page after 5 minutes or repeated retry |
-| ambiguous journal/path/digest reconciliation | any; never mutate |
+| ambiguous journal/temp ownership or target/backup/stage reconciliation | any; never mutate |
 | raw idempotency key/credential detected in retained output | any |
 | migration latency/disk above approved budget | stop current cohort |
 

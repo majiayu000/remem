@@ -109,8 +109,12 @@ every table/count/digest unchanged:
    wrong memory ID, route/lifecycle ID, non-v1 row, predecessor, or source tuple;
 7. transition result bound to another memory/request/ordinal/writer, or a Web
    lifecycle with missing/wrong-type API operation binding;
-8. result inserted after seal and duplicate request/result/seal insertion; and
-9. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
+8. route/lifecycle INSERT with no compatible manifest slot, either ledger
+   appended after seal, and seal with an otherwise valid but unbound ledger row;
+9. all seven owner scopes accepted, but unknown scope, partial pair, empty,
+   ASCII-whitespace-only, leading-whitespace, or trailing-whitespace key rejected;
+10. result inserted after seal and duplicate request/result/seal insertion; and
+11. UPDATE and DELETE against request, result, seal, route, and lifecycle rows,
    both before and after seal, plus mutation of a memory origin tuple.
 
 Explicitly prove that an intent cannot commit without a seal and a seal cannot
@@ -178,11 +182,11 @@ Fault injection kills the process, without unwinding, after every boundary:
 
 | Boundary | No DB seal recovery | Matching DB seal recovery |
 | --- | --- | --- |
-| `reserved`: journal write/fdatasync | prior target unchanged | not reachable |
-| journal rename/directory fsync | prior target; owned temp removed | not reachable |
+| first deterministic temp create/write/fdatasync | prior target; owned temp found and removed | not reachable |
+| first temp→canonical rename/directory fsync | prior target; canonical-or-temp scan converges | not reachable |
 | stage write/fdatasync | prior target; stage removed | not reachable |
 | `staged` journal fsync | prior target; stage removed | not reachable |
-| `swap_intent` journal fsync | exact prior target restored | not reachable |
+| `swap_intent` journal fsync before rename | target=before, backup absent, stage=after; keep target/remove stage | not reachable |
 | `backed_up`: target→backup rename/fsync | backup restored | not reachable |
 | stage→target rename | prior target/absence restored by digests | not reachable |
 | target/parent fsync and `swapped` | prior target/absence restored | not reachable |
@@ -196,6 +200,13 @@ Fault injection kills the process, without unwinding, after every boundary:
 Run every boundary with prior target absent and present, an identical target,
 multibyte bytes, and concurrent exact retries. Assert final target bytes/digest,
 database counts, stored response, journal/artifact counts, and doctor status.
+For every canonical phase, enumerate all legal rows in the cutover contract's
+target/backup/stage table, including physical action completion before the next
+phase-temp rename; assert the named action. Mutate each cell to every other
+absence/before/after/wrong-digest state and assert ambiguity. Test scanner
+restart with canonical only, temp only (empty, partial, complete), both, unknown
+filename, wrong uid/mode/link count, inode alias, and path escape. Only an owned
+deterministic temp may be removed; every failed ownership proof remains intact.
 
 Tamper separately with journal JSON, request fingerprint, target/backup/stage
 path, type, inode alias, and each digest; remove/invalidate the DB; create an

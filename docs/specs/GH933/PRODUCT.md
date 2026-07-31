@@ -67,7 +67,9 @@ pending v2 requirements below.
    selector is exact: Owner requires that owner; Project membership follows
    routing + branch and can include owner Q via `target_project=P`. A compatible
    selector with no row yields an empty truth list, not synthesized Unknown.
-   Owner/memory-scope values are closed domains; trimmed `" global "` is global.
+   Owner scope is exactly user/workspace/repo/tool/domain/workstream/session,
+   its paired key is nonblank/ASCII-trim-stable, and partial pairs fail integrity.
+   Memory-scope is closed; trimmed `" global "` is global.
    Explicit history discovers candidates from a persistent, scope-indexed route
    ledger, then reconstructs owner, target, versioned memory scope, memory type
    and the raw nullable topic key at the cutoff from its complete version chain.
@@ -125,9 +127,11 @@ pending v2 requirements below.
    Before any mutation, each writer appends an immutable request intent with an
    exact typed-result manifest. Generated memory, ledger, audit and operation IDs
    are outputs. Every successful transaction fills that manifest, then appends
-   the immutable final response/result seal; deferred constraints and seal
-   guards reject unsealed, missing, extra or mismatched bindings. Intent, result
-   and seal rows reject UPDATE and DELETE.
+   the immutable final response/result seal. Ledger INSERT requires an open
+   request and compatible manifest slot; sealing reverses every ledger row to
+   its manifest-declared typed result, and seal blocks every later append.
+   Deferred constraints reject unsealed/missing/extra/mismatched bindings.
+   Intent, result and seal rows reject UPDATE and DELETE.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
    it, derive a namespaced opaque request ID and never persist or log the raw key.
    The key and transport credentials are identity, not request payload, so the
@@ -140,10 +144,11 @@ pending v2 requirements below.
    or canonical no-source archive identity and remains stable across its
    importer-owned metadata rewrite.
    Local-copy mutation uses a fsynced write-ahead journal outside the database.
-   The journal records only opaque IDs, constrained paths and before/after
-   digests. Recovery restores the exact prior file when no matching seal exists,
-   or keeps the sealed target and finishes cleanup when it does; ambiguous paths,
-   bytes or seals fail closed. A crash before commit therefore leaves no
+   Deterministic journal/temp/stage/backup names have closed scan and ownership
+   rules; an exhaustive target/backup/stage table covers phase-update lag,
+   including `swap_intent` before rename. Recovery restores exact prior bytes
+   without a seal or keeps the sealed target; every unlisted state fails closed
+   untouched. A crash before commit therefore leaves no
    committed database state or user-file mutation after reconciliation. After
    commit/response loss, an exact-key retry returns the committed winner without
    another file write, version, event, operation, claim or knowledge epoch.
@@ -331,14 +336,18 @@ pending v2 requirements below.
       retained tables.
 - [ ] The exact cutover DDL rejects UPDATE/DELETE on intent/result/seal rows,
       malformed or duplicate manifests, missing/extra/shape-invalid result
-      bindings, orphan/mismatched INSERT origins and seal-before-complete. It
+      bindings, orphan/mismatched INSERT origins, ledger appends without a typed
+      manifest slot, ledger appends after seal, and seal when any ledger lacks
+      its typed result. Owner DDL accepts exactly seven scopes and rejects blank
+      or untrimmed keys. It
       rejects a write connection without the approved SHA-256 UDF. Golden frame
       vectors match Rust, trigger and migration backfill bytes.
 - [ ] The local-copy crash matrix covers journal reservation, staged-file fsync,
       swap intent, backup rename, target rename, every database point through
       commit, cleanup and journal deletion. No-seal recovery restores prior bytes;
       sealed recovery keeps the exact new digest; tampering and indeterminate
-      state remain visible and untouched.
+      state remain visible and untouched. Initial temp naming/scanning/ownership
+      and every legal target/backup/stage tuple have deterministic outcomes.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
