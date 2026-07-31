@@ -280,6 +280,28 @@ fn exact_date_consumes_the_parsed_occurrence() {
 }
 
 #[test]
+fn date_shaped_identifiers_are_not_temporal_expressions() {
+    for query in [
+        "release_2026-05-04_notes",
+        "release2026-05-04notes",
+        "release_2026/05/04_notes",
+        "release_2026.05.04_notes",
+        "版本_2026-05-04_说明",
+        "版本2026-05-04说明",
+        "release_2026年5月4日_notes",
+        "发布_2026年5月4日_说明",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+
+    assert!(extract_temporal("release 2026-05-04 notes").is_some());
+}
+
+#[test]
 fn snake_case_identifiers_are_not_temporal_expressions() {
     for query in ["last_30_days", "3_days_ago"] {
         assert!(extract_temporal(query).is_none(), "{query}");

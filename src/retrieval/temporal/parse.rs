@@ -150,8 +150,27 @@ fn temporal_field_for_query(lower: &str) -> TemporalField {
 
 fn parse_exact_date_or_month(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     parse_separated_ymd(lower)
-        .or_else(|| parse_chinese_ymd(lower))
-        .or_else(|| parse_month_name_date(lower))
+        .filter(|(_, _, span)| has_word_boundaries(lower, span))
+        .or_else(|| {
+            parse_chinese_ymd(lower)
+                .filter(|(_, _, span)| has_ascii_identifier_boundaries(lower, span))
+        })
+        .or_else(|| {
+            parse_month_name_date(lower).filter(|(_, _, span)| has_word_boundaries(lower, span))
+        })
+}
+
+fn has_ascii_identifier_boundaries(query: &str, span: &Range<usize>) -> bool {
+    let is_identifier_character =
+        |character: char| character.is_ascii_alphanumeric() || character == '_';
+    query[..span.start]
+        .chars()
+        .next_back()
+        .is_none_or(|character| !is_identifier_character(character))
+        && query[span.end..]
+            .chars()
+            .next()
+            .is_none_or(|character| !is_identifier_character(character))
 }
 
 fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
