@@ -581,3 +581,21 @@ fn short_named_artifact_keeps_inspection_incomplete() {
     assert!(result.detail.contains("shorter than the SQLite header"));
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn short_arbitrary_backup_in_managed_backups_tree_keeps_inspection_incomplete() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let backup = dir.join("backups").join("custom-output");
+    fs::create_dir_all(backup.parent().expect("backup should have parent"))
+        .expect("backup directory should create");
+    fs::write(&backup, b"short").expect("short backup fixture should write");
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Warn);
+    assert!(result.detail.contains(&backup.display().to_string()));
+    assert!(result.detail.contains("shorter than the SQLite header"));
+    fs::remove_dir_all(&dir).ok();
+}
