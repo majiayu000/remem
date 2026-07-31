@@ -83,7 +83,7 @@ Positive cases cover all ten typed binding kinds and every allowed outcome:
 | --- | --- |
 | `insert_origin` | inserted/backfilled memory plus exact route/lifecycle v1 |
 | `route_transition` | changed memory plus one matching next route |
-| `lifecycle_transition` | changed/acknowledged memory plus matching next lifecycle |
+| `lifecycle_transition` | changed/acknowledged memory plus matching next lifecycle and exact integer/API operation and audit bindings |
 | `memory_outcome` | inserted/updated/reinforced/noop memory |
 | `operation_outcome` | existing operation-log ID |
 | `claim_outcome` | created/reused existing claim; disabled/failed without ID |
@@ -111,8 +111,8 @@ every table/count/digest unchanged:
    schema/JSON, request fingerprint, or result fingerprint;
 6. inserted memory without an `insert_origin`, mismatched writer/request/ordinal,
    wrong memory ID, route/lifecycle ID, non-v1 row, predecessor, or source tuple;
-7. transition result bound to another memory/request/ordinal/writer, or a Web
-   lifecycle with missing/wrong-type API operation binding;
+7. transition result bound to another memory/request/ordinal/writer, route audit,
+   lifecycle integer/API operation or audit; Web missing/wrong-type API binding;
 8. route/lifecycle INSERT with no compatible manifest slot, either ledger
    appended after seal, and seal with an otherwise valid but unbound ledger row;
 9. all seven owner scopes accepted, but unknown scope, partial pair, empty,
@@ -180,8 +180,8 @@ Run foreground migration on:
 
 - empty current schema;
 - one row for each exact memory status (`active`, `stale`, `superseded`,
-  `archived`, `deleted`, `rejected`) and scope/owner/topic
-  NULL/empty/exact-value boundary;
+  `archived`, `deleted`, `rejected`) and scope NULL/empty/`" global "`/exact-value
+  boundary, proving rebuilt scope is exactly `project|global`, plus owner/topic;
 - real anonymized legacy clone with pruned events and unsupported historical
   writers, requiring forward-only floors;
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
@@ -273,12 +273,16 @@ D0. After a valid B pin but before present-target exchange, replace target with
 C: the exchange may move C to S, but remem must durably record `IC/MC/DC`,
 reverse-exchange only exact target=D1/S=C, prove C restored at target and D1 at
 S, and return `local_copy_publish_collision` with J/B/S and an unsealed DB.
+Also keep the original target FD open after B is linked and overwrite/chmod I0
+before exchange, after exchange, and before seal. B/S may drift together from
+D0; compensation must key on stable I0 entry identity, reverse its latest bytes
+to target, preserve J/B/S, and never seal or misclassify the inode as D0.
 SIGKILL after exchange before competitor observation, before/after the
 competitor-proof fsync, and before/after reverse exchange; `exchange_intent`
-recovery must first prove C, durably enter compensation, then finish it. Race the reverse itself: any changed source
-or postcondition preserves every entry as ambiguous, with no unlink or seal.
-If remem exchanges first and the competitor replaces afterward, the pre-seal
-IU/D1 recheck preserves the competitor/evidence.
+recovery must first prove C, durably enter compensation, then finish it. Race
+the reverse itself: changed target/S entry identity preserves every entry as
+ambiguous, with no unlink or seal. If remem exchanges first and a replace or
+open-FD write follows, the pre-seal target plus B/S recheck preserves evidence.
 
 Separately race absent-target S→target. Linux `RENAME_NOREPLACE`, macOS
 `RENAME_EXCL`, and portable `linkat` must return EEXIST when the competitor

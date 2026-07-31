@@ -131,7 +131,8 @@ pending v2 requirements below.
    are outputs. Every successful transaction fills that manifest, then appends
    the immutable final response/result seal. Ledger INSERT requires an open
    request and compatible manifest slot; sealing reverses every ledger row to
-   its manifest-declared typed result, and seal blocks every later append.
+   its manifest-declared typed result, including exact integer/API operation and
+   audit provenance, and seal blocks every later append.
    Deferred constraints reject unsealed/missing/extra/mismatched bindings.
    Intent, result and seal rows reject UPDATE and DELETE.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
@@ -158,18 +159,20 @@ pending v2 requirements below.
    first pins the reverified original inode as backup, retaining identity,
    metadata, digest and legal permissions such as 0200. A durable
    `exchange_intent` precedes atomic stage/target exchange and accepts its exact
-   before, normal-after, or captured-competitor crash tuple; only then does the
-   writer prove target=new and backup+stage=original.
+   before, normal-after, captured replacement, or same-original-inode in-place-
+   write crash tuple; only then does the writer prove target=new and backup+
+   stage=unchanged original.
    An unsupported exchange fails before target mutation. If a concurrent writer
-   wins, its inode is durably identified and reverse-exchanged back to target;
-   any further drift preserves all names and leaves the request unsealed.
+   wins by replacement or an already-open FD, the stable captured inode—not a
+   stale digest—is durably identified and reverse-exchanged back to target;
+   entry replacement during compensation preserves all names and stays unsealed.
    Durable recovery phases make every exchange/unlink/fsync reentrant.
-   Recovery restores exact prior bytes without a seal or keeps the sealed target;
-   every unlisted state fails closed untouched. A crash before commit leaves no
-   committed database state or user-file mutation after reconciliation. After
-   commit/response loss, an exact-key retry returns the committed winner without
-   another file write, version, event, operation, claim or knowledge epoch.
-   Same-second distinct transitions remain ordered by predecessor/version.
+   Without a seal, recovery restores D0/absence when uncontested or the latest
+   captured incumbent inode on collision; a seal keeps D1. Every unlisted state fails closed untouched.
+   A crash before commit leaves no committed database state or user-file mutation
+   after reconciliation. After commit/response loss, an exact-key retry returns the
+   committed winner without another file write, version, event, operation, claim,
+   or knowledge epoch. Same-second transitions remain predecessor/version ordered.
    Every previous status must equal the prior new status and the terminal status
    must equal the current row. The new status is effective at transition
    equality; an unsupported/unrecorded transition, gap, fork or contradiction returns
@@ -375,12 +378,12 @@ pending v2 requirements below.
       swap intent, backup hard-link pin, present-target atomic exchange,
       durable exchange/compensation intents, absent-target no-replace
       publication, every database point through
-      commit, cleanup and journal deletion. No-seal recovery restores prior bytes;
-      sealed recovery keeps the exact new digest; tampering and indeterminate
-      state remain visible and untouched. Initial temp naming/scanning/ownership
+      commit, cleanup and journal deletion. No-seal recovery restores prior bytes
+      or the latest stable captured inode; sealed recovery keeps the new digest;
+      tampering and indeterminate states stay visible. Temp naming/scanning/ownership
       and every legal target/backup/stage tuple have deterministic outcomes.
-      Backup retains original identity/metadata/mode/digest rather than 0600,
-      and persisted recovery phases converge after every recovery-syscall crash.
+      Backup initially proves original identity/metadata/mode/digest, while an
+      open-FD collision retains its inode; every recovery-syscall crash converges.
       Cross-process faults at every writer phase prove scanner and doctor cannot
       recover a live request, including durable D1 before its database seal; after
       writer death exactly one lock owner reconciles. Target-parent traversal,
@@ -388,8 +391,8 @@ pending v2 requirements below.
       stage proof are fault-tested independently of the private journal parent.
       Every stage-build create/chunk-write/fdatasync/publish checkpoint converges;
       forged U/S proofs fail closed. Absent-target and link/exchange source races
-      prove a competing create/replace is never deleted, sealed, or misclassified
-      as the original; stable compensation restores it to target.
+      prove a competing create/replace or open-FD write is never deleted, sealed,
+      or misclassified; stable-entry compensation restores its inode to target.
 - [ ] Canonical same-topic and cross-topic noops advance trust/ack knowledge only
       at their transition; malformed result provenance fails closed.
 - [ ] Candidate replacement/no-op multi-active transitions reconstruct all
