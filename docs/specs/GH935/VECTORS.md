@@ -17,6 +17,8 @@ u64be(n) = unsigned 64-bit big-endian n
 frame(x) = u64be(len(x)) || x
 H(tag, x...) = SHA-256(UTF8(tag) || 0x00 || frame(x[0]) || ... || frame(x[n]))
 raw32(h) = the 32 bytes represented by lowercase hex64 h
+raw64(h) = the 64 bytes represented by lowercase hex128 h
+dec = a JSON string matching 0|[1-9][0-9]*
 ```
 
 Every invalid hex length, non-lowercase serialized digest, integer overflow,
@@ -282,15 +284,15 @@ The final-envelope framing produces
 the visibility object-set formula produces
 `7aa43ff551ddbd1b9bc04468012ae61436d4edeca20a0a43f0f2c9fb0b95bb80`.
 With fingerprint `1e13d405471fbd0f40f5379c71283681102ecb7572e32a9ccdf94c35f3211ccf`,
-the JCS receipt is exactly 657 bytes with SHA-256
-`eba7791918ad3abf39f4a69692daaf0eefdd821ce1d711f9f16af96eba69dc32`.
+the JCS receipt is exactly 661 bytes with SHA-256
+`d89694b8de346511096ae17652b4cd1a4dbc675c15bc6745f58f5439a83a6558`.
 
 The Ed25519 public-key SPKI is
 `302a300506032b6570032100ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c`;
 the receipt signature is
-`9053d37099c5b926df5afba0e7c9cc16a9fe322877e36cc08f3f92a73a571d3ce0fd4222fc0e2db125518434faa97492fab584203f9a6de2929f3fca40578802`;
+`188c8deb0c2178e87fcb56d6164e4d57e8f792c501d5abcb3842413e96b89d945440eb82987af3959e0daae4c1eae057d9ac5c4376ca7763e0102f5d2cc4c60a`;
 the final read root is
-`321c6c70d353b3ae470b6ec078f93b97a7cf954d77c0049a2457e2359b85d72c`.
+`c1de1d05df376612093f9dde05c34af046304d2cfab845684381eb7c5c970748`.
 
 Mutating either path, length, digest, checkpoint, receipt signature, or one
 published byte must fail. Omitting the gated reads while retaining expected
@@ -339,7 +341,7 @@ root, and read root above, the derived `completion_id` is
 `701dee4677c96de280fd29f3a8f37a92e260e7cec91c3a659cb7980a5dac53ab`.
 The closed `publication_complete_v1` object in the field order declared by
 `TECH.md` canonicalizes to 1349 JCS bytes and its `completion_record_hash` is
-`7b0158d2c59c047326f886b58efe94c4bc915e82e6c1c20387057bb4a73b1300`.
+`3534b7beb11963a26fa11802a24ce4a8aeaf99db0db4ba5d5249cbcf7eb1a2d7`.
 
 ## Implementation Verification
 
