@@ -14,7 +14,9 @@
   The pointer is never followed and the blob remains independently scanned;
   malformed, broken, absolute, escaping, or blob-symlink aliases keep the
   inspection explicitly incomplete instead of producing a false healthy
-  result.
+  result. Windows reparse points are rejected before recursive descent,
+  truncated files inside the managed backups tree remain fail-closed, and a
+  regular file occupying the `backups` path is still content-inspected.
 - Staged source version `0.6.40` for the post-merge event-retention
   corrective: automatic cleanup deletes only the seven explicitly ephemeral
   event kinds. Governance, scope-cleanup, and all future unknown event kinds

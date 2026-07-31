@@ -596,8 +596,11 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 
 `remem doctor` 的 `Plaintext residue` 检查会按内容递归检查整个受管理
 `REMEM_DATA_DIR` 树中的普通文件，包括名称任意或没有扩展名的自定义备份
-输出。它绝不会跟随符号链接；配置的密钥路径和当前数据库 sidecar 路径继续
-沿用既有排除规则。只有经过严格结构校验的 Hugging Face 内部缓存 snapshot
+输出。它绝不会跟随符号链接；在 Windows 上，还会在递归前拒绝所有文件系统
+reparse point。受管理 `backups/` 子树中短于 SQLite header 的文件会明确标记为
+检查不完整；其他位置的无关短运行文件会被忽略，除非其名称表明它是数据库
+artifact。配置的密钥路径和当前数据库 sidecar 路径继续沿用既有排除规则。
+只有经过严格结构校验的 Hugging Face 内部缓存 snapshot
 指针会被忽略，因为同仓库的 blob 是普通文件，会由目录树扫描独立检查。其他
 artifact 符号链接都会使检查结果标记为不完整。该检查只读，绝不会删除数据。发现明文副本时，
 如果当前数据库已确认为加密库，该项会报告 `Fail`，且 `remem doctor`

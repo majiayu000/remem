@@ -581,3 +581,49 @@ fn short_named_artifact_keeps_inspection_incomplete() {
     assert!(result.detail.contains("shorter than the SQLite header"));
     fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn short_arbitrary_backup_in_managed_backups_tree_keeps_inspection_incomplete() {
+    let dir = arbitrary_backup_test_dir();
+    let db_path = dir.join("remem.db");
+    write_non_plaintext_db(&db_path);
+    let backup = dir.join("backups").join("custom-output");
+    fs::create_dir_all(backup.parent().expect("backup should have parent"))
+        .expect("backup directory should create");
+    fs::write(&backup, b"short").expect("short backup fixture should write");
+
+    let result = check_plaintext_artifacts_in(&dir, &db_path, true);
+
+    assert_eq!(result.status, Status::Warn);
+    assert!(result.detail.contains(&backup.display().to_string()));
+    assert!(result.detail.contains("shorter than the SQLite header"));
+    fs::remove_dir_all(&dir).ok();
+}
+
+#[cfg(windows)]
+#[test]
+fn case_varied_windows_backups_paths_remain_fail_closed() {
+    let directory_fixture = arbitrary_backup_test_dir();
+    let directory_db = directory_fixture.join("remem.db");
+    write_non_plaintext_db(&directory_db);
+    let short_backup = directory_fixture.join("BACKUPS").join("custom-output");
+    fs::create_dir_all(short_backup.parent().expect("backup should have parent"))
+        .expect("case-varied backup directory should create");
+    fs::write(&short_backup, b"short").expect("short backup fixture should write");
+    let directory_result = check_plaintext_artifacts_in(&directory_fixture, &directory_db, true);
+    assert_eq!(directory_result.status, Status::Warn);
+    assert!(directory_result.detail.contains("shorter than"));
+
+    let file_fixture = arbitrary_backup_test_dir();
+    let file_db = file_fixture.join("remem.db");
+    write_non_plaintext_db(&file_db);
+    let backups_file = file_fixture.join("Backups");
+    write_plaintext_db(&backups_file);
+    let file_result = check_plaintext_artifacts_in(&file_fixture, &file_db, true);
+    assert_eq!(file_result.status, Status::Fail);
+    assert!(file_result.detail.contains("is not a directory"));
+    assert!(file_result.detail.contains("confirmed plaintext"));
+
+    fs::remove_dir_all(&directory_fixture).ok();
+    fs::remove_dir_all(&file_fixture).ok();
+}
