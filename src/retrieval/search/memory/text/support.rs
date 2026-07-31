@@ -4,13 +4,15 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::memory::Memory;
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rusqlite::{types::ToSql, Connection};
 
 use super::super::super::common::{
-    reciprocal_rank_score, weighted_rank_score, WeightedRankedChannel,
+    calibrated_signal, reciprocal_rank_score, weighted_rank_score, WeightedRankedChannel,
 };
-use super::super::{ChannelContribution, SearchWeights};
+use super::super::ChannelContribution;
+#[cfg(test)]
+use super::super::SearchWeights;
 use super::{NamedChannel, QuerySearchPlan};
 
 mod fact;
@@ -42,29 +44,38 @@ pub(super) fn log_search_timing(
 pub(super) fn contributions_for(
     memory_id: i64,
     plan: &QuerySearchPlan,
-) -> Vec<ChannelContribution> {
-    plan.channels
-        .iter()
-        .filter_map(|channel| {
-            channel
-                .hits
-                .iter()
-                .position(|hit| hit.id == memory_id)
-                .map(|index| ChannelContribution {
-                    channel: channel.name.to_string(),
-                    rank: index + 1,
-                    weight: channel.weight,
-                    rrf_score: reciprocal_rank_score(plan.weights.rrf_k, index),
-                    normalized_score: channel.hits[index].normalized_score,
-                    score: weighted_rank_score(
-                        channel.weight,
-                        plan.weights.rrf_k,
-                        index,
-                        channel.hits[index].normalized_score,
-                    ),
-                })
-        })
-        .collect()
+) -> Result<Vec<ChannelContribution>> {
+    let mut contributions = Vec::new();
+    for channel in &plan.channels {
+        if !channel.weight.is_finite() {
+            bail!(
+                "RRF channel {} weight must be finite, got {}",
+                channel.name,
+                channel.weight
+            );
+        }
+        if channel.weight <= 0.0 {
+            continue;
+        }
+        let Some(index) = channel.hits.iter().position(|hit| hit.id == memory_id) else {
+            continue;
+        };
+        let normalized_score = calibrated_signal(channel.hits[index].normalized_score)?;
+        contributions.push(ChannelContribution {
+            channel: channel.name.to_string(),
+            rank: index + 1,
+            weight: channel.weight,
+            rrf_score: reciprocal_rank_score(plan.weights.rrf_k, index)?,
+            normalized_score,
+            score: weighted_rank_score(
+                channel.weight,
+                plan.weights.rrf_k,
+                index,
+                normalized_score,
+            )?,
+        });
+    }
+    Ok(contributions)
 }
 
 pub(super) fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChannel<'_>> {
@@ -413,11 +424,6 @@ fn is_vector_only(memory_id: i64, plan: &QuerySearchPlan) -> bool {
         .is_some_and(|first| first == "vector" && contributing.all(|name| name == "vector"))
 }
 
-pub(super) fn vector_similarity_score(distance: f32, weights: SearchWeights) -> f64 {
-    let threshold = f64::from(weights.max_vector_distance);
-    ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
-}
-
 pub(super) fn visibility_label(memory: &Memory, requested_project: Option<&str>) -> &'static str {
     if memory.scope == "global" {
         "global-overlay"
@@ -476,20 +482,20 @@ mod tests {
     }
 
     #[test]
-    fn rank_only_contributions_explain_pure_rrf_components() {
+    fn rank_only_contributions_explain_pure_rrf_components() -> Result<()> {
         let plan = plan_with_channels(vec![
             NamedChannel::enabled("entity", 1.0, vec![1, 2]),
             NamedChannel::enabled("temporal", 0.1, vec![2]),
         ]);
 
-        let contributions = contributions_for(2, &plan);
+        let contributions = contributions_for(2, &plan)?;
         assert_eq!(contributions.len(), 2);
         let entity = &contributions[0];
         assert_eq!(entity.channel, "entity");
         assert_eq!(entity.rank, 2);
         assert_eq!(entity.weight, 1.0);
         assert_eq!(entity.normalized_score, None);
-        assert_eq!(entity.rrf_score, reciprocal_rank_score(60.0, 1));
+        assert_eq!(entity.rrf_score, reciprocal_rank_score(60.0, 1)?);
         assert_eq!(entity.score, entity.weight * entity.rrf_score);
 
         let temporal = &contributions[1];
@@ -497,8 +503,9 @@ mod tests {
         assert_eq!(temporal.rank, 1);
         assert_eq!(temporal.weight, 0.1);
         assert_eq!(temporal.normalized_score, None);
-        assert_eq!(temporal.rrf_score, reciprocal_rank_score(60.0, 0));
+        assert_eq!(temporal.rrf_score, reciprocal_rank_score(60.0, 0)?);
         assert_eq!(temporal.score, temporal.weight * temporal.rrf_score);
+        Ok(())
     }
 
     fn memory(id: i64, text: &str) -> Memory {

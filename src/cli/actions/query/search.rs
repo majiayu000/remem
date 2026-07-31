@@ -400,10 +400,12 @@ fn render_search_explain(explain: &SearchExplain) -> String {
     output.push_str("  results:\n");
     for result in &explain.results {
         output.push_str(&format!(
-            "    [{}] rank={} score={:.6} evidence_confidence={:.2} visibility={} scope={} project={}\n",
+            "    [{}] rank={} score={:.6} fusion_score={:.6} post_fusion_score_factor={:.3} evidence_confidence={:.2} visibility={} scope={} project={}\n",
             result.memory_id,
             result.final_rank,
             result.final_score,
+            result.fusion_score,
+            result.post_fusion_score_factor,
             result.evidence_confidence,
             result.visibility,
             result.scope,

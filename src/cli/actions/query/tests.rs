@@ -100,6 +100,8 @@ fn sample_explain() -> SearchExplain {
             memory_id: 1,
             final_rank: 1,
             final_score: 0.016393,
+            fusion_score: 0.016393,
+            post_fusion_score_factor: 1.0,
             evidence_confidence: 1.0,
             project: "proj".to_string(),
             scope: "project".to_string(),
@@ -224,6 +226,7 @@ fn cli_search_render_includes_explain_without_memory_content_dump() {
     assert!(output.contains("channels:"));
     assert!(output.contains("fts: 1#1"));
     assert!(output.contains("visibility=project-local"));
+    assert!(output.contains("fusion_score=0.016393 post_fusion_score_factor=1.000"));
     assert!(output.contains("contributions: fts#1=0.016393"));
     assert!(output.contains("weight=1.000,rrf=0.016393,signal=rank-only"));
     assert!(!output.contains("second line"));

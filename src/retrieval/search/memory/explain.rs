@@ -69,6 +69,10 @@ pub struct SearchExplainResult {
     pub memory_id: i64,
     pub final_rank: usize,
     pub final_score: f64,
+    /// Sum of the per-channel RRF contributions before post-fusion policies.
+    pub fusion_score: f64,
+    /// Multiplier applied after fusion, such as source-anchor demotion.
+    pub post_fusion_score_factor: f64,
     pub evidence_confidence: f64,
     pub project: String,
     pub scope: String,

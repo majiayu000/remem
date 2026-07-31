@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
-use super::{search_with_branch_explain, search_with_branch_weights, SearchWeights};
+use super::{
+    search_with_branch_explain, search_with_branch_weights, SearchExplainResult, SearchWeights,
+};
 
 mod fact_channel;
 
@@ -37,6 +39,22 @@ fn insert_explain_memory(conn: &Connection, memory: &ExplainMemory<'_>) -> Resul
         ],
     )?;
     Ok(())
+}
+
+fn assert_score_identity(result: &SearchExplainResult) {
+    let contribution_sum = result
+        .contributions
+        .iter()
+        .map(|contribution| contribution.score)
+        .sum::<f64>();
+    assert!(
+        (result.fusion_score - contribution_sum).abs() < 1e-12,
+        "{result:#?}"
+    );
+    assert!(
+        (result.final_score - result.fusion_score * result.post_fusion_score_factor).abs() < 1e-12,
+        "{result:#?}"
+    );
 }
 
 #[test]
@@ -143,6 +161,69 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
                 .iter()
                 .all(|contribution| contribution.score > 0.0)
     }));
+    for result in &explain.results {
+        assert_eq!(result.post_fusion_score_factor, 1.0);
+        assert_score_identity(result);
+    }
+    Ok(())
+}
+
+#[test]
+fn search_explain_accounts_for_source_anchor_demotion() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    conn.execute(
+        "INSERT INTO memories
+         (id, session_id, project, topic_key, title, content, memory_type, files,
+          created_at_epoch, updated_at_epoch, status, branch, scope)
+         VALUES (1, 'stale-session', 'proj', 'stale-topic', 'Stale marker',
+                 'stale marker retrieval', 'decision', '[\"src/stale.rs\"]',
+                 100, 100, 'active', 'main', 'project')",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO git_commits
+         (id, project, repo_path, sha, short_sha, branch, message,
+          authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch)
+         VALUES (1, 'proj', '/repo', 'source', 'source', 'main', NULL,
+                 100, '[\"src/stale.rs\"]', 100, 100)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO git_commit_sessions
+         (commit_id, session_id, memory_session_id, source, linked_at_epoch)
+         VALUES (1, 'content-1', 'stale-session', 'test', 100)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO git_commits
+         (id, project, repo_path, sha, short_sha, branch, message,
+          authored_at_epoch, changed_files, created_at_epoch, updated_at_epoch)
+         VALUES (2, 'proj', '/repo', 'later', 'later', 'main', NULL,
+                 200, '[\"src/stale.rs\"]', 200, 200)",
+        [],
+    )?;
+
+    let (_, explain) = search_with_branch_explain(
+        &conn,
+        Some("stale marker"),
+        Some("proj"),
+        None,
+        5,
+        0,
+        false,
+        Some("main"),
+    )?;
+    let explain = explain.context("query explain should be present")?;
+    let result = explain
+        .results
+        .iter()
+        .find(|result| result.memory_id == 1)
+        .context("stale memory should remain visible after demotion")?;
+
+    assert_eq!(result.staleness.source_anchor, "verify-before-trust");
+    assert!((result.post_fusion_score_factor - 0.25).abs() < 1e-12);
+    assert_score_identity(result);
     Ok(())
 }
 

@@ -3,7 +3,8 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::memory::{self, Memory};
 use crate::retrieval::search::common::{
-    sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel, WeightedRankedHit,
+    calibrated_vector_similarity, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
+    WeightedRankedHit,
 };
 use crate::retrieval::search::SearchWeights;
 
@@ -143,7 +144,7 @@ pub(super) fn query_hybrid_context_memories_with_weights(
             hits: &channel.hits,
         })
         .collect::<Vec<_>>();
-    let ids = weighted_ranked_fuse(&channel_inputs, weights.rrf_k)
+    let ids = weighted_ranked_fuse(&channel_inputs, weights.rrf_k)?
         .into_iter()
         .take(limit as usize)
         .map(|(id, _)| id)
@@ -537,12 +538,14 @@ fn query_local_vector_channel(
             .unwrap_or(std::cmp::Ordering::Equal)
             .then_with(|| a.0.cmp(&b.0))
     });
-    Ok(hits
-        .into_iter()
+    hits.into_iter()
         .map(|(id, distance)| {
-            WeightedRankedHit::scored(id, vector_similarity_score(distance, max_vector_distance))
+            Ok(WeightedRankedHit::scored(
+                id,
+                calibrated_vector_similarity(distance, max_vector_distance)?,
+            ))
         })
-        .collect())
+        .collect()
 }
 
 fn query_local_like_channel(
@@ -747,9 +750,4 @@ fn fts_ranked_hits(hits: &[(i64, f64)]) -> Vec<WeightedRankedHit> {
 
 fn rank_ordered_hits(ids: Vec<i64>) -> Vec<WeightedRankedHit> {
     ids.into_iter().map(WeightedRankedHit::rank_only).collect()
-}
-
-fn vector_similarity_score(distance: f32, max_vector_distance: f32) -> f64 {
-    let threshold = f64::from(max_vector_distance);
-    ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
 }

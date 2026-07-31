@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use anyhow::Result;
+use anyhow::{ensure, Context, Result};
 use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
 use crate::perf::{push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::common::{
-    paginate_memories, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedHit,
+    calibrated_vector_similarity, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
+    WeightedRankedHit,
 };
 use super::{
     suppression_filter, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
@@ -22,7 +23,7 @@ use format::fts_normalized_hits;
 use support::{
     apply_confidence_gate, candidate_confidence, contributions_for, log_search_timing,
     resolve_explicit_entity_scope, resolve_graph_claim_support, retrieved_candidate_ids,
-    vector_similarity_score, visibility_label, weighted_channel_inputs,
+    visibility_label, weighted_channel_inputs,
 };
 
 pub(super) struct QuerySearchWithExplain {
@@ -213,9 +214,9 @@ pub(super) fn search_with_query_weights(
     let channel_inputs = time_value(&mut plan.timings, "fusion_inputs", || {
         weighted_channel_inputs(&plan.channels)
     });
-    let fused = time_value(&mut plan.timings, "rrf_fusion", || {
+    let fused = time_result(&mut plan.timings, "rrf_fusion", || {
         weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
-    });
+    })?;
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
         load_ordered_memories(conn, &fused_ids, project, plan.include_suppressed)
@@ -298,9 +299,10 @@ pub(super) fn search_with_query_explain(
     let channel_inputs = time_value(&mut plan.timings, "fusion_inputs", || {
         weighted_channel_inputs(&plan.channels)
     });
-    let fused = time_value(&mut plan.timings, "rrf_fusion", || {
+    let fused = time_result(&mut plan.timings, "rrf_fusion", || {
         weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
-    });
+    })?;
+    let fusion_scores = fused.clone();
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
         load_ordered_memories(conn, &fused_ids, project, plan.include_suppressed)
@@ -332,8 +334,9 @@ pub(super) fn search_with_query_explain(
         include_stale,
         branch,
         &plan,
+        &fusion_scores,
         &gated_fused,
-        fused.len().saturating_sub(gated_fused.len()),
+        fusion_scores.len().saturating_sub(gated_fused.len()),
         &paged,
     )?;
     explain.rerank = Some(rerank_explain(&rerank_outcome));
@@ -514,12 +517,12 @@ fn build_query_search_plan(
                 .into_iter()
                 .filter(|hit| hit.distance <= weights.max_vector_distance)
                 .map(|hit| {
-                    WeightedRankedHit::scored(
+                    Ok(WeightedRankedHit::scored(
                         hit.memory_id,
-                        vector_similarity_score(hit.distance, weights),
-                    )
+                        calibrated_vector_similarity(hit.distance, weights.max_vector_distance)?,
+                    ))
                 })
-                .collect::<Vec<_>>();
+                .collect::<Result<Vec<_>>>()?;
             let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
             NamedChannel::enabled_with_hits("vector", weights.vector, hits)
                 .with_candidates_scanned(candidates_scanned)
@@ -641,7 +644,8 @@ fn build_explain(
     include_stale: bool,
     branch: Option<&str>,
     plan: &QuerySearchPlan,
-    fused: &[(i64, f64)],
+    fusion_scores: &[(i64, f64)],
+    final_scores: &[(i64, f64)],
     filtered_result_count: usize,
     paged: &[Memory],
 ) -> Result<SearchExplain> {
@@ -665,28 +669,74 @@ fn build_explain(
                 .collect(),
         })
         .collect();
-    let id_to_score: HashMap<i64, f64> = fused.iter().copied().collect();
+    let id_to_fusion_score: HashMap<i64, f64> = fusion_scores.iter().copied().collect();
+    let id_to_final_score: HashMap<i64, f64> = final_scores.iter().copied().collect();
     let now_epoch = chrono::Utc::now().timestamp();
     let staleness_labels =
         memory::staleness::memory_staleness_labels_for_memories(conn, paged, now_epoch)?;
     let results = paged
         .iter()
         .enumerate()
-        .map(|(index, memory)| SearchExplainResult {
-            memory_id: memory.id,
-            final_rank: index + 1,
-            final_score: id_to_score.get(&memory.id).copied().unwrap_or_default(),
-            evidence_confidence: candidate_confidence(memory, plan),
-            project: memory.project.clone(),
-            scope: memory.scope.clone(),
-            visibility: visibility_label(memory, project).to_string(),
-            staleness: staleness_labels
+        .map(|(index, memory)| -> Result<SearchExplainResult> {
+            let final_score = id_to_final_score
                 .get(&memory.id)
-                .cloned()
-                .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
-            contributions: contributions_for(memory.id, plan),
+                .copied()
+                .with_context(|| format!("missing final score for memory {}", memory.id))?;
+            ensure!(
+                final_score.is_finite() && final_score >= 0.0,
+                "invalid final score {final_score} for memory {}",
+                memory.id
+            );
+            let contributions = contributions_for(memory.id, plan)?;
+            let contribution_sum =
+                contributions.iter().try_fold(0.0, |total, contribution| {
+                let next = total + contribution.score;
+                ensure!(
+                    next.is_finite(),
+                    "fusion explanation score overflow for memory {}",
+                    memory.id
+                );
+                Ok(next)
+            })?;
+            let fusion_score = id_to_fusion_score
+                .get(&memory.id)
+                .copied()
+                .with_context(|| format!("missing fusion score for memory {}", memory.id))?;
+            ensure!(
+                fusion_score.is_finite() && fusion_score > 0.0,
+                "invalid fusion score {fusion_score} for memory {}",
+                memory.id
+            );
+            let score_tolerance = f64::EPSILON * 16.0 * fusion_score.abs().max(1.0);
+            ensure!(
+                (fusion_score - contribution_sum).abs() <= score_tolerance,
+                "fusion contribution mismatch for memory {}: fused={fusion_score} explained={contribution_sum}",
+                memory.id
+            );
+            let post_fusion_score_factor = final_score / fusion_score;
+            ensure!(
+                post_fusion_score_factor.is_finite() && post_fusion_score_factor >= 0.0,
+                "invalid post-fusion score factor for memory {}",
+                memory.id
+            );
+            Ok(SearchExplainResult {
+                memory_id: memory.id,
+                final_rank: index + 1,
+                final_score,
+                fusion_score,
+                post_fusion_score_factor,
+                evidence_confidence: candidate_confidence(memory, plan),
+                project: memory.project.clone(),
+                scope: memory.scope.clone(),
+                visibility: visibility_label(memory, project).to_string(),
+                staleness: staleness_labels
+                    .get(&memory.id)
+                    .cloned()
+                    .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
+                contributions,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     Ok(SearchExplain {
         query: query_text.to_string(),
         project: project.map(str::to_string),
