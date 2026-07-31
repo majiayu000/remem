@@ -438,3 +438,22 @@ fn hybrid_context_declares_no_private_scoring_constants() {
         "injection must mark channels without calibrated strength as rank-only"
     );
 }
+
+#[test]
+fn injection_rejects_non_finite_fact_weight_before_empty_query_short_circuit() {
+    let conn = Connection::open_in_memory().expect("in-memory database");
+    let error = query_hybrid_context_memories_with_weights(
+        &conn,
+        PROJECT,
+        "",
+        None,
+        &[],
+        0,
+        SearchWeights {
+            fact: f64::NAN,
+            ..SearchWeights::default()
+        },
+    )
+    .expect_err("non-finite fact weight must fail closed");
+    assert!(error.to_string().contains("fact"), "{error:#}");
+}

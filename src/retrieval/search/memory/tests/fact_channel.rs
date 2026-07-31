@@ -232,3 +232,39 @@ fn zero_fact_weight_disables_fact_only_results() -> Result<()> {
     assert_eq!(enabled.first().map(|memory| memory.id), Some(1));
     Ok(())
 }
+
+#[test]
+fn weighted_search_rejects_non_finite_fact_and_usage_before_channel_filters() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    for (field, weights) in [
+        (
+            "fact",
+            SearchWeights {
+                fact: f64::NAN,
+                ..SearchWeights::default()
+            },
+        ),
+        (
+            "usage",
+            SearchWeights {
+                usage: f64::INFINITY,
+                ..SearchWeights::default()
+            },
+        ),
+    ] {
+        let error = search_with_branch_weights(
+            &conn,
+            None,
+            Some("/repo"),
+            None,
+            0,
+            0,
+            false,
+            None,
+            weights,
+        )
+        .expect_err("non-finite weights must fail before query/channel short-circuits");
+        assert!(error.to_string().contains(field), "{field}: {error:#}");
+    }
+    Ok(())
+}

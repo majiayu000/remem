@@ -22,6 +22,7 @@ pub(super) fn append_graph_channel(
     fetch_limit: i64,
     weights: SearchWeights,
 ) -> Result<()> {
+    weights.validate()?;
     if weights.graph <= 0.0 {
         channels.push(NamedChannel::disabled(
             "graph_traversal",

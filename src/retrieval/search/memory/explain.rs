@@ -25,6 +25,7 @@ pub struct SearchExplain {
     pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
     pub channels: Vec<SearchExplainChannel>,
     pub results: Vec<SearchExplainResult>,
+    pub contribution_breakdowns: Vec<SearchExplainResultBreakdown>,
     pub has_more: bool,
     pub raw_fallback_count: usize,
 }
@@ -34,6 +35,8 @@ impl SearchExplain {
         self.has_more = has_more;
         self.limit = visible_limit;
         self.results
+            .retain(|result| result_ids.contains(&result.memory_id));
+        self.contribution_breakdowns
             .retain(|result| result_ids.contains(&result.memory_id));
         for (index, result) in self.results.iter_mut().enumerate() {
             result.final_rank = index + 1;
@@ -121,4 +124,21 @@ pub struct ChannelContribution {
     pub channel: String,
     pub rank: usize,
     pub score: f64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchExplainResultBreakdown {
+    pub memory_id: i64,
+    pub contributions: Vec<ChannelContributionBreakdown>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ChannelContributionBreakdown {
+    pub channel: String,
+    pub rank: usize,
+    pub weight: f64,
+    pub reciprocal_rank: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normalized_signal: Option<f64>,
+    pub total_score: f64,
 }

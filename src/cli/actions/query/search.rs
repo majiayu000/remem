@@ -399,6 +399,10 @@ fn render_search_explain(explain: &SearchExplain) -> String {
     }
     output.push_str("  results:\n");
     for result in &explain.results {
+        let contribution_breakdown = explain
+            .contribution_breakdowns
+            .iter()
+            .find(|breakdown| breakdown.memory_id == result.memory_id);
         let post_fusion_score_factor = result
             .post_fusion_score_factor()
             .map(|factor| format!("{factor:.3}"))
@@ -415,15 +419,24 @@ fn render_search_explain(explain: &SearchExplain) -> String {
             result.scope,
             result.project
         ));
-        if !result.contributions.is_empty() {
+        if let Some(breakdown) = contribution_breakdown {
             output.push_str(&format!(
                 "      contributions: {}\n",
-                result
+                breakdown
                     .contributions
                     .iter()
                     .map(|contribution| format!(
-                        "{}#{}={:.6}",
-                        contribution.channel, contribution.rank, contribution.score
+                        "{}#{}={:.6} (weight={:.6}, reciprocal_rank={:.6}, normalized_signal={}, total={:.6})",
+                        contribution.channel,
+                        contribution.rank,
+                        contribution.total_score,
+                        contribution.weight,
+                        contribution.reciprocal_rank,
+                        contribution
+                            .normalized_signal
+                            .map(|signal| format!("{signal:.6}"))
+                            .unwrap_or_else(|| "none".to_string()),
+                        contribution.total_score,
                     ))
                     .collect::<Vec<_>>()
                     .join(", ")

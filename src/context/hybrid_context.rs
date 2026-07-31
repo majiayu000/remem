@@ -52,6 +52,7 @@ pub(super) fn query_hybrid_context_memories_with_weights(
     limit: i64,
     weights: SearchWeights,
 ) -> Result<Vec<Memory>> {
+    weights.validate()?;
     if limit <= 0 || query.trim().is_empty() {
         return Ok(vec![]);
     }

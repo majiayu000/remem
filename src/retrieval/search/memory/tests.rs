@@ -168,6 +168,35 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
         assert_eq!(result.post_fusion_score_factor(), Some(1.0));
         assert_score_identity(result);
     }
+    assert_eq!(
+        explain
+            .contribution_breakdowns
+            .iter()
+            .map(|breakdown| breakdown.memory_id)
+            .collect::<Vec<_>>(),
+        explain
+            .results
+            .iter()
+            .map(|result| result.memory_id)
+            .collect::<Vec<_>>(),
+        "breakdowns must have one uniquely associated entry in result order"
+    );
+    for (result, breakdown) in explain.results.iter().zip(&explain.contribution_breakdowns) {
+        assert_eq!(breakdown.memory_id, result.memory_id);
+        assert_eq!(breakdown.contributions.len(), result.contributions.len());
+        for (total, details) in result.contributions.iter().zip(&breakdown.contributions) {
+            assert_eq!(
+                (details.channel.as_str(), details.rank),
+                (total.channel.as_str(), total.rank)
+            );
+            let signal_factor = 1.0 + details.normalized_signal.unwrap_or(0.0);
+            assert_eq!(
+                details.total_score,
+                details.weight * details.reciprocal_rank * signal_factor
+            );
+            assert_eq!(details.total_score, total.score);
+        }
+    }
     Ok(())
 }
 

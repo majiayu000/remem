@@ -102,6 +102,7 @@ pub(crate) fn search_with_branch_weights(
     branch: Option<&str>,
     weights: SearchWeights,
 ) -> Result<Vec<Memory>> {
+    weights.validate()?;
     match query {
         Some(query_text) if !query_text.is_empty() => search_with_query_weights(
             conn,

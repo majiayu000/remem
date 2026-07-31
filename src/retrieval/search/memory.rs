@@ -13,7 +13,8 @@ pub(crate) mod usage_rank;
 mod weights;
 
 pub use explain::{
-    ChannelContribution, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
+    ChannelContribution, ChannelContributionBreakdown, ChannelHit, SearchExplain,
+    SearchExplainChannel, SearchExplainResult, SearchExplainResultBreakdown,
 };
 pub(crate) use runner::search_with_branch_weights;
 pub use runner::{

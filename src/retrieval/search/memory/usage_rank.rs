@@ -9,6 +9,7 @@ pub(crate) fn usage_hits_for_retrieved_candidates(
     candidate_ids: &[i64],
     weights: SearchWeights,
 ) -> Result<Vec<WeightedRankedHit>> {
+    weights.validate()?;
     if candidate_ids.is_empty() {
         return Ok(vec![]);
     }

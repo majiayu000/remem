@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
-use anyhow::{ensure, Context, Result};
+use anyhow::Result;
 use rusqlite::Connection;
 
 use crate::memory::{self, Memory};
@@ -11,19 +11,17 @@ use super::super::common::{
     calibrated_vector_hits, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
     WeightedRankedHit,
 };
-use super::{
-    suppression_filter, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
-    SearchWeights,
-};
+use super::{suppression_filter, SearchExplain, SearchWeights};
 
+mod explain_build;
 mod format;
 mod graph;
 mod support;
+use explain_build::build_explain;
 use format::fts_normalized_hits;
 use support::{
-    apply_confidence_gate, candidate_confidence, contributions_for, log_search_timing,
-    resolve_explicit_entity_scope, resolve_graph_claim_support, retrieved_candidate_ids,
-    visibility_label, weighted_channel_inputs,
+    apply_confidence_gate, log_search_timing, resolve_explicit_entity_scope,
+    resolve_graph_claim_support, retrieved_candidate_ids, weighted_channel_inputs,
 };
 
 pub(super) struct QuerySearchWithExplain {
@@ -290,6 +288,7 @@ pub(super) fn search_with_query_explain(
                 rerank: None,
                 channels: vec![],
                 results: vec![],
+                contribution_breakdowns: vec![],
                 has_more: false,
                 raw_fallback_count: 0,
             },
@@ -360,6 +359,7 @@ fn build_query_search_plan(
     include_suppressed: bool,
     weights: SearchWeights,
 ) -> Result<QuerySearchPlan> {
+    weights.validate()?;
     let total_start = Instant::now();
     let mut timings = Vec::new();
     let page_target = (limit.max(1) + offset.max(0) + 1).max(2);
@@ -627,134 +627,6 @@ fn build_query_search_plan(
         weights,
         channels,
         timings,
-    })
-}
-
-fn build_explain(
-    conn: &Connection,
-    query_text: &str,
-    project: Option<&str>,
-    memory_type: Option<&str>,
-    limit: i64,
-    offset: i64,
-    include_stale: bool,
-    branch: Option<&str>,
-    plan: &QuerySearchPlan,
-    fusion_scores: &[(i64, f64)],
-    final_scores: &[(i64, f64)],
-    filtered_result_count: usize,
-    paged: &[Memory],
-) -> Result<SearchExplain> {
-    let channels = plan
-        .channels
-        .iter()
-        .map(|channel| SearchExplainChannel {
-            name: channel.name.to_string(),
-            enabled: channel.is_enabled(),
-            disabled_reason: channel.disabled_reason.clone(),
-            candidates_scanned: channel.candidates_scanned,
-            embedding: channel.embedding.clone(),
-            hits: channel
-                .hits
-                .iter()
-                .enumerate()
-                .map(|(index, hit)| ChannelHit {
-                    memory_id: hit.id,
-                    rank: index + 1,
-                })
-                .collect(),
-        })
-        .collect();
-    let id_to_fusion_score: HashMap<i64, f64> = fusion_scores.iter().copied().collect();
-    let id_to_final_score: HashMap<i64, f64> = final_scores.iter().copied().collect();
-    let now_epoch = chrono::Utc::now().timestamp();
-    let staleness_labels =
-        memory::staleness::memory_staleness_labels_for_memories(conn, paged, now_epoch)?;
-    let results = paged
-        .iter()
-        .enumerate()
-        .map(|(index, memory)| -> Result<SearchExplainResult> {
-            let final_score = id_to_final_score
-                .get(&memory.id)
-                .copied()
-                .with_context(|| format!("missing final score for memory {}", memory.id))?;
-            ensure!(
-                final_score.is_finite() && final_score >= 0.0,
-                "invalid final score {final_score} for memory {}",
-                memory.id
-            );
-            let contributions = contributions_for(memory.id, plan)?;
-            let contribution_sum =
-                contributions.iter().try_fold(0.0, |total, contribution| {
-                let next = total + contribution.score;
-                ensure!(
-                    next.is_finite(),
-                    "fusion explanation score overflow for memory {}",
-                    memory.id
-                );
-                Ok(next)
-            })?;
-            let fusion_score = id_to_fusion_score
-                .get(&memory.id)
-                .copied()
-                .with_context(|| format!("missing fusion score for memory {}", memory.id))?;
-            ensure!(
-                fusion_score.is_finite() && fusion_score > 0.0,
-                "invalid fusion score {fusion_score} for memory {}",
-                memory.id
-            );
-            let score_tolerance = f64::EPSILON * 16.0 * fusion_score.abs().max(1.0);
-            ensure!(
-                (fusion_score - contribution_sum).abs() <= score_tolerance,
-                "fusion contribution mismatch for memory {}: fused={fusion_score} explained={contribution_sum}",
-                memory.id
-            );
-            let post_fusion_score_factor = final_score / fusion_score;
-            ensure!(
-                post_fusion_score_factor.is_finite() && post_fusion_score_factor >= 0.0,
-                "invalid post-fusion score factor for memory {}",
-                memory.id
-            );
-            Ok(SearchExplainResult {
-                memory_id: memory.id,
-                final_rank: index + 1,
-                final_score,
-                evidence_confidence: candidate_confidence(memory, plan),
-                project: memory.project.clone(),
-                scope: memory.scope.clone(),
-                visibility: visibility_label(memory, project).to_string(),
-                staleness: staleness_labels
-                    .get(&memory.id)
-                    .cloned()
-                    .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
-                contributions,
-            })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(SearchExplain {
-        query: query_text.to_string(),
-        project: project.map(str::to_string),
-        memory_type: memory_type.map(str::to_string),
-        branch: branch.map(str::to_string),
-        include_stale,
-        limit,
-        offset,
-        fetch_limit: plan.fetch_limit,
-        expanded_terms: plan.expanded_terms.clone(),
-        core_terms: plan.core_terms.clone(),
-        claim_terms: plan.claim_terms.clone(),
-        fts_query: plan.fts_query.clone(),
-        temporal_range: plan.temporal_range,
-        temporal_field: plan.temporal_field.clone(),
-        rrf_k: plan.weights.rrf_k,
-        min_evidence_confidence: plan.weights.min_evidence_confidence,
-        filtered_result_count,
-        timings: plan.timings.clone(),
-        rerank: None,
-        channels,
-        results,
-        has_more: false,
-        raw_fallback_count: 0,
     })
 }
 

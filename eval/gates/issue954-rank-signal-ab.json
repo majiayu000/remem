@@ -1,0 +1,50 @@
+{
+  "version": "2026-08-01",
+  "issue": 954,
+  "dataset": {
+    "path": "eval/golden.json",
+    "raw_sha256": "5c828b0161a556bbc8906d75f52b260653bb86d298e43d1bff563125ea728ee9",
+    "query_id": "rank-signal-01",
+    "slice": "rank_signal",
+    "k": 5
+  },
+  "reproduction": {
+    "command": "cargo run --quiet -- eval-graph-decision --dataset <candidate-worktree>/eval/golden.json --json-out <report.json>",
+    "comparison": "Run the same dataset from each exact commit and read standard.non_associative_by_slice.rank_signal plus the rank-signal-01 query summary."
+  },
+  "baseline": {
+    "commit": "23aa067c4c7e8f1f50ac3e1149a727efcfb7d339",
+    "retrieved_ids": [
+      87,
+      88
+    ],
+    "metrics": {
+      "hit_at_k": 1.0,
+      "mrr_at_10": 0.5,
+      "precision_at_k": 0.5,
+      "recall_at_k": 1.0,
+      "ndcg_at_10": 0.6309297535714575,
+      "evidence_recall_at_k": 1.0
+    }
+  },
+  "candidate": {
+    "commit": "00935383edeb43a4c9b4fce41bd33f739255a66d",
+    "retrieved_ids": [
+      88,
+      87
+    ],
+    "metrics": {
+      "hit_at_k": 1.0,
+      "mrr_at_10": 1.0,
+      "precision_at_k": 0.5,
+      "recall_at_k": 1.0,
+      "ndcg_at_10": 1.0,
+      "evidence_recall_at_k": 1.0
+    }
+  },
+  "delta": {
+    "mrr_at_10": 0.5,
+    "ndcg_at_10": 0.36907024642854247
+  },
+  "passed": true
+}

@@ -136,6 +136,20 @@ fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
     let serialized = serde_json::to_value(&result).expect("search explain should serialize");
     assert_eq!(serialized["fusion_score"].as_f64(), Some(0.5));
     assert_eq!(serialized["post_fusion_score_factor"].as_f64(), Some(0.5));
+
+    let breakdown = remem::retrieval::search::SearchExplainResultBreakdown {
+        memory_id: 7,
+        contributions: vec![remem::retrieval::search::ChannelContributionBreakdown {
+            channel: "entity".to_string(),
+            rank: 1,
+            weight: 2.0,
+            reciprocal_rank: 0.25,
+            normalized_signal: None,
+            total_score: 0.5,
+        }],
+    };
+    assert_eq!(breakdown.memory_id, 7);
+    assert_eq!(breakdown.contributions[0].total_score, 0.5);
 }
 
 #[tokio::test]
