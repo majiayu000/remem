@@ -1,7 +1,12 @@
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{
+    params, params_from_iter, Connection, OptionalExtension, ToSql, Transaction,
+    TransactionBehavior,
+};
 
 use crate::db::{self, CompressedObservationSource, Observation};
+
+use super::write::EPHEMERAL_EVENT_TYPES;
 
 pub const OLD_EVENT_RETENTION_DAYS: i64 = 30;
 pub const COMPRESSED_SOURCE_OBSERVATION_RETENTION_DAYS: i64 = 90;
@@ -9,6 +14,16 @@ pub const STALE_MEMORY_ARCHIVE_DAYS: i64 = 180;
 
 const SECONDS_PER_DAY: i64 = 86_400;
 const COMPRESSED_SOURCE_SCAN_BATCH_SIZE: i64 = 500;
+const OLD_EVENT_PREDICATE: &str = "WHERE retention_class = 'ephemeral'
+       AND event_type IN (?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       AND created_at_epoch < ?1";
+const OLD_EVENT_PREDICATE_WITH_AUDIT_REFERENCES: &str = "WHERE retention_class = 'ephemeral'
+       AND event_type IN (?2, ?3, ?4, ?5, ?6, ?7, ?8)
+       AND created_at_epoch < ?1
+       AND NOT EXISTS (
+         SELECT 1 FROM api_mutation_requests request
+         WHERE request.audit_id = events.id
+       )";
 
 pub fn cleanup_old_events(conn: &Connection, days: i64) -> Result<usize> {
     cleanup_old_events_at(conn, chrono::Utc::now().timestamp(), days)
@@ -23,20 +38,11 @@ pub fn cleanup_old_events_at(conn: &Connection, now_epoch: i64, days: i64) -> Re
         return Ok(0);
     };
     let cutoff = cutoff_epoch(now_epoch, days);
-    let sql = if has_audit_references {
-        "DELETE FROM events
-         WHERE retention_class = 'ephemeral'
-           AND created_at_epoch < ?1
-           AND NOT EXISTS (
-             SELECT 1 FROM api_mutation_requests request
-             WHERE request.audit_id = events.id
-           )"
-    } else {
-        "DELETE FROM events
-         WHERE retention_class = 'ephemeral'
-           AND created_at_epoch < ?1"
-    };
-    Ok(conn.execute(sql, params![cutoff])?)
+    let sql = format!(
+        "DELETE FROM events {}",
+        old_event_predicate(has_audit_references)
+    );
+    Ok(conn.execute(&sql, params_from_iter(old_event_params(&cutoff)))?)
 }
 
 pub fn count_old_events_at(conn: &Connection, now_epoch: i64, days: i64) -> Result<usize> {
@@ -44,20 +50,32 @@ pub fn count_old_events_at(conn: &Connection, now_epoch: i64, days: i64) -> Resu
         return Ok(0);
     };
     let cutoff = cutoff_epoch(now_epoch, days);
-    let sql = if has_audit_references {
-        "SELECT COUNT(*) FROM events
-         WHERE retention_class = 'ephemeral'
-           AND created_at_epoch < ?1
-           AND NOT EXISTS (
-             SELECT 1 FROM api_mutation_requests request
-             WHERE request.audit_id = events.id
-           )"
+    let sql = format!(
+        "SELECT COUNT(*) FROM events {}",
+        old_event_predicate(has_audit_references)
+    );
+    let count = conn
+        .query_row(&sql, params_from_iter(old_event_params(&cutoff)), |row| {
+            row.get::<_, i64>(0)
+        })
+        .context("count expired ephemeral events")?;
+    Ok(count as usize)
+}
+
+fn old_event_predicate(has_audit_references: bool) -> &'static str {
+    if has_audit_references {
+        OLD_EVENT_PREDICATE_WITH_AUDIT_REFERENCES
     } else {
-        "SELECT COUNT(*) FROM events
-         WHERE retention_class = 'ephemeral'
-           AND created_at_epoch < ?1"
-    };
-    count_rows(conn, sql, &[&cutoff])
+        OLD_EVENT_PREDICATE
+    }
+}
+
+fn old_event_params<'a>(cutoff: &'a i64) -> impl Iterator<Item = &'a dyn ToSql> {
+    std::iter::once(cutoff as &'a dyn ToSql).chain(
+        EPHEMERAL_EVENT_TYPES
+            .iter()
+            .map(|event_type| event_type as &dyn ToSql),
+    )
 }
 
 pub fn archive_stale_memories(conn: &Connection, days: i64) -> Result<usize> {

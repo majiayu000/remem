@@ -8,6 +8,11 @@
   time phrases from claim tokens. Conversational request scaffolding and
   localized time expressions no longer inflate claim confidence, while
   malformed, grouped, signed, zero, and overflowing counts fail closed.
+- Staged source version `0.6.40` for the post-merge event-retention
+  corrective: automatic cleanup deletes only the seven explicitly ephemeral
+  event kinds. Governance, scope-cleanup, and all future unknown event kinds
+  remain durable audit history by default instead of being silently classified
+  as disposable.
 - Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
   scores from `SearchWeights` instead of eight private scoring constants in
   `hybrid_context.rs` that duplicated it and had already drifted — the injection
