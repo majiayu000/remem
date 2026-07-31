@@ -227,6 +227,40 @@ fn old_event_cleanup_preserves_audit_and_api_provenance() {
 }
 
 #[test]
+fn old_event_cleanup_preserves_preupgrade_durable_types_misclassified_as_ephemeral() {
+    let conn = Connection::open_in_memory().unwrap();
+    setup_memory_schema(&conn);
+    let now = 2_000_000_000;
+    for event_type in ["bash", "memory_governance", "scope_cleanup", "future_event"] {
+        conn.execute(
+            "INSERT INTO events
+             (session_id, project, event_type, summary, created_at_epoch, retention_class)
+             VALUES ('s', 'proj', ?1, 'old', ?2, 'ephemeral')",
+            params![event_type, now - 40 * 86_400],
+        )
+        .unwrap();
+    }
+
+    assert_eq!(count_old_events_at(&conn, now, 30).unwrap(), 1);
+    assert_eq!(super::cleanup_old_events_at(&conn, now, 30).unwrap(), 1);
+    let remaining = conn
+        .prepare("SELECT event_type FROM events ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get::<_, String>(0))
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        remaining,
+        vec![
+            "memory_governance".to_string(),
+            "scope_cleanup".to_string(),
+            "future_event".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn test_archive_stale_memories() {
     let conn = Connection::open_in_memory().unwrap();
     setup_memory_schema(&conn);

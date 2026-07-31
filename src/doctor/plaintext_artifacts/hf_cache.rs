@@ -31,16 +31,15 @@ pub(super) fn is_snapshot_pointer(data_dir: &Path, path: &Path) -> bool {
             })
             .map(str::len)
     };
-    if snapshot != 3
+    if snapshot < 2
         || parts.len() < snapshot + 3
-        || parts[0] != OsStr::new("models")
-        || !parts[1]
+        || !parts[snapshot - 2]
             .to_str()
             .is_some_and(|name| name.starts_with("fastembed-"))
-        || !parts[2]
+        || !parts[snapshot - 1]
             .to_str()
             .is_some_and(|name| name.starts_with("models--"))
-        || lower_hex_len(parts[snapshot + 1]) != Some(40)
+        || !matches!(lower_hex_len(parts[snapshot + 1]), Some(40) | Some(64))
     {
         return false;
     }
