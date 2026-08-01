@@ -87,6 +87,13 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         );
     }
 
+    let claims = super::super::claim::query_claim_terms("模块由小王维护吗？", Some("/repo"), &[]);
+    assert_eq!(
+        super::super::claim::claim_text_coverage("模块由小李维护；小王负责测试。", &claims),
+        0.5,
+        "contradictory attribution must remain below the confidence gate: {claims:?}"
+    );
+
     let claims = super::super::claim::query_claim_terms("EU模块由小王维护R2", Some("/repo"), &[]);
     assert!(claims.contains(&"eu".to_string()), "{claims:?}");
     assert!(claims.contains(&"r2".to_string()), "{claims:?}");

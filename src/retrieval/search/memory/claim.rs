@@ -109,11 +109,12 @@ pub(super) fn claim_text_match_count(text: &str, claim_terms: &[String]) -> usiz
         .iter()
         .enumerate()
         .filter(|(index, term)| {
-            let followed_by_cjk_relation = claim_terms
+            let following_cjk_relation = claim_terms
                 .get(index + 1)
-                .is_some_and(|next| next.chars().any(is_cjk) && is_relation_only_claim_term(next));
+                .filter(|next| next.chars().any(is_cjk) && is_relation_only_claim_term(next));
             claim_term_matches(&haystack, term)
-                || (followed_by_cjk_relation && relational_term_matches(&haystack, term))
+                || following_cjk_relation
+                    .is_some_and(|predicate| relational_term_matches(&haystack, term, predicate))
         })
         .count()
 }
