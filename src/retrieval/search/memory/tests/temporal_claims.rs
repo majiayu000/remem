@@ -53,6 +53,18 @@ fn cjk_temporal_scaffolding_is_absent_from_search_claims() -> Result<()> {
             vec!["服务", "42", "变化"],
             30,
         ),
+        (
+            "服务42早在7天前有什么变化？",
+            now - 6 * 86_400 - 43_200,
+            vec!["服务", "42", "变化"],
+            7,
+        ),
+        (
+            "服务42直到7天前有什么变化？",
+            now - 6 * 86_400 - 43_200,
+            vec!["服务", "42", "变化"],
+            7,
+        ),
         ("最近的天气", now, vec!["天气"], 3),
         ("最近每天", now, vec!["每天"], 3),
         ("最近的部署每天", now, vec!["部署", "每天"], 3),
@@ -88,7 +100,9 @@ fn cjk_temporal_scaffolding_is_absent_from_search_claims() -> Result<()> {
 
 #[test]
 fn cjk_temporal_introducers_do_not_compact_with_entity_numbers() {
-    for introducer in ["在", "于", "自", "从", "至", "到", "截至", "截止", "自从"] {
+    for introducer in [
+        "在", "于", "自", "从", "至", "到", "截至", "截止", "自从", "早在", "直到",
+    ] {
         let query = format!("服务42{introducer}7天前有什么变化？");
         let claims = super::super::claim::query_claim_terms(&query, Some("/repo"), &[]);
         let compact = format!("42{introducer}");
@@ -113,6 +127,13 @@ fn cjk_temporal_introducers_do_not_compact_with_entity_numbers() {
         "截至 最近7天有什么变化？",
         "截止 最近有什么变化？",
         "截至 7天前有什么变化？",
+        "截至 May 4, 2026 有什么变化？",
+        "截止 yesterday 有什么变化？",
+        "服务42自从 last week 有什么变化？",
+        "截至 last month 有什么变化？",
+        "截至 recently 有什么变化？",
+        "截至 7 days ago 有什么变化？",
+        "截至 last 7 days 有什么变化？",
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(

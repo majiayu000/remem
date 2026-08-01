@@ -158,7 +158,9 @@ fn core_tokens_preserve_short_mixed_script_qualifiers() {
 #[test]
 fn compact_mixed_identifiers_do_not_cross_boundaries_or_leading_cjk() {
     assert!(tokenize_mixed("A区").contains(&"A区".to_string()));
-    for introducer in ["在", "于", "自", "从", "至", "到", "截至", "截止", "自从"] {
+    for introducer in [
+        "在", "于", "自", "从", "至", "到", "截至", "截止", "自从", "早在", "直到",
+    ] {
         let compact = format!("42{introducer}");
         assert!(
             !tokenize_mixed(&compact).contains(&compact),

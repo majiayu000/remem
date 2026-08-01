@@ -8,7 +8,7 @@ mod boundary;
 
 use boundary::{
     cjk_day_phrase_span, date_span_with_context, has_cjk_phrase_context, has_phrase_context,
-    has_recent_phrase_context, span_with_cjk_temporal_introducer,
+    has_recent_phrase_context, is_identifier_joiner, span_with_cjk_temporal_introducer,
 };
 
 struct ParsedTemporal {
@@ -38,12 +38,18 @@ impl TemporalConstraint {
 }
 
 fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
+    let lower = query.to_ascii_lowercase();
+    let mut parsed = parse_temporal_lower(&lower)?;
+    parsed.consumed_span = span_with_cjk_temporal_introducer(&lower, &parsed.consumed_span);
+    Some(parsed)
+}
+
+fn parse_temporal_lower(lower: &str) -> Option<ParsedTemporal> {
     let now = chrono::Utc::now().timestamp();
     let day = 86_400i64;
-    let lower = query.to_ascii_lowercase();
-    let field = temporal_field_for_query(&lower);
+    let field = temporal_field_for_query(lower);
 
-    if let Some((start_epoch, end_epoch, consumed_span)) = parse_exact_date_or_month(&lower) {
+    if let Some((start_epoch, end_epoch, consumed_span)) = parse_exact_date_or_month(lower) {
         return Some(parsed_constraint(
             start_epoch,
             end_epoch,
@@ -52,23 +58,23 @@ fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
         ));
     }
 
-    if let Some(consumed_span) = first_phrase_span(&lower, &["yesterday", "昨天"]) {
+    if let Some(consumed_span) = first_phrase_span(lower, &["yesterday", "昨天"]) {
         return Some(parsed_constraint(now - day, now, field, consumed_span));
     }
-    if let Some(consumed_span) = first_phrase_span(&lower, &["today", "今天"]) {
+    if let Some(consumed_span) = first_phrase_span(lower, &["today", "今天"]) {
         let today_start = now - (now % day);
         return Some(parsed_constraint(today_start, now, field, consumed_span));
     }
-    if let Some(consumed_span) = first_phrase_span(&lower, &["last week", "上周"]) {
+    if let Some(consumed_span) = first_phrase_span(lower, &["last week", "上周"]) {
         return Some(parsed_constraint(now - 7 * day, now, field, consumed_span));
     }
-    if let Some(consumed_span) = first_phrase_span(&lower, &["last month", "上个月", "上月"]) {
+    if let Some(consumed_span) = first_phrase_span(lower, &["last month", "上个月", "上月"]) {
         return Some(parsed_constraint(now - 30 * day, now, field, consumed_span));
     }
-    if let Some(consumed_span) = first_phrase_span(&lower, &["this week", "这周", "本周"]) {
+    if let Some(consumed_span) = first_phrase_span(lower, &["this week", "这周", "本周"]) {
         return Some(parsed_constraint(now - 7 * day, now, field, consumed_span));
     }
-    if let Some((n, consumed_span)) = parse_n_days_ago(&lower) {
+    if let Some((n, consumed_span)) = parse_n_days_ago(lower) {
         let start_delta = n.checked_mul(day)?;
         let end_delta = n.checked_sub(1)?.checked_mul(day)?;
         return Some(parsed_constraint(
@@ -78,7 +84,7 @@ fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
             consumed_span,
         ));
     }
-    if let Some((n, consumed_span)) = parse_last_n_days(&lower) {
+    if let Some((n, consumed_span)) = parse_last_n_days(lower) {
         let delta = n.checked_mul(day)?;
         return Some(parsed_constraint(
             now.checked_sub(delta)?,
@@ -87,10 +93,10 @@ fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
             consumed_span,
         ));
     }
-    if has_quantified_recent_day_phrase(&lower) {
+    if has_quantified_recent_day_phrase(lower) {
         return None;
     }
-    if let Some(consumed_span) = first_phrase_span(&lower, &["recently", "最近"]) {
+    if let Some(consumed_span) = first_phrase_span(lower, &["recently", "最近"]) {
         return Some(parsed_constraint(now - 3 * day, now, field, consumed_span));
     }
 
@@ -133,11 +139,7 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
             if !valid_context {
                 return None;
             }
-            Some(if is_ascii_phrase {
-                span
-            } else {
-                span_with_cjk_temporal_introducer(query, &span)
-            })
+            Some(span)
         })
     })
 }
@@ -469,7 +471,7 @@ fn parse_n_days_ago(lower: &str) -> Option<(i64, Range<usize>)> {
                 continue;
             }
             if let Some(n) = positive_day_count(num_str) {
-                return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
+                return Some((n, span));
             }
         }
         let Some((number_start, last_char)) = before_tian.char_indices().last() else {
@@ -484,7 +486,7 @@ fn parse_n_days_ago(lower: &str) -> Option<(i64, Range<usize>)> {
             continue;
         }
         if let Some(n) = cn_digit(last_char) {
-            return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
+            return Some((n, span));
         }
     }
     None
@@ -519,13 +521,13 @@ fn parse_last_n_days(lower: &str) -> Option<(i64, Range<usize>)> {
             continue;
         }
         if let Some(n) = positive_day_count(before_tian.trim()) {
-            return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
+            return Some((n, span));
         }
         let Ok(digit) = before_tian.trim().parse::<char>() else {
             continue;
         };
         if let Some(n) = cn_digit(digit) {
-            return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
+            return Some((n, span));
         }
     }
     None
@@ -617,8 +619,7 @@ fn preceding_identifier_run(query: &str, end: usize) -> Option<&str> {
         .char_indices()
         .rev()
         .take_while(|(_, character)| {
-            character.is_alphanumeric()
-                || matches!(character, '_' | '-' | '/' | '\\' | '－' | '／' | '＼')
+            character.is_alphanumeric() || is_identifier_joiner(*character)
         })
         .last()
         .map(|(index, _)| index)?;

@@ -163,6 +163,8 @@ fn cjk_temporal_phrases_consume_validated_introducers() {
     for (query, expected_semantic_query) in [
         ("服务42自7天前发生了什么", "服务42 发生了什么"),
         ("服务42自从7天前发生了什么", "服务42 发生了什么"),
+        ("服务42早在7天前发生了什么", "服务42 发生了什么"),
+        ("服务42直到7天前发生了什么", "服务42 发生了什么"),
         ("截至7天前发生了什么", " 发生了什么"),
         ("截止7天前发生了什么", " 发生了什么"),
         ("截至2026年5月4日发生了什么", " 发生了什么"),
@@ -186,6 +188,48 @@ fn cjk_temporal_phrases_consume_validated_introducers() {
             expected_semantic_query,
             "{query}"
         );
+    }
+}
+
+#[test]
+fn cjk_temporal_introducers_consume_ascii_temporal_phrases() {
+    for query in [
+        "截至 May 4, 2026 有什么变化",
+        "截止 yesterday 有什么变化",
+        "服务42自从 last week 有什么变化",
+        "截至 last month 有什么变化",
+        "截至 recently 有什么变化",
+        "截至 7 days ago 有什么变化",
+        "截至 last 7 days 有什么变化",
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+        assert!(
+            !["截至", "截止", "自从"]
+                .iter()
+                .any(|introducer| semantic_query.contains(introducer)),
+            "mixed-language temporal introducer must be consumed: {query}: {semantic_query:?}"
+        );
+    }
+}
+
+#[test]
+fn fullwidth_underscore_is_an_identifier_boundary() {
+    for query in [
+        "config＿今天＿notes",
+        "config＿2026-05-04＿notes",
+        "config＿7天前＿notes",
+        "config＿最近7天＿notes",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+
+    for query in ["service＿42,7天前发生了什么", "服务＿42，7天前发生了什么"] {
+        assert!(extract_temporal(query).is_some(), "{query}");
     }
 }
 

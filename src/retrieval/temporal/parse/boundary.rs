@@ -2,6 +2,10 @@ use std::ops::Range;
 
 use super::{is_cn_number_component, leading_ascii_digits};
 
+const CJK_TEMPORAL_INTRODUCERS: &[&str] = &[
+    "截至", "截止", "自从", "早在", "直到", "在", "于", "自", "从", "至", "到",
+];
+
 pub(super) fn has_phrase_context(query: &str, span: &Range<usize>) -> bool {
     phrase_left_boundary_is_valid(query, span.start, false)
         && phrase_right_boundary_is_valid(query, span.end, false)
@@ -16,13 +20,12 @@ pub(super) fn cjk_day_phrase_span(query: &str, span: &Range<usize>) -> Option<Ra
     if !phrase_left_boundary_is_valid(query, span.start, true) {
         return None;
     }
-    let consumed_span = span_with_cjk_temporal_introducer(query, span);
     if cjk_clock_time_suffix_start(query, span.end).is_some() {
         let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
-        return Some(consumed_span.start..suffix_end);
+        return Some(span.start..suffix_end);
     }
     if phrase_right_boundary_is_valid(query, span.end, true) {
-        return Some(consumed_span);
+        return Some(span.clone());
     }
     None
 }
@@ -39,32 +42,29 @@ pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option
     let left_is_natural = match left.chars().next_back() {
         None => true,
         Some(character) if character.is_whitespace() => true,
-        Some(character) if is_structural_separator(character) || character == '_' => false,
+        Some(character) if is_structural_separator(character) => false,
         Some(character) if character.is_ascii_alphanumeric() || character.is_numeric() => false,
-        Some(character) if character.is_alphanumeric() => {
-            ["在", "于", "自", "从", "至", "到", "截至", "截止"]
-                .iter()
-                .any(|introducer| left.ends_with(introducer))
-        }
+        Some(character) if character.is_alphanumeric() => CJK_TEMPORAL_INTRODUCERS
+            .iter()
+            .any(|introducer| left.ends_with(introducer)),
         Some(_) => true,
     };
     if !left_is_natural {
         return None;
     }
-    let consumed_span = span_with_cjk_temporal_introducer(query, span);
     if cjk_clock_time_suffix_start(query, span.end).is_some() {
         let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
-        return Some(consumed_span.start..suffix_end);
+        return Some(span.start..suffix_end);
     }
     if phrase_right_boundary_is_valid(query, span.end, true) {
-        return Some(consumed_span);
+        return Some(span.clone());
     }
     None
 }
 
 pub(super) fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
     let left = query[..span.start].trim_end_matches(char::is_whitespace);
-    for introducer in ["截至", "截止", "自从", "在", "于", "自", "从", "至", "到"] {
+    for introducer in CJK_TEMPORAL_INTRODUCERS {
         if left.ends_with(introducer) {
             return left.len() - introducer.len()..span.end;
         }
@@ -182,8 +182,12 @@ fn phrase_neighbor_is_valid(character: char, allow_cjk: bool) -> bool {
 }
 
 fn is_structural_separator(character: char) -> bool {
+    is_identifier_joiner(character) || matches!(character, '.' | ':' | '．' | '：')
+}
+
+pub(super) fn is_identifier_joiner(character: char) -> bool {
     matches!(
         character,
-        '/' | '\\' | '.' | ':' | '-' | '／' | '＼' | '．' | '：' | '－'
+        '_' | '-' | '/' | '\\' | '＿' | '－' | '／' | '＼'
     )
 }
