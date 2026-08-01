@@ -64,10 +64,8 @@ pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option
 
 pub(super) fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
     let left = query[..span.start].trim_end_matches(char::is_whitespace);
-    for introducer in CJK_TEMPORAL_INTRODUCERS {
-        if left.ends_with(introducer) {
-            return left.len() - introducer.len()..span.end;
-        }
+    if let Some(introducer_start) = cjk_temporal_introducer_start_before(query, left.len()) {
+        return introducer_start..span.end;
     }
     span.clone()
 }
@@ -165,9 +163,32 @@ fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> 
 }
 
 pub(super) fn has_cjk_temporal_introducer_before(query: &str, start: usize) -> bool {
-    CJK_TEMPORAL_INTRODUCERS
-        .iter()
-        .any(|introducer| query[..start].ends_with(introducer))
+    cjk_temporal_introducer_start_before(query, start).is_some()
+}
+
+fn cjk_temporal_introducer_start_before(query: &str, end: usize) -> Option<usize> {
+    let left = &query[..end];
+    CJK_TEMPORAL_INTRODUCERS.iter().find_map(|introducer| {
+        let start = left.strip_suffix(introducer).map(|prefix| prefix.len())?;
+        cjk_temporal_introducer_left_boundary_is_valid(query, start, introducer).then_some(start)
+    })
+}
+
+fn cjk_temporal_introducer_left_boundary_is_valid(
+    query: &str,
+    start: usize,
+    introducer: &str,
+) -> bool {
+    let Some(character) = query[..start].chars().next_back() else {
+        return true;
+    };
+    if is_structural_separator(character) {
+        return false;
+    }
+    if character.is_whitespace() || !character.is_alphanumeric() {
+        return true;
+    }
+    character.is_ascii_alphanumeric() || character.is_numeric() || introducer.chars().count() > 1
 }
 
 fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {

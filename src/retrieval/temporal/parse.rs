@@ -595,7 +595,10 @@ fn has_numeric_sign_prefix(query: &str, start: usize) -> bool {
 
 fn has_invalid_numeric_left_boundary(query: &str, start: usize) -> bool {
     let (separator, preceding) = preceding_separator(query, start);
-    if separator.chars().any(is_numeric_sign) {
+    if separator
+        .chars()
+        .any(|character| is_numeric_sign(character) || is_identifier_joiner(character))
+    {
         return true;
     }
     let has_whitespace_boundary = separator

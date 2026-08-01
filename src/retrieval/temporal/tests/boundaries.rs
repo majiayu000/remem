@@ -113,6 +113,23 @@ fn opening_parentheses_separate_entity_numbers_from_day_counts() {
 }
 
 #[test]
+fn opening_parentheses_do_not_override_identifier_joiners() {
+    for query in [
+        "service42/(7 days ago)",
+        "service42\\(7 days ago)",
+        "service42_(7 days ago)",
+        "service42／（7天前）",
+        "service42＼（7天前）",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
 fn sentence_punctuation_preserves_temporal_phrases() {
     for query in [
         "What changed today.",
@@ -277,6 +294,61 @@ fn arbitrary_cjk_prefixes_do_not_open_ascii_temporal_boundaries() {
             TemporalConstraint::query_without_temporal_expression(query),
             query
         );
+    }
+}
+
+#[test]
+fn ordinary_cjk_suffixes_are_not_consumed_as_temporal_introducers() {
+    for query in [
+        "存在today notes",
+        "关于yesterday notes",
+        "来自last week notes",
+        "达到recently notes",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+
+    for (query, preserved_prefix) in [
+        ("记录存在 May 4, 2026 changed", "记录存在"),
+        ("数据来自 last week changed", "数据来自"),
+        ("关于 yesterday changed", "关于"),
+        ("达到 recently changed", "达到"),
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+        assert!(
+            semantic_query.contains(preserved_prefix),
+            "ordinary CJK prefix must be preserved: {query}: {semantic_query:?}"
+        );
+    }
+}
+
+#[test]
+fn temporal_introducers_reject_identifier_joiners_on_their_left() {
+    for joiner in ["_", "＿", "-", "/", "\\", "－", "／", "＼"] {
+        for phrase in [
+            "May 4, 2026",
+            "today",
+            "yesterday",
+            "last week",
+            "recently",
+            "7 days ago",
+            "last 7 days",
+            "今天",
+            "2026-05-04",
+            "最近7天",
+        ] {
+            let query = format!("config{joiner}截至{phrase}_notes");
+            assert!(extract_temporal(&query).is_none(), "{query}");
+            assert_eq!(
+                TemporalConstraint::query_without_temporal_expression(&query),
+                query
+            );
+        }
     }
 }
 

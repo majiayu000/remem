@@ -123,7 +123,7 @@ pub(super) fn segment_cjk(text: &str) -> Vec<String> {
         } else {
             let start = i;
             i += 1;
-            while i < chars.len() && known_segment_len(&chars, i).is_none() {
+            while i < chars.len() && known_segment_len_after_unknown(&chars, i).is_none() {
                 i += 1;
             }
             segments.push(chars[start..i].iter().collect());
@@ -131,6 +131,11 @@ pub(super) fn segment_cjk(text: &str) -> Vec<String> {
     }
 
     segments
+}
+
+fn known_segment_len_after_unknown(chars: &[char], start: usize) -> Option<usize> {
+    let length = known_segment_len(chars, start)?;
+    (length > 1 || known_segment_len(chars, start + length).is_some()).then_some(length)
 }
 
 fn known_segment_len(chars: &[char], start: usize) -> Option<usize> {

@@ -143,6 +143,27 @@ fn core_tokens_preserve_unknown_cjk_qualifier_spans() {
         tokens.contains(&"欧洲生产环境".to_string()),
         "unknown CJK qualifiers must remain claim evidence: {tokens:?}"
     );
+
+    for ordinary_word in ["记录存在", "核心目的", "共和国"] {
+        let tokens = core_tokens(ordinary_word);
+        assert!(
+            tokens.contains(&ordinary_word.to_string()),
+            "single-character query segments must not truncate ordinary CJK words: {tokens:?}"
+        );
+    }
+
+    for (query, expected) in [
+        ("记录在维护数据库", &["记录", "维护", "数据库"][..]),
+        ("服务在欧洲", &["服务", "欧洲"][..]),
+    ] {
+        let tokens = core_tokens(query);
+        for term in expected {
+            assert!(
+                tokens.contains(&(*term).to_string()),
+                "standalone single-character query segments must still split: {query}: {tokens:?}"
+            );
+        }
+    }
 }
 
 #[test]

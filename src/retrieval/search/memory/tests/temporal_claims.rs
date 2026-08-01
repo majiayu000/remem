@@ -146,6 +146,22 @@ fn cjk_temporal_introducers_do_not_compact_with_entity_numbers() {
 }
 
 #[test]
+fn ordinary_cjk_words_ending_in_introducer_characters_remain_claims() {
+    for (query, expected_claim) in [
+        ("记录存在 May 4, 2026 changed", "记录存在"),
+        ("数据来自 last week changed", "数据来自"),
+        ("关于 yesterday changed", "关于"),
+        ("达到 recently changed", "达到"),
+    ] {
+        let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert!(
+            claims.iter().any(|term| term == expected_claim),
+            "ordinary CJK word must remain a claim: {query}: {claims:?}"
+        );
+    }
+}
+
+#[test]
 fn non_temporal_number_remains_a_required_claim_in_temporal_query() -> Result<()> {
     let conn = setup_explain_conn()?;
     let now = chrono::Utc::now().timestamp();
