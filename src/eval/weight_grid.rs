@@ -210,6 +210,7 @@ fn evaluate_candidate(
     weights: SearchWeights,
     scoring: &WeightGridScoring,
 ) -> Result<WeightGridCandidate> {
+    weights.validate()?;
     let mut overall = golden::run::CategoryAccumulator::default();
     let mut by_slice = BTreeMap::<String, golden::run::CategoryAccumulator>::new();
     let fetch_limit = k.max(10) as i64;
@@ -469,6 +470,30 @@ impl Display for WeightGridReport {
 mod tests {
     use super::*;
     use crate::eval::golden::{EvidenceRef, GoldenMemory, GoldenQuery};
+
+    #[test]
+    fn empty_candidate_evaluation_rejects_non_finite_weights() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let dataset = GoldenDataset {
+            version: None,
+            description: None,
+            corpus: vec![],
+            queries: vec![],
+        };
+        let error = evaluate_candidate(
+            &conn,
+            &dataset,
+            5,
+            SearchWeights {
+                fact: f64::NAN,
+                ..SearchWeights::default()
+            },
+            &WeightGridScoring::default(),
+        )
+        .expect_err("empty evaluations must still reject non-finite weights");
+        assert!(error.to_string().contains("fact"), "{error:#}");
+        Ok(())
+    }
 
     #[test]
     fn grid_report_includes_defaults_and_ranks_candidates() -> Result<()> {

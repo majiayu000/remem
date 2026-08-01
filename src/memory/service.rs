@@ -17,6 +17,7 @@ pub use save::{
     save_memory, save_memory_with_reference_time, LocalCopyError, SaveMemoryValidationError,
 };
 pub use search::search_memories;
+pub(crate) use search::search_memories_with_explain_details;
 pub use types::{
     default_include_stale, default_include_suppressed, MultiHopMeta, SaveMemoryRequest,
     SaveMemoryResult, SearchRequest, SearchResultSet,

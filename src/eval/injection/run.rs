@@ -6,7 +6,8 @@ use rusqlite::{params, Connection};
 
 use super::types::{
     InjectionCaseReport, InjectionChurnReport, InjectionEvalMetadata, InjectionEvalOptions,
-    InjectionEvalReport, InjectionMetricSummary, InjectionRateMetric, CORPUS_NAME,
+    InjectionEvalReport, InjectionMetricSummary, InjectionRankSignalAbReport,
+    InjectionRankSignalArm, InjectionRateMetric, CORPUS_NAME,
 };
 
 const PROJECT: &str = "/tmp/remem-injection-eval/repo";
@@ -19,6 +20,11 @@ const ABSTENTION_FORBIDDEN_TITLE: &str = "Unrelated recent deployment note";
 const STALE_ANCHOR_TITLE: &str = "Stale source anchor decision";
 const USER_PROMPT_SESSION: &str = "eval-user-prompt-submit";
 const ONE_ADDED_TITLE: &str = "Renderer churn added decision";
+const RANK_SIGNAL_PROJECT: &str = "/tmp/remem-injection-eval/rank-signal";
+const RANK_SIGNAL_QUERY: &str = "rankbridge 2026-07-30";
+const RANK_SIGNAL_EXPECTED_MEMORY_ID: i64 = 2_000;
+const RANK_SIGNAL_DISTRACTOR_MEMORY_ID: i64 = 2_001;
+const RANK_SIGNAL_REFERENCE_EPOCH: i64 = 1_785_412_800;
 
 #[derive(Clone, Copy)]
 struct FixtureMemory {
@@ -155,6 +161,7 @@ fn run_sandbox_eval_inner(
 ) -> Result<InjectionEvalReport> {
     let mut conn = crate::db::open_db().context("open sandbox injection eval DB")?;
     seed_fixture(&mut conn).context("seed injection eval fixture")?;
+    let rank_signal_ab = run_rank_signal_ab(&conn).context("run injection rank-signal A/B")?;
     let user_prompt_context = crate::context::prompt_submit_additional_context(
         &conn,
         PROJECT,
@@ -257,7 +264,8 @@ fn run_sandbox_eval_inner(
         && user_prompt_submit_memory_recall.is_perfect()
         && user_prompt_submit_abstention_false_positive_bound.is_perfect()
         && block_churn_unchanged.is_perfect()
-        && block_churn_one_added_prefix_preserved.is_perfect();
+        && block_churn_one_added_prefix_preserved.is_perfect()
+        && rank_signal_ab.passed;
     let mut failing_examples = Vec::new();
     for case in expected_cases.iter().filter(|case| !case.matched) {
         failing_examples.push(format!("missing expected memory: {}", case.title));
@@ -293,6 +301,12 @@ fn run_sandbox_eval_inner(
         failing_examples.push(
             "one-added churn fixture changed bytes before the first affected section".to_string(),
         );
+    }
+    if !rank_signal_ab.passed {
+        failing_examples.push(format!(
+            "pure-RRF injection A/B regressed: baseline_ids={:?} candidate_ids={:?}",
+            rank_signal_ab.baseline.retrieved_ids, rank_signal_ab.candidate.retrieved_ids
+        ));
     }
 
     let mut cases = expected_cases;
@@ -337,6 +351,7 @@ fn run_sandbox_eval_inner(
             all_checks_passed,
         },
         churn,
+        rank_signal_ab,
         cases,
         failing_examples,
     })
@@ -451,6 +466,7 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
         )?;
     }
     seed_stale_anchor_commits(&tx, now)?;
+    seed_rank_signal_fixture(&tx, now)?;
     tx.execute(
         "INSERT INTO workstreams
          (id, project, title, description, status, progress, next_action, blockers,
@@ -461,6 +477,117 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
     )?;
     tx.commit()?;
     Ok(())
+}
+
+fn seed_rank_signal_fixture(tx: &rusqlite::Transaction<'_>, now: i64) -> Result<()> {
+    for (id, reference_time_epoch, updated_offset) in [
+        (
+            RANK_SIGNAL_EXPECTED_MEMORY_ID,
+            RANK_SIGNAL_REFERENCE_EPOCH,
+            0,
+        ),
+        (
+            RANK_SIGNAL_DISTRACTOR_MEMORY_ID,
+            RANK_SIGNAL_REFERENCE_EPOCH - 86_400,
+            100,
+        ),
+    ] {
+        tx.execute(
+            "INSERT INTO memories
+             (id, project, topic_key, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, reference_time_epoch, status, scope)
+             VALUES (?1, ?2, ?3, 'rankbridge 2026-07-30 memory',
+                     'rankbridge 2026-07-30 memory', 'decision', ?4, ?5, ?6,
+                     'active', 'project')",
+            params![
+                id,
+                RANK_SIGNAL_PROJECT,
+                format!("rank-signal-{id}"),
+                reference_time_epoch,
+                now + updated_offset,
+                reference_time_epoch,
+            ],
+        )?;
+    }
+    for id in 2_002..=2_019 {
+        tx.execute(
+            "INSERT INTO memories
+             (id, project, topic_key, title, content, memory_type, created_at_epoch,
+              updated_at_epoch, reference_time_epoch, status, scope)
+             VALUES (?1, ?2, ?3, ?4, 'temporal-only rank-signal fixture',
+                     'decision', ?5, ?5, ?6, 'active', 'project')",
+            params![
+                id,
+                RANK_SIGNAL_PROJECT,
+                format!("rank-signal-filler-{id}"),
+                format!("Temporal rank-signal filler {id}"),
+                now - id,
+                RANK_SIGNAL_REFERENCE_EPOCH,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+fn run_rank_signal_ab(conn: &Connection) -> Result<InjectionRankSignalAbReport> {
+    let retrieve = |mode| {
+        crate::context::query_hybrid_context_memories_with_rank_signal_mode(
+            conn,
+            RANK_SIGNAL_PROJECT,
+            RANK_SIGNAL_QUERY,
+            None,
+            &[],
+            10,
+            crate::retrieval::search::SearchWeights::default(),
+            mode,
+        )
+        .map(|memories| {
+            memories
+                .into_iter()
+                .map(|memory| memory.id)
+                .collect::<Vec<_>>()
+        })
+    };
+    let baseline_ids = retrieve(crate::context::InjectionRankSignalMode::LegacyRankPseudoScore)?;
+    let candidate_ids = retrieve(crate::context::InjectionRankSignalMode::PureRrf)?;
+    let baseline = rank_signal_arm("legacy-rank-pseudo-score", baseline_ids);
+    let candidate = rank_signal_arm("pure-weighted-rrf", candidate_ids);
+    let passed = baseline.retrieved_ids.get(..2)
+        == Some(
+            &[
+                RANK_SIGNAL_DISTRACTOR_MEMORY_ID,
+                RANK_SIGNAL_EXPECTED_MEMORY_ID,
+            ][..],
+        )
+        && candidate.retrieved_ids.get(..2)
+            == Some(
+                &[
+                    RANK_SIGNAL_EXPECTED_MEMORY_ID,
+                    RANK_SIGNAL_DISTRACTOR_MEMORY_ID,
+                ][..],
+            )
+        && candidate.mrr_at_10 >= baseline.mrr_at_10
+        && candidate.ndcg_at_10 >= baseline.ndcg_at_10;
+    Ok(InjectionRankSignalAbReport {
+        query: RANK_SIGNAL_QUERY.to_string(),
+        expected_memory_id: RANK_SIGNAL_EXPECTED_MEMORY_ID,
+        baseline,
+        candidate,
+        passed,
+    })
+}
+
+fn rank_signal_arm(algorithm: &str, retrieved_ids: Vec<i64>) -> InjectionRankSignalArm {
+    let relevant_rank = retrieved_ids
+        .iter()
+        .take(10)
+        .position(|id| *id == RANK_SIGNAL_EXPECTED_MEMORY_ID);
+    InjectionRankSignalArm {
+        algorithm: algorithm.to_string(),
+        retrieved_ids,
+        mrr_at_10: relevant_rank.map_or(0.0, |rank| 1.0 / (rank as f64 + 1.0)),
+        ndcg_at_10: relevant_rank.map_or(0.0, |rank| 1.0 / (rank as f64 + 2.0).log2()),
+    }
 }
 
 fn fixture_session_id(memory: &FixtureMemory) -> Option<&'static str> {

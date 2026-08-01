@@ -7,8 +7,12 @@ use crate::memory::Memory;
 use anyhow::Result;
 use rusqlite::{types::ToSql, Connection};
 
-use super::super::super::common::{weighted_rank_score, WeightedRankedChannel};
-use super::super::{ChannelContribution, SearchWeights};
+use super::super::super::common::{
+    calibrated_signal, reciprocal_rank_score, weighted_rank_score, WeightedRankedChannel,
+};
+#[cfg(test)]
+use super::super::SearchWeights;
+use super::super::{ChannelContribution, ChannelContributionBreakdown};
 use super::{NamedChannel, QuerySearchPlan};
 
 mod fact;
@@ -37,29 +41,40 @@ pub(super) fn log_search_timing(
     );
 }
 
-pub(super) fn contributions_for(
-    memory_id: i64,
-    plan: &QuerySearchPlan,
-) -> Vec<ChannelContribution> {
-    plan.channels
-        .iter()
-        .filter_map(|channel| {
-            channel
-                .hits
-                .iter()
-                .position(|hit| hit.id == memory_id)
-                .map(|index| ChannelContribution {
-                    channel: channel.name.to_string(),
-                    rank: index + 1,
-                    score: weighted_rank_score(
-                        channel.weight,
-                        plan.weights.rrf_k,
-                        index,
-                        channel.hits[index].normalized_score,
-                    ),
-                })
-        })
-        .collect()
+pub(super) struct ContributionSet {
+    pub totals: Vec<ChannelContribution>,
+    pub breakdowns: Vec<ChannelContributionBreakdown>,
+}
+
+pub(super) fn contributions_for(memory_id: i64, plan: &QuerySearchPlan) -> Result<ContributionSet> {
+    let mut totals = Vec::new();
+    let mut breakdowns = Vec::new();
+    for channel in &plan.channels {
+        if channel.weight <= 0.0 {
+            continue;
+        }
+        let Some(index) = channel.hits.iter().position(|hit| hit.id == memory_id) else {
+            continue;
+        };
+        let normalized_score = calibrated_signal(channel.hits[index].normalized_score)?;
+        let reciprocal_rank = reciprocal_rank_score(plan.weights.rrf_k, index)?;
+        let total_score =
+            weighted_rank_score(channel.weight, plan.weights.rrf_k, index, normalized_score)?;
+        totals.push(ChannelContribution {
+            channel: channel.name.to_string(),
+            rank: index + 1,
+            score: total_score,
+        });
+        breakdowns.push(ChannelContributionBreakdown {
+            channel: channel.name.to_string(),
+            rank: index + 1,
+            weight: channel.weight,
+            reciprocal_rank,
+            normalized_signal: normalized_score,
+            total_score,
+        });
+    }
+    Ok(ContributionSet { totals, breakdowns })
 }
 
 pub(super) fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<WeightedRankedChannel<'_>> {
@@ -408,11 +423,6 @@ fn is_vector_only(memory_id: i64, plan: &QuerySearchPlan) -> bool {
         .is_some_and(|first| first == "vector" && contributing.all(|name| name == "vector"))
 }
 
-pub(super) fn vector_similarity_score(distance: f32, weights: SearchWeights) -> f64 {
-    let threshold = f64::from(weights.max_vector_distance);
-    ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
-}
-
 pub(super) fn visibility_label(memory: &Memory, requested_project: Option<&str>) -> &'static str {
     if memory.scope == "global" {
         "global-overlay"
@@ -465,12 +475,60 @@ mod tests {
             1.0,
             ids.iter()
                 .copied()
-                .map(|id| WeightedRankedHit {
-                    id,
-                    normalized_score: 1.0,
-                })
+                .map(|id| WeightedRankedHit::scored(id, 1.0))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn rank_only_contributions_explain_pure_rrf_components() -> Result<()> {
+        let plan = plan_with_channels(vec![
+            NamedChannel::enabled("entity", 1.0, vec![1, 2]),
+            NamedChannel::enabled("temporal", 0.1, vec![2]),
+        ]);
+
+        let contributions = contributions_for(2, &plan)?;
+        assert_eq!(contributions.totals.len(), 2);
+        assert_eq!(contributions.breakdowns.len(), 2);
+        let entity = &contributions.totals[0];
+        assert_eq!(entity.channel, "entity");
+        assert_eq!(entity.rank, 2);
+        assert_eq!(entity.score, reciprocal_rank_score(60.0, 1)?);
+
+        let temporal = &contributions.totals[1];
+        assert_eq!(temporal.channel, "temporal");
+        assert_eq!(temporal.rank, 1);
+        assert_eq!(temporal.score, 0.1 * reciprocal_rank_score(60.0, 0)?);
+        let entity_breakdown = &contributions.breakdowns[0];
+        assert_eq!(entity_breakdown.channel, "entity");
+        assert_eq!(entity_breakdown.rank, 2);
+        assert_eq!(entity_breakdown.weight, 1.0);
+        assert_eq!(
+            entity_breakdown.reciprocal_rank,
+            reciprocal_rank_score(60.0, 1)?
+        );
+        assert_eq!(entity_breakdown.normalized_signal, None);
+        assert_eq!(entity_breakdown.total_score, entity.score);
+        Ok(())
+    }
+
+    #[test]
+    fn calibrated_zero_signal_remains_distinct_from_rank_only() -> Result<()> {
+        let plan = plan_with_channels(vec![NamedChannel::enabled_with_hits(
+            "fts",
+            2.5,
+            vec![WeightedRankedHit::scored(1, 0.0)],
+        )]);
+
+        let contributions = contributions_for(1, &plan)?;
+        assert_eq!(contributions.breakdowns.len(), 1);
+        let breakdown = &contributions.breakdowns[0];
+        assert_eq!(breakdown.normalized_signal, Some(0.0));
+        assert_eq!(
+            breakdown.total_score,
+            breakdown.weight * breakdown.reciprocal_rank
+        );
+        Ok(())
     }
 
     fn memory(id: i64, text: &str) -> Memory {

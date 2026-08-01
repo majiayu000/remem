@@ -73,8 +73,9 @@ pub(in crate::api) async fn handle_search(
 
     const RAW_PREVIEW_CHARS: usize = 300;
 
-    match service::search_memories(&conn, &req) {
-        Ok(results) => {
+    match service::search_memories_with_explain_details(&conn, &req) {
+        Ok(detailed) => {
+            let results = detailed.result;
             let count = results.memories.len();
             let items: Vec<MemoryItem> = match memories_to_items_with_conn(&conn, &results.memories)
             {
@@ -109,7 +110,7 @@ pub(in crate::api) async fn handle_search(
                 }),
                 raw_hits,
                 raw_hits_error: results.raw_error,
-                explain: results.explain,
+                explain: detailed.explain_details,
             })
             .into_response()
         }
@@ -127,7 +128,7 @@ pub(in crate::api) async fn handle_search(
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use axum::{
         body::to_bytes,
         extract::{Query, State},
@@ -227,6 +228,34 @@ mod tests {
             explain_json["explain"]["results"][0]["staleness"]["status"],
             "active"
         );
+        let explain_result = &explain_json["explain"]["results"][0];
+        let final_score = explain_result["final_score"]
+            .as_f64()
+            .expect("explain final_score should be numeric");
+        let fusion_score = explain_result["fusion_score"]
+            .as_f64()
+            .expect("REST explain should serialize fusion_score");
+        let post_fusion_score_factor = explain_result["post_fusion_score_factor"]
+            .as_f64()
+            .expect("REST explain should serialize post_fusion_score_factor");
+        assert!((final_score - fusion_score * post_fusion_score_factor).abs() < 1e-12);
+        let breakdown = &explain_json["explain"]["contribution_breakdowns"][0];
+        assert_eq!(breakdown["memory_id"], memory_id);
+        for contribution in breakdown["contributions"]
+            .as_array()
+            .context("REST contribution breakdowns should be an array")?
+        {
+            let weight = contribution["weight"].as_f64().context("weight")?;
+            let reciprocal_rank = contribution["reciprocal_rank"]
+                .as_f64()
+                .context("reciprocal_rank")?;
+            let normalized_signal = contribution
+                .get("normalized_signal")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let total = contribution["total_score"].as_f64().context("total")?;
+            assert!((total - weight * reciprocal_rank * (1.0 + normalized_signal)).abs() < 1e-12);
+        }
         Ok(())
     }
 

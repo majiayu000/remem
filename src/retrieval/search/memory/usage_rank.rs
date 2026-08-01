@@ -9,6 +9,7 @@ pub(crate) fn usage_hits_for_retrieved_candidates(
     candidate_ids: &[i64],
     weights: SearchWeights,
 ) -> Result<Vec<WeightedRankedHit>> {
+    weights.validate()?;
     if candidate_ids.is_empty() {
         return Ok(vec![]);
     }
@@ -63,9 +64,6 @@ pub(crate) fn usage_hits_for_retrieved_candidates(
     }
     Ok(scored
         .into_iter()
-        .map(|(id, score)| WeightedRankedHit {
-            id,
-            normalized_score: (score / max_score).clamp(0.0, 1.0),
-        })
+        .map(|(id, score)| WeightedRankedHit::scored(id, (score / max_score).clamp(0.0, 1.0)))
         .collect())
 }

@@ -1,5 +1,5 @@
 {
-  "version": "2026-07-04",
+  "version": "2026-08-01",
   "metrics": {
     "capacity.degradation.channel.entity.evidence_recall_at_k_loss": 0,
     "capacity.degradation.channel.entity.ndcg_at_10_loss": 0,
@@ -94,6 +94,12 @@
     "golden.slice.provider_comparison.ndcg_at_10": 0,
     "golden.slice.provider_comparison.precision_at_k": 0,
     "golden.slice.provider_comparison.recall_at_k": 0,
+    "golden.slice.rank_signal.evidence_recall_at_k": 1,
+    "golden.slice.rank_signal.hit_at_k": 1,
+    "golden.slice.rank_signal.mrr_at_10": 1,
+    "golden.slice.rank_signal.ndcg_at_10": 1,
+    "golden.slice.rank_signal.precision_at_k": 0.5,
+    "golden.slice.rank_signal.recall_at_k": 1,
     "golden.slice.temporal.evidence_recall_at_k": 1,
     "golden.slice.temporal.hit_at_k": 1,
     "golden.slice.temporal.mrr_at_10": 1,

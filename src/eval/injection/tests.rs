@@ -5,7 +5,8 @@ use anyhow::Result;
 use super::types::CORPUS_NAME;
 use super::{
     run::rendered_line_contains_title_and_label, run_sandbox_eval, InjectionEvalMetadata,
-    InjectionEvalOptions, InjectionEvalReport, InjectionMetricSummary, InjectionRateMetric,
+    InjectionEvalOptions, InjectionEvalReport, InjectionMetricSummary, InjectionRankSignalAbReport,
+    InjectionRankSignalArm, InjectionRateMetric,
 };
 
 #[test]
@@ -67,6 +68,17 @@ fn injection_eval_exercises_session_start_render_path() -> Result<()> {
     assert_eq!(report.churn.unchanged_changed_bytes, 0);
     assert!(report.churn.one_added_changed_bytes > 0);
     assert!(report.churn.one_added_prefix_preserved);
+    assert_eq!(
+        report.rank_signal_ab.baseline.retrieved_ids[..2],
+        [2_001, 2_000]
+    );
+    assert_eq!(
+        report.rank_signal_ab.candidate.retrieved_ids[..2],
+        [2_000, 2_001]
+    );
+    assert_eq!(report.rank_signal_ab.baseline.mrr_at_10, 0.5);
+    assert_eq!(report.rank_signal_ab.candidate.mrr_at_10, 1.0);
+    assert!(report.rank_signal_ab.passed, "{:#?}", report);
     assert!(report.metrics.all_checks_passed, "{:#?}", report);
     assert!(report.metadata.memories_loaded > 0);
     assert!(report.metadata.core_count > 0 || report.metadata.index_count > 0);
@@ -116,6 +128,23 @@ fn injection_eval_display_includes_metrics() {
             one_added_first_affected_section: Some("## Core".to_string()),
             one_added_prefix_preserved: true,
         },
+        rank_signal_ab: InjectionRankSignalAbReport {
+            query: "rankbridge 2026-07-30".to_string(),
+            expected_memory_id: 2_000,
+            baseline: InjectionRankSignalArm {
+                algorithm: "legacy-rank-pseudo-score".to_string(),
+                retrieved_ids: vec![2_001, 2_000],
+                mrr_at_10: 0.5,
+                ndcg_at_10: 0.630_929_753_571_457_5,
+            },
+            candidate: InjectionRankSignalArm {
+                algorithm: "pure-weighted-rrf".to_string(),
+                retrieved_ids: vec![2_000, 2_001],
+                mrr_at_10: 1.0,
+                ndcg_at_10: 1.0,
+            },
+            passed: true,
+        },
         cases: vec![],
         failing_examples: vec![],
     };
@@ -133,6 +162,8 @@ fn injection_eval_display_includes_metrics() {
     assert!(rendered.contains("block_churn_one_added_prefix_preserved: 1/1"));
     assert!(rendered.contains("render_contract_version="));
     assert!(rendered.contains("one_added_changed_bytes=42"));
+    assert!(rendered.contains("rank_signal_ab: baseline_mrr_at_10=0.500000"));
+    assert!(rendered.contains("candidate_mrr_at_10=1.000000"));
     assert!(rendered.contains("all_checks_passed: true"));
 }
 

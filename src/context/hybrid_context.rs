@@ -3,7 +3,7 @@ use rusqlite::{Connection, OptionalExtension};
 
 use crate::memory::{self, Memory};
 use crate::retrieval::search::common::{
-    rank_normalized_score, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
+    calibrated_vector_hits, sanitize_fts_query, weighted_ranked_fuse, WeightedRankedChannel,
     WeightedRankedHit,
 };
 use crate::retrieval::search::SearchWeights;
@@ -17,6 +17,12 @@ const MIN_HYBRID_FETCH_LIMIT: i64 = 20;
 struct ContextChannel {
     weight: f64,
     hits: Vec<WeightedRankedHit>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InjectionRankSignalMode {
+    PureRrf,
+    LegacyRankPseudoScore,
 }
 
 pub(super) fn query_hybrid_context_memories(
@@ -52,6 +58,30 @@ pub(super) fn query_hybrid_context_memories_with_weights(
     limit: i64,
     weights: SearchWeights,
 ) -> Result<Vec<Memory>> {
+    query_hybrid_context_memories_with_rank_signal_mode(
+        conn,
+        project,
+        query,
+        current_branch,
+        excluded_types,
+        limit,
+        weights,
+        InjectionRankSignalMode::PureRrf,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn query_hybrid_context_memories_with_rank_signal_mode(
+    conn: &Connection,
+    project: &str,
+    query: &str,
+    current_branch: Option<&str>,
+    excluded_types: &[&str],
+    limit: i64,
+    weights: SearchWeights,
+    rank_signal_mode: InjectionRankSignalMode,
+) -> Result<Vec<Memory>> {
+    weights.validate()?;
     if limit <= 0 || query.trim().is_empty() {
         return Ok(vec![]);
     }
@@ -137,6 +167,16 @@ pub(super) fn query_hybrid_context_memories_with_weights(
         return Ok(vec![]);
     }
 
+    if rank_signal_mode == InjectionRankSignalMode::LegacyRankPseudoScore {
+        for channel in &mut channels {
+            for (rank, hit) in channel.hits.iter_mut().enumerate() {
+                if hit.normalized_score.is_none() {
+                    hit.normalized_score = Some(1.0 / (rank as f64 + 1.0));
+                }
+            }
+        }
+    }
+
     let channel_inputs = channels
         .iter()
         .map(|channel| WeightedRankedChannel {
@@ -144,7 +184,7 @@ pub(super) fn query_hybrid_context_memories_with_weights(
             hits: &channel.hits,
         })
         .collect::<Vec<_>>();
-    let ids = weighted_ranked_fuse(&channel_inputs, weights.rrf_k)
+    let ids = weighted_ranked_fuse(&channel_inputs, weights.rrf_k)?
         .into_iter()
         .take(limit as usize)
         .map(|(id, _)| id)
@@ -529,24 +569,10 @@ fn query_local_vector_channel(
         let embedding = crate::retrieval::vector::decode_embedding(&blob, dimensions)?;
         let distance =
             crate::retrieval::vector::cosine_distance(query_embedding.values(), &embedding)?;
-        if distance <= max_vector_distance {
-            hits.push((memory_id, distance));
-        }
+        hits.push((memory_id, distance));
     }
-    hits.sort_by(|a, b| {
-        a.1.partial_cmp(&b.1)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.0.cmp(&b.0))
-    });
-    Ok(hits
-        .into_iter()
-        .enumerate()
-        .map(|(rank, (id, distance))| WeightedRankedHit {
-            id,
-            normalized_score: vector_similarity_score(distance, max_vector_distance)
-                .max(rank_normalized_score(rank)),
-        })
-        .collect())
+    hits.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
+    calibrated_vector_hits(hits, max_vector_distance)
 }
 
 fn query_local_like_channel(
@@ -739,29 +765,16 @@ fn fts_ranked_hits(hits: &[(i64, f64)]) -> Vec<WeightedRankedHit> {
         .fold(f64::NEG_INFINITY, f64::max);
     let spread = worst - best;
     hits.iter()
-        .enumerate()
-        .map(|(rank, (id, score))| WeightedRankedHit {
-            id: *id,
-            normalized_score: if spread.abs() < f64::EPSILON {
-                rank_normalized_score(rank)
+        .map(|(id, score)| {
+            if spread.abs() < f64::EPSILON {
+                WeightedRankedHit::rank_only(*id)
             } else {
-                ((worst - *score) / spread).clamp(0.0, 1.0)
-            },
+                WeightedRankedHit::scored(*id, ((worst - *score) / spread).clamp(0.0, 1.0))
+            }
         })
         .collect()
 }
 
 fn rank_ordered_hits(ids: Vec<i64>) -> Vec<WeightedRankedHit> {
-    ids.into_iter()
-        .enumerate()
-        .map(|(rank, id)| WeightedRankedHit {
-            id,
-            normalized_score: rank_normalized_score(rank),
-        })
-        .collect()
-}
-
-fn vector_similarity_score(distance: f32, max_vector_distance: f32) -> f64 {
-    let threshold = f64::from(max_vector_distance);
-    ((threshold - f64::from(distance)) / threshold).clamp(0.0, 1.0)
+    ids.into_iter().map(WeightedRankedHit::rank_only).collect()
 }

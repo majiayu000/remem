@@ -8,27 +8,25 @@ use crate::memory::{self, Memory};
 use crate::perf::{push_elapsed, time_result, time_value, PhaseTiming};
 
 use super::super::common::{
-    paginate_memories, rank_normalized_score, sanitize_fts_query, weighted_ranked_fuse,
+    calibrated_vector_hits, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
     WeightedRankedHit,
 };
-use super::{
-    suppression_filter, ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
-    SearchWeights,
-};
+use super::{suppression_filter, SearchExplain, SearchExplainDetails, SearchWeights};
 
+mod explain_build;
 mod format;
 mod graph;
 mod support;
+use explain_build::build_explain;
 use format::fts_normalized_hits;
 use support::{
-    apply_confidence_gate, candidate_confidence, contributions_for, log_search_timing,
-    resolve_explicit_entity_scope, resolve_graph_claim_support, retrieved_candidate_ids,
-    vector_similarity_score, visibility_label, weighted_channel_inputs,
+    apply_confidence_gate, log_search_timing, resolve_explicit_entity_scope,
+    resolve_graph_claim_support, retrieved_candidate_ids, weighted_channel_inputs,
 };
 
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
-    pub explain: SearchExplain,
+    pub explain_details: SearchExplainDetails,
 }
 
 struct QuerySearchPlan {
@@ -64,14 +62,7 @@ struct NamedChannel {
 
 impl NamedChannel {
     fn enabled(name: &'static str, weight: f64, ids: Vec<i64>) -> Self {
-        let hits = ids
-            .into_iter()
-            .enumerate()
-            .map(|(rank, id)| WeightedRankedHit {
-                id,
-                normalized_score: rank_normalized_score(rank),
-            })
-            .collect();
+        let hits = ids.into_iter().map(WeightedRankedHit::rank_only).collect();
         Self::enabled_with_hits(name, weight, hits)
     }
 
@@ -221,9 +212,9 @@ pub(super) fn search_with_query_weights(
     let channel_inputs = time_value(&mut plan.timings, "fusion_inputs", || {
         weighted_channel_inputs(&plan.channels)
     });
-    let fused = time_value(&mut plan.timings, "rrf_fusion", || {
+    let fused = time_result(&mut plan.timings, "rrf_fusion", || {
         weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
-    });
+    })?;
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
         load_ordered_memories(conn, &fused_ids, project, plan.include_suppressed)
@@ -275,30 +266,33 @@ pub(super) fn search_with_query_explain(
         log_search_timing(query_text, project, limit, offset, &plan);
         return Ok(QuerySearchWithExplain {
             memories: vec![],
-            explain: SearchExplain {
-                query: query_text.to_string(),
-                project: project.map(str::to_string),
-                memory_type: memory_type.map(str::to_string),
-                branch: branch.map(str::to_string),
-                include_stale,
-                limit,
-                offset,
-                fetch_limit: plan.fetch_limit,
-                expanded_terms: plan.expanded_terms,
-                core_terms: plan.core_terms,
-                claim_terms: plan.claim_terms,
-                fts_query: plan.fts_query,
-                temporal_range: plan.temporal_range,
-                temporal_field: plan.temporal_field,
-                rrf_k: plan.weights.rrf_k,
-                min_evidence_confidence: plan.weights.min_evidence_confidence,
-                filtered_result_count: 0,
-                timings: plan.timings,
-                rerank: None,
-                channels: vec![],
-                results: vec![],
-                has_more: false,
-                raw_fallback_count: 0,
+            explain_details: SearchExplainDetails {
+                explain: SearchExplain {
+                    query: query_text.to_string(),
+                    project: project.map(str::to_string),
+                    memory_type: memory_type.map(str::to_string),
+                    branch: branch.map(str::to_string),
+                    include_stale,
+                    limit,
+                    offset,
+                    fetch_limit: plan.fetch_limit,
+                    expanded_terms: plan.expanded_terms,
+                    core_terms: plan.core_terms,
+                    claim_terms: plan.claim_terms,
+                    fts_query: plan.fts_query,
+                    temporal_range: plan.temporal_range,
+                    temporal_field: plan.temporal_field,
+                    rrf_k: plan.weights.rrf_k,
+                    min_evidence_confidence: plan.weights.min_evidence_confidence,
+                    filtered_result_count: 0,
+                    timings: plan.timings,
+                    rerank: None,
+                    channels: vec![],
+                    results: vec![],
+                    has_more: false,
+                    raw_fallback_count: 0,
+                },
+                contribution_breakdowns: vec![],
             },
         });
     }
@@ -306,9 +300,10 @@ pub(super) fn search_with_query_explain(
     let channel_inputs = time_value(&mut plan.timings, "fusion_inputs", || {
         weighted_channel_inputs(&plan.channels)
     });
-    let fused = time_value(&mut plan.timings, "rrf_fusion", || {
+    let fused = time_result(&mut plan.timings, "rrf_fusion", || {
         weighted_ranked_fuse(&channel_inputs, plan.weights.rrf_k)
-    });
+    })?;
+    let fusion_scores = fused.clone();
     let fused_ids: Vec<i64> = fused.iter().map(|(id, _)| *id).collect();
     let ordered = time_result(&mut plan.timings, "load_memories", || {
         load_ordered_memories(conn, &fused_ids, project, plan.include_suppressed)
@@ -330,7 +325,7 @@ pub(super) fn search_with_query_explain(
         paginate_memories(ordered, limit, offset)
     });
     let explain_start = Instant::now();
-    let mut explain = build_explain(
+    let mut explain_details = build_explain(
         conn,
         query_text,
         project,
@@ -340,16 +335,17 @@ pub(super) fn search_with_query_explain(
         include_stale,
         branch,
         &plan,
+        &fusion_scores,
         &gated_fused,
-        fused.len().saturating_sub(gated_fused.len()),
+        fusion_scores.len().saturating_sub(gated_fused.len()),
         &paged,
     )?;
-    explain.rerank = Some(rerank_explain(&rerank_outcome));
+    explain_details.explain.rerank = Some(rerank_explain(&rerank_outcome));
     push_elapsed(&mut plan.timings, "build_explain", explain_start);
     log_search_timing(query_text, project, limit, offset, &plan);
     Ok(QuerySearchWithExplain {
         memories: paged,
-        explain,
+        explain_details,
     })
 }
 
@@ -365,6 +361,7 @@ fn build_query_search_plan(
     include_suppressed: bool,
     weights: SearchWeights,
 ) -> Result<QuerySearchPlan> {
+    weights.validate()?;
     let total_start = Instant::now();
     let mut timings = Vec::new();
     let page_target = (limit.max(1) + offset.max(0) + 1).max(2);
@@ -517,15 +514,13 @@ fn build_query_search_plan(
                 .with_candidates_scanned(vector_outcome.candidates_scanned)
         } else {
             let candidates_scanned = vector_outcome.candidates_scanned;
-            let hits = vector_outcome
-                .hits
-                .into_iter()
-                .filter(|hit| hit.distance <= weights.max_vector_distance)
-                .map(|hit| WeightedRankedHit {
-                    id: hit.memory_id,
-                    normalized_score: vector_similarity_score(hit.distance, weights),
-                })
-                .collect::<Vec<_>>();
+            let hits = calibrated_vector_hits(
+                vector_outcome
+                    .hits
+                    .into_iter()
+                    .map(|hit| (hit.memory_id, hit.distance)),
+                weights.max_vector_distance,
+            )?;
             let hits = suppression_filter::weighted_hits(conn, hits, include_suppressed)?;
             NamedChannel::enabled_with_hits("vector", weights.vector, hits)
                 .with_candidates_scanned(candidates_scanned)
@@ -634,89 +629,6 @@ fn build_query_search_plan(
         weights,
         channels,
         timings,
-    })
-}
-
-fn build_explain(
-    conn: &Connection,
-    query_text: &str,
-    project: Option<&str>,
-    memory_type: Option<&str>,
-    limit: i64,
-    offset: i64,
-    include_stale: bool,
-    branch: Option<&str>,
-    plan: &QuerySearchPlan,
-    fused: &[(i64, f64)],
-    filtered_result_count: usize,
-    paged: &[Memory],
-) -> Result<SearchExplain> {
-    let channels = plan
-        .channels
-        .iter()
-        .map(|channel| SearchExplainChannel {
-            name: channel.name.to_string(),
-            enabled: channel.is_enabled(),
-            disabled_reason: channel.disabled_reason.clone(),
-            candidates_scanned: channel.candidates_scanned,
-            embedding: channel.embedding.clone(),
-            hits: channel
-                .hits
-                .iter()
-                .enumerate()
-                .map(|(index, hit)| ChannelHit {
-                    memory_id: hit.id,
-                    rank: index + 1,
-                })
-                .collect(),
-        })
-        .collect();
-    let id_to_score: HashMap<i64, f64> = fused.iter().copied().collect();
-    let now_epoch = chrono::Utc::now().timestamp();
-    let staleness_labels =
-        memory::staleness::memory_staleness_labels_for_memories(conn, paged, now_epoch)?;
-    let results = paged
-        .iter()
-        .enumerate()
-        .map(|(index, memory)| SearchExplainResult {
-            memory_id: memory.id,
-            final_rank: index + 1,
-            final_score: id_to_score.get(&memory.id).copied().unwrap_or_default(),
-            evidence_confidence: candidate_confidence(memory, plan),
-            project: memory.project.clone(),
-            scope: memory.scope.clone(),
-            visibility: visibility_label(memory, project).to_string(),
-            staleness: staleness_labels
-                .get(&memory.id)
-                .cloned()
-                .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
-            contributions: contributions_for(memory.id, plan),
-        })
-        .collect();
-    Ok(SearchExplain {
-        query: query_text.to_string(),
-        project: project.map(str::to_string),
-        memory_type: memory_type.map(str::to_string),
-        branch: branch.map(str::to_string),
-        include_stale,
-        limit,
-        offset,
-        fetch_limit: plan.fetch_limit,
-        expanded_terms: plan.expanded_terms.clone(),
-        core_terms: plan.core_terms.clone(),
-        claim_terms: plan.claim_terms.clone(),
-        fts_query: plan.fts_query.clone(),
-        temporal_range: plan.temporal_range,
-        temporal_field: plan.temporal_field.clone(),
-        rrf_k: plan.weights.rrf_k,
-        min_evidence_confidence: plan.weights.min_evidence_confidence,
-        filtered_result_count,
-        timings: plan.timings.clone(),
-        rerank: None,
-        channels,
-        results,
-        has_more: false,
-        raw_fallback_count: 0,
     })
 }
 

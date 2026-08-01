@@ -206,6 +206,12 @@ List endpoints return:
 
 `GET /api/v1/search` keeps its existing search-specific `meta` shape and may
 also include `multi_hop`, `raw_hits`, `raw_hits_error`, and `explain`.
+When `explain=true`, every entry in `explain.results` reports the additive
+`fusion_score` and `post_fusion_score_factor` fields alongside `final_score`.
+For a non-zero fusion score they satisfy
+`final_score = fusion_score * post_fusion_score_factor`; the factor is `null`
+when no stable ratio can be derived. These fields expose post-fusion demotion
+without changing the existing result fields.
 Default search, memory browse, graph, and direct memory detail reads exclude
 policy-suppressed memories. Search also disables raw-archive fallback when
 active suppressions are present, so raw text cannot bypass a "do not mention/use
