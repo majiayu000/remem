@@ -8,7 +8,7 @@ mod query_scaffold;
 
 #[cfg(test)]
 use crate::memory::Memory;
-use cjk_relational::relational_core_tokens;
+use cjk_relational::relational_term_matches;
 use query_scaffold::strip_conversational_prefix;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -75,8 +75,7 @@ pub(super) fn query_claim_terms(
             query_text,
         );
     let semantic_query = strip_conversational_prefix(&query_without_time, explicit_entity_terms);
-    let core_terms = relational_core_tokens(semantic_query)
-        .unwrap_or_else(|| crate::retrieval::query_expand::core_tokens(semantic_query));
+    let core_terms = crate::retrieval::query_expand::core_tokens(semantic_query);
     let claims = claim_terms(&core_terms, project, explicit_entity_terms);
     let stripped_query_has_explicit_entity = explicit_entity_terms
         .iter()
@@ -88,8 +87,7 @@ pub(super) fn query_claim_terms(
         return claims;
     }
 
-    let fallback_core_terms = relational_core_tokens(&query_without_time)
-        .unwrap_or_else(|| crate::retrieval::query_expand::core_tokens(&query_without_time));
+    let fallback_core_terms = crate::retrieval::query_expand::core_tokens(&query_without_time);
     claim_terms(&fallback_core_terms, project, explicit_entity_terms)
 }
 
@@ -109,7 +107,14 @@ pub(super) fn claim_text_match_count(text: &str, claim_terms: &[String]) -> usiz
     let haystack = text.to_lowercase();
     claim_terms
         .iter()
-        .filter(|term| claim_term_matches(&haystack, term))
+        .enumerate()
+        .filter(|(index, term)| {
+            let followed_by_cjk_relation = claim_terms
+                .get(index + 1)
+                .is_some_and(|next| next.chars().any(is_cjk) && is_relation_only_claim_term(next));
+            claim_term_matches(&haystack, term)
+                || (followed_by_cjk_relation && relational_term_matches(&haystack, term))
+        })
         .count()
 }
 

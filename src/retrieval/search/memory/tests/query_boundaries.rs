@@ -73,22 +73,23 @@ fn empty_conversational_prefixes_do_not_clear_all_claims() {
 }
 
 #[test]
-fn cjk_relational_claims_split_unknown_agents_and_predicates() {
-    for predicate in ["维护", "处理", "接手", "编写"] {
-        let query = format!("模块由小王{predicate}吗？");
-        let claims = super::super::claim::query_claim_terms(&query, Some("/repo"), &[]);
-        assert_eq!(claims, ["模块", "小王", predicate], "{query}: {claims:?}");
+fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() {
+    for (query, candidate) in [
+        ("模块由小王维护吗？", "小王维护模块。"),
+        ("库由小王维护吗？", "小王维护库。"),
+        ("模块由王维护吗？", "王维护模块。"),
+    ] {
+        let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert_eq!(
+            super::super::claim::claim_text_coverage(candidate, &claims),
+            1.0,
+            "{query}: {claims:?}"
+        );
     }
 
-    for subject in ["自由软件", "不自由软件", "半自由软件"] {
-        let query = format!("{subject}由小王维护");
-        let claims = super::super::claim::query_claim_terms(&query, Some("/repo"), &[]);
-        assert_eq!(claims, [subject, "小王", "维护"], "{query}: {claims:?}");
-    }
-
-    let claims = super::super::claim::query_claim_terms("不自由软件维护吗？", Some("/repo"), &[]);
-    assert!(claims.contains(&"不自由软件".to_string()), "{claims:?}");
-    assert!(!claims.contains(&"不自".to_string()), "{claims:?}");
+    let claims = super::super::claim::query_claim_terms("EU模块由小王维护R2", Some("/repo"), &[]);
+    assert!(claims.contains(&"eu".to_string()), "{claims:?}");
+    assert!(claims.contains(&"r2".to_string()), "{claims:?}");
 }
 
 #[test]
