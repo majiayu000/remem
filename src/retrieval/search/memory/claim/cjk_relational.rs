@@ -13,13 +13,10 @@ pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &st
         .match_indices('由')
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    let ambiguous_single_marker = markers.len() == 1;
     markers
         .into_iter()
         .filter(|infix| !has_lexical_you_suffix(term, *infix))
-        .filter(|infix| {
-            !ambiguous_single_marker || !has_single_character_lexical_you_prefix(term, *infix)
-        })
+        .filter(|infix| !has_lexical_you_context(term, *infix))
         .filter(|infix| {
             let subject = term[..*infix]
                 .strip_suffix("是否")
@@ -27,6 +24,8 @@ pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &st
             let agent = &term[*infix + '由'.len_utf8()..];
             if subject.is_empty()
                 || agent.is_empty()
+                || agent.starts_with('由')
+                || subject.ends_with(['转', '改'])
                 || agent.contains("转由")
                 || agent.contains("改由")
             {
@@ -116,11 +115,17 @@ fn has_lexical_you_suffix(term: &str, infix: usize) -> bool {
         .is_some_and(|suffix| LEXICAL_YOU_SUFFIXES.contains(&suffix))
 }
 
-fn has_single_character_lexical_you_prefix(term: &str, infix: usize) -> bool {
+fn has_lexical_you_context(term: &str, infix: usize) -> bool {
     let subject = &term[..infix];
-    subject.chars().count() == 1
-        && subject
-            .chars()
-            .next()
-            .is_some_and(|prefix| LEXICAL_YOU_PREFIXES.contains(&prefix))
+    let Some(prefix) = subject.chars().next_back() else {
+        return false;
+    };
+    if !LEXICAL_YOU_PREFIXES.contains(&prefix) {
+        return false;
+    }
+    let before_prefix = subject[..subject.len() - prefix.len_utf8()]
+        .chars()
+        .next_back();
+    let after_marker = term[infix + '由'.len_utf8()..].chars().next();
+    subject.chars().count() == 1 || before_prefix == Some('由') || after_marker == Some('由')
 }

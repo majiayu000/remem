@@ -151,6 +151,11 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("模块由小王维护吗", "小王维护模块；当前由小李维护模块"),
         ("模块由小王维护吗", "小王维护模块；当前由R&D团队维护模块"),
         ("模块由小王负责吗", "小王负责模块；小王不负责模块"),
+        ("理由由小王维护吗", "由小王维护理"),
+        ("因由由小王维护吗", "由小王维护因"),
+        ("方案由自由软件基金会维护吗", "软件基金会维护方案由自"),
+        ("模块转由小李维护吗", "小李维护模块转"),
+        ("模块改由小李维护吗", "小李维护模块改"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(
