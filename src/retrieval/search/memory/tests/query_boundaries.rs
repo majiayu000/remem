@@ -21,6 +21,10 @@ fn conversational_scaffolding_does_not_filter_true_owner_claim() -> Result<()> {
         ("Please tell me the owner", vec!["owner"]),
         ("Please tell me about NebulaLatch", vec![]),
         ("Today, please tell me who owns NebulaLatch", vec!["owns"]),
+        ("Today: please tell me who owns NebulaLatch", vec!["owns"]),
+        ("Today. please tell me who owns NebulaLatch", vec!["owns"]),
+        ("Today： please tell me who owns NebulaLatch", vec!["owns"]),
+        ("Today． please tell me who owns NebulaLatch", vec!["owns"]),
         (whether_query, vec!["changed"]),
         ("Please tell me if NebulaLatch changed", vec!["changed"]),
         ("Please tell me NebulaLatch owner", vec!["owner"]),
@@ -45,6 +49,16 @@ fn conversational_words_remain_real_claims_outside_command_prefix() {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(claims.iter().any(|term| term == expected), "{claims:?}");
     }
+}
+
+#[test]
+fn terminal_cjk_question_particles_do_not_pollute_claims() {
+    let claims = super::super::claim::query_claim_terms(
+        "NebulaLatch运行正常吗？",
+        Some("/repo"),
+        &["NebulaLatch".to_string()],
+    );
+    assert_eq!(claims, ["运行正常"]);
 }
 
 #[test]

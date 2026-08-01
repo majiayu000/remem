@@ -167,6 +167,26 @@ fn core_tokens_preserve_unknown_cjk_qualifier_spans() {
 }
 
 #[test]
+fn core_tokens_split_terminal_cjk_question_particles() {
+    for (query, expected_claim) in [
+        ("NebulaLatch运行正常吗？", "运行正常"),
+        ("服务仍然可用呢？", "仍然可用"),
+        ("任务已经完成了。", "已经完成"),
+    ] {
+        let tokens = core_tokens(query);
+        assert!(
+            tokens.contains(&expected_claim.to_string()),
+            "terminal question particle must not remain in claim text: {query}: {tokens:?}"
+        );
+    }
+
+    for ordinary_word in ["核心目的", "记录存在"] {
+        let tokens = core_tokens(ordinary_word);
+        assert!(tokens.contains(&ordinary_word.to_string()), "{tokens:?}");
+    }
+}
+
+#[test]
 fn core_tokens_preserve_short_mixed_script_qualifiers() {
     let tokens = core_tokens("谁验证了港湾服务A区？");
 
@@ -180,7 +200,19 @@ fn core_tokens_preserve_short_mixed_script_qualifiers() {
 fn compact_mixed_identifiers_do_not_cross_boundaries_or_leading_cjk() {
     assert!(tokenize_mixed("A区").contains(&"A区".to_string()));
     for introducer in [
-        "在", "于", "自", "从", "至", "到", "截至", "截止", "自从", "早在", "直到",
+        "在",
+        "于",
+        "自",
+        "从",
+        "至",
+        "到",
+        "截至",
+        "截止",
+        "截至到",
+        "截止到",
+        "自从",
+        "早在",
+        "直到",
     ] {
         let compact = format!("42{introducer}");
         assert!(

@@ -44,7 +44,20 @@ fn trim_command_prefix_start(query: &str) -> &str {
         character.is_whitespace()
             || matches!(
                 character,
-                ',' | '，' | ';' | '；' | '!' | '！' | '?' | '？' | '、' | '—' | '–'
+                ',' | '，'
+                    | ';'
+                    | '；'
+                    | '!'
+                    | '！'
+                    | '?'
+                    | '？'
+                    | '.'
+                    | '．'
+                    | ':'
+                    | '：'
+                    | '、'
+                    | '—'
+                    | '–'
             )
     })
 }

@@ -243,6 +243,50 @@ fn compact_month_name_dates_accept_bare_year_comma() {
 }
 
 #[test]
+fn abbreviated_month_names_accept_trailing_periods() {
+    for query in [
+        "What changed Sep. 4, 2026?",
+        "What changed Sept. 4, 2026?",
+        "What changed on Jan. 4, 2026?",
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+        assert!(
+            !semantic_query.contains("2026"),
+            "{query}: {semantic_query:?}"
+        );
+    }
+
+    for query in ["release.Sep.4.2026.notes", "release.Sept.4.2026.notes"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
+fn ascii_temporal_phrases_accept_cjk_right_adjacency() {
+    for (query, expected_semantic_query) in [
+        ("yesterday发生了什么", " 发生了什么"),
+        ("last week部署了什么", " 部署了什么"),
+        ("May 4, 2026发生了什么", " 发生了什么"),
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            expected_semantic_query,
+            "{query}"
+        );
+    }
+
+    for query in ["yesterdayStatus", "last weekDeploy", "May 4, 2026Status"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+    }
+}
+
+#[test]
 fn cjk_day_phrases_accept_valid_clock_suffixes() {
     for (query, expected_semantic_query) in [
         ("今天3点发生什么", " 发生什么"),
@@ -254,6 +298,9 @@ fn cjk_day_phrases_accept_valid_clock_suffixes() {
         ("今天23时59分完成", " 完成"),
         ("今天3:30完成", " 完成"),
         ("今天3：30完成", " 完成"),
+        ("今天三点发生什么", " 发生什么"),
+        ("今天 十点半完成", " 完成"),
+        ("昨天二十三时59分完成", " 完成"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
         assert_eq!(
@@ -266,8 +313,8 @@ fn cjk_day_phrases_accept_valid_clock_suffixes() {
     for query in [
         "今天２",
         "今天 ２点部署",
-        "今天三点部署",
-        "今天 三点部署",
+        "今天二十四点部署",
+        "今天百点部署",
         "今天3点Status",
         "今天3点_notes",
         "今天24点部署",
@@ -302,6 +349,8 @@ fn cjk_temporal_phrases_consume_validated_introducers() {
         ("截至 最近7天发生了什么", " 发生了什么"),
         ("截止 最近发生了什么", " 发生了什么"),
         ("截至 7天前发生了什么", " 发生了什么"),
+        ("服务42截止到7天前发生了什么", "服务42 发生了什么"),
+        ("服务42截至到7天前发生了什么", "服务42 发生了什么"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
         assert_eq!(
@@ -315,7 +364,19 @@ fn cjk_temporal_phrases_consume_validated_introducers() {
 #[test]
 fn cjk_temporal_introducers_consume_ascii_temporal_phrases() {
     let introducers = [
-        "在", "于", "自", "从", "至", "到", "截至", "截止", "自从", "早在", "直到",
+        "在",
+        "于",
+        "自",
+        "从",
+        "至",
+        "到",
+        "截至",
+        "截止",
+        "截至到",
+        "截止到",
+        "自从",
+        "早在",
+        "直到",
     ];
     let separators = ["", " ", "\t", "\n"];
     let temporal_phrases = [
@@ -398,6 +459,7 @@ fn ordinary_cjk_suffixes_are_not_consumed_as_temporal_introducers() {
         ("数据来自 last week changed", "数据来自"),
         ("关于 yesterday changed", "关于"),
         ("达到 recently changed", "达到"),
+        ("签到 yesterday records", "签到"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
         let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
@@ -483,6 +545,8 @@ fn exact_dates_accept_valid_compact_cjk_clock_suffixes() {
         ("2026年5月4日23时59分发生了什么", " 发生了什么"),
         ("2026年5月4日3:30发生了什么", " 发生了什么"),
         ("2026年5月4日3：30发生了什么", " 发生了什么"),
+        ("2026年5月4日三点发生了什么", " 发生了什么"),
+        ("2026年5月4日二十三时59分发生了什么", " 发生了什么"),
         ("2026-05-043点发生了什么", " 发生了什么"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
@@ -495,6 +559,8 @@ fn exact_dates_accept_valid_compact_cjk_clock_suffixes() {
 
     for query in [
         "2026年5月4日２点",
+        "2026年5月4日二十四点部署",
+        "2026年5月4日百点部署",
         "2026年5月4日24点部署",
         "2026年5月4日 24点部署",
         "2026年5月4日3:3部署",

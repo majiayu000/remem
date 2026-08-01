@@ -101,7 +101,19 @@ fn cjk_temporal_scaffolding_is_absent_from_search_claims() -> Result<()> {
 #[test]
 fn cjk_temporal_introducers_do_not_compact_with_entity_numbers() {
     for introducer in [
-        "在", "于", "自", "从", "至", "到", "截至", "截止", "自从", "早在", "直到",
+        "在",
+        "于",
+        "自",
+        "从",
+        "至",
+        "到",
+        "截至",
+        "截止",
+        "截至到",
+        "截止到",
+        "自从",
+        "早在",
+        "直到",
     ] {
         let query = format!("服务42{introducer}7天前有什么变化？");
         let claims = super::super::claim::query_claim_terms(&query, Some("/repo"), &[]);
@@ -152,6 +164,7 @@ fn ordinary_cjk_words_ending_in_introducer_characters_remain_claims() {
         ("数据来自 last week changed", "数据来自"),
         ("关于 yesterday changed", "关于"),
         ("达到 recently changed", "达到"),
+        ("签到 yesterday records", "签到"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(

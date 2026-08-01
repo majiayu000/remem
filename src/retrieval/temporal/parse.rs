@@ -312,13 +312,23 @@ fn parse_month_name_date(lower: &str) -> Option<(i64, i64, Range<usize>)> {
                 return Some((start, end, previous?.span.start..next?.span.end));
             }
             if let Some(day) = next.and_then(|word| parse_day(word.text)) {
-                let year = next2
-                    .and_then(|word| parse_year(word.text))
-                    .unwrap_or(current_year);
+                let explicit_year = next2.and_then(|word| parse_year(word.text));
+                if next2.is_some_and(|word| {
+                    word.text
+                        .chars()
+                        .next()
+                        .is_some_and(|character| character.is_ascii_digit())
+                        && explicit_year.is_none()
+                }) {
+                    return None;
+                }
+                let year = explicit_year.unwrap_or(current_year);
                 let (start, end) = day_range(NaiveDate::from_ymd_opt(year, month, day)?)?;
-                let last = next2
-                    .filter(|word| parse_year(word.text).is_some())
-                    .unwrap_or(next?);
+                let last = if explicit_year.is_some() {
+                    next2?
+                } else {
+                    next?
+                };
                 return Some((start, end, part.span.start..last.span.end));
             }
             if let Some(year) = next.and_then(|word| parse_year(word.text)) {
@@ -362,12 +372,35 @@ fn has_natural_date_word_gaps(query: &str, words: &[QueryWord<'_>], span: &Range
         if !gap.is_empty() && gap.chars().all(char::is_whitespace) {
             return true;
         }
+        if let Some(rest) = gap.strip_prefix(['.', '．']) {
+            return is_abbreviated_month_name(pair[0].text)
+                && !rest.is_empty()
+                && rest.chars().all(char::is_whitespace);
+        }
         let Some(rest) = gap.strip_prefix([',', '，']) else {
             return false;
         };
         rest.chars().all(char::is_whitespace)
             && (!rest.is_empty() || parse_year(pair[1].text).is_some())
     })
+}
+
+fn is_abbreviated_month_name(input: &str) -> bool {
+    matches!(
+        input,
+        "jan"
+            | "feb"
+            | "mar"
+            | "apr"
+            | "jun"
+            | "jul"
+            | "aug"
+            | "sep"
+            | "sept"
+            | "oct"
+            | "nov"
+            | "dec"
+    )
 }
 
 fn day_range(date: NaiveDate) -> Option<(i64, i64)> {
@@ -559,10 +592,16 @@ fn query_words(query: &str) -> Vec<QueryWord<'_>> {
     let mut start = None;
     for (index, character) in query.char_indices() {
         if character.is_alphanumeric() || character == '_' {
-            if character.is_ascii_alphanumeric()
+            let ascii_to_cjk_boundary = !character.is_ascii()
+                && start.is_some_and(|word_start| {
+                    query[word_start..index]
+                        .chars()
+                        .all(|word_character| word_character.is_ascii_alphanumeric())
+                });
+            let cjk_introducer_boundary = character.is_ascii_alphanumeric()
                 && start.is_some()
-                && has_cjk_temporal_introducer_before(query, index)
-            {
+                && has_cjk_temporal_introducer_before(query, index);
+            if ascii_to_cjk_boundary || cjk_introducer_boundary {
                 if let Some(word_start) = start.replace(index) {
                     words.push(QueryWord {
                         text: &query[word_start..index],
