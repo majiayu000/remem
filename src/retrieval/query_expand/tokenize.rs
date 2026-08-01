@@ -62,6 +62,7 @@ const CJK_COMPACT_IDENTIFIER_STOP_SEGMENTS: &[&str] = &[
 ];
 
 const TERMINAL_CJK_QUERY_SEGMENTS: &[&str] = &["了", "吗", "呢"];
+const INFIX_CJK_QUERY_SEGMENTS: &[&str] = &["由"];
 
 pub(super) fn is_cjk(c: char) -> bool {
     matches!(
@@ -145,7 +146,7 @@ pub(super) fn segment_cjk(text: &str) -> Vec<String> {
         } else {
             let start = i;
             i += 1;
-            while i < chars.len() && known_segment_len_after_unknown(&chars, i).is_none() {
+            while i < chars.len() && known_segment_len_after_unknown(&chars, start, i).is_none() {
                 i += 1;
             }
             segments.push(chars[start..i].iter().collect());
@@ -155,14 +156,27 @@ pub(super) fn segment_cjk(text: &str) -> Vec<String> {
     segments
 }
 
-fn known_segment_len_after_unknown(chars: &[char], start: usize) -> Option<usize> {
+fn known_segment_len_after_unknown(
+    chars: &[char],
+    unknown_start: usize,
+    start: usize,
+) -> Option<usize> {
     let length = known_segment_len(chars, start)?;
     let candidate: String = chars[start..start + length].iter().collect();
     (length > 1
         || known_segment_len(chars, start + length).is_some()
+        || (start.saturating_sub(unknown_start) >= 2
+            && INFIX_CJK_QUERY_SEGMENTS.contains(&candidate.as_str())
+            && has_later_known_multi_segment(chars, start + length))
         || (start + length == chars.len()
             && TERMINAL_CJK_QUERY_SEGMENTS.contains(&candidate.as_str())))
     .then_some(length)
+}
+
+fn has_later_known_multi_segment(chars: &[char], start: usize) -> bool {
+    (start..chars.len()).any(|index| {
+        known_segment_len(chars, index).is_some_and(|segment_length| segment_length > 1)
+    })
 }
 
 fn known_segment_len(chars: &[char], start: usize) -> Option<usize> {

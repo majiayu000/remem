@@ -52,6 +52,23 @@ fn conversational_words_remain_real_claims_outside_command_prefix() {
 }
 
 #[test]
+fn empty_conversational_prefixes_do_not_clear_all_claims() {
+    for query in [
+        "Please tell me about?",
+        "Please tell me if!",
+        "Please tell me whether.",
+        "Please tell me who?",
+        "Please tell me the?",
+    ] {
+        let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert!(
+            !claims.is_empty(),
+            "empty command subject must retain abstention evidence: {query}"
+        );
+    }
+}
+
+#[test]
 fn terminal_cjk_question_particles_do_not_pollute_claims() {
     let claims = super::super::claim::query_claim_terms(
         "NebulaLatch运行正常吗？",

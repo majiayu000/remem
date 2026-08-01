@@ -585,6 +585,11 @@ reports the computed score identity
 captures post-fusion policies such as source-anchor demotion without adding
 required fields to the public Rust explain structs.
 
+Before claim and confidence gating, remem removes only validated temporal spans
+and a restricted query-opening command scaffold. Entity numbers remain part of
+the query. Malformed or identifier-shaped temporal text fails closed and stays
+semantic instead of silently becoming a temporal filter.
+
 Enhancements:
 
 - Entity-index and trusted typed-graph expansion (bounded 2-hop retrieval)

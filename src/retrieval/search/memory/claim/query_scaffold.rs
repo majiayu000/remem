@@ -24,19 +24,31 @@ pub(super) fn strip_conversational_prefix<'a>(
     let fourth = word(3);
     let fourth_lower = fourth.to_ascii_lowercase();
     if ["if", "whether", "about"].contains(&fourth_lower.as_str()) {
-        return &trimmed[spans[3].end..];
+        let subject = &trimmed[spans[3].end..];
+        return has_semantic_query_content(subject)
+            .then_some(subject)
+            .unwrap_or(query);
     }
     if [
         "who", "what", "when", "where", "why", "how", "which", "the", "a", "an",
     ]
     .contains(&fourth_lower.as_str())
-        || explicit_entity_terms
-            .iter()
-            .any(|entity| first_entity_word(entity).eq_ignore_ascii_case(fourth))
+    {
+        return has_semantic_query_content(&trimmed[spans[3].end..])
+            .then_some(&trimmed[spans[2].end..])
+            .unwrap_or(query);
+    }
+    if explicit_entity_terms
+        .iter()
+        .any(|entity| first_entity_word(entity).eq_ignore_ascii_case(fourth))
     {
         return &trimmed[spans[2].end..];
     }
     query
+}
+
+fn has_semantic_query_content(query: &str) -> bool {
+    query.chars().any(char::is_alphanumeric)
 }
 
 fn trim_command_prefix_start(query: &str) -> &str {
