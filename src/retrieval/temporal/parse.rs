@@ -143,20 +143,11 @@ fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> bool {
 }
 
 fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {
-    let Some((index, character)) = query[..start].char_indices().next_back() else {
+    let Some((_, character)) = query[..start].char_indices().next_back() else {
         return true;
     };
     if is_structural_separator(character) {
-        let run_start = query[..start]
-            .char_indices()
-            .rev()
-            .take_while(|(_, character)| is_structural_separator(*character))
-            .last()
-            .map_or(index, |(index, _)| index);
-        return query[..run_start]
-            .chars()
-            .next_back()
-            .is_none_or(is_natural_outer_punctuation);
+        return false;
     }
     phrase_neighbor_is_valid(character, allow_cjk)
 }
@@ -171,16 +162,23 @@ fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> b
             .take_while(|(_, character)| is_structural_separator(*character))
             .last()
             .map_or(end, |(index, character)| end + index + character.len_utf8());
-        return query[run_end..]
+        return query[end..run_end]
             .chars()
-            .next()
-            .is_none_or(is_natural_outer_punctuation);
+            .all(is_sentence_boundary_separator)
+            && query[run_end..]
+                .chars()
+                .next()
+                .is_none_or(is_natural_outer_punctuation);
     }
     phrase_neighbor_is_valid(character, allow_cjk)
 }
 
 fn is_natural_outer_punctuation(character: char) -> bool {
     character.is_whitespace() || (!character.is_alphanumeric() && character != '_')
+}
+
+fn is_sentence_boundary_separator(character: char) -> bool {
+    matches!(character, '.' | ':' | '．' | '：')
 }
 
 fn phrase_neighbor_is_valid(character: char, allow_cjk: bool) -> bool {

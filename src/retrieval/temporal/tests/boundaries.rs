@@ -96,6 +96,17 @@ fn sentence_punctuation_preserves_temporal_phrases() {
 }
 
 #[test]
+fn edge_path_segments_are_not_temporal_phrases() {
+    for query in ["/today", ".today", ":today", "today/", "today\\", "today-"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
 fn generic_recent_scans_past_invalid_quantified_identifier() {
     let query = "config_最近7天_notes，最近有什么变化";
     let constraint = extract_temporal(query).expect("later generic recent phrase should parse");
