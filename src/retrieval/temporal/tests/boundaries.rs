@@ -216,22 +216,66 @@ fn cjk_temporal_phrases_consume_validated_introducers() {
 
 #[test]
 fn cjk_temporal_introducers_consume_ascii_temporal_phrases() {
+    let introducers = [
+        "在", "于", "自", "从", "至", "到", "截至", "截止", "自从", "早在", "直到",
+    ];
+    let separators = ["", " ", "\t", "\n"];
+    let temporal_phrases = [
+        "May 4, 2026",
+        "2026-05-04",
+        "today",
+        "yesterday",
+        "last week",
+        "last month",
+        "this week",
+        "recently",
+        "7 days ago",
+        "last 7 days",
+        "2026年5月4日",
+        "今天",
+        "昨天",
+        "上周",
+        "上个月",
+        "本周",
+        "最近7天",
+    ];
+
+    let mut failures = Vec::new();
+    for introducer in introducers {
+        for separator in separators {
+            for phrase in temporal_phrases {
+                let query = format!("{introducer}{separator}{phrase} 有什么变化");
+                if extract_temporal(&query).is_none() {
+                    failures.push(format!("did not parse: {query:?}"));
+                    continue;
+                }
+                let semantic_query = TemporalConstraint::query_without_temporal_expression(&query);
+                if semantic_query.contains(introducer) {
+                    failures.push(format!(
+                        "did not consume introducer: {query:?}: {semantic_query:?}"
+                    ));
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "temporal introducer matrix failures:\n{}",
+        failures.join("\n")
+    );
+}
+
+#[test]
+fn arbitrary_cjk_prefixes_do_not_open_ascii_temporal_boundaries() {
     for query in [
-        "截至 May 4, 2026 有什么变化",
-        "截止 yesterday 有什么变化",
-        "服务42自从 last week 有什么变化",
-        "截至 last month 有什么变化",
-        "截至 recently 有什么变化",
-        "截至 7 days ago 有什么变化",
-        "截至 last 7 days 有什么变化",
+        "服务May 4, 2026 有什么变化",
+        "服务7 days ago 有什么变化",
+        "服务last 7 days 有什么变化",
     ] {
-        assert!(extract_temporal(query).is_some(), "{query}");
-        let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
-        assert!(
-            !["截至", "截止", "自从"]
-                .iter()
-                .any(|introducer| semantic_query.contains(introducer)),
-            "mixed-language temporal introducer must be consumed: {query}: {semantic_query:?}"
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
         );
     }
 }

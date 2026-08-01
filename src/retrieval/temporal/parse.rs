@@ -7,8 +7,9 @@ use crate::retrieval::temporal::types::{TemporalConstraint, TemporalField};
 mod boundary;
 
 use boundary::{
-    cjk_day_phrase_span, date_span_with_context, has_cjk_phrase_context, has_phrase_context,
-    has_recent_phrase_context, is_identifier_joiner, span_with_cjk_temporal_introducer,
+    cjk_day_phrase_span, date_span_with_context, has_cjk_phrase_context,
+    has_cjk_temporal_introducer_before, has_phrase_context, has_recent_phrase_context,
+    is_identifier_joiner, span_with_cjk_temporal_introducer,
 };
 
 struct ParsedTemporal {
@@ -545,6 +546,18 @@ fn query_words(query: &str) -> Vec<QueryWord<'_>> {
     let mut start = None;
     for (index, character) in query.char_indices() {
         if character.is_alphanumeric() || character == '_' {
+            if character.is_ascii_alphanumeric()
+                && start.is_some()
+                && has_cjk_temporal_introducer_before(query, index)
+            {
+                if let Some(word_start) = start.replace(index) {
+                    words.push(QueryWord {
+                        text: &query[word_start..index],
+                        span: word_start..index,
+                    });
+                    continue;
+                }
+            }
             start.get_or_insert(index);
         } else if let Some(start) = start.take() {
             words.push(QueryWord {

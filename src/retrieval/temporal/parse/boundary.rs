@@ -44,9 +44,9 @@ pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option
         Some(character) if character.is_whitespace() => true,
         Some(character) if is_structural_separator(character) => false,
         Some(character) if character.is_ascii_alphanumeric() || character.is_numeric() => false,
-        Some(character) if character.is_alphanumeric() => CJK_TEMPORAL_INTRODUCERS
-            .iter()
-            .any(|introducer| left.ends_with(introducer)),
+        Some(character) if character.is_alphanumeric() => {
+            has_cjk_temporal_introducer_before(query, span.start)
+        }
         Some(_) => true,
     };
     if !left_is_natural {
@@ -158,7 +158,16 @@ fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> 
     if is_structural_separator(character) {
         return false;
     }
+    if !allow_cjk && has_cjk_temporal_introducer_before(query, start) {
+        return true;
+    }
     phrase_neighbor_is_valid(character, allow_cjk)
+}
+
+pub(super) fn has_cjk_temporal_introducer_before(query: &str, start: usize) -> bool {
+    CJK_TEMPORAL_INTRODUCERS
+        .iter()
+        .any(|introducer| query[..start].ends_with(introducer))
 }
 
 fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {
