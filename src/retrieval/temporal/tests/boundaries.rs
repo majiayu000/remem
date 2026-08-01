@@ -11,9 +11,9 @@ fn separated_exact_dates_accept_cjk_sentence_context() -> Result<()> {
         .and_utc()
         .timestamp();
     for (query, expected_semantic_query) in [
-        ("在2026-05-04发生什么", "在 发生什么"),
+        ("在2026-05-04发生什么", " 发生什么"),
         ("2026-05-04发生什么", " 发生什么"),
-        ("服务42在2026-05-04发生什么", "服务42在 发生什么"),
+        ("服务42在2026-05-04发生什么", "服务42 发生什么"),
     ] {
         let constraint =
             extract_temporal(query).ok_or_else(|| anyhow!("CJK sentence date should parse"))?;
@@ -63,7 +63,6 @@ fn cjk_clause_punctuation_separates_entity_number_from_day_count() {
         ("service-42,7天前发生了什么", 7, "service-42, 发生了什么"),
         ("service/42,7天前发生了什么", 7, "service/42, 发生了什么"),
         ("服务42;7天前发生了什么", 7, "服务42; 发生了什么"),
-        ("服务42:7天前发生了什么", 7, "服务42: 发生了什么"),
         ("服务42!7天前发生了什么", 7, "服务42! 发生了什么"),
         ("服务42?7天前发生了什么", 7, "服务42? 发生了什么"),
     ] {
@@ -83,6 +82,8 @@ fn cjk_clause_punctuation_separates_entity_number_from_day_count() {
         "2，30天前",
         "29，5天前",
         "2,030天前",
+        "服务42:7天前发生了什么",
+        "服务42：7天前发生了什么",
         "v7天前",
     ] {
         assert!(extract_temporal(grouped).is_none(), "{grouped}");
@@ -158,12 +159,15 @@ fn cjk_day_phrases_accept_valid_clock_suffixes() {
 }
 
 #[test]
-fn cjk_day_counts_consume_validated_temporal_introducers() {
+fn cjk_temporal_phrases_consume_validated_introducers() {
     for (query, expected_semantic_query) in [
         ("服务42自7天前发生了什么", "服务42 发生了什么"),
         ("服务42自从7天前发生了什么", "服务42 发生了什么"),
         ("截至7天前发生了什么", " 发生了什么"),
         ("截止7天前发生了什么", " 发生了什么"),
+        ("截至2026年5月4日发生了什么", " 发生了什么"),
+        ("截止今天发生了什么", " 发生了什么"),
+        ("服务42自从2026年5月4日发生了什么", "服务42 发生了什么"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
         assert_eq!(
@@ -201,7 +205,16 @@ fn exact_dates_accept_valid_compact_cjk_clock_suffixes() {
 
 #[test]
 fn edge_path_segments_are_not_temporal_phrases() {
-    for query in ["/today", ".today", ":today", "today/", "today\\", "today-"] {
+    for query in [
+        "/today",
+        ".today",
+        ":today",
+        "today/",
+        "today\\",
+        "today-",
+        "config:今天",
+        "config：今天",
+    ] {
         assert!(extract_temporal(query).is_none(), "{query}");
         assert_eq!(
             TemporalConstraint::query_without_temporal_expression(query),

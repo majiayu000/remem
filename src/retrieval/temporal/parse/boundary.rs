@@ -16,12 +16,13 @@ pub(super) fn cjk_day_phrase_span(query: &str, span: &Range<usize>) -> Option<Ra
     if !phrase_left_boundary_is_valid(query, span.start, true) {
         return None;
     }
+    let consumed_span = span_with_cjk_temporal_introducer(query, span);
     if cjk_clock_time_suffix_start(query, span.end).is_some() {
         let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
-        return Some(span.start..suffix_end);
+        return Some(consumed_span.start..suffix_end);
     }
     if phrase_right_boundary_is_valid(query, span.end, true) {
-        return Some(span.clone());
+        return Some(consumed_span);
     }
     None
 }
@@ -50,14 +51,24 @@ pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option
     if !left_is_natural {
         return None;
     }
+    let consumed_span = span_with_cjk_temporal_introducer(query, span);
     if cjk_clock_time_suffix_start(query, span.end).is_some() {
         let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
-        return Some(span.start..suffix_end);
+        return Some(consumed_span.start..suffix_end);
     }
     if phrase_right_boundary_is_valid(query, span.end, true) {
-        return Some(span.clone());
+        return Some(consumed_span);
     }
     None
+}
+
+pub(super) fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
+    for introducer in ["截至", "截止", "自从", "在", "于", "自", "从", "至", "到"] {
+        if query[..span.start].ends_with(introducer) {
+            return span.start - introducer.len()..span.end;
+        }
+    }
+    span.clone()
 }
 
 fn cjk_clock_time_suffix_end(query: &str, start: usize) -> Option<usize> {
@@ -128,29 +139,13 @@ fn cjk_clock_time_suffix_start(query: &str, start: usize) -> Option<usize> {
 }
 
 fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {
-    let Some((index, character)) = query[..start].char_indices().next_back() else {
+    let Some((_, character)) = query[..start].char_indices().next_back() else {
         return true;
     };
     if is_structural_separator(character) {
-        if allow_cjk
-            && matches!(character, ':' | '：')
-            && preceding_identifier_contains_alphabetic(&query[..index])
-        {
-            return true;
-        }
         return false;
     }
     phrase_neighbor_is_valid(character, allow_cjk)
-}
-
-fn preceding_identifier_contains_alphabetic(input: &str) -> bool {
-    input
-        .chars()
-        .rev()
-        .take_while(|character| {
-            character.is_alphanumeric() || matches!(character, '_' | '-' | '/' | '\\')
-        })
-        .any(char::is_alphabetic)
 }
 
 fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {

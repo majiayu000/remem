@@ -8,7 +8,7 @@ mod boundary;
 
 use boundary::{
     cjk_day_phrase_span, date_span_with_context, has_cjk_phrase_context, has_phrase_context,
-    has_recent_phrase_context,
+    has_recent_phrase_context, span_with_cjk_temporal_introducer,
 };
 
 struct ParsedTemporal {
@@ -531,15 +531,6 @@ fn has_whitespace_word_gaps(query: &str, words: &[QueryWord<'_>]) -> bool {
     })
 }
 
-fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
-    for introducer in ["截至", "截止", "自从", "在", "于", "自", "从", "至", "到"] {
-        if query[..span.start].ends_with(introducer) {
-            return span.start - introducer.len()..span.end;
-        }
-    }
-    span.clone()
-}
-
 fn query_words(query: &str) -> Vec<QueryWord<'_>> {
     let mut words = Vec::new();
     let mut start = None;
@@ -594,12 +585,12 @@ fn has_invalid_numeric_left_boundary(query: &str, start: usize) -> bool {
     let has_clause_boundary = separator.chars().any(|character| {
         matches!(
             character,
-            ',' | ';' | ':' | '!' | '?' | '，' | '。' | '；' | '：' | '！' | '？' | '、'
+            ',' | ';' | '!' | '?' | '，' | '。' | '；' | '！' | '？' | '、'
         )
     });
     if separator
         .chars()
-        .any(|character| matches!(character, ',' | ':' | '，' | '：'))
+        .any(|character| matches!(character, ',' | '，'))
         && !has_whitespace_boundary
         && preceding.is_some_and(char::is_numeric)
     {
