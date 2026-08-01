@@ -3,10 +3,12 @@ use std::collections::HashSet;
 use anyhow::Result;
 use rusqlite::Connection;
 
+mod cjk_relational;
 mod query_scaffold;
 
 #[cfg(test)]
 use crate::memory::Memory;
+use cjk_relational::relational_core_tokens;
 use query_scaffold::strip_conversational_prefix;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -73,8 +75,22 @@ pub(super) fn query_claim_terms(
             query_text,
         );
     let semantic_query = strip_conversational_prefix(&query_without_time, explicit_entity_terms);
-    let core_terms = crate::retrieval::query_expand::core_tokens(semantic_query);
-    claim_terms(&core_terms, project, explicit_entity_terms)
+    let core_terms = relational_core_tokens(semantic_query)
+        .unwrap_or_else(|| crate::retrieval::query_expand::core_tokens(semantic_query));
+    let claims = claim_terms(&core_terms, project, explicit_entity_terms);
+    let stripped_query_has_explicit_entity = explicit_entity_terms
+        .iter()
+        .any(|entity| text_contains_exact_token(semantic_query, entity));
+    if !claims.is_empty()
+        || semantic_query == query_without_time
+        || stripped_query_has_explicit_entity
+    {
+        return claims;
+    }
+
+    let fallback_core_terms = relational_core_tokens(&query_without_time)
+        .unwrap_or_else(|| crate::retrieval::query_expand::core_tokens(&query_without_time));
+    claim_terms(&fallback_core_terms, project, explicit_entity_terms)
 }
 
 #[cfg(test)]

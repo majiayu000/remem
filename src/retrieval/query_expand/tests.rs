@@ -187,24 +187,6 @@ fn core_tokens_split_terminal_cjk_question_particles() {
 }
 
 #[test]
-fn core_tokens_split_relational_particle_before_unknown_entity() {
-    let tokens = core_tokens("模块由小王维护吗？");
-    for expected in ["模块", "小王", "维护"] {
-        assert!(
-            tokens.contains(&expected.to_string()),
-            "standalone relational particle must separate unknown entities: {tokens:?}"
-        );
-    }
-    assert!(!tokens.contains(&"模块由小王".to_string()), "{tokens:?}");
-
-    let tokens = core_tokens("自由软件由小王维护");
-    for expected in ["自由软件", "小王", "维护"] {
-        assert!(tokens.contains(&expected.to_string()), "{tokens:?}");
-    }
-    assert!(!tokens.contains(&"自".to_string()), "{tokens:?}");
-}
-
-#[test]
 fn core_tokens_preserve_short_mixed_script_qualifiers() {
     let tokens = core_tokens("谁验证了港湾服务A区？");
 
