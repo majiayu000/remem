@@ -4,7 +4,7 @@ pub(super) fn strip_conversational_prefix<'a>(
     query: &'a str,
     explicit_entity_terms: &[String],
 ) -> &'a str {
-    let trimmed = query.trim_start();
+    let trimmed = trim_command_prefix_start(query);
     let spans = first_query_word_spans(trimmed, 4);
     if spans.len() != 4 {
         return query;
@@ -37,6 +37,16 @@ pub(super) fn strip_conversational_prefix<'a>(
         return &trimmed[spans[2].end..];
     }
     query
+}
+
+fn trim_command_prefix_start(query: &str) -> &str {
+    query.trim_start_matches(|character: char| {
+        character.is_whitespace()
+            || matches!(
+                character,
+                ',' | '，' | ';' | '；' | '!' | '！' | '?' | '？' | '、' | '—' | '–'
+            )
+    })
 }
 
 fn has_conversational_word_gaps(query: &str, spans: &[Range<usize>]) -> bool {

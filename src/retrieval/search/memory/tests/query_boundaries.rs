@@ -20,6 +20,7 @@ fn conversational_scaffolding_does_not_filter_true_owner_claim() -> Result<()> {
         ("Kindly—tell—me who owns NebulaLatch", vec!["owns"]),
         ("Please tell me the owner", vec!["owner"]),
         ("Please tell me about NebulaLatch", vec![]),
+        ("Today, please tell me who owns NebulaLatch", vec!["owns"]),
         (whether_query, vec!["changed"]),
         ("Please tell me if NebulaLatch changed", vec!["changed"]),
         ("Please tell me NebulaLatch owner", vec!["owner"]),
