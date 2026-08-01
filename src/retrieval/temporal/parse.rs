@@ -9,7 +9,7 @@ mod boundary;
 use boundary::{
     cjk_day_phrase_span, date_span_with_context, has_cjk_phrase_context,
     has_cjk_temporal_introducer_before, has_phrase_context, has_recent_phrase_context,
-    is_identifier_joiner, span_with_cjk_temporal_introducer,
+    is_identifier_joiner, validated_temporal_span,
 };
 
 struct ParsedTemporal {
@@ -41,7 +41,7 @@ impl TemporalConstraint {
 fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
     let lower = query.to_ascii_lowercase();
     let mut parsed = parse_temporal_lower(&lower)?;
-    parsed.consumed_span = span_with_cjk_temporal_introducer(&lower, &parsed.consumed_span);
+    parsed.consumed_span = validated_temporal_span(&lower, &parsed.consumed_span)?;
     Some(parsed)
 }
 

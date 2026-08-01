@@ -127,6 +127,29 @@ fn opening_parentheses_do_not_override_identifier_joiners() {
             query
         );
     }
+
+    let mut failures = Vec::new();
+    for joiner in ["_", "＿", "-", "/", "\\", "－", "／", "＼"] {
+        for separator_run in [
+            format!("{joiner}("),
+            format!("{joiner}（"),
+            format!(" {joiner}("),
+            format!(",{joiner}("),
+            format!("（{joiner}("),
+        ] {
+            for phrase in ["last 7 days", "最近7天"] {
+                let query = format!("service42{separator_run}{phrase})");
+                if extract_temporal(&query).is_some() {
+                    failures.push(query);
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "identifier joiners in parenthesis separator runs must fail closed:\n{}",
+        failures.join("\n")
+    );
 }
 
 #[test]
@@ -342,12 +365,14 @@ fn temporal_introducers_reject_identifier_joiners_on_their_left() {
             "2026-05-04",
             "最近7天",
         ] {
-            let query = format!("config{joiner}截至{phrase}_notes");
-            assert!(extract_temporal(&query).is_none(), "{query}");
-            assert_eq!(
-                TemporalConstraint::query_without_temporal_expression(&query),
-                query
-            );
+            for suffix in ["", "_notes"] {
+                let query = format!("config{joiner}截至{phrase}{suffix}");
+                assert!(extract_temporal(&query).is_none(), "{query}");
+                assert_eq!(
+                    TemporalConstraint::query_without_temporal_expression(&query),
+                    query
+                );
+            }
         }
     }
 }

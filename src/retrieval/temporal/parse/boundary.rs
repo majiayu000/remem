@@ -6,6 +6,13 @@ const CJK_TEMPORAL_INTRODUCERS: &[&str] = &[
     "截至", "截止", "自从", "早在", "直到", "在", "于", "自", "从", "至", "到",
 ];
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum CjkIntroducerBoundary {
+    Valid,
+    AmbiguousCjk,
+    Structural,
+}
+
 pub(super) fn has_phrase_context(query: &str, span: &Range<usize>) -> bool {
     phrase_left_boundary_is_valid(query, span.start, false)
         && phrase_right_boundary_is_valid(query, span.end, false)
@@ -62,12 +69,23 @@ pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option
     None
 }
 
-pub(super) fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
+pub(super) fn validated_temporal_span(query: &str, span: &Range<usize>) -> Option<Range<usize>> {
     let left = query[..span.start].trim_end_matches(char::is_whitespace);
-    if let Some(introducer_start) = cjk_temporal_introducer_start_before(query, left.len()) {
-        return introducer_start..span.end;
+    let has_introducer_gap = left.len() < span.start;
+    let mut consumed_span = span.clone();
+    if let Some((introducer_start, boundary)) =
+        cjk_temporal_introducer_candidate_before(query, left.len())
+    {
+        match boundary {
+            CjkIntroducerBoundary::Valid => consumed_span.start = introducer_start,
+            CjkIntroducerBoundary::Structural if !has_introducer_gap => return None,
+            CjkIntroducerBoundary::AmbiguousCjk | CjkIntroducerBoundary::Structural => {}
+        }
     }
-    span.clone()
+    if left_separator_contains_identifier_joiner(query, consumed_span.start) {
+        return None;
+    }
+    Some(consumed_span)
 }
 
 fn cjk_clock_time_suffix_end(query: &str, start: usize) -> Option<usize> {
@@ -167,28 +185,54 @@ pub(super) fn has_cjk_temporal_introducer_before(query: &str, start: usize) -> b
 }
 
 fn cjk_temporal_introducer_start_before(query: &str, end: usize) -> Option<usize> {
+    cjk_temporal_introducer_candidate_before(query, end)
+        .and_then(|(start, boundary)| (boundary == CjkIntroducerBoundary::Valid).then_some(start))
+}
+
+fn cjk_temporal_introducer_candidate_before(
+    query: &str,
+    end: usize,
+) -> Option<(usize, CjkIntroducerBoundary)> {
     let left = &query[..end];
     CJK_TEMPORAL_INTRODUCERS.iter().find_map(|introducer| {
         let start = left.strip_suffix(introducer).map(|prefix| prefix.len())?;
-        cjk_temporal_introducer_left_boundary_is_valid(query, start, introducer).then_some(start)
+        Some((
+            start,
+            cjk_temporal_introducer_left_boundary(query, start, introducer),
+        ))
     })
 }
 
-fn cjk_temporal_introducer_left_boundary_is_valid(
+fn left_separator_contains_identifier_joiner(query: &str, start: usize) -> bool {
+    let before = &query[..start];
+    let separator_start = before
+        .char_indices()
+        .rev()
+        .find(|(_, character)| character.is_alphanumeric())
+        .map_or(0, |(index, character)| index + character.len_utf8());
+    before[separator_start..].chars().any(is_identifier_joiner)
+}
+
+fn cjk_temporal_introducer_left_boundary(
     query: &str,
     start: usize,
     introducer: &str,
-) -> bool {
+) -> CjkIntroducerBoundary {
     let Some(character) = query[..start].chars().next_back() else {
-        return true;
+        return CjkIntroducerBoundary::Valid;
     };
     if is_structural_separator(character) {
-        return false;
+        return CjkIntroducerBoundary::Structural;
     }
     if character.is_whitespace() || !character.is_alphanumeric() {
-        return true;
+        return CjkIntroducerBoundary::Valid;
     }
-    character.is_ascii_alphanumeric() || character.is_numeric() || introducer.chars().count() > 1
+    if character.is_ascii_alphanumeric() || character.is_numeric() || introducer.chars().count() > 1
+    {
+        CjkIntroducerBoundary::Valid
+    } else {
+        CjkIntroducerBoundary::AmbiguousCjk
+    }
 }
 
 fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {
