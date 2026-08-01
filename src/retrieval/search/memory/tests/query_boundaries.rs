@@ -132,11 +132,41 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("模块由小王维护吗", "小王拒绝维护模块"),
         ("模块由小王维护吗", "小王曾负责维护模块"),
         ("模块由小王维护吗", "小王负责测试；维护模块"),
+        (
+            "模块由小王维护吗",
+            "不是小王负责维护模块，而是小李负责维护模块",
+        ),
+        ("模块由小王维护吗", "拒绝让小王负责维护模块"),
+        (
+            "模块由小王维护吗",
+            "过去小王负责维护模块，现在由小李维护模块",
+        ),
+        ("模块由小王维护吗", "如果小王负责维护模块，就通知团队"),
+        ("模块由小王维护吗", "不是小王维护模块，而是小李维护模块"),
+        ("模块由小王维护吗", "如果小王维护模块，就通知团队"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(
             super::super::claim::claim_text_coverage(unrelated_candidate, &claims) < 0.62,
             "lexical 由 must not enable relation reordering: {query}: {claims:?}"
+        );
+    }
+
+    for (query, candidate) in [
+        (
+            "模块由小李维护吗",
+            "不是小王负责维护模块，而是小李负责维护模块",
+        ),
+        (
+            "模块由小李维护吗",
+            "过去小王负责维护模块，现在由小李维护模块",
+        ),
+    ] {
+        let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert_eq!(
+            super::super::claim::claim_text_coverage(candidate, &claims),
+            1.0,
+            "current positive relation must survive contrast reset: {query}: {claims:?}"
         );
     }
 
