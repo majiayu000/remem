@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use super::leading_ascii_digits;
+use super::{is_cn_number_component, leading_ascii_digits};
 
 pub(super) fn has_phrase_context(query: &str, span: &Range<usize>) -> bool {
     phrase_left_boundary_is_valid(query, span.start, false)
@@ -16,11 +16,14 @@ pub(super) fn cjk_day_phrase_span(query: &str, span: &Range<usize>) -> Option<Ra
     if !phrase_left_boundary_is_valid(query, span.start, true) {
         return None;
     }
+    if cjk_clock_time_suffix_start(query, span.end).is_some() {
+        let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
+        return Some(span.start..suffix_end);
+    }
     if phrase_right_boundary_is_valid(query, span.end, true) {
         return Some(span.clone());
     }
-    let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
-    Some(span.start..suffix_end)
+    None
 }
 
 pub(super) fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> bool {
@@ -30,7 +33,7 @@ pub(super) fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> boo
         })
 }
 
-pub(super) fn has_date_context(query: &str, span: &Range<usize>) -> bool {
+pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option<Range<usize>> {
     let left = &query[..span.start];
     let left_is_natural = match left.chars().next_back() {
         None => true,
@@ -44,10 +47,21 @@ pub(super) fn has_date_context(query: &str, span: &Range<usize>) -> bool {
         }
         Some(_) => true,
     };
-    left_is_natural && phrase_right_boundary_is_valid(query, span.end, true)
+    if !left_is_natural {
+        return None;
+    }
+    if cjk_clock_time_suffix_start(query, span.end).is_some() {
+        let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
+        return Some(span.start..suffix_end);
+    }
+    if phrase_right_boundary_is_valid(query, span.end, true) {
+        return Some(span.clone());
+    }
+    None
 }
 
 fn cjk_clock_time_suffix_end(query: &str, start: usize) -> Option<usize> {
+    let start = cjk_clock_time_suffix_start(query, start)?;
     let hour_text = leading_ascii_digits(&query[start..])?;
     let hour = hour_text.parse::<u32>().ok()?;
     if hour > 23 {
@@ -86,17 +100,57 @@ fn cjk_clock_time_suffix_end(query: &str, start: usize) -> Option<usize> {
         suffix_end = minute_end + minute_marker.len_utf8();
     }
 
+    if query[suffix_end..]
+        .chars()
+        .next()
+        .is_some_and(|character| matches!(character, '钟' | '整'))
+    {
+        suffix_end += query[suffix_end..].chars().next()?.len_utf8();
+    }
+
     phrase_right_boundary_is_valid(query, suffix_end, true).then_some(suffix_end)
 }
 
+fn cjk_clock_time_suffix_start(query: &str, start: usize) -> Option<usize> {
+    let remainder = &query[start..];
+    let trimmed = remainder.trim_start_matches(char::is_whitespace);
+    let clock_start = start + remainder.len() - trimmed.len();
+    let numeric_end = trimmed
+        .char_indices()
+        .take_while(|(_, character)| character.is_numeric() || is_cn_number_component(*character))
+        .last()
+        .map(|(index, character)| index + character.len_utf8())?;
+    trimmed[numeric_end..]
+        .chars()
+        .next()
+        .filter(|marker| matches!(marker, '点' | '时'))
+        .map(|_| clock_start)
+}
+
 fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {
-    let Some((_, character)) = query[..start].char_indices().next_back() else {
+    let Some((index, character)) = query[..start].char_indices().next_back() else {
         return true;
     };
     if is_structural_separator(character) {
+        if allow_cjk
+            && matches!(character, ':' | '：')
+            && preceding_identifier_contains_alphabetic(&query[..index])
+        {
+            return true;
+        }
         return false;
     }
     phrase_neighbor_is_valid(character, allow_cjk)
+}
+
+fn preceding_identifier_contains_alphabetic(input: &str) -> bool {
+    input
+        .chars()
+        .rev()
+        .take_while(|character| {
+            character.is_alphanumeric() || matches!(character, '_' | '-' | '/' | '\\')
+        })
+        .any(char::is_alphabetic)
 }
 
 fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {

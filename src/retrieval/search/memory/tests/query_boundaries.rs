@@ -55,3 +55,29 @@ fn direct_object_entity_words_include_identifier_characters() {
         assert_eq!(claims, ["owner"], "{query}: {claims:?}");
     }
 }
+
+#[test]
+fn structural_separators_do_not_form_conversational_prefixes() {
+    for separator in [".", "/", "\\", "-", ":", "．", "／", "＼", "－", "："] {
+        for position in 0..3 {
+            let mut gaps = [" ", " ", " "];
+            gaps[position] = separator;
+            let query = format!(
+                "please{}tell{}me{}about NebulaLatch",
+                gaps[0], gaps[1], gaps[2]
+            );
+            let claims = super::super::claim::query_claim_terms(&query, Some("/repo"), &[]);
+            assert!(
+                claims.iter().any(|term| term.contains("please")),
+                "structural query must remain semantic: {query}: {claims:?}"
+            );
+        }
+    }
+
+    let underscore = "please_tell_me_about NebulaLatch";
+    let claims = super::super::claim::query_claim_terms(underscore, Some("/repo"), &[]);
+    assert!(
+        claims.iter().any(|term| term.contains("please")),
+        "{claims:?}"
+    );
+}

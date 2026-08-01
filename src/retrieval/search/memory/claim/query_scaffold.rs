@@ -9,6 +9,9 @@ pub(super) fn strip_conversational_prefix<'a>(
     if spans.len() != 4 {
         return query;
     }
+    if !has_conversational_word_gaps(trimmed, &spans) {
+        return query;
+    }
 
     let word = |position: usize| &trimmed[spans[position].clone()];
     if !matches!(word(0).to_ascii_lowercase().as_str(), "please" | "kindly")
@@ -34,6 +37,16 @@ pub(super) fn strip_conversational_prefix<'a>(
         return &trimmed[spans[2].end..];
     }
     query
+}
+
+fn has_conversational_word_gaps(query: &str, spans: &[Range<usize>]) -> bool {
+    spans.windows(2).all(|pair| {
+        let gap = &query[pair[0].end..pair[1].start];
+        !gap.is_empty()
+            && gap.chars().all(|character| {
+                character.is_whitespace() || matches!(character, ',' | '，' | '—' | '–')
+            })
+    })
 }
 
 fn first_query_word_spans(query: &str, limit: usize) -> Vec<Range<usize>> {

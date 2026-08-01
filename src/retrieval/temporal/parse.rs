@@ -7,7 +7,7 @@ use crate::retrieval::temporal::types::{TemporalConstraint, TemporalField};
 mod boundary;
 
 use boundary::{
-    cjk_day_phrase_span, has_cjk_phrase_context, has_date_context, has_phrase_context,
+    cjk_day_phrase_span, date_span_with_context, has_cjk_phrase_context, has_phrase_context,
     has_recent_phrase_context,
 };
 
@@ -192,10 +192,10 @@ fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
                 if let Ok(date) = NaiveDate::parse_from_str(token, fmt) {
                     let (start, end) = day_range(date)?;
                     let span = candidate_start..candidate_start + token_end;
-                    if !has_date_context(lower, &span) {
+                    let Some(consumed_span) = date_span_with_context(lower, &span) else {
                         continue 'candidates;
-                    }
-                    return Some((start, end, span));
+                    };
+                    return Some((start, end, consumed_span));
                 }
             }
         }
@@ -252,8 +252,8 @@ fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
             (start, end, year_start..month_end)
         };
 
-        if has_date_context(lower, &candidate.2) {
-            return Some(candidate);
+        if let Some(consumed_span) = date_span_with_context(lower, &candidate.2) {
+            return Some((candidate.0, candidate.1, consumed_span));
         }
     }
 
@@ -462,7 +462,7 @@ fn parse_n_days_ago(lower: &str) -> Option<(i64, Range<usize>)> {
                 continue;
             }
             if let Some(n) = positive_day_count(num_str) {
-                return Some((n, span));
+                return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
             }
         }
         let Some((number_start, last_char)) = before_tian.char_indices().last() else {
@@ -477,7 +477,7 @@ fn parse_n_days_ago(lower: &str) -> Option<(i64, Range<usize>)> {
             continue;
         }
         if let Some(n) = cn_digit(last_char) {
-            return Some((n, span));
+            return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
         }
     }
     None
@@ -531,6 +531,15 @@ fn has_whitespace_word_gaps(query: &str, words: &[QueryWord<'_>]) -> bool {
     })
 }
 
+fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
+    for introducer in ["截至", "截止", "自从", "在", "于", "自", "从", "至", "到"] {
+        if query[..span.start].ends_with(introducer) {
+            return span.start - introducer.len()..span.end;
+        }
+    }
+    span.clone()
+}
+
 fn query_words(query: &str) -> Vec<QueryWord<'_>> {
     let mut words = Vec::new();
     let mut start = None;
@@ -582,13 +591,21 @@ fn has_invalid_numeric_left_boundary(query: &str, start: usize) -> bool {
     let has_dash_boundary = separator
         .chars()
         .any(|character| matches!(character, '—' | '–'));
-    let has_clause_boundary = separator
+    let has_clause_boundary = separator.chars().any(|character| {
+        matches!(
+            character,
+            ',' | ';' | ':' | '!' | '?' | '，' | '。' | '；' | '：' | '！' | '？' | '、'
+        )
+    });
+    if separator
         .chars()
-        .any(|character| matches!(character, '，' | '。' | '；' | '：' | '！' | '？' | '、'));
-    if separator.contains('，') && preceding.is_some_and(char::is_numeric) {
+        .any(|character| matches!(character, ',' | ':' | '，' | '：'))
+        && !has_whitespace_boundary
+        && preceding.is_some_and(char::is_numeric)
+    {
         let separator_start = start - separator.len();
-        return preceding_alphanumeric_run(query, separator_start)
-            .is_none_or(|run| run.chars().all(char::is_numeric));
+        return preceding_identifier_run(query, separator_start)
+            .is_none_or(|run| !run.chars().any(char::is_alphabetic));
     }
     !has_whitespace_boundary
         && !has_dash_boundary
@@ -596,12 +613,14 @@ fn has_invalid_numeric_left_boundary(query: &str, start: usize) -> bool {
         && preceding.is_some_and(char::is_numeric)
 }
 
-fn preceding_alphanumeric_run(query: &str, end: usize) -> Option<&str> {
+fn preceding_identifier_run(query: &str, end: usize) -> Option<&str> {
     let before = &query[..end];
     let start = before
         .char_indices()
         .rev()
-        .take_while(|(_, character)| character.is_alphanumeric())
+        .take_while(|(_, character)| {
+            character.is_alphanumeric() || matches!(character, '_' | '-' | '/' | '\\')
+        })
         .last()
         .map(|(index, _)| index)?;
     Some(&before[start..])
@@ -642,7 +661,7 @@ fn has_cn_number_component_prefix(query: &str, start: usize) -> bool {
         .is_some_and(is_cn_number_component)
 }
 
-fn is_cn_number_component(character: char) -> bool {
+pub(super) fn is_cn_number_component(character: char) -> bool {
     "零〇一二两兩三四五六七八九十拾百佰千仟万萬亿億壹贰貳叁參肆伍陆陸柒捌玖".contains(character)
 }
 

@@ -234,6 +234,27 @@ fn cjk_temporal_scaffolding_is_absent_from_search_claims() -> Result<()> {
 }
 
 #[test]
+fn cjk_temporal_introducers_do_not_compact_with_entity_numbers() {
+    for introducer in ["在", "于", "自", "从", "至", "到", "截至", "截止", "自从"] {
+        let query = format!("服务42{introducer}7天前有什么变化？");
+        let claims = super::claim::query_claim_terms(&query, Some("/repo"), &[]);
+        let compact = format!("42{introducer}");
+        assert!(
+            claims.iter().any(|term| term == "42"),
+            "{query}: {claims:?}"
+        );
+        assert!(
+            !claims.iter().any(|term| term == &compact),
+            "temporal introducer must not become an entity claim: {query}: {claims:?}"
+        );
+        assert!(
+            !claims.iter().any(|term| term == introducer),
+            "temporal introducer must not remain an independent claim: {query}: {claims:?}"
+        );
+    }
+}
+
+#[test]
 fn non_temporal_number_remains_a_required_claim_in_temporal_query() -> Result<()> {
     let conn = setup_explain_conn()?;
     let now = chrono::Utc::now().timestamp();
