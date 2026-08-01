@@ -78,6 +78,10 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("模块由小王维护吗？", "小王维护模块。"),
         ("库由小王维护吗？", "小王维护库。"),
         ("模块由王维护吗？", "王维护模块。"),
+        ("根因由小王维护吗？", "小王维护根因。"),
+        ("数据库根因由小王维护吗？", "小王维护根因，涉及数据库。"),
+        ("模块由小王维护吗？", "小王负责维护模块。"),
+        ("模块是否由小王维护吗？", "小王维护模块。"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert_eq!(
@@ -120,6 +124,14 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("半自由软件维护吗", "软件维护半自动系统"),
         ("理由需要维护吗", "需要维护理想模块"),
         ("根由需要维护吗", "需要维护根目录"),
+        ("因由小王维护吗", "小王维护因"),
+        ("是否由小王维护吗", "小王维护是否"),
+        ("模块是否由于故障维护吗", "故障维护模块"),
+        ("模块由小王维护吗", "小王不负责维护模块"),
+        ("模块由小王维护吗", "小王协助维护模块"),
+        ("模块由小王维护吗", "小王拒绝维护模块"),
+        ("模块由小王维护吗", "小王曾负责维护模块"),
+        ("模块由小王维护吗", "小王负责测试；维护模块"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(

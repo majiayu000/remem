@@ -23,12 +23,15 @@ pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &st
     let [infix] = candidates.as_slice() else {
         return false;
     };
-    let subject = &term[..*infix];
+    let subject = term[..*infix]
+        .strip_suffix("是否")
+        .unwrap_or(&term[..*infix]);
     let agent = &term[*infix + '由'.len_utf8()..];
     if subject.is_empty() || agent.is_empty() {
         return false;
     }
     haystack.contains(&format!("{agent}{predicate}{subject}"))
+        || (predicate != "负责" && haystack.contains(&format!("{agent}负责{predicate}{subject}")))
 }
 
 fn has_lexical_you_suffix(term: &str, infix: usize) -> bool {
@@ -39,7 +42,11 @@ fn has_lexical_you_suffix(term: &str, infix: usize) -> bool {
 }
 
 fn has_lexical_you_prefix(term: &str, infix: usize) -> bool {
-    term[..infix]
+    let subject = &term[..infix];
+    if subject.ends_with("根因") {
+        return false;
+    }
+    subject
         .chars()
         .next_back()
         .is_some_and(|prefix| LEXICAL_YOU_PREFIXES.contains(&prefix))
