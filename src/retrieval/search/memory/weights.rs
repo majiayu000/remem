@@ -50,6 +50,48 @@ impl Default for SearchWeights {
     }
 }
 
+impl SearchWeights {
+    pub(crate) fn validate(&self) -> anyhow::Result<()> {
+        let channel_weights = [
+            ("fts", self.fts),
+            ("vector", self.vector),
+            ("entity", self.entity),
+            ("graph", self.graph),
+            ("temporal", self.temporal),
+            ("fact", self.fact),
+            ("like_fallback", self.like_fallback),
+            ("usage", self.usage),
+        ];
+        for (name, weight) in channel_weights {
+            anyhow::ensure!(
+                weight.is_finite(),
+                "search weight {name} must be finite, got {weight}"
+            );
+        }
+        anyhow::ensure!(
+            self.usage_recency_half_life_days.is_finite(),
+            "usage_recency_half_life_days must be finite, got {}",
+            self.usage_recency_half_life_days
+        );
+        anyhow::ensure!(
+            self.max_vector_distance.is_finite(),
+            "max_vector_distance must be finite, got {}",
+            self.max_vector_distance
+        );
+        anyhow::ensure!(
+            self.rrf_k.is_finite() && self.rrf_k >= 0.0,
+            "rrf_k must be finite and non-negative, got {}",
+            self.rrf_k
+        );
+        anyhow::ensure!(
+            self.min_evidence_confidence.is_finite(),
+            "min_evidence_confidence must be finite, got {}",
+            self.min_evidence_confidence
+        );
+        Ok(())
+    }
+}
+
 fn default_fact_weight() -> f64 {
     FACT_WEIGHT
 }
@@ -60,4 +102,64 @@ fn default_graph_weight() -> f64 {
 
 fn default_usage_recency_half_life_days() -> f64 {
     USAGE_RECENCY_HALF_LIFE_DAYS
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SearchWeights;
+
+    #[test]
+    fn validation_rejects_every_non_finite_numeric_setting() {
+        let mut invalid = Vec::new();
+        macro_rules! reject_f64 {
+            ($field:ident) => {
+                for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+                    invalid.push((
+                        stringify!($field),
+                        SearchWeights {
+                            $field: value,
+                            ..SearchWeights::default()
+                        },
+                    ));
+                }
+            };
+        }
+        reject_f64!(fts);
+        reject_f64!(vector);
+        reject_f64!(entity);
+        reject_f64!(graph);
+        reject_f64!(temporal);
+        reject_f64!(fact);
+        reject_f64!(like_fallback);
+        reject_f64!(usage);
+        reject_f64!(usage_recency_half_life_days);
+        reject_f64!(rrf_k);
+        reject_f64!(min_evidence_confidence);
+        for value in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            invalid.push((
+                "max_vector_distance",
+                SearchWeights {
+                    max_vector_distance: value,
+                    ..SearchWeights::default()
+                },
+            ));
+        }
+
+        for (field, weights) in invalid {
+            let error = weights.validate().expect_err(field);
+            assert!(error.to_string().contains(field), "{field}: {error:#}");
+        }
+    }
+
+    #[test]
+    fn validation_preserves_finite_disabled_weight_semantics() {
+        let weights = SearchWeights {
+            fact: -1.0,
+            usage: 0.0,
+            ..SearchWeights::default()
+        };
+        weights
+            .validate()
+            .expect("finite disabled weights are valid");
+    }
 }

@@ -6,6 +6,7 @@ use crate::memory::Memory;
 use super::listing::search_without_query;
 use super::text::{search_with_query, search_with_query_explain, search_with_query_weights};
 use super::SearchExplain;
+use super::SearchExplainDetails;
 use super::SearchWeights;
 
 pub fn search(
@@ -102,6 +103,7 @@ pub(crate) fn search_with_branch_weights(
     branch: Option<&str>,
     weights: SearchWeights,
 ) -> Result<Vec<Memory>> {
+    weights.validate()?;
     match query {
         Some(query_text) if !query_text.is_empty() => search_with_query_weights(
             conn,
@@ -152,6 +154,30 @@ pub fn search_with_branch_explain(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn search_with_branch_explain_details(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+) -> Result<(Vec<Memory>, Option<SearchExplainDetails>)> {
+    search_with_branch_explain_details_with_suppressed_policy(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn search_with_branch_explain_with_suppressed_policy(
     conn: &Connection,
     query: Option<&str>,
@@ -163,6 +189,32 @@ pub fn search_with_branch_explain_with_suppressed_policy(
     branch: Option<&str>,
     include_suppressed: bool,
 ) -> Result<(Vec<Memory>, Option<SearchExplain>)> {
+    search_with_branch_explain_details_with_suppressed_policy(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        include_suppressed,
+    )
+    .map(|(memories, details)| (memories, details.map(|details| details.explain)))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn search_with_branch_explain_details_with_suppressed_policy(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+    include_suppressed: bool,
+) -> Result<(Vec<Memory>, Option<SearchExplainDetails>)> {
     match query {
         Some(query_text) if !query_text.is_empty() => search_with_query_explain(
             conn,
@@ -175,7 +227,7 @@ pub fn search_with_branch_explain_with_suppressed_policy(
             branch,
             include_suppressed,
         )
-        .map(|result| (result.memories, Some(result.explain))),
+        .map(|result| (result.memories, Some(result.explain_details))),
         _ => Ok((
             search_without_query(
                 conn,

@@ -1167,6 +1167,21 @@
         }
       ],
       "notes": "CJK synonym/paraphrase fixture for GH-716 provider comparison."
+    },
+    {
+      "id": "rank-signal-01",
+      "query": "rankbridge 2026-07-30",
+      "category": "retrieval",
+      "slice": "rank_signal",
+      "project": "synthetic/rank-signal",
+      "evidence_refs": [
+        {
+          "memory_type": "decision",
+          "scope": "global",
+          "text_contains": "rankbridge 2026-07-30 memory"
+        }
+      ],
+      "notes": "GH-954 discriminating fixture: equal-score FTS ranks the distractor first, while independent low-ranked temporal corroboration must put the expected memory first without feeding rank back as a synthetic signal."
     }
   ],
   "corpus": [
@@ -1809,6 +1824,157 @@
       "title": "墨河夜间备份恢复批准人",
       "content": "墨河项目的夜间备份恢复方案由周宁批准，先校验影子副本。",
       "memory_type": "decision"
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "title": "rankbridge candidate",
+      "content": "rankbridge 2026-07-30 memory",
+      "memory_type": "decision",
+      "created_at_epoch": 1782820800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "title": "rankbridge candidate",
+      "content": "rankbridge 2026-07-30 memory",
+      "memory_type": "decision",
+      "scope": "global",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-01",
+      "title": "temporal filler one",
+      "content": "independent dated filler one",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-02",
+      "title": "temporal filler two",
+      "content": "independent dated filler two",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-03",
+      "title": "temporal filler three",
+      "content": "independent dated filler three",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-04",
+      "title": "temporal filler four",
+      "content": "independent dated filler four",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-05",
+      "title": "temporal filler five",
+      "content": "independent dated filler five",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-06",
+      "title": "temporal filler six",
+      "content": "independent dated filler six",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-07",
+      "title": "temporal filler seven",
+      "content": "independent dated filler seven",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-08",
+      "title": "temporal filler eight",
+      "content": "independent dated filler eight",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-09",
+      "title": "temporal filler nine",
+      "content": "independent dated filler nine",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-10",
+      "title": "temporal filler ten",
+      "content": "independent dated filler ten",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-11",
+      "title": "temporal filler eleven",
+      "content": "independent dated filler eleven",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-12",
+      "title": "temporal filler twelve",
+      "content": "independent dated filler twelve",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-13",
+      "title": "temporal filler thirteen",
+      "content": "independent dated filler thirteen",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-14",
+      "title": "temporal filler fourteen",
+      "content": "independent dated filler fourteen",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-15",
+      "title": "temporal filler fifteen",
+      "content": "independent dated filler fifteen",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-16",
+      "title": "temporal filler sixteen",
+      "content": "independent dated filler sixteen",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
+    },
+    {
+      "project": "synthetic/rank-signal",
+      "topic_key": "rank-signal-filler-17",
+      "title": "temporal filler seventeen",
+      "content": "independent dated filler seventeen",
+      "memory_type": "decision",
+      "created_at_epoch": 1785412800
     }
   ]
 }

@@ -103,10 +103,14 @@ fn fact_channel_recalls_source_memory_without_lexical_overlap() -> Result<()> {
         .iter()
         .find(|result| result.memory_id == 1)
         .context("expected fact-recalled result")?;
-    assert!(result
+    let contribution = result
         .contributions
         .iter()
-        .any(|contribution| contribution.channel == "fact" && contribution.score > 0.0));
+        .find(|contribution| contribution.channel == "fact")
+        .context("fact contribution should be explained")?;
+    let expected =
+        SearchWeights::default().fact / (SearchWeights::default().rrf_k + contribution.rank as f64);
+    assert!((contribution.score - expected).abs() < 1e-12);
     assert_eq!(explain.filtered_result_count, 0);
     Ok(())
 }
@@ -226,5 +230,41 @@ fn zero_fact_weight_disables_fact_only_results() -> Result<()> {
 
     assert!(disabled.is_empty());
     assert_eq!(enabled.first().map(|memory| memory.id), Some(1));
+    Ok(())
+}
+
+#[test]
+fn weighted_search_rejects_non_finite_fact_and_usage_before_channel_filters() -> Result<()> {
+    let conn = Connection::open_in_memory()?;
+    for (field, weights) in [
+        (
+            "fact",
+            SearchWeights {
+                fact: f64::NAN,
+                ..SearchWeights::default()
+            },
+        ),
+        (
+            "usage",
+            SearchWeights {
+                usage: f64::INFINITY,
+                ..SearchWeights::default()
+            },
+        ),
+    ] {
+        let error = search_with_branch_weights(
+            &conn,
+            None,
+            Some("/repo"),
+            None,
+            0,
+            0,
+            false,
+            None,
+            weights,
+        )
+        .expect_err("non-finite weights must fail before query/channel short-circuits");
+        assert!(error.to_string().contains(field), "{field}: {error:#}");
+    }
     Ok(())
 }

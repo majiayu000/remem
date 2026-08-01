@@ -32,6 +32,9 @@ use std::ffi::OsString;
 mod tests;
 mod types;
 
+pub(crate) use hybrid_context::{
+    query_hybrid_context_memories_with_rank_signal_mode, InjectionRankSignalMode,
+};
 pub(crate) use policy::ContextLimits;
 pub(crate) use prompt_submit::prompt_submit_additional_context;
 pub(crate) use relevance::{

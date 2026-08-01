@@ -1,5 +1,5 @@
 use crate::retrieval::memory_search::FtsMemoryHit;
-use crate::retrieval::search::common::{rank_normalized_score, WeightedRankedHit};
+use crate::retrieval::search::common::WeightedRankedHit;
 
 pub(super) fn fts_normalized_hits(hits: &[FtsMemoryHit]) -> Vec<WeightedRankedHit> {
     let best = hits
@@ -12,14 +12,15 @@ pub(super) fn fts_normalized_hits(hits: &[FtsMemoryHit]) -> Vec<WeightedRankedHi
         .fold(f64::NEG_INFINITY, f64::max);
     let spread = worst - best;
     hits.iter()
-        .enumerate()
-        .map(|(rank, hit)| WeightedRankedHit {
-            id: hit.memory.id,
-            normalized_score: if spread.abs() < f64::EPSILON {
-                rank_normalized_score(rank)
+        .map(|hit| {
+            if spread.abs() < f64::EPSILON {
+                WeightedRankedHit::rank_only(hit.memory.id)
             } else {
-                ((worst - hit.score) / spread).clamp(0.0, 1.0)
-            },
+                WeightedRankedHit::scored(
+                    hit.memory.id,
+                    ((worst - hit.score) / spread).clamp(0.0, 1.0),
+                )
+            }
         })
         .collect()
 }

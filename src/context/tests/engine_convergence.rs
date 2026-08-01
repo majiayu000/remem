@@ -352,7 +352,10 @@ fn rrf_k_reaches_injection_fusion() {
 
     let mut weights = zero_injection_weights();
     weights.fts = 1.0;
-    weights.entity = 1.0;
+    // Entity is rank-only: it no longer receives a synthetic second rank
+    // boost. A calibrated weight in the crossover interval keeps this fixture
+    // sensitive to rrf_k under the production scoring contract.
+    weights.entity = 1.25;
     weights.rrf_k = 0.0;
     let small_k = ids_for_query(&conn, "postgres pooling", weights);
     weights.rrf_k = 60.0;
@@ -426,4 +429,31 @@ fn hybrid_context_declares_no_private_scoring_constants() {
             "injection must read {field} directly from SearchWeights"
         );
     }
+    assert!(
+        !source.contains("rank_normalized_score"),
+        "injection rank-only channels must not feed rank back as a score"
+    );
+    assert!(
+        source.contains("WeightedRankedHit::rank_only"),
+        "injection must mark channels without calibrated strength as rank-only"
+    );
+}
+
+#[test]
+fn injection_rejects_non_finite_fact_weight_before_empty_query_short_circuit() {
+    let conn = Connection::open_in_memory().expect("in-memory database");
+    let error = query_hybrid_context_memories_with_weights(
+        &conn,
+        PROJECT,
+        "",
+        None,
+        &[],
+        0,
+        SearchWeights {
+            fact: f64::NAN,
+            ..SearchWeights::default()
+        },
+    )
+    .expect_err("non-finite fact weight must fail closed");
+    assert!(error.to_string().contains("fact"), "{error:#}");
 }

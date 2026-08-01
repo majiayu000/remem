@@ -35,10 +35,7 @@ fn scope_channel(name: &'static str, ids: &[i64]) -> NamedChannel {
         1.0,
         ids.iter()
             .copied()
-            .map(|id| WeightedRankedHit {
-                id,
-                normalized_score: 1.0,
-            })
+            .map(|id| WeightedRankedHit::scored(id, 1.0))
             .collect(),
     )
 }

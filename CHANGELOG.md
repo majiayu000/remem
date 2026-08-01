@@ -316,6 +316,14 @@
   hook `--host` aliases and arbitrary values now fail closed.
 
 ### Fixed
+- Staged source version `0.6.43` for GH-954: entity, temporal, fact, LIKE
+  fallback, and graph channels now contribute pure weighted RRF instead of
+  feeding reciprocal rank back as a synthetic normalized score. FTS, vector,
+  and opt-in usage retain calibrated strength signals; equal-score FTS falls
+  back to rank-only fusion. Search explain output reports the computed
+  pre-/post-fusion score identity while preserving the existing public Rust
+  explain-struct field layout. Both search and SessionStart injection now
+  reject non-finite vector thresholds or distances before channel filtering.
 - Staged source version `0.6.33` for GH-944: `remem doctor` now detects
   plaintext SQLite residue across the active data and backup locations,
   reports inspection failures instead of silently skipping them, and bases

@@ -568,10 +568,22 @@ Query: "database encryption"
    | 5. Trusted graph bounded expansion      |
    +-------------+---------------------------+
                  |
-        RRF score = sum(1 / (60 + rank_i))
+        contribution_i = weight_i / (60 + rank_i)
+                         * (1 + normalized_signal_i)
                  |
              Top-K merged results
 ```
+
+Entity, temporal, fact, LIKE fallback, and graph channels are rank-only, so
+their `normalized_signal` is absent and the formula reduces to pure weighted
+RRF; `rank_i` is one-based (`1, 2, ...`). FTS, vector, and opt-in usage channels
+may add a calibrated `[0, 1]`
+signal; an equal-score FTS result set also falls back to pure RRF. Search
+`--explain` reports each contribution's channel rank and total score. It also
+reports the computed score identity
+`final_score = sum(contribution.score) * post_fusion_score_factor`; the factor
+captures post-fusion policies such as source-anchor demotion without adding
+required fields to the public Rust explain structs.
 
 Enhancements:
 

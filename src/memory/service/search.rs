@@ -1,7 +1,9 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use super::types::{MultiHopMeta, SearchRequest, SearchResultSet};
+use super::types::{
+    MultiHopMeta, SearchRequest, SearchResultSet, SearchResultSetWithExplainDetails,
+};
 
 /// Curated hits below this count trigger a raw archive fallback so the caller
 /// always has *something* to show when the conversation happened but was
@@ -10,15 +12,27 @@ const RAW_FALLBACK_THRESHOLD: usize = 3;
 const RAW_FALLBACK_LIMIT: i64 = 10;
 
 pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchResultSet> {
+    search_memories_with_explain_details(conn, req).map(|result| result.result)
+}
+
+pub(crate) fn search_memories_with_explain_details(
+    conn: &Connection,
+    req: &SearchRequest,
+) -> Result<SearchResultSetWithExplainDetails> {
     let limit = req.limit.max(1);
     let query = req.query.as_deref();
 
     if req.multi_hop {
-        return multi_hop_search(conn, query, req.project.as_deref(), limit, req);
+        return multi_hop_search(conn, query, req.project.as_deref(), limit, req).map(|result| {
+            SearchResultSetWithExplainDetails {
+                result,
+                explain_details: None,
+            }
+        });
     }
 
-    let (mut memories, mut explain) = if req.explain {
-        crate::retrieval::search::search_with_branch_explain_with_suppressed_policy(
+    let (mut memories, mut explain_details) = if req.explain {
+        crate::retrieval::search::search_with_branch_explain_details_with_suppressed_policy(
             conn,
             query,
             req.project.as_deref(),
@@ -48,18 +62,23 @@ pub fn search_memories(conn: &Connection, req: &SearchRequest) -> Result<SearchR
     let has_more = memories.len() as i64 > limit;
     memories.truncate(limit as usize);
     let (raw_hits, raw_error) = maybe_fallback_raw(conn, req, memories.len());
-    if let Some(explain) = explain.as_mut() {
+    if let Some(explain) = explain_details.as_mut() {
         let result_ids: Vec<i64> = memories.iter().map(|memory| memory.id).collect();
         explain.retain_result_ids(&result_ids, has_more, limit);
         explain.set_raw_fallback_count(raw_hits.len());
     }
-    Ok(SearchResultSet {
-        memories,
-        multi_hop: None,
-        has_more,
-        explain,
-        raw_hits,
-        raw_error,
+    Ok(SearchResultSetWithExplainDetails {
+        result: SearchResultSet {
+            memories,
+            multi_hop: None,
+            has_more,
+            explain: explain_details
+                .as_ref()
+                .map(|details| details.explain.clone()),
+            raw_hits,
+            raw_error,
+        },
+        explain_details,
     })
 }
 
