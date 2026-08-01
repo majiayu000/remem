@@ -3,8 +3,11 @@ use std::collections::HashSet;
 use anyhow::Result;
 use rusqlite::Connection;
 
+mod query_scaffold;
+
 #[cfg(test)]
 use crate::memory::Memory;
+use query_scaffold::strip_conversational_prefix;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum RelationKind {
@@ -69,48 +72,9 @@ pub(super) fn query_claim_terms(
         crate::retrieval::temporal::TemporalConstraint::query_without_temporal_expression(
             query_text,
         );
-    let semantic_query = strip_conversational_prefix(&query_without_time);
+    let semantic_query = strip_conversational_prefix(&query_without_time, explicit_entity_terms);
     let core_terms = crate::retrieval::query_expand::core_tokens(semantic_query);
     claim_terms(&core_terms, project, explicit_entity_terms)
-}
-
-fn strip_conversational_prefix(query: &str) -> &str {
-    let trimmed = query.trim_start();
-    let mut spans = Vec::new();
-    let mut index = 0;
-    for _ in 0..4 {
-        if !spans.is_empty() {
-            index += trimmed[index..]
-                .find(char::is_alphanumeric)
-                .unwrap_or(trimmed.len() - index);
-        }
-        let start = index;
-        index += trimmed[index..]
-            .find(|character: char| !character.is_ascii_alphabetic())
-            .unwrap_or(trimmed.len() - index);
-        if start == index {
-            break;
-        }
-        spans.push(start..index);
-    }
-    if spans.len() == 4 {
-        let word = |position: usize| &trimmed[spans[position].clone()];
-        if matches!(word(0).to_ascii_lowercase().as_str(), "please" | "kindly")
-            && word(1).eq_ignore_ascii_case("tell")
-            && word(2).eq_ignore_ascii_case("me")
-            && [
-                "who", "what", "when", "where", "why", "how", "which", "if", "whether", "the",
-                "about", "a", "an",
-            ]
-            .contains(&word(3).to_ascii_lowercase().as_str())
-        {
-            if ["if", "whether", "about"].contains(&word(3).to_ascii_lowercase().as_str()) {
-                return &trimmed[spans[3].end..];
-            }
-            return &trimmed[spans[2].end..];
-        }
-    }
-    query
 }
 
 #[cfg(test)]

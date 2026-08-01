@@ -126,33 +126,68 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
 }
 
 fn has_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_neighbor_is_valid(query[..span.start].chars().next_back(), false)
-        && phrase_neighbor_is_valid(query[span.end..].chars().next(), false)
+    phrase_left_boundary_is_valid(query, span.start, false)
+        && phrase_right_boundary_is_valid(query, span.end, false)
 }
 
 fn has_cjk_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_neighbor_is_valid(query[..span.start].chars().next_back(), true)
-        && phrase_neighbor_is_valid(query[span.end..].chars().next(), true)
+    phrase_left_boundary_is_valid(query, span.start, true)
+        && phrase_right_boundary_is_valid(query, span.end, true)
 }
 
 fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_neighbor_is_valid(query[..span.start].chars().next_back(), true)
+    phrase_left_boundary_is_valid(query, span.start, true)
         && query[span.end..].chars().next().is_none_or(|character| {
-            character.is_ascii_digit() || phrase_neighbor_is_valid(Some(character), true)
+            character.is_ascii_digit() || phrase_right_boundary_is_valid(query, span.end, true)
         })
 }
 
-fn phrase_neighbor_is_valid(character: Option<char>, allow_cjk: bool) -> bool {
-    character.is_none_or(|character| {
-        if is_structural_separator(character)
-            || character == '_'
-            || character.is_ascii_alphanumeric()
-            || character.is_numeric()
-        {
-            return false;
-        }
-        allow_cjk || !character.is_alphanumeric()
-    })
+fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {
+    let Some((index, character)) = query[..start].char_indices().next_back() else {
+        return true;
+    };
+    if is_structural_separator(character) {
+        let run_start = query[..start]
+            .char_indices()
+            .rev()
+            .take_while(|(_, character)| is_structural_separator(*character))
+            .last()
+            .map_or(index, |(index, _)| index);
+        return query[..run_start]
+            .chars()
+            .next_back()
+            .is_none_or(is_natural_outer_punctuation);
+    }
+    phrase_neighbor_is_valid(character, allow_cjk)
+}
+
+fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {
+    let Some(character) = query[end..].chars().next() else {
+        return true;
+    };
+    if is_structural_separator(character) {
+        let run_end = query[end..]
+            .char_indices()
+            .take_while(|(_, character)| is_structural_separator(*character))
+            .last()
+            .map_or(end, |(index, character)| end + index + character.len_utf8());
+        return query[run_end..]
+            .chars()
+            .next()
+            .is_none_or(is_natural_outer_punctuation);
+    }
+    phrase_neighbor_is_valid(character, allow_cjk)
+}
+
+fn is_natural_outer_punctuation(character: char) -> bool {
+    character.is_whitespace() || (!character.is_alphanumeric() && character != '_')
+}
+
+fn phrase_neighbor_is_valid(character: char, allow_cjk: bool) -> bool {
+    if character == '_' || character.is_ascii_alphanumeric() || character.is_numeric() {
+        return false;
+    }
+    allow_cjk || !character.is_alphanumeric()
 }
 
 fn is_structural_separator(character: char) -> bool {
@@ -689,23 +724,26 @@ fn is_cn_number_component(character: char) -> bool {
 }
 
 fn has_quantified_recent_day_phrase(query: &str) -> bool {
-    let Some((_, after_recent)) = query.split_once("最近") else {
-        return false;
-    };
-    let Some((count, _)) = after_recent.split_once('天') else {
-        return false;
-    };
-    let count = count.trim();
-    let count = count
-        .strip_prefix('v')
-        .or_else(|| count.strip_prefix('V'))
-        .unwrap_or(count);
-    is_numeric_expression(count)
-        || ['到', '至'].into_iter().any(|separator| {
-            count.split_once(separator).is_some_and(|(start, end)| {
-                is_numeric_expression(start) && is_numeric_expression(end)
+    query.match_indices("最近").any(|(start, _)| {
+        let recent_span = start..start + "最近".len();
+        if !has_recent_phrase_context(query, &recent_span) {
+            return false;
+        }
+        let Some((count, _)) = query[recent_span.end..].split_once('天') else {
+            return false;
+        };
+        let count = count.trim();
+        let count = count
+            .strip_prefix('v')
+            .or_else(|| count.strip_prefix('V'))
+            .unwrap_or(count);
+        is_numeric_expression(count)
+            || ['到', '至'].into_iter().any(|separator| {
+                count.split_once(separator).is_some_and(|(start, end)| {
+                    is_numeric_expression(start) && is_numeric_expression(end)
+                })
             })
-        })
+    })
 }
 
 fn is_numeric_expression(count: &str) -> bool {

@@ -83,3 +83,26 @@ fn cjk_clause_punctuation_separates_entity_number_from_day_count() {
         );
     }
 }
+
+#[test]
+fn sentence_punctuation_preserves_temporal_phrases() {
+    for query in [
+        "What changed today.",
+        "Today: what changed?",
+        "What changed May 4, 2026.",
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+    }
+}
+
+#[test]
+fn generic_recent_scans_past_invalid_quantified_identifier() {
+    let query = "config_最近7天_notes，最近有什么变化";
+    let constraint = extract_temporal(query).expect("later generic recent phrase should parse");
+    let now = chrono::Utc::now().timestamp();
+    assert!((now - constraint.start_epoch - 3 * 86_400).abs() < 2);
+    assert_eq!(
+        TemporalConstraint::query_without_temporal_expression(query),
+        "config_最近7天_notes， 有什么变化"
+    );
+}
