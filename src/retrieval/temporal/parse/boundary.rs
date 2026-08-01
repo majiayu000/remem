@@ -82,42 +82,54 @@ fn cjk_clock_time_suffix_end(query: &str, start: usize) -> Option<usize> {
 
     let hour_end = start + hour_text.len();
     let marker = query[hour_end..].chars().next()?;
-    if !matches!(marker, '点' | '时') {
+    if !matches!(marker, '点' | '时' | ':' | '：') {
         return None;
     }
     let mut suffix_end = hour_end + marker.len_utf8();
     let remainder = &query[suffix_end..];
 
-    if let Some(half) = remainder
-        .chars()
-        .next()
-        .filter(|character| *character == '半')
-    {
-        suffix_end += half.len_utf8();
-    } else if remainder
-        .chars()
-        .next()
-        .is_some_and(|character| character.is_ascii_digit())
-    {
+    if matches!(marker, ':' | '：') {
         let minute_text = leading_ascii_digits(remainder)?;
+        if minute_text.len() != 2 {
+            return None;
+        }
         let minute = minute_text.parse::<u32>().ok()?;
         if minute > 59 {
             return None;
         }
-        let minute_end = suffix_end + minute_text.len();
-        let minute_marker = query[minute_end..].chars().next()?;
-        if minute_marker != '分' {
-            return None;
+        suffix_end += minute_text.len();
+    } else {
+        if let Some(half) = remainder
+            .chars()
+            .next()
+            .filter(|character| *character == '半')
+        {
+            suffix_end += half.len_utf8();
+        } else if remainder
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_digit())
+        {
+            let minute_text = leading_ascii_digits(remainder)?;
+            let minute = minute_text.parse::<u32>().ok()?;
+            if minute > 59 {
+                return None;
+            }
+            let minute_end = suffix_end + minute_text.len();
+            let minute_marker = query[minute_end..].chars().next()?;
+            if minute_marker != '分' {
+                return None;
+            }
+            suffix_end = minute_end + minute_marker.len_utf8();
         }
-        suffix_end = minute_end + minute_marker.len_utf8();
-    }
 
-    if query[suffix_end..]
-        .chars()
-        .next()
-        .is_some_and(|character| matches!(character, '钟' | '整'))
-    {
-        suffix_end += query[suffix_end..].chars().next()?.len_utf8();
+        if query[suffix_end..]
+            .chars()
+            .next()
+            .is_some_and(|character| matches!(character, '钟' | '整'))
+        {
+            suffix_end += query[suffix_end..].chars().next()?.len_utf8();
+        }
     }
 
     phrase_right_boundary_is_valid(query, suffix_end, true).then_some(suffix_end)
@@ -135,7 +147,7 @@ fn cjk_clock_time_suffix_start(query: &str, start: usize) -> Option<usize> {
     trimmed[numeric_end..]
         .chars()
         .next()
-        .filter(|marker| matches!(marker, '点' | '时'))
+        .filter(|marker| matches!(marker, '点' | '时' | ':' | '：'))
         .map(|_| clock_start)
 }
 

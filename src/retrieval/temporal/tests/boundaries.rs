@@ -136,6 +136,8 @@ fn cjk_day_phrases_accept_valid_clock_suffixes() {
         ("今天3点钟完成", " 完成"),
         ("今天3点整完成", " 完成"),
         ("今天23时59分完成", " 完成"),
+        ("今天3:30完成", " 完成"),
+        ("今天3：30完成", " 完成"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
         assert_eq!(
@@ -153,6 +155,9 @@ fn cjk_day_phrases_accept_valid_clock_suffixes() {
         "今天3点Status",
         "今天3点_notes",
         "今天24点部署",
+        "今天3:3部署",
+        "今天3:60部署",
+        "今天24:00部署",
     ] {
         assert!(extract_temporal(query).is_none(), "{query}");
     }
@@ -259,6 +264,8 @@ fn exact_dates_accept_valid_compact_cjk_clock_suffixes() {
         ("2026年5月4日3点发生了什么", " 发生了什么"),
         ("2026年5月4日 3点发生了什么", " 发生了什么"),
         ("2026年5月4日23时59分发生了什么", " 发生了什么"),
+        ("2026年5月4日3:30发生了什么", " 发生了什么"),
+        ("2026年5月4日3：30发生了什么", " 发生了什么"),
         ("2026-05-043点发生了什么", " 发生了什么"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
@@ -273,6 +280,9 @@ fn exact_dates_accept_valid_compact_cjk_clock_suffixes() {
         "2026年5月4日２点",
         "2026年5月4日24点部署",
         "2026年5月4日 24点部署",
+        "2026年5月4日3:3部署",
+        "2026年5月4日3:60部署",
+        "2026年5月4日24:00部署",
     ] {
         assert!(extract_temporal(query).is_none(), "{query}");
     }
