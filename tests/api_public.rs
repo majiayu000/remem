@@ -163,10 +163,7 @@ fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
         raw_fallback_count: 0,
     };
     let serialized = serde_json::to_value(&explain).expect("search explain should serialize");
-    assert_eq!(
-        serialized["contribution_breakdowns"][0]["memory_id"].as_i64(),
-        Some(7)
-    );
+    assert!(serialized.get("contribution_breakdowns").is_none());
 
     let breakdown = remem::retrieval::search::SearchExplainResultBreakdown {
         memory_id: 7,
@@ -175,12 +172,25 @@ fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
             rank: 1,
             weight: 2.0,
             reciprocal_rank: 0.25,
-            normalized_signal: None,
+            normalized_signal: Some(0.0),
             total_score: 0.5,
         }],
     };
     assert_eq!(breakdown.memory_id, 7);
     assert_eq!(breakdown.contributions[0].total_score, 0.5);
+    let details = remem::retrieval::search::SearchExplainDetails {
+        explain,
+        contribution_breakdowns: vec![breakdown],
+    };
+    let serialized = serde_json::to_value(&details).expect("details should serialize");
+    assert_eq!(
+        serialized["contribution_breakdowns"][0]["memory_id"].as_i64(),
+        Some(7)
+    );
+    assert_eq!(
+        serialized["contribution_breakdowns"][0]["contributions"][0]["normalized_signal"].as_f64(),
+        Some(0.0)
+    );
 }
 
 #[tokio::test]

@@ -11,7 +11,7 @@ use super::super::common::{
     calibrated_vector_hits, paginate_memories, sanitize_fts_query, weighted_ranked_fuse,
     WeightedRankedHit,
 };
-use super::{suppression_filter, SearchExplain, SearchWeights};
+use super::{suppression_filter, SearchExplain, SearchExplainDetails, SearchWeights};
 
 mod explain_build;
 mod format;
@@ -26,7 +26,7 @@ use support::{
 
 pub(super) struct QuerySearchWithExplain {
     pub memories: Vec<Memory>,
-    pub explain: SearchExplain,
+    pub explain_details: SearchExplainDetails,
 }
 
 struct QuerySearchPlan {
@@ -266,30 +266,33 @@ pub(super) fn search_with_query_explain(
         log_search_timing(query_text, project, limit, offset, &plan);
         return Ok(QuerySearchWithExplain {
             memories: vec![],
-            explain: SearchExplain {
-                query: query_text.to_string(),
-                project: project.map(str::to_string),
-                memory_type: memory_type.map(str::to_string),
-                branch: branch.map(str::to_string),
-                include_stale,
-                limit,
-                offset,
-                fetch_limit: plan.fetch_limit,
-                expanded_terms: plan.expanded_terms,
-                core_terms: plan.core_terms,
-                claim_terms: plan.claim_terms,
-                fts_query: plan.fts_query,
-                temporal_range: plan.temporal_range,
-                temporal_field: plan.temporal_field,
-                rrf_k: plan.weights.rrf_k,
-                min_evidence_confidence: plan.weights.min_evidence_confidence,
-                filtered_result_count: 0,
-                timings: plan.timings,
-                rerank: None,
-                channels: vec![],
-                results: vec![],
-                has_more: false,
-                raw_fallback_count: 0,
+            explain_details: SearchExplainDetails {
+                explain: SearchExplain {
+                    query: query_text.to_string(),
+                    project: project.map(str::to_string),
+                    memory_type: memory_type.map(str::to_string),
+                    branch: branch.map(str::to_string),
+                    include_stale,
+                    limit,
+                    offset,
+                    fetch_limit: plan.fetch_limit,
+                    expanded_terms: plan.expanded_terms,
+                    core_terms: plan.core_terms,
+                    claim_terms: plan.claim_terms,
+                    fts_query: plan.fts_query,
+                    temporal_range: plan.temporal_range,
+                    temporal_field: plan.temporal_field,
+                    rrf_k: plan.weights.rrf_k,
+                    min_evidence_confidence: plan.weights.min_evidence_confidence,
+                    filtered_result_count: 0,
+                    timings: plan.timings,
+                    rerank: None,
+                    channels: vec![],
+                    results: vec![],
+                    has_more: false,
+                    raw_fallback_count: 0,
+                },
+                contribution_breakdowns: vec![],
             },
         });
     }
@@ -322,7 +325,7 @@ pub(super) fn search_with_query_explain(
         paginate_memories(ordered, limit, offset)
     });
     let explain_start = Instant::now();
-    let mut explain = build_explain(
+    let mut explain_details = build_explain(
         conn,
         query_text,
         project,
@@ -337,12 +340,12 @@ pub(super) fn search_with_query_explain(
         fusion_scores.len().saturating_sub(gated_fused.len()),
         &paged,
     )?;
-    explain.rerank = Some(rerank_explain(&rerank_outcome));
+    explain_details.explain.rerank = Some(rerank_explain(&rerank_outcome));
     push_elapsed(&mut plan.timings, "build_explain", explain_start);
     log_search_timing(query_text, project, limit, offset, &plan);
     Ok(QuerySearchWithExplain {
         memories: paged,
-        explain,
+        explain_details,
     })
 }
 

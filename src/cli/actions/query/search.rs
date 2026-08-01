@@ -8,7 +8,7 @@ use crate::{
         service::{MultiHopMeta, SearchRequest, SearchResultSet},
         Memory,
     },
-    retrieval::search::SearchExplain,
+    retrieval::search::{SearchExplain, SearchExplainDetails, SearchExplainResultBreakdown},
 };
 
 pub(in crate::cli) fn run_search(
@@ -37,7 +37,8 @@ pub(in crate::cli) fn run_search(
         multi_hop,
         explain,
     );
-    let results = crate::memory::service::search_memories(&conn, &request)?;
+    let detailed = crate::memory::service::search_memories_with_explain_details(&conn, &request)?;
+    let results = &detailed.result;
     if json {
         let output = build_search_json(
             query,
@@ -50,12 +51,21 @@ pub(in crate::cli) fn run_search(
             include_suppressed,
             multi_hop,
             explain,
-            &results,
+            results,
+            detailed.explain_details.as_ref(),
         );
         println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
-    print!("{}", render_search_results(&results, offset, limit.max(1)));
+    print!(
+        "{}",
+        render_search_results_with_details(
+            results,
+            detailed.explain_details.as_ref(),
+            offset,
+            limit.max(1),
+        )
+    );
     Ok(())
 }
 
@@ -85,12 +95,22 @@ pub(super) fn build_search_request(
     }
 }
 
+#[cfg(test)]
 pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limit: i64) -> String {
+    render_search_results_with_details(results, None, offset, limit)
+}
+
+pub(super) fn render_search_results_with_details(
+    results: &SearchResultSet,
+    explain_details: Option<&SearchExplainDetails>,
+    offset: i64,
+    limit: i64,
+) -> String {
     let mut output = String::new();
     if results.memories.is_empty() && results.raw_hits.is_empty() && results.raw_error.is_none() {
         output.push_str("No curated memories found.\n");
         append_empty_search_guidance(&mut output);
-        append_search_explain(&mut output, results.explain.as_ref());
+        append_search_explain(&mut output, results.explain.as_ref(), explain_details);
         return output;
     }
 
@@ -126,7 +146,7 @@ pub(super) fn render_search_results(results: &SearchResultSet, offset: i64, limi
         append_raw_fallback_next_step(&mut output);
     }
     append_raw_fallback_error(&mut output, results.raw_error.as_deref());
-    append_search_explain(&mut output, results.explain.as_ref());
+    append_search_explain(&mut output, results.explain.as_ref(), explain_details);
 
     output
 }
@@ -144,6 +164,7 @@ pub(super) fn build_search_json(
     multi_hop: bool,
     explain: bool,
     results: &SearchResultSet,
+    explain_details: Option<&SearchExplainDetails>,
 ) -> SearchJson {
     let normalized_limit = limit.max(1);
     SearchJson {
@@ -181,7 +202,7 @@ pub(super) fn build_search_json(
             hops: meta.hops,
             entities_discovered: meta.entities_discovered.clone(),
         }),
-        explain_details: results.explain.clone(),
+        explain_details: explain_details.cloned(),
     }
 }
 
@@ -204,7 +225,7 @@ pub(super) struct SearchJson {
     pub raw_hits: Vec<RawHitJson>,
     pub raw_hits_error: Option<String>,
     pub multi_hop: Option<MultiHopJson>,
-    pub explain_details: Option<SearchExplain>,
+    pub explain_details: Option<SearchExplainDetails>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -279,13 +300,20 @@ fn append_raw_fallback_error(output: &mut String, error: Option<&str>) {
     output.push('\n');
 }
 
-fn append_search_explain(output: &mut String, explain: Option<&SearchExplain>) {
+fn append_search_explain(
+    output: &mut String,
+    explain: Option<&SearchExplain>,
+    explain_details: Option<&SearchExplainDetails>,
+) {
     if let Some(explain) = explain {
         if !output.ends_with('\n') {
             output.push('\n');
         }
         output.push('\n');
-        output.push_str(&render_search_explain(explain));
+        output.push_str(&render_search_explain(
+            explain,
+            explain_details.map(|details| details.contribution_breakdowns.as_slice()),
+        ));
     }
 }
 
@@ -338,7 +366,10 @@ fn format_raw_hit_line(raw: &RawMessage) -> String {
     output
 }
 
-fn render_search_explain(explain: &SearchExplain) -> String {
+fn render_search_explain(
+    explain: &SearchExplain,
+    contribution_breakdowns: Option<&[SearchExplainResultBreakdown]>,
+) -> String {
     let mut output = String::new();
     output.push_str("Search explain:\n");
     output.push_str(&format!("  query: {:?}\n", explain.query));
@@ -398,9 +429,9 @@ fn render_search_explain(explain: &SearchExplain) -> String {
         ));
     }
     output.push_str("  results:\n");
-    let contribution_breakdowns = explain.contribution_breakdowns();
     for result in &explain.results {
         let contribution_breakdown = contribution_breakdowns
+            .unwrap_or_default()
             .iter()
             .find(|breakdown| breakdown.memory_id == result.memory_id);
         let post_fusion_score_factor = result

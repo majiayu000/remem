@@ -1,6 +1,6 @@
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct SearchExplain {
     pub query: String,
     pub project: Option<String>,
@@ -21,6 +21,7 @@ pub struct SearchExplain {
     pub filtered_result_count: usize,
     pub timings: Vec<crate::perf::PhaseTiming>,
     /// Rerank is a dedicated post-fusion stage, not a recall channel.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
     pub channels: Vec<SearchExplainChannel>,
     pub results: Vec<SearchExplainResult>,
@@ -42,106 +43,25 @@ impl SearchExplain {
     pub fn set_raw_fallback_count(&mut self, count: usize) {
         self.raw_fallback_count = count;
     }
+}
 
-    /// Additive per-channel score details without changing the legacy public
-    /// `SearchExplainResult` or `ChannelContribution` struct-literal layouts.
-    pub fn contribution_breakdowns(&self) -> Vec<SearchExplainResultBreakdown> {
-        let weights = super::SearchWeights::default();
-        self.results
-            .iter()
-            .map(|result| SearchExplainResultBreakdown {
-                memory_id: result.memory_id,
-                contributions: result
-                    .contributions
-                    .iter()
-                    .map(|contribution| {
-                        let reciprocal_rank = 1.0 / (self.rrf_k + contribution.rank as f64);
-                        let configured_weight = weights.channel_weight(&contribution.channel);
-                        let weight = configured_weight
-                            .unwrap_or_else(|| contribution.score / reciprocal_rank);
-                        let base_score = weight * reciprocal_rank;
-                        let normalized_signal = configured_weight
-                            .and_then(|_| {
-                                (base_score > 0.0).then(|| contribution.score / base_score - 1.0)
-                            })
-                            .filter(|signal| signal.is_finite() && *signal > f64::EPSILON)
-                            .map(|signal| signal.clamp(0.0, 1.0));
-                        ChannelContributionBreakdown {
-                            channel: contribution.channel.clone(),
-                            rank: contribution.rank,
-                            weight,
-                            reciprocal_rank,
-                            normalized_signal,
-                            total_score: contribution.score,
-                        }
-                    })
-                    .collect(),
-            })
-            .collect()
+#[derive(Debug, Clone, Serialize)]
+pub struct SearchExplainDetails {
+    #[serde(flatten)]
+    pub explain: SearchExplain,
+    pub contribution_breakdowns: Vec<SearchExplainResultBreakdown>,
+}
+
+impl SearchExplainDetails {
+    pub fn retain_result_ids(&mut self, result_ids: &[i64], has_more: bool, visible_limit: i64) {
+        self.explain
+            .retain_result_ids(result_ids, has_more, visible_limit);
+        self.contribution_breakdowns
+            .retain(|result| result_ids.contains(&result.memory_id));
     }
-}
 
-#[derive(Serialize)]
-struct SearchExplainSerialization<'a> {
-    query: &'a str,
-    project: &'a Option<String>,
-    memory_type: &'a Option<String>,
-    branch: &'a Option<String>,
-    include_stale: bool,
-    limit: i64,
-    offset: i64,
-    fetch_limit: i64,
-    expanded_terms: &'a [String],
-    core_terms: &'a [String],
-    claim_terms: &'a [String],
-    fts_query: &'a Option<String>,
-    temporal_range: Option<(i64, i64)>,
-    temporal_field: &'a Option<String>,
-    rrf_k: f64,
-    min_evidence_confidence: f64,
-    filtered_result_count: usize,
-    timings: &'a [crate::perf::PhaseTiming],
-    #[serde(skip_serializing_if = "Option::is_none")]
-    rerank: Option<&'a crate::retrieval::rerank::RerankExplain>,
-    channels: &'a [SearchExplainChannel],
-    results: &'a [SearchExplainResult],
-    contribution_breakdowns: Vec<SearchExplainResultBreakdown>,
-    has_more: bool,
-    raw_fallback_count: usize,
-}
-
-impl Serialize for SearchExplain {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        SearchExplainSerialization {
-            query: &self.query,
-            project: &self.project,
-            memory_type: &self.memory_type,
-            branch: &self.branch,
-            include_stale: self.include_stale,
-            limit: self.limit,
-            offset: self.offset,
-            fetch_limit: self.fetch_limit,
-            expanded_terms: &self.expanded_terms,
-            core_terms: &self.core_terms,
-            claim_terms: &self.claim_terms,
-            fts_query: &self.fts_query,
-            temporal_range: self.temporal_range,
-            temporal_field: &self.temporal_field,
-            rrf_k: self.rrf_k,
-            min_evidence_confidence: self.min_evidence_confidence,
-            filtered_result_count: self.filtered_result_count,
-            timings: &self.timings,
-            rerank: self.rerank.as_ref(),
-            channels: &self.channels,
-            results: &self.results,
-            contribution_breakdowns: self.contribution_breakdowns(),
-            has_more: self.has_more,
-            raw_fallback_count: self.raw_fallback_count,
-        }
-        .serialize(serializer)
+    pub fn set_raw_fallback_count(&mut self, count: usize) {
+        self.explain.set_raw_fallback_count(count);
     }
 }
 

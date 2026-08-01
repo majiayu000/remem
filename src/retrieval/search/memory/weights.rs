@@ -51,20 +51,6 @@ impl Default for SearchWeights {
 }
 
 impl SearchWeights {
-    pub(crate) fn channel_weight(&self, channel: &str) -> Option<f64> {
-        match channel {
-            "fts" => Some(self.fts),
-            "vector" => Some(self.vector),
-            "entity" => Some(self.entity),
-            "graph_traversal" => Some(self.graph),
-            "temporal" => Some(self.temporal),
-            "fact" => Some(self.fact),
-            "like_fallback" => Some(self.like_fallback),
-            "usage" => Some(self.usage),
-            _ => None,
-        }
-    }
-
     pub(crate) fn validate(&self) -> anyhow::Result<()> {
         let channel_weights = [
             ("fts", self.fts),

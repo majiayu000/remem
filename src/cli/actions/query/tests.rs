@@ -8,7 +8,10 @@ use crate::memory::{
     service::{MultiHopMeta, SearchResultSet},
     Memory,
 };
-use crate::retrieval::search::{ChannelContribution, SearchExplain, SearchExplainResult};
+use crate::retrieval::search::{
+    ChannelContribution, ChannelContributionBreakdown, SearchExplain, SearchExplainDetails,
+    SearchExplainResult, SearchExplainResultBreakdown,
+};
 use serde_json::Value;
 
 use super::{
@@ -16,7 +19,7 @@ use super::{
     raw::{build_raw_search_request, render_raw_search_results, search_raw_archive},
     search::{
         build_search_json, build_search_request, preview_raw_text, preview_text,
-        render_search_results,
+        render_search_results, render_search_results_with_details,
     },
     show::{format_memory_timestamp, ShowJson},
     why::{render_why_memory, ContextGateSummary, PackAttribution},
@@ -114,6 +117,23 @@ fn sample_explain() -> SearchExplain {
         has_more: false,
         raw_fallback_count: 0,
         timings: vec![],
+    }
+}
+
+fn sample_explain_details() -> SearchExplainDetails {
+    SearchExplainDetails {
+        explain: sample_explain(),
+        contribution_breakdowns: vec![SearchExplainResultBreakdown {
+            memory_id: 1,
+            contributions: vec![ChannelContributionBreakdown {
+                channel: "fts".to_string(),
+                rank: 1,
+                weight: 2.5,
+                reciprocal_rank: 1.0 / 61.0,
+                normalized_signal: None,
+                total_score: 0.04098360655737705,
+            }],
+        }],
     }
 }
 
@@ -215,7 +235,8 @@ fn cli_search_render_includes_explain_without_memory_content_dump() {
         raw_error: None,
     };
 
-    let output = render_search_results(&result, 0, 10);
+    let details = sample_explain_details();
+    let output = render_search_results_with_details(&result, Some(&details), 0, 10);
 
     assert!(output.contains("Search explain:"));
     assert!(output.contains("channels:"));
@@ -371,6 +392,7 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
         true,
         true,
         &result,
+        Some(&sample_explain_details()),
     );
 
     let text = serde_json::to_string(&output)?;

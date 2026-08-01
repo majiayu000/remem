@@ -2,7 +2,8 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection};
 
 use super::{
-    search_with_branch_explain, search_with_branch_weights, SearchExplainResult, SearchWeights,
+    search_with_branch_explain, search_with_branch_explain_details_with_suppressed_policy,
+    search_with_branch_weights, SearchExplainResult, SearchWeights,
 };
 
 mod fact_channel;
@@ -100,7 +101,7 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
     crate::retrieval::entity::link_entities(&conn, 1, &["SQLite".to_string()])?;
     crate::retrieval::entity::link_entities(&conn, 2, &["SQLite".to_string()])?;
 
-    let (memories, explain) = search_with_branch_explain(
+    let (memories, explain_details) = search_with_branch_explain_details_with_suppressed_policy(
         &conn,
         Some("recently SQLite"),
         Some("/repo"),
@@ -109,8 +110,10 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
         0,
         false,
         None,
+        false,
     )?;
-    let explain = explain.context("query explain should be present")?;
+    let explain_details = explain_details.context("query explain should be present")?;
+    let explain = &explain_details.explain;
 
     assert!(!memories.is_empty());
     for expected in "fts entity temporal vector graph_traversal like_fallback".split_whitespace() {
@@ -169,8 +172,8 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
         assert_score_identity(result);
     }
     assert_eq!(
-        explain
-            .contribution_breakdowns()
+        explain_details
+            .contribution_breakdowns
             .iter()
             .map(|breakdown| breakdown.memory_id)
             .collect::<Vec<_>>(),
@@ -184,7 +187,7 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
     for (result, breakdown) in explain
         .results
         .iter()
-        .zip(explain.contribution_breakdowns())
+        .zip(&explain_details.contribution_breakdowns)
     {
         assert_eq!(breakdown.memory_id, result.memory_id);
         assert_eq!(breakdown.contributions.len(), result.contributions.len());

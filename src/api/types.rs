@@ -50,7 +50,7 @@ pub(super) struct SearchResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_hits_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub explain: Option<crate::retrieval::search::SearchExplain>,
+    pub explain: Option<crate::retrieval::search::SearchExplainDetails>,
 }
 
 #[derive(Serialize)]

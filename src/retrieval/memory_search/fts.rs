@@ -109,7 +109,7 @@ pub fn search_memories_fts_hits_filtered(
                 memory_type, files, created_at_epoch, updated_at_epoch,
                 status, branch, scope, rank_score
          FROM ranked
-         ORDER BY rank_score
+         ORDER BY rank_score ASC, id ASC
          LIMIT ?{} OFFSET ?{}",
         conditions.join(" AND "),
         idx,
@@ -194,5 +194,29 @@ mod tests {
                 .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].status, "active");
+    }
+
+    #[test]
+    fn equal_rank_scores_use_memory_id_as_a_stable_tiebreaker() -> anyhow::Result<()> {
+        let conn = setup_conn();
+        insert_memory(&conn, 2, "stable rankbridge result", "active");
+        insert_memory(&conn, 1, "stable rankbridge result", "active");
+
+        let hits = search_memories_fts_filtered(
+            &conn,
+            "rankbridge",
+            Some("proj"),
+            None,
+            10,
+            0,
+            false,
+            None,
+        )?;
+
+        assert_eq!(
+            hits.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        Ok(())
     }
 }
