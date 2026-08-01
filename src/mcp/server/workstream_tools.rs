@@ -9,7 +9,7 @@ use super::MemoryServer;
 #[tool_router(router = tool_router_workstream, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "List active workstreams (high-level tasks tracked across sessions). Filter by project and/or status. Shows progress, next action, and blockers for each workstream."
+        description = "Read-only. List existing high-level workstreams for a required project, optionally filtered by status=active, paused, completed, or abandoned. Returns a JSON array with each workstream's status, progress, next action, blockers, and timestamps. Use update_workstream to mutate an existing row; this tool does not create, update, or delete workstreams. A missing project or database failure returns a tool error."
     )]
     pub(super) fn workstreams(
         &self,
@@ -43,7 +43,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Update a workstream's status, next_action, or blockers. Use to manually mark a workstream as completed/paused/abandoned, or to update progress notes."
+        description = "Mutates one existing workstream by id. Optional status, next_action, and blockers fields are left unchanged when omitted; status accepts active, paused, completed, or abandoned. Returns a JSON object with id and updated, where updated=false means no row matched. Use workstreams to list/read rows first. This tool does not create or delete workstreams; database failures return a tool error."
     )]
     pub(super) fn update_workstream(
         &self,

@@ -315,6 +315,13 @@
   Codex protocol behavior is unchanged; the only tightening is that explicit
   hook `--host` aliases and arbitrary values now fail closed.
 
+### Changed
+- Staged source version `0.6.45` for GH-982: the existing 14-tool MCP surface
+  now describes read/write behavior, response shapes, defaults, failure modes,
+  and selection boundaries for current state, search, contextual recall,
+  timelines, detail reads, reports, and workstreams. Public tool names and
+  runtime behavior are unchanged.
+
 ### Fixed
 - Staged source version `0.6.43` for GH-954: entity, temporal, fact, LIKE
   fallback, and graph channels now contribute pure weighted RRF instead of
