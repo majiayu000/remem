@@ -4,51 +4,6 @@ const LEXICAL_YOU_PREFIXES: &[char] = &[
     '自', '理', '事', '案', '缘', '原', '因', '来', '情', '根', '无', '何', '端', '所',
 ];
 const LEXICAL_YOU_SUFFIXES: &[char] = &['于', '来', '衷', '此', '头'];
-const CJK_RELATION_POSITIVE_CARRIERS: &[&str] = &[
-    "现在由",
-    "目前由",
-    "当前由",
-    "而是",
-    "现由",
-    "改由",
-    "转由",
-    "由",
-];
-const CJK_RELATION_NEGATIVE_CARRIERS: &[&str] = &[
-    "不是现在由",
-    "不是目前由",
-    "不是当前由",
-    "尚未让",
-    "不允许",
-    "拒绝让",
-    "拒绝改由",
-    "现在不由",
-    "目前不由",
-    "当前不由",
-    "不再由",
-    "不是",
-    "非",
-];
-const CJK_RELATION_HISTORICAL_CARRIERS: &[&str] =
-    &["过去", "曾由", "原由", "此前由", "原先由", "以前由"];
-const CJK_RELATION_CONDITIONAL_CARRIERS: &[&str] = &["如果", "若", "要是", "假如", "假设", "倘若"];
-const CJK_RELATION_NEGATIVE_SUFFIXES: &[&str] = &["的说法并不成立", "只是一个假设"];
-const CJK_RELATION_NEGATIVE_INFIXES: &[&str] = &[
-    "不再负责",
-    "不负责",
-    "拒绝负责",
-    "尚未负责",
-    "未负责",
-    "没有负责",
-    "停止负责",
-    "不再",
-    "并不",
-    "不",
-    "未",
-    "没有",
-    "拒绝",
-    "停止",
-];
 
 pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &str) -> bool {
     if !term.chars().all(is_cjk) || !predicate.chars().all(is_cjk) {
@@ -75,209 +30,59 @@ pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &st
     if subject.is_empty() || agent.is_empty() {
         return false;
     }
-    current_relation_matches(haystack, agent, predicate, subject)
+    let direct = format!("{agent}{predicate}{subject}");
+    let responsible = (predicate != "负责").then(|| format!("{agent}负责{predicate}{subject}"));
+    standalone_relation_matches(
+        haystack,
+        &direct,
+        responsible.as_deref(),
+        predicate,
+        subject,
+    )
 }
 
-#[derive(Clone, Copy)]
-enum RelationAssertion<'a> {
-    Positive { agent: &'a str, resets_state: bool },
-    Negative { agent: &'a str },
-}
-
-enum RelationSegment<'a> {
-    Assertion(RelationAssertion<'a>),
-    Ignored,
-    Unknown,
-}
-
-fn current_relation_matches(
+fn standalone_relation_matches(
     haystack: &str,
-    expected_agent: &str,
+    direct: &str,
+    responsible: Option<&str>,
     predicate: &str,
     subject: &str,
 ) -> bool {
-    let mut matches = false;
-    for clause in haystack.split(is_strong_clause_boundary) {
-        let clause = clause.trim();
-        if clause.is_empty()
-            || CJK_RELATION_CONDITIONAL_CARRIERS
-                .iter()
-                .any(|carrier| clause.starts_with(carrier))
-        {
-            continue;
-        }
-        let mut unknown_prefix = false;
-        for segment in clause.split([',', '，']) {
-            match parse_relation_segment(segment, predicate, subject) {
-                RelationSegment::Assertion(RelationAssertion::Positive { agent, .. })
-                    if !unknown_prefix && relation_agent_contains(agent, expected_agent) =>
-                {
-                    matches = true
-                }
-                RelationSegment::Assertion(RelationAssertion::Positive {
-                    resets_state: true,
-                    ..
-                }) if !unknown_prefix => matches = false,
-                RelationSegment::Assertion(RelationAssertion::Negative { agent })
-                    if !unknown_prefix && relation_agent_contains(agent, expected_agent) =>
-                {
-                    matches = false;
-                }
-                RelationSegment::Unknown => unknown_prefix = true,
-                _ => {}
-            }
-        }
-    }
-    matches
+    let clauses = haystack
+        .split(is_strong_clause_boundary)
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .collect::<Vec<_>>();
+    let matching = clauses
+        .iter()
+        .map(|clause| relation_clause_matches(clause, direct, responsible))
+        .collect::<Vec<_>>();
+    matching.iter().any(|matches| *matches)
+        && clauses.iter().zip(matching).all(|(clause, matches)| {
+            matches || !relation_clause_conflicts(clause, predicate, subject)
+        })
 }
 
-fn parse_relation_segment<'a>(
-    segment: &'a str,
-    predicate: &str,
-    subject: &str,
-) -> RelationSegment<'a> {
-    let segment = segment.trim();
-    if segment.is_empty() {
-        return RelationSegment::Ignored;
-    }
-    if CJK_RELATION_HISTORICAL_CARRIERS
-        .iter()
-        .any(|carrier| segment.starts_with(carrier))
-    {
-        return RelationSegment::Ignored;
-    }
-
-    for suffix in CJK_RELATION_NEGATIVE_SUFFIXES {
-        if let Some(statement) = segment.strip_suffix(suffix) {
-            return parse_relation_agent(statement, predicate, subject)
-                .map_or(RelationSegment::Unknown, |agent| {
-                    RelationSegment::Assertion(RelationAssertion::Negative { agent })
-                });
-        }
-    }
-    for carrier in CJK_RELATION_NEGATIVE_CARRIERS {
-        if let Some(statement) = segment.strip_prefix(carrier) {
-            return parse_relation_agent(statement, predicate, subject)
-                .map_or(RelationSegment::Unknown, |agent| {
-                    RelationSegment::Assertion(RelationAssertion::Negative { agent })
-                });
-        }
-    }
-    for infix in CJK_RELATION_NEGATIVE_INFIXES {
-        let negative_tail = format!("{infix}{predicate}{subject}");
-        if let Some(agent) = segment
-            .strip_suffix(&negative_tail)
-            .filter(|agent| valid_relation_agent(agent))
-        {
-            return RelationSegment::Assertion(RelationAssertion::Negative { agent });
-        }
-    }
-
-    for carrier in CJK_RELATION_POSITIVE_CARRIERS {
-        if let Some(statement) = segment.strip_prefix(carrier) {
-            return parse_relation_agent(statement, predicate, subject).map_or(
-                RelationSegment::Unknown,
-                |agent| {
-                    RelationSegment::Assertion(RelationAssertion::Positive {
-                        agent,
-                        resets_state: true,
-                    })
-                },
-            );
-        }
-    }
-    if let Some(statement) = strip_relation_label(segment, predicate) {
-        return parse_relation_agent(statement, predicate, subject).map_or(
-            RelationSegment::Unknown,
-            |agent| {
-                RelationSegment::Assertion(RelationAssertion::Positive {
-                    agent,
-                    resets_state: true,
-                })
-            },
-        );
-    }
-    parse_relation_agent(segment, predicate, subject).map_or(RelationSegment::Unknown, |agent| {
-        RelationSegment::Assertion(RelationAssertion::Positive {
-            agent,
-            resets_state: false,
-        })
+fn relation_clause_matches(clause: &str, direct: &str, responsible: Option<&str>) -> bool {
+    std::iter::once(direct).chain(responsible).any(|signature| {
+        clause == signature
+            || clause.strip_prefix(signature).is_some_and(|suffix| {
+                suffix
+                    .strip_prefix("，涉及")
+                    .is_some_and(|detail| !detail.trim().is_empty())
+            })
     })
 }
 
-fn strip_relation_label<'a>(segment: &'a str, predicate: &str) -> Option<&'a str> {
-    let (label, statement) = segment
-        .split_once('：')
-        .or_else(|| segment.split_once(':'))?;
-    let label = label.trim();
-    let predicate_label = format!("{predicate}者");
-    let current_predicate_label = format!("当前{predicate}者");
-    (label == predicate_label
-        || label == current_predicate_label
-        || (predicate == "负责" && matches!(label, "负责人" | "当前负责人")))
-    .then_some(statement.trim())
-}
-
-fn parse_relation_agent<'a>(statement: &'a str, predicate: &str, subject: &str) -> Option<&'a str> {
-    let responsible_tail = format!("负责{predicate}{subject}");
-    let direct_tail = format!("{predicate}{subject}");
-    if predicate != "负责" {
-        if let Some(agent) = statement
-            .strip_suffix(&responsible_tail)
-            .filter(|agent| valid_relation_agent(agent))
-        {
-            return Some(agent);
-        }
-    }
-    statement
-        .strip_suffix(&direct_tail)
-        .filter(|agent| valid_relation_agent(agent))
-}
-
-fn valid_relation_agent(agent: &str) -> bool {
-    let agent = agent.trim();
-    !agent.is_empty()
-        && agent.chars().count() <= 32
-        && agent.chars().all(is_relation_agent_character)
-}
-
-fn relation_agent_contains(candidate: &str, expected: &str) -> bool {
-    let candidate = candidate.trim();
-    let Some(group) = candidate.strip_suffix("共同") else {
-        return relation_agents_equal(candidate, expected);
-    };
-    let mut members = group.split(['和', '与', '、']);
-    let mut found = false;
-    for member in &mut members {
-        if !valid_relation_agent(member) {
-            return false;
-        }
-        found |= relation_agents_equal(member, expected);
-    }
-    found
-}
-
-fn relation_agents_equal(left: &str, right: &str) -> bool {
-    left.split_whitespace().eq(right.split_whitespace())
+fn relation_clause_conflicts(clause: &str, predicate: &str, subject: &str) -> bool {
+    clause.contains(predicate) && clause.contains(subject)
 }
 
 fn is_strong_clause_boundary(character: char) -> bool {
     matches!(
         character,
-        '。' | '！' | '？' | '；' | '!' | '?' | ';' | '\n' | '\r'
+        '。' | '！' | '？' | '；' | '.' | '!' | '?' | ';' | '\n' | '\r'
     )
-}
-
-fn is_relation_agent_character(character: char) -> bool {
-    is_cjk(character)
-        || character.is_ascii_alphanumeric()
-        || character == '_'
-        || character == '-'
-        || character == '+'
-        || character == '.'
-        || character == '/'
-        || character == '、'
-        || character.is_whitespace()
 }
 
 fn has_lexical_you_suffix(term: &str, infix: usize) -> bool {
