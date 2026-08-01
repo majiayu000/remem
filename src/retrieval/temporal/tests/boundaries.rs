@@ -96,6 +96,43 @@ fn sentence_punctuation_preserves_temporal_phrases() {
 }
 
 #[test]
+fn exact_dates_accept_clause_punctuation() {
+    for query in [
+        "2026-05-04: what changed?",
+        "2026-05-04. What changed?",
+        "2026.05.04. What changed?",
+        "2026年5月4日：发生了什么",
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+    }
+}
+
+#[test]
+fn compact_month_name_dates_accept_bare_year_comma() {
+    let query = "What changed on May 4,2026?";
+    assert!(extract_temporal(query).is_some(), "{query}");
+    let semantic_query = TemporalConstraint::query_without_temporal_expression(query);
+    assert!(!semantic_query.contains("May"), "{semantic_query:?}");
+    assert!(!semantic_query.contains("2026"), "{semantic_query:?}");
+}
+
+#[test]
+fn cjk_day_phrases_accept_valid_clock_suffixes() {
+    for query in [
+        "今天3点发生什么",
+        "昨天2点的部署",
+        "今天3点半完成",
+        "今天23时59分完成",
+    ] {
+        assert!(extract_temporal(query).is_some(), "{query}");
+    }
+
+    for query in ["今天２", "今天3点Status", "今天3点_notes", "今天24点部署"] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+    }
+}
+
+#[test]
 fn edge_path_segments_are_not_temporal_phrases() {
     for query in ["/today", ".today", ":today", "today/", "today\\", "today-"] {
         assert!(extract_temporal(query).is_none(), "{query}");

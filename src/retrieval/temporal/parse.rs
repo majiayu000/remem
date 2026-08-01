@@ -4,6 +4,13 @@ use chrono::{Datelike, NaiveDate};
 
 use crate::retrieval::temporal::types::{TemporalConstraint, TemporalField};
 
+mod boundary;
+
+use boundary::{
+    has_cjk_day_phrase_context, has_cjk_phrase_context, has_date_context, has_phrase_context,
+    has_recent_phrase_context,
+};
+
 struct ParsedTemporal {
     constraint: TemporalConstraint,
     consumed_span: Range<usize>,
@@ -117,82 +124,14 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
                 has_phrase_context(query, &span)
             } else if *phrase == "最近" {
                 has_recent_phrase_context(query, &span)
+            } else if matches!(*phrase, "昨天" | "今天") {
+                has_cjk_day_phrase_context(query, &span)
             } else {
                 has_cjk_phrase_context(query, &span)
             };
             valid_context.then_some(span)
         })
     })
-}
-
-fn has_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_left_boundary_is_valid(query, span.start, false)
-        && phrase_right_boundary_is_valid(query, span.end, false)
-}
-
-fn has_cjk_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_left_boundary_is_valid(query, span.start, true)
-        && phrase_right_boundary_is_valid(query, span.end, true)
-}
-
-fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_left_boundary_is_valid(query, span.start, true)
-        && query[span.end..].chars().next().is_none_or(|character| {
-            character.is_ascii_digit() || phrase_right_boundary_is_valid(query, span.end, true)
-        })
-}
-
-fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {
-    let Some((_, character)) = query[..start].char_indices().next_back() else {
-        return true;
-    };
-    if is_structural_separator(character) {
-        return false;
-    }
-    phrase_neighbor_is_valid(character, allow_cjk)
-}
-
-fn phrase_right_boundary_is_valid(query: &str, end: usize, allow_cjk: bool) -> bool {
-    let Some(character) = query[end..].chars().next() else {
-        return true;
-    };
-    if is_structural_separator(character) {
-        let run_end = query[end..]
-            .char_indices()
-            .take_while(|(_, character)| is_structural_separator(*character))
-            .last()
-            .map_or(end, |(index, character)| end + index + character.len_utf8());
-        return query[end..run_end]
-            .chars()
-            .all(is_sentence_boundary_separator)
-            && query[run_end..]
-                .chars()
-                .next()
-                .is_none_or(is_natural_outer_punctuation);
-    }
-    phrase_neighbor_is_valid(character, allow_cjk)
-}
-
-fn is_natural_outer_punctuation(character: char) -> bool {
-    character.is_whitespace() || (!character.is_alphanumeric() && character != '_')
-}
-
-fn is_sentence_boundary_separator(character: char) -> bool {
-    matches!(character, '.' | ':' | '．' | '：')
-}
-
-fn phrase_neighbor_is_valid(character: char, allow_cjk: bool) -> bool {
-    if character == '_' || character.is_ascii_alphanumeric() || character.is_numeric() {
-        return false;
-    }
-    allow_cjk || !character.is_alphanumeric()
-}
-
-fn is_structural_separator(character: char) -> bool {
-    matches!(
-        character,
-        '/' | '\\' | '.' | ':' | '-' | '／' | '＼' | '．' | '：' | '－'
-    )
 }
 
 fn temporal_field_for_query(lower: &str) -> TemporalField {
@@ -218,33 +157,6 @@ fn parse_exact_date_or_month(lower: &str) -> Option<(i64, i64, Range<usize>)> {
         .or_else(|| parse_month_name_date(lower))
 }
 
-fn has_date_context(query: &str, span: &Range<usize>) -> bool {
-    let left = &query[..span.start];
-    let left_is_natural = match left.chars().next_back() {
-        None => true,
-        Some(character) if character.is_whitespace() => true,
-        Some(character) if is_structural_separator(character) || character == '_' => false,
-        Some(character) if character.is_ascii_alphanumeric() || character.is_numeric() => false,
-        Some(character) if character.is_alphanumeric() => {
-            ["在", "于", "自", "从", "至", "到", "截至", "截止"]
-                .iter()
-                .any(|introducer| left.ends_with(introducer))
-        }
-        Some(_) => true,
-    };
-    if !left_is_natural {
-        return false;
-    }
-
-    match query[span.end..].chars().next() {
-        None => true,
-        Some(character) if character.is_whitespace() => true,
-        Some(character) if is_structural_separator(character) || character == '_' => false,
-        Some(character) if character.is_ascii_alphanumeric() || character.is_numeric() => false,
-        Some(_) => true,
-    }
-}
-
 fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     let mut cursor = 0;
     'candidates: while cursor < lower.len() {
@@ -264,15 +176,26 @@ fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
             })
             .unwrap_or(lower.len());
         cursor = candidate_end;
-        let token = &lower[candidate_start..candidate_end];
-        for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"] {
-            if let Ok(date) = NaiveDate::parse_from_str(token, fmt) {
-                let (start, end) = day_range(date)?;
-                let span = candidate_start..candidate_end;
-                if !has_date_context(lower, &span) {
-                    continue 'candidates;
+        let candidate = &lower[candidate_start..candidate_end];
+        for token_end in candidate
+            .char_indices()
+            .filter_map(|(index, character)| {
+                character
+                    .is_ascii_digit()
+                    .then_some(index + character.len_utf8())
+            })
+            .rev()
+        {
+            let token = &candidate[..token_end];
+            for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"] {
+                if let Ok(date) = NaiveDate::parse_from_str(token, fmt) {
+                    let (start, end) = day_range(date)?;
+                    let span = candidate_start..candidate_start + token_end;
+                    if !has_date_context(lower, &span) {
+                        continue 'candidates;
+                    }
+                    return Some((start, end, span));
                 }
-                return Some((start, end, span));
             }
         }
     }
@@ -418,7 +341,8 @@ fn has_natural_date_word_gaps(query: &str, words: &[QueryWord<'_>], span: &Range
         let Some(rest) = gap.strip_prefix([',', '，']) else {
             return false;
         };
-        !rest.is_empty() && rest.chars().all(char::is_whitespace)
+        rest.chars().all(char::is_whitespace)
+            && (!rest.is_empty() || parse_year(pair[1].text).is_some())
     })
 }
 
