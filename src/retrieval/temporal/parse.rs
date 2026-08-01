@@ -7,7 +7,7 @@ use crate::retrieval::temporal::types::{TemporalConstraint, TemporalField};
 mod boundary;
 
 use boundary::{
-    has_cjk_day_phrase_context, has_cjk_phrase_context, has_date_context, has_phrase_context,
+    cjk_day_phrase_span, has_cjk_phrase_context, has_date_context, has_phrase_context,
     has_recent_phrase_context,
 };
 
@@ -117,6 +117,9 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
     phrases.iter().find_map(|phrase| {
         query.match_indices(phrase).find_map(|(start, _)| {
             let span = start..start + phrase.len();
+            if matches!(*phrase, "昨天" | "今天") {
+                return cjk_day_phrase_span(query, &span);
+            }
             let valid_context = if phrase
                 .chars()
                 .any(|character| character.is_ascii_alphabetic())
@@ -124,8 +127,6 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
                 has_phrase_context(query, &span)
             } else if *phrase == "最近" {
                 has_recent_phrase_context(query, &span)
-            } else if matches!(*phrase, "昨天" | "今天") {
-                has_cjk_day_phrase_context(query, &span)
             } else {
                 has_cjk_phrase_context(query, &span)
             };

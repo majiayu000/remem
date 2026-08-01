@@ -12,10 +12,15 @@ pub(super) fn has_cjk_phrase_context(query: &str, span: &Range<usize>) -> bool {
         && phrase_right_boundary_is_valid(query, span.end, true)
 }
 
-pub(super) fn has_cjk_day_phrase_context(query: &str, span: &Range<usize>) -> bool {
-    phrase_left_boundary_is_valid(query, span.start, true)
-        && (phrase_right_boundary_is_valid(query, span.end, true)
-            || has_cjk_clock_time_suffix(query, span.end))
+pub(super) fn cjk_day_phrase_span(query: &str, span: &Range<usize>) -> Option<Range<usize>> {
+    if !phrase_left_boundary_is_valid(query, span.start, true) {
+        return None;
+    }
+    if phrase_right_boundary_is_valid(query, span.end, true) {
+        return Some(span.clone());
+    }
+    let suffix_end = cjk_clock_time_suffix_end(query, span.end)?;
+    Some(span.start..suffix_end)
 }
 
 pub(super) fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> bool {
@@ -42,23 +47,17 @@ pub(super) fn has_date_context(query: &str, span: &Range<usize>) -> bool {
     left_is_natural && phrase_right_boundary_is_valid(query, span.end, true)
 }
 
-fn has_cjk_clock_time_suffix(query: &str, start: usize) -> bool {
-    let Some(hour_text) = leading_ascii_digits(&query[start..]) else {
-        return false;
-    };
-    let Some(hour) = hour_text.parse::<u32>().ok() else {
-        return false;
-    };
+fn cjk_clock_time_suffix_end(query: &str, start: usize) -> Option<usize> {
+    let hour_text = leading_ascii_digits(&query[start..])?;
+    let hour = hour_text.parse::<u32>().ok()?;
     if hour > 23 {
-        return false;
+        return None;
     }
 
     let hour_end = start + hour_text.len();
-    let Some(marker) = query[hour_end..].chars().next() else {
-        return false;
-    };
+    let marker = query[hour_end..].chars().next()?;
     if !matches!(marker, '点' | '时') {
-        return false;
+        return None;
     }
     let mut suffix_end = hour_end + marker.len_utf8();
     let remainder = &query[suffix_end..];
@@ -74,26 +73,20 @@ fn has_cjk_clock_time_suffix(query: &str, start: usize) -> bool {
         .next()
         .is_some_and(|character| character.is_ascii_digit())
     {
-        let Some(minute_text) = leading_ascii_digits(remainder) else {
-            return false;
-        };
-        let Some(minute) = minute_text.parse::<u32>().ok() else {
-            return false;
-        };
+        let minute_text = leading_ascii_digits(remainder)?;
+        let minute = minute_text.parse::<u32>().ok()?;
         if minute > 59 {
-            return false;
+            return None;
         }
         let minute_end = suffix_end + minute_text.len();
-        let Some(minute_marker) = query[minute_end..].chars().next() else {
-            return false;
-        };
+        let minute_marker = query[minute_end..].chars().next()?;
         if minute_marker != '分' {
-            return false;
+            return None;
         }
         suffix_end = minute_end + minute_marker.len_utf8();
     }
 
-    phrase_right_boundary_is_valid(query, suffix_end, true)
+    phrase_right_boundary_is_valid(query, suffix_end, true).then_some(suffix_end)
 }
 
 fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {

@@ -45,3 +45,13 @@ fn conversational_words_remain_real_claims_outside_command_prefix() {
         assert!(claims.iter().any(|term| term == expected), "{claims:?}");
     }
 }
+
+#[test]
+fn direct_object_entity_words_include_identifier_characters() {
+    for entity in ["X509", "API_v2"] {
+        let query = format!("Please tell me {entity} owner");
+        let claims =
+            super::super::claim::query_claim_terms(&query, Some("/repo"), &[entity.to_string()]);
+        assert_eq!(claims, ["owner"], "{query}: {claims:?}");
+    }
+}

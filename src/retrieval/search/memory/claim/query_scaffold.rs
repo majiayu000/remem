@@ -5,7 +5,7 @@ pub(super) fn strip_conversational_prefix<'a>(
     explicit_entity_terms: &[String],
 ) -> &'a str {
     let trimmed = query.trim_start();
-    let spans = first_ascii_word_spans(trimmed, 4);
+    let spans = first_query_word_spans(trimmed, 4);
     if spans.len() != 4 {
         return query;
     }
@@ -36,18 +36,18 @@ pub(super) fn strip_conversational_prefix<'a>(
     query
 }
 
-fn first_ascii_word_spans(query: &str, limit: usize) -> Vec<Range<usize>> {
+fn first_query_word_spans(query: &str, limit: usize) -> Vec<Range<usize>> {
     let mut spans = Vec::new();
     let mut index = 0;
     for _ in 0..limit {
         if !spans.is_empty() {
             index += query[index..]
-                .find(char::is_alphanumeric)
+                .find(is_query_word_character)
                 .unwrap_or(query.len() - index);
         }
         let start = index;
         index += query[index..]
-            .find(|character: char| !character.is_ascii_alphabetic())
+            .find(|character: char| !is_query_word_character(character))
             .unwrap_or(query.len() - index);
         if start == index {
             break;
@@ -55,6 +55,10 @@ fn first_ascii_word_spans(query: &str, limit: usize) -> Vec<Range<usize>> {
         spans.push(start..index);
     }
     spans
+}
+
+fn is_query_word_character(character: char) -> bool {
+    character.is_alphanumeric() || character == '_'
 }
 
 fn first_entity_word(entity: &str) -> &str {

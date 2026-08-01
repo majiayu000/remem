@@ -118,13 +118,18 @@ fn compact_month_name_dates_accept_bare_year_comma() {
 
 #[test]
 fn cjk_day_phrases_accept_valid_clock_suffixes() {
-    for query in [
-        "今天3点发生什么",
-        "昨天2点的部署",
-        "今天3点半完成",
-        "今天23时59分完成",
+    for (query, expected_semantic_query) in [
+        ("今天3点发生什么", " 发生什么"),
+        ("昨天2点的部署", " 的部署"),
+        ("今天3点半完成", " 完成"),
+        ("今天23时59分完成", " 完成"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            expected_semantic_query,
+            "{query}"
+        );
     }
 
     for query in ["今天２", "今天3点Status", "今天3点_notes", "今天24点部署"] {
