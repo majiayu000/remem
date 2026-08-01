@@ -594,7 +594,7 @@ fn has_invalid_numeric_left_boundary(query: &str, start: usize) -> bool {
     let has_clause_boundary = separator.chars().any(|character| {
         matches!(
             character,
-            ',' | ';' | '!' | '?' | '，' | '。' | '；' | '！' | '？' | '、'
+            ',' | ';' | '!' | '?' | '(' | '，' | '。' | '；' | '！' | '？' | '、' | '（'
         )
     });
     if separator

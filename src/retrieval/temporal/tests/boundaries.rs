@@ -95,6 +95,24 @@ fn cjk_clause_punctuation_separates_entity_number_from_day_count() {
 }
 
 #[test]
+fn opening_parentheses_separate_entity_numbers_from_day_counts() {
+    for (query, expected_semantic_query) in [
+        ("服务42（7天前）发生了什么", "服务42（ ）发生了什么"),
+        ("service42(7 days ago) changed", "service42( ) changed"),
+    ] {
+        let constraint = extract_temporal(query)
+            .unwrap_or_else(|| panic!("parenthesized day count should parse: {query}"));
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - 7 * 86_400).abs() < 2);
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            expected_semantic_query,
+            "{query}"
+        );
+    }
+}
+
+#[test]
 fn sentence_punctuation_preserves_temporal_phrases() {
     for query in [
         "What changed today.",
