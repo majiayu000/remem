@@ -110,25 +110,56 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
     phrases.iter().find_map(|phrase| {
         query.match_indices(phrase).find_map(|(start, _)| {
             let span = start..start + phrase.len();
-            (!phrase
+            let valid_context = if phrase
                 .chars()
                 .any(|character| character.is_ascii_alphabetic())
-                || has_word_boundaries(query, &span))
-            .then_some(span)
+            {
+                has_phrase_context(query, &span)
+            } else if *phrase == "最近" {
+                has_recent_phrase_context(query, &span)
+            } else {
+                has_cjk_phrase_context(query, &span)
+            };
+            valid_context.then_some(span)
         })
     })
 }
 
-fn has_word_boundaries(query: &str, span: &Range<usize>) -> bool {
-    let is_word_character = |character: char| character.is_alphanumeric() || character == '_';
-    query[..span.start]
-        .chars()
-        .next_back()
-        .is_none_or(|character| !is_word_character(character))
-        && query[span.end..]
-            .chars()
-            .next()
-            .is_none_or(|character| !is_word_character(character))
+fn has_phrase_context(query: &str, span: &Range<usize>) -> bool {
+    phrase_neighbor_is_valid(query[..span.start].chars().next_back(), false)
+        && phrase_neighbor_is_valid(query[span.end..].chars().next(), false)
+}
+
+fn has_cjk_phrase_context(query: &str, span: &Range<usize>) -> bool {
+    phrase_neighbor_is_valid(query[..span.start].chars().next_back(), true)
+        && phrase_neighbor_is_valid(query[span.end..].chars().next(), true)
+}
+
+fn has_recent_phrase_context(query: &str, span: &Range<usize>) -> bool {
+    phrase_neighbor_is_valid(query[..span.start].chars().next_back(), true)
+        && query[span.end..].chars().next().is_none_or(|character| {
+            character.is_ascii_digit() || phrase_neighbor_is_valid(Some(character), true)
+        })
+}
+
+fn phrase_neighbor_is_valid(character: Option<char>, allow_cjk: bool) -> bool {
+    character.is_none_or(|character| {
+        if is_structural_separator(character)
+            || character == '_'
+            || character.is_ascii_alphanumeric()
+            || character.is_numeric()
+        {
+            return false;
+        }
+        allow_cjk || !character.is_alphanumeric()
+    })
+}
+
+fn is_structural_separator(character: char) -> bool {
+    matches!(
+        character,
+        '/' | '\\' | '.' | ':' | '-' | '／' | '＼' | '．' | '：' | '－'
+    )
 }
 
 fn temporal_field_for_query(lower: &str) -> TemporalField {
@@ -154,17 +185,31 @@ fn parse_exact_date_or_month(lower: &str) -> Option<(i64, i64, Range<usize>)> {
         .or_else(|| parse_month_name_date(lower))
 }
 
-fn has_ascii_identifier_boundaries(query: &str, span: &Range<usize>) -> bool {
-    let is_identifier_character =
-        |character: char| character.is_ascii_alphanumeric() || character == '_';
-    query[..span.start]
-        .chars()
-        .next_back()
-        .is_none_or(|character| !is_identifier_character(character))
-        && query[span.end..]
-            .chars()
-            .next()
-            .is_none_or(|character| !is_identifier_character(character))
+fn has_date_context(query: &str, span: &Range<usize>) -> bool {
+    let left = &query[..span.start];
+    let left_is_natural = match left.chars().next_back() {
+        None => true,
+        Some(character) if character.is_whitespace() => true,
+        Some(character) if is_structural_separator(character) || character == '_' => false,
+        Some(character) if character.is_ascii_alphanumeric() || character.is_numeric() => false,
+        Some(character) if character.is_alphanumeric() => {
+            ["在", "于", "自", "从", "至", "到", "截至", "截止"]
+                .iter()
+                .any(|introducer| left.ends_with(introducer))
+        }
+        Some(_) => true,
+    };
+    if !left_is_natural {
+        return false;
+    }
+
+    match query[span.end..].chars().next() {
+        None => true,
+        Some(character) if character.is_whitespace() => true,
+        Some(character) if is_structural_separator(character) || character == '_' => false,
+        Some(character) if character.is_ascii_alphanumeric() || character.is_numeric() => false,
+        Some(_) => true,
+    }
 }
 
 fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
@@ -179,7 +224,7 @@ fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
                 let (start, end) = day_range(date)?;
                 let token_start = raw_start + raw.find(token)?;
                 let span = token_start..token_start + token.len();
-                if !has_word_boundaries(lower, &span) {
+                if !has_date_context(lower, &span) {
                     continue 'words;
                 }
                 return Some((start, end, span));
@@ -238,7 +283,7 @@ fn parse_chinese_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
             (start, end, year_start..month_end)
         };
 
-        if has_ascii_identifier_boundaries(lower, &candidate.2) {
+        if has_date_context(lower, &candidate.2) {
             return Some(candidate);
         }
     }
@@ -305,15 +350,31 @@ fn parse_month_name_date(lower: &str) -> Option<(i64, i64, Range<usize>)> {
             None
         })();
 
-        if candidate
-            .as_ref()
-            .is_some_and(|(_, _, span)| has_word_boundaries(lower, span))
-        {
+        if candidate.as_ref().is_some_and(|(_, _, span)| {
+            has_phrase_context(lower, span) && has_natural_date_word_gaps(lower, &parts, span)
+        }) {
             return candidate;
         }
     }
 
     None
+}
+
+fn has_natural_date_word_gaps(query: &str, words: &[QueryWord<'_>], span: &Range<usize>) -> bool {
+    let candidate_words: Vec<_> = words
+        .iter()
+        .filter(|word| word.span.start >= span.start && word.span.end <= span.end)
+        .collect();
+    candidate_words.windows(2).all(|pair| {
+        let gap = &query[pair[0].span.end..pair[1].span.start];
+        if !gap.is_empty() && gap.chars().all(char::is_whitespace) {
+            return true;
+        }
+        let Some(rest) = gap.strip_prefix([',', '，']) else {
+            return false;
+        };
+        !rest.is_empty() && rest.chars().all(char::is_whitespace)
+    })
 }
 
 fn day_range(date: NaiveDate) -> Option<(i64, i64)> {
@@ -407,34 +468,47 @@ fn parse_n_days_ago(lower: &str) -> Option<(i64, Range<usize>)> {
     for window in words.windows(3) {
         let unit = window[1].text;
         let ago = window[2].text;
-        if matches!(unit, "day" | "days") && ago == "ago" {
+        let span = window[0].span.start..window[2].span.end;
+        if matches!(unit, "day" | "days")
+            && ago == "ago"
+            && has_whitespace_word_gaps(lower, window)
+            && has_phrase_context(lower, &span)
+        {
             if let Some(n) = positive_query_day_count(lower, &window[0]) {
-                return Some((n, window[0].span.start..window[2].span.end));
+                return Some((n, span));
             }
         }
     }
-    if lower.contains("天前") {
-        let suffix_start = lower.find("天前")?;
+    for (suffix_start, _) in lower.match_indices("天前") {
         let suffix_end = suffix_start + "天前".len();
         let before_tian = &lower[..suffix_start];
         if let Some(num_str) = trailing_ascii_digits(before_tian) {
             let number_start = suffix_start - num_str.len();
+            let span = number_start..suffix_end;
             if has_invalid_numeric_left_boundary(lower, number_start)
                 || has_cn_number_component_prefix(lower, number_start)
+                || !has_cjk_phrase_context(lower, &span)
             {
-                return None;
+                continue;
             }
             if let Some(n) = positive_day_count(num_str) {
-                return Some((n, number_start..suffix_end));
+                return Some((n, span));
             }
         }
-        let (number_start, last_char) = before_tian.char_indices().last()?;
+        let Some((number_start, last_char)) = before_tian.char_indices().last() else {
+            continue;
+        };
+        let span = number_start..suffix_end;
         if has_numeric_sign_prefix(lower, number_start)
             || has_cn_number_component_prefix(lower, number_start)
+            || has_invalid_numeric_left_boundary(lower, number_start)
+            || !has_cjk_phrase_context(lower, &span)
         {
-            return None;
+            continue;
         }
-        return cn_digit(last_char).map(|n| (n, number_start..suffix_end));
+        if let Some(n) = cn_digit(last_char) {
+            return Some((n, span));
+        }
     }
     None
 }
@@ -444,25 +518,47 @@ fn parse_last_n_days(lower: &str) -> Option<(i64, Range<usize>)> {
     for window in words.windows(3) {
         let last = window[0].text;
         let unit = window[2].text;
-        if last == "last" && matches!(unit, "day" | "days") {
+        let span = window[0].span.start..window[2].span.end;
+        if last == "last"
+            && matches!(unit, "day" | "days")
+            && has_whitespace_word_gaps(lower, window)
+            && has_phrase_context(lower, &span)
+        {
             if let Some(n) = positive_query_day_count(lower, &window[1]) {
-                return Some((n, window[0].span.start..window[2].span.end));
+                return Some((n, span));
             }
         }
     }
-    if let Some(start) = lower.find("最近") {
+    for (start, _) in lower.match_indices("最近") {
         let after_start = start + "最近".len();
         let after = &lower[after_start..];
-        let tian_start = after.find('天')?;
+        let Some(tian_start) = after.find('天') else {
+            continue;
+        };
         let before_tian = &after[..tian_start];
         let end = after_start + tian_start + '天'.len_utf8();
-        if let Some(n) = positive_day_count(before_tian.trim()) {
-            return Some((n, start..end));
+        let span = start..end;
+        if !has_cjk_phrase_context(lower, &span) {
+            continue;
         }
-        let digit = before_tian.trim().parse::<char>().ok()?;
-        return cn_digit(digit).map(|n| (n, start..end));
+        if let Some(n) = positive_day_count(before_tian.trim()) {
+            return Some((n, span));
+        }
+        let Ok(digit) = before_tian.trim().parse::<char>() else {
+            continue;
+        };
+        if let Some(n) = cn_digit(digit) {
+            return Some((n, span));
+        }
     }
     None
+}
+
+fn has_whitespace_word_gaps(query: &str, words: &[QueryWord<'_>]) -> bool {
+    words.windows(2).all(|pair| {
+        let gap = &query[pair[0].span.end..pair[1].span.start];
+        !gap.is_empty() && gap.chars().all(char::is_whitespace)
+    })
 }
 
 fn query_words(query: &str) -> Vec<QueryWord<'_>> {
@@ -516,7 +612,29 @@ fn has_invalid_numeric_left_boundary(query: &str, start: usize) -> bool {
     let has_dash_boundary = separator
         .chars()
         .any(|character| matches!(character, '—' | '–'));
-    !has_whitespace_boundary && !has_dash_boundary && preceding.is_some_and(char::is_numeric)
+    let has_clause_boundary = separator
+        .chars()
+        .any(|character| matches!(character, '，' | '。' | '；' | '：' | '！' | '？' | '、'));
+    if separator.contains('，') && preceding.is_some_and(char::is_numeric) {
+        let separator_start = start - separator.len();
+        return preceding_alphanumeric_run(query, separator_start)
+            .is_none_or(|run| run.chars().all(char::is_numeric));
+    }
+    !has_whitespace_boundary
+        && !has_dash_boundary
+        && !has_clause_boundary
+        && preceding.is_some_and(char::is_numeric)
+}
+
+fn preceding_alphanumeric_run(query: &str, end: usize) -> Option<&str> {
+    let before = &query[..end];
+    let start = before
+        .char_indices()
+        .rev()
+        .take_while(|(_, character)| character.is_alphanumeric())
+        .last()
+        .map(|(index, _)| index)?;
+    Some(&before[start..])
 }
 
 fn has_invalid_numeric_right_boundary(query: &str, end: usize) -> bool {
