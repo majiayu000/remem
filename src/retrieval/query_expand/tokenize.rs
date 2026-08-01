@@ -159,10 +159,17 @@ fn known_segment_len_after_unknown(chars: &[char], start: usize) -> Option<usize
     let length = known_segment_len(chars, start)?;
     let candidate: String = chars[start..start + length].iter().collect();
     (length > 1
-        || known_segment_len(chars, start + length).is_some()
+        || followed_by_distinct_known_segment(chars, start, length)
         || (start + length == chars.len()
             && TERMINAL_CJK_QUERY_SEGMENTS.contains(&candidate.as_str())))
     .then_some(length)
+}
+
+fn followed_by_distinct_known_segment(chars: &[char], start: usize, length: usize) -> bool {
+    let Some(next_length) = known_segment_len(chars, start + length) else {
+        return false;
+    };
+    length != 1 || next_length != 1 || chars[start] != chars[start + length]
 }
 
 fn known_segment_len(chars: &[char], start: usize) -> Option<usize> {

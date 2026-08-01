@@ -94,6 +94,27 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         "contradictory attribution must remain below the confidence gate: {claims:?}"
     );
 
+    let ambiguous = vec!["模块由小王转由小李".to_string(), "维护".to_string()];
+    assert_eq!(
+        super::super::claim::claim_text_coverage("小李维护模块由小王转交给团队。", &ambiguous,),
+        0.5,
+        "multiple grammatical markers must fail closed"
+    );
+    for (query, candidate) in [
+        ("模块由自由软件基金会维护", "自由软件基金会维护模块"),
+        ("理由由小王维护", "小王维护理由"),
+        ("事由由小王维护", "小王维护事由"),
+        ("案由由小王维护", "小王维护案由"),
+        ("自由由小王维护", "小王维护自由"),
+    ] {
+        let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert_eq!(
+            super::super::claim::claim_text_coverage(candidate, &claims),
+            1.0,
+            "{query}: {claims:?}"
+        );
+    }
+
     let claims = super::super::claim::query_claim_terms("EU模块由小王维护R2", Some("/repo"), &[]);
     assert!(claims.contains(&"eu".to_string()), "{claims:?}");
     assert!(claims.contains(&"r2".to_string()), "{claims:?}");
