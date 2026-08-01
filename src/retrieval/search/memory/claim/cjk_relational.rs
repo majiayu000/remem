@@ -33,6 +33,22 @@ const CJK_RELATION_HISTORICAL_CARRIERS: &[&str] =
     &["过去", "曾由", "原由", "此前由", "原先由", "以前由"];
 const CJK_RELATION_CONDITIONAL_CARRIERS: &[&str] = &["如果", "若", "要是", "假如", "假设", "倘若"];
 const CJK_RELATION_NEGATIVE_SUFFIXES: &[&str] = &["的说法并不成立", "只是一个假设"];
+const CJK_RELATION_NEGATIVE_INFIXES: &[&str] = &[
+    "不再负责",
+    "不负责",
+    "拒绝负责",
+    "尚未负责",
+    "未负责",
+    "没有负责",
+    "停止负责",
+    "不再",
+    "并不",
+    "不",
+    "未",
+    "没有",
+    "拒绝",
+    "停止",
+];
 
 pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &str) -> bool {
     if !term.chars().all(is_cjk) || !predicate.chars().all(is_cjk) {
@@ -68,6 +84,12 @@ enum RelationAssertion<'a> {
     Negative { agent: &'a str },
 }
 
+enum RelationSegment<'a> {
+    Assertion(RelationAssertion<'a>),
+    Ignored,
+    Unknown,
+}
+
 fn current_relation_matches(
     haystack: &str,
     expected_agent: &str,
@@ -84,21 +106,24 @@ fn current_relation_matches(
         {
             continue;
         }
+        let mut unknown_prefix = false;
         for segment in clause.split([',', '，']) {
-            match parse_relation_assertion(segment, predicate, subject) {
-                Some(RelationAssertion::Positive { agent, .. })
-                    if relation_agents_equal(agent, expected_agent) =>
+            match parse_relation_segment(segment, predicate, subject) {
+                RelationSegment::Assertion(RelationAssertion::Positive { agent, .. })
+                    if !unknown_prefix && relation_agent_contains(agent, expected_agent) =>
                 {
                     matches = true
                 }
-                Some(RelationAssertion::Positive {
-                    resets_state: true, ..
-                }) => matches = false,
-                Some(RelationAssertion::Negative { agent })
-                    if relation_agents_equal(agent, expected_agent) =>
+                RelationSegment::Assertion(RelationAssertion::Positive {
+                    resets_state: true,
+                    ..
+                }) if !unknown_prefix => matches = false,
+                RelationSegment::Assertion(RelationAssertion::Negative { agent })
+                    if !unknown_prefix && relation_agent_contains(agent, expected_agent) =>
                 {
                     matches = false;
                 }
+                RelationSegment::Unknown => unknown_prefix = true,
                 _ => {}
             }
         }
@@ -106,57 +131,91 @@ fn current_relation_matches(
     matches
 }
 
-fn parse_relation_assertion<'a>(
+fn parse_relation_segment<'a>(
     segment: &'a str,
     predicate: &str,
     subject: &str,
-) -> Option<RelationAssertion<'a>> {
+) -> RelationSegment<'a> {
     let segment = segment.trim();
-    if segment.is_empty()
-        || CJK_RELATION_HISTORICAL_CARRIERS
-            .iter()
-            .any(|carrier| segment.starts_with(carrier))
+    if segment.is_empty() {
+        return RelationSegment::Ignored;
+    }
+    if CJK_RELATION_HISTORICAL_CARRIERS
+        .iter()
+        .any(|carrier| segment.starts_with(carrier))
     {
-        return None;
+        return RelationSegment::Ignored;
     }
 
     for suffix in CJK_RELATION_NEGATIVE_SUFFIXES {
         if let Some(statement) = segment.strip_suffix(suffix) {
             return parse_relation_agent(statement, predicate, subject)
-                .map(|agent| RelationAssertion::Negative { agent });
+                .map_or(RelationSegment::Unknown, |agent| {
+                    RelationSegment::Assertion(RelationAssertion::Negative { agent })
+                });
         }
     }
     for carrier in CJK_RELATION_NEGATIVE_CARRIERS {
         if let Some(statement) = segment.strip_prefix(carrier) {
             return parse_relation_agent(statement, predicate, subject)
-                .map(|agent| RelationAssertion::Negative { agent });
+                .map_or(RelationSegment::Unknown, |agent| {
+                    RelationSegment::Assertion(RelationAssertion::Negative { agent })
+                });
         }
     }
-    if let Some((agent, statement)) = segment.split_once("不再负责") {
-        if statement == format!("{predicate}{subject}") && valid_relation_agent(agent) {
-            return Some(RelationAssertion::Negative { agent });
-        }
-    }
-    if let Some((agent, statement)) = segment.split_once("不再") {
-        if statement == format!("{predicate}{subject}") && valid_relation_agent(agent) {
-            return Some(RelationAssertion::Negative { agent });
+    for infix in CJK_RELATION_NEGATIVE_INFIXES {
+        let negative_tail = format!("{infix}{predicate}{subject}");
+        if let Some(agent) = segment
+            .strip_suffix(&negative_tail)
+            .filter(|agent| valid_relation_agent(agent))
+        {
+            return RelationSegment::Assertion(RelationAssertion::Negative { agent });
         }
     }
 
     for carrier in CJK_RELATION_POSITIVE_CARRIERS {
         if let Some(statement) = segment.strip_prefix(carrier) {
-            return parse_relation_agent(statement, predicate, subject).map(|agent| {
-                RelationAssertion::Positive {
-                    agent,
-                    resets_state: true,
-                }
-            });
+            return parse_relation_agent(statement, predicate, subject).map_or(
+                RelationSegment::Unknown,
+                |agent| {
+                    RelationSegment::Assertion(RelationAssertion::Positive {
+                        agent,
+                        resets_state: true,
+                    })
+                },
+            );
         }
     }
-    parse_relation_agent(segment, predicate, subject).map(|agent| RelationAssertion::Positive {
-        agent,
-        resets_state: false,
+    if let Some(statement) = strip_relation_label(segment, predicate) {
+        return parse_relation_agent(statement, predicate, subject).map_or(
+            RelationSegment::Unknown,
+            |agent| {
+                RelationSegment::Assertion(RelationAssertion::Positive {
+                    agent,
+                    resets_state: true,
+                })
+            },
+        );
+    }
+    parse_relation_agent(segment, predicate, subject).map_or(RelationSegment::Unknown, |agent| {
+        RelationSegment::Assertion(RelationAssertion::Positive {
+            agent,
+            resets_state: false,
+        })
     })
+}
+
+fn strip_relation_label<'a>(segment: &'a str, predicate: &str) -> Option<&'a str> {
+    let (label, statement) = segment
+        .split_once('：')
+        .or_else(|| segment.split_once(':'))?;
+    let label = label.trim();
+    let predicate_label = format!("{predicate}者");
+    let current_predicate_label = format!("当前{predicate}者");
+    (label == predicate_label
+        || label == current_predicate_label
+        || (predicate == "负责" && matches!(label, "负责人" | "当前负责人")))
+    .then_some(statement.trim())
 }
 
 fn parse_relation_agent<'a>(statement: &'a str, predicate: &str, subject: &str) -> Option<&'a str> {
@@ -182,6 +241,22 @@ fn valid_relation_agent(agent: &str) -> bool {
         && agent.chars().all(is_relation_agent_character)
 }
 
+fn relation_agent_contains(candidate: &str, expected: &str) -> bool {
+    let candidate = candidate.trim();
+    let Some(group) = candidate.strip_suffix("共同") else {
+        return relation_agents_equal(candidate, expected);
+    };
+    let mut members = group.split(['和', '与', '、']);
+    let mut found = false;
+    for member in &mut members {
+        if !valid_relation_agent(member) {
+            return false;
+        }
+        found |= relation_agents_equal(member, expected);
+    }
+    found
+}
+
 fn relation_agents_equal(left: &str, right: &str) -> bool {
     left.split_whitespace().eq(right.split_whitespace())
 }
@@ -198,6 +273,10 @@ fn is_relation_agent_character(character: char) -> bool {
         || character.is_ascii_alphanumeric()
         || character == '_'
         || character == '-'
+        || character == '+'
+        || character == '.'
+        || character == '/'
+        || character == '、'
         || character.is_whitespace()
 }
 
