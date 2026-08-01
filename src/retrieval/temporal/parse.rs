@@ -120,17 +120,24 @@ fn first_phrase_span(query: &str, phrases: &[&str]) -> Option<Range<usize>> {
             if matches!(*phrase, "昨天" | "今天") {
                 return cjk_day_phrase_span(query, &span);
             }
-            let valid_context = if phrase
+            let is_ascii_phrase = phrase
                 .chars()
-                .any(|character| character.is_ascii_alphabetic())
-            {
+                .any(|character| character.is_ascii_alphabetic());
+            let valid_context = if is_ascii_phrase {
                 has_phrase_context(query, &span)
             } else if *phrase == "最近" {
                 has_recent_phrase_context(query, &span)
             } else {
                 has_cjk_phrase_context(query, &span)
             };
-            valid_context.then_some(span)
+            if !valid_context {
+                return None;
+            }
+            Some(if is_ascii_phrase {
+                span
+            } else {
+                span_with_cjk_temporal_introducer(query, &span)
+            })
         })
     })
 }
@@ -512,13 +519,13 @@ fn parse_last_n_days(lower: &str) -> Option<(i64, Range<usize>)> {
             continue;
         }
         if let Some(n) = positive_day_count(before_tian.trim()) {
-            return Some((n, span));
+            return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
         }
         let Ok(digit) = before_tian.trim().parse::<char>() else {
             continue;
         };
         if let Some(n) = cn_digit(digit) {
-            return Some((n, span));
+            return Some((n, span_with_cjk_temporal_introducer(lower, &span)));
         }
     }
     None
