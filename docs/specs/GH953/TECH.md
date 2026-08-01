@@ -154,6 +154,24 @@ shows an unexplained ranking delta stops the sequence.
 of scope for #953; they change what users see for reasons unrelated to engine
 convergence and belong to their own issues.
 
+### #954 rank-signal correction
+
+The S1 byte-identical requirement applied to centralizing weight ownership. A
+later correctness finding in #954 identified that rank-only channel hits were
+also converted to `normalized_score = 1 / (rank + 1)`, so rank influenced both
+the RRF denominator and a synthetic signal multiplier. #954 removes that
+double-counting in both search and injection while leaving calibrated FTS and
+vector signals intact.
+
+For injection, `eval-injection` owns a discriminating two-arm fixture. Both arms
+call `query_hybrid_context_memories_with_rank_signal_mode` with the same database,
+query, filters, channel SQL, weights, and result limit. The baseline arm applies
+only the legacy rank pseudo-score conversion; the candidate arm uses pure
+weighted RRF for rank-only hits. The gate requires the expected memory to move
+from rank 2 to rank 1 without regressing MRR@10 or nDCG@10. This is evidence for
+the #954 behavior change, not completion evidence for #953's shared-engine,
+channel-parity, graph, or confidence-gate stages.
+
 S1 proves that explicit `SearchWeights` values reach injection and that the
 production wrapper uses the shipped defaults. It does not consume a generated
 `eval-weight-grid` report, make that evaluator execute injection, or prove
@@ -185,6 +203,10 @@ The issue-level completion verification remains:
    and report the `graph` and confidence-gate deltas separately from the
    behavior-preserving refactor.
 4. Keep `cargo test` green through every stage.
+
+Separately, #954 must keep the injection rank-signal A/B green; its baseline and
+candidate are evaluated on the actual injection channel assembly and serialized
+in the `eval-injection` report.
 
 ## Risks
 

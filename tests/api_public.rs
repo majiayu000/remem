@@ -193,6 +193,29 @@ fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
     );
 }
 
+#[test]
+fn detailed_search_explain_has_a_public_producer() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    remem::migrate::run_migrations(&conn)?;
+
+    let (memories, details) = remem::retrieval::search::search_with_branch_explain_details(
+        &conn,
+        Some("public details"),
+        None,
+        None,
+        10,
+        0,
+        false,
+        None,
+    )?;
+
+    assert!(memories.is_empty());
+    let details = details.expect("query search should produce detailed explain output");
+    assert_eq!(details.explain.query, "public details");
+    assert!(details.contribution_breakdowns.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn exported_router_covers_auth_save_list_search_and_detail() -> anyhow::Result<()> {
     let data_dir = TempDataDir::new("public-api-router");

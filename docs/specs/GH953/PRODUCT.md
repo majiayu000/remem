@@ -40,6 +40,14 @@ primary surface, and any future weight change silently applies to one path only.
   `usage = 0.0` here.
 - Re-tuning weights. Producing new tuned values is downstream work.
 
+Issue #954 is a narrow correctness follow-up rather than a #953 convergence
+stage: rank-only channels must contribute pure weighted RRF instead of receiving
+a second synthetic `1 / rank` signal. Because that correction changes injection
+ordering, `eval-injection` runs the old and new rank-signal behavior through the
+same injection channel assembly and requires non-regressing MRR@10 and nDCG@10.
+It does not introduce the shared engine, enable missing channels, or change the
+remaining #953 stages.
+
 ## Success Criteria
 
 - A test asserts both surfaces derive their channel set and weights from the

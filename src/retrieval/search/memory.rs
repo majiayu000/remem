@@ -17,7 +17,7 @@ pub use explain::{
     SearchExplainChannel, SearchExplainDetails, SearchExplainResult, SearchExplainResultBreakdown,
 };
 pub use runner::{
-    search, search_with_branch, search_with_branch_explain,
+    search, search_with_branch, search_with_branch_explain, search_with_branch_explain_details,
     search_with_branch_explain_with_suppressed_policy, search_with_branch_with_suppressed_policy,
 };
 pub(crate) use runner::{

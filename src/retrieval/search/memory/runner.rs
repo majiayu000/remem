@@ -154,6 +154,30 @@ pub fn search_with_branch_explain(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub fn search_with_branch_explain_details(
+    conn: &Connection,
+    query: Option<&str>,
+    project: Option<&str>,
+    memory_type: Option<&str>,
+    limit: i64,
+    offset: i64,
+    include_stale: bool,
+    branch: Option<&str>,
+) -> Result<(Vec<Memory>, Option<SearchExplainDetails>)> {
+    search_with_branch_explain_details_with_suppressed_policy(
+        conn,
+        query,
+        project,
+        memory_type,
+        limit,
+        offset,
+        include_stale,
+        branch,
+        false,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
 pub fn search_with_branch_explain_with_suppressed_policy(
     conn: &Connection,
     query: Option<&str>,

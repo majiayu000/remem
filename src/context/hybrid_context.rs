@@ -19,6 +19,12 @@ struct ContextChannel {
     hits: Vec<WeightedRankedHit>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InjectionRankSignalMode {
+    PureRrf,
+    LegacyRankPseudoScore,
+}
+
 pub(super) fn query_hybrid_context_memories(
     conn: &Connection,
     project: &str,
@@ -51,6 +57,29 @@ pub(super) fn query_hybrid_context_memories_with_weights(
     excluded_types: &[&str],
     limit: i64,
     weights: SearchWeights,
+) -> Result<Vec<Memory>> {
+    query_hybrid_context_memories_with_rank_signal_mode(
+        conn,
+        project,
+        query,
+        current_branch,
+        excluded_types,
+        limit,
+        weights,
+        InjectionRankSignalMode::PureRrf,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn query_hybrid_context_memories_with_rank_signal_mode(
+    conn: &Connection,
+    project: &str,
+    query: &str,
+    current_branch: Option<&str>,
+    excluded_types: &[&str],
+    limit: i64,
+    weights: SearchWeights,
+    rank_signal_mode: InjectionRankSignalMode,
 ) -> Result<Vec<Memory>> {
     weights.validate()?;
     if limit <= 0 || query.trim().is_empty() {
@@ -136,6 +165,16 @@ pub(super) fn query_hybrid_context_memories_with_weights(
     }
     if channels.is_empty() {
         return Ok(vec![]);
+    }
+
+    if rank_signal_mode == InjectionRankSignalMode::LegacyRankPseudoScore {
+        for channel in &mut channels {
+            for (rank, hit) in channel.hits.iter_mut().enumerate() {
+                if hit.normalized_score.is_none() {
+                    hit.normalized_score = Some(1.0 / (rank as f64 + 1.0));
+                }
+            }
+        }
     }
 
     let channel_inputs = channels

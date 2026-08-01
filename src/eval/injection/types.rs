@@ -16,6 +16,7 @@ pub struct InjectionEvalReport {
     pub metadata: InjectionEvalMetadata,
     pub metrics: InjectionMetricSummary,
     pub churn: InjectionChurnReport,
+    pub rank_signal_ab: InjectionRankSignalAbReport,
     pub cases: Vec<InjectionCaseReport>,
     pub failing_examples: Vec<String>,
 }
@@ -62,6 +63,23 @@ pub struct InjectionChurnReport {
     pub one_added_changed_bytes: usize,
     pub one_added_first_affected_section: Option<String>,
     pub one_added_prefix_preserved: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InjectionRankSignalAbReport {
+    pub query: String,
+    pub expected_memory_id: i64,
+    pub baseline: InjectionRankSignalArm,
+    pub candidate: InjectionRankSignalArm,
+    pub passed: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InjectionRankSignalArm {
+    pub algorithm: String,
+    pub retrieved_ids: Vec<i64>,
+    pub mrr_at_10: f64,
+    pub ndcg_at_10: f64,
 }
 
 #[derive(Debug, Serialize)]
@@ -161,6 +179,15 @@ impl Display for InjectionEvalReport {
             self.churn.unchanged_changed_bytes,
             self.churn.one_added_changed_bytes,
             self.churn.one_added_prefix_preserved
+        )?;
+        writeln!(
+            f,
+            "rank_signal_ab: baseline_mrr_at_10={:.6} candidate_mrr_at_10={:.6} baseline_ndcg_at_10={:.6} candidate_ndcg_at_10={:.6} passed={}",
+            self.rank_signal_ab.baseline.mrr_at_10,
+            self.rank_signal_ab.candidate.mrr_at_10,
+            self.rank_signal_ab.baseline.ndcg_at_10,
+            self.rank_signal_ab.candidate.ndcg_at_10,
+            self.rank_signal_ab.passed
         )?;
         writeln!(f, "all_checks_passed: {}", self.metrics.all_checks_passed)?;
         if self.failing_examples.is_empty() {
