@@ -1,0 +1,84 @@
+use anyhow::{anyhow, Result};
+
+use super::super::{extract_temporal, TemporalConstraint};
+
+#[test]
+fn separated_exact_dates_accept_cjk_sentence_context() -> Result<()> {
+    let expected_start = chrono::NaiveDate::from_ymd_opt(2026, 5, 4)
+        .ok_or_else(|| anyhow!("valid date should construct"))?
+        .and_hms_opt(0, 0, 0)
+        .ok_or_else(|| anyhow!("valid time should construct"))?
+        .and_utc()
+        .timestamp();
+    for (query, expected_semantic_query) in [
+        ("在2026-05-04发生什么", "在 发生什么"),
+        ("2026-05-04发生什么", " 发生什么"),
+    ] {
+        let constraint =
+            extract_temporal(query).ok_or_else(|| anyhow!("CJK sentence date should parse"))?;
+        assert_eq!(constraint.start_epoch, expected_start);
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            expected_semantic_query
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn month_name_date_identifiers_are_not_temporal_expressions() {
+    for query in [
+        "release/May/4/2026/notes",
+        "release.May.4.2026.notes",
+        "release/4/May/2026/notes",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
+fn invalid_cjk_relative_identifier_does_not_hide_later_phrase() {
+    for query in [
+        "config_7天前_notes，服务在3天前变化",
+        "config_最近7天_notes，服务最近3天有变化",
+    ] {
+        let constraint = extract_temporal(query).expect("later CJK phrase should parse");
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - 3 * 86_400).abs() < 2);
+    }
+}
+
+#[test]
+fn cjk_clause_punctuation_separates_entity_number_from_day_count() {
+    for (query, days) in [
+        ("服务42，7天前发生了什么", 7),
+        ("服务42，365天前发生了什么", 365),
+    ] {
+        let constraint = extract_temporal(query).expect("CJK clause day count should parse");
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - days * 86_400).abs() < 2);
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            "服务42， 发生了什么"
+        );
+    }
+
+    for grouped in [
+        "2，030天前",
+        "12，345天前",
+        "2，30天前",
+        "29，5天前",
+        "2,030天前",
+        "v7天前",
+    ] {
+        assert!(extract_temporal(grouped).is_none(), "{grouped}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(grouped),
+            grouped
+        );
+    }
+}
