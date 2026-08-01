@@ -13,6 +13,7 @@ fn separated_exact_dates_accept_cjk_sentence_context() -> Result<()> {
     for (query, expected_semantic_query) in [
         ("在2026-05-04发生什么", "在 发生什么"),
         ("2026-05-04发生什么", " 发生什么"),
+        ("服务42在2026-05-04发生什么", "服务42在 发生什么"),
     ] {
         let constraint =
             extract_temporal(query).ok_or_else(|| anyhow!("CJK sentence date should parse"))?;

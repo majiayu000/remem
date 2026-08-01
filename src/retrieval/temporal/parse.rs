@@ -214,18 +214,30 @@ fn has_date_context(query: &str, span: &Range<usize>) -> bool {
 
 fn parse_separated_ymd(lower: &str) -> Option<(i64, i64, Range<usize>)> {
     let mut cursor = 0;
-    'words: for raw in lower.split_whitespace() {
-        let raw_start = cursor + lower[cursor..].find(raw)?;
-        cursor = raw_start + raw.len();
-        let token =
-            raw.trim_matches(|c: char| !(c.is_ascii_digit() || c == '-' || c == '/' || c == '.'));
+    'candidates: while cursor < lower.len() {
+        let candidate_start = lower[cursor..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                character.is_ascii_digit().then_some(cursor + offset)
+            })?;
+        let candidate_end = lower[candidate_start..]
+            .char_indices()
+            .find_map(|(offset, character)| {
+                (!(character.is_ascii_digit()
+                    || character == '-'
+                    || character == '/'
+                    || character == '.'))
+                    .then_some(candidate_start + offset)
+            })
+            .unwrap_or(lower.len());
+        cursor = candidate_end;
+        let token = &lower[candidate_start..candidate_end];
         for fmt in ["%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"] {
             if let Ok(date) = NaiveDate::parse_from_str(token, fmt) {
                 let (start, end) = day_range(date)?;
-                let token_start = raw_start + raw.find(token)?;
-                let span = token_start..token_start + token.len();
+                let span = candidate_start..candidate_end;
                 if !has_date_context(lower, &span) {
-                    continue 'words;
+                    continue 'candidates;
                 }
                 return Some((start, end, span));
             }
