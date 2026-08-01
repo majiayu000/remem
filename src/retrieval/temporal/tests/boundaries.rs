@@ -173,8 +173,34 @@ fn cjk_temporal_phrases_consume_validated_introducers() {
         ("服务42自从本周发生了什么", "服务42 发生了什么"),
         ("截至最近7天发生了什么", " 发生了什么"),
         ("截止最近发生了什么", " 发生了什么"),
+        ("截至 2026年5月4日发生了什么", " 发生了什么"),
+        ("截止 今天发生了什么", " 发生了什么"),
+        ("服务42自从 上周发生了什么", "服务42 发生了什么"),
+        ("截至 最近7天发生了什么", " 发生了什么"),
+        ("截止 最近发生了什么", " 发生了什么"),
+        ("截至 7天前发生了什么", " 发生了什么"),
     ] {
         assert!(extract_temporal(query).is_some(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            expected_semantic_query,
+            "{query}"
+        );
+    }
+}
+
+#[test]
+fn fullwidth_identifier_separators_preserve_following_day_counts() {
+    for (query, expected_semantic_query) in [
+        ("service／42,7天前发生了什么", "service／42, 发生了什么"),
+        ("service＼42，7天前发生了什么", "service＼42， 发生了什么"),
+        ("service－42,7天前发生了什么", "service－42, 发生了什么"),
+        ("服务／42,7天前发生了什么", "服务／42, 发生了什么"),
+    ] {
+        let constraint = extract_temporal(query)
+            .unwrap_or_else(|| panic!("fullwidth identifier day count should parse: {query}"));
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - 7 * 86_400).abs() < 2);
         assert_eq!(
             TemporalConstraint::query_without_temporal_expression(query),
             expected_semantic_query,

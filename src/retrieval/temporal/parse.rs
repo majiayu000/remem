@@ -617,7 +617,8 @@ fn preceding_identifier_run(query: &str, end: usize) -> Option<&str> {
         .char_indices()
         .rev()
         .take_while(|(_, character)| {
-            character.is_alphanumeric() || matches!(character, '_' | '-' | '/' | '\\')
+            character.is_alphanumeric()
+                || matches!(character, '_' | '-' | '/' | '\\' | '－' | '／' | '＼')
         })
         .last()
         .map(|(index, _)| index)?;

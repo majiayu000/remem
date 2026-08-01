@@ -63,9 +63,10 @@ pub(super) fn date_span_with_context(query: &str, span: &Range<usize>) -> Option
 }
 
 pub(super) fn span_with_cjk_temporal_introducer(query: &str, span: &Range<usize>) -> Range<usize> {
+    let left = query[..span.start].trim_end_matches(char::is_whitespace);
     for introducer in ["截至", "截止", "自从", "在", "于", "自", "从", "至", "到"] {
-        if query[..span.start].ends_with(introducer) {
-            return span.start - introducer.len()..span.end;
+        if left.ends_with(introducer) {
+            return left.len() - introducer.len()..span.end;
         }
     }
     span.clone()

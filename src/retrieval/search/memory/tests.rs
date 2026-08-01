@@ -252,6 +252,23 @@ fn cjk_temporal_introducers_do_not_compact_with_entity_numbers() {
             "temporal introducer must not remain an independent claim: {query}: {claims:?}"
         );
     }
+
+    for query in [
+        "截至 2026年5月4日有什么变化？",
+        "截止 今天有什么变化？",
+        "服务42自从 上周有什么变化？",
+        "截至 最近7天有什么变化？",
+        "截止 最近有什么变化？",
+        "截至 7天前有什么变化？",
+    ] {
+        let claims = super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert!(
+            !claims
+                .iter()
+                .any(|term| ["截至", "截止", "自从"].contains(&term.as_str())),
+            "spaced temporal introducer must not remain a claim: {query}: {claims:?}"
+        );
+    }
 }
 
 #[test]
