@@ -391,7 +391,7 @@ fn build_query_search_plan(
                 include_suppressed,
             )
         })?;
-    let claim_terms = super::claim::claim_terms(&core_tokens, project, &explicit_entity_terms);
+    let claim_terms = super::claim::query_claim_terms(query_text, project, &explicit_entity_terms);
     let core_refs: Vec<&str> = core_tokens.iter().map(|token| token.as_str()).collect();
     let mut channels: Vec<NamedChannel> = Vec::new();
     let mut fts_query = None;

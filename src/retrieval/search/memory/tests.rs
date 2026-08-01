@@ -7,6 +7,8 @@ use super::{
 };
 
 mod fact_channel;
+mod query_boundaries;
+mod temporal_claims;
 
 fn setup_explain_conn() -> Result<Connection> {
     let conn = Connection::open_in_memory()?;
@@ -274,36 +276,46 @@ fn search_explain_accounts_for_source_anchor_demotion() -> Result<()> {
 }
 
 #[test]
-fn parsed_temporal_number_does_not_filter_temporal_results() -> Result<()> {
-    let conn = setup_explain_conn()?;
-    let now = chrono::Utc::now().timestamp();
-    insert_explain_memory(
-        &conn,
-        &ExplainMemory {
-            id: 1,
-            project: "/repo",
-            title: "Deployment update",
-            content: "Deployment changed in the last several days.",
-            scope: "project",
-            updated_at_epoch: now - 60,
-        },
-    )?;
+fn lowercase_short_query_words_are_not_claim_terms() {
+    let core_terms = crate::retrieval::query_expand::core_tokens("Who is HarborMint assigned to?");
+    let claims = super::claim::claim_terms(&core_terms, Some("/repo"), &["HarborMint".to_string()]);
 
-    let (memories, explain) = search_with_branch_explain(
-        &conn,
-        Some("What changed in the last 30 days?"),
+    assert!(!claims.contains(&"is".to_string()), "{claims:?}");
+    assert!(!claims.contains(&"to".to_string()), "{claims:?}");
+}
+
+#[test]
+fn arbitrary_title_case_predicate_is_not_removed_by_a_static_list() {
+    let query = "Who Maintains NebulaLatch?";
+    let core_terms = crate::retrieval::query_expand::core_tokens(query);
+    let claims =
+        super::claim::claim_terms(&core_terms, Some("/repo"), &["NebulaLatch".to_string()]);
+
+    assert_eq!(claims, vec!["maintains"]);
+    assert!(super::claim::has_distinctive_entity_shape("NebulaLatch"));
+    assert!(super::claim::has_distinctive_entity_shape("incident-17"));
+    assert!(!super::claim::has_distinctive_entity_shape("Maintains"));
+    assert!(!super::claim::has_distinctive_entity_shape("Current"));
+    assert!(super::claim::claim_term_matches(
+        "NebulaLatch is owned by Team Mica",
+        "owning"
+    ));
+    let terms = super::claim::entity_scope_candidates(
+        "How can I remember capitalization rules?",
         Some("/repo"),
-        None,
-        5,
-        0,
-        false,
-        None,
-    )?;
-    let explain = explain.context("query explain should be present")?;
+    );
+    assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("remem")));
+    assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("api")));
+}
 
-    assert_eq!(memories.first().map(|memory| memory.id), Some(1));
-    assert!(explain.temporal_range.is_some());
-    Ok(())
+#[test]
+fn short_uppercase_qualifiers_remain_claim_terms() {
+    let query = "Who verified HarborMint in EU with R2?";
+    let core_terms = crate::retrieval::query_expand::core_tokens(query);
+    let claims = super::claim::claim_terms(&core_terms, Some("/repo"), &["HarborMint".to_string()]);
+
+    assert!(claims.contains(&"eu".to_string()), "{claims:?}");
+    assert!(claims.contains(&"r2".to_string()), "{claims:?}");
 }
 
 #[test]

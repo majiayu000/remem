@@ -3,8 +3,12 @@ use std::collections::HashSet;
 use anyhow::Result;
 use rusqlite::Connection;
 
-#[cfg(test)]
+mod cjk_relational;
+mod query_scaffold;
+
 use crate::memory::Memory;
+use cjk_relational::relational_term_matches;
+use query_scaffold::strip_conversational_prefix;
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(super) enum RelationKind {
@@ -60,9 +64,34 @@ pub(super) fn claim_terms(
         .collect()
 }
 
-#[cfg(test)]
+pub(super) fn query_claim_terms(
+    query_text: &str,
+    project: Option<&str>,
+    explicit_entity_terms: &[String],
+) -> Vec<String> {
+    let query_without_time =
+        crate::retrieval::temporal::TemporalConstraint::query_without_temporal_expression(
+            query_text,
+        );
+    let semantic_query = strip_conversational_prefix(&query_without_time, explicit_entity_terms);
+    let core_terms = crate::retrieval::query_expand::core_tokens(semantic_query);
+    let claims = claim_terms(&core_terms, project, explicit_entity_terms);
+    let stripped_query_has_explicit_entity = explicit_entity_terms
+        .iter()
+        .any(|entity| text_contains_exact_token(semantic_query, entity));
+    if !claims.is_empty()
+        || semantic_query == query_without_time
+        || stripped_query_has_explicit_entity
+    {
+        return claims;
+    }
+
+    let fallback_core_terms = crate::retrieval::query_expand::core_tokens(&query_without_time);
+    claim_terms(&fallback_core_terms, project, explicit_entity_terms)
+}
+
 pub(super) fn claim_term_coverage(memory: &Memory, claim_terms: &[String]) -> f64 {
-    claim_text_coverage(&format!("{} {}", memory.title, memory.text), claim_terms)
+    claim_text_coverage(&format!("{}\n{}", memory.title, memory.text), claim_terms)
 }
 
 pub(super) fn claim_text_coverage(text: &str, claim_terms: &[String]) -> f64 {
@@ -76,11 +105,19 @@ pub(super) fn claim_text_match_count(text: &str, claim_terms: &[String]) -> usiz
     let haystack = text.to_lowercase();
     claim_terms
         .iter()
-        .filter(|term| claim_term_matches(&haystack, term))
+        .enumerate()
+        .filter(|(index, term)| {
+            let following_cjk_relation = claim_terms
+                .get(index + 1)
+                .filter(|next| next.chars().any(is_cjk) && is_relation_only_claim_term(next));
+            claim_term_matches(&haystack, term)
+                || following_cjk_relation
+                    .is_some_and(|predicate| relational_term_matches(&haystack, term, predicate))
+        })
         .count()
 }
 
-fn claim_term_matches(haystack: &str, term: &str) -> bool {
+pub(super) fn claim_term_matches(haystack: &str, term: &str) -> bool {
     if term.chars().any(is_cjk) {
         return text_contains_cjk_term(haystack, term);
     }
@@ -488,20 +525,12 @@ mod tests {
             "Has Project KestrelNook migrated NebulaLatch to Oracle Cloud?",
             Some("synthetic/kestrelnook"),
         );
-
+        let about = entity_scope_candidates("Who owns About?", Some("/repo"));
         assert!(terms.iter().any(|term| term == "NebulaLatch"));
         assert!(!terms.iter().any(|term| term == "KestrelNook"));
         assert!(!terms.iter().any(|term| term == "Project"));
         assert!(!terms.iter().any(|term| term == "Has"));
-    }
-
-    #[test]
-    fn entity_scope_candidates_reject_technical_substring_matches() {
-        let terms =
-            entity_scope_candidates("How can I remember capitalization rules?", Some("/repo"));
-
-        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("remem")));
-        assert!(!terms.iter().any(|term| term.eq_ignore_ascii_case("api")));
+        assert_eq!(about, vec!["About"]);
     }
 
     #[test]
@@ -566,43 +595,6 @@ mod tests {
         for predicate in ["pager", "handles", "owning", "team"] {
             assert!(claims.iter().any(|term| term == predicate), "{claims:?}");
         }
-    }
-
-    #[test]
-    fn arbitrary_title_case_predicate_is_not_removed_by_a_static_list() {
-        let query = "Who Maintains NebulaLatch?";
-        let core_terms = crate::retrieval::query_expand::core_tokens(query);
-        let claims = claim_terms(&core_terms, Some("/repo"), &["NebulaLatch".to_string()]);
-
-        assert_eq!(claims, vec!["maintains"]);
-    }
-
-    #[test]
-    fn short_uppercase_qualifiers_remain_claim_terms() {
-        let query = "Who verified HarborMint in EU with R2?";
-        let core_terms = crate::retrieval::query_expand::core_tokens(query);
-        let claims = claim_terms(&core_terms, Some("/repo"), &["HarborMint".to_string()]);
-
-        assert!(claims.contains(&"eu".to_string()), "{claims:?}");
-        assert!(claims.contains(&"r2".to_string()), "{claims:?}");
-    }
-
-    #[test]
-    fn lowercase_short_query_words_are_not_claim_terms() {
-        let core_terms =
-            crate::retrieval::query_expand::core_tokens("Who is HarborMint assigned to?");
-        let claims = claim_terms(&core_terms, Some("/repo"), &["HarborMint".to_string()]);
-
-        assert!(!claims.contains(&"is".to_string()), "{claims:?}");
-        assert!(!claims.contains(&"to".to_string()), "{claims:?}");
-    }
-
-    #[test]
-    fn distinctive_scope_shape_rejects_plain_title_case_words() {
-        assert!(has_distinctive_entity_shape("NebulaLatch"));
-        assert!(has_distinctive_entity_shape("incident-17"));
-        assert!(!has_distinctive_entity_shape("Maintains"));
-        assert!(!has_distinctive_entity_shape("Current"));
     }
 
     #[test]
@@ -737,14 +729,6 @@ mod tests {
         for (text, term, expected) in cases {
             assert_eq!(claim_term_matches(text, term), expected);
         }
-    }
-
-    #[test]
-    fn ownership_alias_preserves_multi_hop_owner_evidence() {
-        assert!(claim_term_matches(
-            "NebulaLatch is owned by Team Mica",
-            "owning"
-        ));
     }
 
     #[test]

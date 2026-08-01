@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.44` for the GH-946 query-scaffolding follow-up:
+  temporal parsing now returns exact consumed spans and removes only validated
+  time phrases from claim tokens. Conversational request scaffolding and
+  localized time expressions no longer inflate claim confidence, while
+  malformed, grouped, signed, zero, and overflowing counts fail closed.
 - Staged source version `0.6.42` for GH-950: repeated static SQL on the
   SessionStart summary paginator and observation hash/vector dedup funnel now
   reuses rusqlite's per-connection prepared-statement cache. The four static
