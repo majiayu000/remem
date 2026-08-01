@@ -119,6 +119,7 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("不自由软件维护吗", "软件维护不自动化流程"),
         ("半自由软件维护吗", "软件维护半自动系统"),
         ("理由需要维护吗", "需要维护理想模块"),
+        ("根由需要维护吗", "需要维护根目录"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(
