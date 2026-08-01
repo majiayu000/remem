@@ -40,9 +40,22 @@ impl TemporalConstraint {
 
 fn parse_temporal(query: &str) -> Option<ParsedTemporal> {
     let lower = query.to_ascii_lowercase();
-    let mut parsed = parse_temporal_lower(&lower)?;
-    parsed.consumed_span = validated_temporal_span(&lower, &parsed.consumed_span)?;
-    Some(parsed)
+    let mut candidate_query = lower.clone();
+    for _ in 0..=lower.len() {
+        let mut parsed = parse_temporal_lower(&candidate_query)?;
+        if let Some(consumed_span) = validated_temporal_span(&lower, &parsed.consumed_span) {
+            parsed.consumed_span = consumed_span;
+            return Some(parsed);
+        }
+
+        let rejected_span = parsed.consumed_span;
+        if rejected_span.is_empty() {
+            return None;
+        }
+        let structural_mask = "_".repeat(rejected_span.len());
+        candidate_query.replace_range(rejected_span, &structural_mask);
+    }
+    None
 }
 
 fn parse_temporal_lower(lower: &str) -> Option<ParsedTemporal> {

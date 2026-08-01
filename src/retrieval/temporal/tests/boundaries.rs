@@ -54,6 +54,64 @@ fn invalid_cjk_relative_identifier_does_not_hide_later_phrase() {
 }
 
 #[test]
+fn structurally_invalid_temporal_candidates_do_not_end_later_scanning() {
+    for invalid_prefix in [
+        "config_截至昨天",
+        "config_截至今天",
+        "config_截至上周",
+        "config_截至上个月",
+        "config_截至本周",
+        "config_截至7天前",
+    ] {
+        let query = format!("{invalid_prefix} 后续 服务在3天前 changed");
+        let constraint = extract_temporal(&query)
+            .unwrap_or_else(|| panic!("later lower-priority phrase should parse: {query}"));
+        let now = chrono::Utc::now().timestamp();
+        assert!((now - constraint.start_epoch - 3 * 86_400).abs() < 2);
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(&query);
+        assert!(
+            semantic_query.contains(invalid_prefix),
+            "{semantic_query:?}"
+        );
+        assert!(!semantic_query.contains("3天前"), "{semantic_query:?}");
+    }
+
+    for phrase in ["昨天", "今天", "上周", "上个月", "本周", "7天前"] {
+        let invalid_prefix = format!("config_截至{phrase}");
+        let query = format!("{invalid_prefix} 后续 {phrase} changed");
+        assert!(
+            extract_temporal(&query).is_some(),
+            "later same-kind phrase should parse: {query}"
+        );
+        let semantic_query = TemporalConstraint::query_without_temporal_expression(&query);
+        assert!(
+            semantic_query.contains(&invalid_prefix),
+            "{semantic_query:?}"
+        );
+        assert_eq!(
+            semantic_query.matches(phrase).count(),
+            1,
+            "{semantic_query:?}"
+        );
+    }
+}
+
+#[test]
+fn rejected_candidate_masks_do_not_join_surrounding_phrase_fragments() {
+    for query in [
+        "7 config_截至今天 days ago",
+        "last config_截至今天 7 days",
+        "最近config_截至今天7天",
+    ] {
+        assert!(extract_temporal(query).is_none(), "{query}");
+        assert_eq!(
+            TemporalConstraint::query_without_temporal_expression(query),
+            query
+        );
+    }
+}
+
+#[test]
 fn cjk_clause_punctuation_separates_entity_number_from_day_count() {
     for (query, days, expected_semantic_query) in [
         ("服务42，7天前发生了什么", 7, "服务42， 发生了什么"),
