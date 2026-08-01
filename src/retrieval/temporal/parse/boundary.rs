@@ -194,12 +194,14 @@ fn parse_cjk_hour(input: &str) -> Option<u32> {
     let chars: Vec<_> = input.chars().collect();
     match chars.as_slice() {
         [digit] => cjk_clock_digit(*digit),
-        [ten, digit] if is_cjk_ten(*ten) => Some(10 + cjk_clock_digit(*digit)?),
-        [digit, ten] if is_cjk_ten(*ten) && cjk_clock_digit(*digit)? == 2 => Some(20),
+        [ten, digit] if is_cjk_ten(*ten) && (1..=9).contains(&cjk_clock_digit(*digit)?) => {
+            Some(10 + cjk_clock_digit(*digit)?)
+        }
+        [digit, ten] if is_cjk_ten(*ten) && is_canonical_cjk_two(*digit) => Some(20),
         [digit, ten, unit]
             if is_cjk_ten(*ten)
-                && cjk_clock_digit(*digit)? == 2
-                && cjk_clock_digit(*unit)? <= 3 =>
+                && is_canonical_cjk_two(*digit)
+                && (1..=3).contains(&cjk_clock_digit(*unit)?) =>
         {
             Some(20 + cjk_clock_digit(*unit)?)
         }
@@ -226,6 +228,10 @@ fn cjk_clock_digit(character: char) -> Option<u32> {
 
 fn is_cjk_ten(character: char) -> bool {
     matches!(character, '十' | '拾')
+}
+
+fn is_canonical_cjk_two(character: char) -> bool {
+    matches!(character, '二' | '贰' | '貳')
 }
 
 fn phrase_left_boundary_is_valid(query: &str, start: usize, allow_cjk: bool) -> bool {
