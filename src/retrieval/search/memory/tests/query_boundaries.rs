@@ -170,6 +170,32 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
 }
 
 #[test]
+fn cjk_relational_claims_treat_memory_title_and_text_as_separate_clauses() {
+    let claims = super::super::claim::query_claim_terms("模块由小王维护吗？", Some("/repo"), &[]);
+    let memory = crate::memory::Memory {
+        id: 1,
+        session_id: None,
+        project: "/repo".to_string(),
+        topic_key: None,
+        title: "所有权记录".to_string(),
+        text: "小王维护模块。".to_string(),
+        memory_type: "decision".to_string(),
+        files: None,
+        created_at_epoch: 1,
+        updated_at_epoch: 1,
+        status: "active".to_string(),
+        branch: None,
+        scope: "project".to_string(),
+    };
+
+    assert_eq!(
+        super::super::claim::claim_term_coverage(&memory, &claims),
+        1.0,
+        "title must not hide a relation stated at the start of memory text: {claims:?}"
+    );
+}
+
+#[test]
 fn terminal_cjk_question_particles_do_not_pollute_claims() {
     let claims = super::super::claim::query_claim_terms(
         "NebulaLatch运行正常吗？",

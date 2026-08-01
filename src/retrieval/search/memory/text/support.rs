@@ -386,8 +386,7 @@ fn has_graph_claim_evidence(memory_id: i64, plan: &QuerySearchPlan) -> bool {
 }
 
 fn candidate_claim_confidence(memory: &Memory, plan: &QuerySearchPlan) -> f64 {
-    let text = format!("{} {}", memory.title, memory.text);
-    super::super::claim::claim_text_coverage(&text, &plan.claim_terms)
+    super::super::claim::claim_term_coverage(memory, &plan.claim_terms)
 }
 
 fn candidate_in_explicit_entity_scope(memory: &Memory, plan: &QuerySearchPlan) -> bool {

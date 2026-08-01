@@ -6,7 +6,6 @@ use rusqlite::Connection;
 mod cjk_relational;
 mod query_scaffold;
 
-#[cfg(test)]
 use crate::memory::Memory;
 use cjk_relational::relational_term_matches;
 use query_scaffold::strip_conversational_prefix;
@@ -91,9 +90,8 @@ pub(super) fn query_claim_terms(
     claim_terms(&fallback_core_terms, project, explicit_entity_terms)
 }
 
-#[cfg(test)]
 pub(super) fn claim_term_coverage(memory: &Memory, claim_terms: &[String]) -> f64 {
-    claim_text_coverage(&format!("{} {}", memory.title, memory.text), claim_terms)
+    claim_text_coverage(&format!("{}\n{}", memory.title, memory.text), claim_terms)
 }
 
 pub(super) fn claim_text_coverage(text: &str, claim_terms: &[String]) -> f64 {
