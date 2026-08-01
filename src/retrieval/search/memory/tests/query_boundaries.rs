@@ -144,6 +144,14 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("模块由小王维护吗", "如果小王负责维护模块，就通知团队"),
         ("模块由小王维护吗", "不是小王维护模块，而是小李维护模块"),
         ("模块由小王维护吗", "如果小王维护模块，就通知团队"),
+        ("模块由小王维护吗", "非小王负责维护模块"),
+        ("模块由小王维护吗", "尚未让小王负责维护模块"),
+        ("模块由小王维护吗", "不允许小王负责维护模块"),
+        ("模块由小王维护吗", "若小王负责维护模块，就通知团队"),
+        ("模块由小王维护吗", "要是小王负责维护模块，就通知团队"),
+        ("模块由小王维护吗", "曾由小王负责维护模块，现由小李维护模块"),
+        ("模块由小王维护吗", "原由小王负责维护模块，现由小李维护模块"),
+        ("模块由小王维护吗", "小王负责维护模块；现在由小李维护模块"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert!(
@@ -161,6 +169,8 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
             "模块由小李维护吗",
             "过去小王负责维护模块，现在由小李维护模块",
         ),
+        ("模块由小李维护吗", "小王负责维护模块；现在由小李维护模块"),
+        ("模块由小王维护吗", "由小王负责维护模块"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert_eq!(
