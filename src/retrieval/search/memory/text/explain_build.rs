@@ -9,7 +9,6 @@ use super::support::{candidate_confidence, contributions_for, visibility_label};
 use super::QuerySearchPlan;
 use crate::retrieval::search::{
     ChannelHit, SearchExplain, SearchExplainChannel, SearchExplainResult,
-    SearchExplainResultBreakdown,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -69,7 +68,7 @@ pub(super) fn build_explain(
             )
         })
         .collect::<Result<Vec<_>>>()?;
-    let (results, contribution_breakdowns) = explained_results.into_iter().unzip();
+    let results = explained_results;
     Ok(SearchExplain {
         query: query_text.to_string(),
         project: project.map(str::to_string),
@@ -92,7 +91,6 @@ pub(super) fn build_explain(
         rerank: None,
         channels,
         results,
-        contribution_breakdowns,
         has_more: false,
         raw_fallback_count: 0,
     })
@@ -108,7 +106,7 @@ fn explain_result(
     id_to_final_score: &HashMap<i64, f64>,
     staleness_labels: &HashMap<i64, crate::memory::MemoryStalenessLabel>,
     now_epoch: i64,
-) -> Result<(SearchExplainResult, SearchExplainResultBreakdown)> {
+) -> Result<SearchExplainResult> {
     let final_score = id_to_final_score
         .get(&memory.id)
         .copied()
@@ -119,18 +117,15 @@ fn explain_result(
         memory.id
     );
     let contributions = contributions_for(memory.id, plan)?;
-    let contribution_sum = contributions
-        .totals
-        .iter()
-        .try_fold(0.0, |total, contribution| {
-            let next = total + contribution.score;
-            ensure!(
-                next.is_finite(),
-                "fusion explanation score overflow for memory {}",
-                memory.id
-            );
-            Ok(next)
-        })?;
+    let contribution_sum = contributions.iter().try_fold(0.0, |total, contribution| {
+        let next = total + contribution.score;
+        ensure!(
+            next.is_finite(),
+            "fusion explanation score overflow for memory {}",
+            memory.id
+        );
+        Ok(next)
+    })?;
     let fusion_score = id_to_fusion_score
         .get(&memory.id)
         .copied()
@@ -152,24 +147,18 @@ fn explain_result(
         "invalid post-fusion score factor for memory {}",
         memory.id
     );
-    Ok((
-        SearchExplainResult {
-            memory_id: memory.id,
-            final_rank: index + 1,
-            final_score,
-            evidence_confidence: candidate_confidence(memory, plan),
-            project: memory.project.clone(),
-            scope: memory.scope.clone(),
-            visibility: visibility_label(memory, project).to_string(),
-            staleness: staleness_labels
-                .get(&memory.id)
-                .cloned()
-                .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
-            contributions: contributions.totals,
-        },
-        SearchExplainResultBreakdown {
-            memory_id: memory.id,
-            contributions: contributions.breakdowns,
-        },
-    ))
+    Ok(SearchExplainResult {
+        memory_id: memory.id,
+        final_rank: index + 1,
+        final_score,
+        evidence_confidence: candidate_confidence(memory, plan),
+        project: memory.project.clone(),
+        scope: memory.scope.clone(),
+        visibility: visibility_label(memory, project).to_string(),
+        staleness: staleness_labels
+            .get(&memory.id)
+            .cloned()
+            .unwrap_or_else(|| memory::memory_staleness_label(memory, now_epoch)),
+        contributions,
+    })
 }

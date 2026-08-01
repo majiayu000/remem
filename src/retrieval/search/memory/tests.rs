@@ -170,7 +170,7 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
     }
     assert_eq!(
         explain
-            .contribution_breakdowns
+            .contribution_breakdowns()
             .iter()
             .map(|breakdown| breakdown.memory_id)
             .collect::<Vec<_>>(),
@@ -181,7 +181,11 @@ fn search_explain_reports_channels_scores_and_visibility() -> Result<()> {
             .collect::<Vec<_>>(),
         "breakdowns must have one uniquely associated entry in result order"
     );
-    for (result, breakdown) in explain.results.iter().zip(&explain.contribution_breakdowns) {
+    for (result, breakdown) in explain
+        .results
+        .iter()
+        .zip(explain.contribution_breakdowns())
+    {
         assert_eq!(breakdown.memory_id, result.memory_id);
         assert_eq!(breakdown.contributions.len(), result.contributions.len());
         for (total, details) in result.contributions.iter().zip(&breakdown.contributions) {

@@ -137,6 +137,37 @@ fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
     assert_eq!(serialized["fusion_score"].as_f64(), Some(0.5));
     assert_eq!(serialized["post_fusion_score_factor"].as_f64(), Some(0.5));
 
+    let explain = remem::retrieval::search::SearchExplain {
+        query: "entity".to_string(),
+        project: Some("public-api-project".to_string()),
+        memory_type: None,
+        branch: None,
+        include_stale: false,
+        limit: 10,
+        offset: 0,
+        fetch_limit: 10,
+        expanded_terms: vec![],
+        core_terms: vec![],
+        claim_terms: vec![],
+        fts_query: None,
+        temporal_range: None,
+        temporal_field: None,
+        rrf_k: 60.0,
+        min_evidence_confidence: 0.62,
+        filtered_result_count: 0,
+        timings: vec![],
+        rerank: None,
+        channels: vec![],
+        results: vec![result],
+        has_more: false,
+        raw_fallback_count: 0,
+    };
+    let serialized = serde_json::to_value(&explain).expect("search explain should serialize");
+    assert_eq!(
+        serialized["contribution_breakdowns"][0]["memory_id"].as_i64(),
+        Some(7)
+    );
+
     let breakdown = remem::retrieval::search::SearchExplainResultBreakdown {
         memory_id: 7,
         contributions: vec![remem::retrieval::search::ChannelContributionBreakdown {

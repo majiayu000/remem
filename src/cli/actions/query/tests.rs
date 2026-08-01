@@ -8,10 +8,7 @@ use crate::memory::{
     service::{MultiHopMeta, SearchResultSet},
     Memory,
 };
-use crate::retrieval::search::{
-    ChannelContribution, ChannelContributionBreakdown, SearchExplain, SearchExplainResult,
-    SearchExplainResultBreakdown,
-};
+use crate::retrieval::search::{ChannelContribution, SearchExplain, SearchExplainResult};
 use serde_json::Value;
 
 use super::{
@@ -102,7 +99,7 @@ fn sample_explain() -> SearchExplain {
         results: vec![SearchExplainResult {
             memory_id: 1,
             final_rank: 1,
-            final_score: 0.016393,
+            final_score: 0.04098360655737705,
             evidence_confidence: 1.0,
             project: "proj".to_string(),
             scope: "project".to_string(),
@@ -111,18 +108,7 @@ fn sample_explain() -> SearchExplain {
             contributions: vec![ChannelContribution {
                 channel: "fts".to_string(),
                 rank: 1,
-                score: 0.016393,
-            }],
-        }],
-        contribution_breakdowns: vec![SearchExplainResultBreakdown {
-            memory_id: 1,
-            contributions: vec![ChannelContributionBreakdown {
-                channel: "fts".to_string(),
-                rank: 1,
-                weight: 1.0,
-                reciprocal_rank: 0.016393,
-                normalized_signal: None,
-                total_score: 0.016393,
+                score: 0.04098360655737705,
             }],
         }],
         has_more: false,
@@ -235,9 +221,9 @@ fn cli_search_render_includes_explain_without_memory_content_dump() {
     assert!(output.contains("channels:"));
     assert!(output.contains("fts: 1#1"));
     assert!(output.contains("visibility=project-local"));
-    assert!(output.contains("fusion_score=0.016393 post_fusion_score_factor=1.000"));
+    assert!(output.contains("fusion_score=0.040984 post_fusion_score_factor=1.000"));
     assert!(output.contains(
-        "contributions: fts#1=0.016393 (weight=1.000000, reciprocal_rank=0.016393, normalized_signal=none, total=0.016393)"
+        "contributions: fts#1=0.040984 (weight=2.500000, reciprocal_rank=0.016393, normalized_signal=none, total=0.040984)"
     ));
     assert!(!output.contains("second line"));
 }
@@ -402,16 +388,22 @@ fn cli_search_json_report_is_machine_parseable() -> std::result::Result<(), serd
     assert_eq!(parsed["multi_hop"]["entities_discovered"][0], "Mem0");
     assert_eq!(parsed["explain_details"]["query"], "needle");
     let explain_result = &parsed["explain_details"]["results"][0];
-    assert_eq!(explain_result["fusion_score"].as_f64(), Some(0.016393));
+    assert_eq!(
+        explain_result["fusion_score"].as_f64(),
+        Some(0.04098360655737705)
+    );
     assert_eq!(
         explain_result["post_fusion_score_factor"].as_f64(),
         Some(1.0)
     );
     let contribution = &parsed["explain_details"]["contribution_breakdowns"][0]["contributions"][0];
-    assert_eq!(contribution["weight"].as_f64(), Some(1.0));
-    assert_eq!(contribution["reciprocal_rank"].as_f64(), Some(0.016393));
+    assert_eq!(contribution["weight"].as_f64(), Some(2.5));
+    assert_eq!(contribution["reciprocal_rank"].as_f64(), Some(1.0 / 61.0));
     assert!(contribution.get("normalized_signal").is_none());
-    assert_eq!(contribution["total_score"].as_f64(), Some(0.016393));
+    assert_eq!(
+        contribution["total_score"].as_f64(),
+        Some(0.04098360655737705)
+    );
     Ok(())
 }
 

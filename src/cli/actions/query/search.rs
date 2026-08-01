@@ -398,9 +398,9 @@ fn render_search_explain(explain: &SearchExplain) -> String {
         ));
     }
     output.push_str("  results:\n");
+    let contribution_breakdowns = explain.contribution_breakdowns();
     for result in &explain.results {
-        let contribution_breakdown = explain
-            .contribution_breakdowns
+        let contribution_breakdown = contribution_breakdowns
             .iter()
             .find(|breakdown| breakdown.memory_id == result.memory_id);
         let post_fusion_score_factor = result

@@ -103,6 +103,7 @@ fn run_usage_shadow_candidate(
     k: usize,
     weights: SearchWeights,
 ) -> Result<UsageShadowRun> {
+    weights.validate()?;
     let fetch_limit = k.max(10) as i64;
     let mut scored_queries = 0usize;
     let mut abstention_passed = 0usize;
@@ -287,6 +288,30 @@ mod tests {
 
     use super::*;
     use crate::eval::golden::{EvidenceRef, GoldenMemory, GoldenQuery};
+
+    #[test]
+    fn empty_usage_shadow_rejects_non_finite_weights() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let dataset = GoldenDataset {
+            version: None,
+            description: None,
+            corpus: vec![],
+            queries: vec![],
+        };
+        let error = run_usage_shadow_candidate(
+            &conn,
+            &dataset,
+            5,
+            SearchWeights {
+                usage: f64::NAN,
+                ..SearchWeights::default()
+            },
+        )
+        .err()
+        .context("empty usage-shadow evaluations must reject non-finite weights")?;
+        assert!(error.to_string().contains("usage"), "{error:#}");
+        Ok(())
+    }
 
     #[test]
     fn usage_shadow_reports_usage_scores_without_changing_default_weight() -> Result<()> {

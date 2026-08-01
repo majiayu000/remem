@@ -288,7 +288,6 @@ pub(super) fn search_with_query_explain(
                 rerank: None,
                 channels: vec![],
                 results: vec![],
-                contribution_breakdowns: vec![],
                 has_more: false,
                 raw_fallback_count: 0,
             },
