@@ -85,6 +85,11 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
         ("模块由非凡团队维护吗？", "非凡团队维护模块。"),
         ("模块由若水团队维护吗？", "若水团队维护模块。"),
         ("模块由小王负责吗？", "小王负责模块。"),
+        ("方案由小王维护吗？", "小王维护方案。"),
+        ("方案由自由软件基金会维护吗？", "自由软件基金会维护方案。"),
+        ("真理由小王维护吗？", "小王维护真理。"),
+        ("模块由小王维护吗？", "小王维护模块．无关说明"),
+        ("模块由小王维护吗？", "小王维护模块，涉及API.v2维护模块"),
     ] {
         let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
         assert_eq!(

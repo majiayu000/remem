@@ -13,32 +13,39 @@ pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &st
         .match_indices('由')
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    let candidates = markers
-        .iter()
-        .copied()
-        .filter(|index| {
-            !has_lexical_you_suffix(term, *index) && !has_lexical_you_prefix(term, *index)
+    let ambiguous_single_marker = markers.len() == 1;
+    markers
+        .into_iter()
+        .filter(|infix| !has_lexical_you_suffix(term, *infix))
+        .filter(|infix| {
+            !ambiguous_single_marker || !has_single_character_lexical_you_prefix(term, *infix)
         })
-        .collect::<Vec<_>>();
-    let [infix] = candidates.as_slice() else {
-        return false;
-    };
-    let subject = term[..*infix]
-        .strip_suffix("是否")
-        .unwrap_or(&term[..*infix]);
-    let agent = &term[*infix + '由'.len_utf8()..];
-    if subject.is_empty() || agent.is_empty() {
-        return false;
-    }
-    let direct = format!("{agent}{predicate}{subject}");
-    let responsible = (predicate != "负责").then(|| format!("{agent}负责{predicate}{subject}"));
-    standalone_relation_matches(
-        haystack,
-        &direct,
-        responsible.as_deref(),
-        predicate,
-        subject,
-    )
+        .filter(|infix| {
+            let subject = term[..*infix]
+                .strip_suffix("是否")
+                .unwrap_or(&term[..*infix]);
+            let agent = &term[*infix + '由'.len_utf8()..];
+            if subject.is_empty()
+                || agent.is_empty()
+                || agent.contains("转由")
+                || agent.contains("改由")
+            {
+                return false;
+            }
+            let direct = format!("{agent}{predicate}{subject}");
+            let responsible =
+                (predicate != "负责").then(|| format!("{agent}负责{predicate}{subject}"));
+            standalone_relation_matches(
+                haystack,
+                &direct,
+                responsible.as_deref(),
+                predicate,
+                subject,
+            )
+        })
+        .take(2)
+        .count()
+        == 1
 }
 
 fn standalone_relation_matches(
@@ -48,8 +55,8 @@ fn standalone_relation_matches(
     predicate: &str,
     subject: &str,
 ) -> bool {
-    let clauses = haystack
-        .split(is_strong_clause_boundary)
+    let clauses = strong_relation_clauses(haystack)
+        .into_iter()
         .map(str::trim)
         .filter(|clause| !clause.is_empty())
         .collect::<Vec<_>>();
@@ -78,11 +85,28 @@ fn relation_clause_conflicts(clause: &str, predicate: &str, subject: &str) -> bo
     clause.contains(predicate) && clause.contains(subject)
 }
 
-fn is_strong_clause_boundary(character: char) -> bool {
-    matches!(
-        character,
-        '。' | '！' | '？' | '；' | '.' | '!' | '?' | ';' | '\n' | '\r'
-    )
+fn strong_relation_clauses(text: &str) -> Vec<&str> {
+    let mut clauses = Vec::new();
+    let mut start = 0;
+    let mut previous = None;
+    for (index, character) in text.char_indices() {
+        let next = text[index + character.len_utf8()..].chars().next();
+        let identifier_period = character == '.'
+            && previous.is_some_and(|value: char| value.is_ascii_alphanumeric())
+            && next.is_some_and(|value| value.is_ascii_alphanumeric());
+        if !identifier_period
+            && matches!(
+                character,
+                '。' | '！' | '？' | '；' | '．' | '.' | '!' | '?' | ';' | '\n' | '\r'
+            )
+        {
+            clauses.push(&text[start..index]);
+            start = index + character.len_utf8();
+        }
+        previous = Some(character);
+    }
+    clauses.push(&text[start..]);
+    clauses
 }
 
 fn has_lexical_you_suffix(term: &str, infix: usize) -> bool {
@@ -92,13 +116,11 @@ fn has_lexical_you_suffix(term: &str, infix: usize) -> bool {
         .is_some_and(|suffix| LEXICAL_YOU_SUFFIXES.contains(&suffix))
 }
 
-fn has_lexical_you_prefix(term: &str, infix: usize) -> bool {
+fn has_single_character_lexical_you_prefix(term: &str, infix: usize) -> bool {
     let subject = &term[..infix];
-    if subject.ends_with("根因") {
-        return false;
-    }
-    subject
-        .chars()
-        .next_back()
-        .is_some_and(|prefix| LEXICAL_YOU_PREFIXES.contains(&prefix))
+    subject.chars().count() == 1
+        && subject
+            .chars()
+            .next()
+            .is_some_and(|prefix| LEXICAL_YOU_PREFIXES.contains(&prefix))
 }
