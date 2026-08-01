@@ -3,17 +3,22 @@
   "issue": 954,
   "dataset": {
     "path": "eval/golden.json",
+    "source_commit": "cf25a5489eecbd1ddbb2401824a11d97eaa01be0",
+    "git_blob_oid": "79822be8ce1e353c54015a49372c6fc2c7a4d9f4",
     "raw_sha256": "5c828b0161a556bbc8906d75f52b260653bb86d298e43d1bff563125ea728ee9",
     "query_id": "rank-signal-01",
     "slice": "rank_signal",
     "k": 5
   },
   "reproduction": {
-    "command": "cargo run --quiet -- eval-graph-decision --dataset <candidate-worktree>/eval/golden.json --json-out <report.json>",
-    "comparison": "Run the same dataset from each exact commit and read standard.non_associative_by_slice.rank_signal plus the rank-signal-01 query summary."
+    "materialize_dataset": "mkdir -p /tmp/remem-gh954-evidence && git archive --format=tar --output=/tmp/remem-gh954-golden.tar cf25a5489eecbd1ddbb2401824a11d97eaa01be0 eval/golden.json && tar -xf /tmp/remem-gh954-golden.tar -C /tmp/remem-gh954-evidence",
+    "run_each_commit": "In separate worktrees at baseline.commit and candidate.commit, run: cargo run --quiet -- eval-graph-decision --dataset /tmp/remem-gh954-evidence/eval/golden.json --json-out <report.json>",
+    "comparison": "Read standard.non_associative_by_slice.rank_signal plus standard.query_summaries[id=rank-signal-01] from both reports. The baseline commit is the origin/main algorithm plus only the same deterministic FTS tie-break used by the candidate."
   },
   "baseline": {
-    "commit": "23aa067c4c7e8f1f50ac3e1149a727efcfb7d339",
+    "commit": "0aa358c0dcb624ff3248d1a383fb1b60a6efa3ef",
+    "algorithm_origin": "23aa067c4c7e8f1f50ac3e1149a727efcfb7d339",
+    "determinism_patch": "ORDER BY rank_score ASC, id ASC plus its focused regression test; fusion behavior is unchanged from algorithm_origin.",
     "retrieved_ids": [
       87,
       88
@@ -28,7 +33,7 @@
     }
   },
   "candidate": {
-    "commit": "00935383edeb43a4c9b4fce41bd33f739255a66d",
+    "commit": "e00d73604a0ce4be9ee0c299752d4f17707411a6",
     "retrieved_ids": [
       88,
       87
