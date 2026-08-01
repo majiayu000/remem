@@ -114,6 +114,18 @@ fn cjk_relational_claims_match_reordered_candidates_without_losing_qualifiers() 
             "{query}: {claims:?}"
         );
     }
+    for (query, unrelated_candidate) in [
+        ("自由软件维护吗", "软件维护自动化模块"),
+        ("不自由软件维护吗", "软件维护不自动化流程"),
+        ("半自由软件维护吗", "软件维护半自动系统"),
+        ("理由需要维护吗", "需要维护理想模块"),
+    ] {
+        let claims = super::super::claim::query_claim_terms(query, Some("/repo"), &[]);
+        assert!(
+            super::super::claim::claim_text_coverage(unrelated_candidate, &claims) < 0.62,
+            "lexical 由 must not enable relation reordering: {query}: {claims:?}"
+        );
+    }
 
     let claims = super::super::claim::query_claim_terms("EU模块由小王维护R2", Some("/repo"), &[]);
     assert!(claims.contains(&"eu".to_string()), "{claims:?}");

@@ -11,10 +11,7 @@ pub(super) fn relational_term_matches(haystack: &str, term: &str, predicate: &st
     let candidates = markers
         .iter()
         .copied()
-        .filter(|index| {
-            !is_youyu(term, *index)
-                && (markers.len() == 1 || !is_lexical_you_compound(term, *index))
-        })
+        .filter(|index| !is_youyu(term, *index) && !is_lexical_you_compound(term, *index))
         .collect::<Vec<_>>();
     let [infix] = candidates.as_slice() else {
         return false;
