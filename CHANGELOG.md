@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.46` for GH-955: memory candidates now use a
+  closed low/medium/high risk rubric and claim-level source support instead of
+  rejecting an entire candidate for common words such as `not`, `fail`, or
+  `token`. Directly supported observation-path failure lessons can promote;
+  non-failure lessons, preferences, procedures, prospective claims, secrets,
+  unsupported claims, and instruction-pattern content remain fail-closed with
+  explicit reasons. The deterministic extraction corpus expands from 2 to 20
+  labeled cases and reports the complete risk-class distribution.
 - Staged source version `0.6.44` for the GH-946 query-scaffolding follow-up:
   temporal parsing now returns exact consumed spans and removes only validated
   time phrases from claim tokens. Conversational request scaffolding and

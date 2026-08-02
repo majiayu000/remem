@@ -14,6 +14,7 @@ use crate::memory::MemoryType;
 mod apply;
 mod auto_promote;
 mod parse;
+mod prompt;
 pub(crate) mod review;
 pub(crate) mod review_stats;
 pub(crate) mod route;
@@ -27,18 +28,8 @@ pub(crate) use auto_promote::contains_unsafe_memory_marker;
 use auto_promote::{candidate_promotion_decision, CandidatePromotionDecision};
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
+use prompt::MEMORY_CANDIDATE_SYSTEM;
 pub(super) use route::{route_candidate, CandidateRoute};
-
-const MEMORY_CANDIDATE_SYSTEM: &str = "\
-Generate durable memory candidates from extracted observations.
-Return zero or more <memory_candidate> blocks.
-Each block must include <scope>, <type>, <topic_key>, <risk_class>, <confidence>, and <text>.
-<type> must be one of the valid candidate memory types listed in the task. Observations use a different type vocabulary (feature/refactor/change are not candidate types), so never copy an observation's type verbatim into <type>; map feature/refactor/change to discovery. Factual findings use discovery; never use fact.
-Use scope=project unless the observation is explicitly a stable user preference.
-Use risk_class=low only for factual project-scoped information that can be promoted without review.
-If there is no durable memory candidate, return exactly <no_candidates reason=\"...\"/>.
-If evidence is ambiguous or contradictory, return exactly <defer reason=\"...\"/> so it can be retried or reviewed.
-Use only provided observations and evidence; do not invent files, outcomes, decisions, or facts.";
 
 const SOURCE_KIND_OBSERVATION: &str = "observation";
 const SOURCE_KIND_SUMMARY: &str = "summary";
@@ -796,5 +787,7 @@ fn eval_task(
 pub(super) mod tests;
 #[cfg(test)]
 mod tests_autopromote;
+#[cfg(test)]
+mod tests_autopromote_gh955;
 #[cfg(test)]
 mod tests_autopromote_safety;

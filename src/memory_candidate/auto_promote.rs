@@ -3,7 +3,7 @@ use crate::memory::MemoryType;
 use crate::runtime_config::SummaryGateMode;
 
 use super::route::CandidateRoute;
-use super::support::has_conservative_source_support;
+use super::support::has_claim_level_source_support;
 use super::{ObservationBatch, ParsedMemoryCandidate};
 
 const AUTO_PROMOTE_MIN_CONFIDENCE: f64 = 0.80;
@@ -19,9 +19,31 @@ const AUTO_PROMOTE_UNSAFE_MARKERS: &[&str] = &[
     "password",
     "payment",
     "private key",
+    "access token",
+    "api token",
+    "auth token",
+    "refresh token",
+    "session token",
     "secret",
     "sk-",
-    "token",
+];
+
+const FAILURE_LESSON_MARKERS: &[&str] = &[
+    "bug",
+    "bugs",
+    "crash",
+    "crashed",
+    "deadlock",
+    "error",
+    "errors",
+    "fail",
+    "failed",
+    "failure",
+    "failures",
+    "incident",
+    "regression",
+    "regressions",
+    "timeout",
 ];
 
 pub(super) fn should_auto_promote(
@@ -38,7 +60,7 @@ pub(super) fn should_auto_promote(
         && route.is_repo_owned()
         && route.routing_confidence >= AUTO_PROMOTE_MIN_CONFIDENCE
         && has_evidence_ids(evidence_json)
-        && MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote)
+        && candidate_type_allows_auto_promote(candidate, batch)
         && !contains_auto_promote_unsafe_marker(&candidate.text)
         && is_supported_by_source_observation(candidate, batch)
 }
@@ -146,8 +168,17 @@ pub(super) fn auto_promote_block_reason(
     if !has_evidence_ids(evidence_json) {
         return "missing_evidence_ids";
     }
-    if !MemoryType::parse(&candidate.memory_type).is_some_and(MemoryType::auto_promote) {
-        return "memory_type_not_auto_promotable";
+    match MemoryType::parse(&candidate.memory_type) {
+        Some(memory_type) if memory_type.auto_promote() => {}
+        Some(MemoryType::Lesson) => {
+            let Some(batch) = batch else {
+                return "missing_source_observation_batch";
+            };
+            if !candidate_type_allows_auto_promote(candidate, batch) {
+                return "lesson_not_failure_qualified";
+            }
+        }
+        _ => return "memory_type_not_auto_promotable",
     }
     if contains_auto_promote_unsafe_marker(&candidate.text) {
         return "contains_unsafe_marker";
@@ -227,15 +258,56 @@ fn is_supported_by_source_observation(
     let Some(candidate_type) = MemoryType::parse(&candidate.memory_type) else {
         return false;
     };
-    batch.observations.iter().any(|observation| {
-        if observation.confidence < AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
-            || !candidate_type.supports_observation_type(&observation.observation_type)
-        {
-            return false;
+    let source_texts = batch
+        .observations
+        .iter()
+        .filter(|observation| {
+            observation.confidence >= AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
+                && observation_type_supports_candidate(
+                    candidate_type,
+                    &observation.observation_type,
+                )
+        })
+        .map(|observation| observation.text.as_str())
+        .collect::<Vec<_>>();
+    has_claim_level_source_support(&candidate_text, &source_texts)
+}
+
+fn candidate_type_allows_auto_promote(
+    candidate: &ParsedMemoryCandidate,
+    batch: &ObservationBatch,
+) -> bool {
+    match MemoryType::parse(&candidate.memory_type) {
+        Some(memory_type) if memory_type.auto_promote() => true,
+        Some(MemoryType::Lesson) => {
+            contains_failure_lesson_marker(&candidate.text)
+                && batch.observations.iter().any(|observation| {
+                    observation.confidence >= AUTO_PROMOTE_MIN_OBSERVATION_CONFIDENCE
+                        && observation_type_supports_candidate(
+                            MemoryType::Lesson,
+                            &observation.observation_type,
+                        )
+                        && contains_failure_lesson_marker(&observation.text)
+                })
         }
-        let observation_text = normalize_evidence_text(&observation.text);
-        has_conservative_source_support(&candidate_text, &observation_text)
-    })
+        _ => false,
+    }
+}
+
+fn observation_type_supports_candidate(candidate_type: MemoryType, observation_type: &str) -> bool {
+    if candidate_type == MemoryType::Lesson {
+        matches!(
+            MemoryType::from_observation_type(observation_type),
+            Some(MemoryType::Bugfix | MemoryType::Decision)
+        )
+    } else {
+        candidate_type.supports_observation_type(observation_type)
+    }
+}
+
+fn contains_failure_lesson_marker(text: &str) -> bool {
+    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|token| FAILURE_LESSON_MARKERS.contains(&token.to_ascii_lowercase().as_str()))
 }
 
 fn summary_type_allowlisted(memory_type: &str) -> bool {
@@ -273,10 +345,7 @@ fn is_supported_by_summary_source(
     if candidate_text.chars().count() < 24 {
         return SummarySupport::Failed;
     }
-    if source_texts.iter().any(|source_text| {
-        let source_text = normalize_evidence_text(source_text);
-        has_conservative_source_support(&candidate_text, &source_text)
-    }) {
+    if has_claim_level_source_support(&candidate_text, &source_texts) {
         SummarySupport::Supported
     } else {
         SummarySupport::Failed

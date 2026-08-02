@@ -413,6 +413,8 @@ Tool operations ──→ captured_events (raw capture ledger)
                          ▼ observation_extract (single AI call per range)
                   observations (structured memory)
                          │
+                         ▼ claim-level support + closed risk/type gate
+                         │
              ┌───────────┼───────────┐
              ▼           ▼           ▼
           active      stale      compressed source
@@ -434,6 +436,12 @@ session_summaries ──→ memories (auto-promoted)
 ```
 
 - **Incremental delta**: During extraction, inject latest 10 existing memories so AI skips duplicates
+- **Candidate promotion boundary**: each candidate sentence must be supported
+  by an eligible source observation with matching polarity/modality. Directly
+  supported observation-path failure lessons are the only lesson subtype that
+  can auto-promote; preference/procedure types remain fail-closed. Secret
+  phrases and instruction patterns are blocked before memory creation, and all
+  pending decisions retain an explicit block reason.
 - **File overlap staleness**: When new operations overwrite old files, old observations auto-marked stale
 - **Time decay**: FTS search ranked by relevance × time decay, stale observations further penalized
 - **Auto compression**: Projects with >100 observations: keep newest 50, merge oldest 30 into 1-2 summaries

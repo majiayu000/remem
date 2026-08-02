@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 const MIN_SUPPORT_TOKEN_OVERLAP: usize = 6;
 const MIN_SUPPORT_TOKEN_RATIO: f64 = 0.72;
 const MAX_SUPPORT_TOKEN_WINDOW_EXTRA: usize = 5;
@@ -26,17 +28,39 @@ pub(crate) fn has_conservative_source_support(
     candidate_text: &str,
     observation_text: &str,
 ) -> bool {
-    if contains_support_risk_token(candidate_text) {
-        return false;
-    }
-    has_conservative_exact_support(candidate_text, observation_text)
-        || has_conservative_support_token_overlap(candidate_text, observation_text)
+    has_claim_level_source_support(candidate_text, &[observation_text])
+}
+
+pub(crate) fn has_claim_level_source_support(candidate_text: &str, source_texts: &[&str]) -> bool {
+    let candidate_text = normalize_support_text(candidate_text);
+    let source_texts = source_texts
+        .iter()
+        .map(|source_text| normalize_support_text(source_text))
+        .collect::<Vec<_>>();
+    let claims = support_sentence_segments(&candidate_text);
+    !claims.is_empty()
+        && claims.iter().all(|claim| {
+            is_promotable_assertion(claim)
+                && source_texts.iter().any(|source_text| {
+                    has_conservative_exact_support(claim, source_text)
+                        || has_conservative_support_token_overlap(claim, source_text)
+                })
+        })
+}
+
+fn normalize_support_text(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase()
 }
 
 fn has_conservative_exact_support(candidate_text: &str, observation_text: &str) -> bool {
     support_sentence_segments(observation_text)
         .into_iter()
-        .any(|segment| !contains_support_risk_token(&segment) && segment.contains(candidate_text))
+        .any(|segment| {
+            semantic_signatures_match(candidate_text, &segment) && segment.contains(candidate_text)
+        })
 }
 
 fn has_conservative_support_token_overlap(candidate_text: &str, observation_text: &str) -> bool {
@@ -51,7 +75,7 @@ fn has_conservative_support_token_overlap(candidate_text: &str, observation_text
     support_text_segments(observation_text)
         .into_iter()
         .any(|segment| {
-            !contains_support_risk_token(&segment)
+            semantic_signatures_match(candidate_text, &segment)
                 && has_conservative_support_token_overlap_segment(
                     &candidate_tokens,
                     &segment,
@@ -116,7 +140,8 @@ fn has_ordered_support_window(
 }
 
 fn support_tokens(text: &str) -> Vec<SupportToken> {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric())
+    normalize_contractions(text)
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
         .filter_map(support_token)
         .collect()
 }
@@ -213,12 +238,14 @@ fn support_token(token: &str) -> Option<SupportToken> {
         return None;
     }
     let required_identifier = is_required_support_identifier(token);
-    if !required_identifier && token.chars().count() < SUPPORT_TOKEN_MIN_CHARS {
+    let required_semantic = SUPPORT_RISK_TOKENS.contains(&token);
+    if !required_identifier && !required_semantic && token.chars().count() < SUPPORT_TOKEN_MIN_CHARS
+    {
         return None;
     }
     let text = normalize_support_token(token);
     Some(SupportToken {
-        required: required_identifier || !is_optional_support_token(&text),
+        required: required_identifier || required_semantic || !is_optional_support_token(&text),
         text,
     })
 }
@@ -258,9 +285,54 @@ fn normalize_support_token(token: &str) -> String {
     token.to_string()
 }
 
-fn contains_support_risk_token(text: &str) -> bool {
-    text.split(|ch: char| !ch.is_ascii_alphanumeric())
-        .any(|token| SUPPORT_RISK_TOKENS.contains(&token))
+fn normalize_contractions(text: &str) -> String {
+    text.to_ascii_lowercase().replace("n't", " not")
+}
+
+fn is_promotable_assertion(text: &str) -> bool {
+    semantic_signature(text).iter().all(|semantic| {
+        !matches!(
+            *semantic,
+            "uncertain" | "prospective" | "prescriptive" | "conditional"
+        )
+    })
+}
+
+fn semantic_signatures_match(candidate_text: &str, source_text: &str) -> bool {
+    semantic_signature(candidate_text) == semantic_signature(source_text)
+}
+
+fn semantic_signature(text: &str) -> BTreeSet<&'static str> {
+    let normalized = normalize_contractions(text);
+    normalized
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter_map(|token| match token {
+            "no" | "not" | "never" | "cannot" | "cant" | "couldn" | "didn" | "doesn" | "don"
+            | "hadn" | "hasn" | "haven" | "isn" | "shouldn" | "wasn" | "weren" | "won"
+            | "wouldn" => Some("negative"),
+            "may" | "might" | "could" | "would" => Some("uncertain"),
+            "will" | "plan" | "planned" | "planning" | "plans" => Some("prospective"),
+            "must" | "shall" | "should" => Some("prescriptive"),
+            "if" | "unless" => Some("conditional"),
+            "fail" | "failed" | "failing" | "fails" | "failure" | "failures" => {
+                Some("outcome_fail")
+            }
+            "pass" | "passed" | "passes" | "passing" | "succeed" | "succeeded" | "succeeds"
+            | "success" => Some("outcome_success"),
+            "allow" | "allowed" | "allows" => Some("control_allow"),
+            "enable" | "enabled" | "enables" => Some("control_enable"),
+            "deny" | "denied" | "denies" => Some("control_deny"),
+            "disable" | "disabled" | "disables" => Some("control_disable"),
+            "reject" | "rejected" | "rejects" => Some("control_reject"),
+            "prevent" | "prevented" | "prevents" => Some("control_prevent"),
+            "delete" | "deleted" | "deletes" | "remove" | "removed" | "removes" => {
+                Some("destructive_delete")
+            }
+            "ignore" | "ignored" | "ignores" => Some("control_ignore"),
+            "skip" | "skipped" | "skips" => Some("control_skip"),
+            _ => None,
+        })
+        .collect()
 }
 
 fn is_support_stop_token(token: &str) -> bool {
