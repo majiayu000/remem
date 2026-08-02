@@ -624,6 +624,12 @@ Phase B/C 必须独立经过架构审阅、实现验证和发布说明；在这�
 Breaking migration 不得由普通 open、CLI、hook、worker、MCP/API 或通用
 runner 执行；plan 先 fsync prep journal，再 checkpoint/close handles 并 bind stable DB/empty-WAL/backup。
 prep journal 使 orphan backup 可 exact adopt/cleanup；step2 full pure rebuild 后 locked revalidate；
-route typed、response_aux=seal response、same-target request 串行。Windows 保持 v1，v2 typed 拒绝；
-started 只 resume same exact attempt。外部 triggers recreate；所有 memory-owned UPDATE effects
-延迟到 terminal C/dependent rows exact-match 后安装。
+route/local-copy-path storage typed；intent 锁定 response schema、payload fingerprint 与
+compiled planner 的 canonical non-secret request plan，manifest 只能从 plan 重推；ordered
+response contract 只排序一次 plan/response header 与 typed-only rows，并以 4,096-row、
+field caps 和 16-MiB total row budget 逐字段 Exact/Aggregate/InternalOnly
+校验 typed results 与 Rust DTO，unknown/unclassified/missing/extra/reordered/duplicate target/result
+fail closed；超限 v1 operation 在 intent 前 typed reject、禁止无 root seal 的 auto-chunk；全部 protocol trigger `RAISE(ROLLBACK)` 且 catch 后不可 commit；same-target request 串行。Windows 保持 v1，v2 typed 拒绝；started 只 resume
+same exact attempt。外部 triggers recreate；所有 memory-owned I/U/D side-effect triggers
+在 replay 缺席，terminal C/non-FTS dependents exact-match 后一次 rebuild，并以 external-content
+`integrity-check,rank=1` 校验 FTS，再 byte-exact 安装。

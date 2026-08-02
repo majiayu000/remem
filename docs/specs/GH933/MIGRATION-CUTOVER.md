@@ -8,13 +8,13 @@ The migration registry marks this migration `operator_only`. Ordinary `open_db()
 Only dedicated `plan` may prepare the pending DB. Before backup creation it durably writes a mode-0600 `plan_preparing` journal binding stable DB/binary identity, absent final destination, and random nonce; it checkpoints/closes, writes/fsyncs/test-opens nonce-qualified temp, journals `backup_ready` with digest, then publishes no-replace and writes the canonical plan. Restart may remove only the exact journal-owned incomplete temp, or adopt an existing final only when `backup_ready` identity/digest/test-open and unchanged DB/empty-WAL all match; unknown/multiple/unowned artifacts fail ambiguous. Apply writes `approved`. Before start, `retire --plan ... --reason` may exact-match unchanged state and mark it `retired`; retired history is audit-only and replacement requires no active record. Started retirement/reuse fails.
 ## Implementation Scope
 - `Cargo.toml`/`Cargo.lock`: enable rusqlite `functions`.
-- `src/db/sql_functions.rs` and every connection constructor: register the versioned function after SQLCipher keying and before schema access or writes.
+- `src/db/sql_functions.rs` and every connection constructor: register the versioned functions after SQLCipher keying and before schema access or writes.
 - The migration SQL/runner install this DDL, rebuild `memories`, and backfill in one `BEGIN IMMEDIATE`.
 - Every insert and named route/lifecycle update creates intent before mutation, populates all declared bindings, and seals last.
 - `src/memory/service/{types,save,local_copy}.rs` and all API/MCP save adapters require the caller key and journal protocol.
 - `src/doctor/` reconciles safe journals and visibly reports every pending or ambiguous journal.
 - Run the migration/API/writer/DDL/UDF/retry/fault tests in the rehearsal.
-No connection may register different framing; no fallback hash is legal.
+No connection may register different framing/contracts; no fallback hash or response mapping is legal.
 ## Versioned SHA-256 Data Flow
 `remem_sha256_frame_v1` is variadic and takes alternating names and values:
 
@@ -32,7 +32,7 @@ u64_be(value byte length)
 value bytes
 ```
 
-INTEGER is signed i64 big-endian; REAL is exact IEEE-754 f64 bits in big-endian; TEXT/BLOB use exact bytes; NULL has length zero and differs from empty. Return is exactly 64 lowercase hex; registration is `DETERMINISTIC | INNOCUOUS`, and failure aborts. Rust hashes requests before SQL; SQL chains results and hashes request/terminal/schema/response while triggers hash typed OLD/NEW. Golden vectors cover NULL/empty, i64 bounds, negative zero/non-finite rejection, multibyte/NUL TEXT, BLOB, pair order and duplicate names against independent Python.
+INTEGER is signed i64 big-endian; REAL is exact IEEE-754 f64 bits in big-endian; TEXT/BLOB use exact bytes; NULL has length zero and differs from empty. Return is exactly 64 lowercase hex; registration is `DETERMINISTIC | INNOCUOUS`, and failure aborts. Rust hashes requests before SQL; SQL chains results and hashes request/terminal/schema/response while triggers hash typed OLD/NEW. Golden vectors cover NULL/empty, i64 bounds, negative zero/non-finite rejection, multibyte/NUL TEXT, BLOB, pair order and duplicate names against independent Python. `remem_validate_write_manifest_v1` is a deterministic/innocuous scalar and `remem_validate_write_response_v1` a deterministic/innocuous aggregate; both fail closed. Their retained compile-time registry is keyed by `(writer_kind,request_schema_version,response_schema_version)`. Intent locks that tuple plus a canonical, non-secret, behavior-complete `request_plan_json` bound to the payload fingerprint: the exact selector and option presence, ordered input-item fingerprints, and every resolved target's stable pre-mutation identity/version/fingerprint and requested outcome. Dynamic writers build it under the same `BEGIN IMMEDIATE` from one compiled planner over the locked snapshot; that immutable vector is the sole input to both mutation and plan serialization, so neither caller nor writer supplies a separate target list or manifest. The manifest validator receives the payload fingerprint, parses the exact request-plan DTO, and re-derives the only accepted ordered manifest. The ordered response aggregate receives one `record_kind=0` header carrying writer/schema/request/plan/response once, followed by `record_kind=1` rows carrying only typed fields; header blobs are not repeated per row, while the required `response_aux` response copy is charged to the row budget. It parses the exact Rust response DTO and classifies every result field exactly once as `Exact(response path)|Aggregate(response field)|InternalOnly`: Exact values byte/type-match, Aggregate values are recomputed across the complete plan/result set, and InternalOnly is accepted only for an enumerated contract/kind/outcome/field. Unknown writer/version/plan/target/kind/outcome/field, arbitrary `binding_json`, missing/extra/reordered/duplicate target, result or projection, and any request-plan/manifest/result/DTO disagreement fail closed; no writer-supplied path/visibility flag exists. V1 caps a request at 4,096 manifested rows, 8 MiB each for canonical plan/manifest/response and each `binding_json`, and 16 MiB for the conservative encoded sum of every sorted row record (512 bytes overhead plus all TEXT/BLOB arguments per row); with the single header, large-value sorter input is below 33 MiB plus bounded B-tree overhead. The planner rejects a logical operation whose conservative worst case exceeds any cap with typed `write_batch_too_large_v1` before intent/mutation; an unexpected actual overrun raises the same error and rolls back. V1 never auto-chunks. A future chunked contract requires a root plan/seal binding exact child ordinal/count/plan fingerprints and typed child receipts.
 ## Caller Idempotency
 
 Every direct save entrypoint requires `idempotency_key`; the adapter trims ASCII outer whitespace once, then requires 1–128 bytes in `[A-Za-z0-9._~-]` and derives:
@@ -42,7 +42,7 @@ request_id = "save_" || lower_hex(
     SHA-256("remem/save-idempotency/v1\0" || normalized_key)
 )
 ```
-Only `request_id` is retained; raw/normalized keys never enter serialization, database, journals, logs, errors, traces, metrics, or responses. Fingerprint excludes key/credentials and covers every other raw field, Option presence, list order/duplicates, reference time, defaults, and effective inputs:
+Only `request_id` is retained; raw/normalized keys never enter serialization, database, journals, logs, errors, traces, metrics, or responses. The payload fingerprint excludes key/credentials and covers every other raw field, Option presence, list order/duplicates, reference time, defaults, and effective inputs. On an initial miss, the separately hashed plan is built under the write lock; a sealed equal-payload retry replays the stored response without recomputing that plan against later database state:
 
 | Existing row | Incoming key/payload | Result |
 | --- | --- | --- |
@@ -94,11 +94,11 @@ CREATE TABLE memory_write_requests (
     request_fingerprint TEXT NOT NULL
       CHECK (typeof(request_fingerprint)='text' AND instr(request_fingerprint,char(0))=0 AND length(request_fingerprint) = 64)
       CHECK (request_fingerprint NOT GLOB '*[^0-9a-f]*'),
-    request_schema_version INTEGER NOT NULL CHECK (typeof(request_schema_version)='integer' AND request_schema_version > 0),
+    request_schema_version INTEGER NOT NULL CHECK (typeof(request_schema_version)='integer' AND request_schema_version > 0), response_schema_version INTEGER NOT NULL CHECK (typeof(response_schema_version)='integer' AND response_schema_version > 0),
+    request_plan_json TEXT NOT NULL CHECK (json_valid(request_plan_json)=1 AND json_type(request_plan_json)='object' AND request_plan_json=json(request_plan_json)) CHECK (length(CAST(request_plan_json AS BLOB)) BETWEEN 2 AND 8388608),
+    request_plan_fingerprint TEXT NOT NULL CHECK (typeof(request_plan_fingerprint)='text' AND instr(request_plan_fingerprint,char(0))=0 AND length(request_plan_fingerprint)=64 AND request_plan_fingerprint NOT GLOB '*[^0-9a-f]*'),
     requested_at_epoch INTEGER NOT NULL CHECK (typeof(requested_at_epoch)='integer' AND requested_at_epoch >= 0),
-    expected_results_json TEXT NOT NULL
-      CHECK (json_valid(expected_results_json) = 1)
-      CHECK (json_type(expected_results_json) = 'array'),
+    expected_results_json TEXT NOT NULL CHECK (json_valid(expected_results_json)=1 AND json_type(expected_results_json)='array') CHECK (length(CAST(expected_results_json AS BLOB)) BETWEEN 2 AND 8388608),
     PRIMARY KEY (writer_kind, request_id),
     FOREIGN KEY (writer_kind, request_id)
       REFERENCES memory_write_request_commits(writer_kind, request_id)
@@ -229,7 +229,7 @@ CREATE TABLE memory_write_request_results (
     operation_id INTEGER CHECK (operation_id IS NULL OR typeof(operation_id)='integer'), api_operation_id TEXT CHECK (api_operation_id IS NULL OR (typeof(api_operation_id)='text' AND instr(api_operation_id,char(0))=0)),
     claim_id INTEGER CHECK (claim_id IS NULL OR typeof(claim_id)='integer'),
     audit_event_id INTEGER CHECK (audit_event_id IS NULL OR typeof(audit_event_id)='integer'),
-    local_copy_path TEXT,
+    local_copy_path TEXT CHECK (local_copy_path IS NULL OR (typeof(local_copy_path)='text' AND instr(local_copy_path,char(0))=0)),
     local_copy_digest TEXT
       CHECK (
         local_copy_digest IS NULL
@@ -238,10 +238,7 @@ CREATE TABLE memory_write_request_results (
           AND local_copy_digest NOT GLOB '*[^0-9a-f]*'
         )
       ),
-    binding_json TEXT NOT NULL
-      CHECK (json_valid(binding_json) = 1)
-      CHECK (json_type(binding_json) = 'object')
-      CHECK (binding_json = json(binding_json)),
+    binding_json TEXT NOT NULL CHECK (json_valid(binding_json)=1 AND json_type(binding_json)='object' AND binding_json=json(binding_json)) CHECK (length(CAST(binding_json AS BLOB)) BETWEEN 2 AND 8388608),
     previous_binding_fingerprint TEXT
       CHECK (
         previous_binding_fingerprint IS NULL
@@ -279,9 +276,7 @@ CREATE TABLE memory_write_request_commits (
       CHECK (typeof(result_fingerprint)='text' AND instr(result_fingerprint,char(0))=0 AND length(result_fingerprint) = 64)
       CHECK (result_fingerprint NOT GLOB '*[^0-9a-f]*'),
     response_schema_version INTEGER NOT NULL CHECK (typeof(response_schema_version)='integer' AND response_schema_version > 0),
-    response_json TEXT NOT NULL
-      CHECK (json_valid(response_json) = 1)
-      CHECK (response_json = json(response_json)),
+    response_json TEXT NOT NULL CHECK (json_valid(response_json)=1 AND response_json=json(response_json)) CHECK (length(CAST(response_json AS BLOB)) BETWEEN 2 AND 8388608),
     committed_at_epoch INTEGER NOT NULL CHECK (typeof(committed_at_epoch)='integer' AND committed_at_epoch >= 0),
     PRIMARY KEY (writer_kind, request_id),
     FOREIGN KEY (writer_kind, request_id)
@@ -291,9 +286,9 @@ CREATE TABLE memory_write_request_commits (
 CREATE TRIGGER memory_write_request_manifest_guard
 BEFORE INSERT ON memory_write_requests
 BEGIN
-  SELECT CASE WHEN NEW.expected_results_json<>json(NEW.expected_results_json)
-    OR json_array_length(NEW.expected_results_json)=0
-    THEN RAISE(ABORT, 'invalid request result manifest') END;
+  SELECT CASE WHEN (typeof(NEW.request_plan_json)='text' AND length(CAST(NEW.request_plan_json AS BLOB))>8388608) OR (typeof(NEW.expected_results_json)='text' AND length(CAST(NEW.expected_results_json AS BLOB))>8388608) OR CASE WHEN json_valid(NEW.expected_results_json)=1 AND json_type(NEW.expected_results_json)='array' THEN json_array_length(NEW.expected_results_json)>4096 ELSE 0 END THEN RAISE(ROLLBACK,'write_batch_too_large_v1') END;
+  SELECT CASE WHEN NOT (typeof(NEW.request_plan_json)='text' AND length(CAST(NEW.request_plan_json AS BLOB)) BETWEEN 2 AND 8388608 AND CASE WHEN json_valid(NEW.request_plan_json)=1 THEN json_type(NEW.request_plan_json)='object' AND NEW.request_plan_json=json(NEW.request_plan_json) ELSE 0 END) OR NOT (typeof(NEW.expected_results_json)='text' AND length(CAST(NEW.expected_results_json AS BLOB)) BETWEEN 2 AND 8388608 AND CASE WHEN json_valid(NEW.expected_results_json)=1 THEN json_type(NEW.expected_results_json)='array' AND NEW.expected_results_json=json(NEW.expected_results_json) AND json_array_length(NEW.expected_results_json) BETWEEN 1 AND 4096 ELSE 0 END) THEN RAISE(ROLLBACK,'invalid request result manifest') END;
+  SELECT CASE WHEN NEW.request_plan_fingerprint<>remem_sha256_frame_v1('domain','memory_write_request_plan/v1','writer_kind',NEW.writer_kind,'request_id',NEW.request_id,'request_fingerprint',NEW.request_fingerprint,'request_schema_version',NEW.request_schema_version,'response_schema_version',NEW.response_schema_version,'request_plan_json',NEW.request_plan_json) OR remem_validate_write_manifest_v1(NEW.writer_kind,NEW.request_schema_version,NEW.response_schema_version,NEW.request_fingerprint,NEW.request_plan_json,NEW.expected_results_json) IS NOT 1 THEN RAISE(ROLLBACK,'invalid request result manifest') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM json_each(NEW.expected_results_json) AS item
     WHERE item.type<>'object' OR json_type(item.value,'$.result_ordinal')<>'integer'
@@ -308,7 +303,7 @@ BEGIN
        OR json(item.value)<>json_object(
          'result_ordinal',json_extract(item.value,'$.result_ordinal'),
          'binding_kind',json_extract(item.value,'$.binding_kind'))
-  ) THEN RAISE(ABORT, 'invalid request result manifest entry') END;
+  ) THEN RAISE(ROLLBACK, 'invalid request result manifest entry') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM json_each(NEW.expected_results_json) AS earlier
     JOIN json_each(NEW.expected_results_json) AS later
@@ -319,11 +314,11 @@ BEGIN
              json_extract(later.value,'$.result_ordinal')
          AND json_extract(earlier.value,'$.binding_kind')>=
              json_extract(later.value,'$.binding_kind'))
-  ) THEN RAISE(ABORT, 'request result manifest is not strictly sorted') END;
+  ) THEN RAISE(ROLLBACK, 'request result manifest is not strictly sorted') END;
   SELECT CASE WHEN (
     SELECT count(*) FROM json_each(NEW.expected_results_json)
     WHERE json_extract(value,'$.binding_kind')='response_aux'
-  )<>1 THEN RAISE(ABORT, 'request manifest needs one response_aux') END;
+  )<>1 THEN RAISE(ROLLBACK, 'request manifest needs one response_aux') END;
 END;
 CREATE TRIGGER memory_route_ledger_insert_guard
 BEFORE INSERT ON memory_route_ledger
@@ -331,7 +326,7 @@ BEGIN
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_commits
     WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref
-  ) THEN RAISE(ABORT, 'sealed request cannot append route ledger') END;
+  ) THEN RAISE(ROLLBACK, 'sealed request cannot append route ledger') END;
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1 FROM memory_write_requests AS request,
       json_each(request.expected_results_json) AS expected
@@ -339,7 +334,7 @@ BEGIN
       AND request.request_id=NEW.source_ref
       AND json_extract(expected.value,'$.result_ordinal')=NEW.source_result_ordinal
       AND json_extract(expected.value,'$.binding_kind') IN ('insert_origin','route_transition')
-  ) THEN RAISE(ABORT, 'route ledger lacks typed manifest slot') END;
+  ) THEN RAISE(ROLLBACK, 'route ledger lacks typed manifest slot') END;
 END;
 CREATE TRIGGER memory_lifecycle_ledger_insert_guard
 BEFORE INSERT ON memory_lifecycle_ledger
@@ -347,7 +342,7 @@ BEGIN
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_commits
     WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref
-  ) THEN RAISE(ABORT, 'sealed request cannot append lifecycle ledger') END;
+  ) THEN RAISE(ROLLBACK, 'sealed request cannot append lifecycle ledger') END;
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1 FROM memory_write_requests AS request,
       json_each(request.expected_results_json) AS expected
@@ -355,31 +350,31 @@ BEGIN
       AND request.request_id=NEW.source_ref
       AND json_extract(expected.value,'$.result_ordinal')=NEW.source_result_ordinal
       AND json_extract(expected.value,'$.binding_kind') IN ('insert_origin','lifecycle_transition')
-  ) THEN RAISE(ABORT, 'lifecycle ledger lacks typed manifest slot') END;
+  ) THEN RAISE(ROLLBACK, 'lifecycle ledger lacks typed manifest slot') END;
 END;
 CREATE TRIGGER memory_route_ledger_fingerprint_guard BEFORE INSERT ON memory_route_ledger BEGIN
-  SELECT CASE WHEN (NEW.route_version=1 AND (NEW.previous_route_id IS NOT NULL OR NEW.source_kind NOT IN ('insert','legacy_backfill'))) OR (NEW.route_version>1 AND (NEW.source_kind IN ('insert','legacy_backfill') OR NOT EXISTS (SELECT 1 FROM memory_route_ledger AS OLD WHERE OLD.id=NEW.previous_route_id AND OLD.memory_id=NEW.memory_id AND OLD.route_version=NEW.route_version-1 AND OLD.effective_at_epoch<=NEW.effective_at_epoch))) THEN RAISE(ABORT, 'invalid route predecessor') END;
-  SELECT CASE WHEN NEW.route_version>1 AND NOT (NEW.placement_project IS NOT (SELECT placement_project FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.source_project IS NOT (SELECT source_project FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.target_project IS NOT (SELECT target_project FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.owner_scope IS NOT (SELECT owner_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.owner_key IS NOT (SELECT owner_key FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.memory_type IS NOT (SELECT memory_type FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.topic_key IS NOT (SELECT topic_key FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.topic_domain IS NOT (SELECT topic_domain FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.routing_confidence IS NOT (SELECT routing_confidence FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.routing_reason IS NOT (SELECT routing_reason FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.context_class IS NOT (SELECT context_class FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.memory_scope IS NOT (SELECT memory_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.branch IS NOT (SELECT branch FROM memory_route_ledger WHERE id=NEW.previous_route_id)) THEN RAISE(ABORT, 'route successor is unchanged') END;
-  SELECT CASE WHEN NEW.source_fingerprint IS NOT remem_sha256_frame_v1('domain','memory_route_ledger/v1','old_memory_id',(SELECT memory_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_route_version',(SELECT route_version FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_previous_route_id',(SELECT previous_route_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_effective_at_epoch',(SELECT effective_at_epoch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_kind',(SELECT source_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_audit_event_id',(SELECT audit_event_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_writer_kind',(SELECT source_writer_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_ref',(SELECT source_ref FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_result_ordinal',(SELECT source_result_ordinal FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=(SELECT source_writer_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id) AND request_id=(SELECT source_ref FROM memory_route_ledger WHERE id=NEW.previous_route_id)),'old_coverage_kind',(SELECT coverage_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_coverage_start_epoch',(SELECT coverage_start_epoch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_placement_project',(SELECT placement_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_project',(SELECT source_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_target_project',(SELECT target_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_owner_scope',(SELECT owner_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_owner_key',(SELECT owner_key FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_memory_type',(SELECT memory_type FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_topic_key',(SELECT topic_key FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_topic_domain',(SELECT topic_domain FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_routing_confidence',(SELECT routing_confidence FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_routing_reason',(SELECT routing_reason FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_context_class',(SELECT context_class FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_memory_scope',(SELECT memory_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_branch',(SELECT branch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'new_memory_id',NEW.memory_id,'new_route_version',NEW.route_version,'new_previous_route_id',NEW.previous_route_id,'new_effective_at_epoch',NEW.effective_at_epoch,'new_source_kind',NEW.source_kind,'new_audit_event_id',NEW.audit_event_id,'new_source_writer_kind',NEW.source_writer_kind,'new_source_ref',NEW.source_ref,'new_source_result_ordinal',NEW.source_result_ordinal,'new_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref),'new_coverage_kind',NEW.coverage_kind,'new_coverage_start_epoch',NEW.coverage_start_epoch,'new_placement_project',NEW.placement_project,'new_source_project',NEW.source_project,'new_target_project',NEW.target_project,'new_owner_scope',NEW.owner_scope,'new_owner_key',NEW.owner_key,'new_memory_type',NEW.memory_type,'new_topic_key',NEW.topic_key,'new_topic_domain',NEW.topic_domain,'new_routing_confidence',NEW.routing_confidence,'new_routing_reason',NEW.routing_reason,'new_context_class',NEW.context_class,'new_memory_scope',NEW.memory_scope,'new_branch',NEW.branch) THEN RAISE(ABORT, 'route fingerprint mismatch') END;
+  SELECT CASE WHEN (NEW.route_version=1 AND (NEW.previous_route_id IS NOT NULL OR NEW.source_kind NOT IN ('insert','legacy_backfill'))) OR (NEW.route_version>1 AND (NEW.source_kind IN ('insert','legacy_backfill') OR NOT EXISTS (SELECT 1 FROM memory_route_ledger AS OLD WHERE OLD.id=NEW.previous_route_id AND OLD.memory_id=NEW.memory_id AND OLD.route_version=NEW.route_version-1 AND OLD.effective_at_epoch<=NEW.effective_at_epoch))) THEN RAISE(ROLLBACK, 'invalid route predecessor') END;
+  SELECT CASE WHEN NEW.route_version>1 AND NOT (NEW.placement_project IS NOT (SELECT placement_project FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.source_project IS NOT (SELECT source_project FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.target_project IS NOT (SELECT target_project FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.owner_scope IS NOT (SELECT owner_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.owner_key IS NOT (SELECT owner_key FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.memory_type IS NOT (SELECT memory_type FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.topic_key IS NOT (SELECT topic_key FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.topic_domain IS NOT (SELECT topic_domain FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.routing_confidence IS NOT (SELECT routing_confidence FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.routing_reason IS NOT (SELECT routing_reason FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.context_class IS NOT (SELECT context_class FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.memory_scope IS NOT (SELECT memory_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id) OR NEW.branch IS NOT (SELECT branch FROM memory_route_ledger WHERE id=NEW.previous_route_id)) THEN RAISE(ROLLBACK, 'route successor is unchanged') END;
+  SELECT CASE WHEN NEW.source_fingerprint IS NOT remem_sha256_frame_v1('domain','memory_route_ledger/v1','old_memory_id',(SELECT memory_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_route_version',(SELECT route_version FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_previous_route_id',(SELECT previous_route_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_effective_at_epoch',(SELECT effective_at_epoch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_kind',(SELECT source_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_audit_event_id',(SELECT audit_event_id FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_writer_kind',(SELECT source_writer_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_ref',(SELECT source_ref FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_result_ordinal',(SELECT source_result_ordinal FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=(SELECT source_writer_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id) AND request_id=(SELECT source_ref FROM memory_route_ledger WHERE id=NEW.previous_route_id)),'old_coverage_kind',(SELECT coverage_kind FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_coverage_start_epoch',(SELECT coverage_start_epoch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_placement_project',(SELECT placement_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_source_project',(SELECT source_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_target_project',(SELECT target_project FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_owner_scope',(SELECT owner_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_owner_key',(SELECT owner_key FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_memory_type',(SELECT memory_type FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_topic_key',(SELECT topic_key FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_topic_domain',(SELECT topic_domain FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_routing_confidence',(SELECT routing_confidence FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_routing_reason',(SELECT routing_reason FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_context_class',(SELECT context_class FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_memory_scope',(SELECT memory_scope FROM memory_route_ledger WHERE id=NEW.previous_route_id),'old_branch',(SELECT branch FROM memory_route_ledger WHERE id=NEW.previous_route_id),'new_memory_id',NEW.memory_id,'new_route_version',NEW.route_version,'new_previous_route_id',NEW.previous_route_id,'new_effective_at_epoch',NEW.effective_at_epoch,'new_source_kind',NEW.source_kind,'new_audit_event_id',NEW.audit_event_id,'new_source_writer_kind',NEW.source_writer_kind,'new_source_ref',NEW.source_ref,'new_source_result_ordinal',NEW.source_result_ordinal,'new_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref),'new_coverage_kind',NEW.coverage_kind,'new_coverage_start_epoch',NEW.coverage_start_epoch,'new_placement_project',NEW.placement_project,'new_source_project',NEW.source_project,'new_target_project',NEW.target_project,'new_owner_scope',NEW.owner_scope,'new_owner_key',NEW.owner_key,'new_memory_type',NEW.memory_type,'new_topic_key',NEW.topic_key,'new_topic_domain',NEW.topic_domain,'new_routing_confidence',NEW.routing_confidence,'new_routing_reason',NEW.routing_reason,'new_context_class',NEW.context_class,'new_memory_scope',NEW.memory_scope,'new_branch',NEW.branch) THEN RAISE(ROLLBACK, 'route fingerprint mismatch') END;
 END;
 CREATE TRIGGER memory_lifecycle_ledger_fingerprint_guard BEFORE INSERT ON memory_lifecycle_ledger BEGIN
-  SELECT CASE WHEN (NEW.lifecycle_version=1 AND (NEW.previous_lifecycle_id IS NOT NULL OR NEW.previous_status IS NOT NULL OR NEW.source_kind NOT IN ('insert','legacy_backfill') OR NEW.source_action<>'baseline')) OR (NEW.lifecycle_version>1 AND (NEW.source_kind IN ('insert','legacy_backfill') OR NEW.source_action='baseline' OR NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS OLD WHERE OLD.id=NEW.previous_lifecycle_id AND OLD.memory_id=NEW.memory_id AND OLD.lifecycle_version=NEW.lifecycle_version-1 AND OLD.new_status=NEW.previous_status AND OLD.effective_at_epoch<=NEW.effective_at_epoch))) THEN RAISE(ABORT, 'invalid lifecycle predecessor') END;
-  SELECT CASE WHEN NEW.source_fingerprint IS NOT remem_sha256_frame_v1('domain','memory_lifecycle_ledger/v1','old_memory_id',(SELECT memory_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_lifecycle_version',(SELECT lifecycle_version FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_previous_lifecycle_id',(SELECT previous_lifecycle_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_effective_at_epoch',(SELECT effective_at_epoch FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_previous_status',(SELECT previous_status FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_new_status',(SELECT new_status FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_kind',(SELECT source_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_action',(SELECT source_action FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_operation_id',(SELECT source_operation_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_api_operation_id',(SELECT source_api_operation_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_audit_event_id',(SELECT audit_event_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_writer_kind',(SELECT source_writer_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_ref',(SELECT source_ref FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_result_ordinal',(SELECT source_result_ordinal FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=(SELECT source_writer_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id) AND request_id=(SELECT source_ref FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id)),'old_coverage_kind',(SELECT coverage_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_coverage_start_epoch',(SELECT coverage_start_epoch FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'new_memory_id',NEW.memory_id,'new_lifecycle_version',NEW.lifecycle_version,'new_previous_lifecycle_id',NEW.previous_lifecycle_id,'new_effective_at_epoch',NEW.effective_at_epoch,'new_previous_status',NEW.previous_status,'new_new_status',NEW.new_status,'new_source_kind',NEW.source_kind,'new_source_action',NEW.source_action,'new_source_operation_id',NEW.source_operation_id,'new_source_api_operation_id',NEW.source_api_operation_id,'new_audit_event_id',NEW.audit_event_id,'new_source_writer_kind',NEW.source_writer_kind,'new_source_ref',NEW.source_ref,'new_source_result_ordinal',NEW.source_result_ordinal,'new_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref),'new_coverage_kind',NEW.coverage_kind,'new_coverage_start_epoch',NEW.coverage_start_epoch) THEN RAISE(ABORT, 'lifecycle fingerprint mismatch') END;
+  SELECT CASE WHEN (NEW.lifecycle_version=1 AND (NEW.previous_lifecycle_id IS NOT NULL OR NEW.previous_status IS NOT NULL OR NEW.source_kind NOT IN ('insert','legacy_backfill') OR NEW.source_action<>'baseline')) OR (NEW.lifecycle_version>1 AND (NEW.source_kind IN ('insert','legacy_backfill') OR NEW.source_action='baseline' OR NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS OLD WHERE OLD.id=NEW.previous_lifecycle_id AND OLD.memory_id=NEW.memory_id AND OLD.lifecycle_version=NEW.lifecycle_version-1 AND OLD.new_status=NEW.previous_status AND OLD.effective_at_epoch<=NEW.effective_at_epoch))) THEN RAISE(ROLLBACK, 'invalid lifecycle predecessor') END;
+  SELECT CASE WHEN NEW.source_fingerprint IS NOT remem_sha256_frame_v1('domain','memory_lifecycle_ledger/v1','old_memory_id',(SELECT memory_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_lifecycle_version',(SELECT lifecycle_version FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_previous_lifecycle_id',(SELECT previous_lifecycle_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_effective_at_epoch',(SELECT effective_at_epoch FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_previous_status',(SELECT previous_status FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_new_status',(SELECT new_status FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_kind',(SELECT source_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_action',(SELECT source_action FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_operation_id',(SELECT source_operation_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_api_operation_id',(SELECT source_api_operation_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_audit_event_id',(SELECT audit_event_id FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_writer_kind',(SELECT source_writer_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_ref',(SELECT source_ref FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_source_result_ordinal',(SELECT source_result_ordinal FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=(SELECT source_writer_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id) AND request_id=(SELECT source_ref FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id)),'old_coverage_kind',(SELECT coverage_kind FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'old_coverage_start_epoch',(SELECT coverage_start_epoch FROM memory_lifecycle_ledger WHERE id=NEW.previous_lifecycle_id),'new_memory_id',NEW.memory_id,'new_lifecycle_version',NEW.lifecycle_version,'new_previous_lifecycle_id',NEW.previous_lifecycle_id,'new_effective_at_epoch',NEW.effective_at_epoch,'new_previous_status',NEW.previous_status,'new_new_status',NEW.new_status,'new_source_kind',NEW.source_kind,'new_source_action',NEW.source_action,'new_source_operation_id',NEW.source_operation_id,'new_source_api_operation_id',NEW.source_api_operation_id,'new_audit_event_id',NEW.audit_event_id,'new_source_writer_kind',NEW.source_writer_kind,'new_source_ref',NEW.source_ref,'new_source_result_ordinal',NEW.source_result_ordinal,'new_request_fingerprint',(SELECT request_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.source_writer_kind AND request_id=NEW.source_ref),'new_coverage_kind',NEW.coverage_kind,'new_coverage_start_epoch',NEW.coverage_start_epoch) THEN RAISE(ROLLBACK, 'lifecycle fingerprint mismatch') END;
 END;
 CREATE TRIGGER memory_write_result_guard
 BEFORE INSERT ON memory_write_request_results
-BEGIN
+BEGIN SELECT CASE WHEN typeof(NEW.binding_json)='text' AND length(CAST(NEW.binding_json AS BLOB))>8388608 THEN RAISE(ROLLBACK,'write_batch_too_large_v1') END; SELECT CASE WHEN NOT (typeof(NEW.binding_json)='text' AND length(CAST(NEW.binding_json AS BLOB)) BETWEEN 2 AND 8388608 AND CASE WHEN json_valid(NEW.binding_json)=1 THEN json_type(NEW.binding_json)='object' AND NEW.binding_json=json(NEW.binding_json) ELSE 0 END) THEN RAISE(ROLLBACK,'invalid result binding json') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_commits
     WHERE writer_kind = NEW.writer_kind AND request_id = NEW.request_id
-  ) THEN RAISE(ABORT, 'request is already sealed') END;
+  ) THEN RAISE(ROLLBACK, 'request is already sealed') END;
   SELECT CASE WHEN NOT EXISTS (
     SELECT 1 FROM memory_write_requests AS request,
       json_each(request.expected_results_json) AS expected
     WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id
       AND json_extract(expected.value,'$.result_ordinal')=NEW.result_ordinal
       AND json_extract(expected.value,'$.binding_kind')=NEW.binding_kind
-  ) THEN RAISE(ABORT, 'result is absent from manifest') END;
+  ) THEN RAISE(ROLLBACK, 'result is absent from manifest') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_requests AS request,
       json_each(request.expected_results_json) AS expected
@@ -395,7 +390,7 @@ BEGIN
           AND actual.result_ordinal=json_extract(expected.value,'$.result_ordinal')
           AND actual.binding_kind=json_extract(expected.value,'$.binding_kind')
       )
-  ) THEN RAISE(ABORT, 'result bindings must follow manifest order') END;
+  ) THEN RAISE(ROLLBACK, 'result bindings must follow manifest order') END;
   SELECT CASE WHEN NEW.previous_binding_fingerprint IS NOT (
     SELECT actual.binding_fingerprint FROM memory_write_request_results AS actual
     WHERE actual.writer_kind=NEW.writer_kind AND actual.request_id=NEW.request_id
@@ -406,8 +401,8 @@ BEGIN
       )
     ORDER BY actual.result_ordinal DESC, actual.binding_kind DESC
     LIMIT 1
-  ) THEN RAISE(ABORT, 'result fingerprint predecessor mismatch') END;
-  SELECT CASE WHEN NEW.binding_kind<>'lifecycle_transition' AND NEW.api_operation_id IS NOT NULL THEN RAISE(ABORT, 'API operation only valid for lifecycle result') END;
+  ) THEN RAISE(ROLLBACK, 'result fingerprint predecessor mismatch') END;
+  SELECT CASE WHEN NEW.binding_kind<>'lifecycle_transition' AND NEW.api_operation_id IS NOT NULL THEN RAISE(ROLLBACK, 'API operation only valid for lifecycle result') END;
   SELECT CASE WHEN NOT (
     (
       NEW.binding_kind='insert_origin' AND NEW.outcome_code IN ('inserted','backfilled')
@@ -493,7 +488,7 @@ BEGIN
       AND NEW.claim_id IS NULL AND NEW.audit_event_id IS NULL
       AND NEW.local_copy_path IS NULL AND NEW.local_copy_digest IS NULL
     )
-  ) THEN RAISE(ABORT, 'result binding shape mismatch') END;
+  ) THEN RAISE(ROLLBACK, 'result binding shape mismatch') END;
   SELECT CASE WHEN NEW.binding_fingerprint <> remem_sha256_frame_v1(
     'domain', 'memory_write_result/v1',
     'writer_kind', NEW.writer_kind,
@@ -502,6 +497,7 @@ BEGIN
       SELECT request_fingerprint FROM memory_write_requests
       WHERE writer_kind = NEW.writer_kind AND request_id = NEW.request_id
     ),
+    'request_plan_fingerprint', (SELECT request_plan_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id),
     'result_ordinal', NEW.result_ordinal,
     'binding_kind', NEW.binding_kind,
     'outcome_code', NEW.outcome_code,
@@ -515,11 +511,12 @@ BEGIN
     'local_copy_digest', NEW.local_copy_digest,
     'binding_json', NEW.binding_json,
     'previous_binding_fingerprint', NEW.previous_binding_fingerprint
-  ) THEN RAISE(ABORT, 'result binding fingerprint mismatch') END;
+  ) THEN RAISE(ROLLBACK, 'result binding fingerprint mismatch') END;
 END;
 CREATE TRIGGER memory_write_commit_guard
 BEFORE INSERT ON memory_write_request_commits
 BEGIN
+  SELECT CASE WHEN typeof(NEW.response_json)='text' AND length(CAST(NEW.response_json AS BLOB))>8388608 THEN RAISE(ROLLBACK,'write_batch_too_large_v1') END; SELECT CASE WHEN NOT (typeof(NEW.response_json)='text' AND length(CAST(NEW.response_json AS BLOB)) BETWEEN 2 AND 8388608 AND CASE WHEN json_valid(NEW.response_json)=1 THEN NEW.response_json=json(NEW.response_json) ELSE 0 END) OR NOT EXISTS (SELECT 1 FROM memory_write_requests AS request WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id AND request.response_schema_version=NEW.response_schema_version) THEN RAISE(ROLLBACK,'commit response contract mismatch') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_requests AS request,
       json_each(request.expected_results_json) AS expected
@@ -530,7 +527,7 @@ BEGIN
           AND actual.result_ordinal=json_extract(expected.value,'$.result_ordinal')
           AND actual.binding_kind=json_extract(expected.value,'$.binding_kind')
       )
-  ) THEN RAISE(ABORT, 'request results are incomplete') END;
+  ) THEN RAISE(ROLLBACK, 'request results are incomplete') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS actual
     WHERE actual.writer_kind=NEW.writer_kind AND actual.request_id=NEW.request_id
@@ -541,7 +538,7 @@ BEGIN
           AND json_extract(expected.value,'$.result_ordinal')=actual.result_ordinal
           AND json_extract(expected.value,'$.binding_kind')=actual.binding_kind
       )
-  ) THEN RAISE(ABORT, 'request has unexpected results') END;
+  ) THEN RAISE(ROLLBACK, 'request has unexpected results') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memories AS memory
     WHERE memory.insert_writer_kind = NEW.writer_kind
@@ -566,7 +563,7 @@ BEGIN
           AND lifecycle.source_ref=NEW.request_id
           AND lifecycle.source_result_ordinal=memory.insert_result_ordinal
       )
-  ) THEN RAISE(ABORT, 'insert origin lacks matching v1 ledgers') END;
+  ) THEN RAISE(ROLLBACK, 'insert origin lacks matching v1 ledgers') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS result
     WHERE result.writer_kind = NEW.writer_kind
@@ -579,7 +576,7 @@ BEGIN
           AND memory.insert_request_id = NEW.request_id
           AND memory.insert_result_ordinal = result.result_ordinal
       )
-  ) THEN RAISE(ABORT, 'insert result lacks matching memory origin') END;
+  ) THEN RAISE(ROLLBACK, 'insert result lacks matching memory origin') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS result
     JOIN memory_route_ledger AS route ON route.id = result.route_ledger_id
@@ -590,7 +587,7 @@ BEGIN
         OR route.source_ref<>NEW.request_id
         OR route.source_result_ordinal<>result.result_ordinal OR route.audit_event_id IS NOT result.audit_event_id
       )
-  ) THEN RAISE(ABORT, 'route result binding mismatch') END;
+  ) THEN RAISE(ROLLBACK, 'route result binding mismatch') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_write_request_results AS result
     JOIN memory_lifecycle_ledger AS lifecycle ON lifecycle.id=result.lifecycle_ledger_id
@@ -602,8 +599,8 @@ BEGIN
         OR lifecycle.source_ref<>NEW.request_id
         OR lifecycle.source_result_ordinal<>result.result_ordinal OR lifecycle.source_operation_id IS NOT result.operation_id OR lifecycle.source_api_operation_id IS NOT result.api_operation_id OR lifecycle.audit_event_id IS NOT result.audit_event_id
       )
-  ) THEN RAISE(ABORT, 'lifecycle result binding mismatch') END;
-  SELECT CASE WHEN EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS lifecycle LEFT JOIN api_mutation_requests AS api ON api.operation_id=lifecycle.source_api_operation_id WHERE lifecycle.source_writer_kind=NEW.writer_kind AND lifecycle.source_ref=NEW.request_id AND lifecycle.source_kind='web_governance' AND (api.operation_id IS NULL OR NOT (typeof(api.resource_kind)='text' AND api.resource_kind='memory' AND typeof(api.resource_id)='integer' AND api.resource_id=lifecycle.memory_id AND typeof(api.action)='text' AND api.action=lifecycle.source_action AND typeof(api.response_schema_version)='integer' AND api.response_schema_version=1 AND typeof(api.response_json)='text' AND typeof(api.audit_id)='integer' AND api.audit_id=lifecycle.audit_event_id AND typeof(api.created_at_epoch)='integer' AND api.created_at_epoch=lifecycle.effective_at_epoch AND json_valid(api.response_json)=1 AND json_type(api.response_json,'$.version')='integer' AND json(api.response_json)=json_object('response_schema_version',1,'operation_id',api.operation_id,'audit_id',api.audit_id,'memory_id',api.resource_id,'action',api.action,'before_status',lifecycle.previous_status,'after_status',lifecycle.new_status,'version',json_extract(api.response_json,'$.version'),'occurred_at_epoch',api.created_at_epoch,'replayed',json('false'))))) THEN RAISE(ABORT, 'Web lifecycle API operation mismatch') END;
+  ) THEN RAISE(ROLLBACK, 'lifecycle result binding mismatch') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS lifecycle LEFT JOIN api_mutation_requests AS api ON api.operation_id=lifecycle.source_api_operation_id WHERE lifecycle.source_writer_kind=NEW.writer_kind AND lifecycle.source_ref=NEW.request_id AND lifecycle.source_kind='web_governance' AND (api.operation_id IS NULL OR NOT (typeof(api.resource_kind)='text' AND api.resource_kind='memory' AND typeof(api.resource_id)='integer' AND api.resource_id=lifecycle.memory_id AND typeof(api.action)='text' AND api.action=lifecycle.source_action AND typeof(api.response_schema_version)='integer' AND api.response_schema_version=1 AND typeof(api.response_json)='text' AND typeof(api.audit_id)='integer' AND api.audit_id=lifecycle.audit_event_id AND typeof(api.created_at_epoch)='integer' AND api.created_at_epoch=lifecycle.effective_at_epoch AND json_valid(api.response_json)=1 AND json_type(api.response_json,'$.version')='integer' AND json(api.response_json)=json_object('response_schema_version',1,'operation_id',api.operation_id,'audit_id',api.audit_id,'memory_id',api.resource_id,'action',api.action,'before_status',lifecycle.previous_status,'after_status',lifecycle.new_status,'version',json_extract(api.response_json,'$.version'),'occurred_at_epoch',api.created_at_epoch,'replayed',json('false'))))) THEN RAISE(ROLLBACK, 'Web lifecycle API operation mismatch') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_route_ledger AS route
     WHERE route.source_writer_kind=NEW.writer_kind AND route.source_ref=NEW.request_id
@@ -619,7 +616,7 @@ BEGIN
           AND result.binding_kind IN ('insert_origin','route_transition')
           AND result.memory_id=route.memory_id AND result.route_ledger_id=route.id AND result.audit_event_id IS route.audit_event_id
       )
-  ) THEN RAISE(ABORT, 'route ledger lacks typed result binding') END;
+  ) THEN RAISE(ROLLBACK, 'route ledger lacks typed result binding') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_lifecycle_ledger AS lifecycle
     WHERE lifecycle.source_writer_kind=NEW.writer_kind AND lifecycle.source_ref=NEW.request_id
@@ -636,19 +633,20 @@ BEGIN
           AND result.memory_id=lifecycle.memory_id
           AND result.lifecycle_ledger_id=lifecycle.id AND result.operation_id IS lifecycle.source_operation_id AND result.api_operation_id IS lifecycle.source_api_operation_id AND result.audit_event_id IS lifecycle.audit_event_id
       )
-  ) THEN RAISE(ABORT, 'lifecycle ledger lacks typed result binding') END;
+  ) THEN RAISE(ROLLBACK, 'lifecycle ledger lacks typed result binding') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_route_ledger AS route JOIN memories AS memory ON memory.id=route.memory_id
     WHERE route.source_writer_kind=NEW.writer_kind AND route.source_ref=NEW.request_id
       AND (EXISTS (SELECT 1 FROM memory_route_ledger AS successor WHERE successor.previous_route_id=route.id)
         OR route.placement_project IS NOT memory.project OR route.source_project IS NOT memory.source_project OR route.target_project IS NOT memory.target_project OR route.owner_scope IS NOT memory.owner_scope OR route.owner_key IS NOT memory.owner_key OR route.memory_type IS NOT memory.memory_type OR route.topic_key IS NOT memory.topic_key OR route.topic_domain IS NOT memory.topic_domain OR route.routing_confidence IS NOT memory.routing_confidence OR route.routing_reason IS NOT memory.routing_reason OR route.context_class IS NOT memory.context_class OR route.memory_scope IS NOT memory.scope OR route.branch IS NOT memory.branch)
-  ) THEN RAISE(ABORT, 'route terminal does not match memory at seal') END;
+  ) THEN RAISE(ROLLBACK, 'route terminal does not match memory at seal') END;
   SELECT CASE WHEN EXISTS (
     SELECT 1 FROM memory_lifecycle_ledger AS lifecycle JOIN memories AS memory ON memory.id=lifecycle.memory_id
     WHERE lifecycle.source_writer_kind=NEW.writer_kind AND lifecycle.source_ref=NEW.request_id
       AND (EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS successor WHERE successor.previous_lifecycle_id=lifecycle.id) OR lifecycle.new_status IS NOT memory.status)
-  ) THEN RAISE(ABORT, 'lifecycle terminal does not match memory at seal') END;
-  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM memory_write_request_results AS result WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id AND result.binding_kind='response_aux' AND result.outcome_code='returned' AND result.binding_json IS NEW.response_json) THEN RAISE(ABORT, 'response_aux does not match committed response') END;
+  ) THEN RAISE(ROLLBACK, 'lifecycle terminal does not match memory at seal') END;
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM memory_write_request_results AS result WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id AND result.binding_kind='response_aux' AND result.outcome_code='returned' AND result.binding_json IS NEW.response_json) THEN RAISE(ROLLBACK, 'response_aux does not match committed response') END;
+  SELECT CASE WHEN COALESCE((SELECT SUM(512+length(CAST(binding_kind AS BLOB))+length(CAST(outcome_code AS BLOB))+COALESCE(length(CAST(api_operation_id AS BLOB)),0)+COALESCE(length(CAST(local_copy_path AS BLOB)),0)+COALESCE(length(CAST(local_copy_digest AS BLOB)),0)+length(CAST(binding_json AS BLOB))+COALESCE(length(CAST(previous_binding_fingerprint AS BLOB)),0)+length(CAST(binding_fingerprint AS BLOB))) FROM memory_write_request_results WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id),0)>16777216 THEN RAISE(ROLLBACK,'write_batch_too_large_v1') END; SELECT CASE WHEN (SELECT remem_validate_write_response_v1(record_kind,writer_kind,request_schema_version,response_schema_version,request_fingerprint,request_plan_fingerprint,request_plan_json,response_json,result_ordinal,binding_kind,outcome_code,memory_id,route_ledger_id,lifecycle_ledger_id,operation_id,api_operation_id,claim_id,audit_event_id,local_copy_path,local_copy_digest,binding_json,previous_binding_fingerprint,binding_fingerprint ORDER BY record_kind,result_ordinal,binding_kind) FROM (SELECT 0 AS record_kind,request.writer_kind,request.request_schema_version,request.response_schema_version,request.request_fingerprint,request.request_plan_fingerprint,request.request_plan_json,NEW.response_json AS response_json,NULL AS result_ordinal,NULL AS binding_kind,NULL AS outcome_code,NULL AS memory_id,NULL AS route_ledger_id,NULL AS lifecycle_ledger_id,NULL AS operation_id,NULL AS api_operation_id,NULL AS claim_id,NULL AS audit_event_id,NULL AS local_copy_path,NULL AS local_copy_digest,NULL AS binding_json,NULL AS previous_binding_fingerprint,NULL AS binding_fingerprint FROM memory_write_requests AS request WHERE request.writer_kind=NEW.writer_kind AND request.request_id=NEW.request_id UNION ALL SELECT 1,NULL,NULL,NULL,NULL,NULL,NULL,NULL,result.result_ordinal,result.binding_kind,result.outcome_code,result.memory_id,result.route_ledger_id,result.lifecycle_ledger_id,result.operation_id,result.api_operation_id,result.claim_id,result.audit_event_id,result.local_copy_path,result.local_copy_digest,result.binding_json,result.previous_binding_fingerprint,result.binding_fingerprint FROM memory_write_request_results AS result WHERE result.writer_kind=NEW.writer_kind AND result.request_id=NEW.request_id) AS record) IS NOT 1 THEN RAISE(ROLLBACK,'typed results disagree with request plan or committed response') END;
   SELECT CASE WHEN NEW.result_fingerprint <> remem_sha256_frame_v1(
     'domain', 'memory_write_commit/v1',
     'writer_kind', NEW.writer_kind,
@@ -657,6 +655,7 @@ BEGIN
       SELECT request_fingerprint FROM memory_write_requests
       WHERE writer_kind = NEW.writer_kind AND request_id = NEW.request_id
     ),
+    'request_plan_fingerprint', (SELECT request_plan_fingerprint FROM memory_write_requests WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id),
     'terminal_binding_fingerprint', (
       SELECT binding_fingerprint
       FROM memory_write_request_results
@@ -666,10 +665,10 @@ BEGIN
     ),
     'response_schema_version', NEW.response_schema_version,
     'response_json', NEW.response_json
-  ) THEN RAISE(ABORT, 'request commit fingerprint mismatch') END;
+  ) THEN RAISE(ROLLBACK, 'request commit fingerprint mismatch') END;
 END;
 CREATE TRIGGER memory_insert_v1_ledgers AFTER INSERT ON memories BEGIN
-  SELECT CASE WHEN EXISTS (SELECT 1 FROM memory_write_request_commits WHERE writer_kind=NEW.insert_writer_kind AND request_id=NEW.insert_request_id) OR NOT EXISTS (SELECT 1 FROM memory_write_requests AS request,json_each(request.expected_results_json) AS expected WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id AND json_extract(expected.value,'$.result_ordinal')=NEW.insert_result_ordinal AND json_extract(expected.value,'$.binding_kind')='insert_origin') THEN RAISE(ABORT, 'memory insert lacks open insert_origin') END;
+  SELECT CASE WHEN EXISTS (SELECT 1 FROM memory_write_request_commits WHERE writer_kind=NEW.insert_writer_kind AND request_id=NEW.insert_request_id) OR NOT EXISTS (SELECT 1 FROM memory_write_requests AS request,json_each(request.expected_results_json) AS expected WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id AND json_extract(expected.value,'$.result_ordinal')=NEW.insert_result_ordinal AND json_extract(expected.value,'$.binding_kind')='insert_origin') THEN RAISE(ROLLBACK, 'memory insert lacks open insert_origin') END;
   INSERT INTO memory_route_ledger(memory_id,route_version,previous_route_id,effective_at_epoch,source_kind,audit_event_id,source_writer_kind,source_ref,source_result_ordinal,source_fingerprint,coverage_kind,coverage_start_epoch,placement_project,source_project,target_project,owner_scope,owner_key,memory_type,topic_key,topic_domain,routing_confidence,routing_reason,context_class,memory_scope,branch) SELECT NEW.id,1,NULL,request.requested_at_epoch,CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,NULL,NEW.insert_writer_kind,NEW.insert_request_id,NEW.insert_result_ordinal,remem_sha256_frame_v1('domain','memory_route_ledger/v1','old_memory_id',NULL,'old_route_version',NULL,'old_previous_route_id',NULL,'old_effective_at_epoch',NULL,'old_source_kind',NULL,'old_audit_event_id',NULL,'old_source_writer_kind',NULL,'old_source_ref',NULL,'old_source_result_ordinal',NULL,'old_request_fingerprint',NULL,'old_coverage_kind',NULL,'old_coverage_start_epoch',NULL,'old_placement_project',NULL,'old_source_project',NULL,'old_target_project',NULL,'old_owner_scope',NULL,'old_owner_key',NULL,'old_memory_type',NULL,'old_topic_key',NULL,'old_topic_domain',NULL,'old_routing_confidence',NULL,'old_routing_reason',NULL,'old_context_class',NULL,'old_memory_scope',NULL,'old_branch',NULL,'new_memory_id',NEW.id,'new_route_version',1,'new_previous_route_id',NULL,'new_effective_at_epoch',request.requested_at_epoch,'new_source_kind',CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,'new_audit_event_id',NULL,'new_source_writer_kind',NEW.insert_writer_kind,'new_source_ref',NEW.insert_request_id,'new_source_result_ordinal',NEW.insert_result_ordinal,'new_request_fingerprint',request.request_fingerprint,'new_coverage_kind','complete','new_coverage_start_epoch',request.requested_at_epoch,'new_placement_project',NEW.project,'new_source_project',NEW.source_project,'new_target_project',NEW.target_project,'new_owner_scope',NEW.owner_scope,'new_owner_key',NEW.owner_key,'new_memory_type',NEW.memory_type,'new_topic_key',NEW.topic_key,'new_topic_domain',NEW.topic_domain,'new_routing_confidence',NEW.routing_confidence,'new_routing_reason',NEW.routing_reason,'new_context_class',NEW.context_class,'new_memory_scope',NEW.scope,'new_branch',NEW.branch),'complete',request.requested_at_epoch,NEW.project,NEW.source_project,NEW.target_project,NEW.owner_scope,NEW.owner_key,NEW.memory_type,NEW.topic_key,NEW.topic_domain,NEW.routing_confidence,NEW.routing_reason,NEW.context_class,NEW.scope,NEW.branch FROM memory_write_requests AS request WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id;
   INSERT INTO memory_lifecycle_ledger(memory_id,lifecycle_version,previous_lifecycle_id,effective_at_epoch,previous_status,new_status,source_kind,source_action,source_operation_id,source_api_operation_id,audit_event_id,source_writer_kind,source_ref,source_result_ordinal,source_fingerprint,coverage_kind,coverage_start_epoch) SELECT NEW.id,1,NULL,request.requested_at_epoch,NULL,NEW.status,CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,'baseline',NULL,NULL,NULL,NEW.insert_writer_kind,NEW.insert_request_id,NEW.insert_result_ordinal,remem_sha256_frame_v1('domain','memory_lifecycle_ledger/v1','old_memory_id',NULL,'old_lifecycle_version',NULL,'old_previous_lifecycle_id',NULL,'old_effective_at_epoch',NULL,'old_previous_status',NULL,'old_new_status',NULL,'old_source_kind',NULL,'old_source_action',NULL,'old_source_operation_id',NULL,'old_source_api_operation_id',NULL,'old_audit_event_id',NULL,'old_source_writer_kind',NULL,'old_source_ref',NULL,'old_source_result_ordinal',NULL,'old_request_fingerprint',NULL,'old_coverage_kind',NULL,'old_coverage_start_epoch',NULL,'new_memory_id',NEW.id,'new_lifecycle_version',1,'new_previous_lifecycle_id',NULL,'new_effective_at_epoch',request.requested_at_epoch,'new_previous_status',NULL,'new_new_status',NEW.status,'new_source_kind',CASE WHEN NEW.insert_writer_kind='legacy_backfill' THEN 'legacy_backfill' ELSE 'insert' END,'new_source_action','baseline','new_source_operation_id',NULL,'new_source_api_operation_id',NULL,'new_audit_event_id',NULL,'new_source_writer_kind',NEW.insert_writer_kind,'new_source_ref',NEW.insert_request_id,'new_source_result_ordinal',NEW.insert_result_ordinal,'new_request_fingerprint',request.request_fingerprint,'new_coverage_kind','complete','new_coverage_start_epoch',request.requested_at_epoch),'complete',request.requested_at_epoch FROM memory_write_requests AS request WHERE request.writer_kind=NEW.insert_writer_kind AND request.request_id=NEW.insert_request_id;
 END;
@@ -686,54 +685,54 @@ BEGIN
       AND NOT EXISTS (SELECT 1 FROM memory_write_request_commits AS commit_row WHERE commit_row.writer_kind=new_route.source_writer_kind AND commit_row.request_id=new_route.source_ref)
       AND old_route.placement_project IS OLD.project AND old_route.source_project IS OLD.source_project AND old_route.target_project IS OLD.target_project AND old_route.owner_scope IS OLD.owner_scope AND old_route.owner_key IS OLD.owner_key AND old_route.memory_type IS OLD.memory_type AND old_route.topic_key IS OLD.topic_key AND old_route.topic_domain IS OLD.topic_domain AND old_route.routing_confidence IS OLD.routing_confidence AND old_route.routing_reason IS OLD.routing_reason AND old_route.context_class IS OLD.context_class AND old_route.memory_scope IS OLD.scope AND old_route.branch IS OLD.branch
       AND new_route.placement_project IS NEW.project AND new_route.source_project IS NEW.source_project AND new_route.target_project IS NEW.target_project AND new_route.owner_scope IS NEW.owner_scope AND new_route.owner_key IS NEW.owner_key AND new_route.memory_type IS NEW.memory_type AND new_route.topic_key IS NEW.topic_key AND new_route.topic_domain IS NEW.topic_domain AND new_route.routing_confidence IS NEW.routing_confidence AND new_route.routing_reason IS NEW.routing_reason AND new_route.context_class IS NEW.context_class AND new_route.memory_scope IS NEW.scope AND new_route.branch IS NEW.branch
-  ) THEN RAISE(ABORT, 'memory route update lacks matching staged next version') END;
+  ) THEN RAISE(ROLLBACK, 'memory route update lacks matching staged next version') END;
 END;
 CREATE TRIGGER memory_status_update_guard
 BEFORE UPDATE OF status ON memories WHEN NEW.status IS NOT OLD.status BEGIN
   SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS new_lifecycle JOIN memory_lifecycle_ledger AS old_lifecycle ON old_lifecycle.id=new_lifecycle.previous_lifecycle_id WHERE new_lifecycle.memory_id=OLD.id AND old_lifecycle.memory_id=OLD.id AND new_lifecycle.lifecycle_version=old_lifecycle.lifecycle_version+1 AND NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS successor WHERE successor.previous_lifecycle_id=new_lifecycle.id) AND NOT EXISTS (SELECT 1 FROM memory_write_request_commits AS commit_row WHERE commit_row.writer_kind=new_lifecycle.source_writer_kind AND commit_row.request_id=new_lifecycle.source_ref) AND old_lifecycle.new_status IS OLD.status AND new_lifecycle.previous_status IS OLD.status AND new_lifecycle.new_status IS NEW.status)
-    THEN RAISE(ABORT, 'memory status update lacks matching staged next version') END;
+    THEN RAISE(ROLLBACK, 'memory status update lacks matching staged next version') END;
 END;
 CREATE TRIGGER memory_origin_tuple_immutable BEFORE UPDATE OF
 insert_writer_kind, insert_request_id, insert_result_ordinal ON memories
 WHEN NEW.insert_writer_kind IS NOT OLD.insert_writer_kind
   OR NEW.insert_request_id IS NOT OLD.insert_request_id
   OR NEW.insert_result_ordinal IS NOT OLD.insert_result_ordinal
-BEGIN SELECT RAISE(ABORT, 'memory insert origin is immutable'); END;
-CREATE TRIGGER memory_write_lock_anchors_insert_once BEFORE INSERT ON memory_write_lock_anchors WHEN EXISTS (SELECT 1 FROM memory_write_lock_anchors WHERE (lock_kind=NEW.lock_kind AND lock_key=NEW.lock_key) OR (lock_dev=NEW.lock_dev AND lock_ino=NEW.lock_ino)) BEGIN SELECT RAISE(ABORT, 'memory write lock anchor conflicts with immutable row'); END;
-CREATE TRIGGER memory_write_lock_anchors_no_update BEFORE UPDATE ON memory_write_lock_anchors BEGIN SELECT RAISE(ABORT, 'memory write lock anchors are append-only'); END;
-CREATE TRIGGER memory_write_lock_anchors_no_delete BEFORE DELETE ON memory_write_lock_anchors BEGIN SELECT RAISE(ABORT, 'memory write lock anchors are append-only'); END;
-CREATE TRIGGER memory_write_requests_insert_once BEFORE INSERT ON memory_write_requests WHEN EXISTS (SELECT 1 FROM memory_write_requests WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id) BEGIN SELECT RAISE(ABORT, 'memory write request conflicts with immutable row'); END;
-CREATE TRIGGER memory_write_requests_no_update BEFORE UPDATE ON memory_write_requests BEGIN SELECT RAISE(ABORT, 'memory write requests are append-only'); END;
-CREATE TRIGGER memory_write_requests_no_delete BEFORE DELETE ON memory_write_requests BEGIN SELECT RAISE(ABORT, 'memory write requests are append-only'); END;
-CREATE TRIGGER memory_write_results_insert_once BEFORE INSERT ON memory_write_request_results WHEN EXISTS (SELECT 1 FROM memory_write_request_results WHERE (writer_kind=NEW.writer_kind AND request_id=NEW.request_id AND result_ordinal=NEW.result_ordinal AND binding_kind=NEW.binding_kind) OR (NEW.route_ledger_id IS NOT NULL AND route_ledger_id=NEW.route_ledger_id) OR (NEW.lifecycle_ledger_id IS NOT NULL AND lifecycle_ledger_id=NEW.lifecycle_ledger_id)) BEGIN SELECT RAISE(ABORT, 'memory write result conflicts with immutable row'); END;
-CREATE TRIGGER memory_write_results_no_update BEFORE UPDATE ON memory_write_request_results BEGIN SELECT RAISE(ABORT, 'memory write results are append-only'); END;
-CREATE TRIGGER memory_write_results_no_delete BEFORE DELETE ON memory_write_request_results BEGIN SELECT RAISE(ABORT, 'memory write results are append-only'); END;
-CREATE TRIGGER memory_write_commits_insert_once BEFORE INSERT ON memory_write_request_commits WHEN EXISTS (SELECT 1 FROM memory_write_request_commits WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id) BEGIN SELECT RAISE(ABORT, 'memory write commit conflicts with immutable row'); END;
-CREATE TRIGGER memory_write_commits_no_update BEFORE UPDATE ON memory_write_request_commits BEGIN SELECT RAISE(ABORT, 'memory write commits are append-only'); END;
-CREATE TRIGGER memory_write_commits_no_delete BEFORE DELETE ON memory_write_request_commits BEGIN SELECT RAISE(ABORT, 'memory write commits are append-only'); END;
-CREATE TRIGGER memory_route_ledger_insert_once BEFORE INSERT ON memory_route_ledger WHEN (NEW.id>0 AND EXISTS (SELECT 1 FROM memory_route_ledger WHERE id=NEW.id)) OR EXISTS (SELECT 1 FROM memory_route_ledger WHERE (memory_id=NEW.memory_id AND route_version=NEW.route_version) OR (NEW.previous_route_id IS NOT NULL AND previous_route_id=NEW.previous_route_id) OR (memory_id=NEW.memory_id AND source_kind=NEW.source_kind AND source_fingerprint=NEW.source_fingerprint)) BEGIN SELECT RAISE(ABORT, 'memory route ledger conflicts with immutable row'); END;
-CREATE TRIGGER memory_route_ledger_no_update BEFORE UPDATE ON memory_route_ledger BEGIN SELECT RAISE(ABORT, 'memory route ledger is append-only'); END;
-CREATE TRIGGER memory_route_ledger_no_delete BEFORE DELETE ON memory_route_ledger BEGIN SELECT RAISE(ABORT, 'memory route ledger is append-only'); END;
-CREATE TRIGGER memory_lifecycle_ledger_insert_once BEFORE INSERT ON memory_lifecycle_ledger WHEN (NEW.id>0 AND EXISTS (SELECT 1 FROM memory_lifecycle_ledger WHERE id=NEW.id)) OR EXISTS (SELECT 1 FROM memory_lifecycle_ledger WHERE (memory_id=NEW.memory_id AND lifecycle_version=NEW.lifecycle_version) OR (NEW.previous_lifecycle_id IS NOT NULL AND previous_lifecycle_id=NEW.previous_lifecycle_id) OR (memory_id=NEW.memory_id AND source_kind=NEW.source_kind AND source_fingerprint=NEW.source_fingerprint) OR (NEW.source_operation_id IS NOT NULL AND source_operation_id=NEW.source_operation_id AND memory_id=NEW.memory_id) OR (NEW.source_api_operation_id IS NOT NULL AND source_api_operation_id=NEW.source_api_operation_id AND memory_id=NEW.memory_id)) BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger conflicts with immutable row'); END;
-CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
-CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
-CREATE TRIGGER api_mutation_requests_referenced_no_update BEFORE UPDATE ON api_mutation_requests WHEN EXISTS (SELECT 1 FROM memory_lifecycle_ledger WHERE source_api_operation_id=OLD.operation_id) BEGIN SELECT RAISE(ABORT, 'referenced API mutation request is immutable'); END;
+BEGIN SELECT RAISE(ROLLBACK, 'memory insert origin is immutable'); END;
+CREATE TRIGGER memory_write_lock_anchors_insert_once BEFORE INSERT ON memory_write_lock_anchors WHEN EXISTS (SELECT 1 FROM memory_write_lock_anchors WHERE (lock_kind=NEW.lock_kind AND lock_key=NEW.lock_key) OR (lock_dev=NEW.lock_dev AND lock_ino=NEW.lock_ino)) BEGIN SELECT RAISE(ROLLBACK, 'memory write lock anchor conflicts with immutable row'); END;
+CREATE TRIGGER memory_write_lock_anchors_no_update BEFORE UPDATE ON memory_write_lock_anchors BEGIN SELECT RAISE(ROLLBACK, 'memory write lock anchors are append-only'); END;
+CREATE TRIGGER memory_write_lock_anchors_no_delete BEFORE DELETE ON memory_write_lock_anchors BEGIN SELECT RAISE(ROLLBACK, 'memory write lock anchors are append-only'); END;
+CREATE TRIGGER memory_write_requests_insert_once BEFORE INSERT ON memory_write_requests WHEN EXISTS (SELECT 1 FROM memory_write_requests WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id) BEGIN SELECT RAISE(ROLLBACK, 'memory write request conflicts with immutable row'); END;
+CREATE TRIGGER memory_write_requests_no_update BEFORE UPDATE ON memory_write_requests BEGIN SELECT RAISE(ROLLBACK, 'memory write requests are append-only'); END;
+CREATE TRIGGER memory_write_requests_no_delete BEFORE DELETE ON memory_write_requests BEGIN SELECT RAISE(ROLLBACK, 'memory write requests are append-only'); END;
+CREATE TRIGGER memory_write_results_insert_once BEFORE INSERT ON memory_write_request_results WHEN EXISTS (SELECT 1 FROM memory_write_request_results WHERE (writer_kind=NEW.writer_kind AND request_id=NEW.request_id AND result_ordinal=NEW.result_ordinal AND binding_kind=NEW.binding_kind) OR (NEW.route_ledger_id IS NOT NULL AND route_ledger_id=NEW.route_ledger_id) OR (NEW.lifecycle_ledger_id IS NOT NULL AND lifecycle_ledger_id=NEW.lifecycle_ledger_id)) BEGIN SELECT RAISE(ROLLBACK, 'memory write result conflicts with immutable row'); END;
+CREATE TRIGGER memory_write_results_no_update BEFORE UPDATE ON memory_write_request_results BEGIN SELECT RAISE(ROLLBACK, 'memory write results are append-only'); END;
+CREATE TRIGGER memory_write_results_no_delete BEFORE DELETE ON memory_write_request_results BEGIN SELECT RAISE(ROLLBACK, 'memory write results are append-only'); END;
+CREATE TRIGGER memory_write_commits_insert_once BEFORE INSERT ON memory_write_request_commits WHEN EXISTS (SELECT 1 FROM memory_write_request_commits WHERE writer_kind=NEW.writer_kind AND request_id=NEW.request_id) BEGIN SELECT RAISE(ROLLBACK, 'memory write commit conflicts with immutable row'); END;
+CREATE TRIGGER memory_write_commits_no_update BEFORE UPDATE ON memory_write_request_commits BEGIN SELECT RAISE(ROLLBACK, 'memory write commits are append-only'); END;
+CREATE TRIGGER memory_write_commits_no_delete BEFORE DELETE ON memory_write_request_commits BEGIN SELECT RAISE(ROLLBACK, 'memory write commits are append-only'); END;
+CREATE TRIGGER memory_route_ledger_insert_once BEFORE INSERT ON memory_route_ledger WHEN (NEW.id>0 AND EXISTS (SELECT 1 FROM memory_route_ledger WHERE id=NEW.id)) OR EXISTS (SELECT 1 FROM memory_route_ledger WHERE (memory_id=NEW.memory_id AND route_version=NEW.route_version) OR (NEW.previous_route_id IS NOT NULL AND previous_route_id=NEW.previous_route_id) OR (memory_id=NEW.memory_id AND source_kind=NEW.source_kind AND source_fingerprint=NEW.source_fingerprint)) BEGIN SELECT RAISE(ROLLBACK, 'memory route ledger conflicts with immutable row'); END;
+CREATE TRIGGER memory_route_ledger_no_update BEFORE UPDATE ON memory_route_ledger BEGIN SELECT RAISE(ROLLBACK, 'memory route ledger is append-only'); END;
+CREATE TRIGGER memory_route_ledger_no_delete BEFORE DELETE ON memory_route_ledger BEGIN SELECT RAISE(ROLLBACK, 'memory route ledger is append-only'); END;
+CREATE TRIGGER memory_lifecycle_ledger_insert_once BEFORE INSERT ON memory_lifecycle_ledger WHEN (NEW.id>0 AND EXISTS (SELECT 1 FROM memory_lifecycle_ledger WHERE id=NEW.id)) OR EXISTS (SELECT 1 FROM memory_lifecycle_ledger WHERE (memory_id=NEW.memory_id AND lifecycle_version=NEW.lifecycle_version) OR (NEW.previous_lifecycle_id IS NOT NULL AND previous_lifecycle_id=NEW.previous_lifecycle_id) OR (memory_id=NEW.memory_id AND source_kind=NEW.source_kind AND source_fingerprint=NEW.source_fingerprint) OR (NEW.source_operation_id IS NOT NULL AND source_operation_id=NEW.source_operation_id AND memory_id=NEW.memory_id) OR (NEW.source_api_operation_id IS NOT NULL AND source_api_operation_id=NEW.source_api_operation_id AND memory_id=NEW.memory_id)) BEGIN SELECT RAISE(ROLLBACK, 'memory lifecycle ledger conflicts with immutable row'); END;
+CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ROLLBACK, 'memory lifecycle ledger is append-only'); END;
+CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ROLLBACK, 'memory lifecycle ledger is append-only'); END;
+CREATE TRIGGER api_mutation_requests_referenced_no_update BEFORE UPDATE ON api_mutation_requests WHEN EXISTS (SELECT 1 FROM memory_lifecycle_ledger WHERE source_api_operation_id=OLD.operation_id) BEGIN SELECT RAISE(ROLLBACK, 'referenced API mutation request is immutable'); END;
 ```
 The fingerprint guards hash every typed OLD/NEW column and reject unchanged route successors; insert-v1 is atomic; route/status updates require an open exact stage; commit requires terminal equality; referenced API mutation rows are immutable. These literal bodies are sole executable authority: no templates, post-insert patch, or fallback hash.
 ## Backfill and Foreground Cutover
 The migration runner performs these steps under one exclusive maintenance
 window. Steps 1–2 precede any migration write transaction; steps 3–5 use one
 uninterrupted `BEGIN IMMEDIATE`:
-1. Register/self-test the UDF; require exactly one active `approved` or same-attempt `cutover_started` record bound to this plan/database/binary/backup/digest. Retired/completed history is allowed but never active; absent/multiple/mismatched active state aborts.
+1. Register/self-test all three UDFs; require exactly one active `approved` or same-attempt `cutover_started` record bound to this plan/database/binary/backup/digest. Retired/completed history is allowed but never active; absent/multiple/mismatched active state aborts.
 2. Revalidate writer shutdown, stable main/empty-WAL, schema, backup, binary, expiry, and free space without changing bytes. Using the exact step-4 rebuild code path in pure mode, materialize and validate every selected memory/source/API input and would-be memory, baseline/successor, route/lifecycle, binding, response and seal: all destination storage classes/no-NUL rules, scope/status/source/action/coverage domains, owner pair/allowlist/nonblank trim-stable key, numeric ranges, FK targets and full API shape must pass while approval remains retireable.
-3. Reopen the exact live database, register/self-test the UDF, set `foreign_keys=OFF`, verify it, and start `BEGIN IMMEDIATE`. Under that write lock, revalidate the entire plan-bound step-1/2 state—including main identity/hash, empty WAL, schema/user/target, every dependent object/exact SQL, backup/binary/digest/expiry/free-space and writer shutdown—then snapshot dependents and rerun the same pure rebuild. Only then durably transition `approved→cutover_started` immediately before the first schema write; any failure/failpoint before that transition rolls back and leaves `approved` retireable.
+3. Reopen the exact live database, register/self-test all three UDFs, set `foreign_keys=OFF`, verify it, and start `BEGIN IMMEDIATE`. Under that write lock, revalidate the entire plan-bound step-1/2 state—including main identity/hash, empty WAL, schema/user/target, every dependent object/exact SQL, backup/binary/digest/expiry/free-space and writer shutdown—then snapshot dependents and rerun the same pure rebuild. Only then durably transition `approved→cutover_started` immediately before the first schema write; any failure/failpoint before that transition rolls back and leaves `approved` retireable.
    Then drop every trigger on another table that references `memories` (including the graph-edge node validators)
    before the old table can be absent.
-4. Create/rebuild/rename `memories`, recreate owned indexes/FTS tables and external triggers byte-exact without altering dependents. Do not install any preexisting memory-owned UPDATE effect (FTS/enrichment/version/archive/status) during replay; only reviewed route/status enforcement guards run.
+4. Create/rebuild/rename `memories`, create its ordinary indexes and empty FTS virtual table, and recreate external triggers byte-exact without altering dependents. Keep every preexisting memory-owned INSERT/UPDATE/DELETE side-effect trigger—including FTS/enrichment/version/archive/status—absent throughout replay; only the newly reviewed GH933 insert-v1 ledger trigger and route/status enforcement guards may run on `memories`.
    Create retry/ledger objects and the ledger/update enforcement guards in FK-safe order. A forward-only row uses `migration_vNNN:<memory_id>:baseline` with sorted `insert_origin`/`response_aux` slots and today's snapshot.
    For exhaustive A→B→C proof, copy reconstructed A, bind/seal its baseline, then replay each proved successor under a separate deterministic
    `migration_vNNN:<memory_id>:step:<ordinal>` request with exact `route_transition` and/or `lifecycle_transition` slots plus `response_aux`;
-   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; after final C exact-matches stored memory and dependent rows, install every exact preexisting memory-owned UPDATE trigger before validation/commit.
+   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; after final C and every non-FTS dependent exact-match, run exactly one `INSERT INTO memories_fts(memories_fts) VALUES ('rebuild')`, prove the indexed projection equals every terminal source row, then require external-content verification `INSERT INTO memories_fts(memories_fts,rank) VALUES('integrity-check',1)` to succeed before restoring snapshotted `memories_ai`/`memories_ad`/`memories_au` and every other preexisting memory-owned INSERT/UPDATE/DELETE side-effect trigger byte-exact before final validation/commit.
    Consume only the exact validated rebuild; never introduce a first-time deterministic rejection here or infer history from current bytes/prunable events.
 5. Append typed bindings/response/seals and install literal guards. Before commit require row/count/digest/object equality, unchanged dependent DDL, `integrity_check='ok'`, and empty `foreign_key_check`; commit, immediately
    restore/verify `foreign_keys=ON`, then repeat both checks before any writer.
@@ -743,8 +742,7 @@ valid terminal route/lifecycle per memory matching `memories`, valid origin/v1
 maps, immutable unique lock anchors, and no schema or dependent-row/object drift.
 On restart, `cutover_started` is resumable only for the same approval: after writer shutdown, rollback recovery, and exact inspection, target schema+postflight marks `completed`; exact pre-cutover database+empty WAL+backup resumes step 3 without issuing another approval; any partial/ambiguous state requires restore and manual reauthorization. This state is never reusable for a different plan or database.
 
-Failure before step 3 leaves the live database unmodified; every precommit
-failure rolls back that one transaction. A postcommit FK-restore/check failure
+Failure before step 3 leaves the live database unmodified. Every protocol trigger uses `RAISE(ROLLBACK)`, and the canonical Rust transaction wrapper becomes poisoned on the first SQL error, immediately rolls back, exposes no raw commit path, and refuses commit even if an inner caller catches the error; therefore every precommit failure rolls back the whole request/migration transaction with `foreign_keys` either ON or OFF. A postcommit FK-restore/check failure
 discards the connection and blocks writers. The operator restores the backup
 only after proving the failed
 database is closed. Once a v2 writer seals any non-migration request, rollback

@@ -132,14 +132,21 @@ pending v2 requirements below.
    typed OLD/NEW state. The write connection registers the versioned deterministic
    `remem_sha256_frame_v1` SQLite function before migration or mutation; a
    missing/wrong function fails the INSERT rather than weakening the hash.
-   Before any mutation, each writer appends an immutable request intent with an
-   exact typed-result manifest. Generated memory, ledger, audit and operation IDs
+   Before any mutation, each writer appends an immutable request intent locking
+   request/response schema plus a canonical behavior-complete request plan; one
+   compiled planner produces the resolved target vector consumed by both mutation
+   and serialization, and the validator re-derives the only exact result manifest.
+   Generated memory, ledger, audit and operation IDs
    are outputs. Every successful transaction fills that manifest, then appends
    the immutable final response/result seal. Ledger INSERT requires an open
    request and compatible manifest slot; sealing reverses every ledger row to
    its manifest-declared typed result, including exact integer/API operation and
-   audit provenance, and seal blocks every later append.
-   Deferred constraints reject unsealed/missing/extra/mismatched bindings.
+   audit provenance. A versioned central validator maps every typed field to the
+   exact returned DTO field, a full-set aggregate, or an explicitly enumerated
+   internal-only slot; unknown/unclassified fields and any typed-result/response
+   disagreement rolls back the whole transaction, and seal blocks every later append.
+   All protocol triggers use transaction-level rollback; the poisoned Rust wrapper
+   exposes no catch-and-commit path. Deferred constraints independently reject unsealed/missing/extra/mismatched bindings.
    Anchor, intent, result, seal and ledger rows reject UPDATE, DELETE, and every
    conflict-path `INSERT OR REPLACE` even with recursive triggers disabled.
    Every internal/API writer/request identity, nonce, SHA-256, and digest requires SQLite TEXT
@@ -487,8 +494,11 @@ pending v2 requirements below.
       changed-route staging and direct bypass rejection are covered. A
       production-shaped FK fixture proves the `memories` rebuild first drops
       every external trigger that references it, recreates external triggers
-      byte-for-byte, and defers every preexisting memory-owned UPDATE side-effect
-      trigger—including FTS/enrichment—until replay exact-matches stored terminal bytes and dependent rows while preserving
+      byte-for-byte, and defers every preexisting memory-owned
+      INSERT/UPDATE/DELETE side-effect trigger—including FTS/enrichment—until
+      replay exact-matches stored terminal bytes and non-FTS dependent rows; it
+      then rebuilds FTS once from terminal C and runs external-content
+      `integrity-check` with `rank=1` before restoring every snapshotted trigger while preserving
       rows/DDL, restoring enforcement, and repeating `foreign_key_check`; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
@@ -523,13 +533,16 @@ pending v2 requirements below.
       Raw keys/credentials never enter logs, fingerprints, response JSON or
       retained tables.
 - [ ] The exact cutover DDL rejects UPDATE/DELETE on intent/result/seal rows,
-      malformed or duplicate manifests, missing/extra/shape-invalid result
+      malformed/mismatched request plans or manifests, missing/extra/shape-invalid/cross-response result
       bindings, orphan/mismatched INSERT origins, ledger appends without a typed
       manifest slot, ledger appends after seal, and seal when any ledger lacks
       its typed result or is nonterminal/current-row-mismatching. Owner DDL
       accepts exactly seven scopes and rejects blank
       or untrimmed keys. It
-      rejects a write connection without the approved SHA-256 UDF. Golden frame
+      rejects a write connection without all approved hash/manifest/response
+      UDFs, enforces row/byte/sorter caps with one large aggregate header, typed-rejects
+      over-cap work before intent instead of auto-chunking,
+      and rejects BLOB/NUL local-copy paths. Golden frame
       vectors match Rust, trigger and migration backfill bytes; nonce/hash/digest
       columns reject BLOB, REAL, and INTEGER storage. Literal
       `memory_route_ledger_fingerprint_guard`,

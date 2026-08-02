@@ -110,6 +110,8 @@ Positive cases cover all ten typed binding kinds and every allowed outcome:
 | `audit_outcome` | recorded scalar event ID or explicit not-required/failed |
 | `response_aux` | exactly one canonical returned-result object byte-equal to committed `response_json` |
 
+Table-drive the compiled plan/manifest/response registry over every accepted `(writer_kind,request_schema_version,response_schema_version,binding_kind,outcome_code,field)` exactly once. Its v1 inventory covers save/API save; lifecycle/candidate apply; general/Web governance and candidate safe review; scope mutation/cleanup and preference merge; backup/Markdown/pack/Codex imports; and `internal_receipt_v1` for TTL, supersede, preference removal, stale archive and migration jobs. For each real request DTO, execute the compiled planner against a locked fixture, compare every qualifying/input target to its canonical non-secret plan, and require the manifest UDF to rederive the exact slots. Holding that plan fixed, simultaneously omit/add/reorder/duplicate a request target in manifest+typed results+response and require intent/seal rollback; independently mutate selector/input fingerprints or the resolved plan against the original DTO/locked fixture and require planner/intent rejection. Serialize each real response DTO (imports validate canonical receipt JSON before CLI rendering), mutate every Exact field and each side of every Aggregate—including IDs/statuses, local path/status/reason aliases, ordered arrays/order/duplicates/counts—and require seal rollback with zero database change. InternalOnly is accepted only for the compiled writer/kind/outcome/field tuple and remains subject to FK/ledger/fingerprint guards; unknown contracts, relabeling, missing/extra projections, DTO keys or result rows fail closed. Exercise manifest/result caps at 4,095/4,096/4,097 rows, the 16-MiB total row-record sorter budget, and plan/manifest/response/binding byte caps at N/N+1; every over-cap logical operation returns `write_batch_too_large_v1` before intent/mutation, with no automatic child request. `EXPLAIN`/VDBE inspection must show one large header record and NULL header fields on each row record; at 4,096 rows, instrument SQLite allocator high-water and temp-file writes and require at most 128 MiB above baseline while perturbing indexes/query plans and preserving `(record_kind,result_ordinal,binding_kind)` order.
+
 For each row, recompute the binding fingerprint independently and verify the
 ordered predecessor chain and final seal digest. Then run these negative cases,
 each in a fresh transaction, and assert the named statement fails and leaves
@@ -118,14 +120,12 @@ every table/count/digest unchanged:
 1. non-TEXT/NUL-tailed/blank/space/uppercase writer kinds; malformed internal/API request IDs (including preexisting referenced API parents) while mixed-case
    valid IDs remain accepted; and short, uppercase, nonhex, overlong, embedded-
    NUL-tailed TEXT, or length-valid BLOB fingerprints/nonces/digests;
-2. invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra
-   object key, negative ordinal, duplicate pair, unsorted pair, or zero/multiple
-   `response_aux` entries;
+2. invalid/nonobject/noncanonical request plan or plan fingerprint, request/response schema mismatch, invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra object key, negative ordinal, duplicate pair, unsorted pair, or zero/multiple `response_aux` entries;
 3. result absent from manifest, result out of manifest order, wrong predecessor,
    wrong fingerprint, unknown outcome, and every cross-kind typed-column leak;
 4. each kind with one required ID/path/digest removed, a forbidden ID added,
-   dangling FK, duplicate route/lifecycle binding, or noncanonical JSON;
-5. seal with zero, missing, unexpected, or shape-invalid results; `response_aux` bytes differing from response (including reordered canonical-object keys); nonterminal or
+   dangling FK, duplicate route/lifecycle binding, or noncanonical JSON; `local_copy_path` BLOB or embedded-NUL TEXT fails unchanged/unsealed, ordinary TEXT/no-NUL `written` succeeds, and disabled/failed NULL succeeds;
+5. seal with zero, missing, unexpected, shape-invalid or response-contract-disagreeing results; `response_aux` bytes differing from response (including reordered canonical-object keys); nonterminal or
    current-row-mismatching route/lifecycle state, wrong chain, response
    schema/JSON, request fingerprint, or result fingerprint;
 6. inserted memory without an `insert_origin`, mismatched writer/request/ordinal,
@@ -169,9 +169,7 @@ another R with the candidate `(dev,ino)` and a zero-length crash-left L; the
 combined R-or-IL lookup must reject before nonce write, leaving L bytes/mtime
 and every anchor row unchanged.
 
-Explicitly prove that an intent cannot commit without a seal and a seal cannot
-commit without all manifested results. `PRAGMA foreign_key_check` is empty after
-every positive case.
+Explicitly prove that an intent cannot commit without a seal and a seal cannot commit without all planned/manifested results. For every protocol trigger, catch the SQLite error and then attempt `COMMIT`: `RAISE(ROLLBACK)` has ended the transaction, all prior writes are absent, and the canonical wrapper remains poisoned/refuses commit. Repeat with `foreign_keys=ON` and `OFF`; `PRAGMA foreign_key_check` is empty after every positive case.
 
 ## Writer and Retry Matrix
 
@@ -234,7 +232,7 @@ Run foreground migration on:
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
 - 100,000-memory scale fixture with WAL plus nonempty claims, edges, facts,
   embeddings, FTS and every other table whose FK references `memories`;
-- production external triggers that select `memories`, plus every preexisting memory-owned UPDATE side-effect trigger including FTS/enrichment/version/archive/status; prove external triggers are dropped before table absence, while all owned UPDATE effects stay absent through A→B→C replay and are recreated byte-exact only after terminal C and dependent rows match stored bytes;
+- production external triggers that select `memories`, plus every preexisting memory-owned INSERT/UPDATE/DELETE side-effect trigger including FTS/enrichment/version/archive/status; snapshot exact SQL, prove all owned side effects stay absent after A insert, B update and C update, with no replay-built FTS entries or embedding/edge/archive-marker drift. After terminal C and all non-FTS dependents exact-match, run one canonical FTS rebuild, require every terminal projection exact, and execute external-content `INSERT INTO memories_fts(memories_fts,rank) VALUES('integrity-check',1)` successfully before recreating all trigger SQL byte-exact. Fixture-only unique three-or-more-character trigram sentinels present solely in each A/B row and absent from every C/other row must stop matching that row; this is not a production global-token-absence gate. Probes prove INSERT indexes, indexed UPDATE removes old/adds new (including enrichment), and DELETE removes FTS/edges; a pre-rebuild failpoint restores the byte-identical original DB, original FTS contents and original triggers with no partial rebuilt index;
 - malformed owner pair, status, chain, FK, FTS/schema object, or source version;
   and
 - injected interruption before/after every migration stage and before COMMIT.

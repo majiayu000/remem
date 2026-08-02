@@ -73,14 +73,24 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     Legacy save/Markdown changes and pruned events make unproved rows
     migration-time `forward_only`; never infer absence or earlier eligibility.
     Before old-table absence, snapshot/drop every external dependent trigger,
-    then recreate it byte-exact；all preexisting memory-owned UPDATE effects stay absent
-    until terminal C byte equality. Materialize A→B→C only when every transition is
+    then recreate it byte-exact；all preexisting memory-owned I/U/D side-effect
+    triggers stay absent until terminal C/non-FTS-dependent byte equality, then one
+    canonical FTS rebuild proves every terminal projection exact; fixture-only
+    unique trigram sentinels prove A/B row tokens no longer match，external-content
+    `integrity-check,rank=1` must succeed before byte-exact trigger restore. Materialize
+    A→B→C only when every transition is
     proved: seal one deterministic baseline request, then use and seal a distinct
     deterministic request for each successor before the next step. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
     Every internal/API request identity requires TEXT/no-NUL；route snapshot text
     typed/no-NUL、confidence numeric/null；successor NULL-safe real change；referenced
-    API mutation immutable，response_aux 必须 byte-equal seal response；every integer-
+    API mutation immutable；`local_copy_path` 必须 NULL 或 TEXT/no-NUL，BLOB/NUL 负测；
+    intent 锁定 response schema 与 compiled planner 的 canonical request plan，manifest
+    从 plan 重推；ordered response contract 只排序一次 plan/response header 与 typed-only
+    rows，在 4,096-row/field caps 和 16-MiB total row budget 内将 every
+    typed result field 封闭分类 Exact/Aggregate/InternalOnly 并与 Rust DTO 校验，
+    unknown/unclassified/missing/extra/reordered/duplicate target/result/cross-response
+    fail closed；超限 v1 operation 在 intent 前 typed reject、不 auto-chunk；protocol guards `RAISE(ROLLBACK)` 且 catch 后不可 commit；every integer-
     domain ID/version/ordinal/epoch/floor requires INTEGER storage。
   - 六类 INSERT 在 mutation 前取得/derive 稳定 request/operation ID，canonical
     entrypoint 先查 sealed writer+ID/request hash，miss append immutable intent；
