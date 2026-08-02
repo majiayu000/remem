@@ -269,8 +269,11 @@ Expected commands are host-only; model, executor, and context policy live in
 
 After restarting Codex, remem automatically injects relevant project memory at
 session start and summarizes the session at stop. Codex can also call the MCP
-tools exposed by `remem mcp`, including `search`, `get_observations`,
-`save_memory`, `workstreams`, and `timeline`.
+tools exposed by `remem mcp`: current-state, curated/raw search, contextual
+recall, timeline/detail/commit lookup, memory save/governance, reports, and
+workstream tools. All 14 tools publish explicit side-effect annotations. The 13
+JSON tools return both their legacy text content and matching structured
+content with an output schema; `timeline_report` remains Markdown.
 
 SessionStart keeps Core, Preferences, and Workstreams on their existing paths,
 then applies one deterministic relevance budget across Lessons, the non-Core

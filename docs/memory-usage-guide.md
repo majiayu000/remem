@@ -3,6 +3,15 @@
 remem keeps MCP tool descriptions short so agents see contracts first and
 tutorials only when they need them.
 
+Every MCP tool descriptor declares whether it reads or mutates durable state,
+whether repeat calls add effects, and whether an external embedding provider
+may be contacted. Treat `get_observations` as a write-aware detail read because
+it overwrites last-access metadata and increments access counts, so its static
+descriptor is destructive even though it does not delete memory content.
+Recall and commit lookup may quarantine an unsafe summary. JSON tools expose
+structured content without changing their legacy text response, while
+`timeline_report` intentionally stays Markdown-only.
+
 ## Retrieval
 
 Use `search(query, project?)` first. It returns compact results with IDs,

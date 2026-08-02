@@ -6,6 +6,7 @@ mod runtime;
 mod search_tools;
 #[cfg(test)]
 mod tests;
+mod tool_contracts;
 mod workstream_tools;
 mod write_tools;
 
@@ -21,14 +22,14 @@ pub(super) struct MemoryServer {
 
 impl MemoryServer {
     fn new() -> Result<Self> {
-        Ok(Self {
-            tool_router: Self::tool_router_search()
-                + Self::tool_router_context()
-                + Self::tool_router_commit()
-                + Self::tool_router_write()
-                + Self::tool_router_workstream()
-                + Self::tool_router_raw(),
-        })
+        let mut tool_router = Self::tool_router_search()
+            + Self::tool_router_context()
+            + Self::tool_router_commit()
+            + Self::tool_router_write()
+            + Self::tool_router_workstream()
+            + Self::tool_router_raw();
+        tool_contracts::apply(&mut tool_router)?;
+        Ok(Self { tool_router })
     }
 
     fn with_conn<F, T>(&self, tool: &'static str, f: F) -> McpToolResult<T>
