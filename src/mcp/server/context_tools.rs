@@ -13,7 +13,7 @@ use crate::{db, memory};
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Recall task-aware user context on demand. Combines safe user claims, profile summary, repo memories, current-state keys, workstreams, and recent sessions into compact source-attributed context with include/drop reason codes."
+        description = "Read-only. Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Requires a non-blank query. project sets the scope; otherwise cwd is normalized, and when both are omitted the current process working directory supplies the scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input, an unavailable process working directory, or database failures return a tool error."
     )]
     pub(super) fn recall_user_context(
         &self,
@@ -52,13 +52,24 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Get chronological observations around a specific point. Useful for understanding what happened before/after a change. Provide anchor ID or search query to find the center point."
+        description = "Read-only. Return a JSON array of observations before and after one center point; provide anchor or query, and anchor takes precedence when both are set. depth_before and depth_after default to 5, and project limits both anchor lookup and results. Use this for local chronological context around an observation; use timeline_report for an aggregated project report, search for curated memories, or current_state for a stable fact. Missing anchors/queries, no query match, or database failures return a tool error."
     )]
     pub(super) fn timeline(
         &self,
         Parameters(params): Parameters<TimelineParams>,
     ) -> McpToolResult<String> {
         const TOOL: &str = "timeline";
+        if params.anchor.is_none()
+            && params
+                .query
+                .as_deref()
+                .is_none_or(|query| query.trim().is_empty())
+        {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "anchor or non-blank query required",
+            ));
+        }
         let start = std::time::Instant::now();
         crate::log::info(
             "mcp",
@@ -138,7 +149,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Fetch complete details by IDs. Use after search(): pass selected IDs and the exact source from search.next_step.source or each result.source. Supports source='memory' for curated memories and source='observation' for current extracted observations."
+        description = "Fetch full details for explicit IDs and record last-accessed metadata for returned rows. Use after search, not for discovery: pass selected IDs and the exact source from search.next_step.source or each result.source. source defaults to 'memory'; source='memory' returns curated memory detail objects and requires its access update to succeed, while source='observation' returns current extracted observations as detail objects in a JSON array and records its access update best-effort (a failed update is logged but details still return). Unsupported sources, any missing requested ID, detail-read failures, or memory access-update failures return a tool error."
     )]
     pub(super) fn get_observations(
         &self,

@@ -648,7 +648,10 @@ fn timeline_rejects_missing_anchor_and_query_as_invalid_request() {
         Err(err) => err,
     };
     let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "timeline", false);
-    assert_eq!(json["error"]["message"], "anchor or query required");
+    assert_eq!(
+        json["error"]["message"],
+        "anchor or non-blank query required"
+    );
 }
 
 #[test]
