@@ -72,13 +72,14 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - In one foreground migration transaction, copy only exhaustive durable proof.
     Legacy save/Markdown changes and pruned events make unproved rows
     migration-time `forward_only`; never infer absence or earlier eligibility.
-    Before old-table absence, snapshot and drop every external dependent trigger,
-    then recreate byte-exact. Materialize A→B→C only when every transition is
+    Before old-table absence, snapshot/drop every external dependent trigger,
+    then recreate it byte-exact；memory-owned side-effect triggers stay absent
+    until terminal C byte equality. Materialize A→B→C only when every transition is
     proved: seal one deterministic baseline request, then use and seal a distinct
     deterministic request for each successor before the next step. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
-    Every nonce/fingerprint/digest constraint requires `typeof(...)=text` plus
-    lowercase 64-hex checks so BLOB affinity coercion cannot bypass validation.
+    Every nonce/fingerprint/digest requires TEXT/no-NUL/exact hex；every integer-
+    domain ID/version/ordinal/epoch/floor requires INTEGER storage。
   - 六类 INSERT 在 mutation 前取得/derive 稳定 request/operation ID，canonical
     entrypoint 先查 sealed writer+ID/request hash，miss append immutable intent；
     memory INSERT 带 writer/request/result-ordinal origin tuple，Route trigger 用
@@ -192,8 +193,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     从 A2R durable lifecycle ledger 按 memory/time index 重建；general/Web
     governance、scope archive、cleanup-plan、save/Markdown、candidate apply、TTL、
     soft supersede、preference removal 与 stale archive 全部经 canonical service
-    将 status+next version 原子提交，event 仅 audit mirror。链连续到 current；
-    v2 startup 不得启用 uninstrumented status writer，terminal drift fail closed。
+    将 status+next changed version 原子提交，对称 status update guard 要求 open
+    exact staged successor，same-status writer row 禁止；v2 startup 不得启用 bypass。
     Web row 复制 operation binding，并 exact bind durable API mutation
     resource/action/schema/response/status/time；audit ID 非 proof。
     unsupported/unrecorded/gap/fork/terminal drift/ledger mismatch 返回
@@ -273,7 +274,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - 普通 open/read-only/CLI/hook/worker/MCP/API 与通用 migration runner 在 pending
     v2 时 fail closed；仅 dedicated operator `plan`/`apply` 可执行 cutover。plan
     mode 0600 且 durable，绑定 DB identity/hash、schema/target、binary、backup、
-    nonce/expiry；apply 要求 exact plan SHA-256 与 durable single-use approval。
+    nonce/expiry；apply 要求 exact plan SHA-256，durable 写唯一 approval journal；
+    step 1 exact validate/consume 该 record，不能要求 empty journal。
   - PR uses `Refs #933`; it does not claim Phase B/C completion or close issue。
   - Commit all source/docs/version changes and complete the final base sync
     first。Then, on that exact candidate SHA, regenerate the final record and

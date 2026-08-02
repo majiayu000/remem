@@ -78,7 +78,7 @@ canonical bytes, database path/dev/inode/hash, schema/user/target versions,
 binary checksum, backup destination, random nonce, expiry, and stable SHA-256.
 Apply rejects missing, uppercase, BLOB, stale, reused, altered, wrong-database,
 wrong-binary, wrong-backup, or post-plan-writer-state input before live writes.
-Only the exact lowercase digest consumes one approval and enters cutover once.
+Only the exact lowercase digest creates one durable unconsumed approval record; step 1 accepts exactly that sole record, validates every binding, atomically marks it `cutover_started`, and rejects absent/consumed/extra/mismatched journal state.
 
 ## Executable DDL Matrix
 
@@ -88,7 +88,7 @@ never use a relaxed copy. Normalize only insignificant whitespace and identifier
 quoting, then require name/body equivalence for every object, explicitly
 `memory_route_ledger_fingerprint_guard`,
 `memory_lifecycle_ledger_fingerprint_guard`, `memory_insert_v1_ledgers`, and
-`memory_route_tuple_update_guard`, `memory_write_commit_guard`,
+`memory_route_tuple_update_guard`, `memory_status_update_guard`, `memory_write_commit_guard`,
 `memory_write_lock_anchors`, all six insert-once conflict guards, and every
 append-only UPDATE/DELETE trigger.
 
@@ -114,8 +114,8 @@ every table/count/digest unchanged:
 
 1. blank/space/uppercase writer kinds; blank, whitespace-containing,
    NUL-containing, overlong, or out-of-alphabet request IDs while mixed-case
-   valid IDs remain accepted; and short, uppercase, nonhex, overlong, or
-   length-valid BLOB fingerprints/nonces/digests;
+   valid IDs remain accepted; and short, uppercase, nonhex, overlong, embedded-
+   NUL-tailed TEXT, or length-valid BLOB fingerprints/nonces/digests;
 2. invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra
    object key, negative ordinal, duplicate pair, unsorted pair, or zero/multiple
    `response_aux` entries;
@@ -130,7 +130,7 @@ every table/count/digest unchanged:
    wrong memory ID, route/lifecycle ID, non-v1 row, predecessor, or source tuple;
 7. transition result bound to another memory/request/ordinal/writer, route audit,
    lifecycle integer/API operation or audit; unknown lifecycle action, invalid
-   action/status/source/version tuple, Web missing/wrong-type API binding, or a
+   action/status/source/version tuple, same-status `writer_transition`, Web missing/wrong-type API binding, or a
    `poisoning_ack` carrying audit provenance;
 8. route/lifecycle INSERT with no compatible manifest slot, either ledger
    appended after seal, and seal with an otherwise valid but unbound ledger row;
@@ -141,10 +141,10 @@ every table/count/digest unchanged:
    request/result/seal, route, and lifecycle PK/UNIQUE/partial-UNIQUE collision;
 12. UPDATE and DELETE against those six append-only tables before/after seal,
    plus mutation of a memory origin tuple; and
-13. a changed route tuple with no staged next row, a sealed staged row, wrong
-   head, OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching
-   open terminal next row permits the update and null-safe same-value
-   assignments need no route row.
+13. a changed route or status with no staged next row, sealed stage, wrong head,
+   OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching open
+   terminal successor permits the update and same-value assignments need no row; and
+14. stored non-INTEGER values (nonnumeric TEXT/BLOB/nonintegral REAL) for every integer-domain ID/version/ordinal/epoch/floor, including nullable fields, are rejected unchanged.
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field
@@ -154,7 +154,7 @@ mutate each OLD/NEW value with reused digest, and only a valid chain may pass.
 For `memory_insert_v1_ledgers`, run every insert family, missing/wrong
 `insert_origin`, wrong UDF, invalid route/lifecycle value, and injected failure
 between its two INSERT statements. A parent INSERT yields exactly memory+route
-v1+lifecycle v1 or zero rows—never one ledger. Compare the five literal trigger
+v1+lifecycle v1 or zero rows—never one ledger. Compare the six literal trigger
 bodies independently with normalized `sqlite_schema.sql`.
 
 Exercise anchor DDL independently: only valid opaque R, INTEGER nonnegative dev
@@ -231,8 +231,7 @@ Run foreground migration on:
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
 - 100,000-memory scale fixture with WAL plus nonempty claims, edges, facts,
   embeddings, FTS and every other table whose FK references `memories`;
-- production external triggers that select `memories`, including graph-edge node
-  validators; prove they are dropped before table absence and recreated byte-exact;
+- production external triggers that select `memories`, including graph-edge node validators, plus memory-owned version/archive/status side-effect triggers; prove external triggers are dropped before table absence, while owned side-effect triggers stay absent through A→B→C replay and are recreated byte-exact only after terminal C matches stored bytes;
 - malformed owner pair, status, chain, FK, FTS/schema object, or source version;
   and
 - injected interruption before/after every migration stage and before COMMIT.

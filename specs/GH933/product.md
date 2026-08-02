@@ -156,9 +156,10 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    status；unsupported/unrecorded action/status、
    gap/fork/contradiction/ledger mismatch 返回
    `unreconstructable_memory_lifecycle`。v2 启动不得留下任何 uninstrumented
-   status writer；否则 release no-go。
-   所有 nonce/fingerprint/digest 列还必须以 `typeof(...)=text` 拒绝可通过长度/GLOB
-   外观检查的 BLOB；两 ledger fingerprint 是 NOT NULL 且严格 lowercase 64-hex，per-memory/
+   status writer；对称 DB guard 要求每次真实 status change 已有 open exact staged
+   successor，writer_transition 禁止 same-status row，否则 release no-go。
+   所有 nonce/fingerprint/digest 必须 TEXT、无 embedded NUL、exact hex；所有
+   integer-domain ID/version/ordinal/epoch/floor 必须 INTEGER，拒绝 affinity bypass。两 ledger fingerprint 是 NOT NULL 且严格 lowercase 64-hex，per-memory/
    source unique 无 NULL bypass。每个 writer 在 mutation 前 append stable、
    nonblank request/operation intent；ledger hash 绑定 strict request hash、result
    ordinal、predecessor 与 exact typed OLD/NEW，不绑定 trigger 当时尚不存在的
@@ -621,7 +622,7 @@ Context Bundle 用户界面。下一份 Phase A hardening follow-up 仍以 `Refs
 Phase B/C 必须独立经过架构审阅、实现验证和发布说明；在这些阶段完成前，不得
 将 GH-933 或完整 CurrentTruth 能力标记为已交付。
 Breaking migration 不得由普通 open、CLI、hook、worker、MCP/API 或通用
-`run_migrations` 自动执行；operator 必须先生成绑定 DB identity、binary、backup
-destination、nonce 与 expiry 的 mode-0600 durable plan，再以 exact lowercase
-SHA-256 显式 apply，且 approval durable single-use。任何 mismatch/reuse 必须在
-首次 live write 前失败。
+runner 执行；operator plan/apply durable 写唯一 bound approval journal，cutover
+step 1 exact validate/mark `cutover_started`，而非要求 empty journal。外部 dependent
+triggers byte-exact recreate；memory-owned side-effect triggers 延迟到 replay terminal
+C exact-match 后安装。任何 mismatch/reuse 必须在首次 live write 前失败。

@@ -38,7 +38,7 @@ Exit requires:
 - focused tests, full Rust test/clippy, plugin version sync, version-bump check,
   PR preflight, and public API compile pass at exact HEAD;
 - actual migration SQL and installed `sqlite_schema` match every reviewed
-  literal object, including both fingerprint guards and insert-v1 trigger;
+  literal object, including fingerprint, route/status-update and insert-v1 guards;
 - ordinary `open_db`/read-only/CLI/hook/worker/MCP/API startup refuses the
   pending operator-only migration without mutating schema, and only the
   dedicated plan/apply entrypoint can construct its single-use capability;
@@ -95,7 +95,8 @@ operator consent. Before cutover:
    exact database/binary/backup-bound plan.
 
 The operator runs `remem migrate current-truth-v2 apply --plan <path>
---approve-plan-sha256 <digest>` once. Apply must durably consume the exact plan;
+--approve-plan-sha256 <digest>` once. Apply durably writes the sole approval
+journal record; cutover step 1 exact-validates and marks it `cutover_started`;
 a missing, stale, reused, mistyped, or identity-mismatched plan fails before a
 live write. No old writer starts afterward. An ordinary command is never a
 migration entrypoint.

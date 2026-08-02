@@ -116,9 +116,11 @@ pending v2 requirements below.
    durable, memory-indexed lifecycle ledger. This includes `govern_memories`, Web
    archive/restore, scope archive/reroute/cleanup-plan, save/Markdown reactivation,
    candidate application, TTL expiry, soft supersede, preference removal, and
-   stale archive. One canonical service commits status and the next version
-   atomically; Web versions bind the durable API operation record, while audit
-   events remain optional mirrors. No v2 startup enables an uninstrumented path.
+   stale archive. One canonical service commits status and the next changed
+   version atomically; a database guard rejects any real status update without
+   its open exact staged successor, and same-status writer rows are forbidden.
+   Web versions bind the durable API operation record, while audit events remain
+   optional mirrors. No v2 startup enables an uninstrumented path.
    Both history ledgers are retained indefinitely with restrictive memory/self
    links and no FK/cascade to the 30-day `events` table.
    Every append has a nonblank canonical writer-specific request discriminator
@@ -137,8 +139,9 @@ pending v2 requirements below.
    Deferred constraints reject unsealed/missing/extra/mismatched bindings.
    Anchor, intent, result, seal and ledger rows reject UPDATE, DELETE, and every
    conflict-path `INSERT OR REPLACE` even with recursive triggers disabled.
-   Every nonce, SHA-256, and digest CHECK also requires SQLite TEXT storage;
-   a length-valid BLOB must fail rather than bypass `GLOB` validation.
+   Every nonce, SHA-256, and digest CHECK requires SQLite TEXT storage, exact byte
+   length, and no embedded NUL; every integer-domain ledger value requires
+   INTEGER storage. BLOB and NUL-tailed prefix bypasses must fail.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
    it, derive a namespaced opaque request ID and never persist or log the raw key.
    The key and transport credentials are identity, not request payload, so the
@@ -476,9 +479,10 @@ pending v2 requirements below.
       insert families, the three existing-row route writers, same-value no-ops,
       changed-route staging and direct bypass rejection are covered. A
       production-shaped FK fixture proves the `memories` rebuild first drops
-      every external trigger that references it, then recreates each trigger
-      byte-for-byte while preserving dependent rows/DDL, restoring enforcement,
-      and repeating `foreign_key_check`; the legacy user-claim wrapper stays
+      every external trigger that references it, recreates external triggers
+      byte-for-byte, and defers memory-owned side-effect triggers until history
+      replay exact-matches stored terminal bytes while preserving dependent
+      rows/DDL, restoring enforcement, and repeating `foreign_key_check`; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.
@@ -692,5 +696,6 @@ Phase A v2 PRs use `Refs #933`. They do not close GH-933 or claim Phase B/C
 delivery. Merge and release remain explicit human decisions.
 The breaking migration is never reached through ordinary database open. A
 single-use canonical plan binds database/binary/backup identity, and only the
-operator's exact lowercase SHA-256 approval passed to the dedicated
-`remem migrate current-truth-v2 apply` command authorizes cutover.
+operator's exact lowercase SHA-256 approval passed to the dedicated apply command
+authorizes cutover. Apply durably writes one approval journal entry; cutover step
+1 must validate and consume that exact sole entry, not require an empty journal.

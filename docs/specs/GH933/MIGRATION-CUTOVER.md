@@ -43,7 +43,6 @@ request_id = "save_" || lower_hex(
     SHA-256("remem/save-idempotency/v1\0" || normalized_key)
 )
 ```
-
 Only `request_id` is retained; raw/normalized keys never enter serialization, database, journals, logs, errors, traces, metrics, or responses. Fingerprint excludes key/credentials and covers every other raw field, Option presence, list order/duplicates, reference time, defaults, and effective inputs:
 
 | Existing row | Incoming key/payload | Result |
@@ -63,7 +62,7 @@ using `ALTER TABLE ... NOT NULL` on populated data. The rebuilt table adds:
 ```sql
 insert_writer_kind TEXT NOT NULL,
 insert_request_id TEXT NOT NULL,
-insert_result_ordinal INTEGER NOT NULL CHECK (insert_result_ordinal >= 0),
+insert_result_ordinal INTEGER NOT NULL CHECK (typeof(insert_result_ordinal)='integer' AND insert_result_ordinal >= 0),
 UNIQUE (insert_writer_kind, insert_request_id, insert_result_ordinal),
 FOREIGN KEY (insert_writer_kind, insert_request_id)
   REFERENCES memory_write_requests(writer_kind, request_id)
@@ -82,7 +81,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE memory_write_lock_anchors (
     request_id TEXT PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0 AND request_id GLOB '[0-9A-Za-z]*' AND request_id NOT GLOB '*[^-0-9A-Z_a-z]*'),
     lock_dev INTEGER NOT NULL CHECK (typeof(lock_dev)='integer' AND lock_dev >= 0), lock_ino INTEGER NOT NULL CHECK (typeof(lock_ino)='integer' AND lock_ino > 0),
-    lock_nonce TEXT NOT NULL CHECK (typeof(lock_nonce)='text' AND length(lock_nonce)=32 AND lock_nonce NOT GLOB '*[^0-9a-f]*'),
+    lock_nonce TEXT NOT NULL CHECK (typeof(lock_nonce)='text' AND instr(lock_nonce,char(0))=0 AND length(lock_nonce)=32 AND lock_nonce NOT GLOB '*[^0-9a-f]*'),
     anchored_at_epoch INTEGER NOT NULL CHECK (typeof(anchored_at_epoch)='integer' AND anchored_at_epoch >= 0),
     UNIQUE (lock_dev, lock_ino)
 ) WITHOUT ROWID;
@@ -94,11 +93,10 @@ CREATE TABLE memory_write_requests (
       CHECK (length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0)
       CHECK (request_id NOT GLOB '*[^0-9A-Za-z._:-]*'),
     request_fingerprint TEXT NOT NULL
-      CHECK (typeof(request_fingerprint)='text' AND length(request_fingerprint) = 64)
+      CHECK (typeof(request_fingerprint)='text' AND instr(request_fingerprint,char(0))=0 AND length(request_fingerprint) = 64)
       CHECK (request_fingerprint NOT GLOB '*[^0-9a-f]*'),
-    request_schema_version INTEGER NOT NULL
-      CHECK (request_schema_version > 0),
-    requested_at_epoch INTEGER NOT NULL CHECK (requested_at_epoch >= 0),
+    request_schema_version INTEGER NOT NULL CHECK (typeof(request_schema_version)='integer' AND request_schema_version > 0),
+    requested_at_epoch INTEGER NOT NULL CHECK (typeof(requested_at_epoch)='integer' AND requested_at_epoch >= 0),
     expected_results_json TEXT NOT NULL
       CHECK (json_valid(expected_results_json) = 1)
       CHECK (json_type(expected_results_json) = 'array'),
@@ -109,26 +107,26 @@ CREATE TABLE memory_write_requests (
 );
 CREATE TABLE memory_route_ledger (
     id INTEGER PRIMARY KEY CHECK (id > 0),
-    memory_id INTEGER NOT NULL,
-    route_version INTEGER NOT NULL CHECK (route_version > 0),
-    previous_route_id INTEGER,
-    effective_at_epoch INTEGER NOT NULL CHECK (effective_at_epoch >= 0),
+    memory_id INTEGER NOT NULL CHECK (typeof(memory_id)='integer'),
+    route_version INTEGER NOT NULL CHECK (typeof(route_version)='integer' AND route_version > 0),
+    previous_route_id INTEGER CHECK (previous_route_id IS NULL OR typeof(previous_route_id)='integer'),
+    effective_at_epoch INTEGER NOT NULL CHECK (typeof(effective_at_epoch)='integer' AND effective_at_epoch >= 0),
     source_kind TEXT NOT NULL CHECK (
       source_kind IN (
         'insert', 'legacy_backfill', 'save_upsert',
         'markdown_import', 'scope_cleanup'
       )
     ),
-    audit_event_id INTEGER,
+    audit_event_id INTEGER CHECK (audit_event_id IS NULL OR typeof(audit_event_id)='integer'),
     source_writer_kind TEXT NOT NULL,
     source_ref TEXT NOT NULL,
-    source_result_ordinal INTEGER NOT NULL CHECK (source_result_ordinal >= 0),
+    source_result_ordinal INTEGER NOT NULL CHECK (typeof(source_result_ordinal)='integer' AND source_result_ordinal >= 0),
     source_fingerprint TEXT NOT NULL
-      CHECK (typeof(source_fingerprint)='text' AND length(source_fingerprint) = 64)
+      CHECK (typeof(source_fingerprint)='text' AND instr(source_fingerprint,char(0))=0 AND length(source_fingerprint) = 64)
       CHECK (source_fingerprint NOT GLOB '*[^0-9a-f]*'),
     coverage_kind TEXT NOT NULL
       CHECK (coverage_kind IN ('complete', 'forward_only')),
-    coverage_start_epoch INTEGER NOT NULL CHECK (coverage_start_epoch >= 0),
+    coverage_start_epoch INTEGER NOT NULL CHECK (typeof(coverage_start_epoch)='integer' AND coverage_start_epoch >= 0),
     placement_project TEXT NOT NULL,
     source_project TEXT,
     target_project TEXT,
@@ -173,10 +171,10 @@ CREATE INDEX idx_memory_route_legacy ON memory_route_ledger(placement_project,me
 CREATE INDEX idx_memory_route_coverage ON memory_route_ledger(coverage_kind,coverage_start_epoch);
 CREATE TABLE memory_lifecycle_ledger (
     id INTEGER PRIMARY KEY CHECK (id > 0),
-    memory_id INTEGER NOT NULL,
-    lifecycle_version INTEGER NOT NULL CHECK (lifecycle_version > 0),
-    previous_lifecycle_id INTEGER,
-    effective_at_epoch INTEGER NOT NULL CHECK (effective_at_epoch >= 0),
+    memory_id INTEGER NOT NULL CHECK (typeof(memory_id)='integer'),
+    lifecycle_version INTEGER NOT NULL CHECK (typeof(lifecycle_version)='integer' AND lifecycle_version > 0),
+    previous_lifecycle_id INTEGER CHECK (previous_lifecycle_id IS NULL OR typeof(previous_lifecycle_id)='integer'),
+    effective_at_epoch INTEGER NOT NULL CHECK (typeof(effective_at_epoch)='integer' AND effective_at_epoch >= 0),
     previous_status TEXT CHECK (previous_status IS NULL OR previous_status IN ('active','stale','superseded','archived','deleted','rejected')),
     new_status TEXT NOT NULL CHECK (new_status IN ('active','stale','superseded','archived','deleted','rejected')),
     source_kind TEXT NOT NULL CHECK (
@@ -186,17 +184,17 @@ CREATE TABLE memory_lifecycle_ledger (
       )
     ),
     source_action TEXT NOT NULL,
-    source_operation_id INTEGER, source_api_operation_id TEXT, audit_event_id INTEGER,
+    source_operation_id INTEGER CHECK (source_operation_id IS NULL OR typeof(source_operation_id)='integer'), source_api_operation_id TEXT, audit_event_id INTEGER CHECK (audit_event_id IS NULL OR typeof(audit_event_id)='integer'),
     source_writer_kind TEXT NOT NULL,
     source_ref TEXT NOT NULL,
-    source_result_ordinal INTEGER NOT NULL CHECK (source_result_ordinal >= 0),
+    source_result_ordinal INTEGER NOT NULL CHECK (typeof(source_result_ordinal)='integer' AND source_result_ordinal >= 0),
     source_fingerprint TEXT NOT NULL
-      CHECK (typeof(source_fingerprint)='text' AND length(source_fingerprint) = 64)
+      CHECK (typeof(source_fingerprint)='text' AND instr(source_fingerprint,char(0))=0 AND length(source_fingerprint) = 64)
       CHECK (source_fingerprint NOT GLOB '*[^0-9a-f]*'),
     coverage_kind TEXT NOT NULL
       CHECK (coverage_kind IN ('complete', 'forward_only')),
-    coverage_start_epoch INTEGER NOT NULL CHECK (coverage_start_epoch >= 0),
-    CHECK ((source_kind IN ('insert','legacy_backfill') AND lifecycle_version=1 AND previous_status IS NULL AND source_action='baseline' AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL) OR (source_kind='memory_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NOT NULL AND source_api_operation_id IS NULL AND ((source_action='delete' AND new_status='deleted') OR (source_action='reject' AND new_status='rejected') OR (source_action='stale' AND new_status='stale') OR (source_action='acknowledge_pattern' AND new_status=previous_status))) OR (source_kind='web_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_api_operation_id IS NOT NULL AND source_operation_id IS NULL AND ((source_action='archive' AND previous_status='active' AND new_status='archived') OR (source_action='restore' AND previous_status='archived' AND new_status='active'))) OR (source_kind='scope_cleanup' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND ((source_action='archive' AND new_status='archived') OR (source_action='reroute' AND new_status=previous_status) OR (source_action='memory_cleanup' AND new_status IN ('active','stale')))) OR (source_kind='writer_transition' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL AND ((source_action IN ('save_upsert','markdown_import') AND new_status IN ('active','stale','superseded','archived','deleted','rejected')) OR (source_action IN ('candidate_apply','ttl_expire','soft_supersede') AND new_status='stale') OR (source_action IN ('preference_remove','stale_archive') AND new_status='archived')))),
+    coverage_start_epoch INTEGER NOT NULL CHECK (typeof(coverage_start_epoch)='integer' AND coverage_start_epoch >= 0),
+    CHECK ((source_kind IN ('insert','legacy_backfill') AND lifecycle_version=1 AND previous_status IS NULL AND source_action='baseline' AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL) OR (source_kind='memory_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NOT NULL AND source_api_operation_id IS NULL AND ((source_action='delete' AND new_status='deleted') OR (source_action='reject' AND new_status='rejected') OR (source_action='stale' AND new_status='stale') OR (source_action='acknowledge_pattern' AND new_status=previous_status))) OR (source_kind='web_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_api_operation_id IS NOT NULL AND source_operation_id IS NULL AND ((source_action='archive' AND previous_status='active' AND new_status='archived') OR (source_action='restore' AND previous_status='archived' AND new_status='active'))) OR (source_kind='scope_cleanup' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND ((source_action='archive' AND new_status='archived') OR (source_action='reroute' AND new_status=previous_status) OR (source_action='memory_cleanup' AND new_status IN ('active','stale')))) OR (source_kind='writer_transition' AND lifecycle_version>1 AND previous_status IS NOT NULL AND new_status IS NOT previous_status AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL AND ((source_action IN ('save_upsert','markdown_import') AND new_status IN ('active','stale','superseded','archived','deleted','rejected')) OR (source_action IN ('candidate_apply','ttl_expire','soft_supersede') AND new_status='stale') OR (source_action IN ('preference_remove','stale_archive') AND new_status='archived')))),
     UNIQUE (memory_id, lifecycle_version),
     UNIQUE (previous_lifecycle_id),
     UNIQUE (memory_id, source_kind, source_fingerprint),
@@ -216,7 +214,7 @@ CREATE UNIQUE INDEX uq_memory_lifecycle_api_operation ON memory_lifecycle_ledger
 CREATE TABLE memory_write_request_results (
     writer_kind TEXT NOT NULL,
     request_id TEXT NOT NULL,
-    result_ordinal INTEGER NOT NULL CHECK (result_ordinal >= 0),
+    result_ordinal INTEGER NOT NULL CHECK (typeof(result_ordinal)='integer' AND result_ordinal >= 0),
     binding_kind TEXT NOT NULL CHECK (
       binding_kind IN (
         'insert_origin', 'route_transition', 'lifecycle_transition',
@@ -226,18 +224,18 @@ CREATE TABLE memory_write_request_results (
       )
     ),
     outcome_code TEXT NOT NULL CHECK (length(outcome_code) > 0),
-    memory_id INTEGER,
-    route_ledger_id INTEGER,
-    lifecycle_ledger_id INTEGER,
-    operation_id INTEGER, api_operation_id TEXT,
-    claim_id INTEGER,
-    audit_event_id INTEGER,
+    memory_id INTEGER CHECK (memory_id IS NULL OR typeof(memory_id)='integer'),
+    route_ledger_id INTEGER CHECK (route_ledger_id IS NULL OR typeof(route_ledger_id)='integer'),
+    lifecycle_ledger_id INTEGER CHECK (lifecycle_ledger_id IS NULL OR typeof(lifecycle_ledger_id)='integer'),
+    operation_id INTEGER CHECK (operation_id IS NULL OR typeof(operation_id)='integer'), api_operation_id TEXT,
+    claim_id INTEGER CHECK (claim_id IS NULL OR typeof(claim_id)='integer'),
+    audit_event_id INTEGER CHECK (audit_event_id IS NULL OR typeof(audit_event_id)='integer'),
     local_copy_path TEXT,
     local_copy_digest TEXT
       CHECK (
         local_copy_digest IS NULL
         OR (
-          typeof(local_copy_digest)='text' AND length(local_copy_digest) = 64
+          typeof(local_copy_digest)='text' AND instr(local_copy_digest,char(0))=0 AND length(local_copy_digest) = 64
           AND local_copy_digest NOT GLOB '*[^0-9a-f]*'
         )
       ),
@@ -249,12 +247,12 @@ CREATE TABLE memory_write_request_results (
       CHECK (
         previous_binding_fingerprint IS NULL
         OR (
-          typeof(previous_binding_fingerprint)='text' AND length(previous_binding_fingerprint) = 64
+          typeof(previous_binding_fingerprint)='text' AND instr(previous_binding_fingerprint,char(0))=0 AND length(previous_binding_fingerprint) = 64
           AND previous_binding_fingerprint NOT GLOB '*[^0-9a-f]*'
         )
       ),
     binding_fingerprint TEXT NOT NULL
-      CHECK (typeof(binding_fingerprint)='text' AND length(binding_fingerprint) = 64)
+      CHECK (typeof(binding_fingerprint)='text' AND instr(binding_fingerprint,char(0))=0 AND length(binding_fingerprint) = 64)
       CHECK (binding_fingerprint NOT GLOB '*[^0-9a-f]*'),
     PRIMARY KEY (writer_kind, request_id, result_ordinal, binding_kind),
     FOREIGN KEY (writer_kind, request_id)
@@ -279,14 +277,13 @@ CREATE TABLE memory_write_request_commits (
     writer_kind TEXT NOT NULL,
     request_id TEXT NOT NULL,
     result_fingerprint TEXT NOT NULL
-      CHECK (typeof(result_fingerprint)='text' AND length(result_fingerprint) = 64)
+      CHECK (typeof(result_fingerprint)='text' AND instr(result_fingerprint,char(0))=0 AND length(result_fingerprint) = 64)
       CHECK (result_fingerprint NOT GLOB '*[^0-9a-f]*'),
-    response_schema_version INTEGER NOT NULL
-      CHECK (response_schema_version > 0),
+    response_schema_version INTEGER NOT NULL CHECK (typeof(response_schema_version)='integer' AND response_schema_version > 0),
     response_json TEXT NOT NULL
       CHECK (json_valid(response_json) = 1)
       CHECK (response_json = json(response_json)),
-    committed_at_epoch INTEGER NOT NULL CHECK (committed_at_epoch >= 0),
+    committed_at_epoch INTEGER NOT NULL CHECK (typeof(committed_at_epoch)='integer' AND committed_at_epoch >= 0),
     PRIMARY KEY (writer_kind, request_id),
     FOREIGN KEY (writer_kind, request_id)
       REFERENCES memory_write_requests(writer_kind, request_id)
@@ -689,6 +686,11 @@ BEGIN
       AND new_route.placement_project IS NEW.project AND new_route.source_project IS NEW.source_project AND new_route.target_project IS NEW.target_project AND new_route.owner_scope IS NEW.owner_scope AND new_route.owner_key IS NEW.owner_key AND new_route.memory_type IS NEW.memory_type AND new_route.topic_key IS NEW.topic_key AND new_route.topic_domain IS NEW.topic_domain AND new_route.routing_confidence IS NEW.routing_confidence AND new_route.routing_reason IS NEW.routing_reason AND new_route.context_class IS NEW.context_class AND new_route.memory_scope IS NEW.scope AND new_route.branch IS NEW.branch
   ) THEN RAISE(ABORT, 'memory route update lacks matching staged next version') END;
 END;
+CREATE TRIGGER memory_status_update_guard
+BEFORE UPDATE OF status ON memories WHEN NEW.status IS NOT OLD.status BEGIN
+  SELECT CASE WHEN NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS new_lifecycle JOIN memory_lifecycle_ledger AS old_lifecycle ON old_lifecycle.id=new_lifecycle.previous_lifecycle_id WHERE new_lifecycle.memory_id=OLD.id AND old_lifecycle.memory_id=OLD.id AND new_lifecycle.lifecycle_version=old_lifecycle.lifecycle_version+1 AND NOT EXISTS (SELECT 1 FROM memory_lifecycle_ledger AS successor WHERE successor.previous_lifecycle_id=new_lifecycle.id) AND NOT EXISTS (SELECT 1 FROM memory_write_request_commits AS commit_row WHERE commit_row.writer_kind=new_lifecycle.source_writer_kind AND commit_row.request_id=new_lifecycle.source_ref) AND old_lifecycle.new_status IS OLD.status AND new_lifecycle.previous_status IS OLD.status AND new_lifecycle.new_status IS NEW.status)
+    THEN RAISE(ABORT, 'memory status update lacks matching staged next version') END;
+END;
 CREATE TRIGGER memory_origin_tuple_immutable BEFORE UPDATE OF
 insert_writer_kind, insert_request_id, insert_result_ordinal ON memories
 WHEN NEW.insert_writer_kind IS NOT OLD.insert_writer_kind
@@ -714,25 +716,23 @@ CREATE TRIGGER memory_lifecycle_ledger_insert_once BEFORE INSERT ON memory_lifec
 CREATE TRIGGER memory_lifecycle_ledger_no_update BEFORE UPDATE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
 CREATE TRIGGER memory_lifecycle_ledger_no_delete BEFORE DELETE ON memory_lifecycle_ledger BEGIN SELECT RAISE(ABORT, 'memory lifecycle ledger is append-only'); END;
 ```
-`memory_route_ledger_fingerprint_guard` and `memory_lifecycle_ledger_fingerprint_guard` hash every typed OLD/NEW column except row ID/digest, including both request fingerprints; `memory_insert_v1_ledgers` atomically creates both v1 rows; `memory_route_tuple_update_guard` requires an open exact next route; and `memory_write_commit_guard` requires request-owned ledger terminals to match current memory. These literal bodies are the sole executable authority: no templates, SQL concatenation, post-insert patch, or fallback hash.
+`memory_route_ledger_fingerprint_guard` and `memory_lifecycle_ledger_fingerprint_guard` hash every typed OLD/NEW column except row ID/digest, including both request fingerprints; `memory_insert_v1_ledgers` atomically creates both v1 rows; the route/status update guards require an open exact staged successor; and `memory_write_commit_guard` requires request-owned ledger terminals to match current memory. These literal bodies are the sole executable authority: no templates, SQL concatenation, post-insert patch, or fallback hash.
 ## Backfill and Foreground Cutover
 The migration runner performs these steps under one exclusive maintenance
 window. Steps 1–2 precede any migration write transaction; steps 3–5 use one
 uninterrupted `BEGIN IMMEDIATE`:
 
-1. Register and self-test `remem_sha256_frame_v1`; reject a missing function,
-   wrong golden vector, disabled FK enforcement, or nonempty migration journal.
+1. Register and self-test `remem_sha256_frame_v1`; reject a missing function, wrong golden vector, or disabled FK enforcement. The journal must contain exactly the durable, unconsumed approval for this plan/database/binary/backup/digest and no other entry; atomically mark it `cutover_started` before schema work. Missing, consumed, extra, or mismatched state aborts.
 2. Verify schema, checkpoint WAL after all writers stop, close every handle, copy
    the main database byte-for-byte, fsync file/directory, hash, and test-open it.
 3. Reopen the exact live database, register/self-test the UDF, revalidate database/schema/backup identity, and snapshot every dependent FK/table object plus exact SQL.
    Set `foreign_keys=OFF`, verify it, start `BEGIN IMMEDIATE`, then drop every trigger on another table that references `memories` (including the graph-edge node validators)
    before the old table can be absent.
-4. Create `memories_rebuild` with the exact target schema, copy all rows with
-   `scope=COALESCE(NULLIF(TRIM(scope),''),'project')`, validate, drop/rename, and recreate owned indexes/triggers/FTS plus every snapshotted dependent trigger byte-for-byte without altering dependent rows.
-   Create retry/ledger objects in FK-safe order. A forward-only row uses `migration_vNNN:<memory_id>:baseline` with sorted `insert_origin`/`response_aux` slots and today's snapshot.
+4. Create `memories_rebuild` with the exact target schema, copy all rows with `scope=COALESCE(NULLIF(TRIM(scope),''),'project')`, validate, drop/rename, and recreate owned indexes/FTS plus every snapshotted external dependent trigger byte-for-byte without altering dependent rows. Do not yet install memory-owned version/archive/status side-effect triggers.
+   Create retry/ledger objects and the ledger/update enforcement guards in FK-safe order. A forward-only row uses `migration_vNNN:<memory_id>:baseline` with sorted `insert_origin`/`response_aux` slots and today's snapshot.
    For exhaustive A→B→C proof, copy reconstructed A, bind/seal its baseline, then replay each proved successor under a separate deterministic
    `migration_vNNN:<memory_id>:step:<ordinal>` request with exact `route_transition` and/or `lifecycle_transition` slots plus `response_aux`;
-   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; the final step exact-matches pre-cutover C.
+   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; after the final step exact-matches stored pre-cutover C bytes, install the exact memory-owned side-effect triggers before validation/commit.
    Reject scope outside `project|global`; never infer history from current bytes or prunable events.
 5. Append typed bindings/response/seals and install literal guards. Before
    commit require row/count/digest/object equality, unchanged dependent DDL,
