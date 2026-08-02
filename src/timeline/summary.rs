@@ -100,7 +100,9 @@ pub(super) fn query_token_economics(conn: &Connection, project: &str) -> Result<
             refs.as_slice(),
             |row| row.get(0),
         )
-        .unwrap_or(0.0);
+        .map_err(|error| {
+            anyhow::anyhow!("timeline token-economics AI-cost query failed: {error}")
+        })?;
 
     let mut p2: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let (pf2, _) = push_project_filter("project", project, 1, &mut p2);
@@ -114,7 +116,9 @@ pub(super) fn query_token_economics(conn: &Connection, project: &str) -> Result<
             refs2.as_slice(),
             |row| row.get(0),
         )
-        .unwrap_or(0);
+        .map_err(|error| {
+            anyhow::anyhow!("timeline token-economics discovery-token query failed: {error}")
+        })?;
 
     let mut p3: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     let (pf3, _) = push_project_filter("project", project, 1, &mut p3);
@@ -128,7 +132,9 @@ pub(super) fn query_token_economics(conn: &Connection, project: &str) -> Result<
             refs3.as_slice(),
             |row| row.get(0),
         )
-        .unwrap_or(0);
+        .map_err(|error| {
+            anyhow::anyhow!("timeline token-economics context-session query failed: {error}")
+        })?;
 
     Ok(TokenEcon {
         total_ai_cost,

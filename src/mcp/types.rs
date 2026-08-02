@@ -222,6 +222,7 @@ pub(super) struct WorkStreamsParams {
     #[schemars(description = "Project name filter")]
     pub project: Option<String>,
     #[schemars(description = "Status filter: active, paused, completed, abandoned")]
+    #[schemars(schema_with = "workstream_status_schema")]
     pub status: Option<String>,
 }
 
@@ -230,11 +231,20 @@ pub(super) struct UpdateWorkStreamParams {
     #[schemars(description = "WorkStream ID to update")]
     pub id: i64,
     #[schemars(description = "New status: active, paused, completed, abandoned")]
+    #[schemars(schema_with = "workstream_status_schema")]
     pub status: Option<String>,
     #[schemars(description = "Next action to take")]
     pub next_action: Option<String>,
     #[schemars(description = "Current blockers")]
     pub blockers: Option<String>,
+}
+
+fn workstream_status_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "string",
+        "enum": ["active", "paused", "completed", "abandoned"],
+        "nullable": true
+    })
 }
 
 #[derive(Debug, Serialize)]

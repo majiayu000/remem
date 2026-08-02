@@ -227,7 +227,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Generate a project timeline report with activity history, type distribution, and Token ROI analysis. Use for understanding project evolution and memory system value."
+        description = "Read-only. Generate an aggregated Markdown report for the required project with activity history, type distribution, and Token ROI analysis. full defaults to false for the compact report; full=true adds the detailed timeline and monthly breakdown. Use this for project-level reporting, not observation lookup; use timeline for chronological context around one observation. Database failures return a tool error."
     )]
     pub(super) fn timeline_report(
         &self,
