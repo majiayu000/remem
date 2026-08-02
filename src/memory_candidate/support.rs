@@ -5,6 +5,53 @@ const MIN_SUPPORT_TOKEN_RATIO: f64 = 0.72;
 const MAX_SUPPORT_TOKEN_WINDOW_EXTRA: usize = 5;
 const SUPPORT_TOKEN_MIN_CHARS: usize = 4;
 
+const DESTRUCTIVE_ACTION_TOKENS: &[&str] = &[
+    "delete",
+    "deleted",
+    "deletes",
+    "drop",
+    "dropped",
+    "drops",
+    "overwrite",
+    "overwrites",
+    "purge",
+    "purged",
+    "purges",
+    "remove",
+    "removed",
+    "removes",
+    "truncate",
+    "truncated",
+    "truncates",
+    "wipe",
+    "wiped",
+    "wipes",
+];
+
+const IMPERATIVE_CONTROL_TOKENS: &[&str] = &[
+    "allow",
+    "bypass",
+    "conceal",
+    "copy",
+    "delete",
+    "disable",
+    "disregard",
+    "enable",
+    "execute",
+    "exfiltrate",
+    "grant",
+    "hide",
+    "ignore",
+    "override",
+    "remove",
+    "reveal",
+    "run",
+    "send",
+    "truncate",
+    "upload",
+    "wipe",
+];
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SupportToken {
     text: String,
@@ -21,7 +68,9 @@ const SUPPORT_RISK_TOKENS: &[&str] = &[
     "prevent", "prevented", "prevents", "reject", "rejected", "rejects",
     "remove", "removed", "removes", "shall", "should", "shouldn", "skip", "skipped", "skips",
     "succeed", "succeeded", "succeeds", "success", "unless", "wasn", "weren", "will", "without",
-    "won", "wouldn",
+    "won", "wouldn", "drop", "dropped", "drops", "grant", "granted", "grants", "overwrite",
+    "overwrites", "permit", "permits", "permitted", "purge", "purged", "purges", "revoke",
+    "revoked", "revokes", "truncate", "truncated", "truncates", "wipe", "wiped", "wipes",
 ];
 
 pub(crate) fn has_conservative_source_support(
@@ -48,11 +97,17 @@ pub(crate) fn has_claim_level_source_support(candidate_text: &str, source_texts:
         })
 }
 
+pub(crate) fn claim_semantics_require_review(candidate_text: &str) -> bool {
+    let candidate_text = normalize_support_text(candidate_text);
+    let claims = support_sentence_segments(&candidate_text);
+    claims.is_empty() || claims.iter().any(|claim| !is_promotable_assertion(claim))
+}
+
 fn normalize_support_text(text: &str) -> String {
-    text.split_whitespace()
+    fold_width_and_case(text)
+        .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .to_ascii_lowercase()
 }
 
 fn has_conservative_exact_support(candidate_text: &str, observation_text: &str) -> bool {
@@ -286,16 +341,29 @@ fn normalize_support_token(token: &str) -> String {
 }
 
 fn normalize_contractions(text: &str) -> String {
-    text.to_ascii_lowercase().replace("n't", " not")
+    fold_width_and_case(text)
+        .replace(['’', '‘', 'ʼ', '＇'], "'")
+        .replace("won't", "will not")
+        .replace("can't", "can not")
+        .replace("shan't", "shall not")
+        .replace("n't", " not")
 }
 
 fn is_promotable_assertion(text: &str) -> bool {
-    semantic_signature(text).iter().all(|semantic| {
+    let signature = semantic_signature(text);
+    signature.iter().all(|semantic| {
         !matches!(
             *semantic,
-            "uncertain" | "prospective" | "prescriptive" | "conditional"
+            "conditional"
+                | "imperative_control"
+                | "meta_negated"
+                | "modal_capability"
+                | "prescriptive"
+                | "prospective"
+                | "security_sensitive"
+                | "uncertain"
         )
-    })
+    }) && destructive_actions_are_safely_negated(text)
 }
 
 fn semantic_signatures_match(candidate_text: &str, source_text: &str) -> bool {
@@ -304,14 +372,19 @@ fn semantic_signatures_match(candidate_text: &str, source_text: &str) -> bool {
 
 fn semantic_signature(text: &str) -> BTreeSet<&'static str> {
     let normalized = normalize_contractions(text);
-    normalized
+    let tokens = normalized
         .split(|ch: char| !ch.is_ascii_alphanumeric())
-        .filter_map(|token| match token {
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mut signature = tokens
+        .iter()
+        .filter_map(|token| match *token {
             "no" | "not" | "never" | "cannot" | "cant" | "couldn" | "didn" | "doesn" | "don"
             | "hadn" | "hasn" | "haven" | "isn" | "shouldn" | "wasn" | "weren" | "won"
             | "wouldn" => Some("negative"),
             "may" | "might" | "could" | "would" => Some("uncertain"),
             "will" | "plan" | "planned" | "planning" | "plans" => Some("prospective"),
+            "can" => Some("modal_capability"),
             "must" | "shall" | "should" => Some("prescriptive"),
             "if" | "unless" => Some("conditional"),
             "fail" | "failed" | "failing" | "fails" | "failure" | "failures" => {
@@ -320,19 +393,245 @@ fn semantic_signature(text: &str) -> BTreeSet<&'static str> {
             "pass" | "passed" | "passes" | "passing" | "succeed" | "succeeded" | "succeeds"
             | "success" => Some("outcome_success"),
             "allow" | "allowed" | "allows" => Some("control_allow"),
+            "grant" | "granted" | "grants" | "permit" | "permits" | "permitted" => {
+                Some("control_allow")
+            }
             "enable" | "enabled" | "enables" => Some("control_enable"),
             "deny" | "denied" | "denies" => Some("control_deny"),
+            "revoke" | "revoked" | "revokes" => Some("control_deny"),
             "disable" | "disabled" | "disables" => Some("control_disable"),
             "reject" | "rejected" | "rejects" => Some("control_reject"),
             "prevent" | "prevented" | "prevents" => Some("control_prevent"),
-            "delete" | "deleted" | "deletes" | "remove" | "removed" | "removes" => {
-                Some("destructive_delete")
-            }
             "ignore" | "ignored" | "ignores" => Some("control_ignore"),
             "skip" | "skipped" | "skips" => Some("control_skip"),
             _ => None,
         })
-        .collect()
+        .collect::<BTreeSet<_>>();
+    if tokens
+        .iter()
+        .any(|token| matches!(*token, "cannot" | "cant"))
+    {
+        signature.insert("modal_capability");
+    }
+    if tokens
+        .iter()
+        .enumerate()
+        .any(|(index, _)| is_destructive_action_at(&tokens, index))
+    {
+        signature.insert("destructive_delete");
+    }
+    if has_outer_meta_negation(&normalized) {
+        signature.insert("meta_negated");
+    }
+    if is_imperative_control_claim(&tokens) || has_instruction_control_semantics(&tokens) {
+        signature.insert("imperative_control");
+    }
+    if has_security_sensitive_semantics(&tokens) {
+        signature.insert("security_sensitive");
+    }
+    signature
+}
+
+fn fold_width_and_case(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    for ch in text.chars() {
+        let folded = match ch {
+            '\u{3000}' => ' ',
+            '\u{ff01}'..='\u{ff5e}' => char::from_u32((ch as u32) - 0xfee0).unwrap_or(ch),
+            _ => ch,
+        };
+        normalized.extend(folded.to_lowercase());
+    }
+    normalized
+}
+
+fn has_outer_meta_negation(text: &str) -> bool {
+    [
+        "false that",
+        "incorrect that",
+        "untrue that",
+        "not true that",
+        "not correct that",
+        "is false",
+        "is incorrect",
+        "was false",
+        "was incorrect",
+    ]
+    .iter()
+    .any(|phrase| text.contains(phrase))
+}
+
+fn is_imperative_control_claim(tokens: &[&str]) -> bool {
+    tokens
+        .iter()
+        .copied()
+        .find(|token| !matches!(*token, "do" | "immediately" | "kindly" | "now" | "please"))
+        .is_some_and(|token| IMPERATIVE_CONTROL_TOKENS.contains(&token))
+}
+
+fn has_instruction_control_semantics(tokens: &[&str]) -> bool {
+    let has_control = tokens
+        .iter()
+        .any(|token| IMPERATIVE_CONTROL_TOKENS.contains(token));
+    let has_control_target = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "command"
+                | "commands"
+                | "file"
+                | "files"
+                | "instruction"
+                | "instructions"
+                | "output"
+                | "private"
+                | "prompt"
+                | "prompts"
+                | "repository"
+                | "secret"
+                | "secrets"
+                | "system"
+                | "user"
+                | "workspace"
+        )
+    });
+    has_control && has_control_target
+}
+
+fn has_security_sensitive_semantics(tokens: &[&str]) -> bool {
+    let has_security_subject = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "access"
+                | "admin"
+                | "administrator"
+                | "anonymous"
+                | "auth"
+                | "authentication"
+                | "authorization"
+                | "permission"
+                | "permissions"
+                | "privilege"
+                | "privileges"
+                | "role"
+                | "roles"
+                | "unauthenticated"
+        )
+    });
+    let has_security_control = tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "allow"
+                | "allowed"
+                | "allows"
+                | "deny"
+                | "denied"
+                | "denies"
+                | "disable"
+                | "disabled"
+                | "disables"
+                | "enable"
+                | "enabled"
+                | "enables"
+                | "grant"
+                | "granted"
+                | "grants"
+                | "permit"
+                | "permits"
+                | "permitted"
+                | "revoke"
+                | "revoked"
+                | "revokes"
+        )
+    });
+    has_security_subject && has_security_control
+}
+
+fn destructive_actions_are_safely_negated(text: &str) -> bool {
+    let normalized = normalize_contractions(text);
+    let tokens = normalized
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    tokens.iter().enumerate().all(|(index, token)| {
+        !DESTRUCTIVE_ACTION_TOKENS.contains(token)
+            || !is_destructive_action_at(&tokens, index)
+            || token_is_locally_negated(&tokens, index)
+    })
+}
+
+fn is_destructive_action_at(tokens: &[&str], index: usize) -> bool {
+    let token = tokens[index];
+    if matches!(
+        token,
+        "delete"
+            | "deleted"
+            | "deletes"
+            | "purge"
+            | "purged"
+            | "purges"
+            | "truncate"
+            | "truncated"
+            | "truncates"
+            | "wipe"
+            | "wiped"
+            | "wipes"
+    ) {
+        return true;
+    }
+    if !matches!(
+        token,
+        "drop"
+            | "dropped"
+            | "drops"
+            | "overwrite"
+            | "overwrites"
+            | "remove"
+            | "removed"
+            | "removes"
+    ) {
+        return false;
+    }
+    tokens[index + 1..tokens.len().min(index + 5)]
+        .iter()
+        .take_while(|token| !matches!(**token, "and" | "but" | "however" | "then"))
+        .any(|token| {
+            matches!(
+                *token,
+                "archive"
+                    | "archives"
+                    | "database"
+                    | "databases"
+                    | "file"
+                    | "files"
+                    | "index"
+                    | "indexes"
+                    | "indices"
+                    | "memory"
+                    | "memories"
+                    | "row"
+                    | "rows"
+                    | "schema"
+                    | "schemas"
+                    | "table"
+                    | "tables"
+            )
+        })
+}
+
+fn token_is_locally_negated(tokens: &[&str], index: usize) -> bool {
+    let start = index.saturating_sub(3);
+    for token in tokens[start..index].iter().rev() {
+        if matches!(*token, "and" | "but" | "however" | "then") {
+            return false;
+        }
+        if matches!(
+            *token,
+            "cannot" | "cant" | "never" | "no" | "not" | "without"
+        ) {
+            return true;
+        }
+    }
+    false
 }
 
 fn is_support_stop_token(token: &str) -> bool {

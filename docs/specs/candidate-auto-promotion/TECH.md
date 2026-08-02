@@ -34,8 +34,18 @@ add explicit handling for negative polarity, uncertainty, prospective language,
 prescriptive language, and conditions.
 
 Candidate/source signatures must match. Only an empty signature or negative
-factual signature is auto-promotable. This permits supported negative facts but
-keeps future, uncertain, conditional, and prescriptive claims pending.
+factual signature is auto-promotable. `won't` and `can't`, including curly
+apostrophes, normalize to their real prospective/capability modal forms.
+Outer meta-negation is a separate signature so a false or incorrect quoted
+claim cannot support its embedded text. This permits supported negative facts
+but keeps future, uncertain, conditional, prescriptive, modal, and ambiguous
+quoted claims pending.
+
+The structured claim gate also review-routes imperative control text,
+auth/authz control state, and affirmative destructive actions even if the
+model labels them `low`. A locally negated destructive fact such as “does not
+delete active rows” remains eligible; the gate does not return to a whole-text
+common-word blacklist.
 
 ## Type and Secret Gates
 
@@ -43,19 +53,24 @@ The canonical `MemoryType::auto_promote` vocabulary remains unchanged for core
 types. The observation-path decision adds a narrow failure-lesson case:
 
 - type is `lesson`;
-- candidate and an eligible bugfix/decision observation both contain a closed
-  failure-outcome marker;
+- candidate and an eligible bugfix/decision observation both contain an
+  affirmative failure outcome linked to a recovery action in the same claim;
 - ordinary scope, risk, confidence, trust, routing, evidence-id, unsafe-marker,
   and claim-support gates all pass.
 
 Non-failure lessons record `lesson_not_failure_qualified`; preference and
 procedure candidates record `memory_type_not_auto_promotable`.
 
-The unsafe-marker list removes bare `token` and adds credential phrases such as
-`access token`, `api token`, `auth token`, `refresh token`, and `session token`.
+The unsafe-marker list removes bare `token`. A deterministic canonicalizer
+folds case and full-width ASCII and treats punctuation, underscores, dashes,
+and Unicode separators as word boundaries. Credential-qualified forms such as
+`access-token`, `GITHUB_TOKEN`, `deployment token`, and `OAuth2 token` are
+blocked. Only explicit non-credential contexts such as token budgets, counts,
+limits, and windows bypass this token check; ambiguous contexts fail closed.
 Existing API-key, bearer, password, private-key, payment, secret, and key-format
 markers remain. Instruction-pattern scanning and quarantine run before the
-promotion decision.
+promotion decision, with the claim gate as a second defense for generic
+imperatives outside the fixed scanner vocabulary.
 
 ## Verification
 

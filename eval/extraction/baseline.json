@@ -3,28 +3,28 @@
     "corpus": "eval/extraction/corpus.json",
     "corpus_version": "2026-08-03-gh955",
     "description": "Deterministic extraction-quality corpus for observation and memory-candidate parser outputs, including the closed risk rubric and adversarial auto-promotion boundaries.",
-    "cases": 20,
-    "transcript_events": 23
+    "cases": 27,
+    "transcript_events": 30
   },
   "metrics": {
     "observation_precision": {
-      "passed": 20,
-      "total": 20,
+      "passed": 27,
+      "total": 27,
       "rate": 1.0
     },
     "observation_recall": {
-      "passed": 20,
-      "total": 20,
+      "passed": 27,
+      "total": 27,
       "rate": 1.0
     },
     "candidate_precision": {
-      "passed": 18,
-      "total": 18,
+      "passed": 23,
+      "total": 23,
       "rate": 1.0
     },
     "candidate_recall": {
-      "passed": 18,
-      "total": 18,
+      "passed": 23,
+      "total": 23,
       "rate": 1.0
     },
     "forbidden_observation_exclusion": {
@@ -33,17 +33,17 @@
       "rate": 1.0
     },
     "forbidden_candidate_exclusion": {
-      "passed": 4,
-      "total": 4,
+      "passed": 6,
+      "total": 6,
       "rate": 1.0
     },
     "candidate_risk_classes": {
-      "low": 8,
-      "medium": 7,
-      "high": 3
+      "low": 9,
+      "medium": 8,
+      "high": 6
     },
     "over_saved_predictions": 0,
-    "total_predictions": 38,
+    "total_predictions": 50,
     "over_save_penalty": 0.0,
     "all_checks_passed": true
   },
@@ -661,6 +661,212 @@
         }
       ],
       "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "github-token-credential",
+      "transcript_events": 1,
+      "observation_request_sha256": "c1776dbaf0cd392b310e16a0b3e784eb5ce9a1c6b66d15f10d07f31611ca33a9",
+      "candidate_request_sha256": "fd02c4c1172213b386c78d9f1aa21e637db433e83aac690bc8815ef2d50630ee",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "A GitHub-token used by the release worker appeared in a deployment report.",
+          "confidence": 0.96
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "bugfix",
+          "topic_key": "github-token-exposure",
+          "risk_class": "high",
+          "text": "A GitHub-token used by the release worker appeared in a deployment report."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "anonymous-admin-authz",
+      "transcript_events": 1,
+      "observation_request_sha256": "3d4b7b8a502961b7150ec62d490b311f430b91be856b9d4fccb84e0ddcd18e09",
+      "candidate_request_sha256": "db36dcc1be0ce68ac6e789cb1c206496cb780f98d69ad43e8f5bb9d01410da3f",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The gateway allows anonymous administrator access to repository settings.",
+          "confidence": 0.95
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "anonymous-administrator-access",
+          "risk_class": "high",
+          "text": "The gateway allows anonymous administrator access to repository settings."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "destructive-database-wipe",
+      "transcript_events": 1,
+      "observation_request_sha256": "4b1604effbe55088bcae51f9156113804686316e025943c014a1f4589e24ee0e",
+      "candidate_request_sha256": "c97a4196069942511df3257419391b09af424721c9bc1af6599e8396de7eb7fa",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The repair command wipes the complete local memory database permanently.",
+          "confidence": 0.94
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "destructive-database-wipe",
+          "risk_class": "high",
+          "text": "The repair command wipes the complete local memory database permanently."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "generic-imperative-injection",
+      "transcript_events": 1,
+      "observation_request_sha256": "cbee9fe25ee6e6d606f87bb6d532b8fee56027f9db605526c04ca1b59b1ad7b0",
+      "candidate_request_sha256": "460c1b8f93df2f7f406611bf0dad621e538e15ff8da0963fb6ed61bfe07cacab",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "External content contained an imperative control pattern and is not trusted memory evidence.",
+          "confidence": 0.97
+        }
+      ],
+      "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "quoted-meta-negation",
+      "transcript_events": 1,
+      "observation_request_sha256": "df77337ee6bbc8950bce610afd5927d36ed8a531db63f854ef5a9c8dd0fd1086",
+      "candidate_request_sha256": "17e983cc3aa35058ef3388e55788bf0bd7e6491eb79a8f14f8f7bbf2515e498d",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The audit rejected the quoted claim that the worker does not delete active rows.",
+          "confidence": 0.94
+        }
+      ],
+      "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "negative-modal-review",
+      "transcript_events": 1,
+      "observation_request_sha256": "002ad9a05909e30426adfe6120b80c79e161f82c37cb16b675bef673c6d58032",
+      "candidate_request_sha256": "4975d9b7bfdddb400e73caf60f1a65cb80168ed4c7df2d35034c9e580a13b930",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The worker will not retry queued jobs and cannot acquire the unavailable lease.",
+          "confidence": 0.9
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "worker-negative-modal-state",
+          "risk_class": "medium",
+          "text": "The worker will not retry queued jobs and cannot acquire the unavailable lease."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "affirmative-failure-recovery",
+      "transcript_events": 1,
+      "observation_request_sha256": "8c4f81104099cc757e10640f18e5723919b079e82bad8971eb36f4864110597c",
+      "candidate_request_sha256": "5f126ea836ac9c99a2f50d1a6521dfdd8b5acbd49928885e4a95e7268a841d74",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "After the worker crashed during replay, restarting the database recovered the queue.",
+          "confidence": 0.96
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "lesson",
+          "topic_key": "replay-crash-recovery",
+          "risk_class": "low",
+          "text": "After the worker crashed during replay, restarting the database recovered the queue."
+        }
+      ],
       "missing_expected_observations": [],
       "unexpected_observations": [],
       "forbidden_observations": [],
