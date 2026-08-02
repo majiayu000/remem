@@ -320,7 +320,11 @@
   now describes read/write behavior, response shapes, defaults, failure modes,
   and selection boundaries for current state, search, contextual recall,
   timelines, detail reads, reports, and workstreams. Public tool names and
-  runtime behavior are unchanged.
+  runtime behavior is unchanged except that `update_workstream` now rejects
+  unknown status strings and calls without any update field instead of silently
+  normalizing or touching the row; `workstreams` rejects unknown status filters,
+  blank timeline/multi-hop queries fail explicitly, and timeline-report metric
+  query failures propagate instead of being rendered as zero.
 
 ### Fixed
 - Staged source version `0.6.46` for GH-969: Dream now scans every generated

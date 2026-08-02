@@ -19,7 +19,7 @@ Persistence:
 - Search before saving and use a stable kebab-case `topic_key` for repeat topics.
 
 Workstreams:
-- `workstreams(project)` lists active tasks.
+- `workstreams(project, status?)` lists all statuses by default; pass a status to filter tasks.
 - `update_workstream(id, status?, next_action?, blockers?)` updates status, next action, or blockers."#;
 
 #[tool_handler]

@@ -200,7 +200,7 @@ fn search_preserves_multi_hop_metadata_in_compact_envelope() {
 
     let response = server
         .search(Parameters(SearchParams {
-            query: None,
+            query: Some("linked project context".to_string()),
             limit: Some(5),
             project: Some("/repo".to_string()),
             r#type: None,
