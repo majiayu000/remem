@@ -36,15 +36,19 @@ pub fn extract_entities(title: &str, content: &str) -> Vec<String> {
         }
     }
 
-    let lower_combined = combined.to_lowercase();
     for term in technical_terms() {
-        if lower_combined.contains(&term.to_lowercase()) && seen.insert(term.to_lowercase()) {
+        if contains_technical_term(&combined, term) && seen.insert(term.to_lowercase()) {
             entities.push(term.to_string());
         }
     }
 
     entities.truncate(10);
     entities
+}
+
+fn contains_technical_term(text: &str, term: &str) -> bool {
+    text.split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|token| token.eq_ignore_ascii_case(term))
 }
 
 fn technical_terms() -> &'static [&'static str] {

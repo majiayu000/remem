@@ -4,7 +4,7 @@ use clap::Subcommand;
 pub(in crate::cli) enum EmbeddingAction {
     /// Download a local semantic embedding model into the remem data directory.
     Download {
-        /// Model preset: multilingual-e5-small or bge-m3.
+        /// Automatic download preset. Currently only multilingual-e5-small; bge-m3 requires an existing verified cache.
         #[arg(long)]
         model: Option<String>,
         /// Emit a single JSON object with stable fields for scripts.

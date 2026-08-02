@@ -97,17 +97,18 @@ impl MemoryServer {
                 multi_hop: requested_multi_hop,
                 explain: requested_explain,
             };
-            let search_set = service::search_memories(conn, &req).map_err(|e| {
+            let detailed = service::search_memories_with_explain_details(conn, &req).map_err(|e| {
                 crate::log::warn("mcp", &format!("search failed: {}", e));
                 McpToolError::db_query(TOOL, e)
             })?;
+            let search_set = detailed.result;
             let req_limit = req.limit;
             let req_offset = req.offset;
             let service::SearchResultSet {
                 memories,
                 multi_hop,
                 has_more,
-                explain,
+                explain: _,
                 raw_hits,
                 raw_error,
             } = search_set;
@@ -236,8 +237,8 @@ impl MemoryServer {
                 response["has_more"] = serde_json::Value::Bool(true);
                 response["next_offset"] = serde_json::Value::from(req_offset + req_limit);
             }
-            if let Some(explain) = explain {
-                response["explain"] = errors::to_json_value(TOOL, &explain)?;
+            if let Some(explain_details) = detailed.explain_details {
+                response["explain"] = errors::to_json_value(TOOL, &explain_details)?;
             }
             errors::to_json_pretty(TOOL, &response)
         })
@@ -260,7 +261,7 @@ fn temporal_fact_preview_labels(text: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use rmcp::handler::server::wrapper::Parameters;
     use serde_json::Value;
 
@@ -343,6 +344,34 @@ mod tests {
             explain_json["explain"]["results"][0]["staleness"]["status"],
             "active"
         );
+        let explain_result = &explain_json["explain"]["results"][0];
+        let final_score = explain_result["final_score"]
+            .as_f64()
+            .expect("explain final_score should be numeric");
+        let fusion_score = explain_result["fusion_score"]
+            .as_f64()
+            .expect("MCP explain should serialize fusion_score");
+        let post_fusion_score_factor = explain_result["post_fusion_score_factor"]
+            .as_f64()
+            .expect("MCP explain should serialize post_fusion_score_factor");
+        assert!((final_score - fusion_score * post_fusion_score_factor).abs() < 1e-12);
+        let breakdown = &explain_json["explain"]["contribution_breakdowns"][0];
+        assert_eq!(breakdown["memory_id"], memory_id);
+        for contribution in breakdown["contributions"]
+            .as_array()
+            .context("MCP contribution breakdowns should be an array")?
+        {
+            let weight = contribution["weight"].as_f64().context("weight")?;
+            let reciprocal_rank = contribution["reciprocal_rank"]
+                .as_f64()
+                .context("reciprocal_rank")?;
+            let normalized_signal = contribution
+                .get("normalized_signal")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0);
+            let total = contribution["total_score"].as_f64().context("total")?;
+            assert!((total - weight * reciprocal_rank * (1.0 + normalized_signal)).abs() < 1e-12);
+        }
         Ok(())
     }
 

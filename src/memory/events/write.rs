@@ -1,6 +1,24 @@
 use anyhow::Result;
 use rusqlite::{params, Connection};
 
+pub(super) const EPHEMERAL_EVENT_TYPES: [&str; 7] = [
+    "file_edit",
+    "file_create",
+    "bash",
+    "search",
+    "agent",
+    "tool_result",
+    "cursor_tool_failure",
+];
+
+fn event_retention_class(event_type: &str) -> &'static str {
+    if EPHEMERAL_EVENT_TYPES.contains(&event_type) {
+        "ephemeral"
+    } else {
+        "audit"
+    }
+}
+
 pub fn insert_event(
     conn: &Connection,
     session_id: &str,
@@ -14,9 +32,20 @@ pub fn insert_event(
     let now = chrono::Utc::now().timestamp();
     conn.execute(
         "INSERT INTO events \
-         (session_id, project, event_type, summary, detail, files, exit_code, created_at_epoch) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![session_id, project, event_type, summary, detail, files, exit_code, now],
+         (session_id, project, event_type, summary, detail, files, exit_code,
+          created_at_epoch, retention_class) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![
+            session_id,
+            project,
+            event_type,
+            summary,
+            detail,
+            files,
+            exit_code,
+            now,
+            event_retention_class(event_type)
+        ],
     )?;
     Ok(conn.last_insert_rowid())
 }

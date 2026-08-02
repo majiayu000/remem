@@ -273,7 +273,7 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 Claude Code 正常工作流
         |
         |- SessionStart      -> 注入记忆与偏好
-        |- UserPromptSubmit  -> 注册会话、刷新旧队列
+        |- UserPromptSubmit  -> 注册会话、记录 prompt 并注入上下文
         |- PostToolUse       -> 捕获工具操作（入队，<1ms）
         '- Stop              -> 后台总结（返回约 6ms）
 
@@ -503,7 +503,14 @@ remem model test [--live]
 remem model rollback
 remem usage --days 14 --weeks 8
 remem pending list-failed
+remem pending list-failed --json
 remem pending retry-failed --dry-run
+remem pending migrate-legacy --dry-run
+remem pending migrate-legacy
+remem pending recover-archived --id 42 --dry-run
+remem pending recover-archived --id 42
+remem pending recover-archived --id 42 --host claude-code --dry-run
+remem pending recover-archived --id 42 --host claude-code
 remem pending purge-failed --dry-run --older-than-days 7
 remem review list
 remem review approve <id>
@@ -520,6 +527,43 @@ remem install --target codex
 remem mcp
 remem sync-memory --cwd .
 ```
+
+worker 会在每个已完成 cleanup 尝试后的 24 小时窗口内，最多调度一个数据库
+全局生命周期清理。它先把 TTL 已到期的 memory 收敛为 `stale`，再原子执行与
+`remem cleanup` 相同的安全 retention policy；审计事件和仍在使用的 provenance
+不会被删除。自动 cleanup 永远不能 purge archived failures，这个硬删除边界仍
+必须由操作者显式传入正数 `--archived-failures[=DAYS]`。`remem doctor` 会分别
+报告最近一次自动成功和失败。
+
+### 旧 pending 队列恢复
+
+当前采集路径不再写入或 claim 已退役的 `pending_observations` 队列。当前
+extraction 没有 ready 任务时，普通 worker 可以把残留行迁入当前
+capture/extraction 管线。`remem worker --once` 每个进程最多投喂一批；
+daemon 每 60 秒最多投喂一批；每批最多选择 25 条最老的合格记录。若 legacy
+预检期间出现当前 extraction 工作，零进度 yield 会保留本次投喂资格，等当前
+工作完成后重试；已经迁移过记录的部分进度 yield 则会消耗该资格。
+
+自动候选必须带有已知的 Claude Code 或 Codex host，且状态为 pending、租约已
+过期的 processing、已到重试时间的 transient failure，或受控恢复的历史
+archived transient failure。成功时会在同一事务中记录当前 captured event 和
+extraction task、将旧行标记为 migrated，并清除旧的 failure/archive 状态。
+任何 replay 错误都会回滚当前管线写入，记录最长 900 秒的指数退避，并中止
+本批。bridge 不会把共享 replay 故障猜成单行 permanent。doctor 会让退避中的
+known-host archived transient 行继续可见，显示最早 `next_retry_epoch`，并在尚无
+到期行时省略立即运行 `worker --once` 的建议。已经被分类为
+permanent 的行或 unknown-host 行继续通过 `remem pending` 供用户检查和显式
+管理恢复；unknown host 必须先在 replay 时补全。该桥不会恢复旧 enqueue/claim
+API，也绝不会自动删除记录。
+
+不符合自动 bridge 条件的 archived failed 旧行会由 doctor 报告为
+`admin-required`。doctor 会直接按最老优先列出有上限的候选集，包含真实 ID、
+已保存 host、failure class、归档时间，以及具体的 `remem pending
+recover-archived` 预览和执行命令。同一行若保存为 `host = unknown`，doctor
+会同时给出显式的 `--host claude-code` 和 `--host codex-cli` 变体，供管理员
+选择正确身份。`recover-archived` 只接受精确的 archived failed 行，在一个
+事务中 replay；只有当前 event 和 extraction task 成功提交后才清理
+failure/archive 状态，任何失败都会保持源行不变。
 
 ## REST API
 
@@ -547,6 +591,45 @@ curl -H "Authorization: Bearer $TOKEN" http://127.0.0.1:5567/api/v1/status
 - REST API 仅绑定本机（`127.0.0.1`），并要求
   `Authorization: Bearer $(cat ~/.remem/.api-token)`
 - API token 文件权限（`0600`）
+
+### 明文残留诊断
+
+`remem doctor` 的 `Plaintext residue` 检查会按内容递归检查整个受管理
+`REMEM_DATA_DIR` 树中的普通文件，包括名称任意或没有扩展名的自定义备份
+输出。它绝不会跟随符号链接；在 Windows 上，还会在递归前拒绝所有文件系统
+reparse point。受管理 `backups/` 子树中短于 SQLite header 的文件会明确标记为
+检查不完整；其他位置的无关短运行文件会被忽略，除非其名称表明它是数据库
+artifact。配置的密钥路径和当前数据库 sidecar 路径继续沿用既有排除规则。
+只有经过严格结构校验的 Hugging Face 内部缓存 snapshot
+指针会被忽略，因为同仓库的 blob 是普通文件，会由目录树扫描独立检查。其他
+artifact 符号链接都会使检查结果标记为不完整。该检查只读，绝不会删除数据。发现明文副本时，
+如果当前数据库已确认为加密库，该项会报告 `Fail`，且 `remem doctor`
+以退出码 2 结束；如果当前数据库是明文库，或无法确认其加密状态，该项报告
+`Warn`。因 I/O 错误而无法检查的目录项或候选文件会被明确报告，并阻止该项
+报告 `Ok`。
+
+请根据检查状态选择处置路径：
+
+- `Fail` 表示 doctor 已确认当前数据库已加密，同时存在明文副本。先运行
+  `remem status` 确认当前数据库可以打开，再运行 `remem admin backup` 创建
+  一份新的加密备份；完成后才能人工删除列出的明文副本，或仅将其保留在
+  加密存储中。
+- 如果当前数据库是明文库而报告 `Warn`，先检查
+  `REMEM_DATA_DIR/remem.db.bak` 或 `REMEM_DATA_DIR/remem.db.enc` 是否会阻塞
+  加密。若存在其中任一文件，先确认 `REMEM_DATA_DIR/backups/` 是真实目录而
+  不是符号链接，再为每个文件选择未被占用的目标名称，并在不覆盖任何文件的
+  前提下将阻塞文件移入该目录。然后运行 `remem encrypt`，并反复运行
+  `remem status`，确认当前数据库可以打开。再运行 `remem doctor`，确认
+  Plaintext residue 的详情显示当前数据库已加密且可读；只要保留的明文副本
+  仍在，该检查预期会继续报告 `Fail`。随后运行 `remem admin backup` 创建
+  新的加密备份，再人工删除旧的明文副本或仅将其保留在加密存储中，最后
+  反复运行 `remem doctor`，直到 Plaintext residue 通过。
+- 如果因当前数据库缺失或无法验证、密钥问题或 I/O 错误而报告 `Warn`，不要
+  备份或删除任何文件。先修复当前数据库、密钥或可读性问题；只有在
+  `remem status` 成功且 `remem doctor` 确认加密后，才能继续备份和处置。
+
+仅将副本移出 `REMEM_DATA_DIR` 只能让它不再被此项扫描，并不能保护其中的
+数据。Remem 不承诺人工删除文件后可实现安全擦除。
 
 ## 架构文档
 

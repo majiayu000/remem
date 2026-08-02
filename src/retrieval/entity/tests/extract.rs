@@ -35,3 +35,39 @@ fn no_stop_words() {
     assert!(!entities.iter().any(|entity| entity.to_lowercase() == "the"));
     assert!(entities.iter().any(|entity| entity == "API"));
 }
+
+#[test]
+fn technical_terms_do_not_match_inside_words() {
+    let entities = extract_entities("", "How can I remember capitalization rules?");
+
+    assert!(!entities
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case("remem")));
+    assert!(!entities
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case("API")));
+}
+
+#[test]
+fn technical_terms_match_at_punctuation_and_hyphen_boundaries() {
+    let entities = extract_entities("", "remem-ai uses an API-driven hook.");
+
+    assert!(entities
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case("remem")));
+    assert!(entities
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case("API")));
+    assert!(entities
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case("hook")));
+}
+
+#[test]
+fn technical_terms_match_at_cjk_script_boundaries() {
+    let entities = extract_entities("", "使用SQLite数据库");
+
+    assert!(entities
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case("sqlite")));
+}

@@ -106,6 +106,116 @@ fn raw_archive_time_bound_remains_public_and_uses_utc_midnight_for_dates() {
     assert_eq!(parse("2026-01-02").unwrap(), 1_767_312_000);
 }
 
+#[test]
+fn search_explain_public_struct_literals_keep_the_existing_field_layout() {
+    let contribution = remem::retrieval::search::ChannelContribution {
+        channel: "entity".to_string(),
+        rank: 1,
+        score: 0.5,
+    };
+    let result = remem::retrieval::search::SearchExplainResult {
+        memory_id: 7,
+        final_rank: 1,
+        final_score: 0.25,
+        evidence_confidence: 1.0,
+        project: "public-api-project".to_string(),
+        scope: "project".to_string(),
+        visibility: "project-local".to_string(),
+        staleness: remem::memory::MemoryStalenessLabel {
+            status: "active".to_string(),
+            age: "fresh",
+            source_anchor: "untracked".to_string(),
+            label: "status=active; staleness=fresh; source_anchor=untracked".to_string(),
+            error: None,
+        },
+        contributions: vec![contribution],
+    };
+
+    assert_eq!(result.fusion_score(), 0.5);
+    assert_eq!(result.post_fusion_score_factor(), Some(0.5));
+    let serialized = serde_json::to_value(&result).expect("search explain should serialize");
+    assert_eq!(serialized["fusion_score"].as_f64(), Some(0.5));
+    assert_eq!(serialized["post_fusion_score_factor"].as_f64(), Some(0.5));
+
+    let explain = remem::retrieval::search::SearchExplain {
+        query: "entity".to_string(),
+        project: Some("public-api-project".to_string()),
+        memory_type: None,
+        branch: None,
+        include_stale: false,
+        limit: 10,
+        offset: 0,
+        fetch_limit: 10,
+        expanded_terms: vec![],
+        core_terms: vec![],
+        claim_terms: vec![],
+        fts_query: None,
+        temporal_range: None,
+        temporal_field: None,
+        rrf_k: 60.0,
+        min_evidence_confidence: 0.62,
+        filtered_result_count: 0,
+        timings: vec![],
+        rerank: None,
+        channels: vec![],
+        results: vec![result],
+        has_more: false,
+        raw_fallback_count: 0,
+    };
+    let serialized = serde_json::to_value(&explain).expect("search explain should serialize");
+    assert!(serialized.get("contribution_breakdowns").is_none());
+
+    let breakdown = remem::retrieval::search::SearchExplainResultBreakdown {
+        memory_id: 7,
+        contributions: vec![remem::retrieval::search::ChannelContributionBreakdown {
+            channel: "entity".to_string(),
+            rank: 1,
+            weight: 2.0,
+            reciprocal_rank: 0.25,
+            normalized_signal: Some(0.0),
+            total_score: 0.5,
+        }],
+    };
+    assert_eq!(breakdown.memory_id, 7);
+    assert_eq!(breakdown.contributions[0].total_score, 0.5);
+    let details = remem::retrieval::search::SearchExplainDetails {
+        explain,
+        contribution_breakdowns: vec![breakdown],
+    };
+    let serialized = serde_json::to_value(&details).expect("details should serialize");
+    assert_eq!(
+        serialized["contribution_breakdowns"][0]["memory_id"].as_i64(),
+        Some(7)
+    );
+    assert_eq!(
+        serialized["contribution_breakdowns"][0]["contributions"][0]["normalized_signal"].as_f64(),
+        Some(0.0)
+    );
+}
+
+#[test]
+fn detailed_search_explain_has_a_public_producer() -> anyhow::Result<()> {
+    let conn = Connection::open_in_memory()?;
+    remem::migrate::run_migrations(&conn)?;
+
+    let (memories, details) = remem::retrieval::search::search_with_branch_explain_details(
+        &conn,
+        Some("public details"),
+        None,
+        None,
+        10,
+        0,
+        false,
+        None,
+    )?;
+
+    assert!(memories.is_empty());
+    let details = details.expect("query search should produce detailed explain output");
+    assert_eq!(details.explain.query, "public details");
+    assert!(details.contribution_breakdowns.is_empty());
+    Ok(())
+}
+
 #[tokio::test]
 async fn exported_router_covers_auth_save_list_search_and_detail() -> anyhow::Result<()> {
     let data_dir = TempDataDir::new("public-api-router");

@@ -81,3 +81,14 @@ jobs:
             /tmp/remem-eval-gates-capacity-regression.json
             /tmp/remem-eval-gates-capacity-regression.log
       - run: cargo test
+
+  windows_local_embedding_security:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Check Windows local embedding integration
+        run: cargo check --locked --all-targets
+      - name: Test Windows local embedding filesystem security
+        run: cargo test --locked --lib retrieval::embedding::local_semantic

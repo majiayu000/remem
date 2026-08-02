@@ -43,6 +43,12 @@ pub struct SearchResultSet {
     pub raw_error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SearchResultSetWithExplainDetails {
+    pub result: SearchResultSet,
+    pub explain_details: Option<crate::retrieval::search::SearchExplainDetails>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct SaveMemoryRequest {
     pub text: String,

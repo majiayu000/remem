@@ -656,7 +656,11 @@ fn v069_post_migration_hook_log_failure_rolls_back_migration() -> Result<()> {
     assert_eq!(applied, 0);
     let index_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM sqlite_master
-         WHERE type='index' AND name LIKE 'idx_jobs_active_%_unique'",
+         WHERE type='index' AND name IN (
+             'idx_jobs_active_ordinary_unique',
+             'idx_jobs_active_dream_unique',
+             'idx_jobs_active_compile_rules_unique'
+         )",
         [],
         |row| row.get(0),
     )?;

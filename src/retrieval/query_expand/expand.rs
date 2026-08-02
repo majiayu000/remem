@@ -50,6 +50,13 @@ fn push_core_token(token: &str, tokens: &mut Vec<String>, seen: &mut HashSet<Str
     let chars: Vec<char> = token.chars().collect();
     let all_cjk = !chars.is_empty() && chars.iter().all(|c| is_cjk(*c));
 
+    if !chars
+        .iter()
+        .any(|character| character.is_alphanumeric() || is_cjk(*character))
+    {
+        return;
+    }
+
     if all_cjk && chars.len() > 1 {
         let segments = segment_cjk(token);
         let any_multi = segments.iter().any(|segment| segment.chars().count() > 1);

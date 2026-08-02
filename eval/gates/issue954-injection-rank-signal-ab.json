@@ -1,0 +1,40 @@
+{
+  "version": "2026-08-01",
+  "issue": 954,
+  "surface": "SessionStart injection channel assembly",
+  "source_commit": "ae6dc5f9e5a634bf88319d2046c54e50cf1630be",
+  "reproduction": {
+    "command": "cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json",
+    "report_path": "source_reports.injection.rank_signal_ab",
+    "contract": "Both arms use the same temporary SQLite fixture, query, filters, channel SQL, SearchWeights::default(), and result limit. The baseline arm only restores the legacy rank pseudo-score conversion; the candidate arm uses pure weighted RRF for rank-only hits."
+  },
+  "fixture": {
+    "query": "rankbridge 2026-07-30",
+    "expected_memory_id": 2000,
+    "k": 10
+  },
+  "baseline": {
+    "algorithm": "legacy-rank-pseudo-score",
+    "retrieved_ids": [2001, 2000, 2019, 2018, 2017, 2016, 2015, 2014, 2013, 2012],
+    "mrr_at_10": 0.5,
+    "ndcg_at_10": 0.6309297535714575
+  },
+  "candidate": {
+    "algorithm": "pure-weighted-rrf",
+    "retrieved_ids": [2000, 2001, 2019, 2018, 2017, 2016, 2015, 2014, 2013, 2012],
+    "mrr_at_10": 1.0,
+    "ndcg_at_10": 1.0
+  },
+  "delta": {
+    "mrr_at_10": 0.5,
+    "ndcg_at_10": 0.36907024642854247
+  },
+  "eval_gate_summary": {
+    "metrics_checked": 114,
+    "passed": true,
+    "injection_all_checks_passed": true,
+    "failing_examples": []
+  },
+  "scope_note": "This is #954 correctness evidence on the current injection implementation. It does not satisfy or close #953 shared-engine and channel-parity stages.",
+  "passed": true
+}

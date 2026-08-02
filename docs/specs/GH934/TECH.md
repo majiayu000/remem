@@ -1,4 +1,4 @@
-# Retrieval Router v1 — Tech Spec
+# Retrieval Router — Tech Spec
 
 Refs #934.
 
@@ -17,8 +17,12 @@ src/cli/actions/context_plan.rs   `remem context-plan` handler
 
 ## Contract
 
-- `RETRIEVAL_PLAN_SCHEMA_VERSION = 1`,
-  `RETRIEVAL_ROUTER_POLICY_VERSION = "retrieval_router_v1"`.
+- `RETRIEVAL_PLAN_SCHEMA_VERSION = 1`.
+- `RETRIEVAL_ROUTER_POLICY_VERSION = "retrieval_router_v2"` after the
+  post-merge caller-scope correction: intent resolution must never widen
+  `include_superseded`. The schema remains v1 because the serialized shape is
+  unchanged; the policy version distinguishes plans compiled before and after
+  this behavioral correction.
 - `ContextIntent` (shared with #932 in `context_bundle::domain`) gains
   the six router variants; `SessionStart` stays the bundle-planner
   intent and is not routable — explicit `SessionStart` falls back to

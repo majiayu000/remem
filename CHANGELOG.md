@@ -3,6 +3,134 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.44` for the GH-946 query-scaffolding follow-up:
+  temporal parsing now returns exact consumed spans and removes only validated
+  time phrases from claim tokens. Conversational request scaffolding and
+  localized time expressions no longer inflate claim confidence, while
+  malformed, grouped, signed, zero, and overflowing counts fail closed.
+- Staged source version `0.6.42` for GH-950: repeated static SQL on the
+  SessionStart summary paginator and observation hash/vector dedup funnel now
+  reuses rusqlite's per-connection prepared-statement cache. The four static
+  staleness statements were already cached; dynamic placeholder SQL and
+  one-shot queries remain uncached so they do not churn the bounded cache.
+- Staged source version `0.6.41` for the post-merge doctor corrective:
+  plaintext-residue inspection now accepts only strictly validated internal
+  Hugging Face snapshot pointers whose same-repository blob is a regular file.
+  The pointer is never followed and the blob remains independently scanned;
+  malformed, broken, absolute, escaping, or blob-symlink aliases keep the
+  inspection explicitly incomplete instead of producing a false healthy
+  result. Windows reparse points are rejected before recursive descent,
+  truncated files inside the managed backups tree remain fail-closed, and a
+  regular file occupying the `backups` path is still content-inspected.
+- Staged source version `0.6.40` for the post-merge event-retention
+  corrective: automatic cleanup deletes only the seven explicitly ephemeral
+  event kinds. Governance, scope-cleanup, and all future unknown event kinds
+  remain durable audit history by default instead of being silently classified
+  as disposable.
+- Staged source version `0.6.39` for GH-953 stage S1: SessionStart injection now
+  scores from `SearchWeights` instead of eight private scoring constants in
+  `hybrid_context.rs` that duplicated it and had already drifted — the injection
+  path had no `graph` channel and no `usage` channel. Because
+  `eval-weight-grid` tunes `SearchWeights` and injection never read it, the
+  evaluation harness was optimizing a path users do not take. Channel SQL and
+  post-fusion behavior are unchanged; `docs/specs/GH953/TECH.md` stages the
+  remaining convergence work so each ranking-visible change lands with its own
+  evaluation delta.
+- Staged source version `0.6.38` for GH-951: the owner-trace exclusion query is
+  a `NOT ... OR ...` scan no index can serve, and it ran on every SessionStart
+  even though its only consumers are debug output and `governance_eval_snapshot`
+  (which passes `collect_diagnostics = true`). It is now gated, removing a full
+  table scan from the non-debug hot path. The indexed `id IN (...)` lookup stays
+  unconditional because `owner_counts` feeds `ContextRenderStats` and
+  `remem context --status`; only the per-row trace construction is gated. A test
+  asserts that a non-debug load keeps identical owner counts and memory
+  selection while reporting no traces.
+- Staged source version `0.6.37` for GH-949: every database connection now
+  applies tuned SQLite pragmas from one place. `cache_size=-65536` (64 MiB),
+  `synchronous=FULL`, and `temp_store=MEMORY` join the existing WAL,
+  foreign-key, and busy-timeout settings; SQLCipher disables mmap, so page
+  residency matters far more here than on a plaintext store, and every cache
+  miss otherwise costs a `pread` plus an AES decrypt. `FULL` preserves the
+  prior power-loss durability by default; `REMEM_SQLITE_SYNCHRONOUS=normal`
+  makes the WAL latency/durability tradeoff explicit. Read-only connections
+  take a narrower set that omits write-only pragmas. Both tuning overrides
+  fail before opening the database on invalid or non-Unicode values.
+  `REMEM_SQLITE_CACHE_KIB` accepts 1 through 1048576 KiB. The three
+  `open_configured_*` helpers no longer carry separate pragma strings.
+- Staged source version `0.6.36` for the GH-946 post-merge corrective:
+  automatic E5 downloads now use the exact immutable Hugging Face revision
+  evaluated by the checked-in provider evidence, while presets without an
+  approved revision fail before any network request. CLI help, README, and the
+  runtime error now distinguish automatically downloadable E5 from BGE support
+  through an already installed verified cache. Exact-entity retrieval also
+  grounds the irregular `build` / `built` / `builds` / `building` family
+  without matching unrelated predicates, and the graph-decision fingerprint is
+  regenerated against the corrected implementation.
+- Staged source version `0.6.35` for the GH-934 post-merge corrective:
+  Retrieval Router plans now preserve the caller's `include_superseded`
+  temporal scope across explicit, keyword-fallback, and default-fallback
+  intents. Filters, freshness policy, and history-channel validity share the
+  same caller-controlled value, so intent classification cannot silently
+  expand access to superseded evidence.
+- Staged source version `0.6.34` for GH-946: `Auto` now prefers an explicitly
+  downloaded, verified `multilingual-e5-small` local embedding model over
+  feature-hash when no remem-specific API key is configured. Provider/model
+  switches gain an actionable doctor backfill hint. The default-k provider
+  comparison now records the verified model artifact digest, preserves
+  abstention and existing-slice budgets, and shows the local paraphrase
+  improvement while separating cold-start latency from warm-query p95. A
+  two-stage evidence gate prevents unsupported vector-only tails without
+  suppressing semantic fallback behind weak lexical hits. Local manifests now
+  bind active HF snapshot symlinks and resolved blobs, released schema-v1
+  installs migrate offline, runtime sessions are process-wide singleflight,
+  and artifact-qualified model ids prevent old/new weight revisions from
+  silently sharing vector coverage. Windows model staging, private runtime
+  caches, and lock files now use protected owner-only ACLs, reject reparse
+  points, and verify 128-bit file identities under native Windows CI. Windows
+  custom/shared model roots fail closed instead of accepting a weaker trust
+  boundary.
+- Staged source version `0.6.32` for GH-945: workers now schedule one
+  database-global lifecycle cleanup after a durable 24-hour cooldown and claim
+  it through a dedicated lane. Each run atomically expires memory TTLs, advances
+  inactive workstreams, removes only explicitly ephemeral old events, archives
+  stale memories, and deletes old compressed sources only when their supported
+  canonical v2 content/provenance snapshot remains sufficient after
+  compression-time revalidation. Exact historical v1 links are upgraded to v2
+  in the deletion transaction before old sources are removed; malformed or
+  changed v1 data remains fail-closed. Mutable lifecycle/access metadata is
+  checked separately or excluded by contract. Automatic cleanup cannot purge
+  archived failures. A maintenance ledger and doctor check expose success,
+  redacted failure, retry, overdue, and stalled-lease state; bounded SQL batches
+  keep large ID sets below SQLite parameter limits.
+- Staged source version `0.6.31` for GH-948: indexed source-anchor staleness
+  lookup. Schema v074 adds a commit-epoch expression index and a
+  trigger-maintained commit-file relation; link-first and split epoch/ID
+  queries preserve branch, path-overlap, and equal-timestamp semantics without
+  scanning pre-anchor project history. SessionStart now reports a dedicated
+  `load_staleness_labels` phase and includes a 50,376-commit ignored benchmark.
+- Staged source version `0.6.30` for GH-943: ordinary workers now drain
+  eligible residual `pending_observations` into the current capture/extraction
+  pipeline only when no current extraction task is ready. The bridge admits at
+  most 25 oldest known-host rows once per `worker --once` process or once per
+  60-second daemon interval, handles pending/expired-processing/due transient
+  and historical archived transient rows, uses per-row immediate transactions
+  plus replay savepoints, prepares Git metadata before taking the SQLite write
+  lock, revalidates the source snapshot after locking, and records capped
+  exponential backoff without rewriting first-failure/archive history on
+  replay errors. A zero-progress yield to newly arrived current work keeps the
+  once/interval admission available, while partial progress consumes it.
+  Doctor keeps deferred archived transient rows visible with their earliest
+  retry epoch, reports due automatic backlog with executable `remem worker
+  --once` guidance, and marks archived permanent/unknown-host rows
+  `admin-required`, listing a bounded oldest-first candidate set with concrete
+  exact-ID recovery commands instead of relying on the global recent-failure
+  list. The new exact `remem pending recover-archived --id` command supports
+  dry-run, requires an explicit host for stored unknown identity, and clears
+  failure/archive state only after transactional replay succeeds.
+  Deterministic two-connection coverage proves Git enrichment leaves the
+  database write lock available, and process-level kill/restart coverage proves
+  a durable failed backlog still drains to zero after restart. This staged
+  version follows `0.6.28` (#962) and `0.6.29` (#960); merge those PRs first.
 - Staged source version `0.6.27` for GH-934: Retrieval Router v1
   deterministic plan compilation. New `src/retrieval_router/` module with
   a versioned `RetrievalPlan` (per-channel enabled/limit/weight/max
@@ -188,6 +316,19 @@
   hook `--host` aliases and arbitrary values now fail closed.
 
 ### Fixed
+- Staged source version `0.6.43` for GH-954: entity, temporal, fact, LIKE
+  fallback, and graph channels now contribute pure weighted RRF instead of
+  feeding reciprocal rank back as a synthetic normalized score. FTS, vector,
+  and opt-in usage retain calibrated strength signals; equal-score FTS falls
+  back to rank-only fusion. Search explain output reports the computed
+  pre-/post-fusion score identity while preserving the existing public Rust
+  explain-struct field layout. Both search and SessionStart injection now
+  reject non-finite vector thresholds or distances before channel filtering.
+- Staged source version `0.6.33` for GH-944: `remem doctor` now detects
+  plaintext SQLite residue across the active data and backup locations,
+  reports inspection failures instead of silently skipping them, and bases
+  cleanup guidance on the live database state. Release metadata remains
+  `unreleased`.
 - Staged source version `0.6.17`: AI HTTP calls now reuse one process-wide
   `reqwest::Client` (connection pool + TLS config) via a `OnceLock` instead of
   rebuilding a client on every call. The timeout is a compile-time constant, so

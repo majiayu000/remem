@@ -34,6 +34,7 @@ pub struct GraphDecisionReport {
     pub version: String,
     pub dataset_path: String,
     pub evidence_fingerprint: evidence_fingerprint::GraphEvidenceFingerprint,
+    pub embedding_profile: GraphDecisionEmbeddingProfile,
     pub k: usize,
     pub benefit_threshold: f64,
     pub latency_budget_p95_ms: f64,
@@ -48,6 +49,17 @@ pub struct GraphDecisionReport {
     pub deltas: GraphDecisionDeltas,
     pub checks: GraphDecisionChecks,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct GraphDecisionEmbeddingProfile {
+    pub configured_provider: String,
+    pub active_provider: String,
+    pub fallback_provider: Option<String>,
+    pub model_id: String,
+    pub dimensions: usize,
+    pub degraded: bool,
+    pub disabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -138,6 +150,29 @@ fn run_graph_decision_dataset(
     dataset_path: String,
     requested_k: usize,
 ) -> Result<GraphDecisionReport> {
+    let _env_guard = crate::runtime_config::ENV_LOCK
+        .lock()
+        .map_err(|_| anyhow::anyhow!("graph decision embedding environment lock poisoned"))?;
+    let base_config = crate::retrieval::embedding::resolve_embedding_config()?;
+    let forced_config = super::provider_comparison::forced_provider_config(
+        &base_config,
+        crate::retrieval::embedding::EmbeddingProvider::FeatureHash,
+    )?;
+    let _scoped_config = super::provider_comparison::ScopedEmbeddingConfig::activate(
+        &forced_config,
+        crate::retrieval::embedding::EmbeddingProvider::FeatureHash,
+        false,
+    )?;
+    let embedding_profile = fixed_graph_embedding_profile()?;
+    run_graph_decision_dataset_with_profile(dataset, dataset_path, requested_k, embedding_profile)
+}
+
+fn run_graph_decision_dataset_with_profile(
+    dataset: GoldenDataset,
+    dataset_path: String,
+    requested_k: usize,
+    embedding_profile: GraphDecisionEmbeddingProfile,
+) -> Result<GraphDecisionReport> {
     if !dataset.has_fixture_corpus() {
         bail!("graph decision eval requires a fixture-backed golden dataset");
     }
@@ -167,9 +202,10 @@ fn run_graph_decision_dataset(
     };
 
     Ok(GraphDecisionReport {
-        version: "2026-07-19".to_string(),
+        version: "2026-07-29".to_string(),
         evidence_fingerprint: evidence_fingerprint::compute(&dataset_path)?,
         dataset_path,
+        embedding_profile,
         k,
         benefit_threshold: BENEFIT_THRESHOLD,
         latency_budget_p95_ms: LATENCY_BUDGET_P95_MS,
@@ -188,10 +224,54 @@ fn run_graph_decision_dataset(
         deltas,
         checks,
         notes: vec![
+            "All graph-decision arms force the same feature-hash embedding profile, independent of ambient Auto/local installation state.".to_string(),
             "The standard and literal arms use the same golden dataset and search implementation; the standard arm sets graph weight to zero.".to_string(),
             "Associative hop_path metadata seeds trusted mentions/touches_file edges through the typed provenance contract before literal-arm queries run.".to_string(),
             "Entity BFS remains informational and does not decide whether literal graph_edges traversal is wired.".to_string(),
         ],
+    })
+}
+
+fn fixed_graph_embedding_profile() -> Result<GraphDecisionEmbeddingProfile> {
+    let status = crate::retrieval::embedding::embedding_provider_status_without_probe()?;
+    let model_id = status
+        .active_model_id
+        .clone()
+        .context("fixed graph-decision embedding profile has no model id")?;
+    let dimensions = status
+        .active_dimensions
+        .context("fixed graph-decision embedding profile has no dimensions")?;
+    let expected_model = crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL;
+    let expected_dimensions = crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_DIMENSIONS;
+    if status.configured_provider != "feature-hash"
+        || status.active_provider != "feature-hash"
+        || status.fallback_provider.is_some()
+        || model_id != expected_model
+        || dimensions != expected_dimensions
+        || status.degraded
+        || status.disabled
+        || status.unavailable_reason.is_some()
+    {
+        bail!(
+            "graph decision eval requires an exact feature-hash profile: configured={} active={} fallback={:?} model={} dimensions={} degraded={} disabled={} unavailable={:?}",
+            status.configured_provider,
+            status.active_provider,
+            status.fallback_provider,
+            model_id,
+            dimensions,
+            status.degraded,
+            status.disabled,
+            status.unavailable_reason
+        );
+    }
+    Ok(GraphDecisionEmbeddingProfile {
+        configured_provider: status.configured_provider,
+        active_provider: status.active_provider,
+        fallback_provider: status.fallback_provider,
+        model_id,
+        dimensions,
+        degraded: status.degraded,
+        disabled: status.disabled,
     })
 }
 

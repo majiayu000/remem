@@ -109,11 +109,22 @@ fn coverage_check(
             ),
         );
     }
+    if coverage.embedded == 0 && coverage.mixed_profile_count > 0 {
+        return Check::new(
+            "Embedding coverage",
+            Status::Warn,
+            format!(
+                "0/{} memories have vectors for active model {} (0.0%); existing vectors use another provider/model or dimensions; run `remem embedding backfill --limit 1000`",
+                coverage.total,
+                status.active_model_id.as_deref().unwrap_or("none")
+            ),
+        );
+    }
     Check::new(
         "Embedding coverage",
         Status::Warn,
         format!(
-            "{}/{} memories have vectors for active model {} ({:.1}%); run `remem reindex-embeddings --limit 1000`",
+            "{}/{} memories have vectors for active model {} ({:.1}%); run `remem embedding backfill --limit 1000`",
             coverage.embedded,
             coverage.total,
             status.active_model_id.as_deref().unwrap_or("none"),
@@ -142,6 +153,8 @@ fn mixed_model_check(mixed_profile_count: i64) -> Check {
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
+    #[cfg(feature = "local-onnx")]
+    use std::path::{Path, PathBuf};
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -167,28 +180,86 @@ mod tests {
         "REMEM_EMBEDDINGS_API_KEY_ENV",
         "REMEM_EMBEDDINGS_TIMEOUT_SECS",
         "REMEM_EMBEDDINGS_MODEL_DIR",
+        "HF_HOME",
         "OPENAI_API_KEY",
     ];
 
-    fn with_clean_embedding_env<T>(f: impl FnOnce() -> T) -> T {
-        let _guard = crate::runtime_config::TEST_ENV_LOCK
-            .lock()
-            .expect("env lock should acquire");
-        let saved = ENV_KEYS
-            .iter()
-            .map(|key| (*key, std::env::var(key).ok()))
-            .collect::<Vec<_>>();
-        for key in ENV_KEYS {
-            unsafe { std::env::remove_var(key) };
+    #[cfg(feature = "local-onnx")]
+    struct TestModelRoot(PathBuf);
+
+    #[cfg(feature = "local-onnx")]
+    impl TestModelRoot {
+        fn new() -> Self {
+            Self(std::env::temp_dir().join(format!(
+                "remem-doctor-model-test-{}-{}",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            )))
         }
-        let result = f();
-        for (key, value) in saved {
-            match value {
-                Some(value) => unsafe { std::env::set_var(key, value) },
-                None => unsafe { std::env::remove_var(key) },
+
+        fn path(&self) -> &Path {
+            &self.0
+        }
+    }
+
+    #[cfg(feature = "local-onnx")]
+    impl Drop for TestModelRoot {
+        fn drop(&mut self) {
+            if let Err(error) = std::fs::remove_dir_all(&self.0) {
+                if error.kind() != std::io::ErrorKind::NotFound {
+                    eprintln!(
+                        "failed to remove doctor test model root {}: {error}",
+                        self.0.display()
+                    );
+                }
             }
         }
-        result
+    }
+
+    struct CleanEmbeddingEnv {
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+        _guard: crate::runtime_config::TestEnvGuard,
+    }
+
+    impl CleanEmbeddingEnv {
+        fn new() -> Self {
+            let guard = crate::runtime_config::TEST_ENV_LOCK
+                .lock()
+                .expect("env lock should acquire");
+            let saved = ENV_KEYS
+                .iter()
+                .map(|key| (*key, std::env::var_os(key)))
+                .collect::<Vec<_>>();
+            for key in ENV_KEYS {
+                unsafe { std::env::remove_var(key) };
+            }
+            let isolated_config = std::env::temp_dir().join(format!(
+                "remem-doctor-missing-config-{}-{}.toml",
+                std::process::id(),
+                chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            ));
+            unsafe { std::env::set_var("REMEM_CONFIG", isolated_config) };
+            Self {
+                saved,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for CleanEmbeddingEnv {
+        fn drop(&mut self) {
+            for (key, value) in &self.saved {
+                match value {
+                    Some(value) => unsafe { std::env::set_var(key, value) },
+                    None => unsafe { std::env::remove_var(key) },
+                }
+            }
+        }
+    }
+
+    fn with_clean_embedding_env<T>(f: impl FnOnce() -> T) -> T {
+        let _env = CleanEmbeddingEnv::new();
+        f()
     }
 
     fn setup_conn() -> anyhow::Result<Connection> {
@@ -419,6 +490,57 @@ mod tests {
                 .expect("model mix check should exist");
             assert!(matches!(model_mix.status, Status::Warn));
             assert!(model_mix.detail.contains("2 embedding model"));
+            Ok(())
+        })
+    }
+
+    #[test]
+    #[cfg(feature = "local-onnx")]
+    fn auto_local_provider_switch_warns_to_backfill_old_profile() -> anyhow::Result<()> {
+        with_clean_embedding_env(|| -> anyhow::Result<()> {
+            let model_root = TestModelRoot::new();
+            crate::retrieval::embedding::install_test_local_embedding_model(model_root.path())?;
+            unsafe {
+                std::env::set_var("REMEM_EMBEDDINGS_MODEL_DIR", model_root.path());
+            }
+            let conn = setup_conn()?;
+            conn.execute(
+                "INSERT INTO memories
+                 (id, project, title, content, memory_type, created_at_epoch, updated_at_epoch, status)
+                 VALUES (1, '/repo', 'Memory', 'Content', 'decision', 1, 1, 'active')",
+                [],
+            )?;
+            conn.execute(
+                "INSERT INTO memory_embeddings
+                 (memory_id, embedding, dimensions, model, content_hash, updated_at_epoch)
+                 VALUES (1, ?1, ?2, ?3, 'hash', 1)",
+                params![
+                    vec![0_u8; crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_DIMENSIONS * 4],
+                    crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_DIMENSIONS as i64,
+                    crate::retrieval::embedding::FEATURE_HASH_EMBEDDING_MODEL
+                ],
+            )?;
+
+            let checks = check_embedding_provider(Some(&conn));
+            let provider = checks
+                .iter()
+                .find(|check| check.name == "Embedding provider")
+                .expect("provider check should exist");
+            let coverage = checks
+                .iter()
+                .find(|check| check.name == "Embedding coverage")
+                .expect("coverage check should exist");
+
+            assert!(matches!(provider.status, Status::Ok));
+            assert!(provider.detail.contains("configured=auto active=local"));
+            assert!(matches!(coverage.status, Status::Warn));
+            assert!(coverage.detail.contains("0/1"));
+            assert!(coverage
+                .detail
+                .contains("another provider/model or dimensions"));
+            assert!(coverage
+                .detail
+                .contains("remem embedding backfill --limit 1000"));
             Ok(())
         })
     }
