@@ -13,7 +13,7 @@ use crate::{db, memory};
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Read-only. Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Requires a non-blank query plus project or cwd (cwd is normalized when project is omitted). Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input or database failures return a tool error."
+        description = "Read-only. Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Requires a non-blank query. project sets the scope; otherwise cwd is normalized, and when both are omitted the current process working directory supplies the scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input, an unavailable process working directory, or database failures return a tool error."
     )]
     pub(super) fn recall_user_context(
         &self,
@@ -138,7 +138,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Fetch full details for explicit IDs and record last-accessed metadata for returned rows. Use after search, not for discovery: pass selected IDs and the exact source from search.next_step.source or each result.source. source defaults to 'memory'; source='memory' returns curated memory detail objects and source='observation' returns current extracted observations as detail objects in a JSON array. Unsupported sources, any missing requested ID, or database failures return a tool error."
+        description = "Fetch full details for explicit IDs and record last-accessed metadata for returned rows. Use after search, not for discovery: pass selected IDs and the exact source from search.next_step.source or each result.source. source defaults to 'memory'; source='memory' returns curated memory detail objects and requires its access update to succeed, while source='observation' returns current extracted observations as detail objects in a JSON array and records its access update best-effort (a failed update is logged but details still return). Unsupported sources, any missing requested ID, detail-read failures, or memory access-update failures return a tool error."
     )]
     pub(super) fn get_observations(
         &self,

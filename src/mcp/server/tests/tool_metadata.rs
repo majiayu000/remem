@@ -79,12 +79,15 @@ fn search_and_context_descriptions_explain_selection_boundaries() -> anyhow::Res
     assert!(search.contains("Use current_state"));
     assert!(search.contains("timeline"));
     assert!(search.contains("search_raw"));
+    assert!(search.contains("raw_hits_error"));
+    assert!(search.contains("preserves the curated results"));
 
     let recall = tool_description(&server, "recall_user_context");
     assert!(recall.contains("Read-only"));
     assert!(recall.contains("Use search for exhaustive memory matches"));
     assert!(recall.contains("current_state"));
     assert!(recall.contains("bounded context bundle"));
+    assert!(recall.contains("current process working directory"));
 
     let timeline = tool_description(&server, "timeline");
     assert!(timeline.contains("Read-only"));
@@ -101,6 +104,8 @@ fn detail_and_workstream_descriptions_disclose_side_effects_and_shapes() -> anyh
     assert!(details.contains("record last-accessed metadata"));
     assert!(details.contains("Use after search, not for discovery"));
     assert!(details.contains("source defaults to 'memory'"));
+    assert!(details.contains("best-effort"));
+    assert!(details.contains("details still return"));
     assert!(details.contains("any missing requested ID"));
 
     let workstreams = tool_description(&server, "workstreams");

@@ -40,7 +40,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Read-only. Search or list curated memories: query is optional, while project/type/branch and visibility flags filter results. Returns a compact JSON object with results, source='memory', pagination, and next_step for get_observations(ids, source); limit defaults to 20 and offset to 0. Use current_state when an exact stable state_key is known, timeline for chronological observation context, and search_raw for literal chat recall. explain requires a non-blank query and cannot be combined with multi_hop=true; invalid combinations or database failures return a tool error."
+        description = "Read-only. Search or list curated memories: query is optional, while project/type/branch and visibility flags filter results. Returns a compact JSON object with results, source='memory', pagination, and next_step for get_observations(ids, source); limit defaults to 20 and offset to 0. Use current_state when an exact stable state_key is known, timeline for chronological observation context, and search_raw for literal chat recall. explain requires a non-blank query and cannot be combined with multi_hop=true. Invalid combinations or curated-search database failures return a tool error; an automatic raw-archive fallback failure preserves the curated results and adds raw_hits_error to the successful response."
     )]
     pub(super) fn search(
         &self,
