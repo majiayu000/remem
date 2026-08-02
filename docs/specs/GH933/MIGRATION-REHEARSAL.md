@@ -79,7 +79,7 @@ database identity/hash, empty WAL, schema/user/target, binary, backup digest,
 nonce, expiry, and stable SHA-256. Apply must not checkpoint or change those bytes.
 Apply rejects missing, uppercase, BLOB, stale, reused, altered, wrong-database,
 wrong-binary, wrong-backup, or post-plan-writer-state input before live writes.
-Only the exact lowercase digest creates one durable `approved` record. Fail every preflight boundary and prove it stays retryable; after `cutover_started`, crash/restart must either complete target postflight, resume the same approval from exact pre-cutover bytes, or fail ambiguous/manual-restore—never strand or reauthorize silently.
+Only the exact digest creates `approved`. Fail every preflight boundary and prove retryability; retire an expired/mismatched approval only after exact pre-cutover proof, retain audit history, then approve one replacement. Retirement after `cutover_started` fails. Started restart completes target, resumes same approval from exact pre-cutover bytes, or fails manual-restore.
 
 ## Executable DDL Matrix
 
@@ -113,7 +113,7 @@ ordered predecessor chain and final seal digest. Then run these negative cases,
 each in a fresh transaction, and assert the named statement fails and leaves
 every table/count/digest unchanged:
 
-1. non-TEXT/NUL-tailed/blank/space/uppercase writer kinds; non-TEXT, NUL-containing, overlong, or out-of-alphabet request IDs while mixed-case
+1. non-TEXT/NUL-tailed/blank/space/uppercase writer kinds; malformed internal/API request IDs (including preexisting referenced API parents) while mixed-case
    valid IDs remain accepted; and short, uppercase, nonhex, overlong, embedded-
    NUL-tailed TEXT, or length-valid BLOB fingerprints/nonces/digests;
 2. invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra
@@ -141,10 +141,11 @@ every table/count/digest unchanged:
    request/result/seal, route, and lifecycle PK/UNIQUE/partial-UNIQUE collision;
 12. UPDATE and DELETE against those six append-only tables before/after seal,
    plus mutation of a memory origin tuple; and
-13. a changed route or status with no staged next row, sealed stage, wrong head,
+13. an unchanged route successor, or changed route/status with no staged next row, sealed stage, wrong head,
    OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching open
    terminal successor permits the update and same-value assignments need no row; and
 14. stored non-INTEGER values (nonnumeric TEXT/BLOB/nonintegral REAL) for every integer-domain ID/version/ordinal/epoch/floor, including nullable fields, are rejected unchanged.
+15. once lifecycle history references an API mutation row, every UPDATE of its action/resource/response/schema/audit/time or operation ID aborts; unreferenced construction may finish before binding.
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field

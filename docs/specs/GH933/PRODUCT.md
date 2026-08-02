@@ -139,7 +139,7 @@ pending v2 requirements below.
    Deferred constraints reject unsealed/missing/extra/mismatched bindings.
    Anchor, intent, result, seal and ledger rows reject UPDATE, DELETE, and every
    conflict-path `INSERT OR REPLACE` even with recursive triggers disabled.
-   Every writer/request identity, nonce, SHA-256, and digest requires SQLite TEXT
+   Every internal/API writer/request identity, nonce, SHA-256, and digest requires SQLite TEXT
    storage and no embedded NUL; every integer-domain ledger value requires
    INTEGER storage. BLOB and NUL-tailed prefix bypasses must fail.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
@@ -700,3 +700,5 @@ operator's exact lowercase SHA-256 approval authorizes cutover. Plan checkpoints
 WAL/closes handles before binding stable DB+backup hashes. Apply writes one
 `approved` entry; preflight leaves it retryable, schema start marks it
 `cutover_started`, and recovery resumes only the same exact attempt or verified target.
+An `approved` attempt may be durably retired only while exact pre-cutover state is
+unchanged; started attempts cannot retire. Dedicated plan creates the sole backup.
