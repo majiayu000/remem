@@ -434,6 +434,16 @@ Remem is meant for the parts that should not depend on manual upkeep:
   build/test failure evidence and an explicit "stop and challenge the
   hypothesis" style lesson feed an idempotent `failure` lesson before summary
   cooldown, duplicate, or skip exits.
+- **Guarded Dream consolidation**: every model-generated topic key, type,
+  title, content, no-merge reason, and conflict reason is scanned before Dream
+  can persist or replace anything. The final title/content render is scanned as
+  one surface too, so split-field instructions cannot bypass the boundary. A
+  match becomes a project-scoped quarantined review candidate with a
+  cryptographically version-bound source-cluster artifact; the original
+  memories remain active, and newer semantic output invalidates an older review
+  instead of silently rebinding it. Every decision rechecks source payload,
+  TTL, current-state pointer, and suppression under its write lock; clean model
+  output stays external trust and cannot rewrite a cluster-external dedup target.
 - **Governance and auditability**: `remem why <id>`, `remem govern --action
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,
@@ -1212,8 +1222,8 @@ frequently than the returned `cache.ttl_secs`; use
 |---|---|---|
 | `/api/v1/stats` | GET | Product stats for local dashboards |
 | `/api/v1/candidates?project=&status=&limit=&offset=` | GET | List compact memory candidates |
-| `/api/v1/candidates/{id}` | GET | Safe candidate detail, evidence, and review decision |
-| `/api/v1/candidates/{id}/review/approve` | POST | Versioned, audited, idempotent safe approval |
+| `/api/v1/candidates/{id}` | GET | Safe candidate detail, evidence/provenance, action-specific review decision, and Dream review token when applicable |
+| `/api/v1/candidates/{id}/review/approve` | POST | Versioned, audited, idempotent safe approval; Dream quarantine requires the current pattern and provenance-token acknowledgements |
 | `/api/v1/candidates/{id}/review/reject` | POST | Versioned, audited, idempotent safe rejection |
 | `/api/v1/candidates/{id}/review/edit` | POST | Versioned, audited, idempotent safe edit-and-approve |
 | `/api/v1/candidates/{id}/approve` | POST | Approve a pending memory candidate; quarantined candidates require `acknowledge_pattern` |

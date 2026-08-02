@@ -396,7 +396,42 @@ pub(super) struct CandidateReviewResponse {
 pub(super) struct CandidateDetailResponse {
     pub data: CandidateDetailItem,
     pub evidence: Vec<CandidateEvidenceItem>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provenance: Option<CandidateDreamProvenance>,
     pub decision: CandidateReviewDecision,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateDreamProvenance {
+    pub kind: &'static str,
+    pub review_token: Option<String>,
+    pub authorized_supersede_ids: Vec<i64>,
+    pub artifacts: Vec<CandidateDreamArtifact>,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateDreamArtifact {
+    pub artifact_id: i64,
+    pub version: i64,
+    pub project: String,
+    pub cluster_signature: String,
+    pub member_ids: Vec<i64>,
+    pub decision_kind: String,
+    pub decision_ids: Vec<i64>,
+    pub decision_payload_sha256: String,
+    pub intended_superseded_ids: Vec<i64>,
+    pub generated_topic_key: Option<String>,
+    pub generated_memory_type: Option<String>,
+    pub generated_title: Option<String>,
+    pub generated_content: Option<String>,
+    pub generated_field: String,
+    pub pattern_id: String,
+    pub pattern_version: i64,
+    pub source_operation: String,
+    pub source_trust_class: String,
+    pub occurrence_count: i64,
+    pub created_at_epoch: i64,
+    pub updated_at_epoch: i64,
 }
 
 #[derive(Serialize)]
@@ -446,6 +481,20 @@ pub(super) struct CandidateEvidenceItem {
 pub(super) struct CandidateReviewDecision {
     pub can_review: bool,
     pub blocked_reasons: Vec<String>,
+    pub actions: CandidateReviewActionDecisions,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateReviewActionDecisions {
+    pub approve: CandidateReviewActionDecision,
+    pub reject: CandidateReviewActionDecision,
+    pub edit: CandidateReviewActionDecision,
+}
+
+#[derive(Serialize)]
+pub(super) struct CandidateReviewActionDecision {
+    pub allowed: bool,
+    pub blocked_reasons: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -456,6 +505,8 @@ pub(super) struct CandidateSafeApproveRequest {
     pub idempotency_key: String,
     #[serde(default)]
     pub acknowledge_pattern: Option<String>,
+    #[serde(default)]
+    pub acknowledge_dream_review_token: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

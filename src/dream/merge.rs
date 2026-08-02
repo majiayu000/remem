@@ -192,15 +192,17 @@ fn require_tag(response: &str, tag: &str) -> Result<String> {
     extract_tag(response, tag)
         .filter(|s| !s.trim().is_empty())
         .ok_or_else(|| {
+            let response_sha256 = crate::db::content_identity_hash(response.as_bytes());
             crate::log::error(
                 "dream",
                 &format!(
-                    "merge response missing or empty <{}>; raw excerpt: {}",
+                    "merge_parse_error error_code=missing_required_tag field={} response_bytes={} response_sha256={}",
                     tag,
-                    redact_excerpt(response)
+                    response.len(),
+                    response_sha256
                 ),
             );
-            anyhow!("merge response missing or empty <{}>", tag)
+            anyhow!("dream merge parse failed error_code=missing_required_tag field=<{tag}>")
         })
 }
 
@@ -235,9 +237,13 @@ fn extract_conflict_ids(text: &str) -> Result<Vec<i64>> {
         .ok_or_else(|| anyhow!("conflict response missing ids attribute"))?;
     let mut ids = Vec::new();
     for token in ids_raw.split_whitespace() {
-        let id = token
-            .parse::<i64>()
-            .map_err(|_| anyhow!("conflict response contains invalid memory id '{token}'"))?;
+        let id = token.parse::<i64>().map_err(|_| {
+            anyhow!(
+                "conflict response contains invalid memory id error_code=invalid_memory_id token_bytes={} token_sha256={}",
+                token.len(),
+                crate::db::content_identity_hash(token.as_bytes())
+            )
+        })?;
         ids.push(id);
     }
     if ids.len() < 2 {
@@ -273,58 +279,6 @@ fn xml_unescape(s: &str) -> String {
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
-}
-
-fn redact_excerpt(response: &str) -> String {
-    const MAX_CHARS: usize = 200;
-    let mut excerpt: String = response.chars().take(MAX_CHARS).collect();
-    if response.chars().count() > MAX_CHARS {
-        excerpt.push_str("...");
-    }
-    redact_secrets(&excerpt)
-}
-
-fn redact_secrets(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let bytes = text.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        let rest = &text[i..];
-        if let Some(prefix_len) = secret_prefix_len(rest) {
-            let after = &rest[prefix_len..];
-            let token_len = after
-                .char_indices()
-                .find(|(_, c)| !is_secret_token_char(*c))
-                .map(|(idx, _)| idx)
-                .unwrap_or(after.len());
-            if token_len >= 8 {
-                out.push_str(&rest[..prefix_len]);
-                out.push_str("[REDACTED]");
-                i += prefix_len + token_len;
-                continue;
-            }
-        }
-        let Some(ch) = rest.chars().next() else {
-            break;
-        };
-        out.push(ch);
-        i += ch.len_utf8();
-    }
-    out
-}
-
-fn secret_prefix_len(s: &str) -> Option<usize> {
-    const PREFIXES: &[&str] = &["sk-", "sk_", "Bearer ", "bearer ", "ghp_", "ghs_", "xoxb-"];
-    for p in PREFIXES {
-        if s.starts_with(p) {
-            return Some(p.len());
-        }
-    }
-    None
-}
-
-fn is_secret_token_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || c == '-' || c == '_'
 }
 
 fn xml_escape(s: &str) -> String {
@@ -498,6 +452,7 @@ mod tests {
             members: vec![
                 MemoryCandidate {
                     id: 10,
+                    version: 1,
                     topic_key: Some("k".into()),
                     title: "t".into(),
                     content: "c".into(),
@@ -506,6 +461,7 @@ mod tests {
                 },
                 MemoryCandidate {
                     id: 20,
+                    version: 1,
                     topic_key: Some("k".into()),
                     title: "t".into(),
                     content: "c".into(),
@@ -536,6 +492,7 @@ mod tests {
             members: vec![
                 MemoryCandidate {
                     id: 10,
+                    version: 1,
                     topic_key: Some("k".into()),
                     title: "t".into(),
                     content: "c".into(),
@@ -544,6 +501,7 @@ mod tests {
                 },
                 MemoryCandidate {
                     id: 20,
+                    version: 1,
                     topic_key: Some("k".into()),
                     title: "t".into(),
                     content: "c".into(),
@@ -575,6 +533,7 @@ mod tests {
             members: vec![
                 MemoryCandidate {
                     id: 10,
+                    version: 1,
                     topic_key: Some("k".into()),
                     title: "t".into(),
                     content: "c".into(),
@@ -583,6 +542,7 @@ mod tests {
                 },
                 MemoryCandidate {
                     id: 20,
+                    version: 1,
                     topic_key: Some("k".into()),
                     title: "t".into(),
                     content: "c".into(),
@@ -609,6 +569,7 @@ mod tests {
         let cluster = Cluster {
             members: vec![MemoryCandidate {
                 id: 10,
+                version: 1,
                 topic_key: Some("k".into()),
                 title: "t".into(),
                 content: "c".into(),
@@ -656,19 +617,31 @@ mod tests {
     }
 
     #[test]
-    fn test_redact_secrets_strips_bearer_and_sk_keys() {
-        let raw = "Authorization: Bearer abcd1234EFGH5678 token sk-ABCDEFGH123 ok";
-        let redacted = redact_secrets(raw);
-        assert!(!redacted.contains("abcd1234EFGH5678"));
-        assert!(!redacted.contains("ABCDEFGH123"));
-        assert!(redacted.contains("[REDACTED]"));
-    }
+    fn test_parse_error_log_contains_only_structured_response_metadata() -> Result<()> {
+        let sentinel = "RAW_MODEL_SENTINEL_sk-ABCDEFGH123";
+        let response = format!(
+            "<memory><topic_key>provider</topic_key><content>{sentinel}</content></memory>"
+        );
+        let log_dir = std::env::temp_dir().join(format!(
+            "remem-dream-parse-log-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&log_dir)?;
 
-    #[test]
-    fn test_redact_excerpt_truncates() {
-        let long = "x".repeat(500);
-        let excerpt = redact_excerpt(&long);
-        assert!(excerpt.ends_with("..."));
-        assert!(excerpt.chars().count() <= 203);
+        let error = crate::log::with_log_dir(&log_dir, || {
+            parse_response(&response).expect_err("missing title must fail")
+        });
+        let log = std::fs::read_to_string(log_dir.join("remem.log"))?;
+        std::fs::remove_dir_all(&log_dir)?;
+
+        assert!(!error.to_string().contains(sentinel));
+        assert!(!log.contains(sentinel));
+        assert!(log.contains("error_code=missing_required_tag"));
+        assert!(log.contains("response_bytes="));
+        assert!(log.contains("response_sha256=sha256:content-v1:"));
+        Ok(())
     }
 }

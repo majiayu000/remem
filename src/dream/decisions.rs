@@ -177,7 +177,7 @@ fn cluster_memory_type(cluster: &Cluster) -> Option<&str> {
         .map(|member| member.memory_type.as_str())
 }
 
-fn cluster_member_ids(cluster: &Cluster) -> Vec<i64> {
+pub(super) fn cluster_member_ids(cluster: &Cluster) -> Vec<i64> {
     let mut ids = cluster
         .members
         .iter()
@@ -187,21 +187,24 @@ fn cluster_member_ids(cluster: &Cluster) -> Vec<i64> {
     ids
 }
 
-fn cluster_signature(project: &str, cluster: &Cluster) -> String {
-    let mut parts = cluster
+pub(super) fn cluster_signature(project: &str, cluster: &Cluster) -> String {
+    let snapshots = cluster
         .members
         .iter()
-        .map(|member| format!("{}:{}", member.id, member.updated_at_epoch))
+        .map(|member| crate::dream::DreamClusterMemberSnapshot {
+            id: member.id,
+            version: member.version,
+            updated_at_epoch: member.updated_at_epoch,
+            topic_key: member.topic_key.clone(),
+            title: member.title.clone(),
+            content: member.content.clone(),
+        })
         .collect::<Vec<_>>();
-    parts.sort();
-    let memory_type = cluster_memory_type(cluster).unwrap_or("unknown");
-    let raw = format!(
-        "dream-cluster-v1\0{}\0{}\0{}",
+    crate::dream::cluster_signature_sha256(
         project,
-        memory_type,
-        parts.join("\0")
-    );
-    format!("{:016x}", crate::db::deterministic_hash(raw.as_bytes()))
+        cluster_memory_type(cluster).unwrap_or("unknown"),
+        &snapshots,
+    )
 }
 
 #[cfg(test)]
@@ -213,6 +216,7 @@ mod tests {
     fn member(id: i64, updated_at_epoch: i64) -> super::super::candidates::MemoryCandidate {
         super::super::candidates::MemoryCandidate {
             id,
+            version: 1,
             topic_key: Some("shared-topic".to_string()),
             title: format!("title-{id}"),
             content: format!("content-{id}"),

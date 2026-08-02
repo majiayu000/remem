@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
@@ -12,12 +14,63 @@ use crate::memory::preference::consolidation::{
     load_active_preference_content, PreferenceConsolidationKind,
 };
 
+mod dream_supersede;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CandidateApplyOutcome {
     pub memory_id: Option<i64>,
     pub promoted: bool,
     pub noop: bool,
     pub superseded: usize,
+    pub superseded_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum SupersedePolicy {
+    Unrestricted,
+    RequireExact {
+        memory_ids: BTreeSet<i64>,
+        provenance_epoch: i64,
+    },
+}
+
+impl SupersedePolicy {
+    fn required_memory_ids(&self) -> Option<&BTreeSet<i64>> {
+        match self {
+            Self::Unrestricted => None,
+            Self::RequireExact { memory_ids, .. } => Some(memory_ids),
+        }
+    }
+
+    fn ensure_exact(&self, memory_ids: &[i64]) -> Result<()> {
+        let Self::RequireExact {
+            memory_ids: required,
+            ..
+        } = self
+        else {
+            return Ok(());
+        };
+        let actual = memory_ids.iter().copied().collect::<BTreeSet<_>>();
+        if &actual != required {
+            bail!(
+                "candidate promotion supersede set does not exactly match acknowledged Dream provenance: required={required:?} actual={actual:?}"
+            );
+        }
+        Ok(())
+    }
+
+    fn is_unrestricted(&self) -> bool {
+        matches!(self, Self::Unrestricted)
+    }
+
+    fn provenance_epoch(&self) -> Option<i64> {
+        match self {
+            Self::Unrestricted => None,
+            Self::RequireExact {
+                provenance_epoch, ..
+            } => Some(*provenance_epoch),
+        }
+    }
 }
 
 impl CandidateApplyOutcome {
@@ -39,6 +92,31 @@ pub(super) fn promote_candidate_to_memory_with_route(
     evidence_json: &str,
     route: &CandidateRoute,
     source_trust: SourceTrustClass,
+) -> Result<CandidateApplyOutcome> {
+    promote_candidate_to_memory_with_route_and_policy(
+        conn,
+        session_id,
+        source_project,
+        candidate_id,
+        candidate,
+        evidence_json,
+        route,
+        source_trust,
+        SupersedePolicy::Unrestricted,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn promote_candidate_to_memory_with_route_and_policy(
+    conn: &Connection,
+    session_id: Option<&str>,
+    source_project: &str,
+    candidate_id: i64,
+    candidate: &ParsedMemoryCandidate,
+    evidence_json: &str,
+    route: &CandidateRoute,
+    source_trust: SourceTrustClass,
+    supersede_policy: SupersedePolicy,
 ) -> Result<CandidateApplyOutcome> {
     let title = candidate_title(candidate);
     let memory_project = route.memory_project(source_project);
@@ -73,7 +151,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             source_candidate_id: Some(candidate_id),
             confidence: Some(candidate.confidence),
         };
-        let mut active = find_active_same_state_or_topic(
+        let discovered_active = find_active_same_state_or_topic(
             conn,
             candidate,
             route,
@@ -81,9 +159,35 @@ pub(super) fn promote_candidate_to_memory_with_route(
             now,
             candidate_has_ttl,
         )?;
+        let mut active = if let Some(required_ids) = supersede_policy.required_memory_ids() {
+            let unexpected_current = discovered_active
+                .iter()
+                .filter(|row| row.is_current && !required_ids.contains(&row.id))
+                .map(|row| row.id)
+                .collect::<Vec<_>>();
+            if !unexpected_current.is_empty() {
+                bail!(
+                    "candidate promotion would collide with active memories outside acknowledged Dream provenance: {unexpected_current:?}"
+                );
+            }
+            dream_supersede::load_required_memories(
+                conn,
+                candidate,
+                route,
+                &memory_project,
+                required_ids,
+                now,
+                candidate_has_ttl,
+            )?
+        } else {
+            discovered_active
+        };
         let mut generic_preference_reason = None;
         let mut conflicting_ids = Vec::new();
-        if candidate.memory_type == "preference" && active.is_empty() {
+        if supersede_policy.is_unrestricted()
+            && candidate.memory_type == "preference"
+            && active.is_empty()
+        {
             if let Some(preference_match) =
                 crate::memory::preference::consolidation::find_preference_consolidation(
                     conn,
@@ -114,10 +218,15 @@ pub(super) fn promote_candidate_to_memory_with_route(
                 }
             }
         }
-        if let Some(existing) = active
-            .iter()
-            .filter(|row| row.is_current)
-            .find(|row| same_memory_text(&row.content, &candidate.text))
+        if let Some(existing) = supersede_policy
+            .is_unrestricted()
+            .then(|| {
+                active
+                    .iter()
+                    .filter(|row| row.is_current)
+                    .find(|row| same_memory_text(&row.content, &candidate.text))
+            })
+            .flatten()
         {
             if candidate.memory_type == "preference" {
                 crate::memory::preference::reinforcement::reinforce_existing_preference(
@@ -146,10 +255,12 @@ pub(super) fn promote_candidate_to_memory_with_route(
                 promoted: false,
                 noop: true,
                 superseded: 0,
+                superseded_ids: Vec::new(),
             });
         }
 
         let superseded_ids = active.iter().map(|row| row.id).collect::<Vec<_>>();
+        supersede_policy.ensure_exact(&superseded_ids)?;
         let op = if !conflicting_ids.is_empty() {
             MemoryLifecycleOp::Conflict
         } else if superseded_ids.is_empty() {
@@ -171,7 +282,13 @@ pub(super) fn promote_candidate_to_memory_with_route(
             .with_conflicting_ids(conflicting_ids.clone());
 
         let evidence_event_ids: Vec<i64> = serde_json::from_str(evidence_json)?;
-        let reference_time_epoch = evidence_valid_from_epoch(conn, &evidence_event_ids)?;
+        let reference_time_epoch = if evidence_event_ids.is_empty() {
+            supersede_policy
+                .provenance_epoch()
+                .context("candidate promotion requires evidence_event_ids or reviewed provenance")?
+        } else {
+            evidence_valid_from_epoch(conn, &evidence_event_ids)?
+        };
         let memory_id = insert_routed_memory(
             conn,
             session_id,
@@ -189,6 +306,12 @@ pub(super) fn promote_candidate_to_memory_with_route(
         )?;
         plan.target_memory_id = Some(memory_id);
         let superseded = soft_supersede_routed(conn, &superseded_ids, Some(memory_id))?;
+        if superseded != superseded_ids.len() {
+            bail!(
+                "candidate promotion supersede write count changed inside transaction: expected={} actual={superseded}",
+                superseded_ids.len()
+            );
+        }
         if candidate.memory_type == "preference" {
             crate::memory::preference::reinforcement::persist_preference_reinforcement(
                 conn,
@@ -258,6 +381,7 @@ pub(super) fn promote_candidate_to_memory_with_route(
             promoted: true,
             noop: false,
             superseded,
+            superseded_ids,
         })
     })
 }

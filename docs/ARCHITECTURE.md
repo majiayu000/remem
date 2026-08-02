@@ -225,6 +225,9 @@ Stop hook fires
        └─ Long-term compression and governed dream consolidation
 ```
 
+Dream treats all generated surfaces as untrusted; every decision rechecks snapshot, TTL, current-state, and suppression under its write lock, and poisoned output becomes an atomic quarantine artifact.
+Clean output stays external trust and cannot reuse an unreviewed target; review tokens bind the exact source set. See [the poisoning contract](specs/memory-poisoning-defense/TECH.md).
+
 GH684-T7 removes the legacy Summary job from the production Stop path. Stop
 captures now enqueue `SessionRollup`; the rollup worker persists semantic
 request, decisions, learned, next_steps, and preferences fields, then owns raw

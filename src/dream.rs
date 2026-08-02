@@ -3,17 +3,29 @@ mod candidates;
 mod conflict;
 mod constants;
 mod decisions;
+#[cfg(test)]
+mod exposure_tests;
+mod freshness;
+#[cfg(test)]
+mod freshness_tests;
 mod merge;
+mod poisoning;
+mod process;
+mod provenance;
+#[cfg(test)]
+mod regression_tests;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use candidates::load_clusters;
 pub(crate) use candidates::Cluster;
 pub(crate) use constants::DREAM_COOLDOWN_SECS;
-use decisions::{load_cluster_plan, record_failed, record_merged, record_no_merge};
-use merge::{merge_cluster, MergeDecision};
-use rusqlite::Connection;
-use std::future::Future;
-use std::pin::Pin;
+use decisions::load_cluster_plan;
+use merge::merge_cluster;
+use process::process_clusters;
+pub(crate) use provenance::{
+    cluster_signature_sha256, decision_payload_sha256, quarantine_semantic_discriminator_sha256,
+    DreamClusterMemberSnapshot, DreamDecisionPayload,
+};
 
 #[derive(Debug)]
 pub(crate) struct DreamClusterPlan {
@@ -74,203 +86,68 @@ async fn process_dream_job_with_selection(
     .await
 }
 
-type MergeFuture<'a> = Pin<Box<dyn Future<Output = Result<MergeDecision>> + 'a>>;
-
-async fn process_clusters(
-    project: &str,
-    conn: &mut Connection,
-    clusters: &[Cluster],
-    merge_fn: impl for<'a> Fn(&'a Cluster, &'a str) -> MergeFuture<'a>,
-) -> Result<()> {
-    if clusters.is_empty() {
-        crate::log::info(
-            "dream",
-            &format!("project={} no clusters to merge", project),
-        );
-        return Ok(());
-    }
-
-    crate::log::info(
-        "dream",
-        &format!("project={} clusters={}", project, clusters.len()),
-    );
-
-    let mut merged = 0usize;
-    let mut skipped = 0usize;
-    let mut merge_failures = 0usize;
-    let mut apply_failures = 0usize;
-
-    for cluster in clusters {
-        let cluster_size = cluster.members.len();
-        let cluster_first_id = cluster.members.first().map(|member| member.id);
-
-        let decision = match merge_fn(cluster, project).await {
-            Ok(decision) => decision,
-            Err(error) => {
-                record_failed(
-                    conn,
-                    project,
-                    cluster,
-                    &format!(
-                        "merge failed: {}",
-                        crate::db::truncate_str(&error.to_string(), 500)
-                    ),
-                )?;
-                merge_failures += 1;
-                crate::log::warn(
-                    "dream",
-                    &format!(
-                        "project={} cluster_size={} cluster_first_id={:?} merge failed: {}",
-                        project, cluster_size, cluster_first_id, error
-                    ),
-                );
-                continue;
-            }
-        };
-
-        match decision {
-            MergeDecision::Merge(result) => {
-                let topic_key = result.topic_key.clone();
-                let superseded = result.superseded_ids.len();
-                let outcome = match apply::apply(conn, project, &result) {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        record_failed(
-                            conn,
-                            project,
-                            cluster,
-                            &format!(
-                                "apply failed: {}",
-                                crate::db::truncate_str(&error.to_string(), 500)
-                            ),
-                        )?;
-                        apply_failures += 1;
-                        crate::log::warn(
-                            "dream",
-                            &format!(
-                                "project={} cluster_size={} cluster_first_id={:?} topic_key={} apply failed: {}",
-                                project, cluster_size, cluster_first_id, topic_key, error
-                            ),
-                        );
-                        continue;
-                    }
-                };
-                if let Err(error) = record_merged(conn, project, cluster, outcome) {
-                    apply_failures += 1;
-                    crate::log::warn(
-                        "dream",
-                        &format!(
-                            "project={} cluster_size={} cluster_first_id={:?} topic_key={} decision record failed: {}",
-                            project, cluster_size, cluster_first_id, topic_key, error
-                        ),
-                    );
-                    continue;
-                }
-                merged += 1;
-                crate::log::info(
-                    "dream",
-                    &format!("merged topic_key={} superseded={}", topic_key, superseded),
-                );
-            }
-            MergeDecision::NoMerge { reason } => {
-                record_no_merge(conn, project, cluster, reason.as_deref())?;
-                skipped += 1;
-            }
-            MergeDecision::Conflict {
-                conflicting_ids,
-                reason,
-            } => match conflict::record_conflict(
-                conn,
-                project,
-                cluster,
-                &conflicting_ids,
-                reason.as_deref(),
-            ) {
-                Ok(outcome) => {
-                    skipped += 1;
-                    crate::log::info(
-                        "dream",
-                        &format!(
-                            "deferred conflict ids={:?} operation_id={} edge_count={}",
-                            conflicting_ids, outcome.operation_id, outcome.edge_count
-                        ),
-                    );
-                }
-                Err(error) => {
-                    record_failed(
-                        conn,
-                        project,
-                        cluster,
-                        &format!(
-                            "conflict record failed: {}",
-                            crate::db::truncate_str(&error.to_string(), 500)
-                        ),
-                    )?;
-                    apply_failures += 1;
-                    crate::log::warn(
-                        "dream",
-                        &format!(
-                            "project={} cluster_size={} cluster_first_id={:?} conflict record failed: {}",
-                            project, cluster_size, cluster_first_id, error
-                        ),
-                    );
-                    continue;
-                }
-            },
-        }
-    }
-
-    crate::log::info(
-        "dream",
-        &format!(
-            "project={} merged={} skipped={} merge_failures={} apply_failures={}",
-            project, merged, skipped, merge_failures, apply_failures
-        ),
-    );
-
-    let total_failures = merge_failures + apply_failures;
-    if merged == 0 && skipped == 0 && total_failures > 0 {
-        return Err(anyhow!(
-            "project={} all {} cluster attempts failed (merge_failures={} apply_failures={})",
-            project,
-            total_failures,
-            merge_failures,
-            apply_failures
-        ));
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
+    use super::merge::MergeDecision;
     use super::*;
     use crate::memory::insert_memory;
     use crate::memory::tests_helper::setup_memory_schema;
     use anyhow::anyhow;
-    use rusqlite::params;
+    use rusqlite::{params, Connection};
 
-    fn make_cluster(ids: [i64; 2], topic_keys: [&str; 2]) -> Cluster {
-        Cluster {
-            members: vec![
-                candidates::MemoryCandidate {
-                    id: ids[0],
-                    topic_key: Some(topic_keys[0].to_owned()),
-                    title: format!("title-{}", ids[0]),
-                    content: format!("content-{}", ids[0]),
-                    memory_type: "decision".to_owned(),
-                    updated_at_epoch: 1,
-                },
-                candidates::MemoryCandidate {
-                    id: ids[1],
-                    topic_key: Some(topic_keys[1].to_owned()),
-                    title: format!("title-{}", ids[1]),
-                    content: format!("content-{}", ids[1]),
-                    memory_type: "decision".to_owned(),
-                    updated_at_epoch: 2,
-                },
-            ],
+    fn snapshot_cluster(conn: &Connection, ids: &[i64]) -> Cluster {
+        let members = ids
+            .iter()
+            .map(|id| {
+                conn.query_row(
+                    "SELECT id, version, topic_key, title, content, memory_type, updated_at_epoch
+                     FROM memories WHERE id = ?1",
+                    params![id],
+                    |row| {
+                        Ok(candidates::MemoryCandidate {
+                            id: row.get(0)?,
+                            version: row.get(1)?,
+                            topic_key: row.get(2)?,
+                            title: row.get(3)?,
+                            content: row.get(4)?,
+                            memory_type: row.get(5)?,
+                            updated_at_epoch: row.get(6)?,
+                        })
+                    },
+                )
+                .expect("cluster member snapshot")
+            })
+            .collect();
+        Cluster { members }
+    }
+
+    fn make_cluster(
+        conn: &Connection,
+        project: &str,
+        ids: [i64; 2],
+        topic_keys: [&str; 2],
+    ) -> Cluster {
+        for (offset, (id, topic_key)) in ids.into_iter().zip(topic_keys).enumerate() {
+            let epoch = offset as i64 + 1;
+            conn.execute(
+                "INSERT INTO memories
+                 (id, session_id, project, topic_key, title, content, memory_type,
+                  created_at_epoch, updated_at_epoch, status, scope, source_project,
+                  target_project, owner_scope, owner_key, context_class)
+                 VALUES (?1, 'dream-test', ?2, ?3, ?4, ?5, 'decision', ?6, ?6,
+                         'active', 'project', ?2, ?2, 'repo', ?2, 'startup_core')",
+                params![
+                    id,
+                    project,
+                    topic_key,
+                    format!("title-{id}"),
+                    format!("content-{id}"),
+                    epoch
+                ],
+            )
+            .expect("insert cluster member");
         }
+        snapshot_cluster(conn, &ids)
     }
 
     #[tokio::test]
@@ -279,24 +156,19 @@ mod tests {
         setup_memory_schema(&conn);
         let project = "test-dream-process";
 
-        let stale_id = insert_memory(
+        let failing_cluster = make_cluster(
             &conn,
-            Some("sess-1"),
             project,
-            None,
-            "old title",
-            "old content",
-            "decision",
-            None,
-        )
-        .expect("insert");
-
-        let failing_cluster = make_cluster([101, 102], ["broken-topic-a", "broken-topic-b"]);
-        let success_cluster = make_cluster([201, 202], ["good-topic-a", "good-topic-b"]);
+            [101, 102],
+            ["broken-topic-a", "broken-topic-b"],
+        );
+        let success_cluster =
+            make_cluster(&conn, project, [201, 202], ["good-topic-a", "good-topic-b"]);
         let clusters = vec![failing_cluster, success_cluster];
 
         process_clusters(project, &mut conn, &clusters, |cluster, _project| {
             let should_fail = cluster.members[0].id == 101;
+            let superseded_ids = cluster.members.iter().map(|member| member.id).collect();
             Box::pin(async move {
                 if should_fail {
                     return Err(anyhow!("synthetic merge failure"));
@@ -306,7 +178,7 @@ mod tests {
                     memory_type: "decision".to_owned(),
                     title: "Merged title".to_owned(),
                     content: "Merged content".to_owned(),
-                    superseded_ids: vec![stale_id],
+                    superseded_ids,
                 }))
             })
         })
@@ -322,14 +194,14 @@ mod tests {
             .expect("count merged rows");
         assert_eq!(merged_count, 1, "later clusters should still be applied");
 
-        let stale_status: String = conn
+        let stale_count: i64 = conn
             .query_row(
-                "SELECT status FROM memories WHERE id = ?1",
-                params![stale_id],
+                "SELECT COUNT(*) FROM memories WHERE id IN (201, 202) AND status = 'stale'",
+                [],
                 |row| row.get(0),
             )
-            .expect("read stale status");
-        assert_eq!(stale_status, "stale");
+            .expect("read stale count");
+        assert_eq!(stale_count, 2);
     }
 
     #[tokio::test]
@@ -338,8 +210,18 @@ mod tests {
         setup_memory_schema(&conn);
         let project = "test-dream-all-fail";
         let clusters = vec![
-            make_cluster([101, 102], ["broken-topic-a", "broken-topic-b"]),
-            make_cluster([201, 202], ["broken-topic-c", "broken-topic-d"]),
+            make_cluster(
+                &conn,
+                project,
+                [101, 102],
+                ["broken-topic-a", "broken-topic-b"],
+            ),
+            make_cluster(
+                &conn,
+                project,
+                [201, 202],
+                ["broken-topic-c", "broken-topic-d"],
+            ),
         ];
 
         let error = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
@@ -359,7 +241,12 @@ mod tests {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         setup_memory_schema(&conn);
         let project = "test-dream-no-merge";
-        let clusters = vec![make_cluster([101, 102], ["topic-a", "topic-b"])];
+        let clusters = vec![make_cluster(
+            &conn,
+            project,
+            [101, 102],
+            ["topic-a", "topic-b"],
+        )];
 
         process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
             Box::pin(async move {
@@ -410,26 +297,7 @@ mod tests {
             "decision",
             None,
         )?;
-        let clusters = vec![Cluster {
-            members: vec![
-                candidates::MemoryCandidate {
-                    id: first_id,
-                    topic_key: Some("conflict-a".to_string()),
-                    title: "Use provider A".to_string(),
-                    content: "Use provider A for embeddings.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 1,
-                },
-                candidates::MemoryCandidate {
-                    id: second_id,
-                    topic_key: Some("conflict-b".to_string()),
-                    title: "Use provider B".to_string(),
-                    content: "Use provider B for embeddings.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 2,
-                },
-            ],
-        }];
+        let clusters = vec![snapshot_cluster(&conn, &[first_id, second_id])];
 
         process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
             Box::pin(async move {
@@ -533,34 +401,7 @@ mod tests {
             "decision",
             None,
         )?;
-        let clusters = vec![Cluster {
-            members: vec![
-                candidates::MemoryCandidate {
-                    id: first_id,
-                    topic_key: Some("conflict-a".to_string()),
-                    title: "Use provider A".to_string(),
-                    content: "Use provider A for embeddings.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 1,
-                },
-                candidates::MemoryCandidate {
-                    id: second_id,
-                    topic_key: Some("conflict-b".to_string()),
-                    title: "Keep provider B as backup".to_string(),
-                    content: "Keep provider B as a backup option.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 2,
-                },
-                candidates::MemoryCandidate {
-                    id: third_id,
-                    topic_key: Some("conflict-c".to_string()),
-                    title: "Use provider C".to_string(),
-                    content: "Use provider C for embeddings.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 3,
-                },
-            ],
-        }];
+        let clusters = vec![snapshot_cluster(&conn, &[first_id, second_id, third_id])];
 
         process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
             Box::pin(async move {
@@ -637,7 +478,12 @@ mod tests {
         let mut conn = Connection::open_in_memory()?;
         setup_memory_schema(&conn);
         let project = "test-dream-invalid-conflict";
-        let clusters = vec![make_cluster([101, 102], ["topic-a", "topic-b"])];
+        let clusters = vec![make_cluster(
+            &conn,
+            project,
+            [101, 102],
+            ["topic-a", "topic-b"],
+        )];
 
         let Err(error) = process_clusters(project, &mut conn, &clusters, |_cluster, _project| {
             Box::pin(async move {
@@ -675,24 +521,14 @@ mod tests {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
         setup_memory_schema(&conn);
         let project = "test-dream-apply-failure";
-        let stale_id = insert_memory(
-            &conn,
-            Some("sess-1"),
-            project,
-            None,
-            "old title",
-            "old content",
-            "decision",
-            None,
-        )
-        .expect("insert");
         let clusters = vec![
-            make_cluster([101, 102], ["bad-topic-a", "bad-topic-b"]),
-            make_cluster([201, 202], ["good-topic-a", "good-topic-b"]),
+            make_cluster(&conn, project, [101, 102], ["bad-topic-a", "bad-topic-b"]),
+            make_cluster(&conn, project, [201, 202], ["good-topic-a", "good-topic-b"]),
         ];
 
         process_clusters(project, &mut conn, &clusters, |cluster, _project| {
             let should_fail_apply = cluster.members[0].id == 101;
+            let superseded_ids = cluster.members.iter().map(|member| member.id).collect();
             Box::pin(async move {
                 Ok(MergeDecision::Merge(merge::MergeResult {
                     topic_key: if should_fail_apply {
@@ -706,7 +542,7 @@ mod tests {
                     superseded_ids: if should_fail_apply {
                         vec![99999]
                     } else {
-                        vec![stale_id]
+                        superseded_ids
                     },
                 }))
             })
@@ -738,13 +574,13 @@ mod tests {
             "failed apply must still roll back its own transaction"
         );
 
-        let stale_status: String = conn
+        let stale_count: i64 = conn
             .query_row(
-                "SELECT status FROM memories WHERE id = ?1",
-                params![stale_id],
+                "SELECT COUNT(*) FROM memories WHERE id IN (201, 202) AND status = 'stale'",
+                [],
                 |row| row.get(0),
             )
-            .expect("read stale status");
-        assert_eq!(stale_status, "stale");
+            .expect("read stale count");
+        assert_eq!(stale_count, 2);
     }
 }

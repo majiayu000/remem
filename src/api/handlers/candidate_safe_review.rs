@@ -16,7 +16,7 @@ use crate::api::mutation::{
 };
 use crate::memory_candidate::review::{
     approve_candidate_in_transaction, discard_candidate_with_meta, edit_candidate_in_transaction,
-    normalize_candidate_edit, CandidateEdit, ReviewMeta,
+    normalize_candidate_edit, CandidateEdit, ReviewApprovalOutcome, ReviewMeta,
 };
 
 use super::super::types::{
@@ -130,6 +130,9 @@ impl SafeRequest {
                     reason: &request.reason,
                     expected_version: request.expected_version,
                     acknowledge_pattern: request.acknowledge_pattern.as_deref(),
+                    acknowledge_dream_review_token: request
+                        .acknowledge_dream_review_token
+                        .as_deref(),
                 },
             ),
             Self::Reject(request) => mutation_request_hash(
@@ -163,6 +166,7 @@ struct SafeApproveHashBody<'a> {
     reason: &'a str,
     expected_version: i64,
     acknowledge_pattern: Option<&'a str>,
+    acknowledge_dream_review_token: Option<&'a str>,
 }
 
 impl CredentialFreeMutationBody for SafeApproveHashBody<'_> {}
@@ -261,6 +265,11 @@ fn validate_safe_request(
                 .acknowledge_pattern
                 .take()
                 .map(|value| value.trim().to_string());
+            request.acknowledge_dream_review_token = request
+                .acknowledge_dream_review_token
+                .take()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
         }
         SafeRequest::Reject(request) => request.reason = reason,
         SafeRequest::Edit(request) => {
@@ -378,15 +387,28 @@ fn execute_safe_review_on_connection(
                 Some(&identity.operation_id),
             )
         })?;
-    if !projection.response.decision.can_review {
-        let code = if projection
-            .response
-            .decision
+    let action_decision = match &request {
+        SafeRequest::Approve(_) => &projection.response.decision.actions.approve,
+        SafeRequest::Reject(_) => &projection.response.decision.actions.reject,
+        SafeRequest::Edit(_) => &projection.response.decision.actions.edit,
+    };
+    if !action_decision.allowed {
+        let code = if action_decision
             .blocked_reasons
             .iter()
             .any(|reason| reason == "candidate_not_reviewable")
         {
             "candidate_not_reviewable"
+        } else if action_decision
+            .blocked_reasons
+            .iter()
+            .any(|reason| reason == "dream_candidate_edit_unsupported")
+        {
+            "dream_candidate_edit_unsupported"
+        } else if let Some(reason) = action_decision.blocked_reasons.iter().find(|reason| {
+            reason.starts_with("dream_decision_") || reason.starts_with("dream_provenance_")
+        }) {
+            reason
         } else {
             "evidence_blocked"
         };
@@ -408,6 +430,7 @@ fn execute_safe_review_on_connection(
         )
         .into());
     }
+    validate_dream_review_token(&projection, &request, &identity.operation_id)?;
     let project = projection.response.data.project.clone().ok_or_else(|| {
         safe_internal_error(
             "candidate_review_project_unavailable",
@@ -416,7 +439,7 @@ fn execute_safe_review_on_connection(
     })?;
     let mut meta = ReviewMeta::single(REVIEW_ACTOR);
     meta.reason = Some(request.reason().to_string());
-    let memory_id = apply_safe_action(&tx, id, &request, &meta).map_err(|_| {
+    let apply_outcome = apply_safe_action(&tx, id, &request, &meta).map_err(|_| {
         safe_error(
             StatusCode::CONFLICT,
             "candidate_review_rejected",
@@ -437,12 +460,36 @@ fn execute_safe_review_on_connection(
             )
         })?;
     let occurred_at_epoch = chrono::Utc::now().timestamp();
+    let dream_artifact_ids = projection
+        .dream_provenance
+        .as_ref()
+        .map(|provenance| {
+            provenance
+                .artifacts
+                .iter()
+                .map(|artifact| artifact.artifact_id)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let dream_review_token = projection
+        .dream_provenance
+        .as_ref()
+        .and_then(|provenance| provenance.review_token.clone());
+    let authorized_supersede_ids = projection
+        .dream_provenance
+        .as_ref()
+        .map(|provenance| provenance.authorized_supersede_ids.clone())
+        .unwrap_or_default();
     let audit_detail = json!({
         "action": request.mutation_action(),
         "after_status": after_status,
         "before_status": before_status,
         "operation_id": identity.operation_id,
         "reason": request.reason(),
+        "dream_artifact_ids": dream_artifact_ids,
+        "dream_review_token": dream_review_token,
+        "authorized_supersede_ids": authorized_supersede_ids,
+        "actual_superseded_ids": apply_outcome.actual_superseded_ids,
     })
     .to_string();
     tx.execute(
@@ -468,7 +515,7 @@ fn execute_safe_review_on_connection(
         operation_id: identity.operation_id.clone(),
         audit_id,
         candidate_id: id,
-        memory_id,
+        memory_id: apply_outcome.memory_id,
         action: request.mutation_action().to_string(),
         before_status,
         after_status,
@@ -535,17 +582,23 @@ fn apply_safe_action(
     id: i64,
     request: &SafeRequest,
     meta: &ReviewMeta,
-) -> anyhow::Result<Option<i64>> {
+) -> anyhow::Result<SafeApplyOutcome> {
     match request {
-        SafeRequest::Approve(request) => {
-            approve_candidate_in_transaction(conn, id, meta, request.acknowledge_pattern.as_deref())
-        }
+        SafeRequest::Approve(request) => approve_candidate_in_transaction(
+            conn,
+            id,
+            meta,
+            request.acknowledge_pattern.as_deref(),
+            request.acknowledge_dream_review_token.as_deref(),
+        )
+        .map(|outcome| outcome.map(SafeApplyOutcome::from))?
+        .ok_or_else(|| anyhow::anyhow!("candidate changed state")),
         SafeRequest::Reject(_) => {
             anyhow::ensure!(
                 discard_candidate_with_meta(conn, id, meta)?,
                 "candidate changed state"
             );
-            Ok(None)
+            Ok(SafeApplyOutcome::default())
         }
         SafeRequest::Edit(request) => edit_candidate_in_transaction(
             conn,
@@ -557,8 +610,68 @@ fn apply_safe_action(
                 text: request.text.clone(),
             },
             meta,
-        ),
+        )
+        .map(|memory_id| SafeApplyOutcome {
+            memory_id,
+            actual_superseded_ids: Vec::new(),
+        }),
     }
+}
+
+#[derive(Default)]
+struct SafeApplyOutcome {
+    memory_id: Option<i64>,
+    actual_superseded_ids: Vec<i64>,
+}
+
+impl From<ReviewApprovalOutcome> for SafeApplyOutcome {
+    fn from(outcome: ReviewApprovalOutcome) -> Self {
+        Self {
+            memory_id: Some(outcome.memory_id),
+            actual_superseded_ids: outcome.actual_superseded_ids,
+        }
+    }
+}
+
+fn validate_dream_review_token(
+    projection: &super::candidate_detail::CandidateDetailProjection,
+    request: &SafeRequest,
+    operation_id: &str,
+) -> SafeReviewResult<()> {
+    let SafeRequest::Approve(request) = request else {
+        return Ok(());
+    };
+    let Some(provenance) = &projection.dream_provenance else {
+        if request.acknowledge_dream_review_token.is_some() {
+            return Err(safe_error(
+                StatusCode::CONFLICT,
+                "dream_review_token_unexpected",
+                "Dream review token is only valid for Dream candidates",
+                Some(operation_id),
+            )
+            .into());
+        }
+        return Ok(());
+    };
+    let Some(acknowledged) = request.acknowledge_dream_review_token.as_deref() else {
+        return Err(safe_error(
+            StatusCode::CONFLICT,
+            "dream_provenance_ack_required",
+            "Dream provenance review token is required",
+            Some(operation_id),
+        )
+        .into());
+    };
+    if provenance.review_token.as_deref() != Some(acknowledged) {
+        return Err(safe_error(
+            StatusCode::CONFLICT,
+            "dream_provenance_changed",
+            "Dream provenance changed after review",
+            Some(operation_id),
+        )
+        .into());
+    }
+    Ok(())
 }
 
 fn invalid_typed_request(operation_id: Option<&str>) -> Response {

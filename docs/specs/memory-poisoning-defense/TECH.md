@@ -218,3 +218,74 @@ injection. GH-855 extends the same v1 pattern set (`src/memory/poisoning.rs`,
 Failure semantics: prefer false-positive quarantine over letting content reach
 a model-visible sink; scan/state errors exclude the row rather than degrade to
 "assume safe"; captured events and raw archives are never deleted by a match.
+
+## Dream Generated-Output Extension (GH-969, staged 0.6.46)
+
+Dream output never inherits trust from the memories in its prompt. Before a
+`MergeDecision` branch writes anything, `scan_generated_surfaces` scans the
+generated topic key, memory type, title, content, no-merge reason, and conflict
+reason in a fixed order. Merge output is also scanned as the exact
+`title + "\n" + content` render used by review and promotion, preventing a split
+instruction from crossing a field boundary.
+
+The source cluster has a domain-separated, length-prefixed SHA-256 signature.
+It binds project, memory type, and each sorted member's id, database version,
+update epoch, topic key, title, and content. The immutable decision digest binds
+the decision kind and its complete payload: structured Merge fields plus exact
+intended ids, the no-merge reason, or conflict ids plus reason. A separate
+semantic discriminator binds the cluster signature, decision digest, generated
+field, and instruction-pattern id/version.
+
+Cluster selection and every write branch use the canonical current-memory,
+state-key-current, TTL, and suppression predicates. Merge, no-merge, conflict,
+and quarantine then revalidate the full snapshot under the same immediate
+write transaction before their first mutation. A source payload/version change,
+expiry, state-key pointer replacement, or active suppression therefore fails
+closed even when the memory row itself did not change during the model call.
+
+A match uses one immediate transaction to:
+
+1. claim a route-scoped external identity and create or reuse a quarantined
+   `dream_model_output` candidate;
+2. insert an immutable `dream_quarantine_artifacts` payload, or advance only
+   its version/occurrence/update epoch for an exact recurrence;
+3. terminalize only older pending/quarantined candidates for the same project
+   and exact cluster signature when the semantic discriminator changes, marking
+   them `dream_semantic_superseded` and writing a payload-free audit event; and
+4. record a durable Dream `no_merge` decision containing safe identifiers only.
+
+Any failure rolls the candidate, identity, artifact, terminalization, audit, and
+no-merge write back together. Source memories stay active; no replacement,
+supersede operation, conflict edge, raw model reason, MCP result, or
+SessionStart item is emitted. A later A→B→A semantic recurrence creates a fresh
+review candidate rather than treating the system supersede as a human reject.
+
+Candidate detail recomputes the source snapshot and full decision digest before
+issuing a review token. The token binds candidate and artifact versions, every
+immutable artifact field, and the exact authorized supersede ids. A source
+version/content/status/type/project change, artifact recurrence, or semantic
+replacement invalidates the old token. API output redacts generated topic,
+type, title, and content in both the base candidate and provenance projection;
+CLI review output escapes terminal controls and Unicode bidi controls.
+
+Clean generated merges remain model output: the resulting active memory is
+explicitly `source_trust_class='external_content'`. Dream may create a new row
+or reuse only an exact reviewed cluster member. If generic state-key,
+preference, or semantic dedup resolves to any pre-existing row outside that
+set, the transaction fails and rolls back the tentative rewrite, supersedes,
+operation, edges, and decision together.
+
+Safe approval requires the current candidate version, pattern acknowledgement,
+and current Dream token inside one immediate transaction. Promotion preserves
+the structured title/content and must supersede exactly the reviewed current
+source set—neither a subset nor an extra active target is accepted. Legacy,
+edit, and batch paths cannot bypass this contract. No-merge and conflict
+artifacts are reject-only and can never become active memories.
+
+The v076 external identity ledger stores SHA-256 summaries, not candidate text.
+Its length-prefixed identity covers source kind, memory type, optional semantic
+discriminator, source project, owner scope/key, null-tagged target project,
+topic key, and text. Candidate mutation and ledger/recurrence writes share a
+savepoint, and every digest hit validates the stored route fields. Semantic
+identities never adopt unverifiable legacy candidates; ordinary legacy native
+imports retain deterministic exact-row adoption.
