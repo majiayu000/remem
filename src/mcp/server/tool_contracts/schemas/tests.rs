@@ -44,6 +44,29 @@ fn assert_no_nullable(value: &Value, path: &str) {
     }
 }
 
+fn assert_declared_objects_are_closed(value: &Value, path: &str) {
+    match value {
+        Value::Object(object) => {
+            if object.get("properties").is_some_and(Value::is_object) {
+                assert_eq!(
+                    object.get("additionalProperties"),
+                    Some(&Value::Bool(false)),
+                    "declared object must reject unknown fields at {path}: {value}"
+                );
+            }
+            for (key, child) in object {
+                assert_declared_objects_are_closed(child, &format!("{path}.{key}"));
+            }
+        }
+        Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                assert_declared_objects_are_closed(child, &format!("{path}[{index}]"));
+            }
+        }
+        _ => {}
+    }
+}
+
 fn resolve_local_ref<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
     schema
         .get("$ref")
@@ -134,6 +157,15 @@ fn all_published_output_schemas_use_draft_2020_nullable_unions() -> anyhow::Resu
     for kind in JSON_OUTPUTS {
         let schema = schema_value(kind)?;
         assert_no_nullable(&schema, &format!("{kind:?}"));
+    }
+    Ok(())
+}
+
+#[test]
+fn all_typed_output_objects_reject_undeclared_fields() -> anyhow::Result<()> {
+    for kind in JSON_OUTPUTS {
+        let schema = schema_value(kind)?;
+        assert_declared_objects_are_closed(&schema, &format!("{kind:?}"));
     }
     Ok(())
 }

@@ -2,7 +2,8 @@ use super::MemoryServer;
 use super::{assert_mcp_error, McpErrorCode};
 use crate::db::test_support::ScopedTestDataDir;
 use crate::mcp::types::{
-    SearchParams, TimelineParams, TimelineReportParams, UpdateWorkStreamParams, WorkStreamsParams,
+    GetObservationsParams, SearchParams, TimelineParams, TimelineReportParams,
+    UpdateWorkStreamParams, WorkStreamsParams,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::Tool;
@@ -255,6 +256,51 @@ fn public_tool_metadata_matches_the_contract_matrix() -> anyhow::Result<()> {
 }
 
 #[test]
+fn get_observations_metadata_matches_access_accounting_side_effect() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-get-observations-access-metadata");
+    let server = MemoryServer::new()?;
+    let tool = registered_tool(&server, "get_observations");
+    let annotations = tool
+        .annotations
+        .as_ref()
+        .expect("get_observations should publish annotations");
+    assert_eq!(annotations.read_only_hint, Some(false));
+    assert_eq!(annotations.destructive_hint, Some(true));
+    assert_eq!(annotations.idempotent_hint, Some(false));
+
+    let conn = crate::db::open_db()?;
+    conn.execute(
+        "INSERT INTO memories
+         (session_id, project, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, access_count)
+         VALUES (NULL, '/repo', 'Accessed memory', 'body', 'decision', 1, 1,
+                 'active', 'project', 0)",
+        [],
+    )?;
+    let id = conn.last_insert_rowid();
+
+    for _ in 0..2 {
+        server
+            .get_observations(Parameters(GetObservationsParams {
+                ids: vec![id],
+                project: Some("/repo".to_string()),
+                source: Some("memory".to_string()),
+                include_suppressed: None,
+            }))
+            .map_err(anyhow::Error::msg)?;
+    }
+
+    let (access_count, last_accessed_epoch): (i64, Option<i64>) = conn.query_row(
+        "SELECT access_count, last_accessed_epoch FROM memories WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(access_count, 2);
+    assert!(last_accessed_epoch.is_some());
+    Ok(())
+}
+
+#[test]
 fn json_tools_publish_object_output_schemas_with_stable_required_fields() -> anyhow::Result<()> {
     let server = MemoryServer::new()?;
 
@@ -298,6 +344,29 @@ fn json_tools_publish_object_output_schemas_with_stable_required_fields() -> any
                 expected.name
             );
         }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn json_tools_publish_closed_object_output_schemas() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+
+    for expected in EXPECTED_TOOL_METADATA {
+        if expected.name == "timeline_report" {
+            continue;
+        }
+        let schema = registered_tool(&server, expected.name)
+            .output_schema
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} should publish outputSchema", expected.name));
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&serde_json::Value::Bool(false)),
+            "{} outputSchema root must reject undeclared fields",
+            expected.name
+        );
     }
 
     Ok(())

@@ -89,6 +89,12 @@ documented conditional fields where a tool has multiple modes. The schema
 must not promise a field or enum value that production cannot emit; in
 particular, `current_state.status` includes `no_current`.
 
+Every typed object with declared `properties` publishes
+`additionalProperties: false`, including nested DTO definitions. Deliberately
+dynamic `serde_json::Value` extension points such as search explanation data
+remain unconstrained; the contract must not accidentally close data whose
+shape is owned by a separately versioned subsystem.
+
 rmcp 0.15's schema transform emits the OpenAPI-style `nullable` keyword even
 though its schema declares JSON Schema 2020-12. `build_schema` therefore
 normalizes every generated output schema before publication: a typed nullable
@@ -160,6 +166,8 @@ Focused tests cover:
 - output-schema presence for exactly 13 tools and absence for
   `timeline_report`;
 - object-rooted schemas with the stable fields/envelope keys above;
+- closed root and nested typed objects, with documented dynamic extension
+  values left open;
 - serialized descriptor camelCase wire keys;
 - object adaptation preserves the original content bytes;
 - array adaptation preserves the original array text and exposes the named

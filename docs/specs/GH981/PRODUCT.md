@@ -20,6 +20,8 @@ shape.
 - Publish an explicit title and all four MCP hints for every registered tool:
   `readOnlyHint`, `destructiveHint`, `idempotentHint`, and `openWorldHint`.
 - Publish an object-rooted `outputSchema` for every JSON-producing tool.
+- Close every typed object schema against undeclared fields while leaving only
+  documented dynamic extension values unconstrained.
 - Emit JSON Schema 2020-12-compatible null unions; never publish the
   non-standard OpenAPI `nullable` keyword.
 - Add matching `structuredContent` to successful JSON responses while
@@ -114,6 +116,8 @@ or error payload changes as part of #981.
 - All 14 tools expose explicit annotations matching the matrix.
 - Thirteen JSON tools expose stable object-rooted output schemas; the one
   Markdown tool intentionally does not.
+- Typed output objects reject undeclared fields instead of advertising an open
+  shape broader than the production response.
 - Normal successful responses containing JSON `null` validate against the
   published 2020-12 schemas.
 - Representative object and array calls prove legacy text preservation and

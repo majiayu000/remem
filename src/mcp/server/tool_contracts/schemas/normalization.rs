@@ -8,6 +8,48 @@ pub(super) fn normalize_nullable(mut schema: JsonObject) -> anyhow::Result<JsonO
     Ok(schema)
 }
 
+/// Reject undeclared fields for every typed object emitted by the output DTOs.
+/// Unconstrained `serde_json::Value` extension points have no declared
+/// `properties`, so they intentionally remain open.
+pub(super) fn close_declared_objects(mut schema: JsonObject) -> anyhow::Result<JsonObject> {
+    close_object(&mut schema, "$".to_string())?;
+    Ok(schema)
+}
+
+fn close_value(value: &mut Value, path: String) -> anyhow::Result<()> {
+    match value {
+        Value::Object(object) => close_object(object, path),
+        Value::Array(items) => {
+            for (index, item) in items.iter_mut().enumerate() {
+                close_value(item, format!("{path}[{index}]"))?;
+            }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn close_object(object: &mut Map<String, Value>, path: String) -> anyhow::Result<()> {
+    for (key, value) in object.iter_mut() {
+        close_value(value, format!("{path}.{key}"))?;
+    }
+
+    if !object.get("properties").is_some_and(Value::is_object) {
+        return Ok(());
+    }
+
+    match object.get("additionalProperties") {
+        None => {
+            object.insert("additionalProperties".to_string(), Value::Bool(false));
+            Ok(())
+        }
+        Some(Value::Bool(false)) => Ok(()),
+        Some(other) => bail!(
+            "{path}.additionalProperties must be false for a declared output object, got {other}"
+        ),
+    }
+}
+
 fn normalize_value(value: &mut Value, path: String) -> anyhow::Result<()> {
     match value {
         Value::Object(object) => normalize_object(object, path),
@@ -71,7 +113,7 @@ fn make_nullable(object: &mut Map<String, Value>, path: &str) -> anyhow::Result<
 mod tests {
     use serde_json::json;
 
-    use super::normalize_nullable;
+    use super::{close_declared_objects, normalize_nullable};
 
     #[test]
     fn nullable_type_becomes_draft_2020_type_union() -> anyhow::Result<()> {
@@ -118,6 +160,35 @@ mod tests {
                 { "type": "null" }
             ])
         );
+        Ok(())
+    }
+
+    #[test]
+    fn declared_objects_are_closed_but_untyped_extensions_remain_open() -> anyhow::Result<()> {
+        let schema = close_declared_objects(
+            json!({
+                "type": "object",
+                "properties": {
+                    "nested": {
+                        "type": "object",
+                        "properties": { "id": { "type": "integer" } }
+                    },
+                    "extension": {}
+                }
+            })
+            .as_object()
+            .expect("fixture is an object")
+            .clone(),
+        )?;
+
+        assert_eq!(schema["additionalProperties"], false);
+        assert_eq!(
+            schema["properties"]["nested"]["additionalProperties"],
+            false
+        );
+        assert!(schema["properties"]["extension"]
+            .get("additionalProperties")
+            .is_none());
         Ok(())
     }
 }

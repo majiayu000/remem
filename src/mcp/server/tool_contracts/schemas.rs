@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use current_state::CurrentStateOutput;
 use details::{ObservationDetailsOutput, ObservationOutput};
-use normalization::normalize_nullable;
+use normalization::{close_declared_objects, normalize_nullable};
 
 /// Output-only schemas selected by the tool-contract registry.
 #[derive(Debug, Clone, Copy)]
@@ -54,8 +54,10 @@ pub(super) fn build_schema(kind: OutputSchema) -> anyhow::Result<Arc<JsonObject>
     }
     .map_err(|message| anyhow!("failed to build {kind:?} output schema: {message}"))?;
 
-    let mut schema = normalize_nullable(schema.as_ref().clone())
+    let schema = normalize_nullable(schema.as_ref().clone())
         .with_context(|| format!("normalize {kind:?} output schema"))?;
+    let mut schema =
+        close_declared_objects(schema).with_context(|| format!("close {kind:?} output schema"))?;
     if matches!(kind, OutputSchema::GovernMemory) {
         require_root_property(&mut schema, "reason")?;
     }
