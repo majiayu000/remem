@@ -20,7 +20,7 @@ src/doctor/** + route-mutating eval/test fixtures
 src/truth.rs + src/truth/{adapter,lifecycle,projection,types}.rs + src/truth/tests/** + tests/truth_public_api.rs
 ```
 No projection query may write/migrate/call external systems/change Context Bundle.
-The v2 migration is `operator_only`: plan alone checkpoints/closes and creates the sole backup before binding hashes. Apply writes `approved`; preflight may retry or explicitly retire it after exact unchanged-state proof, started approval cannot retire, and same-attempt restart only resumes exact pre-cutover bytes or completes verified target.
+The v2 migration is `operator_only`: plan fsyncs a nonce-bound preparation journal before the sole backup; restart adopts only exact `backup_ready` output or removes exact owned temp. Apply writes `approved`; preflight may retry/retire, started cannot retire and only exact-resumes or completes.
 Atomic route/lifecycle instrumentation and duplicate timestamp preservation are the only added writer scope; split `src/truth/tests.rs` before v2 tests, and keep every source file below 800 lines.
 
 ## Public v2 Types
@@ -392,7 +392,7 @@ Every production `memories.status` writer—including general/Web governance, sc
 The chain starts at its validated baseline, joins `previous_status` to the prior `new_status`, ends at current status, and folds `(effective_at_epoch,id)` with equality applying the new status. A scoped memory with a forward-only floor after `t` returns `unreconstructable_memory_lifecycle`. Web rows copy the operation binding and exact-match durable `api_mutation_requests` resource/action/schema/response/status/time; its `audit_id` is correlation only. Unknown/unsupported/unrecorded transitions, gaps, forks, terminal drift, or Web mismatch return the same error.
 Both ledgers have indefinite retention, are excluded from `cleanup_old_events`, and have no FK/cascade to `events`; event deletion or ID reuse cannot change proof. Memory/self FKs use `ON DELETE RESTRICT`, so cleanup cannot erase canonical history. A future purge requires a separately reviewed tombstone/compaction migration, never cascade. Regression calls `cleanup_old_events_at` past 30 days and proves identical route/lifecycle output, intact Web proof, zero ledger deletes, and `foreign_key_check`.
 
-Both ledgers use one retry protocol. Every internal/API writer/request identity and nonce/hash/digest requires TEXT/no NUL; integer-domain values require INTEGER. Cutover rejects malformed referenced API parents, and a trigger makes every referenced API mutation row immutable before seal can depend on it. Fingerprints frame schema/version, memory/source/action, predecessor, stable request identity, ordinal, and typed OLD/NEW; final response/generated IDs enter only seal.
+Both ledgers use one retry protocol. Internal/API identities and hashes are typed. Step 2 rejects malformed selected API rows before start; lifecycle seal exact-matches API resource/memory/action/canonical response schema+JSON/audit/time, then a trigger makes the referenced row immutable. Fingerprints frame schema/version, predecessor, request identity, ordinal, and typed OLD/NEW.
 
 | Writer | Canonical request discriminator |
 | --- | --- |

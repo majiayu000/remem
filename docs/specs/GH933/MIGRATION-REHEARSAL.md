@@ -73,13 +73,14 @@ or memory bytes. `cargo tree -e features -i rusqlite` must show `functions`.
 Seed the pending breaking migration, then open it through ordinary read/write,
 read-only, CLI, hook, worker, MCP, and API paths. Every path must return
 `breaking_migration_requires_authorized_cutover` with identical database/WAL/
-schema fingerprints. With writers stopped, plan must checkpoint WAL and close
-handles before backup/main hashing; prove mode 0600, fsync, canonical bytes,
+schema fingerprints. With writers stopped, plan first fsyncs `plan_preparing`,
+then checkpoints/closes before backup/main hashing; prove mode 0600, fsync, canonical bytes,
 database identity/hash, empty WAL, schema/user/target, binary, backup digest,
 nonce, expiry, and stable SHA-256. Apply must not checkpoint or change those bytes.
 Apply rejects missing, uppercase, BLOB, stale, reused, altered, wrong-database,
 wrong-binary, wrong-backup, or post-plan-writer-state input before live writes.
 Only the exact digest creates `approved`. Fail every preflight boundary and prove retryability; retire an expired/mismatched approval only after exact pre-cutover proof, retain audit history, then approve one replacement. Retirement after `cutover_started` fails. Started restart completes target, resumes same approval from exact pre-cutover bytes, or fails manual-restore.
+Crash before/during temp backup, after `backup_ready`, after no-replace publication, and before plan fsync: retry removes only exact owned incomplete temp or adopts exact final from the journal; unknown/multiple/unowned backup artifacts remain ambiguous.
 
 ## Executable DDL Matrix
 
@@ -145,7 +146,7 @@ every table/count/digest unchanged:
    OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching open
    terminal successor permits the update and same-value assignments need no row; and
 14. stored non-INTEGER values (nonnumeric TEXT/BLOB/nonintegral REAL) for every integer-domain ID/version/ordinal/epoch/floor, including nullable fields, are rejected unchanged.
-15. once lifecycle history references an API mutation row, every UPDATE of its action/resource/response/schema/audit/time or operation ID aborts; unreferenced construction may finish before binding.
+15. step-2 read-only scan rejects malformed selected API identity/content while approval can retire; lifecycle insert/seal independently reject wrong resource/action/canonical response/schema/audit/time, then every UPDATE of a referenced API row aborts.
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field

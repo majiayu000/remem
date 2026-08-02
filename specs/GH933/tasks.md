@@ -275,7 +275,7 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - 普通 open/read-only/CLI/hook/worker/MCP/API 与通用 migration runner 在 pending
     v2 时 fail closed；仅 dedicated operator `plan`/`apply` 可执行 cutover。plan
     mode 0600 且 durable，绑定 DB identity/hash、schema/target、binary、backup、
-    nonce/expiry；plan creates sole backup；apply 写 `approved`，preflight 可 exact
+    nonce/expiry；plan prep journal 支持 orphan backup exact adoption/cleanup；apply
     retire/replan，started 只 same-attempt resume。
   - PR uses `Refs #933`; it does not claim Phase B/C completion or close issue。
   - Commit all source/docs/version changes and complete the final base sync

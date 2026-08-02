@@ -622,7 +622,7 @@ Context Bundle 用户界面。下一份 Phase A hardening follow-up 仍以 `Refs
 Phase B/C 必须独立经过架构审阅、实现验证和发布说明；在这些阶段完成前，不得
 将 GH-933 或完整 CurrentTruth 能力标记为已交付。
 Breaking migration 不得由普通 open、CLI、hook、worker、MCP/API 或通用
-runner 执行；plan 先 checkpoint/close handles 再 bind stable DB/empty-WAL/backup。
-apply 写 `approved`；preflight 可 exact retire/replan，started 只 same-attempt restart；
+runner 执行；plan 先 fsync prep journal，再 checkpoint/close handles 并 bind stable DB/empty-WAL/backup。
+prep journal 使 orphan backup 可 exact adopt/cleanup；API row step2 validate 且 seal full-match；
 只 resume same exact attempt。外部 triggers recreate；所有 memory-owned UPDATE effects
 延迟到 terminal C/dependent rows exact-match 后安装。

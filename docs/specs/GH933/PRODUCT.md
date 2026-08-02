@@ -701,4 +701,5 @@ WAL/closes handles before binding stable DB+backup hashes. Apply writes one
 `approved` entry; preflight leaves it retryable, schema start marks it
 `cutover_started`, and recovery resumes only the same exact attempt or verified target.
 An `approved` attempt may be durably retired only while exact pre-cutover state is
-unchanged; started attempts cannot retire. Dedicated plan creates the sole backup.
+unchanged; started attempts cannot retire. Plan journals preparation before its sole
+backup so crash recovery adopts only exact output or cleans only exact owned temp.

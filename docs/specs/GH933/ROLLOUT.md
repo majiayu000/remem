@@ -90,8 +90,8 @@ operator consent. Before cutover:
 4. verify the backup destination is absent and its parent/free-space/rollback owner are approved;
 5. verify binary/checksum, exact approved HEAD, free space, and rollback owner;
 6. capture preflight schema, counts, WAL state, and filesystem evidence; and
-7. run `remem migrate current-truth-v2 plan --output <mode-0600-path>` once; it
-   checkpoints/closes handles and creates/fsyncs/hashes/test-opens that sole backup.
+7. run `remem migrate current-truth-v2 plan --output <mode-0600-path>`; it first
+   fsyncs preparation identity, then checkpoints/closes and creates the sole backup.
    Archive the plan SHA-256 and obtain release-owner approval for the
    exact database/binary/backup-bound plan.
 
