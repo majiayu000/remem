@@ -14,6 +14,9 @@ includes narrow durable route/lifecycle ledgers, migration/backfill, and writer
 instrumentation required for exact history. Phase B Context Bundle consumption,
 worktree/task scope, and Phase C general writer convergence remain later work,
 so GH-933 stays open.
+This Phase A v2 persistence/cutover contract is Unix-only until a separately
+reviewed Windows-native locking/publication contract lands; supported Windows
+installations remain on the existing v1 runtime and are never silently migrated.
 
 The issue packet under `specs/GH933/` is historical planning evidence. This
 five-file `docs/specs/GH933/` set is the normative current contract.
@@ -164,8 +167,12 @@ pending v2 requirements below.
    request before writing the lock nonce. Any old state fails closed rather than
    being re-anchored. The writer proves
    this before request lookup or mutation and holds the lock through seal plus
-   cleanup/reconciliation. Local-copy mutation then uses a fsynced write-ahead
-   journal outside the database.
+   cleanup/reconciliation. An enabled local copy additionally locks the canonical
+   target-path digest and durably binds its current request owner before target
+   inspection; request→target is the only lock order, and both remain held through
+   postcommit journal/pin cleanup and owner removal. A different request for the
+   same target first reconciles the recorded owner, while distinct targets may run
+   concurrently. Local-copy mutation then uses a fsynced write-ahead journal.
    Internal local-copy request `R` is exactly 1–128 ASCII bytes matching
    `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`; this namespace grammar is distinct from
    validation of the caller's raw idempotency key. Because POSIX record locks
@@ -703,3 +710,6 @@ WAL/closes handles before binding stable DB+backup hashes. Apply writes one
 An `approved` attempt may be durably retired only while exact pre-cutover state is
 unchanged; started attempts cannot retire. Plan journals preparation before its sole
 backup so crash recovery adopts only exact output or cleans only exact owned temp.
+Before consuming approval, the exact rebuild runs purely over every destination
+type/domain/FK/API constraint and repeats under the write lock before durable
+start. Windows plan/apply fail typed with zero side effects and retain v1 support.

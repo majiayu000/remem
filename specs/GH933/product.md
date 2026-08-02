@@ -623,6 +623,7 @@ Phase B/C 必须独立经过架构审阅、实现验证和发布说明；在这�
 将 GH-933 或完整 CurrentTruth 能力标记为已交付。
 Breaking migration 不得由普通 open、CLI、hook、worker、MCP/API 或通用
 runner 执行；plan 先 fsync prep journal，再 checkpoint/close handles 并 bind stable DB/empty-WAL/backup。
-prep journal 使 orphan backup 可 exact adopt/cleanup；API row step2 validate 且 seal full-match；
-只 resume same exact attempt。外部 triggers recreate；所有 memory-owned UPDATE effects
+prep journal 使 orphan backup 可 exact adopt/cleanup；step2 full pure rebuild 后 locked revalidate；
+route typed、response_aux=seal response、same-target request 串行。Windows 保持 v1，v2 typed 拒绝；
+started 只 resume same exact attempt。外部 triggers recreate；所有 memory-owned UPDATE effects
 延迟到 terminal C/dependent rows exact-match 后安装。

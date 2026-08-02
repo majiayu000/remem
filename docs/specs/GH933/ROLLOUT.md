@@ -42,6 +42,8 @@ Exit requires:
 - ordinary `open_db`/read-only/CLI/hook/worker/MCP/API startup refuses the
   pending operator-only migration without mutating schema, and only the
   dedicated plan/apply entrypoint can construct its single-use capability;
+- Windows keeps the supported v1 runtime: v2 plan/apply and imported-v2 writes
+  fail typed before prep/backup/approval, pending a reviewed native protocol;
 - security and database reviewers approve unresolved-risk lists; and
 - the PR remains unmerged until an independent final review.
 
@@ -62,8 +64,8 @@ Exit requires:
 - two deterministic reruns on identical input with matching logical
   fingerprints;
 - backup restore drill completed and timed;
-- cross-process lock-contention and target-parent evidence complete on every
-  supported filesystem;
+- cross-process request+canonical-target lock, owner-handoff and target-parent
+  evidence complete on every v2-supported Unix filesystem;
 - exhaustive stage-build, exact shared nonce grammar, first-use Q-directory
   durability, prepublication N-pin, N→G retained-new and sealed B→O
   retained-old quarantine, all five cleanup-source snapshots/revalidations,
@@ -85,6 +87,7 @@ operator consent. Before cutover:
 1. announce downtime and stop every CLI, app, hook, worker, MCP, and scheduled
    writer;
 2. prove no old process holds the database or any per-request local-copy lock;
+   require a v2-supported Unix/filesystem probe; Windows is not a v2 canary;
 3. reconcile journals to zero (retained L and completed G/O files are not
    pending journals), inventory/report G/O separately, and require doctor healthy;
 4. verify the backup destination is absent and its parent/free-space/rollback owner are approved;
@@ -103,6 +106,8 @@ proof so a replacement plan can be approved; started approval cannot be retired;
 a missing, stale, reused, mistyped, or identity-mismatched plan fails before a
 live write. No old writer starts afterward. An ordinary command is never a
 migration entrypoint.
+The exact rebuild must pass purely before start and again under `BEGIN IMMEDIATE`;
+no deterministic type/domain/FK/API failure may first consume approval.
 Before enabling v2 reads or writes, require postflight `integrity_check`,
 `foreign_key_check`, schema fingerprint, origins/seals, terminal ledger equality,
 ledger→manifest→typed-result equality, seven-owner/key CHECK probes, FTS query,

@@ -78,8 +78,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     proved: seal one deterministic baseline request, then use and seal a distinct
     deterministic request for each successor before the next step. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
-    Every internal/API request identity requires TEXT/no-NUL；route successor 必须
-    NULL-safe real change，referenced API mutation row immutable；every integer-
+    Every internal/API request identity requires TEXT/no-NUL；route snapshot text
+    typed/no-NUL、confidence numeric/null；successor NULL-safe real change；referenced
+    API mutation immutable，response_aux 必须 byte-equal seal response；every integer-
     domain ID/version/ordinal/epoch/floor requires INTEGER storage。
   - 六类 INSERT 在 mutation 前取得/derive 稳定 request/operation ID，canonical
     entrypoint 先查 sealed writer+ID/request hash，miss append immutable intent；
@@ -275,8 +276,9 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - 普通 open/read-only/CLI/hook/worker/MCP/API 与通用 migration runner 在 pending
     v2 时 fail closed；仅 dedicated operator `plan`/`apply` 可执行 cutover。plan
     mode 0600 且 durable，绑定 DB identity/hash、schema/target、binary、backup、
-    nonce/expiry；plan prep journal 支持 orphan backup exact adoption/cleanup；apply
-    retire/replan，started 只 same-attempt resume。
+    nonce/expiry；plan prep journal 支持 orphan backup exact adoption/cleanup；step2
+    full pure rebuild + locked revalidate；Windows 保持 v1 且 v2 typed no-write 拒绝；
+    apply retire/replan，started 只 same-attempt resume。
   - PR uses `Refs #933`; it does not claim Phase B/C completion or close issue。
   - Commit all source/docs/version changes and complete the final base sync
     first。Then, on that exact candidate SHA, regenerate the final record and

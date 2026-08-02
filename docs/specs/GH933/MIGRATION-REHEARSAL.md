@@ -81,6 +81,7 @@ Apply rejects missing, uppercase, BLOB, stale, reused, altered, wrong-database,
 wrong-binary, wrong-backup, or post-plan-writer-state input before live writes.
 Only the exact digest creates `approved`. Fail every preflight boundary and prove retryability; retire an expired/mismatched approval only after exact pre-cutover proof, retain audit history, then approve one replacement. Retirement after `cutover_started` fails. Started restart completes target, resumes same approval from exact pre-cutover bytes, or fails manual-restore.
 Crash before/during temp backup, after `backup_ready`, after no-replace publication, and before plan fsync: retry removes only exact owned incomplete temp or adopts exact final from the journal; unknown/multiple/unowned backup artifacts remain ambiguous.
+Before start, pure-rebuild every selected row through the exact migration path; malformed scope/owner/status/storage/source/action/coverage/FK/API input must leave approval `approved`, DB/WAL/schema/hash unchanged and retireable. Under `BEGIN IMMEDIATE`, recheck full plan-bound DB/WAL/schema/dependent-DDL/backup/binary state plus pure rebuild immediately before durable start; race valid data or DDL after outer scan and fail at each locked boundary, always leaving approval retireable. On Windows, plan/apply fail typed with zero prep/backup/approval/DB change, v1 remains supported, and Unix-v2 is rejected before write.
 
 ## Executable DDL Matrix
 
@@ -107,7 +108,7 @@ Positive cases cover all ten typed binding kinds and every allowed outcome:
 | `poisoning_ack` | acknowledged memory or explicit not-required/failed |
 | `local_copy_outcome` | written path+digest or disabled/failed |
 | `audit_outcome` | recorded scalar event ID or explicit not-required/failed |
-| `response_aux` | exactly one canonical returned-result object |
+| `response_aux` | exactly one canonical returned-result object byte-equal to committed `response_json` |
 
 For each row, recompute the binding fingerprint independently and verify the
 ordered predecessor chain and final seal digest. Then run these negative cases,
@@ -124,7 +125,7 @@ every table/count/digest unchanged:
    wrong fingerprint, unknown outcome, and every cross-kind typed-column leak;
 4. each kind with one required ID/path/digest removed, a forbidden ID added,
    dangling FK, duplicate route/lifecycle binding, or noncanonical JSON;
-5. seal with zero, missing, unexpected, or shape-invalid results; nonterminal or
+5. seal with zero, missing, unexpected, or shape-invalid results; `response_aux` bytes differing from response (including reordered canonical-object keys); nonterminal or
    current-row-mismatching route/lifecycle state, wrong chain, response
    schema/JSON, request fingerprint, or result fingerprint;
 6. inserted memory without an `insert_origin`, mismatched writer/request/ordinal,
@@ -145,8 +146,9 @@ every table/count/digest unchanged:
 13. an unchanged route successor, or changed route/status with no staged next row, sealed stage, wrong head,
    OLD mismatch, or NEW mismatch; each aborts unchanged, while a matching open
    terminal successor permits the update and same-value assignments need no row; and
-14. stored non-INTEGER values (nonnumeric TEXT/BLOB/nonintegral REAL) for every integer-domain ID/version/ordinal/epoch/floor, including nullable fields, are rejected unchanged.
-15. step-2 read-only scan rejects malformed selected API identity/content while approval can retire; lifecycle insert/seal independently reject wrong resource/action/canonical response/schema/audit/time, then every UPDATE of a referenced API row aborts.
+14. stored non-INTEGER values (nonnumeric TEXT/BLOB/nonintegral REAL) for every integer-domain ID/version/ordinal/epoch/floor, including nullable fields, are rejected unchanged;
+15. step-2 pure rebuild rejects malformed selected API identity/content while approval can retire; lifecycle insert/seal independently reject wrong resource/action/canonical response/schema/audit/time, then every UPDATE of a referenced API row aborts; and
+16. every route snapshot text field rejects BLOB/NUL while preserving NULL versus empty TEXT; confidence accepts NULL/numeric storage and rejects TEXT/BLOB, both in DDL and pre-start source scan.
 
 For both fingerprint guards, enumerate every table column except row ID/digest
 and prove the literal frame has exactly one ordered `old_*` and `new_*` field
@@ -159,9 +161,8 @@ between its two INSERT statements. A parent INSERT yields exactly memory+route
 v1+lifecycle v1 or zero rows—never one ledger. Compare the six literal trigger
 bodies independently with normalized `sqlite_schema.sql`.
 
-Exercise anchor DDL independently: only valid opaque R, INTEGER nonnegative dev
-and epoch, positive INTEGER ino, and TEXT lowercase 128-bit nonce insert. Nonnumeric
-TEXT/BLOB/REAL identity values, BLOB nonce, duplicate R/dev+ino, malformed nonce,
+Exercise anchor DDL independently: request keys accept only valid opaque R and target keys exact lowercase Z; both require INTEGER nonnegative dev/epoch, positive ino, and TEXT lowercase nonce. Nonnumeric
+TEXT/BLOB/REAL identity values, BLOB nonce, duplicate kind+key/dev+ino, malformed nonce,
 UPDATE/DELETE/OR REPLACE fail unchanged. A short `BEGIN IMMEDIATE` race with
 different candidate inodes for one R commits at most one exact anchor. Preseed
 another R with the candidate `(dev,ino)` and a zero-length crash-left L; the
@@ -457,16 +458,8 @@ JSON such as `[]` must also remain byte-identical and return typed ambiguity in
 normal and optimized execution. A safe pending Xc is regular, current-uid, on Q's device and
 nlink≥1; it is intentionally not snapshot-inode-bound so a proof→rename
 replacement is restored rather than orphaned or deleted.
-Explicitly hold the writer with durable D1 at S/N and at target/N but no DB seal;
-doctor must neither restore D0 nor delete D1/J/Tc/V/U/G/O/S/B/N/C/H.
-The lock must still be busy after each cleanup unlink and after J unlink but
-before Q fsync, and become acquirable only when the owner releases it afterward.
-
-SIGKILL the writer at every boundary so the kernel releases L, then race scanner
-and doctor as independent processes. Exactly one must acquire the same retained
-lock inode, exact-match K and reconcile through terminal fsync/J cleanup; the simultaneous
-other returns busy, while a separately launched later contender observes no
-work. Repeat with reversed process order.
+Explicitly hold one writer with durable D1 at S/N and target/N but no seal; doctor deletes nothing. L and same-target LT remain busy through seal, every cleanup/J fsync, A unlink/owners-dir fsync, and release only afterward. Run distinct R values/default+explicit paths resolving to one Z: pause R1 after COMMIT and every pin/J/A boundary; R2 performs zero target/P/artifact mutation until R1 releases, then completes without collision. Distinct Z values may progress concurrently.
+SIGKILL at every boundary releases both locks. For A-only/At-only, scanner proves LT/KT, reads exact owner R, releases, then reacquires L→LT and classifies reread. Barrier two discoverers so S1 removes A/At before S2 rereads: absent+terminal is clean, different exact owner restarts, while absent+pending or malformed/multiple is ambiguous. Exactly one reconciles; cover temp/rename/fsync, A+J, seal+no-J+A, and forbid holding LT while acquiring L outside discovery.
 First prove the raw primitive's replacement hazard: A locks old L, rename-replace
 the path, and B locks the new inode concurrently. Race both anchor transactions
 with K absent in each DB ordering; at most one exact fd/path/K/nonce tuple becomes
@@ -644,7 +637,7 @@ B and assert link fails before exchange; probe Linux `RENAME_EXCHANGE` and macOS
 `RENAME_SWAP` before target mutation. Unsupported present-target exchange is a
 visible no-mutation compatibility error.
 
-Securely create distinct journal Q/locks and Q/quarantine directories at 0700 and a current-uid target
+Securely create distinct Q/locks, Q/target-locks, Q/target-owners and Q/quarantine directories at 0700 and a current-uid target
 parent P at 0755 on Q's device, including a missing descendant securely created
 via its parent dirfd. Prove L/J/T/Tc/V/Xc/U/G/O stay below Q, request-qualified
 S/B/N/C/H/target stay below P, and
@@ -672,7 +665,7 @@ are distinct. Supply relative, raw `..`, symlink-ancestor and noncanonical root
 paths and require rejection before J. Forge a coherent inode group with one
 different digest and add one untracked hard link; both fail before J/chmod.
 On first use, crash before/after Q mkdir, Q-parent fsync, each child mkdir,
-child fsync, and Q fsync that records `locks` or `quarantine`; restart may use a
+child fsync, and Q fsync that records any lock/owner/quarantine child; restart may use a
 directory only after both its own and parent-entry durability proofs pass.
 
 Keep all 23 historical double-crash vectors as named regressions with identical
