@@ -320,7 +320,9 @@
   now describes read/write behavior, response shapes, defaults, failure modes,
   and selection boundaries for current state, search, contextual recall,
   timelines, detail reads, reports, and workstreams. Public tool names and
-  runtime behavior are unchanged.
+  runtime behavior is unchanged except that `update_workstream` now rejects
+  unknown status strings and calls without any update field instead of silently
+  normalizing or touching the row.
 
 ### Fixed
 - Staged source version `0.6.43` for GH-954: entity, temporal, fact, LIKE
