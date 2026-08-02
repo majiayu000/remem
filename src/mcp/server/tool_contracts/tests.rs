@@ -84,6 +84,73 @@ fn malformed_or_wrong_shape_success_fails_loudly() {
     assert!(shape_error.message.contains("output contract"));
 }
 
+#[test]
+fn adapter_rejects_values_that_drift_from_the_advertised_schema() {
+    let cases = [
+        (
+            "undeclared root field",
+            "update_workstream",
+            LegacyShape::Object,
+            json!({ "id": 7, "updated": true, "schema_drift_probe": true }),
+        ),
+        (
+            "missing required field",
+            "update_workstream",
+            LegacyShape::Object,
+            json!({ "id": 7 }),
+        ),
+        (
+            "null in a non-null field",
+            "update_workstream",
+            LegacyShape::Object,
+            json!({ "id": null, "updated": true }),
+        ),
+        (
+            "wrong nested field type",
+            "workstreams",
+            LegacyShape::Array {
+                envelope: "workstreams",
+            },
+            json!([{
+                "id": "not-an-integer",
+                "project": "/repo",
+                "title": "Release",
+                "status": "active",
+                "created_at_epoch": 1,
+                "updated_at_epoch": 1
+            }]),
+        ),
+        (
+            "object mixes mutually exclusive union branches",
+            "get_observations",
+            LegacyShape::Array {
+                envelope: "details",
+            },
+            json!([{
+                "id": 7,
+                "project": "/repo",
+                "title": "Memory",
+                "text": "body",
+                "memory_type": "decision",
+                "created_at_epoch": 1,
+                "updated_at_epoch": 1,
+                "status": "active",
+                "scope": "project",
+                "memory_session_id": "session-1",
+                "type": "discovery",
+                "created_at": "1970-01-01T00:00:01Z"
+            }]),
+        ),
+    ];
+
+    for (label, tool, shape, value) in cases {
+        let result = CallToolResult::success(vec![Content::text(value.to_string())]);
+        let error = add_structured_content(tool, shape, result)
+            .expect_err(&format!("{label} should violate {tool}'s outputSchema"));
+        assert!(error.message.contains("output contract"));
+    }
+}
+
 #[tokio::test]
 async fn served_routes_preserve_text_and_publish_structured_successes() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("mcp-structured-wire");
