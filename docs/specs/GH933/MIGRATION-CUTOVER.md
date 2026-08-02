@@ -4,8 +4,10 @@ Refs #933.
 
 This is the normative Phase A v2 migration, retry-ledger, hashing, and local-copy cutover contract referenced by `TECH.md`. It remains pending until implementation, `MIGRATION-REHEARSAL.md` evidence, and `ROLLOUT.md` gates pass. SQL is executable, not pseudocode; production preserves every constraint and trigger body.
 The breaking cutover runs in a maintenance window: all 0.6.x writers remain stopped from before the foreground transaction through new-binary postflight. There is no mixed-writer mode or down migration after a v2 write.
+## Operator-Authorized Entry Point
+The migration registry marks this migration `operator_only`. Ordinary `open_db()`/`open_db_read_only()` and every normal CLI, hook, worker, MCP, or API startup must stop before it with `breaking_migration_requires_authorized_cutover`; the generic `run_migrations` path cannot execute it, and no environment variable or first-open fallback bypasses that refusal.
+Only `remem migrate current-truth-v2 plan --output <path>` may inspect the pending database without migrating it. It writes canonical mode-0600 JSON, fdatasyncs it and its parent, and binds database path/dev/inode/hash, schema and user versions, target migration/version, binary checksum, backup destination, a random nonce, and expiry. The operator then runs `remem migrate current-truth-v2 apply --plan <path> --approve-plan-sha256 <64-lowercase-hex>`; apply exact-matches the digest and every bound input, proves writer shutdown and backup preconditions, and durably records the single-use approval in the migration journal before step 1. Missing, stale, reused, mistyped, or mismatched approval fails before any live-database write.
 ## Implementation Scope
-
 - `Cargo.toml`/`Cargo.lock`: enable rusqlite `functions`.
 - `src/db/sql_functions.rs` and every connection constructor: register the versioned function after SQLCipher keying and before schema access or writes.
 - The migration SQL/runner install this DDL, rebuild `memories`, and backfill in one `BEGIN IMMEDIATE`.
@@ -15,7 +17,6 @@ The breaking cutover runs in a maintenance window: all 0.6.x writers remain stop
 - Run the migration/API/writer/DDL/UDF/retry/fault tests in the rehearsal.
 No connection may register different framing; no fallback hash is legal.
 ## Versioned SHA-256 Data Flow
-
 `remem_sha256_frame_v1` is variadic and takes alternating names and values:
 
 ```text
@@ -81,7 +82,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE memory_write_lock_anchors (
     request_id TEXT PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0 AND request_id GLOB '[0-9A-Za-z]*' AND request_id NOT GLOB '*[^-0-9A-Z_a-z]*'),
     lock_dev INTEGER NOT NULL CHECK (typeof(lock_dev)='integer' AND lock_dev >= 0), lock_ino INTEGER NOT NULL CHECK (typeof(lock_ino)='integer' AND lock_ino > 0),
-    lock_nonce TEXT NOT NULL CHECK (length(lock_nonce)=32 AND lock_nonce NOT GLOB '*[^0-9a-f]*'),
+    lock_nonce TEXT NOT NULL CHECK (typeof(lock_nonce)='text' AND length(lock_nonce)=32 AND lock_nonce NOT GLOB '*[^0-9a-f]*'),
     anchored_at_epoch INTEGER NOT NULL CHECK (typeof(anchored_at_epoch)='integer' AND anchored_at_epoch >= 0),
     UNIQUE (lock_dev, lock_ino)
 ) WITHOUT ROWID;
@@ -93,7 +94,7 @@ CREATE TABLE memory_write_requests (
       CHECK (length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0)
       CHECK (request_id NOT GLOB '*[^0-9A-Za-z._:-]*'),
     request_fingerprint TEXT NOT NULL
-      CHECK (length(request_fingerprint) = 64)
+      CHECK (typeof(request_fingerprint)='text' AND length(request_fingerprint) = 64)
       CHECK (request_fingerprint NOT GLOB '*[^0-9a-f]*'),
     request_schema_version INTEGER NOT NULL
       CHECK (request_schema_version > 0),
@@ -123,7 +124,7 @@ CREATE TABLE memory_route_ledger (
     source_ref TEXT NOT NULL,
     source_result_ordinal INTEGER NOT NULL CHECK (source_result_ordinal >= 0),
     source_fingerprint TEXT NOT NULL
-      CHECK (length(source_fingerprint) = 64)
+      CHECK (typeof(source_fingerprint)='text' AND length(source_fingerprint) = 64)
       CHECK (source_fingerprint NOT GLOB '*[^0-9a-f]*'),
     coverage_kind TEXT NOT NULL
       CHECK (coverage_kind IN ('complete', 'forward_only')),
@@ -181,7 +182,7 @@ CREATE TABLE memory_lifecycle_ledger (
     source_kind TEXT NOT NULL CHECK (
       source_kind IN (
         'insert', 'legacy_backfill', 'memory_governance',
-        'web_governance', 'scope_cleanup'
+        'web_governance', 'scope_cleanup', 'writer_transition'
       )
     ),
     source_action TEXT NOT NULL,
@@ -190,12 +191,12 @@ CREATE TABLE memory_lifecycle_ledger (
     source_ref TEXT NOT NULL,
     source_result_ordinal INTEGER NOT NULL CHECK (source_result_ordinal >= 0),
     source_fingerprint TEXT NOT NULL
-      CHECK (length(source_fingerprint) = 64)
+      CHECK (typeof(source_fingerprint)='text' AND length(source_fingerprint) = 64)
       CHECK (source_fingerprint NOT GLOB '*[^0-9a-f]*'),
     coverage_kind TEXT NOT NULL
       CHECK (coverage_kind IN ('complete', 'forward_only')),
     coverage_start_epoch INTEGER NOT NULL CHECK (coverage_start_epoch >= 0),
-    CHECK ((source_kind IN ('insert','legacy_backfill') AND lifecycle_version=1 AND previous_status IS NULL AND source_action='baseline' AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL) OR (source_kind='memory_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NOT NULL AND source_api_operation_id IS NULL AND ((source_action='delete' AND new_status='deleted') OR (source_action='reject' AND new_status='rejected') OR (source_action='stale' AND new_status='stale') OR (source_action='acknowledge_pattern' AND new_status=previous_status))) OR (source_kind='web_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_api_operation_id IS NOT NULL AND source_operation_id IS NULL AND ((source_action='archive' AND previous_status='active' AND new_status='archived') OR (source_action='restore' AND previous_status='archived' AND new_status='active'))) OR (source_kind='scope_cleanup' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND ((source_action='archive' AND new_status='archived') OR (source_action='reroute' AND new_status=previous_status) OR (source_action='memory_cleanup' AND new_status IN ('active','stale'))))),
+    CHECK ((source_kind IN ('insert','legacy_backfill') AND lifecycle_version=1 AND previous_status IS NULL AND source_action='baseline' AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL) OR (source_kind='memory_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NOT NULL AND source_api_operation_id IS NULL AND ((source_action='delete' AND new_status='deleted') OR (source_action='reject' AND new_status='rejected') OR (source_action='stale' AND new_status='stale') OR (source_action='acknowledge_pattern' AND new_status=previous_status))) OR (source_kind='web_governance' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_api_operation_id IS NOT NULL AND source_operation_id IS NULL AND ((source_action='archive' AND previous_status='active' AND new_status='archived') OR (source_action='restore' AND previous_status='archived' AND new_status='active'))) OR (source_kind='scope_cleanup' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND ((source_action='archive' AND new_status='archived') OR (source_action='reroute' AND new_status=previous_status) OR (source_action='memory_cleanup' AND new_status IN ('active','stale')))) OR (source_kind='writer_transition' AND lifecycle_version>1 AND previous_status IS NOT NULL AND source_operation_id IS NULL AND source_api_operation_id IS NULL AND audit_event_id IS NULL AND ((source_action IN ('save_upsert','markdown_import') AND new_status IN ('active','stale','superseded','archived','deleted','rejected')) OR (source_action IN ('candidate_apply','ttl_expire','soft_supersede') AND new_status='stale') OR (source_action IN ('preference_remove','stale_archive') AND new_status='archived')))),
     UNIQUE (memory_id, lifecycle_version),
     UNIQUE (previous_lifecycle_id),
     UNIQUE (memory_id, source_kind, source_fingerprint),
@@ -236,7 +237,7 @@ CREATE TABLE memory_write_request_results (
       CHECK (
         local_copy_digest IS NULL
         OR (
-          length(local_copy_digest) = 64
+          typeof(local_copy_digest)='text' AND length(local_copy_digest) = 64
           AND local_copy_digest NOT GLOB '*[^0-9a-f]*'
         )
       ),
@@ -248,12 +249,12 @@ CREATE TABLE memory_write_request_results (
       CHECK (
         previous_binding_fingerprint IS NULL
         OR (
-          length(previous_binding_fingerprint) = 64
+          typeof(previous_binding_fingerprint)='text' AND length(previous_binding_fingerprint) = 64
           AND previous_binding_fingerprint NOT GLOB '*[^0-9a-f]*'
         )
       ),
     binding_fingerprint TEXT NOT NULL
-      CHECK (length(binding_fingerprint) = 64)
+      CHECK (typeof(binding_fingerprint)='text' AND length(binding_fingerprint) = 64)
       CHECK (binding_fingerprint NOT GLOB '*[^0-9a-f]*'),
     PRIMARY KEY (writer_kind, request_id, result_ordinal, binding_kind),
     FOREIGN KEY (writer_kind, request_id)
@@ -278,7 +279,7 @@ CREATE TABLE memory_write_request_commits (
     writer_kind TEXT NOT NULL,
     request_id TEXT NOT NULL,
     result_fingerprint TEXT NOT NULL
-      CHECK (length(result_fingerprint) = 64)
+      CHECK (typeof(result_fingerprint)='text' AND length(result_fingerprint) = 64)
       CHECK (result_fingerprint NOT GLOB '*[^0-9a-f]*'),
     response_schema_version INTEGER NOT NULL
       CHECK (response_schema_version > 0),
@@ -723,17 +724,16 @@ uninterrupted `BEGIN IMMEDIATE`:
    wrong golden vector, disabled FK enforcement, or nonempty migration journal.
 2. Verify schema, checkpoint WAL after all writers stop, close every handle, copy
    the main database byte-for-byte, fsync file/directory, hash, and test-open it.
-3. Reopen the exact live database, register/self-test the UDF, revalidate
-   database/schema/backup identity, snapshot every dependent FK/table object,
-   set `foreign_keys=OFF` and verify it before starting `BEGIN IMMEDIATE`.
+3. Reopen the exact live database, register/self-test the UDF, revalidate database/schema/backup identity, and snapshot every dependent FK/table object plus exact SQL.
+   Set `foreign_keys=OFF`, verify it, start `BEGIN IMMEDIATE`, then drop every trigger on another table that references `memories` (including the graph-edge node validators)
+   before the old table can be absent.
 4. Create `memories_rebuild` with the exact target schema, copy all rows with
-   `scope=COALESCE(NULLIF(TRIM(scope),''),'project')`, reject any result outside
-   `project|global`, validate, drop old `memories`, rename, and recreate exact owned
-   indexes/triggers/FTS without altering dependent tables. Then create
-   ledgers/results. For each legacy ID, use
-   `migration_vNNN:<memory_id>` with sorted `insert_origin`/`response_aux`
-   manifest. Exhaustive durable evidence may form complete history; otherwise
-   create only forward-only baselines. Never infer from current bytes/events.
+   `scope=COALESCE(NULLIF(TRIM(scope),''),'project')`, validate, drop/rename, and recreate owned indexes/triggers/FTS plus every snapshotted dependent trigger byte-for-byte without altering dependent rows.
+   Create retry/ledger objects in FK-safe order. A forward-only row uses `migration_vNNN:<memory_id>:baseline` with sorted `insert_origin`/`response_aux` slots and today's snapshot.
+   For exhaustive A→B→C proof, copy reconstructed A, bind/seal its baseline, then replay each proved successor under a separate deterministic
+   `migration_vNNN:<memory_id>:step:<ordinal>` request with exact `route_transition` and/or `lifecycle_transition` slots plus `response_aux`;
+   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; the final step exact-matches pre-cutover C.
+   Reject scope outside `project|global`; never infer history from current bytes or prunable events.
 5. Append typed bindings/response/seals and install literal guards. Before
    commit require row/count/digest/object equality, unchanged dependent DDL,
    `integrity_check='ok'`, and empty `foreign_key_check`; commit, immediately

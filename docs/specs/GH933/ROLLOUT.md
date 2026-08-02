@@ -39,6 +39,9 @@ Exit requires:
   PR preflight, and public API compile pass at exact HEAD;
 - actual migration SQL and installed `sqlite_schema` match every reviewed
   literal object, including both fingerprint guards and insert-v1 trigger;
+- ordinary `open_db`/read-only/CLI/hook/worker/MCP/API startup refuses the
+  pending operator-only migration without mutating schema, and only the
+  dedicated plan/apply entrypoint can construct its single-use capability;
 - security and database reviewers approve unresolved-risk lists; and
 - the PR remains unmerged until an independent final review.
 
@@ -87,9 +90,15 @@ operator consent. Before cutover:
 4. create, fsync, hash, and read-only test-open the database backup;
 5. verify binary/checksum, exact approved HEAD, free space, and rollback owner;
 6. capture preflight schema, counts, WAL state, and filesystem evidence; and
-7. obtain release-owner go/no-go approval.
+7. run `remem migrate current-truth-v2 plan --output <mode-0600-path>`, archive
+   its canonical SHA-256, and obtain release-owner go/no-go approval for that
+   exact database/binary/backup-bound plan.
 
-The operator runs the foreground migration once. No old writer starts afterward.
+The operator runs `remem migrate current-truth-v2 apply --plan <path>
+--approve-plan-sha256 <digest>` once. Apply must durably consume the exact plan;
+a missing, stale, reused, mistyped, or identity-mismatched plan fails before a
+live write. No old writer starts afterward. An ordinary command is never a
+migration entrypoint.
 Before enabling v2 reads or writes, require postflight `integrity_check`,
 `foreign_key_check`, schema fingerprint, origins/seals, terminal ledger equality,
 ledger→manifest→typed-result equality, seven-owner/key CHECK probes, FTS query,
@@ -126,8 +135,9 @@ Keep the canary on the new binary for at least 72 hours and through:
   anchor proof admits at most one protocol owner, followed by single-owner
   reconciliation after writer death; local-copy-disabled saves and every
   virgin-R negative state must use the same retained anchor;
-- normal hook, MCP/API, import, Markdown, candidate, governance, and cleanup
-  activity that exercises every supported writer;
+- normal hook, MCP/API, import, Markdown, candidate, governance, cleanup, TTL,
+  supersede, preference-removal, and stale-archive activity that exercises every
+  status writer through its lifecycle ledger; an uninstrumented writer is a stop;
 - event retention cleanup proving history remains intact; and
 - an exact-key response-loss retry plus a different-key identical lesson save.
 
@@ -161,7 +171,7 @@ Metrics and structured logs use opaque request IDs only:
 | Signal | Page/stop threshold |
 | --- | --- |
 | UDF registration/self-test/hash mismatch | any |
-| migration, integrity, FK, schema, or terminal-ledger error | any |
+| automatic-open attempt, approval-plan mismatch/reuse, migration, integrity, FK, schema, or terminal-ledger error | any |
 | unsealed intent, post-seal ledger append, or manifest/result/ledger/seal guard rejection | any |
 | idempotency conflict | observe rate; stop on unexplained surge |
 | exact replay that mutates rows/files/knowledge epoch | any |

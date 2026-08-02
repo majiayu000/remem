@@ -144,8 +144,9 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    epoch 的 identity、empty transition sets 与 source/reason 全部验证时证明后续
    trust/ack transition；input topic 是 request provenance，可合法不同于 result
    topic。它推进 knowledge time，但不能独立证明初始 ingestion。
-   `govern_memories`、Web archive/restore、`scope_cleanup::archive_objects` 与
-   cleanup plan 的 canonical→active/duplicate→stale 都从 durable、
+   `govern_memories`、Web archive/restore、scope cleanup、save/Markdown、
+   candidate apply、TTL expiry、soft supersede、preference removal 与 stale archive
+   的每个 production status mutation 都经 canonical lifecycle service，从 durable、
    memory/time-indexed `memory_lifecycle_ledger` 重建；status 与 next version
    同 transaction，event 仅 optional audit mirror。previous 必须连续、terminal
    必须等于 current。Web row 复制 operation binding 并 exact bind durable
@@ -154,8 +155,10 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    30-day cleanup 与 event ID reuse 不影响 proof。equality 使用最后一个 new
    status；unsupported/unrecorded action/status、
    gap/fork/contradiction/ledger mismatch 返回
-   `unreconstructable_memory_lifecycle`。
-   两 ledger 的 fingerprint 列是 NOT NULL 且严格 lowercase 64-hex，per-memory/
+   `unreconstructable_memory_lifecycle`。v2 启动不得留下任何 uninstrumented
+   status writer；否则 release no-go。
+   所有 nonce/fingerprint/digest 列还必须以 `typeof(...)=text` 拒绝可通过长度/GLOB
+   外观检查的 BLOB；两 ledger fingerprint 是 NOT NULL 且严格 lowercase 64-hex，per-memory/
    source unique 无 NULL bypass。每个 writer 在 mutation 前 append stable、
    nonblank request/operation intent；ledger hash 绑定 strict request hash、result
    ordinal、predecessor 与 exact typed OLD/NEW，不绑定 trigger 当时尚不存在的
@@ -617,3 +620,8 @@ Context Bundle 用户界面。下一份 Phase A hardening follow-up 仍以 `Refs
 架构文档、changelog 与全部 distribution metadata 中提供 v1→v2 迁移说明。
 Phase B/C 必须独立经过架构审阅、实现验证和发布说明；在这些阶段完成前，不得
 将 GH-933 或完整 CurrentTruth 能力标记为已交付。
+Breaking migration 不得由普通 open、CLI、hook、worker、MCP/API 或通用
+`run_migrations` 自动执行；operator 必须先生成绑定 DB identity、binary、backup
+destination、nonce 与 expiry 的 mode-0600 durable plan，再以 exact lowercase
+SHA-256 显式 apply，且 approval durable single-use。任何 mismatch/reuse 必须在
+首次 live write 前失败。

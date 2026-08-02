@@ -112,12 +112,13 @@ pending v2 requirements below.
    co-predecessors even though only one row may have an explicit successor
    link. In-place suppress/unsuppress/delete mutations without a historical row
    are conservatively excluded/Unknown; current bytes must not be projected
-   backward. Memory status changes written by `govern_memories`, Web archive/
-   restore, `scope_cleanup::archive_objects`, or either side of
-   `apply_memory_cleanup_plan` (canonical→active and duplicate→stale) are instead
-   reconstructed from one durable, memory-indexed lifecycle ledger. Those
-   writers commit status and the next version atomically; Web versions bind the
-   durable API operation record. Audit events are optional mirrors, not proof.
+   backward. Every production memory-status change is reconstructed from one
+   durable, memory-indexed lifecycle ledger. This includes `govern_memories`, Web
+   archive/restore, scope archive/reroute/cleanup-plan, save/Markdown reactivation,
+   candidate application, TTL expiry, soft supersede, preference removal, and
+   stale archive. One canonical service commits status and the next version
+   atomically; Web versions bind the durable API operation record, while audit
+   events remain optional mirrors. No v2 startup enables an uninstrumented path.
    Both history ledgers are retained indefinitely with restrictive memory/self
    links and no FK/cascade to the 30-day `events` table.
    Every append has a nonblank canonical writer-specific request discriminator
@@ -136,6 +137,8 @@ pending v2 requirements below.
    Deferred constraints reject unsealed/missing/extra/mismatched bindings.
    Anchor, intent, result, seal and ledger rows reject UPDATE, DELETE, and every
    conflict-path `INSERT OR REPLACE` even with recursive triggers disabled.
+   Every nonce, SHA-256, and digest CHECK also requires SQLite TEXT storage;
+   a length-valid BLOB must fail rather than bypass `GLOB` validation.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
    it, derive a namespaced opaque request ID and never persist or log the raw key.
    The key and transport credentials are identity, not request payload, so the
@@ -472,9 +475,10 @@ pending v2 requirements below.
       pre-floor reads and incomplete writer chains fail closed. All six current
       insert families, the three existing-row route writers, same-value no-ops,
       changed-route staging and direct bypass rejection are covered. A
-      production-shaped FK fixture proves the `memories` rebuild preserves
-      dependent rows/DDL, validates before commit, restores enforcement, and
-      repeats `foreign_key_check`; the legacy user-claim wrapper stays
+      production-shaped FK fixture proves the `memories` rebuild first drops
+      every external trigger that references it, then recreates each trigger
+      byte-for-byte while preserving dependent rows/DDL, restoring enforcement,
+      and repeating `foreign_key_check`; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
       malformed exact-owner memory or memory-only suppression.
@@ -489,9 +493,9 @@ pending v2 requirements below.
       through the writer route without requiring an unavailable candidate title.
       Operation-less procedure memory is current-snapshot-only; history excludes/Unknown.
 - [ ] Versioned edit and in-place mutation histories have separate
-      before/equal/after tests. One globally ordered lifecycle chain covers
-      general and Web governance plus scope-cleanup archive and cleanup-plan
-      active/stale transitions; gaps, forks, unsupported transitions and Web
+      before/equal/after tests. One globally ordered lifecycle chain covers every
+      production status writer, including save/Markdown, candidate/TTL/supersede,
+      preference removal, and stale archive; gaps, forks, unsupported transitions and Web
       ledger mismatches return `unreconstructable_memory_lifecycle`. Its
       memory/time index is used, and deleting 30-day events leaves both ledgers,
       Web proof and serialized historical output unchanged. Every governed route/lifecycle writer's
@@ -515,7 +519,8 @@ pending v2 requirements below.
       accepts exactly seven scopes and rejects blank
       or untrimmed keys. It
       rejects a write connection without the approved SHA-256 UDF. Golden frame
-      vectors match Rust, trigger and migration backfill bytes. Literal
+      vectors match Rust, trigger and migration backfill bytes; nonce/hash/digest
+      columns reject BLOB, REAL, and INTEGER storage. Literal
       `memory_route_ledger_fingerprint_guard`,
       `memory_lifecycle_ledger_fingerprint_guard`, and
       `memory_insert_v1_ledgers`, `memory_route_tuple_update_guard`, plus
@@ -685,3 +690,7 @@ docs use the real Rust path `remem::truth`.
 
 Phase A v2 PRs use `Refs #933`. They do not close GH-933 or claim Phase B/C
 delivery. Merge and release remain explicit human decisions.
+The breaking migration is never reached through ordinary database open. A
+single-use canonical plan binds database/binary/backup identity, and only the
+operator's exact lowercase SHA-256 approval passed to the dedicated
+`remem migrate current-truth-v2 apply` command authorizes cutover.

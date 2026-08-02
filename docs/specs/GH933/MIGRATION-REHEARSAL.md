@@ -37,6 +37,7 @@ The implementation PR adds focused targets with these stable entrypoints:
 cargo test gh933_sha256_frame_vectors -- --nocapture
 cargo test gh933_retry_ledger_ddl -- --nocapture
 cargo test gh933_writer_coverage -- --nocapture
+cargo test gh933_operator_cutover_gate -- --nocapture
 cargo test gh933_idempotency_matrix -- --nocapture
 cargo test gh933_local_copy_crash_matrix -- --nocapture
 cargo test gh933_migration_rehearsal --release -- --ignored --nocapture
@@ -66,6 +67,18 @@ Apply the actual migration with the UDF unregistered and with an intentionally
 wrong same-name UDF. The first fails `no such function`; the second fails the
 known-vector preflight. Neither writes `user_version`, request rows, history,
 or memory bytes. `cargo tree -e features -i rusqlite` must show `functions`.
+
+## Operator Authorization Matrix
+
+Seed the pending breaking migration, then open it through ordinary read/write,
+read-only, CLI, hook, worker, MCP, and API paths. Every path must return
+`breaking_migration_requires_authorized_cutover` with identical database/WAL/
+schema fingerprints. Generate a plan and prove mode 0600 plus file/parent fsync,
+canonical bytes, database path/dev/inode/hash, schema/user/target versions,
+binary checksum, backup destination, random nonce, expiry, and stable SHA-256.
+Apply rejects missing, uppercase, BLOB, stale, reused, altered, wrong-database,
+wrong-binary, wrong-backup, or post-plan-writer-state input before live writes.
+Only the exact lowercase digest consumes one approval and enters cutover once.
 
 ## Executable DDL Matrix
 
@@ -101,7 +114,8 @@ every table/count/digest unchanged:
 
 1. blank/space/uppercase writer kinds; blank, whitespace-containing,
    NUL-containing, overlong, or out-of-alphabet request IDs while mixed-case
-   valid IDs remain accepted; and short, uppercase, nonhex, or overlong fingerprints;
+   valid IDs remain accepted; and short, uppercase, nonhex, overlong, or
+   length-valid BLOB fingerprints/nonces/digests;
 2. invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra
    object key, negative ordinal, duplicate pair, unsorted pair, or zero/multiple
    `response_aux` entries;
@@ -144,8 +158,8 @@ v1+lifecycle v1 or zero rows—never one ledger. Compare the five literal trigge
 bodies independently with normalized `sqlite_schema.sql`.
 
 Exercise anchor DDL independently: only valid opaque R, INTEGER nonnegative dev
-and epoch, positive INTEGER ino, and lowercase 128-bit nonce insert. Nonnumeric
-TEXT/BLOB/REAL identity values, duplicate R/dev+ino, malformed nonce,
+and epoch, positive INTEGER ino, and TEXT lowercase 128-bit nonce insert. Nonnumeric
+TEXT/BLOB/REAL identity values, BLOB nonce, duplicate R/dev+ino, malformed nonce,
 UPDATE/DELETE/OR REPLACE fail unchanged. A short `BEGIN IMMEDIATE` race with
 different candidate inodes for one R commits at most one exact anchor. Preseed
 another R with the candidate `(dev,ino)` and a zero-length crash-left L; the
@@ -158,8 +172,8 @@ every positive case.
 
 ## Writer and Retry Matrix
 
-Exercise the six current memory insert families and the three existing-row
-transition writers named in `TECH.md`. For each, assert intent precedes mutation,
+Exercise the six current memory insert families, three existing-row route writers,
+and every status writer named in `TECH.md`. For each, assert intent precedes mutation,
 INSERT creates route/lifecycle v1 in the same transaction, every declared result
 is typed, seal is last, and an injected error at each statement rolls everything
 back. Same-value assignments append no transition.
@@ -217,6 +231,8 @@ Run foreground migration on:
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
 - 100,000-memory scale fixture with WAL plus nonempty claims, edges, facts,
   embeddings, FTS and every other table whose FK references `memories`;
+- production external triggers that select `memories`, including graph-edge node
+  validators; prove they are dropped before table absence and recreated byte-exact;
 - malformed owner pair, status, chain, FK, FTS/schema object, or source version;
   and
 - injected interruption before/after every migration stage and before COMMIT.
