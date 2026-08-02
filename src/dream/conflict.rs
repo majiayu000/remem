@@ -25,6 +25,9 @@ pub(super) fn record_conflict(
     super::freshness::validate_cluster_snapshot(&tx, project, cluster)?;
     let metadata = validate_conflicting_ids(&tx, project, cluster, conflicting_ids)?;
     let decision_cluster = cluster_for_conflicting_ids(cluster, &metadata.ids);
+    super::poisoning::terminalize_prior_cluster_candidates_for_clean_decision(
+        &tx, project, cluster, "conflict",
+    )?;
     if let Some(operation_id) = existing_conflict_operation_id(&tx, &metadata.ids)? {
         decisions::record_defer(&tx, project, &decision_cluster, reason, operation_id)?;
         tx.commit()?;

@@ -328,8 +328,9 @@
   conflict reasons, before persistence. Poisoned output atomically becomes a
   route-scoped quarantined candidate plus a versioned cluster-bound artifact;
   token-aware review binds current source versions and canonical payloads and
-  can supersede only the exact acknowledged source set. Changed semantic output
-  creates a fresh review and atomically invalidates the older candidate.
+  can supersede only the exact acknowledged source set. Every later semantic
+  decision—including a clean no-merge or conflict—atomically invalidates older
+  review candidates for the same cluster.
   Every decision now rechecks source payload, TTL, state-key currentness, and
   suppression in its immediate write transaction. Clean generated memories are
   external trust, and cluster-external state-key/semantic reuse rolls back.

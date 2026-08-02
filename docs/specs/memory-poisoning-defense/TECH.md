@@ -259,6 +259,10 @@ no-merge write back together. Source memories stay active; no replacement,
 supersede operation, conflict edge, raw model reason, MCP result, or
 SessionStart item is emitted. A later A→B→A semantic recurrence creates a fresh
 review candidate rather than treating the system supersede as a human reject.
+Every later clean `no_merge` or `conflict` decision also terminalizes all still
+reviewable quarantine candidates for the exact cluster signature inside that
+decision's immediate transaction. The terminalization, audit event, and final
+decision/operation therefore commit or roll back together.
 
 Candidate detail recomputes the source snapshot and full decision digest before
 issuing a review token. The token binds candidate and artifact versions, every

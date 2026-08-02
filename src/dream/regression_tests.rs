@@ -6,16 +6,16 @@ use super::merge::{MergeDecision, MergeResult};
 use super::{process_clusters, Cluster};
 use crate::memory::insert_memory;
 
-struct DreamFixture {
-    conn: Connection,
-    project: &'static str,
-    first_id: i64,
-    second_id: i64,
+pub(super) struct DreamFixture {
+    pub(super) conn: Connection,
+    pub(super) project: &'static str,
+    pub(super) first_id: i64,
+    pub(super) second_id: i64,
     cluster: Cluster,
 }
 
 impl DreamFixture {
-    fn new(project: &'static str) -> Result<Self> {
+    pub(super) fn new(project: &'static str) -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;
         let first_id = insert_memory(
@@ -79,7 +79,7 @@ impl DreamFixture {
         })
     }
 
-    async fn process_merge(&mut self, title: &str, content: &str) -> Result<()> {
+    pub(super) async fn process_merge(&mut self, title: &str, content: &str) -> Result<()> {
         self.process_merge_with_superseded_ids(title, content, vec![self.first_id, self.second_id])
             .await
     }
@@ -114,7 +114,7 @@ impl DreamFixture {
         .await
     }
 
-    async fn process_no_merge(&mut self, reason: &str) -> Result<()> {
+    pub(super) async fn process_no_merge(&mut self, reason: &str) -> Result<()> {
         let reason = reason.to_string();
         process_clusters(
             self.project,
@@ -132,7 +132,7 @@ impl DreamFixture {
         .await
     }
 
-    async fn process_conflict(&mut self, reason: &str) -> Result<()> {
+    pub(super) async fn process_conflict(&mut self, reason: &str) -> Result<()> {
         let reason = reason.to_string();
         let first_id = self.first_id;
         let second_id = self.second_id;
@@ -153,7 +153,7 @@ impl DreamFixture {
         .await
     }
 
-    fn assert_quarantine_only(
+    pub(super) fn assert_quarantine_only(
         &self,
         expected_field: &str,
         expected_kind: &str,

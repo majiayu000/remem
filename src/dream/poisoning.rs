@@ -311,9 +311,10 @@ fn persist_quarantine(
         &tx,
         project,
         &cluster_signature,
-        candidate_id,
-        artifact_id,
-        &semantic_discriminator_sha256,
+        Some(candidate_id),
+        Some(artifact_id),
+        Some(&semantic_discriminator_sha256),
+        plan.decision_kind,
         now,
     )?;
     let reason = format!(
@@ -340,13 +341,33 @@ fn persist_quarantine(
     Ok(())
 }
 
+pub(super) fn terminalize_prior_cluster_candidates_for_clean_decision(
+    conn: &Connection,
+    project: &str,
+    cluster: &Cluster,
+    decision_kind: &'static str,
+) -> Result<()> {
+    let cluster_signature = super::decisions::cluster_signature(project, cluster);
+    terminalize_prior_cluster_candidates(
+        conn,
+        project,
+        &cluster_signature,
+        None,
+        None,
+        None,
+        decision_kind,
+        chrono::Utc::now().timestamp(),
+    )
+}
+
 fn terminalize_prior_cluster_candidates(
     conn: &Connection,
     project: &str,
     cluster_signature: &str,
-    current_candidate_id: i64,
-    current_artifact_id: i64,
-    semantic_discriminator_sha256: &str,
+    current_candidate_id: Option<i64>,
+    current_artifact_id: Option<i64>,
+    semantic_discriminator_sha256: Option<&str>,
+    superseding_decision: &'static str,
     now: i64,
 ) -> Result<()> {
     let prior_ids = {
@@ -356,7 +377,7 @@ fn terminalize_prior_cluster_candidates(
              JOIN memory_candidates c ON c.id = a.source_candidate_id
              WHERE a.project = ?1
                AND a.cluster_signature = ?2
-               AND c.id != ?3
+               AND (?3 IS NULL OR c.id != ?3)
                AND c.review_status IN ('pending_review', 'quarantined')
              ORDER BY c.id",
         )?;
@@ -392,13 +413,14 @@ fn terminalize_prior_cluster_candidates(
         "current_candidate_id": current_candidate_id,
         "prior_candidate_ids": prior_ids,
         "semantic_discriminator_sha256": semantic_discriminator_sha256,
+        "superseding_decision": superseding_decision,
     })
     .to_string();
     let inserted = conn.execute(
         "INSERT INTO events(session_id, project, event_type, summary, detail, created_at_epoch)
          VALUES ('dream:semantic-supersede', ?1,
                  'candidate_dream_semantic_superseded',
-                 'Newer Dream quarantine decision superseded prior review candidates',
+                 'Newer Dream semantic decision superseded prior review candidates',
                  ?2, ?3)",
         params![project, detail, now],
     )?;

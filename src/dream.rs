@@ -91,9 +91,12 @@ mod tests {
     use super::merge::MergeDecision;
     use super::*;
     use crate::memory::insert_memory;
-    use crate::memory::tests_helper::setup_memory_schema;
     use anyhow::anyhow;
     use rusqlite::{params, Connection};
+
+    fn setup_dream_schema(conn: &Connection) {
+        crate::migrate::run_migrations(conn).expect("migrate Dream test database");
+    }
 
     fn snapshot_cluster(conn: &Connection, ids: &[i64]) -> Cluster {
         let members = ids
@@ -153,7 +156,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_continues_after_cluster_failure() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-process";
 
         let failing_cluster = make_cluster(
@@ -207,7 +210,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_fails_when_all_cluster_merges_fail() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-all-fail";
         let clusters = vec![
             make_cluster(
@@ -239,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_persists_no_merge_decision() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-no-merge";
         let clusters = vec![make_cluster(
             &conn,
@@ -275,7 +278,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_persists_conflict_defer_without_merging() -> Result<()> {
         let mut conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-conflict";
         let first_id = insert_memory(
             &conn,
@@ -369,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_defer_records_only_conflicting_subset() -> Result<()> {
         let mut conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-conflict-subset";
         let first_id = insert_memory(
             &conn,
@@ -476,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_records_failed_for_invalid_conflict_ids() -> Result<()> {
         let mut conn = Connection::open_in_memory()?;
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-invalid-conflict";
         let clusters = vec![make_cluster(
             &conn,
@@ -519,7 +522,7 @@ mod tests {
     #[tokio::test]
     async fn process_clusters_continues_after_apply_failure() {
         let mut conn = Connection::open_in_memory().expect("in-memory db");
-        setup_memory_schema(&conn);
+        setup_dream_schema(&conn);
         let project = "test-dream-apply-failure";
         let clusters = vec![
             make_cluster(&conn, project, [101, 102], ["bad-topic-a", "bad-topic-b"]),
