@@ -160,6 +160,33 @@ pending v2 requirements below.
    this before request lookup or mutation and holds the lock through seal plus
    cleanup/reconciliation. Local-copy mutation then uses a fsynced write-ahead
    journal outside the database.
+   Internal local-copy request `R` is exactly 1–128 ASCII bytes matching
+   `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`; this namespace grammar is distinct from
+   validation of the caller's raw idempotency key. Because POSIX record locks
+   are process-scoped and closing another FD for L can release the process's
+   lock, acquisition atomically reserves `(Q/locks dev, Q/locks ino, R)` in a
+   process-local registry before opening L. A same-process duplicate therefore
+   fails without opening or closing L; the registry supplements rather than
+   replaces the kernel lock. Before a forked child can acquire anything, its
+   callback moves every inherited capability FD out of its owner, invalidates
+   capability state, makes exactly one close attempt per FD, and resets the
+   registry. No numeric FD is probed or retried after close returns, including on
+   error, so an old child object cannot close a recycled FD or release a fresh
+   child lock. Acquisition returns
+   a mandatory, request- and PID-bound held-lock capability that retains the exact
+   `Q/locks` directory FD even after the caller closes its original FD. Every
+   inspection, source/cleanup-journal transition, read lift, snapshot proof,
+   cleanup capture, recovery, ordered cleanup, and J removal accepts that
+   capability with no unlocked/default path. Entry, callback, rename, unlink,
+   and journal boundaries reprove the live kernel lock, immutable L identity,
+   canonical no-follow Q identity, and canonical `Q/locks` binding. Independently,
+   every path-dependent inspection, read-lift, snapshot, journal, or cleanup step
+   reopens the canonical trusted-root→P chain and exact-matches retained P before
+   mutation, recovery, and successful return; the retained P FD alone is never
+   authorization after its canonical binding changes. A closed,
+   fork-inherited, wrong-request, decoy-locks, replaced-Q, or replaced-L
+   capability fails visibly before mutation. L is never unlinked; normal close
+   or process death releases only the kernel lock on the same retained inode.
    A direct save retries only lock acquisition for
    at most 5 seconds, then either acquires the lock and replays the sealed winner
    or reports the still-live writer; scanner/doctor contenders report immediately.
@@ -209,21 +236,62 @@ pending v2 requirements below.
    phase, exact frozen namespace/name/identity and cleanup-relevant
    metadata/digest snapshot, and one source-authorized ordered unlink list.
    Before that transition, the canonical source J records the request/stage
-   fingerprints, epoch, source phase, prior-kind/publication/seal state, D0/D1
-   digests, exact path/component proofs, and a complete coherent binding for
-   every source name. Exact alias groups, nlink, mode, size, mtime and digest
-   facts are validated before J creation or any read-bit lift.
+   fingerprints, epoch, source phase, prior-kind/publication/seal state,
+   `semantic_d0_digest`/`semantic_d1_digest`, exact path/component proofs, and
+   `source_namespace` entries containing only dev/inode/uid/gid/type/nlink.
+   Mutable mode/size/mtime/digest are first frozen in `cleanup_intent`.
    Cleanup conversion uses a nonce-qualified private `Tc`, distinct from the
-   ordinary phase-update temp. While source J is canonical, any exact-owned
-   empty/partial/malformed `Tc` may be discarded and Q-fsynced, and only the
-   complete exact cleanup document may replace J; canonical cleanup J rejects
-   every stray `Tc`.
-   An unreadable source or cleanup snapshot arms a separate nonce-qualified
-   hard-link `V` to canonical J and fsyncs Q before adding owner-read. `V` may
-   coexist with partial `Tc`. Recovery restores and fsyncs the original mode
-   through any surviving exact data alias before removing `V`; restore failure
-   retains `V`, while replacement/content drift is reported only after mode
-   recovery. Without `V`, a single-read-bit difference is ordinary drift.
+   ordinary phase-update temp. A request-wide scanner reserves every same-R
+   cleanup-temp candidate across nonce values, including malformed basenames.
+   While source J is canonical, only the sole exact current-nonce Tc may have
+   provisional bytes discarded and Q-fsynced or, when byte-exact to the fresh
+   complete candidate, replace J. Stale-nonce, malformed, or multiple candidates
+   are preserved ambiguous, and canonical cleanup J rejects every same-R `Tc`.
+   An unreadable source or cleanup snapshot first exact-matches its pathname and
+   retained write FD to the cleanup snapshot's full raw proof before it arms the
+   nonce-qualified hard-link
+   `V=Q/.R.<stage_nonce>.read-lift.<group>.<mode:04o>` to canonical J and fsyncs
+   Q before adding owner-read; V may coexist with Tc. A request-wide scanner
+   reserves every same-R read-lift candidate across nonce values; only one exact
+   current-nonce basename is usable, while stale, malformed—including a same-R
+   lexical prefix with an extra dot—or multiple V names are preserved ambiguous;
+   a distinct valid request prefix remains isolated. Its basename binds the source group and observed original mode. Recovery restores and fsyncs that
+   mode through any surviving exact structural alias before removing V; failure
+   retains V, and an unmarked single-read-bit change remains ordinary drift.
+   Recovery derives the snapshot, removed prefix, and exempt identities only
+   from V's persisted canonical J plus the current namespace; caller-supplied
+   transient values must exact-match that derivation or V/J remain untouched.
+   Read proof and V begin likewise derive the canonical namespace, group, and
+   observed mode, while V finish independently proves that a surviving exact
+   alias has regained the encoded mode before it can remove the marker. Inspection
+   owner-read restoration and V begin/finish/restore/recovery re-resolve canonical
+   P before and after every path-dependent mutation and before every success return.
+   Each public capture or restart entry independently requires the exact
+   canonical `cleanup_intent` J, its exact field set, trusted-root/directory-handle
+   proofs and logical path bindings, its allowlisted contract, no forbidden
+   V/Tc/Xc coexistence, and the exact next ordered member: every prior member is absent
+   and every later member remains present. Each ordered removal then retains its verified reader/proof and atomically
+   renames the source no-replace to
+   `Xc=Q/.R.<stage_nonce>.cleanup-capture.<H|S|B|C|N>`. It fsyncs Q and then the
+   source parent, revalidates held L, proves the source name absent, and
+   rechecks both Xc and the retained FD/digest. Exact capture is removed only by
+   unlinking Xc followed by Q fsync. Any mismatch is restored Xc→source
+   no-replace and durably fsynced source-parent then Q; EEXIST preserves both
+   names and returns the cleanup-concurrency error. Restart restores a sole
+   valid Xc before deriving the removed prefix, so a crash cannot turn a
+   captured entry into a completed unlink. Malformed, multiple, stale-nonce,
+   symlink, wrong-owner/type/device, or out-of-order Xc is preserved ambiguous;
+   unsupported native no-replace rename fails before source mutation. V+Tc is
+   the sole allowed marker/temp coexistence; V+Xc and Tc+Xc are ambiguous.
+   Immediately before J unlink, the public boundary again validates canonical J,
+   the full intent/path contract, held L, and request-wide absence of every Tc,
+   V, and Xc candidate. It independently proves every ordered cleanup name absent
+   and every retained target/G/O or required absence against the terminal snapshot
+   with runtime nlink; an early direct call or late stale artifact keeps J and all
+   remaining names intact with typed ambiguity.
+   Snapshot nlink is not reused after the first removal: each capture expects
+   the number of still-named snapshot aliases for that inode, including any
+   permanent G/O alias.
    Every inode that may receive user bytes remains named by the user target or
    permanent G/O; every remaining prefix is revalidated before the next unlink
    and once more before J removal. Target replace/write/chmod and unretained
@@ -238,7 +306,11 @@ pending v2 requirements below.
    directory fsyncs. Journal,
    quarantine, and request-qualified `.remem-save-R.*` names are remem-reserved; distinguishable
    identity/name/type/ownership/link tampering fails closed and security-visible,
-   while active malicious unlink is outside the contract. For an inode already
+   while active nonprotocol mutation by the same uid inside private mode-0700 Q
+   (including a check-to-Xc-unlink substitution) is outside the threat model.
+   Canonical-Q or `Q/locks` replacement observed at any validation boundary is
+   nevertheless a typed lock-unsafe abort that mutates neither the retained old
+   Q nor the replacement. For an inode already
    exposed as user target, phase-qualified same-inode mode/bytes/size/mtime/digest
    drift is accepted wherever the protocol now names it B/S/C/H/N/G/O: an old
    target-FD operation and a direct reserved-path operation are physically
@@ -487,9 +559,12 @@ pending v2 requirements below.
       recover a live request, including durable D1 before its database seal; after
       writer death exactly one anchor-verified lock owner reconciles. Lock-path
       replacement may acquire a second kernel lock but fails immutable
-      fd/path/inode/nonce proof before any request or artifact access. Target-parent traversal,
-      identity, ownership, permissions, device, fsync/no-replace support and every
-      stage proof are fault-tested independently of the private journal parent.
+      fd/path/inode/nonce proof before any request or artifact access. Target-parent
+      traversal, identity, ownership, permissions, device, fsync/no-replace support
+      and every stage proof are fault-tested independently of the private journal
+      parent. Renaming retained P and recreating its canonical path at inspection,
+      read-lift begin/finish/restore/recovery, snapshot, cleanup-J load, and J unlink
+      must return typed ambiguity without operating through either old or decoy P.
       First-use Q/locks and Q/quarantine creation, child and parent directory
       fsyncs, and the shared exact 32-lowercase-hex stage nonce grammar are
       crash- and boundary-tested.
@@ -504,15 +579,28 @@ pending v2 requirements below.
       `local_copy_cleanup_concurrency_violation`; the harness keeps target
       quiescent after successful revalidation.
       The five exact cleanup sources and ordered lists reject every other
-      source/list/seal tuple. Source J plus absent or exact-owned arbitrary
-      partial `Tc`, complete `Tc`, independent same-inode `V`, and combined
-      `Tc`+`V` restart forms all have deterministic outcomes; only a complete
-      valid `Tc` may advance, and canonical cleanup J rejects stray `Tc`.
-      Faults in restore fchmod/fsync retain `V`; retry fsyncs the restored mode
-      before disarming it. Target replacement and open-FD content writes restore
+      source/list/seal tuple. Source J plus absent or exact-owned stale
+      partial/complete `Tc`, one mode-qualified same-inode `V`, and combined
+      `Tc`+`V` restart forms all have deterministic outcomes. Malformed
+      group/mode suffixes and multiple marker candidates fail closed; only the
+      fresh complete valid `Tc` may advance, and cleanup J rejects stray `Tc`.
+      Restore fchmod/fsync faults retain V; retry uses its encoded original mode
+      and fsyncs restoration before disarming it. Target replacement and open-FD content writes restore
       through a surviving alias, then return the typed concurrency error with
       `doctor_healthy=false`; journal identity ambiguity returns the distinct
       reconciliation error with the same nonhealthy state.
+      Every cleanup name is removed only through no-replace source→Xc capture,
+      Q/source-parent durability, retained-FD/Xc postproof and Xc unlink/Q-fsync.
+      Proof→rename replacement and post-rename open-FD drift restore the exact
+      captured bytes no-replace before error; EEXIST keeps Xc. All five capture
+      and three restore crash boundaries restart by restoring Xc before prefix
+      derivation. Multiple/malformed/unsafe Xc and V+Xc or Tc+Xc remain intact
+      and ambiguous. All production safety invariants use explicit typed checks,
+      never runtime assertions or hand-raised `AssertionError`; public journal,
+      snapshot, inspection, transition, read-lift and cleanup boundaries map
+      external proof failures to typed errors. Optimized execution independently
+      preserves the V, Tc, and Xc gates. A second process stays lock-busy throughout active V, Tc, Xc,
+      ordered cleanup and J removal; fork inheritance cannot reuse capability.
       Completed G/O files are reported separately from pending journals, have
       no automatic garbage collection, and a fresh attempt uses a distinct
       stage nonce; sealed exact replay remains mutation-free.
