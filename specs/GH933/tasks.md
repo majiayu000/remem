@@ -73,12 +73,12 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
     Legacy save/Markdown changes and pruned events make unproved rows
     migration-time `forward_only`; never infer absence or earlier eligibility.
     Before old-table absence, snapshot/drop every external dependent trigger,
-    then recreate it byte-exact；memory-owned side-effect triggers stay absent
+    then recreate it byte-exact；all preexisting memory-owned UPDATE effects stay absent
     until terminal C byte equality. Materialize A→B→C only when every transition is
     proved: seal one deterministic baseline request, then use and seal a distinct
     deterministic request for each successor before the next step. Validate counts,
     terminal snapshots/chains and reported incomplete counts before apply.
-    Every nonce/fingerprint/digest requires TEXT/no-NUL/exact hex；every integer-
+    Every writer/request identity and nonce/fingerprint/digest requires TEXT/no-NUL；every integer-
     domain ID/version/ordinal/epoch/floor requires INTEGER storage。
   - 六类 INSERT 在 mutation 前取得/derive 稳定 request/operation ID，canonical
     entrypoint 先查 sealed writer+ID/request hash，miss append immutable intent；
@@ -274,8 +274,8 @@ Truth v1 的 changelog 事实；所有 implementation checkbox 保持未完成�
   - 普通 open/read-only/CLI/hook/worker/MCP/API 与通用 migration runner 在 pending
     v2 时 fail closed；仅 dedicated operator `plan`/`apply` 可执行 cutover。plan
     mode 0600 且 durable，绑定 DB identity/hash、schema/target、binary、backup、
-    nonce/expiry；apply 要求 exact plan SHA-256，durable 写唯一 approval journal；
-    step 1 exact validate/consume 该 record，不能要求 empty journal。
+    nonce/expiry；plan 先 checkpoint/close handles 后 bind stable DB/backup；apply 写
+    `approved`，preflight retryable，schema start marks `cutover_started`，same attempt resume。
   - PR uses `Refs #933`; it does not claim Phase B/C completion or close issue。
   - Commit all source/docs/version changes and complete the final base sync
     first。Then, on that exact candidate SHA, regenerate the final record and

@@ -87,16 +87,16 @@ operator consent. Before cutover:
 2. prove no old process holds the database or any per-request local-copy lock;
 3. reconcile journals to zero (retained L and completed G/O files are not
    pending journals), inventory/report G/O separately, and require doctor healthy;
-4. create, fsync, hash, and read-only test-open the database backup;
+4. stop writers, checkpoint WAL, close handles, then create/fsync/hash/test-open backup;
 5. verify binary/checksum, exact approved HEAD, free space, and rollback owner;
 6. capture preflight schema, counts, WAL state, and filesystem evidence; and
 7. run `remem migrate current-truth-v2 plan --output <mode-0600-path>`, archive
    its canonical SHA-256, and obtain release-owner go/no-go approval for that
    exact database/binary/backup-bound plan.
 
-The operator runs `remem migrate current-truth-v2 apply --plan <path>
---approve-plan-sha256 <digest>` once. Apply durably writes the sole approval
-journal record; cutover step 1 exact-validates and marks it `cutover_started`;
+The plan binds the stable post-checkpoint main file plus empty-WAL and backup
+proofs. Apply writes the sole `approved` journal record; preflight is retryable,
+schema start marks `cutover_started`, and restart resumes only the exact attempt;
 a missing, stale, reused, mistyped, or identity-mismatched plan fails before a
 live write. No old writer starts afterward. An ordinary command is never a
 migration entrypoint.

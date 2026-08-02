@@ -6,7 +6,7 @@ This is the normative Phase A v2 migration, retry-ledger, hashing, and local-cop
 The breaking cutover runs in a maintenance window: all 0.6.x writers remain stopped from before the foreground transaction through new-binary postflight. There is no mixed-writer mode or down migration after a v2 write.
 ## Operator-Authorized Entry Point
 The migration registry marks this migration `operator_only`. Ordinary `open_db()`/`open_db_read_only()` and every normal CLI, hook, worker, MCP, or API startup must stop before it with `breaking_migration_requires_authorized_cutover`; the generic `run_migrations` path cannot execute it, and no environment variable or first-open fallback bypasses that refusal.
-Only `remem migrate current-truth-v2 plan --output <path>` may inspect the pending database without migrating it. It writes canonical mode-0600 JSON, fdatasyncs it and its parent, and binds database path/dev/inode/hash, schema and user versions, target migration/version, binary checksum, backup destination, a random nonce, and expiry. The operator then runs `remem migrate current-truth-v2 apply --plan <path> --approve-plan-sha256 <64-lowercase-hex>`; apply exact-matches the digest and every bound input, proves writer shutdown and backup preconditions, and durably records the single-use approval in the migration journal before step 1. Missing, stale, reused, mistyped, or mismatched approval fails before any live-database write.
+Only `remem migrate current-truth-v2 plan --output <path>` may prepare the pending database without migrating schema. Under proved writer shutdown it checkpoints WAL, closes all owned handles, creates/fsyncs/hashes/test-opens the backup, then hashes the stable main file and proves WAL absent/empty before writing canonical mode-0600 JSON. The fdatasynced plan/parent bind database path/dev/inode/hash, empty-WAL proof, schema/user/target versions, binary checksum, backup destination/digest, random nonce, and expiry. `apply --plan <path> --approve-plan-sha256 <64-lowercase-hex>` exact-matches every input and writes one durable `approved` record. Missing/stale/reused/mistyped/mismatched approval fails before live-database write.
 ## Implementation Scope
 - `Cargo.toml`/`Cargo.lock`: enable rusqlite `functions`.
 - `src/db/sql_functions.rs` and every connection constructor: register the versioned function after SQLCipher keying and before schema access or writes.
@@ -60,8 +60,8 @@ The migration rebuilds `memories` from the canonical current schema rather than
 using `ALTER TABLE ... NOT NULL` on populated data. The rebuilt table adds:
 
 ```sql
-insert_writer_kind TEXT NOT NULL,
-insert_request_id TEXT NOT NULL,
+insert_writer_kind TEXT NOT NULL CHECK (typeof(insert_writer_kind)='text' AND instr(insert_writer_kind,char(0))=0),
+insert_request_id TEXT NOT NULL CHECK (typeof(insert_request_id)='text' AND instr(insert_request_id,char(0))=0),
 insert_result_ordinal INTEGER NOT NULL CHECK (typeof(insert_result_ordinal)='integer' AND insert_result_ordinal >= 0),
 UNIQUE (insert_writer_kind, insert_request_id, insert_result_ordinal),
 FOREIGN KEY (insert_writer_kind, insert_request_id)
@@ -79,7 +79,7 @@ production primary-key types.
 ```sql
 PRAGMA foreign_keys = ON;
 CREATE TABLE memory_write_lock_anchors (
-    request_id TEXT PRIMARY KEY CHECK (length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0 AND request_id GLOB '[0-9A-Za-z]*' AND request_id NOT GLOB '*[^-0-9A-Z_a-z]*'),
+    request_id TEXT PRIMARY KEY CHECK (typeof(request_id)='text' AND length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0 AND request_id GLOB '[0-9A-Za-z]*' AND request_id NOT GLOB '*[^-0-9A-Z_a-z]*'),
     lock_dev INTEGER NOT NULL CHECK (typeof(lock_dev)='integer' AND lock_dev >= 0), lock_ino INTEGER NOT NULL CHECK (typeof(lock_ino)='integer' AND lock_ino > 0),
     lock_nonce TEXT NOT NULL CHECK (typeof(lock_nonce)='text' AND instr(lock_nonce,char(0))=0 AND length(lock_nonce)=32 AND lock_nonce NOT GLOB '*[^0-9a-f]*'),
     anchored_at_epoch INTEGER NOT NULL CHECK (typeof(anchored_at_epoch)='integer' AND anchored_at_epoch >= 0),
@@ -87,10 +87,10 @@ CREATE TABLE memory_write_lock_anchors (
 ) WITHOUT ROWID;
 CREATE TABLE memory_write_requests (
     writer_kind TEXT NOT NULL
-      CHECK (length(writer_kind) BETWEEN 1 AND 64)
+      CHECK (typeof(writer_kind)='text' AND instr(writer_kind,char(0))=0 AND length(writer_kind) BETWEEN 1 AND 64)
       CHECK (writer_kind NOT GLOB '*[^0-9a-z._:-]*'),
     request_id TEXT NOT NULL
-      CHECK (length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0)
+      CHECK (typeof(request_id)='text' AND length(request_id) BETWEEN 1 AND 128 AND instr(request_id,char(0))=0)
       CHECK (request_id NOT GLOB '*[^0-9A-Za-z._:-]*'),
     request_fingerprint TEXT NOT NULL
       CHECK (typeof(request_fingerprint)='text' AND instr(request_fingerprint,char(0))=0 AND length(request_fingerprint) = 64)
@@ -118,8 +118,8 @@ CREATE TABLE memory_route_ledger (
       )
     ),
     audit_event_id INTEGER CHECK (audit_event_id IS NULL OR typeof(audit_event_id)='integer'),
-    source_writer_kind TEXT NOT NULL,
-    source_ref TEXT NOT NULL,
+    source_writer_kind TEXT NOT NULL CHECK (typeof(source_writer_kind)='text' AND instr(source_writer_kind,char(0))=0),
+    source_ref TEXT NOT NULL CHECK (typeof(source_ref)='text' AND instr(source_ref,char(0))=0),
     source_result_ordinal INTEGER NOT NULL CHECK (typeof(source_result_ordinal)='integer' AND source_result_ordinal >= 0),
     source_fingerprint TEXT NOT NULL
       CHECK (typeof(source_fingerprint)='text' AND instr(source_fingerprint,char(0))=0 AND length(source_fingerprint) = 64)
@@ -185,8 +185,8 @@ CREATE TABLE memory_lifecycle_ledger (
     ),
     source_action TEXT NOT NULL,
     source_operation_id INTEGER CHECK (source_operation_id IS NULL OR typeof(source_operation_id)='integer'), source_api_operation_id TEXT, audit_event_id INTEGER CHECK (audit_event_id IS NULL OR typeof(audit_event_id)='integer'),
-    source_writer_kind TEXT NOT NULL,
-    source_ref TEXT NOT NULL,
+    source_writer_kind TEXT NOT NULL CHECK (typeof(source_writer_kind)='text' AND instr(source_writer_kind,char(0))=0),
+    source_ref TEXT NOT NULL CHECK (typeof(source_ref)='text' AND instr(source_ref,char(0))=0),
     source_result_ordinal INTEGER NOT NULL CHECK (typeof(source_result_ordinal)='integer' AND source_result_ordinal >= 0),
     source_fingerprint TEXT NOT NULL
       CHECK (typeof(source_fingerprint)='text' AND instr(source_fingerprint,char(0))=0 AND length(source_fingerprint) = 64)
@@ -212,8 +212,8 @@ CREATE INDEX idx_memory_lifecycle_coverage ON memory_lifecycle_ledger(coverage_k
 CREATE UNIQUE INDEX uq_memory_lifecycle_operation ON memory_lifecycle_ledger(source_operation_id,memory_id) WHERE source_operation_id IS NOT NULL;
 CREATE UNIQUE INDEX uq_memory_lifecycle_api_operation ON memory_lifecycle_ledger(source_api_operation_id,memory_id) WHERE source_api_operation_id IS NOT NULL;
 CREATE TABLE memory_write_request_results (
-    writer_kind TEXT NOT NULL,
-    request_id TEXT NOT NULL,
+    writer_kind TEXT NOT NULL CHECK (typeof(writer_kind)='text' AND instr(writer_kind,char(0))=0),
+    request_id TEXT NOT NULL CHECK (typeof(request_id)='text' AND instr(request_id,char(0))=0),
     result_ordinal INTEGER NOT NULL CHECK (typeof(result_ordinal)='integer' AND result_ordinal >= 0),
     binding_kind TEXT NOT NULL CHECK (
       binding_kind IN (
@@ -274,8 +274,8 @@ CREATE UNIQUE INDEX uq_memory_write_result_lifecycle
   ON memory_write_request_results(lifecycle_ledger_id)
   WHERE lifecycle_ledger_id IS NOT NULL;
 CREATE TABLE memory_write_request_commits (
-    writer_kind TEXT NOT NULL,
-    request_id TEXT NOT NULL,
+    writer_kind TEXT NOT NULL CHECK (typeof(writer_kind)='text' AND instr(writer_kind,char(0))=0),
+    request_id TEXT NOT NULL CHECK (typeof(request_id)='text' AND instr(request_id,char(0))=0),
     result_fingerprint TEXT NOT NULL
       CHECK (typeof(result_fingerprint)='text' AND instr(result_fingerprint,char(0))=0 AND length(result_fingerprint) = 64)
       CHECK (result_fingerprint NOT GLOB '*[^0-9a-f]*'),
@@ -722,17 +722,16 @@ The migration runner performs these steps under one exclusive maintenance
 window. Steps 1–2 precede any migration write transaction; steps 3–5 use one
 uninterrupted `BEGIN IMMEDIATE`:
 
-1. Register and self-test `remem_sha256_frame_v1`; reject a missing function, wrong golden vector, or disabled FK enforcement. The journal must contain exactly the durable, unconsumed approval for this plan/database/binary/backup/digest and no other entry; atomically mark it `cutover_started` before schema work. Missing, consumed, extra, or mismatched state aborts.
-2. Verify schema, checkpoint WAL after all writers stop, close every handle, copy
-   the main database byte-for-byte, fsync file/directory, hash, and test-open it.
-3. Reopen the exact live database, register/self-test the UDF, revalidate database/schema/backup identity, and snapshot every dependent FK/table object plus exact SQL.
+1. Register/self-test `remem_sha256_frame_v1`; require exactly one durable `approved` or same-attempt `cutover_started` record bound to this plan/database/binary/backup/digest. `approved` remains retryable through preflight; absent/completed/extra/mismatched state aborts.
+2. Revalidate the plan-time writer-shutdown, stable main-file/empty-WAL, schema, backup, binary, expiry, and free-space proofs without checkpointing or changing bytes.
+3. Reopen the exact live database, register/self-test the UDF, snapshot every dependent FK/table object plus exact SQL, and transition `approved→cutover_started` immediately before the first schema write.
    Set `foreign_keys=OFF`, verify it, start `BEGIN IMMEDIATE`, then drop every trigger on another table that references `memories` (including the graph-edge node validators)
    before the old table can be absent.
-4. Create `memories_rebuild` with the exact target schema, copy all rows with `scope=COALESCE(NULLIF(TRIM(scope),''),'project')`, validate, drop/rename, and recreate owned indexes/FTS plus every snapshotted external dependent trigger byte-for-byte without altering dependent rows. Do not yet install memory-owned version/archive/status side-effect triggers.
+4. Create `memories_rebuild` with the exact target schema, copy all rows with `scope=COALESCE(NULLIF(TRIM(scope),''),'project')`, validate, drop/rename, and recreate owned indexes/FTS tables plus every snapshotted external dependent trigger byte-for-byte without altering dependent rows. Do not install any preexisting memory-owned UPDATE trigger (including FTS/enrichment/version/archive/status effects) during replay; only the newly reviewed route/status enforcement guards run.
    Create retry/ledger objects and the ledger/update enforcement guards in FK-safe order. A forward-only row uses `migration_vNNN:<memory_id>:baseline` with sorted `insert_origin`/`response_aux` slots and today's snapshot.
    For exhaustive A→B→C proof, copy reconstructed A, bind/seal its baseline, then replay each proved successor under a separate deterministic
    `migration_vNNN:<memory_id>:step:<ordinal>` request with exact `route_transition` and/or `lifecycle_transition` slots plus `response_aux`;
-   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; after the final step exact-matches stored pre-cutover C bytes, install the exact memory-owned side-effect triggers before validation/commit.
+   update `memories`, bind, and seal before the next step. Every request-owned ledger is terminal at its seal; after final C exact-matches stored memory and dependent rows, install every exact preexisting memory-owned UPDATE trigger before validation/commit.
    Reject scope outside `project|global`; never infer history from current bytes or prunable events.
 5. Append typed bindings/response/seals and install literal guards. Before
    commit require row/count/digest/object equality, unchanged dependent DDL,
@@ -742,6 +741,7 @@ uninterrupted `BEGIN IMMEDIATE`:
 Postflight also requires zero unsealed requests, exact manifest/results, one
 valid terminal route/lifecycle per memory matching `memories`, valid origin/v1
 maps, immutable unique lock anchors, and no schema or dependent-row/object drift.
+On restart, `cutover_started` is resumable only for the same approval: after writer shutdown, rollback recovery, and exact inspection, target schema+postflight marks `completed`; exact pre-cutover database+empty WAL+backup resumes step 3 without issuing another approval; any partial/ambiguous state requires restore and manual reauthorization. This state is never reusable for a different plan or database.
 
 Failure before step 3 leaves the live database unmodified; every precommit
 failure rolls back that one transaction. A postcommit FK-restore/check failure

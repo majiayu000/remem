@@ -73,12 +73,13 @@ or memory bytes. `cargo tree -e features -i rusqlite` must show `functions`.
 Seed the pending breaking migration, then open it through ordinary read/write,
 read-only, CLI, hook, worker, MCP, and API paths. Every path must return
 `breaking_migration_requires_authorized_cutover` with identical database/WAL/
-schema fingerprints. Generate a plan and prove mode 0600 plus file/parent fsync,
-canonical bytes, database path/dev/inode/hash, schema/user/target versions,
-binary checksum, backup destination, random nonce, expiry, and stable SHA-256.
+schema fingerprints. With writers stopped, plan must checkpoint WAL and close
+handles before backup/main hashing; prove mode 0600, fsync, canonical bytes,
+database identity/hash, empty WAL, schema/user/target, binary, backup digest,
+nonce, expiry, and stable SHA-256. Apply must not checkpoint or change those bytes.
 Apply rejects missing, uppercase, BLOB, stale, reused, altered, wrong-database,
 wrong-binary, wrong-backup, or post-plan-writer-state input before live writes.
-Only the exact lowercase digest creates one durable unconsumed approval record; step 1 accepts exactly that sole record, validates every binding, atomically marks it `cutover_started`, and rejects absent/consumed/extra/mismatched journal state.
+Only the exact lowercase digest creates one durable `approved` record. Fail every preflight boundary and prove it stays retryable; after `cutover_started`, crash/restart must either complete target postflight, resume the same approval from exact pre-cutover bytes, or fail ambiguous/manual-restore—never strand or reauthorize silently.
 
 ## Executable DDL Matrix
 
@@ -112,8 +113,7 @@ ordered predecessor chain and final seal digest. Then run these negative cases,
 each in a fresh transaction, and assert the named statement fails and leaves
 every table/count/digest unchanged:
 
-1. blank/space/uppercase writer kinds; blank, whitespace-containing,
-   NUL-containing, overlong, or out-of-alphabet request IDs while mixed-case
+1. non-TEXT/NUL-tailed/blank/space/uppercase writer kinds; non-TEXT, NUL-containing, overlong, or out-of-alphabet request IDs while mixed-case
    valid IDs remain accepted; and short, uppercase, nonhex, overlong, embedded-
    NUL-tailed TEXT, or length-valid BLOB fingerprints/nonces/digests;
 2. invalid/nonarray/noncanonical/empty manifest, unknown kind, missing/extra
@@ -231,7 +231,7 @@ Run foreground migration on:
 - surviving exhaustive evidence that legitimately reconstructs A→B→C;
 - 100,000-memory scale fixture with WAL plus nonempty claims, edges, facts,
   embeddings, FTS and every other table whose FK references `memories`;
-- production external triggers that select `memories`, including graph-edge node validators, plus memory-owned version/archive/status side-effect triggers; prove external triggers are dropped before table absence, while owned side-effect triggers stay absent through A→B→C replay and are recreated byte-exact only after terminal C matches stored bytes;
+- production external triggers that select `memories`, plus every preexisting memory-owned UPDATE side-effect trigger including FTS/enrichment/version/archive/status; prove external triggers are dropped before table absence, while all owned UPDATE effects stay absent through A→B→C replay and are recreated byte-exact only after terminal C and dependent rows match stored bytes;
 - malformed owner pair, status, chain, FK, FTS/schema object, or source version;
   and
 - injected interruption before/after every migration stage and before COMMIT.

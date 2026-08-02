@@ -139,8 +139,8 @@ pending v2 requirements below.
    Deferred constraints reject unsealed/missing/extra/mismatched bindings.
    Anchor, intent, result, seal and ledger rows reject UPDATE, DELETE, and every
    conflict-path `INSERT OR REPLACE` even with recursive triggers disabled.
-   Every nonce, SHA-256, and digest CHECK requires SQLite TEXT storage, exact byte
-   length, and no embedded NUL; every integer-domain ledger value requires
+   Every writer/request identity, nonce, SHA-256, and digest requires SQLite TEXT
+   storage and no embedded NUL; every integer-domain ledger value requires
    INTEGER storage. BLOB and NUL-tailed prefix bypasses must fail.
    Caller-facing save requires an explicit `idempotency_key`. Adapters validate
    it, derive a namespaced opaque request ID and never persist or log the raw key.
@@ -480,8 +480,8 @@ pending v2 requirements below.
       changed-route staging and direct bypass rejection are covered. A
       production-shaped FK fixture proves the `memories` rebuild first drops
       every external trigger that references it, recreates external triggers
-      byte-for-byte, and defers memory-owned side-effect triggers until history
-      replay exact-matches stored terminal bytes while preserving dependent
+      byte-for-byte, and defers every preexisting memory-owned UPDATE side-effect
+      trigger—including FTS/enrichment—until replay exact-matches stored terminal bytes and dependent rows while preserving
       rows/DDL, restoring enforcement, and repeating `foreign_key_check`; the legacy user-claim wrapper stays
       user-claim-only, performs bounded referenced-memory plus applicable
       `user_claim`/`pattern` suppression reads, and is not failed by unrelated
@@ -696,6 +696,7 @@ Phase A v2 PRs use `Refs #933`. They do not close GH-933 or claim Phase B/C
 delivery. Merge and release remain explicit human decisions.
 The breaking migration is never reached through ordinary database open. A
 single-use canonical plan binds database/binary/backup identity, and only the
-operator's exact lowercase SHA-256 approval passed to the dedicated apply command
-authorizes cutover. Apply durably writes one approval journal entry; cutover step
-1 must validate and consume that exact sole entry, not require an empty journal.
+operator's exact lowercase SHA-256 approval authorizes cutover. Plan checkpoints
+WAL/closes handles before binding stable DB+backup hashes. Apply writes one
+`approved` entry; preflight leaves it retryable, schema start marks it
+`cutover_started`, and recovery resumes only the same exact attempt or verified target.

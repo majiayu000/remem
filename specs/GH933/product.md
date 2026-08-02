@@ -158,7 +158,7 @@ remem 已经保存 evidence、memory、observation、user-context claim、relati
    `unreconstructable_memory_lifecycle`。v2 启动不得留下任何 uninstrumented
    status writer；对称 DB guard 要求每次真实 status change 已有 open exact staged
    successor，writer_transition 禁止 same-status row，否则 release no-go。
-   所有 nonce/fingerprint/digest 必须 TEXT、无 embedded NUL、exact hex；所有
+   所有 writer/request identity 与 nonce/fingerprint/digest 必须 TEXT、无 NUL；所有
    integer-domain ID/version/ordinal/epoch/floor 必须 INTEGER，拒绝 affinity bypass。两 ledger fingerprint 是 NOT NULL 且严格 lowercase 64-hex，per-memory/
    source unique 无 NULL bypass。每个 writer 在 mutation 前 append stable、
    nonblank request/operation intent；ledger hash 绑定 strict request hash、result
@@ -622,7 +622,7 @@ Context Bundle 用户界面。下一份 Phase A hardening follow-up 仍以 `Refs
 Phase B/C 必须独立经过架构审阅、实现验证和发布说明；在这些阶段完成前，不得
 将 GH-933 或完整 CurrentTruth 能力标记为已交付。
 Breaking migration 不得由普通 open、CLI、hook、worker、MCP/API 或通用
-runner 执行；operator plan/apply durable 写唯一 bound approval journal，cutover
-step 1 exact validate/mark `cutover_started`，而非要求 empty journal。外部 dependent
-triggers byte-exact recreate；memory-owned side-effect triggers 延迟到 replay terminal
-C exact-match 后安装。任何 mismatch/reuse 必须在首次 live write 前失败。
+runner 执行；plan 先 checkpoint/close handles 再 bind stable DB/empty-WAL/backup。
+apply 写 `approved`；preflight retryable，schema start marks `cutover_started`，restart
+只 resume same exact attempt。外部 triggers recreate；所有 memory-owned UPDATE effects
+延迟到 terminal C/dependent rows exact-match 后安装。
