@@ -59,6 +59,17 @@ impl MemoryServer {
         Parameters(params): Parameters<TimelineParams>,
     ) -> McpToolResult<String> {
         const TOOL: &str = "timeline";
+        if params.anchor.is_none()
+            && params
+                .query
+                .as_deref()
+                .is_none_or(|query| query.trim().is_empty())
+        {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "anchor or non-blank query required",
+            ));
+        }
         let start = std::time::Instant::now();
         crate::log::info(
             "mcp",

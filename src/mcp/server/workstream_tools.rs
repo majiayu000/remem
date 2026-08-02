@@ -8,6 +8,16 @@ use super::MemoryServer;
 
 const WORKSTREAM_STATUSES: [&str; 4] = ["active", "paused", "completed", "abandoned"];
 
+fn validate_workstream_status(tool: &'static str, status: &str) -> McpToolResult<()> {
+    if WORKSTREAM_STATUSES.contains(&status) {
+        return Ok(());
+    }
+    Err(McpToolError::invalid_request(
+        tool,
+        format!("unknown status '{status}'; expected active, paused, completed, or abandoned"),
+    ))
+}
+
 #[tool_router(router = tool_router_workstream, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
@@ -18,6 +28,9 @@ impl MemoryServer {
         Parameters(params): Parameters<WorkStreamsParams>,
     ) -> McpToolResult<String> {
         const TOOL: &str = "workstreams";
+        if let Some(status) = params.status.as_deref() {
+            validate_workstream_status(TOOL, status)?;
+        }
         crate::log::info(
             "mcp",
             &format!(
@@ -59,14 +72,7 @@ impl MemoryServer {
             ));
         }
         if let Some(status) = params.status.as_deref() {
-            if !WORKSTREAM_STATUSES.contains(&status) {
-                return Err(McpToolError::invalid_request(
-                    TOOL,
-                    format!(
-                        "unknown status '{status}'; expected active, paused, completed, or abandoned"
-                    ),
-                ));
-            }
+            validate_workstream_status(TOOL, status)?;
         }
         crate::log::info(
             "mcp",

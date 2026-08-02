@@ -322,7 +322,9 @@
   timelines, detail reads, reports, and workstreams. Public tool names and
   runtime behavior is unchanged except that `update_workstream` now rejects
   unknown status strings and calls without any update field instead of silently
-  normalizing or touching the row.
+  normalizing or touching the row; `workstreams` rejects unknown status filters,
+  blank timeline/multi-hop queries fail explicitly, and timeline-report metric
+  query failures propagate instead of being rendered as zero.
 
 ### Fixed
 - Staged source version `0.6.43` for GH-954: entity, temporal, fact, LIKE

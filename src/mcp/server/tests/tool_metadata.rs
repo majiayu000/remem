@@ -1,7 +1,9 @@
 use super::MemoryServer;
 use super::{assert_mcp_error, McpErrorCode};
 use crate::db::test_support::ScopedTestDataDir;
-use crate::mcp::types::UpdateWorkStreamParams;
+use crate::mcp::types::{
+    SearchParams, TimelineParams, TimelineReportParams, UpdateWorkStreamParams, WorkStreamsParams,
+};
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::ServerHandler;
 
@@ -141,19 +143,21 @@ fn timeline_report_description_distinguishes_report_from_observation_context() -
 }
 
 #[test]
-fn update_workstream_schema_restricts_status_values() -> anyhow::Result<()> {
+fn workstream_schemas_restrict_status_values() -> anyhow::Result<()> {
     let server = MemoryServer::new()?;
-    let route = server
-        .tool_router
-        .map
-        .get("update_workstream")
-        .expect("update_workstream tool should be registered");
-    let status_schema = &route.attr.input_schema["properties"]["status"];
-    assert_eq!(
-        status_schema["enum"],
-        serde_json::json!(["active", "paused", "completed", "abandoned"]),
-        "status schema should expose only the accepted values"
-    );
+    for tool in ["workstreams", "update_workstream"] {
+        let route = server
+            .tool_router
+            .map
+            .get(tool)
+            .unwrap_or_else(|| panic!("{tool} should be registered"));
+        let status_schema = &route.attr.input_schema["properties"]["status"];
+        assert_eq!(
+            status_schema["enum"],
+            serde_json::json!(["active", "paused", "completed", "abandoned"]),
+            "{tool} status schema should expose only the accepted values"
+        );
+    }
     Ok(())
 }
 
@@ -249,5 +253,100 @@ fn server_instructions_match_default_all_status_workstream_listing() -> anyhow::
         instructions.contains("all statuses by default"),
         "runtime guidance must match the unfiltered workstreams query: {instructions}"
     );
+    Ok(())
+}
+
+#[test]
+fn workstreams_rejects_unknown_status_filter() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-workstreams-unknown-status");
+    let server = MemoryServer::new()?;
+
+    let err = server
+        .workstreams(Parameters(WorkStreamsParams {
+            project: Some("test/proj".to_string()),
+            status: Some("complete".to_string()),
+        }))
+        .expect_err("unknown status filter should be rejected");
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "workstreams", false);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("unknown status")));
+    Ok(())
+}
+
+#[test]
+fn timeline_rejects_blank_query_without_selecting_recent_observation() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-timeline-blank-query");
+    let server = MemoryServer::new()?;
+
+    let err = server
+        .timeline(Parameters(TimelineParams {
+            anchor: None,
+            query: Some("  ".to_string()),
+            depth_before: None,
+            depth_after: None,
+            project: Some("test/proj".to_string()),
+        }))
+        .expect_err("blank timeline query should be rejected");
+    let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "timeline", false);
+    assert_eq!(
+        json["error"]["message"],
+        "anchor or non-blank query required"
+    );
+    Ok(())
+}
+
+#[test]
+fn timeline_report_propagates_token_economics_query_failure() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-timeline-report-query-failure");
+    let server = MemoryServer::new()?;
+    let conn = crate::db::open_db()?;
+    for session_id in ["overflow-a", "overflow-b"] {
+        conn.execute(
+            "INSERT INTO observations
+             (memory_session_id, project, type, title, created_at_epoch, discovery_tokens)
+             VALUES (?1, 'test/proj', 'decision', 'Overflow metric', 1, ?2)",
+            rusqlite::params![session_id, i64::MAX],
+        )?;
+    }
+
+    let err = server
+        .timeline_report(Parameters(TimelineReportParams {
+            project: "test/proj".to_string(),
+            full: Some(false),
+        }))
+        .expect_err("timeline report should expose metric query failure");
+    let json = assert_mcp_error(err, McpErrorCode::DbQueryFailed, "timeline_report", true);
+    assert!(json["error"]["message"]
+        .as_str()
+        .is_some_and(|message| message.contains("integer overflow")));
+    Ok(())
+}
+
+#[test]
+fn search_rejects_multi_hop_without_non_blank_query() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-multi-hop-blank-query");
+    let server = MemoryServer::new()?;
+
+    for query in [None, Some("  ".to_string())] {
+        let err = server
+            .search(Parameters(SearchParams {
+                query,
+                limit: None,
+                project: Some("test/proj".to_string()),
+                r#type: None,
+                offset: None,
+                include_stale: None,
+                include_suppressed: None,
+                branch: None,
+                multi_hop: Some(true),
+                explain: None,
+            }))
+            .expect_err("multi-hop should require a query");
+        let json = assert_mcp_error(err, McpErrorCode::InvalidRequest, "search", false);
+        assert!(json["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("multi_hop requires")));
+    }
     Ok(())
 }
