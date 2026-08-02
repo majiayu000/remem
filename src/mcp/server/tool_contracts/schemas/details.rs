@@ -1,18 +1,22 @@
 use rmcp::schemars::{self, JsonSchema};
+use serde::Deserialize;
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ObservationDetailsOutput {
     details: Vec<DetailOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(untagged)]
 #[schemars(untagged)]
 enum DetailOutput {
     Memory(MemoryDetailOutput),
     Observation(ObservationDetailOutput),
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct MemoryDetailOutput {
     id: i64,
     session_id: Option<String>,
@@ -31,7 +35,8 @@ struct MemoryDetailOutput {
     topic_trace: Option<Vec<TopicTraceOutput>>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct MemoryTemporalFactOutput {
     project: String,
     subject: String,
@@ -44,7 +49,8 @@ struct MemoryTemporalFactOutput {
     status: String,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TopicTraceOutput {
     id: i64,
     topic_key: String,
@@ -60,17 +66,39 @@ struct TopicTraceOutput {
     updated_at_epoch: i64,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct ObservationDetailOutput {
-    #[schemars(flatten)]
-    observation: ObservationOutput,
+    id: i64,
+    memory_session_id: String,
+    #[serde(rename = "type")]
+    #[schemars(rename = "type")]
+    observation_type: String,
+    title: Option<String>,
+    subtitle: Option<String>,
+    narrative: Option<String>,
+    facts: Option<String>,
+    concepts: Option<String>,
+    files_read: Option<String>,
+    files_modified: Option<String>,
+    discovery_tokens: Option<i64>,
+    created_at: String,
+    created_at_epoch: i64,
+    project: Option<String>,
+    status: String,
+    last_accessed_epoch: Option<i64>,
+    content_session_id: Option<String>,
+    branch: Option<String>,
+    commit_sha: Option<String>,
     compressed_sources: Option<Vec<CompressedObservationSourceOutput>>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ObservationOutput {
     id: i64,
     memory_session_id: String,
+    #[serde(rename = "type")]
     #[schemars(rename = "type")]
     observation_type: String,
     title: Option<String>,
@@ -91,7 +119,8 @@ pub(super) struct ObservationOutput {
     commit_sha: Option<String>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CompressedObservationSourceOutput {
     compressed_observation_id: i64,
     source_observation_id: i64,

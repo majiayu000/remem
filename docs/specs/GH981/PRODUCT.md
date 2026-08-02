@@ -29,8 +29,9 @@ shape.
 - Keep `timeline_report` as Markdown text with no misleading JSON schema.
 - Fail server construction if a registered tool has no contract or a contract
   names a tool that is not registered.
-- Fail a schema-bearing successful call if its legacy content is not the
-  expected JSON top-level shape; do not silently omit structured output.
+- Fail a schema-bearing successful call if its legacy content does not conform
+  to the exact DTO that generated its advertised schema, including required,
+  nullable, nested, union, enum, and closed-object constraints.
 - Pin the final merged router metadata and response-adapter behavior in tests.
 
 ## Side-Effect Boundary
@@ -120,8 +121,10 @@ or error payload changes as part of #981.
   shape broader than the production response.
 - Normal successful responses containing JSON `null` validate against the
   published 2020-12 schemas.
-- Representative object and array calls prove legacy text preservation and
-  schema-conforming structured content; errors never masquerade as success.
+- Real non-empty served-wire successes from all thirteen JSON tools prove
+  legacy text preservation and schema-conforming structured content, including
+  both detail union branches and nested/nullable values; errors never
+  masquerade as success.
 - Focused MCP tests, formatting, `cargo check`, and the repository preflight
   pass from the submitted commit.
 - After the implementation is deployed and Glama refreshes the server, its

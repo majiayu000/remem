@@ -9,7 +9,7 @@ use rmcp::model::{CallToolResult, ToolAnnotations};
 use serde_json::{json, Map, Value};
 
 use super::MemoryServer;
-use schemas::{build_schema, OutputSchema};
+use schemas::{build_schema, validate_output, OutputSchema};
 
 #[derive(Clone, Copy, Debug)]
 enum LegacyShape {
@@ -225,7 +225,7 @@ pub(super) fn apply(router: &mut ToolRouter<MemoryServer>) -> Result<()> {
                 build_schema(schema)
                     .with_context(|| format!("build output schema for {}", contract.name))?,
             );
-            wrap_success(route, contract.name, shape);
+            wrap_success(route, contract.name, shape, schema);
         } else {
             route.attr.output_schema = None;
         }
@@ -266,13 +266,18 @@ fn verify_complete_registry(router: &ToolRouter<MemoryServer>) -> Result<()> {
     );
 }
 
-fn wrap_success(route: &mut ToolRoute<MemoryServer>, tool: &'static str, shape: LegacyShape) {
+fn wrap_success(
+    route: &mut ToolRoute<MemoryServer>,
+    tool: &'static str,
+    shape: LegacyShape,
+    schema: OutputSchema,
+) {
     let original = Arc::clone(&route.call);
     route.call = Arc::new(move |context| {
         let original = Arc::clone(&original);
         Box::pin(async move {
             let result = original(context).await?;
-            add_structured_content(tool, shape, result)
+            add_structured_content(tool, shape, schema, result)
         })
     });
 }
@@ -280,6 +285,7 @@ fn wrap_success(route: &mut ToolRoute<MemoryServer>, tool: &'static str, shape: 
 fn add_structured_content(
     tool: &'static str,
     shape: LegacyShape,
+    schema: OutputSchema,
     mut result: CallToolResult,
 ) -> std::result::Result<CallToolResult, rmcp::ErrorData> {
     if result.is_error == Some(true) {
@@ -331,6 +337,12 @@ fn add_structured_content(
             ));
         }
     };
+    validate_output(schema, &structured).map_err(|error| {
+        contract_violation(
+            tool,
+            format!("structured success did not match outputSchema: {error:#}"),
+        )
+    })?;
     result.structured_content = Some(structured);
     Ok(result)
 }

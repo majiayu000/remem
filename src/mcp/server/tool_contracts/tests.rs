@@ -4,9 +4,12 @@ use rmcp::ServiceExt;
 use serde_json::{json, Value};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader, Lines};
 
+use super::schemas::OutputSchema;
 use super::{add_structured_content, LegacyShape, CONTRACTS};
 use crate::db::test_support::ScopedTestDataDir;
 use crate::mcp::types::{CurrentStateParams, TimelineReportParams};
+
+mod served_wire;
 
 #[test]
 fn contract_names_are_unique() {
@@ -20,29 +23,41 @@ fn contract_names_are_unique() {
 
 #[test]
 fn object_adapter_preserves_legacy_text_exactly() {
-    let legacy = "{\n  \"status\": \"ok\"\n}";
+    let legacy = "{\n  \"id\": 7,\n  \"updated\": true\n}";
     let result = CallToolResult::success(vec![Content::text(legacy)]);
 
-    let adapted = add_structured_content("test", LegacyShape::Object, result)
-        .expect("object response should adapt");
+    let adapted = add_structured_content(
+        "update_workstream",
+        LegacyShape::Object,
+        OutputSchema::UpdateWorkstream,
+        result,
+    )
+    .expect("object response should adapt");
 
     assert_eq!(result_text(&adapted), legacy);
-    assert_eq!(adapted.structured_content, Some(json!({ "status": "ok" })));
+    assert_eq!(
+        adapted.structured_content,
+        Some(json!({ "id": 7, "updated": true }))
+    );
     let wire = serde_json::to_value(&adapted).expect("result should serialize");
-    assert_eq!(wire["structuredContent"], json!({ "status": "ok" }));
+    assert_eq!(
+        wire["structuredContent"],
+        json!({ "id": 7, "updated": true })
+    );
     assert!(wire.get("structured_content").is_none());
 }
 
 #[test]
 fn array_adapter_preserves_text_and_adds_named_envelope() {
-    let legacy = "[\n  {\"id\": 7}\n]";
+    let legacy = "[]";
     let result = CallToolResult::success(vec![Content::text(legacy)]);
 
     let adapted = add_structured_content(
-        "test",
+        "workstreams",
         LegacyShape::Array {
-            envelope: "details",
+            envelope: "workstreams",
         },
+        OutputSchema::Workstreams,
         result,
     )
     .expect("array response should adapt");
@@ -50,21 +65,23 @@ fn array_adapter_preserves_text_and_adds_named_envelope() {
     assert_eq!(result_text(&adapted), legacy);
     assert_eq!(
         adapted.structured_content,
-        Some(json!({ "details": [{ "id": 7 }] }))
+        Some(json!({ "workstreams": [] }))
     );
     let wire = serde_json::to_value(&adapted).expect("result should serialize");
-    assert_eq!(
-        wire["structuredContent"],
-        json!({ "details": [{ "id": 7 }] })
-    );
+    assert_eq!(wire["structuredContent"], json!({ "workstreams": [] }));
 }
 
 #[test]
 fn error_result_is_not_adapted() {
     let original = CallToolResult::error(vec![Content::text("{\"error\":{}}")]);
 
-    let adapted = add_structured_content("test", LegacyShape::Object, original.clone())
-        .expect("tool errors should pass through");
+    let adapted = add_structured_content(
+        "update_workstream",
+        LegacyShape::Object,
+        OutputSchema::UpdateWorkstream,
+        original.clone(),
+    )
+    .expect("tool errors should pass through");
 
     assert_eq!(adapted, original);
     assert!(adapted.structured_content.is_none());
@@ -75,10 +92,20 @@ fn malformed_or_wrong_shape_success_fails_loudly() {
     let malformed = CallToolResult::success(vec![Content::text("not json")]);
     let wrong_shape = CallToolResult::success(vec![Content::text("[]")]);
 
-    let malformed_error = add_structured_content("test", LegacyShape::Object, malformed)
-        .expect_err("malformed JSON must fail");
-    let shape_error = add_structured_content("test", LegacyShape::Object, wrong_shape)
-        .expect_err("wrong root shape must fail");
+    let malformed_error = add_structured_content(
+        "update_workstream",
+        LegacyShape::Object,
+        OutputSchema::UpdateWorkstream,
+        malformed,
+    )
+    .expect_err("malformed JSON must fail");
+    let shape_error = add_structured_content(
+        "update_workstream",
+        LegacyShape::Object,
+        OutputSchema::UpdateWorkstream,
+        wrong_shape,
+    )
+    .expect_err("wrong root shape must fail");
 
     assert!(malformed_error.message.contains("output contract"));
     assert!(shape_error.message.contains("output contract"));
@@ -91,19 +118,29 @@ fn adapter_rejects_values_that_drift_from_the_advertised_schema() {
             "undeclared root field",
             "update_workstream",
             LegacyShape::Object,
+            OutputSchema::UpdateWorkstream,
             json!({ "id": 7, "updated": true, "schema_drift_probe": true }),
         ),
         (
             "missing required field",
             "update_workstream",
             LegacyShape::Object,
+            OutputSchema::UpdateWorkstream,
             json!({ "id": 7 }),
         ),
         (
             "null in a non-null field",
             "update_workstream",
             LegacyShape::Object,
+            OutputSchema::UpdateWorkstream,
             json!({ "id": null, "updated": true }),
+        ),
+        (
+            "missing required nullable field",
+            "govern_memory",
+            LegacyShape::Object,
+            OutputSchema::GovernMemory,
+            json!({ "dry_run": true, "action": "stale", "affected": [] }),
         ),
         (
             "wrong nested field type",
@@ -111,6 +148,7 @@ fn adapter_rejects_values_that_drift_from_the_advertised_schema() {
             LegacyShape::Array {
                 envelope: "workstreams",
             },
+            OutputSchema::Workstreams,
             json!([{
                 "id": "not-an-integer",
                 "project": "/repo",
@@ -126,6 +164,7 @@ fn adapter_rejects_values_that_drift_from_the_advertised_schema() {
             LegacyShape::Array {
                 envelope: "details",
             },
+            OutputSchema::GetObservations,
             json!([{
                 "id": 7,
                 "project": "/repo",
@@ -143,9 +182,9 @@ fn adapter_rejects_values_that_drift_from_the_advertised_schema() {
         ),
     ];
 
-    for (label, tool, shape, value) in cases {
+    for (label, tool, shape, schema, value) in cases {
         let result = CallToolResult::success(vec![Content::text(value.to_string())]);
-        let error = add_structured_content(tool, shape, result)
+        let error = add_structured_content(tool, shape, schema, result)
             .expect_err(&format!("{label} should violate {tool}'s outputSchema"));
         assert!(error.message.contains("output contract"));
     }

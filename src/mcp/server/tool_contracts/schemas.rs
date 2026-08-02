@@ -8,10 +8,12 @@ mod tests;
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, Context};
 use rmcp::handler::server::tool::schema_for_output;
 use rmcp::model::JsonObject;
 use rmcp::schemars::{self, JsonSchema};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 use current_state::CurrentStateOutput;
@@ -56,38 +58,51 @@ pub(super) fn build_schema(kind: OutputSchema) -> anyhow::Result<Arc<JsonObject>
 
     let schema = normalize_nullable(schema.as_ref().clone())
         .with_context(|| format!("normalize {kind:?} output schema"))?;
-    let mut schema =
+    let schema =
         close_declared_objects(schema).with_context(|| format!("close {kind:?} output schema"))?;
-    if matches!(kind, OutputSchema::GovernMemory) {
-        require_root_property(&mut schema, "reason")?;
-    }
     Ok(Arc::new(schema))
 }
 
-fn require_root_property(schema: &mut JsonObject, property: &str) -> anyhow::Result<()> {
-    let properties = schema
-        .get("properties")
-        .and_then(Value::as_object)
-        .context("output schema root must contain object properties")?;
-    if !properties.contains_key(property) {
-        bail!("output schema has no root property {property:?}");
+pub(super) fn validate_output(kind: OutputSchema, value: &Value) -> anyhow::Result<()> {
+    match kind {
+        OutputSchema::CurrentState => validate::<CurrentStateOutput>(kind, value),
+        OutputSchema::Search => validate::<SearchOutput>(kind, value),
+        OutputSchema::RecallUserContext => validate::<RecallUserContextOutput>(kind, value),
+        OutputSchema::Timeline => validate::<TimelineOutput>(kind, value),
+        OutputSchema::GetObservations => validate::<ObservationDetailsOutput>(kind, value),
+        OutputSchema::LookupCommit => validate::<CommitLookupsOutput>(kind, value),
+        OutputSchema::CommitsForSession => validate::<SessionCommitsOutput>(kind, value),
+        OutputSchema::SaveMemory => validate::<SaveMemoryOutput>(kind, value),
+        OutputSchema::GovernMemory => validate::<GovernMemoryOutput>(kind, value),
+        OutputSchema::Workstreams => validate::<WorkstreamsOutput>(kind, value),
+        OutputSchema::UpdateWorkstream => validate::<UpdateWorkstreamOutput>(kind, value),
+        OutputSchema::SearchRaw => validate::<SearchRawOutput>(kind, value),
+        OutputSchema::ListRawSessions => validate::<RawSessionsOutput>(kind, value),
     }
-
-    let required = schema
-        .entry("required")
-        .or_insert_with(|| Value::Array(Vec::new()))
-        .as_array_mut()
-        .context("output schema root required must be an array")?;
-    if !required
-        .iter()
-        .any(|value| value.as_str() == Some(property))
-    {
-        required.push(Value::String(property.to_string()));
-    }
-    Ok(())
 }
 
-#[derive(JsonSchema)]
+fn validate<T: DeserializeOwned>(kind: OutputSchema, value: &Value) -> anyhow::Result<()> {
+    T::deserialize(value)
+        .map(drop)
+        .with_context(|| format!("validate {kind:?} output DTO"))
+}
+
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
+}
+
+fn required_nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": ["string", "null"]
+    })
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchOutput {
     mode: String,
     results: Vec<SearchResultOutput>,
@@ -102,9 +117,11 @@ struct SearchOutput {
     explain: Option<Value>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchResultOutput {
     id: i64,
+    #[serde(rename = "type")]
     #[schemars(rename = "type")]
     memory_type: String,
     title: String,
@@ -119,7 +136,8 @@ struct SearchResultOutput {
     staleness: Option<MemoryStalenessOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchNextStepOutput {
     tool: String,
     source: String,
@@ -128,7 +146,8 @@ struct SearchNextStepOutput {
     include_suppressed: Option<bool>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchPaginationOutput {
     limit: i64,
     offset: i64,
@@ -136,13 +155,15 @@ struct SearchPaginationOutput {
     next_offset: Option<i64>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchMultiHopOutput {
     hops: u8,
     entities_discovered: Vec<String>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RawSearchHitOutput {
     id: i64,
     source_type: String,
@@ -155,7 +176,8 @@ struct RawSearchHitOutput {
     created_at: String,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct MemoryStalenessOutput {
     status: String,
     age: String,
@@ -164,7 +186,8 @@ pub(super) struct MemoryStalenessOutput {
     error: Option<String>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecallUserContextOutput {
     query: String,
     project: String,
@@ -178,7 +201,8 @@ struct RecallUserContextOutput {
     diagnostics: RecallDiagnosticsOutput,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecallIncludedItemOutput {
     source_type: String,
     source_id: Option<i64>,
@@ -188,7 +212,8 @@ struct RecallIncludedItemOutput {
     source_refs: Option<Value>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecallDroppedItemOutput {
     source_type: String,
     source_id: Option<i64>,
@@ -196,7 +221,8 @@ struct RecallDroppedItemOutput {
     reason_code: String,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecallDiagnosticsOutput {
     requested_limit: usize,
     budget_chars: usize,
@@ -204,7 +230,8 @@ struct RecallDiagnosticsOutput {
     candidate_counts: RecallCandidateCountsOutput,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RecallCandidateCountsOutput {
     summaries: usize,
     claims: usize,
@@ -215,34 +242,40 @@ struct RecallCandidateCountsOutput {
     dropped: usize,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct TimelineOutput {
     observations: Vec<ObservationOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CommitLookupsOutput {
     commits: Vec<CommitLookupOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CommitLookupOutput {
     git: GitCommitOutput,
     sessions: Vec<CommitSessionLinkOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SessionCommitsOutput {
     commits: Vec<SessionCommitOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SessionCommitOutput {
     git: GitCommitOutput,
     link: CommitSessionLinkOutput,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct GitCommitOutput {
     id: i64,
     project: String,
@@ -257,7 +290,8 @@ struct GitCommitOutput {
     updated_at_epoch: i64,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CommitSessionLinkOutput {
     session_id: String,
     memory_session_id: Option<String>,
@@ -266,7 +300,8 @@ struct CommitSessionLinkOutput {
     summary: Option<SessionSummaryTraceOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SessionSummaryTraceOutput {
     request: Option<String>,
     completed: Option<String>,
@@ -277,7 +312,8 @@ struct SessionSummaryTraceOutput {
     created_at_epoch: Option<i64>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SaveMemoryOutput {
     id: i64,
     status: String,
@@ -300,14 +336,16 @@ struct SaveMemoryOutput {
     next_step: SaveMemoryNextStepOutput,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct LocalCopyOutput {
     status: String,
     path: Option<String>,
     reason: Option<String>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SaveMemoryNextStepOutput {
     tool: String,
     ids: Vec<i64>,
@@ -315,15 +353,19 @@ struct SaveMemoryNextStepOutput {
     reason: String,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct GovernMemoryOutput {
     dry_run: bool,
     action: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
     reason: Option<String>,
     affected: Vec<GovernedMemoryOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct GovernedMemoryOutput {
     id: i64,
     title: String,
@@ -331,12 +373,14 @@ struct GovernedMemoryOutput {
     new_status: String,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WorkstreamsOutput {
     workstreams: Vec<WorkstreamOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct WorkstreamOutput {
     id: i64,
     project: String,
@@ -351,7 +395,8 @@ struct WorkstreamOutput {
     completed_at_epoch: Option<i64>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
 #[schemars(rename_all = "lowercase")]
 enum WorkstreamStatus {
     Active,
@@ -360,13 +405,15 @@ enum WorkstreamStatus {
     Abandoned,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct UpdateWorkstreamOutput {
     id: i64,
     updated: bool,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct SearchRawOutput {
     query: String,
     project: Option<String>,
@@ -384,7 +431,8 @@ struct SearchRawOutput {
     results: Vec<RawArchiveRowOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RawArchiveRowOutput {
     id: i64,
     source_type: String,
@@ -398,7 +446,8 @@ struct RawArchiveRowOutput {
     created_at_epoch: i64,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RawSessionsOutput {
     since_epoch: Option<i64>,
     until_epoch: Option<i64>,
@@ -408,7 +457,8 @@ struct RawSessionsOutput {
     sessions: Vec<RawSessionOutput>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RawSessionOutput {
     source_root: String,
     project: String,

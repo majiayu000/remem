@@ -1,8 +1,10 @@
 use rmcp::schemars::{self, JsonSchema};
+use serde::Deserialize;
 
 use super::MemoryStalenessOutput;
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub(super) struct CurrentStateOutput {
     status: CurrentStateStatus,
     state_key: String,
@@ -16,7 +18,8 @@ pub(super) struct CurrentStateOutput {
     why: Option<Vec<CurrentStateWhyOutput>>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
 #[schemars(rename_all = "snake_case")]
 enum CurrentStateStatus {
     Current,
@@ -26,7 +29,8 @@ enum CurrentStateStatus {
     NoCurrent,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CurrentStateKeySummaryOutput {
     id: i64,
     owner_scope: String,
@@ -38,7 +42,8 @@ struct CurrentStateKeySummaryOutput {
     current_memory_id: Option<i64>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CurrentStateAnswerOutput {
     id: i64,
     title: String,
@@ -52,7 +57,8 @@ struct CurrentStateAnswerOutput {
     staleness: MemoryStalenessOutput,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CurrentStateMemoryRefOutput {
     id: i64,
     title: String,
@@ -69,7 +75,8 @@ struct CurrentStateMemoryRefOutput {
     source_operation_id: Option<i64>,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CurrentStateFactOutput {
     id: i64,
     subject: String,
@@ -82,7 +89,8 @@ struct CurrentStateFactOutput {
     status: String,
 }
 
-#[derive(JsonSchema)]
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct CurrentStateWhyOutput {
     edge_type: String,
     from_memory_id: Option<i64>,

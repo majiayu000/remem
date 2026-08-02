@@ -136,14 +136,19 @@ The wrapper invokes the original route handler and then:
 3. Parses that text as JSON without rewriting the original content.
 4. Validates the expected object/array top-level shape.
 5. Copies objects directly or wraps arrays under the registry envelope key.
-6. Sets `structuredContent` and returns the original content unchanged.
+6. Deserializes the structured value through the exact output DTO used to
+   generate that route's schema. Every typed DTO rejects undeclared fields;
+   required, nullable, enum, nested, and untagged-union semantics therefore
+   remain executable on the served path.
+7. Sets `structuredContent` and returns the original content unchanged.
 
-Unexpected content count/type, malformed JSON, or wrong top-level shape is an
-internal MCP error naming the tool and contract violation. It must never be a
-warning plus missing structured content.
+Unexpected content count/type, malformed JSON, wrong top-level shape, or DTO
+validation failure is an internal MCP error naming the tool and contract
+violation. It must never be a warning plus missing structured content.
 
-No full JSON-Schema validator is added to the hot path. The registry and DTO
-tests prove schema shape; the adapter enforces the runtime top-level contract.
+No second generic JSON-Schema interpreter is added to the hot path. Schema
+generation and runtime validation share one output DTO per route, preventing
+the two contract descriptions from drifting independently.
 
 ## Description Corrections
 
@@ -174,6 +179,11 @@ Focused tests cover:
   structured envelope;
 - error results remain unchanged without structured content;
 - malformed or wrong-shape successes fail loudly;
+- undeclared, missing, wrong-type, invalid-null, nested, and union-branch
+  mutations fail against the advertised contract;
+- every one of the 13 schema-bearing served routes returns a real non-empty
+  success through the adapter, covering both detail union branches and
+  nested/nullable values;
 - `MemoryServer::new` remains lazy and does not open the database.
 
 Existing handler tests remain the behavioral oracle for the legacy text
