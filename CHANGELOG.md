@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.47` for GH-981: all 14 MCP tools now publish
+  explicit titles and truthful read-only, destructive, idempotent, and
+  open-world annotations. The 13 JSON tools also publish object-rooted output
+  schemas and schema-conforming `structuredContent` while preserving their
+  existing text content byte-for-byte; the Markdown timeline report remains
+  explicitly unstructured. Router construction fails closed on contract drift,
+  and descriptions now disclose access-accounting and summary-quarantine
+  side effects.
 - Staged source version `0.6.44` for the GH-946 query-scaffolding follow-up:
   temporal parsing now returns exact consumed spans and removes only validated
   time phrases from claim tokens. Conversational request scaffolding and
