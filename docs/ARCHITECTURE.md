@@ -541,17 +541,19 @@ base_url = "https://api.anthropic.com"
 
 ## MCP Server
 
-MCP server via stdio transport, providing 7 tools:
+The stdio MCP server exposes 14 tools:
 
-| Tool | Description |
-|------|-------------|
-| `search` | Full-text search (FTS5) + project/type filter, returns ID+title |
-| `get_observations` | Get full memory by ID (narrative, facts, concepts, files) |
-| `timeline` | Timeline query: observations around an anchor point |
-| `timeline_report` | Project history and Token ROI report |
-| `save_memory` | Manually save important memories with local Markdown backup |
-| `workstreams` | List active high-level tasks tracked across sessions |
-| `update_workstream` | Update workstream status, next action, or blockers |
+- Retrieval: `current_state`, `search`, `recall_user_context`, `timeline`,
+  `search_raw`, and `list_raw_sessions`.
+- Detail and trace: `get_observations`, `lookup_commit`, and
+  `commits_for_session`.
+- Mutation and reporting: `save_memory`, `govern_memory`, `timeline_report`,
+  `workstreams`, and `update_workstream`.
+
+All descriptors carry explicit title/read-only/destructive/idempotent/open-world
+annotations. Thirteen JSON tools preserve their existing text content and add
+object-rooted `outputSchema` plus matching `structuredContent`; legacy arrays
+use named structured envelopes. `timeline_report` remains Markdown-only.
 
 Recommended workflow: `search(query)` → find relevant IDs → `get_observations(ids)` for full content.
 `get_observations(source='observation')` reads current extracted-observation

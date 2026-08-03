@@ -8,7 +8,7 @@ use super::MemoryServer;
 #[tool_router(router = tool_router_commit, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Look up git commit metadata and linked memory sessions by full or short SHA. The response separates git metadata from memory-derived summaries so missing links are not inferred."
+        description = "Look up git commit metadata and linked memory sessions by full or short SHA. Its poisoning gate may quarantine the newest eligible unsafe linked session summary. The response separates git metadata from memory-derived summaries so missing links are not inferred."
     )]
     pub(super) fn lookup_commit(
         &self,
@@ -40,7 +40,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "List git commits linked to a content session ID or remem memory session ID. Returns link evidence plus git metadata; it does not guess commit intent when no link exists."
+        description = "List git commits linked to a content session ID or remem memory session ID. Its poisoning gate may quarantine the newest eligible unsafe linked session summary. Returns link evidence plus git metadata; it does not guess commit intent when no link exists."
     )]
     pub(super) fn commits_for_session(
         &self,
