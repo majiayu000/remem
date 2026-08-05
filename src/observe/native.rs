@@ -63,17 +63,19 @@ pub(super) fn sync_native_memory(
             confidence: 0.5,
             risk_class: "high",
             source_kind: SOURCE_KIND,
+            semantic_discriminator_sha256: None,
             owner_scope: "repo",
             owner_key: &project,
             target_project: Some(&project),
             context_class: "startup_core",
             routing_reason: "claude native topic file (external content, review required)",
+            quarantine_match: None,
         },
     )
     .with_context(|| format!("queue native memory candidate for {file_path}"))?;
 
     match outcome {
-        ExternalCandidateOutcome::Inserted { quarantined } => {
+        ExternalCandidateOutcome::Inserted { quarantined, .. } => {
             crate::log::info(
                 "observe",
                 &format!(
@@ -89,7 +91,7 @@ pub(super) fn sync_native_memory(
                 ),
             );
         }
-        ExternalCandidateOutcome::Duplicate => {}
+        ExternalCandidateOutcome::Duplicate { .. } => {}
     }
     Ok(())
 }
@@ -123,9 +125,20 @@ mod tests {
     }
 
     fn write_topic_file(test_dir: &ScopedTestDataDir, name: &str, content: &str) -> String {
+        write_project_topic_file(test_dir, "example", name, content)
+    }
+
+    fn write_project_topic_file(
+        test_dir: &ScopedTestDataDir,
+        project_slug: &str,
+        name: &str,
+        content: &str,
+    ) -> String {
         let path = test_dir
             .path
-            .join(".claude/projects/example/memory")
+            .join(".claude/projects")
+            .join(project_slug)
+            .join("memory")
             .join(name);
         let parent = path.parent().expect("native memory path parent");
         std::fs::create_dir_all(parent).expect("create native memory dir");
@@ -205,6 +218,46 @@ mod tests {
             |row| row.get(0),
         )?;
         assert_eq!(count, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn native_same_content_is_route_isolated_and_retry_counted() -> anyhow::Result<()> {
+        let test_dir = ScopedTestDataDir::new("native-route-identity");
+        let body = "Both repositories independently use the same release checklist.";
+        let alpha = write_project_topic_file(&test_dir, "repos-alpha", "shared.md", body);
+        let beta = write_project_topic_file(&test_dir, "repos-beta", "shared.md", body);
+        let conn = crate::db::open_db()?;
+
+        sync_native_memory(&conn, "session-alpha", &alpha, None)?;
+        sync_native_memory(&conn, "session-beta", &beta, None)?;
+        sync_native_memory(&conn, "session-alpha-retry", &alpha, None)?;
+
+        let rows: Vec<(String, String, i64)> = conn
+            .prepare(
+                "SELECT source_project, target_project, occurrence_count
+                 FROM external_candidate_identities
+                 WHERE source_kind = 'claude_native'
+                 ORDER BY source_project",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+            .collect::<std::result::Result<_, _>>()?;
+        assert_eq!(
+            rows,
+            vec![
+                ("/repos/alpha".to_string(), "/repos/alpha".to_string(), 2),
+                ("/repos/beta".to_string(), "/repos/beta".to_string(), 1),
+            ]
+        );
+        assert_eq!(
+            conn.query_row(
+                "SELECT COUNT(*) FROM memory_candidates
+                 WHERE source_kind = 'claude_native' AND topic_key = 'native-shared'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )?,
+            2
+        );
         Ok(())
     }
 

@@ -5,27 +5,53 @@ use super::merge::MergeResult;
 use crate::memory::lifecycle::MemoryLifecycleOp;
 use crate::memory::operation::{insert_operation_log, MemoryOperationInput, MemoryOperationPlan};
 
+mod target_guard;
+mod trust;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct ApplyOutcome {
     pub merged_id: i64,
     pub operation_id: i64,
 }
 
+#[cfg(test)]
 pub(super) fn apply(
     conn: &mut Connection,
     project: &str,
     result: &MergeResult,
 ) -> Result<ApplyOutcome> {
     let tx = conn.transaction()?;
+    let outcome = apply_mutations_in_transaction(&tx, project, result)?;
+    tx.commit()?;
+    Ok(outcome)
+}
+
+pub(super) fn apply_in_transaction(
+    conn: &Connection,
+    project: &str,
+    cluster: &super::Cluster,
+    result: &MergeResult,
+) -> Result<ApplyOutcome> {
+    super::freshness::validate_cluster_snapshot(conn, project, cluster)?;
+    validate_cluster_superseded_ids(cluster, &result.superseded_ids)?;
+    apply_mutations_in_transaction(conn, project, result)
+}
+
+fn apply_mutations_in_transaction(
+    conn: &Connection,
+    project: &str,
+    result: &MergeResult,
+) -> Result<ApplyOutcome> {
     let superseded_ids =
-        validate_dream_superseded_ids(&tx, project, &result.memory_type, &result.superseded_ids)?;
+        validate_dream_superseded_ids(conn, project, &result.memory_type, &result.superseded_ids)?;
     validate_dream_target_topic(
-        &tx,
+        conn,
         project,
         &result.memory_type,
         &result.topic_key,
         &superseded_ids,
     )?;
+    let target_guard = target_guard::TargetResolutionGuard::capture(conn, &superseded_ids)?;
     let state_key = crate::memory::state_key::derive_state_key(
         &result.memory_type,
         Some(&result.topic_key),
@@ -48,7 +74,7 @@ pub(super) fn apply(
 
     // Upsert the merged memory (reuses existing topic_key upsert logic)
     let merged_id = crate::memory::insert_memory_full(
-        &tx,
+        conn,
         Some("dream"),
         project,
         Some(&result.topic_key),
@@ -60,13 +86,15 @@ pub(super) fn apply(
         "project",
         None,
     )?;
+    target_guard.validate_resolution(merged_id)?;
+    trust::mark_dream_generated(conn, merged_id)?;
     let actual_superseded_ids = superseded_ids
         .into_iter()
         .filter(|id| *id != merged_id)
         .collect::<Vec<_>>();
 
     crate::memory::lifecycle::soft_supersede(
-        &tx,
+        conn,
         project,
         &actual_superseded_ids,
         Some(merged_id),
@@ -79,9 +107,9 @@ pub(super) fn apply(
     let plan = MemoryOperationPlan::new(op, state_key, "dream consolidation applied")
         .with_target_memory_id(Some(merged_id))
         .with_superseded_ids(actual_superseded_ids.clone());
-    let operation_id = insert_operation_log(&tx, &operation_input, &plan, Some(merged_id))?;
+    let operation_id = insert_operation_log(conn, &operation_input, &plan, Some(merged_id))?;
     crate::memory::edge::insert_merged_into_edges(
-        &tx,
+        conn,
         &actual_superseded_ids,
         merged_id,
         crate::memory::edge::MemoryEdgeWriteContext {
@@ -90,12 +118,25 @@ pub(super) fn apply(
             ..Default::default()
         },
     )?;
-
-    tx.commit()?;
     Ok(ApplyOutcome {
         merged_id,
         operation_id,
     })
+}
+
+fn validate_cluster_superseded_ids(cluster: &super::Cluster, superseded_ids: &[i64]) -> Result<()> {
+    let member_ids = cluster
+        .members
+        .iter()
+        .map(|member| member.id)
+        .collect::<std::collections::HashSet<_>>();
+    if superseded_ids.is_empty() {
+        bail!("dream merge requires at least one superseded cluster member");
+    }
+    if let Some(id) = superseded_ids.iter().find(|id| !member_ids.contains(id)) {
+        bail!("dream superseded memory id={id} is outside cluster snapshot");
+    }
+    Ok(())
 }
 
 fn validate_dream_superseded_ids(
@@ -179,6 +220,8 @@ mod tests {
     use crate::memory::tests_helper::setup_memory_schema;
     use crate::memory::{insert_memory, search_memories_fts, search_memories_fts_filtered};
     use rusqlite::{params, Connection};
+
+    mod search_and_atomicity;
 
     fn setup() -> (Connection, String) {
         let conn = Connection::open_in_memory().expect("in-memory db");
@@ -378,6 +421,12 @@ mod tests {
         apply(&mut conn, &project, &result)?;
 
         assert_eq!(status_for_id(&conn, old_id), "active");
+        let trust: String = conn.query_row(
+            "SELECT source_trust_class FROM memories WHERE id = ?1",
+            params![old_id],
+            |row| row.get(0),
+        )?;
+        assert_eq!(trust, "external_content");
         assert_eq!(active_count(&conn, &project, "reused-topic"), 1);
         assert!(
             fts_indexed(&conn, old_id, "mergedreusedneedle"),
@@ -665,116 +714,5 @@ mod tests {
         assert_eq!(status_for_id(&conn, old_id), "active");
         assert_eq!(log_count, 0);
         Ok(())
-    }
-
-    #[test]
-    fn test_apply_hides_superseded_rows_through_query_predicate() {
-        let (mut conn, project) = setup();
-        let old_id = insert_memory(
-            &conn,
-            Some("sess-1"),
-            &project,
-            None,
-            "old searchable title",
-            "supersededneedle older content",
-            "decision",
-            None,
-        )
-        .expect("insert old memory");
-
-        let pre_hits: Vec<i64> = conn
-            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
-            .unwrap()
-            .query_map(params!["supersededneedle"], |r| r.get::<_, i64>(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            pre_hits,
-            vec![old_id],
-            "FTS index should locate the original row before apply"
-        );
-
-        let result = MergeResult {
-            topic_key: "merged-topic".to_owned(),
-            memory_type: "decision".to_owned(),
-            title: "Merged title".to_owned(),
-            content: "Merged content".to_owned(),
-            superseded_ids: vec![old_id],
-        };
-        apply(&mut conn, &project, &result).expect("apply");
-
-        let post_hits: Vec<i64> = conn
-            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
-            .unwrap()
-            .query_map(params!["supersededneedle"], |r| r.get::<_, i64>(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            post_hits,
-            vec![old_id],
-            "the all-status FTS index must retain the superseded row"
-        );
-        assert!(
-            search_memories_fts(&conn, "supersededneedle", Some(&project), None, 10, 0)
-                .expect("default search")
-                .is_empty(),
-            "the default query predicate must hide superseded rows"
-        );
-        let stale_hits = search_memories_fts_filtered(
-            &conn,
-            "supersededneedle",
-            Some(&project),
-            None,
-            10,
-            0,
-            true,
-            None,
-        )
-        .expect("include inactive search");
-        assert_eq!(stale_hits.len(), 1);
-        assert_eq!(stale_hits[0].id, old_id);
-        assert_eq!(stale_hits[0].status, "stale");
-
-        // The merged memory should still be searchable.
-        let merged_hits: Vec<i64> = conn
-            .prepare("SELECT rowid FROM memories_fts WHERE memories_fts MATCH ?1")
-            .unwrap()
-            .query_map(params!["Merged"], |r| r.get::<_, i64>(0))
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            merged_hits.len(),
-            1,
-            "merged memory should remain indexed in FTS"
-        );
-    }
-
-    #[test]
-    fn test_apply_is_atomic_on_invalid_superseded_id() {
-        // ID 99999 does not exist — stale-mark must fail, and the upsert must be rolled back.
-        let (mut conn, project) = setup();
-        let result = MergeResult {
-            topic_key: "atomic-merged".to_owned(),
-            memory_type: "decision".to_owned(),
-            title: "Atomic title".to_owned(),
-            content: "Atomic content".to_owned(),
-            superseded_ids: vec![99999],
-        };
-        assert!(
-            apply(&mut conn, &project, &result).is_err(),
-            "apply must fail when a superseded id does not exist"
-        );
-
-        let count: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM memories WHERE project = ?1 AND topic_key = ?2",
-                params![project, "atomic-merged"],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(count, 0, "upsert must be rolled back when stale-mark fails");
     }
 }

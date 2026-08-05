@@ -19,38 +19,106 @@ pub(in crate::cli) fn run_review(action: ReviewAction) -> Result<()> {
             println!("Pending memory candidates ({}):", rows.len());
             for row in rows {
                 let project = row.project.as_deref().unwrap_or("<unknown project>");
+                let is_dream = row.source_kind.as_deref() == Some("dream_model_output");
                 println!(
-                    "  [{}] {} {} {} status={} confidence={:.2} risk={} project={}",
+                    "  [{}] {} {} {} status={} confidence={:.2} risk={} project={} source={}",
                     row.id,
-                    row.scope,
-                    row.memory_type,
-                    row.topic_key,
-                    row.review_status,
+                    terminal_safe(&row.scope),
+                    candidate_terminal_safe(&row.memory_type, is_dream),
+                    candidate_terminal_safe(&row.topic_key, is_dream),
+                    terminal_safe(&row.review_status),
                     row.confidence,
-                    row.risk_class,
-                    project
+                    terminal_safe(&row.risk_class),
+                    terminal_safe(project),
+                    terminal_safe(row.source_kind.as_deref().unwrap_or("<unknown>"))
                 );
                 if let Some(pattern) = &row.quarantine_pattern_id {
                     let version = row
                         .quarantine_pattern_version
                         .map(|value| format!("@v{value}"))
                         .unwrap_or_default();
-                    println!("      quarantine: {pattern}{version}");
+                    println!(
+                        "      quarantine: {}{}",
+                        terminal_safe(pattern),
+                        terminal_safe(&version)
+                    );
                 }
-                println!("      text: {}", db::truncate_str(&row.text, 180));
-                println!("      evidence: {}", row.evidence_event_ids);
+                println!(
+                    "      text: {}",
+                    candidate_terminal_preview(&row.text, 180, is_dream)
+                );
+                println!("      evidence: {}", terminal_safe(&row.evidence_event_ids));
                 for evidence in row.evidence_preview {
-                    println!("        {}", evidence);
+                    println!("        {}", terminal_safe(&evidence));
+                }
+                if let Some(provenance) = &row.dream_provenance {
+                    println!(
+                        "      dream_review_token: {}",
+                        provenance
+                            .review_token
+                            .as_deref()
+                            .map(terminal_safe)
+                            .unwrap_or_else(|| "<unavailable>".to_string())
+                    );
+                    println!(
+                        "      authorized_supersede_ids: {:?}",
+                        provenance.authorized_supersede_ids
+                    );
+                    for artifact in &provenance.artifacts {
+                        println!(
+                            "      dream_artifact: id={} version={} occurrences={} decision={} decision_ids={:?} payload_sha256={} field={} pattern={}@v{} members={:?} intended_superseded={:?}",
+                            artifact.artifact_id,
+                            artifact.version,
+                            artifact.occurrence_count,
+                            terminal_safe(&artifact.decision_kind),
+                            artifact.decision_ids,
+                            terminal_safe(&artifact.decision_payload_sha256),
+                            terminal_safe(&artifact.generated_field),
+                            terminal_safe(&artifact.pattern_id),
+                            artifact.pattern_version,
+                            artifact.member_ids,
+                            artifact.intended_superseded_ids
+                        );
+                        if let (Some(topic_key), Some(memory_type), Some(title), Some(content)) = (
+                            artifact.generated_topic_key.as_deref(),
+                            artifact.generated_memory_type.as_deref(),
+                            artifact.generated_title.as_deref(),
+                            artifact.generated_content.as_deref(),
+                        ) {
+                            println!(
+                                "        merge_payload: topic={} type={} title={} content={}",
+                                dream_terminal_safe(topic_key),
+                                dream_terminal_safe(memory_type),
+                                dream_terminal_preview(title, 96),
+                                dream_terminal_preview(content, 180)
+                            );
+                        }
+                    }
+                    for reason in &provenance.blocked_reasons {
+                        println!("      dream_blocked: {}", terminal_safe(reason));
+                    }
                 }
             }
         }
         ReviewAction::Approve {
             id,
             acknowledge_pattern,
+            acknowledge_dream_review_token,
         } => {
-            let approved = match acknowledge_pattern.as_deref() {
-                Some(pattern) => review::approve_candidate_with_ack(&mut conn, id, pattern)?,
-                None => review::approve_candidate(&mut conn, id)?,
+            let approved = match (
+                acknowledge_pattern.as_deref(),
+                acknowledge_dream_review_token.as_deref(),
+            ) {
+                (Some(pattern), Some(review_token)) => {
+                    review::approve_candidate_with_dream_ack(&mut conn, id, pattern, review_token)?
+                }
+                (Some(pattern), None) => {
+                    review::approve_candidate_with_ack(&mut conn, id, pattern)?
+                }
+                (None, Some(_)) => {
+                    bail!("--acknowledge-dream-review-token requires --acknowledge-pattern")
+                }
+                (None, None) => review::approve_candidate(&mut conn, id)?,
             };
             let Some(memory_id) = approved else {
                 bail!("candidate {} not found", id);
@@ -179,17 +247,20 @@ fn print_batch_preview(action: &str, preview: &BatchPreview) {
     );
     println!("  By type:");
     for (memory_type, count) in &preview.by_type {
-        println!("    {:<24} {:>6}", memory_type, count);
+        println!("    {:<24} {:>6}", terminal_safe(memory_type), count);
     }
     println!("  By project:");
     for (project, count) in &preview.by_project {
-        println!("    {:<48} {:>6}", project, count);
+        println!("    {:<48} {:>6}", terminal_safe(project), count);
     }
     println!("  Sample rows:");
     for sample in &preview.samples {
         println!(
             "    [{}] {} {} — {}",
-            sample.id, sample.memory_type, sample.topic_key, sample.text
+            sample.id,
+            terminal_safe(&sample.memory_type),
+            terminal_safe(&sample.topic_key),
+            terminal_safe(&sample.text)
         );
     }
 }
@@ -261,21 +332,106 @@ fn print_graph_candidate(row: &graph_review::ReviewGraphCandidate) {
     println!(
         "  [{}] {} {} {} -> {} confidence={:.2} risk={} status={} project={}",
         row.id,
-        row.candidate_type,
-        row.edge_type,
-        row.from_ref,
-        row.to_ref,
+        terminal_safe(&row.candidate_type),
+        terminal_safe(&row.edge_type),
+        terminal_safe(&row.from_ref),
+        terminal_safe(&row.to_ref),
         row.confidence,
-        row.risk_class,
-        row.review_status,
-        project
+        terminal_safe(&row.risk_class),
+        terminal_safe(&row.review_status),
+        terminal_safe(project)
     );
     println!("      evidence: {:?}", row.evidence_event_ids);
-    println!("      reason: {}", db::truncate_str(&row.reason, 180));
+    println!(
+        "      reason: {}",
+        terminal_safe(db::truncate_str(&row.reason, 180))
+    );
     if let Some(edge_id) = row.promoted_edge_id {
         println!("      promoted_edge: {}", edge_id);
     }
     for evidence in &row.evidence_preview {
-        println!("        {}", evidence);
+        println!("        {}", terminal_safe(evidence));
+    }
+}
+
+fn terminal_safe(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_control() {
+            output.extend(ch.escape_default());
+        } else if is_bidi_format_control(ch) {
+            output.extend(ch.escape_unicode());
+        } else {
+            output.push(ch);
+        }
+    }
+    output
+}
+
+fn candidate_terminal_safe(value: &str, is_dream: bool) -> String {
+    if is_dream {
+        dream_terminal_safe(value)
+    } else {
+        terminal_safe(value)
+    }
+}
+
+fn candidate_terminal_preview(value: &str, max_chars: usize, is_dream: bool) -> String {
+    if is_dream {
+        dream_terminal_preview(value, max_chars)
+    } else {
+        terminal_safe(db::truncate_str(value, max_chars))
+    }
+}
+
+fn dream_terminal_safe(value: &str) -> String {
+    terminal_safe(&crate::adapter::common::redact_sensitive_text(value))
+}
+
+fn dream_terminal_preview(value: &str, max_chars: usize) -> String {
+    let redacted = crate::adapter::common::redact_sensitive_text(value);
+    terminal_safe(db::truncate_str(&redacted, max_chars))
+}
+
+fn is_bidi_format_control(ch: char) -> bool {
+    matches!(ch, '\u{061c}' | '\u{200e}' | '\u{200f}')
+        || ('\u{202a}'..='\u{202e}').contains(&ch)
+        || ('\u{2066}'..='\u{2069}').contains(&ch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{dream_terminal_safe, terminal_safe};
+
+    #[test]
+    fn terminal_safe_escapes_control_and_ansi_bytes_without_hiding_text() {
+        let rendered = terminal_safe("visible\n\x1b[2Jspoof\r");
+        assert!(rendered.contains("visible"));
+        assert!(rendered.contains("spoof"));
+        assert!(rendered.contains("\\n"));
+        assert!(!rendered.contains('\n'));
+        assert!(!rendered.contains('\r'));
+        assert!(!rendered.contains('\x1b'));
+    }
+
+    #[test]
+    fn terminal_safe_escapes_unicode_bidi_format_controls() {
+        let rendered = terminal_safe("left\u{202e}right\u{2066}end");
+        assert_eq!(rendered, "left\\u{202e}right\\u{2066}end");
+        assert!(!rendered.contains('\u{202e}'));
+        assert!(!rendered.contains('\u{2066}'));
+    }
+
+    #[test]
+    fn dream_terminal_safe_redacts_secrets_before_escaping_controls() {
+        let secret = "ghp_1234567890abcdef";
+        let rendered = dream_terminal_safe(&format!("visible {secret}\n\x1b[2J\u{202e}spoof"));
+        assert!(rendered.contains("visible [REDACTED]"));
+        assert!(!rendered.contains(secret));
+        assert!(!rendered.contains('\n'));
+        assert!(!rendered.contains('\x1b'));
+        assert!(!rendered.contains('\u{202e}'));
+        assert!(rendered.contains("\\n"));
+        assert!(rendered.contains("\\u{202e}"));
     }
 }

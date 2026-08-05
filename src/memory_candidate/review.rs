@@ -6,10 +6,12 @@ use super::{
     ParsedMemoryCandidate,
 };
 mod approval;
+mod dream_provenance;
 
 pub(crate) use approval::{
     approve_candidate_in_transaction, edit_candidate_in_transaction, normalize_candidate_edit,
 };
+pub(crate) use dream_provenance::{load_dream_quarantine_provenance, DreamQuarantineProvenance};
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct ReviewCandidate {
@@ -24,8 +26,10 @@ pub(crate) struct ReviewCandidate {
     pub confidence: f64,
     pub risk_class: String,
     pub review_status: String,
+    pub source_kind: Option<String>,
     pub quarantine_pattern_id: Option<String>,
     pub quarantine_pattern_version: Option<i64>,
+    pub dream_provenance: Option<DreamQuarantineProvenance>,
     pub created_at_epoch: i64,
 }
 
@@ -133,10 +137,17 @@ pub(crate) struct BatchOutcome {
     pub promoted_memory_ids: Vec<i64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ReviewPromotion {
     memory_id: i64,
     promoted: bool,
+    superseded_ids: Vec<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ReviewApprovalOutcome {
+    pub memory_id: i64,
+    pub actual_superseded_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone)]
@@ -216,6 +227,7 @@ pub(crate) fn list_pending(
     rows.into_iter()
         .map(|row| {
             let evidence_preview = evidence_preview(conn, &row.evidence_event_ids)?;
+            let dream_provenance = load_dream_quarantine_provenance(conn, row.id)?;
             Ok(ReviewCandidate {
                 id: row.id,
                 project: row.project,
@@ -228,8 +240,10 @@ pub(crate) fn list_pending(
                 confidence: row.confidence,
                 risk_class: row.risk_class,
                 review_status: row.review_status,
+                source_kind: row.source_kind,
                 quarantine_pattern_id: row.quarantine_pattern_id,
                 quarantine_pattern_version: row.quarantine_pattern_version,
+                dream_provenance,
                 created_at_epoch: row.created_at_epoch,
             })
         })
@@ -245,7 +259,8 @@ pub(crate) fn approve_candidate_with_meta(
     id: i64,
     meta: &ReviewMeta,
 ) -> Result<Option<i64>> {
-    approval::approve_candidate_with_meta_and_ack(conn, id, meta, None)
+    approval::approve_candidate_with_meta_and_ack(conn, id, meta, None, None)
+        .map(|outcome| outcome.map(|outcome| outcome.memory_id))
 }
 
 pub(crate) fn approve_candidate_with_ack(
@@ -258,7 +273,25 @@ pub(crate) fn approve_candidate_with_ack(
         id,
         &ReviewMeta::single(default_review_actor()),
         Some(acknowledged_pattern_id),
+        None,
     )
+    .map(|outcome| outcome.map(|outcome| outcome.memory_id))
+}
+
+pub(crate) fn approve_candidate_with_dream_ack(
+    conn: &mut Connection,
+    id: i64,
+    acknowledged_pattern_id: &str,
+    acknowledged_dream_review_token: &str,
+) -> Result<Option<i64>> {
+    approval::approve_candidate_with_meta_and_ack(
+        conn,
+        id,
+        &ReviewMeta::single(default_review_actor()),
+        Some(acknowledged_pattern_id),
+        Some(acknowledged_dream_review_token),
+    )
+    .map(|outcome| outcome.map(|outcome| outcome.memory_id))
 }
 
 pub(crate) fn discard_candidate(conn: &Connection, id: i64) -> Result<bool> {
@@ -484,7 +517,20 @@ pub(crate) fn approve_batch(
         let row = load_candidate(&tx, *id)?
             .with_context(|| format!("candidate {id} disappeared during batch"))?;
         ensure_pending(&row)?;
-        let promotion = approval::promote_row(&tx, &row, "approved", None, meta, None)?;
+        if row.source_kind.as_deref() == Some("dream_model_output") {
+            bail!("dream_candidate_batch_approval_unsupported");
+        }
+        let promotion = approval::promote_row(
+            &tx,
+            &row,
+            "approved",
+            None,
+            false,
+            false,
+            meta,
+            None,
+            super::apply::SupersedePolicy::Unrestricted,
+        )?;
         if promotion.promoted {
             promoted_memory_ids.push(promotion.memory_id);
         }

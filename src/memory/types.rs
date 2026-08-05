@@ -378,6 +378,7 @@ pub mod tests_helper {
                 valid_from_epoch INTEGER,
                 valid_to_epoch INTEGER,
                 state_key_id INTEGER,
+                version INTEGER NOT NULL DEFAULT 1,
                 source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
                 acknowledged_pattern_id TEXT,
                 acknowledged_pattern_version INTEGER,

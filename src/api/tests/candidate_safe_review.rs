@@ -14,7 +14,13 @@ use crate::db::test_support::ScopedTestDataDir;
 use super::super::handlers::execute_safe_review_for_test;
 use super::authorized_json_request;
 
+mod dream;
 mod stable_errors;
+
+pub(super) use dream::{
+    insert_safe_dream_review_candidate, insert_safe_dream_review_candidate_with_decision,
+    insert_safe_dream_review_candidate_with_payload,
+};
 
 pub(super) fn insert_safe_review_candidate(
     fixture: &str,

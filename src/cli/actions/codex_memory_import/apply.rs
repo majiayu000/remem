@@ -9,7 +9,7 @@ use crate::memory_candidate::route::{
     insert_external_candidate, ExternalCandidateInsert, ExternalCandidateOutcome,
 };
 
-use super::plan::{topic_key_for, Classification, DestinationRoute, ImportPlan, SOURCE_KIND};
+use super::plan::{topic_key_for, DestinationRoute, ImportPlan, SOURCE_KIND};
 
 const TOOL_OWNED_PROJECT: &str = "tool:codex-cli";
 
@@ -24,11 +24,6 @@ pub(super) fn apply_plan(mut conn: Connection, plan: &ImportPlan) -> Result<Appl
     let tx = conn.transaction()?;
     let mut summary = ApplySummary::default();
     for entry in &plan.entries {
-        if entry.classification == Classification::Dedup {
-            summary.dedup += 1;
-            continue;
-        }
-
         let (project, owner_scope, owner_key, target_project, context_class, routing_reason) =
             match &entry.route {
                 DestinationRoute::Project(project) => (
@@ -62,19 +57,23 @@ pub(super) fn apply_plan(mut conn: Connection, plan: &ImportPlan) -> Result<Appl
                 confidence: 0.5,
                 risk_class: "high",
                 source_kind: SOURCE_KIND,
+                semantic_discriminator_sha256: None,
                 owner_scope,
                 owner_key,
                 target_project,
                 context_class,
                 routing_reason,
+                quarantine_match: None,
             },
         )?;
         match outcome {
-            ExternalCandidateOutcome::Inserted { quarantined: true } => summary.quarantined += 1,
-            ExternalCandidateOutcome::Inserted { quarantined: false } => {
-                summary.pending_review += 1
-            }
-            ExternalCandidateOutcome::Duplicate => summary.dedup += 1,
+            ExternalCandidateOutcome::Inserted {
+                quarantined: true, ..
+            } => summary.quarantined += 1,
+            ExternalCandidateOutcome::Inserted {
+                quarantined: false, ..
+            } => summary.pending_review += 1,
+            ExternalCandidateOutcome::Duplicate { .. } => summary.dedup += 1,
         }
     }
     tx.commit()?;

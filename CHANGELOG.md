@@ -345,6 +345,20 @@
   query failures propagate instead of being rendered as zero.
 
 ### Fixed
+- Staged source version `0.6.49` for GH-969: Dream now scans every generated
+  decision surface, including the combined title/content render and no-merge or
+  conflict reasons, before persistence. Poisoned output atomically becomes a
+  route-scoped quarantined candidate plus a versioned cluster-bound artifact;
+  token-aware review binds current source versions and canonical payloads and
+  can supersede only the exact acknowledged source set. Every later semantic
+  decision—including a clean no-merge or conflict—atomically invalidates older
+  review candidates for the same cluster.
+  Every decision now rechecks source payload, TTL, state-key currentness, and
+  suppression in its immediate write transaction. Clean generated memories are
+  external trust, and cluster-external state-key/semantic reuse rolls back.
+  External-candidate dedup now uses an immutable, atomic source/destination
+  identity ledger, so identical native content is isolated across projects and
+  retries remain idempotent after review or edits.
 - Staged source version `0.6.43` for GH-954: entity, temporal, fact, LIKE
   fallback, and graph channels now contribute pure weighted RRF instead of
   feeding reciprocal rank back as a synthetic normalized score. FTS, vector,

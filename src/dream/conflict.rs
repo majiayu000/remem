@@ -1,5 +1,5 @@
 use anyhow::{bail, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 
 use super::candidates::Cluster;
 use super::decisions;
@@ -21,9 +21,13 @@ pub(super) fn record_conflict(
     conflicting_ids: &[i64],
     reason: Option<&str>,
 ) -> Result<ConflictOutcome> {
-    let tx = conn.transaction()?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    super::freshness::validate_cluster_snapshot(&tx, project, cluster)?;
     let metadata = validate_conflicting_ids(&tx, project, cluster, conflicting_ids)?;
     let decision_cluster = cluster_for_conflicting_ids(cluster, &metadata.ids);
+    super::poisoning::terminalize_prior_cluster_candidates_for_clean_decision(
+        &tx, project, cluster, "conflict",
+    )?;
     if let Some(operation_id) = existing_conflict_operation_id(&tx, &metadata.ids)? {
         decisions::record_defer(&tx, project, &decision_cluster, reason, operation_id)?;
         tx.commit()?;
@@ -247,27 +251,29 @@ mod tests {
     use crate::memory::insert_memory;
     use crate::memory::tests_helper::setup_memory_schema;
 
-    fn cluster_for_ids(first_id: i64, second_id: i64) -> Cluster {
-        Cluster {
-            members: vec![
-                MemoryCandidate {
-                    id: first_id,
-                    topic_key: Some("conflict-a".to_string()),
-                    title: "Use provider A".to_string(),
-                    content: "Use provider A for embeddings.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 1,
-                },
-                MemoryCandidate {
-                    id: second_id,
-                    topic_key: Some("conflict-b".to_string()),
-                    title: "Use provider B".to_string(),
-                    content: "Use provider B for embeddings.".to_string(),
-                    memory_type: "decision".to_string(),
-                    updated_at_epoch: 2,
-                },
-            ],
-        }
+    fn cluster_for_ids(conn: &Connection, ids: [i64; 2]) -> Result<Cluster> {
+        let members = ids
+            .into_iter()
+            .map(|id| {
+                conn.query_row(
+                    "SELECT id, version, topic_key, title, content, memory_type, updated_at_epoch
+                     FROM memories WHERE id = ?1",
+                    params![id],
+                    |row| {
+                        Ok(MemoryCandidate {
+                            id: row.get(0)?,
+                            version: row.get(1)?,
+                            topic_key: row.get(2)?,
+                            title: row.get(3)?,
+                            content: row.get(4)?,
+                            memory_type: row.get(5)?,
+                            updated_at_epoch: row.get(6)?,
+                        })
+                    },
+                )
+            })
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Cluster { members })
     }
 
     #[test]
@@ -299,7 +305,7 @@ mod tests {
             "UPDATE memories SET expires_at_epoch = 1 WHERE id = ?1",
             params![second_id],
         )?;
-        let cluster = cluster_for_ids(first_id, second_id);
+        let cluster = cluster_for_ids(&conn, [first_id, second_id])?;
 
         let Err(error) = record_conflict(
             &mut conn,
@@ -311,7 +317,7 @@ mod tests {
             panic!("expired conflict memory should be rejected");
         };
         assert!(
-            error.to_string().contains("active repo memories"),
+            error.to_string().contains("dream_cluster_snapshot_stale"),
             "unexpected error: {error}"
         );
         let conflict_edge_count: i64 = conn.query_row(

@@ -11,6 +11,8 @@ pub(in crate::cli) enum ReviewAction {
     Approve {
         #[arg(long = "acknowledge-pattern")]
         acknowledge_pattern: Option<String>,
+        #[arg(long = "acknowledge-dream-review-token")]
+        acknowledge_dream_review_token: Option<String>,
         id: i64,
     },
     Discard {
@@ -91,4 +93,49 @@ pub(in crate::cli) enum GraphReviewAction {
         #[arg(long)]
         reason: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::ReviewAction;
+
+    #[derive(Parser)]
+    struct ReviewParser {
+        #[command(subcommand)]
+        action: ReviewAction,
+    }
+
+    #[test]
+    fn approve_parses_dream_review_token() {
+        let parsed = ReviewParser::parse_from([
+            "review",
+            "approve",
+            "--acknowledge-pattern",
+            "override_previous_instructions",
+            "--acknowledge-dream-review-token",
+            "sha256:reviewed",
+            "42",
+        ]);
+
+        match parsed.action {
+            ReviewAction::Approve {
+                id,
+                acknowledge_pattern,
+                acknowledge_dream_review_token,
+            } => {
+                assert_eq!(id, 42);
+                assert_eq!(
+                    acknowledge_pattern.as_deref(),
+                    Some("override_previous_instructions")
+                );
+                assert_eq!(
+                    acknowledge_dream_review_token.as_deref(),
+                    Some("sha256:reviewed")
+                );
+            }
+            _ => panic!("expected approve action"),
+        }
+    }
 }

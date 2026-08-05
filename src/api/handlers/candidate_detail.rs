@@ -11,12 +11,17 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use super::super::helpers::error_response;
 use super::super::types::{
-    CandidateDetailItem, CandidateDetailResponse, CandidateEvidenceItem, CandidateReviewDecision,
-    DbState,
+    CandidateDetailItem, CandidateDetailResponse, CandidateDreamArtifact, CandidateDreamProvenance,
+    CandidateEvidenceItem, CandidateReviewActionDecision, CandidateReviewActionDecisions,
+    CandidateReviewDecision, DbState,
+};
+use crate::memory_candidate::review::{
+    load_dream_quarantine_provenance, DreamQuarantineProvenance,
 };
 
 pub(super) struct CandidateDetailProjection {
     pub response: CandidateDetailResponse,
+    pub dream_provenance: Option<DreamQuarantineProvenance>,
 }
 
 pub(in crate::api) async fn handle_candidate_detail(
@@ -113,37 +118,112 @@ pub(super) fn load_candidate_detail(
     let suppressions = load_active_suppressions(conn)?;
     let candidate_suppressed = candidate_is_suppressed(&candidate, &suppressions);
     redact_candidate_fields(&mut candidate);
-    let mut blocked = Vec::new();
+    let mut base_blocked = Vec::new();
     if !matches!(
         candidate.review_status.as_str(),
         "pending_review" | "quarantined"
     ) {
-        push_blocked_reason(&mut blocked, "candidate_not_reviewable");
+        push_blocked_reason(&mut base_blocked, "candidate_not_reviewable");
     }
     if project_id.is_none() {
-        push_blocked_reason(&mut blocked, "candidate_project_unavailable");
+        push_blocked_reason(&mut base_blocked, "candidate_project_unavailable");
     }
     if candidate_suppressed {
-        push_blocked_reason(&mut blocked, "candidate_policy_suppressed");
+        push_blocked_reason(&mut base_blocked, "candidate_policy_suppressed");
     }
 
-    let evidence = load_evidence(
-        conn,
-        project_id,
-        &evidence_json,
-        &suppressions,
-        &mut blocked,
-    )?;
+    let dream_provenance = load_dream_quarantine_provenance(conn, id)?;
+    let mut approve_blocked = base_blocked.clone();
+    let evidence = if let Some(provenance) = &dream_provenance {
+        for reason in &provenance.blocked_reasons {
+            push_blocked_reason(&mut approve_blocked, reason);
+        }
+        for reason in provenance.approval_blocked_reasons() {
+            push_blocked_reason(&mut approve_blocked, &reason);
+        }
+        Vec::new()
+    } else {
+        load_evidence(
+            conn,
+            project_id,
+            &evidence_json,
+            &suppressions,
+            &mut approve_blocked,
+        )?
+    };
+    let mut reject_blocked = Vec::new();
+    for reason in &base_blocked {
+        if matches!(
+            reason.as_str(),
+            "candidate_not_reviewable" | "candidate_project_unavailable"
+        ) {
+            push_blocked_reason(&mut reject_blocked, reason);
+        }
+    }
+    let mut edit_blocked = approve_blocked.clone();
+    if dream_provenance.is_some() {
+        push_blocked_reason(&mut edit_blocked, "dream_candidate_edit_unsupported");
+    }
+    let response_provenance = dream_provenance.as_ref().map(api_dream_provenance);
     Ok(Some(CandidateDetailProjection {
         response: CandidateDetailResponse {
             data: candidate,
             evidence,
+            provenance: response_provenance,
             decision: CandidateReviewDecision {
-                can_review: blocked.is_empty(),
-                blocked_reasons: blocked,
+                can_review: approve_blocked.is_empty(),
+                blocked_reasons: approve_blocked.clone(),
+                actions: CandidateReviewActionDecisions {
+                    approve: action_decision(approve_blocked),
+                    reject: action_decision(reject_blocked),
+                    edit: action_decision(edit_blocked),
+                },
             },
         },
+        dream_provenance,
     }))
+}
+
+fn action_decision(blocked_reasons: Vec<String>) -> CandidateReviewActionDecision {
+    CandidateReviewActionDecision {
+        allowed: blocked_reasons.is_empty(),
+        blocked_reasons,
+    }
+}
+
+fn api_dream_provenance(provenance: &DreamQuarantineProvenance) -> CandidateDreamProvenance {
+    CandidateDreamProvenance {
+        kind: "dream_quarantine",
+        review_token: provenance.review_token.clone(),
+        authorized_supersede_ids: provenance.authorized_supersede_ids.clone(),
+        artifacts: provenance
+            .artifacts
+            .iter()
+            .map(|artifact| CandidateDreamArtifact {
+                artifact_id: artifact.artifact_id,
+                version: artifact.version,
+                project: artifact.project.clone(),
+                cluster_signature: artifact.cluster_signature.clone(),
+                member_ids: artifact.member_ids.clone(),
+                decision_kind: artifact.decision_kind.clone(),
+                decision_ids: artifact.decision_ids.clone(),
+                decision_payload_sha256: artifact.decision_payload_sha256.clone(),
+                intended_superseded_ids: artifact.intended_superseded_ids.clone(),
+                generated_topic_key: redact_optional(artifact.generated_topic_key.as_deref()),
+                generated_memory_type: redact_optional(artifact.generated_memory_type.as_deref()),
+                generated_title: redact_optional(artifact.generated_title.as_deref()),
+                generated_content: redact_optional(artifact.generated_content.as_deref()),
+                generated_field: artifact.generated_field.clone(),
+                pattern_id: artifact.pattern_id.clone(),
+                pattern_version: artifact.pattern_version,
+                source_operation: artifact.source_operation.clone(),
+                source_trust_class: artifact.source_trust_class.clone(),
+                occurrence_count: artifact.occurrence_count,
+                created_at_epoch: artifact.created_at_epoch,
+                updated_at_epoch: artifact.updated_at_epoch,
+            })
+            .collect(),
+    }
 }
 
 #[derive(Debug)]
@@ -356,6 +436,15 @@ fn redact_candidate_fields(candidate: &mut CandidateDetailItem) {
         .routing_reason
         .take()
         .map(|value| crate::adapter::common::redact_sensitive_text(&value));
+    if candidate.source_kind.as_deref() == Some("dream_model_output") {
+        candidate.topic_key = crate::adapter::common::redact_sensitive_text(&candidate.topic_key);
+        candidate.memory_type =
+            crate::adapter::common::redact_sensitive_text(&candidate.memory_type);
+    }
+}
+
+fn redact_optional(value: Option<&str>) -> Option<String> {
+    value.map(crate::adapter::common::redact_sensitive_text)
 }
 
 fn push_blocked_reason(reasons: &mut Vec<String>, reason: &str) {

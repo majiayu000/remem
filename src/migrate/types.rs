@@ -380,6 +380,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "automatic_cleanup",
         sql: include_str!("../migrations/v075_automatic_cleanup.sql"),
     },
+    Migration {
+        version: 76,
+        name: "dream_poisoning_quarantine",
+        sql: include_str!("../migrations/v076_dream_poisoning_quarantine.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

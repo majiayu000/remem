@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use super::run_migrations;
 use super::schema_drift::{SchemaObject, SCHEMA_INVARIANTS};
+use super::{run_migrations, validate_schema_invariants};
 
 /// The minimal v10 schema used to simulate an old database for upgrade tests.
 /// Includes FTS virtual tables and triggers (present in all real v10+ databases).
@@ -67,6 +67,9 @@ const CONVERGENCE_TABLES: &[&str] = &[
     "raw_ingest_failures",
     "memory_embeddings",
     "dream_cluster_decisions",
+    "dream_quarantine_artifacts",
+    "external_candidate_identities",
+    "external_candidate_recurrences",
     "graph_candidates",
     "graph_file_nodes",
     "graph_edges",
@@ -480,5 +483,181 @@ fn open_db_enables_foreign_keys() -> Result<()> {
     let conn = crate::db::open_db()?;
     let fk_on: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
     assert_eq!(fk_on, 1, "open_db must enable PRAGMA foreign_keys");
+    Ok(())
+}
+
+fn assert_v076_shape_drift(conn: &Connection, expected: &str) -> Result<()> {
+    let drift = validate_schema_invariants(conn)?;
+    assert!(
+        drift.iter().any(|finding| {
+            finding.contains("v076_dream_poisoning_quarantine critical shape mismatch")
+                && finding.contains(expected)
+        }),
+        "same-name wrong-shape object must fail loud for {expected}: {drift:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn v076_same_name_wrong_shape_objects_fail_loud() -> Result<()> {
+    let wrong_index = Connection::open_in_memory()?;
+    run_migrations(&wrong_index)?;
+    wrong_index.execute_batch(
+        "DROP INDEX idx_external_candidate_identities_candidate;
+         CREATE INDEX idx_external_candidate_identities_candidate
+         ON external_candidate_identities(source_kind);",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_index,
+        "index idx_external_candidate_identities_candidate",
+    )?;
+
+    let wrong_trigger = Connection::open_in_memory()?;
+    run_migrations(&wrong_trigger)?;
+    wrong_trigger.execute_batch(
+        "DROP TRIGGER external_candidate_identities_no_replace;
+         CREATE TRIGGER external_candidate_identities_no_replace
+         BEFORE INSERT ON external_candidate_identities BEGIN SELECT 1; END;
+         DROP TRIGGER dream_quarantine_artifacts_no_replace;
+         CREATE TRIGGER dream_quarantine_artifacts_no_replace
+         BEFORE INSERT ON dream_quarantine_artifacts BEGIN SELECT 1; END;
+         DROP TRIGGER dream_quarantine_artifacts_initial_counters;
+         CREATE TRIGGER dream_quarantine_artifacts_initial_counters
+         BEFORE INSERT ON dream_quarantine_artifacts BEGIN SELECT 1; END;
+         DROP TRIGGER dream_quarantine_artifacts_immutable_payload;
+         CREATE TRIGGER dream_quarantine_artifacts_immutable_payload
+         BEFORE UPDATE OF id ON dream_quarantine_artifacts BEGIN SELECT 1; END;
+         DROP TRIGGER external_candidate_identities_immutable_update;
+         CREATE TRIGGER external_candidate_identities_immutable_update
+         BEFORE UPDATE OF identity_sha256 ON external_candidate_identities
+         BEGIN SELECT 1; END;",
+    )?;
+    assert_v076_shape_drift(&wrong_trigger, "external_candidate_identities_no_replace")?;
+    assert_v076_shape_drift(&wrong_trigger, "dream_quarantine_artifacts_no_replace")?;
+    assert_v076_shape_drift(
+        &wrong_trigger,
+        "dream_quarantine_artifacts_initial_counters",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_trigger,
+        "dream_quarantine_artifacts_immutable_payload",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_trigger,
+        "external_candidate_identities_immutable_update",
+    )?;
+
+    let wrong_dream = Connection::open_in_memory()?;
+    run_migrations(&wrong_dream)?;
+    wrong_dream.execute_batch(
+        "DROP TABLE dream_quarantine_artifacts;
+         CREATE TABLE dream_quarantine_artifacts (
+             id INTEGER PRIMARY KEY,
+             version INTEGER NOT NULL DEFAULT 1,
+             project TEXT NOT NULL,
+             cluster_signature TEXT NOT NULL,
+             member_ids_json TEXT NOT NULL,
+             source_candidate_id INTEGER NOT NULL
+                 REFERENCES memory_candidates(id) ON DELETE CASCADE,
+             decision_kind TEXT NOT NULL,
+             decision_ids_json TEXT NOT NULL,
+             decision_payload_sha256 TEXT NOT NULL,
+             intended_superseded_ids_json TEXT NOT NULL,
+             generated_topic_key TEXT,
+             generated_memory_type TEXT,
+             generated_title TEXT,
+             generated_content TEXT,
+             generated_field TEXT NOT NULL,
+             pattern_id TEXT NOT NULL,
+             pattern_version INTEGER NOT NULL,
+             source_operation TEXT NOT NULL,
+             source_trust_class TEXT NOT NULL,
+             occurrence_count INTEGER NOT NULL DEFAULT 1,
+             created_at_epoch INTEGER NOT NULL,
+             updated_at_epoch INTEGER NOT NULL,
+             UNIQUE(project, cluster_signature)
+         );",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "missing UNIQUE(project,cluster_signature,source_candidate_id)",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "source_candidate_id missing REFERENCES memory_candidates(id) ON DELETE RESTRICT",
+    )?;
+    assert_v076_shape_drift(&wrong_dream, "missing SQL contract `decision_kind in")?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "missing SQL contract `json_valid(decision_ids_json)`",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "missing SQL contract `length(decision_payload_sha256) = 64`",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "missing SQL contract `generated_field in ( 'dream.topic_key'",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "missing SQL contract `length(trim(generated_topic_key)) > 0`",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_dream,
+        "missing SQL contract `length(trim(generated_memory_type)) > 0`",
+    )?;
+
+    let wrong_identity = Connection::open_in_memory()?;
+    run_migrations(&wrong_identity)?;
+    wrong_identity.execute_batch(
+        "DROP TABLE external_candidate_recurrences;
+         DROP TABLE external_candidate_identities;
+         CREATE TABLE external_candidate_identities (
+             identity_sha256 TEXT PRIMARY KEY NOT NULL,
+             candidate_id INTEGER NOT NULL
+                 REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+             source_kind TEXT NOT NULL,
+             memory_type TEXT NOT NULL,
+             semantic_discriminator_sha256 TEXT,
+             source_project TEXT NOT NULL,
+             owner_scope TEXT NOT NULL,
+             owner_key TEXT NOT NULL,
+             target_project TEXT,
+             topic_key TEXT NOT NULL,
+             text_sha256 TEXT NOT NULL,
+             first_seen_epoch INTEGER NOT NULL,
+             last_seen_epoch INTEGER NOT NULL,
+             occurrence_count INTEGER NOT NULL
+         );",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_identity,
+        "missing SQL contract `text_sha256 not glob '*[^0-9a-f]*'`",
+    )?;
+
+    let wrong_recurrence = Connection::open_in_memory()?;
+    run_migrations(&wrong_recurrence)?;
+    wrong_recurrence.execute_batch(
+        "DROP TABLE external_candidate_recurrences;
+         CREATE TABLE external_candidate_recurrences (
+             id INTEGER,
+             identity_sha256 TEXT NOT NULL
+                 REFERENCES external_candidate_identities(identity_sha256)
+                 ON DELETE RESTRICT,
+             canonical_candidate_id INTEGER NOT NULL
+                 REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+             candidate_id INTEGER NOT NULL
+                 REFERENCES memory_candidates(id) ON DELETE RESTRICT,
+             recurrence_kind TEXT NOT NULL,
+             pattern_id TEXT,
+             pattern_version INTEGER,
+             occurred_at_epoch INTEGER NOT NULL
+         );",
+    )?;
+    assert_v076_shape_drift(
+        &wrong_recurrence,
+        "external_candidate_recurrences.id must be PRIMARY KEY",
+    )?;
     Ok(())
 }

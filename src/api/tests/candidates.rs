@@ -12,7 +12,10 @@ use crate::db::test_support::ScopedTestDataDir;
 use super::super::handlers::{handle_candidate_detail, handle_list_candidates};
 use super::super::types::CandidateParams;
 use super::super::DbState;
-use super::candidate_safe_review::insert_safe_review_candidate;
+use super::candidate_safe_review::{
+    insert_safe_dream_review_candidate, insert_safe_dream_review_candidate_with_decision,
+    insert_safe_dream_review_candidate_with_payload, insert_safe_review_candidate,
+};
 
 async fn candidate_detail_payload(id: i64) -> anyhow::Result<(StatusCode, Value)> {
     let response = handle_candidate_detail(State(DbState), Path(id))
@@ -451,6 +454,213 @@ async fn candidate_detail_requires_at_least_one_evidence_reference() -> anyhow::
         serde_json::json!(["evidence_required"])
     );
     assert_eq!(payload["evidence"], serde_json::json!([]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_uses_dream_artifact_instead_of_event_evidence() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-dream-provenance");
+    let (candidate_id, member_ids) =
+        insert_safe_dream_review_candidate("candidate-detail-dream-provenance")?;
+
+    let (status, payload) = candidate_detail_payload(candidate_id).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["evidence"], serde_json::json!([]));
+    assert_eq!(payload["decision"]["can_review"], true);
+    assert_eq!(payload["decision"]["actions"]["approve"]["allowed"], true);
+    assert_eq!(payload["decision"]["actions"]["reject"]["allowed"], true);
+    assert_eq!(payload["decision"]["actions"]["edit"]["allowed"], false);
+    assert_eq!(payload["provenance"]["kind"], "dream_quarantine");
+    assert_eq!(
+        payload["provenance"]["authorized_supersede_ids"],
+        serde_json::json!(member_ids)
+    );
+    assert!(payload["provenance"]["review_token"]
+        .as_str()
+        .is_some_and(|token| token.starts_with("sha256:")));
+    assert_eq!(payload["provenance"]["artifacts"][0]["version"], 1);
+    assert_eq!(payload["provenance"]["artifacts"][0]["occurrence_count"], 1);
+    assert_eq!(
+        payload["provenance"]["artifacts"][0]["decision_kind"],
+        "merge"
+    );
+    assert_eq!(
+        payload["provenance"]["artifacts"][0]["decision_ids"],
+        serde_json::json!(member_ids)
+    );
+    assert!(
+        payload["provenance"]["artifacts"][0]["decision_payload_sha256"]
+            .as_str()
+            .is_some_and(|digest| digest.len() == 64)
+    );
+    assert!(payload["provenance"]["artifacts"][0]["cluster_signature"]
+        .as_str()
+        .is_some_and(|signature| signature.starts_with("sha256:")));
+    assert_eq!(
+        payload["provenance"]["artifacts"][0]["intended_superseded_ids"],
+        serde_json::json!(member_ids)
+    );
+    assert_eq!(
+        payload["provenance"]["artifacts"][0]["generated_field"],
+        "dream.title"
+    );
+    assert_eq!(
+        payload["provenance"]["artifacts"][0]["generated_title"],
+        "Reviewed Dream title"
+    );
+    assert_eq!(
+        payload["provenance"]["artifacts"][0]["generated_content"],
+        "Reviewed Dream content"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_redacts_dream_payload_from_entire_response() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-dream-redaction");
+    let secret = "ghp_1234567890abcdef";
+    let (candidate_id, _) = insert_safe_dream_review_candidate_with_payload(
+        "candidate-detail-dream-redaction",
+        &format!("dream-topic {secret}"),
+        &format!("decision {secret}"),
+        &format!("Dream title {secret}"),
+        &format!("Dream content {secret}"),
+    )?;
+
+    let (status, payload) = candidate_detail_payload(candidate_id).await?;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(payload["decision"]["actions"]["approve"]["allowed"], true);
+    assert!(!serde_json::to_string(&payload)?.contains(secret));
+    for value in [
+        &payload["data"]["topic_key"],
+        &payload["data"]["memory_type"],
+        &payload["data"]["text"],
+        &payload["provenance"]["artifacts"][0]["generated_topic_key"],
+        &payload["provenance"]["artifacts"][0]["generated_memory_type"],
+        &payload["provenance"]["artifacts"][0]["generated_title"],
+        &payload["provenance"]["artifacts"][0]["generated_content"],
+    ] {
+        assert!(value
+            .as_str()
+            .is_some_and(|text| text.contains("[REDACTED]")));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_reason_only_dream_decisions_only_allow_reject() -> anyhow::Result<()> {
+    for (decision_kind, expected_reason) in [
+        ("no_merge", "dream_decision_no_merge_not_approvable"),
+        ("conflict", "dream_decision_conflict_not_approvable"),
+    ] {
+        let fixture = format!("candidate-detail-dream-{decision_kind}");
+        let test_dir = ScopedTestDataDir::new(&fixture);
+        let (candidate_id, member_ids) =
+            insert_safe_dream_review_candidate_with_decision(&fixture, decision_kind, &[])?;
+
+        let (status, payload) = candidate_detail_payload(candidate_id).await?;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(payload["decision"]["can_review"], false);
+        assert_eq!(payload["decision"]["actions"]["approve"]["allowed"], false);
+        assert_eq!(payload["decision"]["actions"]["reject"]["allowed"], true);
+        assert_eq!(payload["decision"]["actions"]["edit"]["allowed"], false);
+        assert!(payload["decision"]["actions"]["approve"]["blocked_reasons"]
+            .as_array()
+            .expect("approve blockers should be an array")
+            .contains(&Value::String(expected_reason.to_string())));
+        assert_eq!(
+            payload["provenance"]["authorized_supersede_ids"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            payload["provenance"]["artifacts"][0]["decision_kind"],
+            decision_kind
+        );
+        assert_eq!(
+            payload["provenance"]["artifacts"][0]["intended_superseded_ids"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            payload["provenance"]["artifacts"][0]["member_ids"],
+            serde_json::json!(member_ids)
+        );
+        assert!(payload["provenance"]["review_token"]
+            .as_str()
+            .is_some_and(|token| token.starts_with("sha256:")));
+        drop(test_dir);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_blocks_dream_approval_without_artifact_but_allows_reject(
+) -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-dream-missing");
+    let fixture = "candidate-detail-dream-missing";
+    let (candidate_id, _) = insert_safe_review_candidate(
+        fixture,
+        "file_edit",
+        "Dream review evidence",
+        "Malformed Dream quarantine",
+    )?;
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE memory_candidates
+         SET review_status = 'quarantined', source_kind = 'dream_model_output',
+             source_project = ?1, target_project = ?1,
+             owner_scope = 'repo', owner_key = ?1,
+             source_trust_class = 'external_content',
+             quarantine_pattern_id = 'override_previous_instructions',
+             quarantine_pattern_version = ?2
+         WHERE id = ?3",
+        rusqlite::params![
+            fixture,
+            crate::memory::poisoning::INSTRUCTION_PATTERN_SET_VERSION,
+            candidate_id
+        ],
+    )?;
+    drop(conn);
+
+    let (_, payload) = candidate_detail_payload(candidate_id).await?;
+
+    assert_eq!(payload["decision"]["can_review"], false);
+    assert!(payload["decision"]["blocked_reasons"]
+        .as_array()
+        .expect("blocked reasons should be an array")
+        .contains(&Value::String("dream_provenance_missing".to_string())));
+    assert_eq!(payload["decision"]["actions"]["approve"]["allowed"], false);
+    assert_eq!(payload["decision"]["actions"]["reject"]["allowed"], true);
+    assert_eq!(payload["provenance"]["review_token"], Value::Null);
+    Ok(())
+}
+
+#[tokio::test]
+async fn candidate_detail_dream_token_changes_with_artifact_version_only() -> anyhow::Result<()> {
+    let _test_dir = ScopedTestDataDir::new("api-candidate-detail-dream-token-version");
+    let (candidate_id, _) =
+        insert_safe_dream_review_candidate("candidate-detail-dream-token-version")?;
+    let (_, before) = candidate_detail_payload(candidate_id).await?;
+    let candidate_version = before["data"]["version"].clone();
+    let before_token = before["provenance"]["review_token"].clone();
+    let conn = db::open_db()?;
+    conn.execute(
+        "UPDATE dream_quarantine_artifacts
+         SET version = version + 1,
+             occurrence_count = occurrence_count + 1,
+             updated_at_epoch = updated_at_epoch + 1
+         WHERE source_candidate_id = ?1",
+        rusqlite::params![candidate_id],
+    )?;
+    drop(conn);
+
+    let (_, after) = candidate_detail_payload(candidate_id).await?;
+
+    assert_eq!(after["data"]["version"], candidate_version);
+    assert_ne!(after["provenance"]["review_token"], before_token);
+    assert_eq!(after["provenance"]["artifacts"][0]["version"], 2);
     Ok(())
 }
 

@@ -1,5 +1,5 @@
 use anyhow::Result;
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use super::constants::{
     DREAM_MAX_CLUSTERS, DREAM_MIN_CLUSTER_SIZE, DREAM_RECENCY_GUARD_SECS, TOPIC_KEY_PREFIX_LEN,
@@ -8,6 +8,7 @@ use super::constants::{
 #[derive(Debug, Clone)]
 pub(crate) struct MemoryCandidate {
     pub id: i64,
+    pub version: i64,
     pub topic_key: Option<String>,
     pub title: String,
     pub content: String,
@@ -25,33 +26,40 @@ pub(crate) struct Cluster {
 /// Load active memories for a project and group them into merge candidates.
 pub(super) fn load_clusters(conn: &Connection, project: &str) -> Result<Vec<Cluster>> {
     let cutoff = chrono::Utc::now().timestamp() - DREAM_RECENCY_GUARD_SECS;
+    let current_filter =
+        crate::memory::memory_current_filter_sql("m.status", "m.expires_at_epoch", false);
+    let state_filter = crate::memory::memory_state_key_current_filter_sql("m");
+    let policy_filter = crate::memory::suppression::memory_policy_filter_sql("m");
 
-    let mut stmt = conn.prepare(
-        "SELECT id, topic_key, title, content, memory_type, updated_at_epoch
-         FROM memories
-         WHERE project = ?1
-           AND status = 'active'
-           AND updated_at_epoch < ?2
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, version, topic_key, title, content, memory_type, updated_at_epoch
+         FROM memories m
+         WHERE m.project = ?1
+           AND {current_filter}
+           AND {state_filter}
+           AND {policy_filter}
+           AND m.updated_at_epoch < ?2
            AND COALESCE(
-                owner_scope,
-                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
+                m.owner_scope,
+                CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user' ELSE 'repo' END
            ) = 'repo'
            AND COALESCE(
-                owner_key,
-                CASE WHEN COALESCE(scope, 'project') = 'global' THEN 'user:default' ELSE project END
+                m.owner_key,
+                CASE WHEN COALESCE(m.scope, 'project') = 'global' THEN 'user:default' ELSE m.project END
            ) = ?1
-         ORDER BY memory_type, topic_key, updated_at_epoch DESC",
-    )?;
+         ORDER BY m.memory_type, m.topic_key, m.updated_at_epoch DESC"
+    ))?;
 
     let candidates: Vec<MemoryCandidate> = stmt
-        .query_map([project, &cutoff.to_string()], |row| {
+        .query_map(params![project, cutoff], |row| {
             Ok(MemoryCandidate {
                 id: row.get(0)?,
-                topic_key: row.get(1)?,
-                title: row.get::<_, String>(2)?,
-                content: row.get::<_, String>(3)?,
-                memory_type: row.get::<_, String>(4)?,
-                updated_at_epoch: row.get(5)?,
+                version: row.get(1)?,
+                topic_key: row.get(2)?,
+                title: row.get::<_, String>(3)?,
+                content: row.get::<_, String>(4)?,
+                memory_type: row.get::<_, String>(5)?,
+                updated_at_epoch: row.get(6)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<MemoryCandidate>>>()?;
@@ -103,6 +111,7 @@ mod tests {
     fn make(id: i64, topic_key: Option<&str>, memory_type: &str) -> MemoryCandidate {
         MemoryCandidate {
             id,
+            version: 1,
             topic_key: topic_key.map(str::to_owned),
             title: format!("title-{}", id),
             content: format!("content-{}", id),
@@ -187,6 +196,7 @@ mod tests {
         conn.execute_batch(
             "CREATE TABLE memories (
                  id,
+                 version      INTEGER NOT NULL DEFAULT 1,
                  project      TEXT,
                  status       TEXT,
                  scope        TEXT DEFAULT 'project',
@@ -196,8 +206,23 @@ mod tests {
                  title        TEXT,
                  content      TEXT,
                  memory_type  TEXT,
-                 updated_at_epoch INTEGER
-             )",
+                 updated_at_epoch INTEGER,
+                 expires_at_epoch INTEGER,
+                 state_key_id INTEGER
+             );
+             CREATE TABLE memory_state_keys (
+                 id INTEGER PRIMARY KEY,
+                 current_memory_id INTEGER
+             );
+             CREATE TABLE memory_suppressions (
+                 id INTEGER PRIMARY KEY,
+                 target_kind TEXT NOT NULL,
+                 target_id INTEGER,
+                 target_value TEXT,
+                 status TEXT NOT NULL
+             );
+             CREATE TABLE memory_entities (memory_id INTEGER, entity_id INTEGER);
+             CREATE TABLE entities (id INTEGER PRIMARY KEY, canonical_name TEXT)",
         )
         .unwrap();
     }

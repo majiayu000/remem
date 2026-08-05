@@ -141,19 +141,45 @@ pub(super) fn build_plan(conn: &Connection, files: &[DiscoveredFile]) -> Result<
         let route = resolve_route(&record.cwd);
         let identity = record_identity(&record.body, &route);
         let topic_key = topic_key_for(&identity);
+        let quarantine_match = crate::memory::poisoning::scan_instruction_pattern(&record.body);
 
-        let classification = if seen_identities.contains(&identity)
-            || crate::memory_candidate::route::external_candidate_exists(
-                conn,
-                SOURCE_KIND,
-                &topic_key,
-                &record.body,
-            )? {
+        let classification = if seen_identities.contains(&identity) {
             Classification::Dedup
-        } else if crate::memory::poisoning::scan_instruction_pattern(&record.body).is_some() {
-            Classification::Quarantined
         } else {
-            Classification::PendingReview
+            let (source_project, owner_scope, owner_key, target_project) = match &route {
+                DestinationRoute::Project(project) => (
+                    project.as_str(),
+                    "repo",
+                    project.as_str(),
+                    Some(project.as_str()),
+                ),
+                DestinationRoute::ToolOwned => ("tool:codex-cli", "tool", "codex-cli", None),
+            };
+            match crate::memory_candidate::route::external_candidate_disposition(
+                conn,
+                &crate::memory_candidate::route::ExternalCandidateIdentity {
+                    source_kind: SOURCE_KIND,
+                    memory_type: "discovery",
+                    semantic_discriminator_sha256: None,
+                    source_project,
+                    owner_scope,
+                    owner_key,
+                    target_project,
+                    topic_key: &topic_key,
+                    text: &record.body,
+                },
+                quarantine_match,
+            )? {
+                crate::memory_candidate::route::ExternalCandidateDisposition::PendingReview => {
+                    Classification::PendingReview
+                }
+                crate::memory_candidate::route::ExternalCandidateDisposition::Quarantined => {
+                    Classification::Quarantined
+                }
+                crate::memory_candidate::route::ExternalCandidateDisposition::Duplicate => {
+                    Classification::Dedup
+                }
+            }
         };
         seen_identities.insert(identity.clone());
         entries.push(PlanEntry {
