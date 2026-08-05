@@ -2,18 +2,163 @@ use super::MemoryServer;
 use super::{assert_mcp_error, McpErrorCode};
 use crate::db::test_support::ScopedTestDataDir;
 use crate::mcp::types::{
-    SearchParams, TimelineParams, TimelineReportParams, UpdateWorkStreamParams, WorkStreamsParams,
+    GetObservationsParams, SearchParams, TimelineParams, TimelineReportParams,
+    UpdateWorkStreamParams, WorkStreamsParams,
 };
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::Tool;
 use rmcp::ServerHandler;
+use std::collections::BTreeSet;
 
-fn tool_description<'a>(server: &'a MemoryServer, name: &str) -> &'a str {
+#[derive(Debug)]
+struct ExpectedToolMetadata {
+    name: &'static str,
+    title: &'static str,
+    read_only: bool,
+    destructive: bool,
+    idempotent: bool,
+    open_world: bool,
+    required_output_fields: &'static [&'static str],
+}
+
+const EXPECTED_TOOL_METADATA: &[ExpectedToolMetadata] = &[
+    ExpectedToolMetadata {
+        name: "current_state",
+        title: "Current State",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+        required_output_fields: &["status"],
+    },
+    ExpectedToolMetadata {
+        name: "search",
+        title: "Search Memories",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: true,
+        required_output_fields: &["mode", "results", "next_step"],
+    },
+    ExpectedToolMetadata {
+        name: "recall_user_context",
+        title: "Recall User Context",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: true,
+        required_output_fields: &["query", "context", "included", "dropped", "diagnostics"],
+    },
+    ExpectedToolMetadata {
+        name: "timeline",
+        title: "Memory Timeline",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: true,
+        required_output_fields: &["observations"],
+    },
+    ExpectedToolMetadata {
+        name: "get_observations",
+        title: "Get Observation Details",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+        required_output_fields: &["details"],
+    },
+    ExpectedToolMetadata {
+        name: "lookup_commit",
+        title: "Lookup Commit",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+        required_output_fields: &["commits"],
+    },
+    ExpectedToolMetadata {
+        name: "commits_for_session",
+        title: "List Session Commits",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+        required_output_fields: &["commits"],
+    },
+    ExpectedToolMetadata {
+        name: "save_memory",
+        title: "Save Memory",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: true,
+        required_output_fields: &["status", "operation", "next_step"],
+    },
+    ExpectedToolMetadata {
+        name: "govern_memory",
+        title: "Govern Memory",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+        required_output_fields: &["dry_run", "action", "reason", "affected"],
+    },
+    ExpectedToolMetadata {
+        name: "timeline_report",
+        title: "Timeline Report",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+        required_output_fields: &[],
+    },
+    ExpectedToolMetadata {
+        name: "workstreams",
+        title: "List Workstreams",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+        required_output_fields: &["workstreams"],
+    },
+    ExpectedToolMetadata {
+        name: "update_workstream",
+        title: "Update Workstream",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+        required_output_fields: &["id", "updated"],
+    },
+    ExpectedToolMetadata {
+        name: "search_raw",
+        title: "Search Raw Archive",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+        required_output_fields: &["query", "count", "has_more", "results"],
+    },
+    ExpectedToolMetadata {
+        name: "list_raw_sessions",
+        title: "List Raw Sessions",
+        read_only: true,
+        destructive: false,
+        idempotent: true,
+        open_world: false,
+        required_output_fields: &["sample", "count", "sessions"],
+    },
+];
+
+fn registered_tool<'a>(server: &'a MemoryServer, name: &str) -> &'a Tool {
     server
         .tool_router
-        .map
         .get(name)
         .unwrap_or_else(|| panic!("{name} tool should be registered"))
-        .attr
+}
+
+fn tool_description<'a>(server: &'a MemoryServer, name: &str) -> &'a str {
+    registered_tool(server, name)
         .description
         .as_deref()
         .unwrap_or_else(|| panic!("{name} tool should have a description"))
@@ -48,25 +193,248 @@ fn public_tool_names_remain_compact_and_compatible() -> anyhow::Result<()> {
         .map
         .keys()
         .map(|name| name.as_ref())
-        .collect::<std::collections::BTreeSet<_>>();
-    let expected = std::collections::BTreeSet::from([
-        "commits_for_session",
-        "current_state",
-        "get_observations",
-        "govern_memory",
-        "list_raw_sessions",
-        "lookup_commit",
-        "recall_user_context",
-        "save_memory",
-        "search",
-        "search_raw",
-        "timeline",
-        "timeline_report",
-        "update_workstream",
-        "workstreams",
-    ]);
+        .collect::<BTreeSet<_>>();
+    let expected = EXPECTED_TOOL_METADATA
+        .iter()
+        .map(|tool| tool.name)
+        .collect::<BTreeSet<_>>();
 
     assert_eq!(actual, expected);
+    Ok(())
+}
+
+#[test]
+fn public_tool_metadata_matches_the_contract_matrix() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+
+    for expected in EXPECTED_TOOL_METADATA {
+        let tool = registered_tool(&server, expected.name);
+        assert_eq!(
+            tool.title.as_deref(),
+            Some(expected.title),
+            "{} title",
+            expected.name
+        );
+
+        let annotations = tool
+            .annotations
+            .as_ref()
+            .unwrap_or_else(|| panic!("{} should publish annotations", expected.name));
+        assert_eq!(
+            annotations.title.as_deref(),
+            Some(expected.title),
+            "{} annotation title",
+            expected.name
+        );
+        assert_eq!(
+            annotations.read_only_hint,
+            Some(expected.read_only),
+            "{} readOnlyHint",
+            expected.name
+        );
+        assert_eq!(
+            annotations.destructive_hint,
+            Some(expected.destructive),
+            "{} destructiveHint",
+            expected.name
+        );
+        assert_eq!(
+            annotations.idempotent_hint,
+            Some(expected.idempotent),
+            "{} idempotentHint",
+            expected.name
+        );
+        assert_eq!(
+            annotations.open_world_hint,
+            Some(expected.open_world),
+            "{} openWorldHint",
+            expected.name
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn get_observations_metadata_matches_access_accounting_side_effect() -> anyhow::Result<()> {
+    let _dir = ScopedTestDataDir::new("mcp-get-observations-access-metadata");
+    let server = MemoryServer::new()?;
+    let tool = registered_tool(&server, "get_observations");
+    let annotations = tool
+        .annotations
+        .as_ref()
+        .expect("get_observations should publish annotations");
+    assert_eq!(annotations.read_only_hint, Some(false));
+    assert_eq!(annotations.destructive_hint, Some(true));
+    assert_eq!(annotations.idempotent_hint, Some(false));
+
+    let conn = crate::db::open_db()?;
+    conn.execute(
+        "INSERT INTO memories
+         (session_id, project, title, content, memory_type, created_at_epoch,
+          updated_at_epoch, status, scope, access_count)
+         VALUES (NULL, '/repo', 'Accessed memory', 'body', 'decision', 1, 1,
+                 'active', 'project', 0)",
+        [],
+    )?;
+    let id = conn.last_insert_rowid();
+
+    for _ in 0..2 {
+        server
+            .get_observations(Parameters(GetObservationsParams {
+                ids: vec![id],
+                project: Some("/repo".to_string()),
+                source: Some("memory".to_string()),
+                include_suppressed: None,
+            }))
+            .map_err(anyhow::Error::msg)?;
+    }
+
+    let (access_count, last_accessed_epoch): (i64, Option<i64>) = conn.query_row(
+        "SELECT access_count, last_accessed_epoch FROM memories WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(access_count, 2);
+    assert!(last_accessed_epoch.is_some());
+    Ok(())
+}
+
+#[test]
+fn json_tools_publish_object_output_schemas_with_stable_required_fields() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+
+    for expected in EXPECTED_TOOL_METADATA {
+        let tool = registered_tool(&server, expected.name);
+        if expected.name == "timeline_report" {
+            assert!(
+                tool.output_schema.is_none(),
+                "timeline_report should remain Markdown without outputSchema"
+            );
+            continue;
+        }
+
+        let schema = tool
+            .output_schema
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} should publish outputSchema", expected.name));
+        assert_eq!(
+            schema.get("type").and_then(serde_json::Value::as_str),
+            Some("object"),
+            "{} outputSchema root type",
+            expected.name
+        );
+
+        let required = schema
+            .get("required")
+            .and_then(serde_json::Value::as_array)
+            .unwrap_or_else(|| {
+                panic!(
+                    "{} outputSchema should declare required fields",
+                    expected.name
+                )
+            })
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<BTreeSet<_>>();
+        for field in expected.required_output_fields {
+            assert!(
+                required.contains(field),
+                "{} outputSchema should require root field {field}",
+                expected.name
+            );
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn json_tools_publish_closed_object_output_schemas() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+
+    for expected in EXPECTED_TOOL_METADATA {
+        if expected.name == "timeline_report" {
+            continue;
+        }
+        let schema = registered_tool(&server, expected.name)
+            .output_schema
+            .as_deref()
+            .unwrap_or_else(|| panic!("{} should publish outputSchema", expected.name));
+        assert_eq!(
+            schema.get("additionalProperties"),
+            Some(&serde_json::Value::Bool(false)),
+            "{} outputSchema root must reject undeclared fields",
+            expected.name
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn serialized_tool_descriptors_use_mcp_camel_case_keys() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+
+    for expected in EXPECTED_TOOL_METADATA {
+        let wire = serde_json::to_value(registered_tool(&server, expected.name))?;
+        let descriptor = wire
+            .as_object()
+            .unwrap_or_else(|| panic!("{} descriptor should be an object", expected.name));
+        assert_eq!(
+            descriptor.get("title").and_then(serde_json::Value::as_str),
+            Some(expected.title),
+            "{} wire title",
+            expected.name
+        );
+        assert!(
+            descriptor.contains_key("annotations"),
+            "{} annotations",
+            expected.name
+        );
+        assert!(
+            !descriptor.contains_key("output_schema"),
+            "{} output_schema",
+            expected.name
+        );
+        assert_eq!(
+            descriptor.contains_key("outputSchema"),
+            expected.name != "timeline_report",
+            "{} outputSchema presence",
+            expected.name
+        );
+
+        let annotations = descriptor["annotations"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{} wire annotations should be an object", expected.name));
+        assert_eq!(
+            annotations.get("title").and_then(serde_json::Value::as_str),
+            Some(expected.title),
+            "{} wire annotation title",
+            expected.name
+        );
+        for (camel_case, snake_case, expected_value) in [
+            ("readOnlyHint", "read_only_hint", expected.read_only),
+            ("destructiveHint", "destructive_hint", expected.destructive),
+            ("idempotentHint", "idempotent_hint", expected.idempotent),
+            ("openWorldHint", "open_world_hint", expected.open_world),
+        ] {
+            assert_eq!(
+                annotations
+                    .get(camel_case)
+                    .and_then(serde_json::Value::as_bool),
+                Some(expected_value),
+                "{} wire {camel_case}",
+                expected.name
+            );
+            assert!(
+                !annotations.contains_key(snake_case),
+                "{} should not serialize {snake_case}",
+                expected.name
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -75,6 +443,7 @@ fn search_and_context_descriptions_explain_selection_boundaries() -> anyhow::Res
     let server = MemoryServer::new()?;
     let current_state = tool_description(&server, "current_state");
     assert!(current_state.contains("Read-only"));
+    assert!(current_state.contains("no_current"));
     assert!(current_state.contains("Use this instead of search"));
     assert!(current_state.contains("use timeline"));
     assert!(current_state.contains("JSON object"));
@@ -89,7 +458,10 @@ fn search_and_context_descriptions_explain_selection_boundaries() -> anyhow::Res
     assert!(search.contains("preserves the curated results"));
 
     let recall = tool_description(&server, "recall_user_context");
-    assert!(recall.contains("Read-only"));
+    assert!(!recall.contains("Read-only"));
+    assert!(recall.contains("poisoning gate"));
+    assert!(recall.contains("may quarantine"));
+    assert!(recall.contains("unsafe legacy or session summary"));
     assert!(recall.contains("Use search for exhaustive memory matches"));
     assert!(recall.contains("current_state"));
     assert!(recall.contains("bounded context bundle"));
@@ -100,6 +472,23 @@ fn search_and_context_descriptions_explain_selection_boundaries() -> anyhow::Res
     assert!(timeline.contains("anchor takes precedence"));
     assert!(timeline.contains("use timeline_report"));
     assert!(timeline.contains("JSON array"));
+    Ok(())
+}
+
+#[test]
+fn commit_tool_descriptions_disclose_linked_summary_quarantine() -> anyhow::Result<()> {
+    let server = MemoryServer::new()?;
+
+    for name in ["lookup_commit", "commits_for_session"] {
+        let description = tool_description(&server, name);
+        assert!(description.contains("poisoning gate"), "{name}");
+        assert!(description.contains("may quarantine"), "{name}");
+        assert!(
+            description.contains("unsafe linked session summary"),
+            "{name}"
+        );
+    }
+
     Ok(())
 }
 

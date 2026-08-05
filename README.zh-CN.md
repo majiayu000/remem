@@ -243,8 +243,11 @@ jq -r '.hooks.SessionStart[]?.hooks[]?.command' ~/.codex/hooks.json
 - 创建或更新 `~/.remem/config.toml` memory-AI profiles
 
 重启 Codex 后，remem 会在 session start 自动注入相关项目记忆，并在 stop
-时后台总结本次会话。Codex 也可以调用 `remem mcp` 暴露的 MCP 工具，包括
-`search`、`get_observations`、`save_memory`、`workstreams` 和 `timeline`。
+时后台总结本次会话。Codex 也可以调用 `remem mcp` 暴露的 14 个 MCP 工具，
+覆盖 current-state、curated/raw 检索、上下文召回、timeline/detail/commit
+查询、记忆保存与治理、报告及 workstream。所有工具都显式声明副作用；13 个
+JSON 工具在保持旧文本内容不变的同时返回匹配 output schema 的结构化内容，
+`timeline_report` 仍为 Markdown。
 
 默认 Codex 集成刻意保持低噪音：用 `SessionStart` 注入上下文，用 `Stop`
 做后台总结。Codex 通过 `[memory_ai.hosts."codex-cli"].context_gate = "strict"`

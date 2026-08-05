@@ -5,9 +5,10 @@ use anyhow::{ensure, Context, Result};
 use sha2::{Digest, Sha256};
 
 use super::types::{
-    CandidateExpectation, CandidatePrediction, ExtractionCase, ExtractionCaseReport,
-    ExtractionCorpus, ExtractionEvalMetadata, ExtractionEvalOptions, ExtractionEvalReport,
-    ExtractionMetricSummary, ExtractionRateMetric, ObservationExpectation, ObservationPrediction,
+    CandidateExpectation, CandidatePrediction, CandidateRiskClassCounts, ExtractionCase,
+    ExtractionCaseReport, ExtractionCorpus, ExtractionEvalMetadata, ExtractionEvalOptions,
+    ExtractionEvalReport, ExtractionMetricSummary, ExtractionRateMetric, ObservationExpectation,
+    ObservationPrediction,
 };
 
 const EVAL_PROJECT: &str = "/tmp/remem/extraction-eval";
@@ -374,6 +375,7 @@ fn summarize_metrics(
         .iter()
         .map(|case| case.predicted_candidates.len())
         .sum::<usize>();
+    let candidate_risk_classes = count_candidate_risk_classes(cases);
     let over_saved_predictions = cases
         .iter()
         .map(|case| case.over_saved_predictions)
@@ -440,6 +442,7 @@ fn summarize_metrics(
             forbidden_candidate_total - forbidden_candidate_hits,
             forbidden_candidate_total,
         ),
+        candidate_risk_classes,
         over_saved_predictions,
         total_predictions,
         over_save_penalty: if total_predictions == 0 {
@@ -449,6 +452,26 @@ fn summarize_metrics(
         },
         all_checks_passed: false,
     }
+}
+
+fn count_candidate_risk_classes(cases: &[ExtractionCaseReport]) -> CandidateRiskClassCounts {
+    let mut counts = CandidateRiskClassCounts::default();
+    let mut total = 0;
+    for candidate in cases.iter().flat_map(|case| &case.predicted_candidates) {
+        total += 1;
+        match candidate.risk_class.as_str() {
+            "low" => counts.low += 1,
+            "medium" => counts.medium += 1,
+            "high" => counts.high += 1,
+            other => panic!("candidate parser emitted risk class outside closed rubric: {other}"),
+        }
+    }
+    assert_eq!(
+        counts.low + counts.medium + counts.high,
+        total,
+        "candidate risk-class accounting must cover every prediction"
+    );
+    counts
 }
 
 fn missing_observations(cases: &[ExtractionCaseReport]) -> usize {

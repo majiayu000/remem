@@ -416,6 +416,8 @@ Tool operations ──→ captured_events (raw capture ledger)
                          ▼ observation_extract (single AI call per range)
                   observations (structured memory)
                          │
+                         ▼ claim-level support + closed risk/type gate
+                         │
              ┌───────────┼───────────┐
              ▼           ▼           ▼
           active      stale      compressed source
@@ -437,6 +439,15 @@ session_summaries ──→ memories (auto-promoted)
 ```
 
 - **Incremental delta**: During extraction, inject latest 10 existing memories so AI skips duplicates
+- **Candidate promotion boundary**: each candidate sentence must be supported
+  by an eligible source observation with matching polarity/modality. Directly
+  supported observation-path failure-and-recovery lessons are the only lesson
+  subtype that can auto-promote; preference/procedure types remain fail-closed.
+  Canonicalized credential-token variants, auth/authz controls, affirmative
+  destructive actions, generic imperatives, outer meta-negation, and ambiguous
+  modals are review-gated independently of the model's risk label. Secret
+  phrases and known instruction patterns are blocked before memory creation,
+  and all pending decisions retain an explicit block reason.
 - **File overlap staleness**: When new operations overwrite old files, old observations auto-marked stale
 - **Time decay**: FTS search ranked by relevance × time decay, stale observations further penalized
 - **Auto compression**: Projects with >100 observations: keep newest 50, merge oldest 30 into 1-2 summaries
@@ -533,17 +544,19 @@ base_url = "https://api.anthropic.com"
 
 ## MCP Server
 
-MCP server via stdio transport, providing 7 tools:
+The stdio MCP server exposes 14 tools:
 
-| Tool | Description |
-|------|-------------|
-| `search` | Full-text search (FTS5) + project/type filter, returns ID+title |
-| `get_observations` | Get full memory by ID (narrative, facts, concepts, files) |
-| `timeline` | Timeline query: observations around an anchor point |
-| `timeline_report` | Project history and Token ROI report |
-| `save_memory` | Manually save important memories with local Markdown backup |
-| `workstreams` | List active high-level tasks tracked across sessions |
-| `update_workstream` | Update workstream status, next action, or blockers |
+- Retrieval: `current_state`, `search`, `recall_user_context`, `timeline`,
+  `search_raw`, and `list_raw_sessions`.
+- Detail and trace: `get_observations`, `lookup_commit`, and
+  `commits_for_session`.
+- Mutation and reporting: `save_memory`, `govern_memory`, `timeline_report`,
+  `workstreams`, and `update_workstream`.
+
+All descriptors carry explicit title/read-only/destructive/idempotent/open-world
+annotations. Thirteen JSON tools preserve their existing text content and add
+object-rooted `outputSchema` plus matching `structuredContent`; legacy arrays
+use named structured envelopes. `timeline_report` remains Markdown-only.
 
 Recommended workflow: `search(query)` → find relevant IDs → `get_observations(ids)` for full content.
 `get_observations(source='observation')` reads current extracted-observation

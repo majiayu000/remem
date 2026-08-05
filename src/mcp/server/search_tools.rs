@@ -11,7 +11,7 @@ const RAW_PREVIEW_CHARS: usize = 300;
 #[tool_router(router = tool_router_search, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Read-only. Resolve one stable state_key to a JSON object with status=current, not_found, ambiguous, or unresolved_conflict, plus answer, compact history, and why edges. state_key must be non-blank; project/owner/type/as_of filters narrow the resolution. Use this instead of search when the durable key is known; use timeline for chronological observation context. Invalid input or database failures return a tool error."
+        description = "Read-only. Resolve one stable state_key to a JSON object with status=current, no_current, not_found, ambiguous, or unresolved_conflict, plus answer, compact history, and why edges. state_key must be non-blank; project/owner/type/as_of filters narrow the resolution. Use this instead of search when the durable key is known; use timeline for chronological observation context. Invalid input or database failures return a tool error."
     )]
     pub(super) fn current_state(
         &self,

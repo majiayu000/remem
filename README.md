@@ -269,8 +269,11 @@ Expected commands are host-only; model, executor, and context policy live in
 
 After restarting Codex, remem automatically injects relevant project memory at
 session start and summarizes the session at stop. Codex can also call the MCP
-tools exposed by `remem mcp`, including `search`, `get_observations`,
-`save_memory`, `workstreams`, and `timeline`.
+tools exposed by `remem mcp`: current-state, curated/raw search, contextual
+recall, timeline/detail/commit lookup, memory save/governance, reports, and
+workstream tools. All 14 tools publish explicit side-effect annotations. The 13
+JSON tools return both their legacy text content and matching structured
+content with an output schema; `timeline_report` remains Markdown.
 
 SessionStart keeps Core, Preferences, and Workstreams on their existing paths,
 then applies one deterministic relevance budget across Lessons, the non-Core
@@ -444,6 +447,17 @@ Remem is meant for the parts that should not depend on manual upkeep:
   instead of silently rebinding it. Every decision rechecks source payload,
   TTL, current-state pointer, and suppression under its write lock; clean model
   output stays external trust and cannot rewrite a cluster-external dedup target.
+- **Auditable candidate promotion**: candidate risk uses the closed
+  `low`/`medium`/`high` rubric. Observation-derived low-risk facts are checked
+  claim by claim against eligible source observations; supported negative facts
+  and ordinary engineering uses of “token” are not rejected by a bare-word
+  blacklist. Credential token variants, auth/authz state, destructive actions,
+  generic imperative controls, outer negation, and ambiguous modal claims are
+  deterministically review-gated even if a model labels them low risk. Directly
+  supported failure-and-recovery lessons may promote, while preferences,
+  procedures, secrets, instruction patterns, unsupported claims, and
+  prospective or conditional claims remain review-gated or quarantined with an
+  explicit block reason.
 - **Governance and auditability**: `remem why <id>`, `remem govern --action
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,

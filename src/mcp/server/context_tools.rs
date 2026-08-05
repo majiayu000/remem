@@ -13,7 +13,7 @@ use crate::{db, memory};
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {
     #[tool(
-        description = "Read-only. Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Requires a non-blank query. project sets the scope; otherwise cwd is normalized, and when both are omitted the current process working directory supplies the scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input, an unavailable process working directory, or database failures return a tool error."
+        description = "Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Its poisoning gate may quarantine an unsafe legacy or session summary. Requires a non-blank query. project sets the scope; otherwise cwd is normalized, and when both are omitted the current process working directory supplies the scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input, an unavailable process working directory, or database failures return a tool error."
     )]
     pub(super) fn recall_user_context(
         &self,

@@ -109,10 +109,18 @@ pub struct ExtractionMetricSummary {
     pub candidate_recall: ExtractionRateMetric,
     pub forbidden_observation_exclusion: ExtractionRateMetric,
     pub forbidden_candidate_exclusion: ExtractionRateMetric,
+    pub candidate_risk_classes: CandidateRiskClassCounts,
     pub over_saved_predictions: usize,
     pub total_predictions: usize,
     pub over_save_penalty: f64,
     pub all_checks_passed: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct CandidateRiskClassCounts {
+    pub low: usize,
+    pub medium: usize,
+    pub high: usize,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -171,6 +179,13 @@ impl Display for ExtractionEvalReport {
             format_rate(&self.metrics.candidate_precision),
             format_rate(&self.metrics.candidate_recall),
             format_rate(&self.metrics.forbidden_candidate_exclusion)
+        )?;
+        writeln!(
+            f,
+            "Candidate risk classes: low={} medium={} high={}",
+            self.metrics.candidate_risk_classes.low,
+            self.metrics.candidate_risk_classes.medium,
+            self.metrics.candidate_risk_classes.high
         )?;
         writeln!(
             f,
