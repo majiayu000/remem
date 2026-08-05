@@ -10,6 +10,8 @@ use crate::retrieval::search::SearchWeights;
 
 use super::filters::{push_excluded_type_filter, push_owner_included_filter};
 
+mod usage;
+
 /// Injection-only: how deep each channel reads before fusion. Not a scoring
 /// knob, so it stays here rather than in [`SearchWeights`] (GH953).
 const MIN_HYBRID_FETCH_LIMIT: i64 = 20;
@@ -166,6 +168,8 @@ pub(crate) fn query_hybrid_context_memories_with_rank_signal_mode(
     if channels.is_empty() {
         return Ok(vec![]);
     }
+
+    usage::push_usage_channel(conn, &mut channels, weights)?;
 
     if rank_signal_mode == InjectionRankSignalMode::LegacyRankPseudoScore {
         for channel in &mut channels {

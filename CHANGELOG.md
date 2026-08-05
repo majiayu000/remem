@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+- Staged source version `0.6.50` for GH-947: the SessionStart injection path
+  now applies `SearchWeights::usage`. It previously fused only its fts, entity,
+  temporal, fact, and vector channels, so `usage` was validated but never
+  scored — raising `USAGE_WEIGHT` would have reordered `retrieval::search`
+  results while leaving injected context byte-identical. Usage reranks the
+  candidates the retrieval channels already surfaced and never introduces a
+  memory on its own. The default weight stays `0.0`, so this change is
+  behavior-neutral until the rollout in GH-947 raises it.
+
 ### Added
 - Staged source version `0.6.48` for GH-955: memory candidates now use a
   closed low/medium/high risk rubric and claim-level source support instead of

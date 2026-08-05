@@ -52,6 +52,18 @@ pub(crate) struct WeightedRankedChannel<'a> {
     pub hits: &'a [WeightedRankedHit],
 }
 
+/// Distinct memory ids across already-retrieved hits, ascending.
+///
+/// Shared by the `retrieval::search` plan and the injection path so both feed
+/// the usage reranker the same candidate set. Order is not significant: the
+/// ids are consumed as a `WHERE id IN (...)` set.
+pub(crate) fn distinct_hit_ids<'a>(hits: impl Iterator<Item = &'a WeightedRankedHit>) -> Vec<i64> {
+    let mut ids = hits.map(|hit| hit.id).collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
 pub(crate) fn weighted_ranked_fuse(
     channels: &[WeightedRankedChannel<'_>],
     k: f64,

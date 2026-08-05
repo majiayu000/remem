@@ -457,3 +457,89 @@ fn injection_rejects_non_finite_fact_weight_before_empty_query_short_circuit() {
     .expect_err("non-finite fact weight must fail closed");
     assert!(error.to_string().contains("fact"), "{error:#}");
 }
+
+/// GH947: the injection path must respond to `SearchWeights::usage`.
+///
+/// Before this wiring `hybrid_context` fused only its retrieval channels, so
+/// `weights.usage` was validated but never applied. Raising `USAGE_WEIGHT`
+/// would have changed `retrieval::search` results while leaving SessionStart
+/// injection ordering byte-identical — a silent no-op rollout.
+fn mark_usage(conn: &Connection, memory_id: i64, access_count: i64, last_accessed_epoch: i64) {
+    let changed = conn
+        .execute(
+            "UPDATE memories SET access_count = ?2, last_accessed_epoch = ?3 WHERE id = ?1",
+            params![memory_id, access_count, last_accessed_epoch],
+        )
+        .expect("usage update");
+    assert_eq!(changed, 1, "usage update must hit exactly one memory");
+}
+
+#[test]
+fn injection_ordering_responds_to_usage_weight() {
+    let conn = Connection::open_in_memory().expect("in-memory database");
+    seed(&conn);
+
+    // Memory 2 wins the entity channel but loses the text match. Give it a
+    // strong, recent usage signal so usage is the only thing that can lift it
+    // above the fts winner.
+    mark_usage(&conn, 2, 40, chrono::Utc::now().timestamp());
+
+    let fts_heavy = SearchWeights {
+        fts: 100.0,
+        entity: 0.001,
+        usage: 0.0,
+        ..SearchWeights::default()
+    };
+    let usage_heavy = SearchWeights {
+        usage: 500.0,
+        ..fts_heavy
+    };
+
+    let without_usage = ids_for(&conn, fts_heavy);
+    let with_usage = ids_for(&conn, usage_heavy);
+
+    assert_eq!(
+        without_usage.first(),
+        Some(&1),
+        "with usage disabled the fts winner must lead; got {without_usage:?}"
+    );
+    assert_eq!(
+        with_usage.first(),
+        Some(&2),
+        "a positive usage weight must reorder the injection result; got {with_usage:?}"
+    );
+}
+
+#[test]
+fn usage_never_introduces_an_unretrieved_memory() {
+    let conn = Connection::open_in_memory().expect("in-memory database");
+    seed(&conn);
+
+    // Memory 3 shares no query terms and no entity link, so no retrieval
+    // channel surfaces it. Usage reranks retrieved candidates only; an
+    // overwhelming access count must not pull it into the injected set.
+    insert_memory(
+        &conn,
+        3,
+        PROJECT,
+        None,
+        "decision",
+        "never retrieved",
+        "no query terms and no entity link",
+        1_710_000_200,
+    );
+    mark_usage(&conn, 3, 100_000, chrono::Utc::now().timestamp());
+
+    let ids = ids_for(
+        &conn,
+        SearchWeights {
+            usage: 500.0,
+            ..SearchWeights::default()
+        },
+    );
+
+    assert!(
+        !ids.contains(&3),
+        "usage must rerank retrieved candidates only; got {ids:?}"
+    );
+}
