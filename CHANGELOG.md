@@ -345,7 +345,7 @@
   query failures propagate instead of being rendered as zero.
 
 ### Fixed
-- Staged source version `0.6.46` for GH-969: Dream now scans every generated
+- Staged source version `0.6.49` for GH-969: Dream now scans every generated
   decision surface, including the combined title/content render and no-merge or
   conflict reasons, before persistence. Poisoned output atomically becomes a
   route-scoped quarantined candidate plus a versioned cluster-bound artifact;
