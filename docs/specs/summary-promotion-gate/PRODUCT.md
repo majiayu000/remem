@@ -71,8 +71,9 @@ traffic before any behavior change.
 - No relaxation of existing gate thresholds for the observation path.
 - No bulk auto-approval of the existing `pending_review` backlog; existing
   rows keep their state and are only re-evaluated by explicit replay tooling.
-- No change to the auto-promotable memory-type vocabulary
-  (`lesson`/`preference` stay review-gated even when summary-derived).
+- No change to the summary-path type allowlist: `lesson` and `preference` stay
+  review-gated when summary-derived. The separate observation-path contract in
+  `candidate-auto-promotion/` permits only directly supported failure lessons.
 - No LLM calls added to the promotion path.
 
 ## User-Visible Behavior

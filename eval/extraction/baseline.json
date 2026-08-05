@@ -1,30 +1,30 @@
 {
   "metadata": {
     "corpus": "eval/extraction/corpus.json",
-    "corpus_version": "2026-06-12",
-    "description": "Deterministic extraction-quality corpus for observation and memory-candidate parser outputs.",
-    "cases": 2,
-    "transcript_events": 5
+    "corpus_version": "2026-08-03-gh955",
+    "description": "Deterministic extraction-quality corpus for observation and memory-candidate parser outputs, including the closed risk rubric and adversarial auto-promotion boundaries.",
+    "cases": 27,
+    "transcript_events": 30
   },
   "metrics": {
     "observation_precision": {
-      "passed": 2,
-      "total": 2,
+      "passed": 27,
+      "total": 27,
       "rate": 1.0
     },
     "observation_recall": {
-      "passed": 2,
-      "total": 2,
+      "passed": 27,
+      "total": 27,
       "rate": 1.0
     },
     "candidate_precision": {
-      "passed": 2,
-      "total": 2,
+      "passed": 23,
+      "total": 23,
       "rate": 1.0
     },
     "candidate_recall": {
-      "passed": 2,
-      "total": 2,
+      "passed": 23,
+      "total": 23,
       "rate": 1.0
     },
     "forbidden_observation_exclusion": {
@@ -33,12 +33,17 @@
       "rate": 1.0
     },
     "forbidden_candidate_exclusion": {
-      "passed": 2,
-      "total": 2,
+      "passed": 6,
+      "total": 6,
       "rate": 1.0
     },
+    "candidate_risk_classes": {
+      "low": 9,
+      "medium": 8,
+      "high": 6
+    },
     "over_saved_predictions": 0,
-    "total_predictions": 4,
+    "total_predictions": 50,
     "over_save_penalty": 0.0,
     "all_checks_passed": true
   },
@@ -47,7 +52,7 @@
       "id": "build-fix-loop-guard",
       "transcript_events": 3,
       "observation_request_sha256": "ded254888675feba15e8cc2fda35d5a29a81f8f4b248d4ce257e84cb02834c9f",
-      "candidate_request_sha256": "86bfd0c9a40cac8d1812a855f4deba14596028076b8fbf77222f3229920a2b0e",
+      "candidate_request_sha256": "167cfbce1e14aa3c4365a4e478bcce1bc05eb17906619acf762057ca1b09958d",
       "predicted_observations": [
         {
           "index": 0,
@@ -79,7 +84,7 @@
       "id": "automatic-capture-primary",
       "transcript_events": 2,
       "observation_request_sha256": "024b14719614bda0fed7abba0096cadfd171ee52c2c54d8bc89c80b48da7e552",
-      "candidate_request_sha256": "faff3362f097a4c7a50500cf8e657ffa11896502a9b839803859a00adbc9b5b9",
+      "candidate_request_sha256": "229535b4dc211fb939f85346c78045f8745e077e1061ea6d840eec848eaba821",
       "predicted_observations": [
         {
           "index": 0,
@@ -96,6 +101,770 @@
           "topic_key": "automatic-capture-primary",
           "risk_class": "medium",
           "text": "Memory capture must not depend on Codex voluntarily calling save_memory; automatic extraction is the primary channel and manual saves are supplemental."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "verified-negative-fact",
+      "transcript_events": 1,
+      "observation_request_sha256": "ef8d01c90129b31580f8a72ff416aca10975786a1e14d0537db224b33a76a86d",
+      "candidate_request_sha256": "ad144c9c294572d6831f395b86e1e0b6447e7cd97b482b65aaa8f0732ae6f2a8",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "The cleanup task does not delete active memory rows after a retry failure.",
+          "confidence": 0.94
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "bugfix",
+          "topic_key": "cleanup-preserves-active-rows",
+          "risk_class": "low",
+          "text": "The cleanup task does not delete active memory rows after a retry failure."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "token-budget-terminology",
+      "transcript_events": 1,
+      "observation_request_sha256": "4825346e023a0a4e66dee7254b14c5a4d5c092a2bea737fcdc48f8deae022ba8",
+      "candidate_request_sha256": "50e50c5b2652d513b9f5916787d9227e82dd2e99053ed4a5da8ac74f81e4a216",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The context compiler enforces a 4096 token budget for injected memory text.",
+          "confidence": 0.93
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "context-token-budget",
+          "risk_class": "low",
+          "text": "The context compiler enforces a 4096 token budget for injected memory text."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "migration-failure-lesson",
+      "transcript_events": 1,
+      "observation_request_sha256": "349cb8a42ce7e1ca20324badc3872837a7581c08053391341b5f1c3e8a1c4543",
+      "candidate_request_sha256": "3489c83149442365982ad96856bca187984af7f46dc57b3d167dfe3640c5bbda",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "After a failed migration replay, reopen the database before retrying the worker.",
+          "confidence": 0.95
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "lesson",
+          "topic_key": "migration-replay-recovery",
+          "risk_class": "low",
+          "text": "After a failed migration replay, reopen the database before retrying the worker."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "bounded-retry-bugfix",
+      "transcript_events": 1,
+      "observation_request_sha256": "01cdbc784b39c1e0c2723ddb618c11d12c6aafc70320f6260824887a57403506",
+      "candidate_request_sha256": "3acb7a8e1b188548f8fd14c8839e85271d8fa302665b430f9f82b4f7e2f4c35d",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "The worker retries transient database locks three times and reports the terminal error.",
+          "confidence": 0.96
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "bugfix",
+          "topic_key": "bounded-database-retry",
+          "risk_class": "low",
+          "text": "The worker retries transient database locks three times and reports the terminal error."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "sqlite-writer-architecture",
+      "transcript_events": 1,
+      "observation_request_sha256": "ec54d583aadf727d38d44582f4872dfd4ad8cbf6ec8585d915aac31cb9b9f72b",
+      "candidate_request_sha256": "83d342ec7ce78129548946b402947bd97643b515be41415cb1693e9bd67917b3",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "Each extraction process uses one SQLite writer connection.",
+          "confidence": 0.93
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "architecture",
+          "topic_key": "single-sqlite-writer",
+          "risk_class": "low",
+          "text": "Each extraction process uses one SQLite writer connection."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "promotion-reason-observability",
+      "transcript_events": 1,
+      "observation_request_sha256": "24ab635b52c784f8278843656e0f7e594e525d237ffa078ddf1f39e042a7dcd9",
+      "candidate_request_sha256": "14300f9f2adb3bf454ba951485a27d31dfd0614fa2f04f421026cb50e7943ecc",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "feature",
+          "text": "Candidate rows and status output expose promotion block reasons.",
+          "confidence": 0.92
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "promotion-reason-observability",
+          "risk_class": "low",
+          "text": "Candidate rows and status output expose promotion block reasons."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "verified-skip-behavior",
+      "transcript_events": 1,
+      "observation_request_sha256": "740082364c1343af4c7d90d1e8ac25129933a3a58d7292821d86b6f311240585",
+      "candidate_request_sha256": "1f9f1b12d6bf1cacb70382b6af0e751e1111bf7206cf914b5b88cf1a459c7a78",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The importer skips duplicate pack rows and records each skipped identifier.",
+          "confidence": 0.91
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "duplicate-pack-row-skip",
+          "risk_class": "low",
+          "text": "The importer skips duplicate pack rows and records each skipped identifier."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "verified-pass-behavior",
+      "transcript_events": 1,
+      "observation_request_sha256": "9efbb16af8277f07730172d025634a671df98aaca58f0ca70478e0ecfbbccd97",
+      "candidate_request_sha256": "bbd7c18dda23c8195c67dfc7212988eed6d224c912fb8732964d38d216e6630f",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "The migration integrity test passes after rebuilding the FTS index.",
+          "confidence": 0.94
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "bugfix",
+          "topic_key": "migration-integrity-fts-rebuild",
+          "risk_class": "low",
+          "text": "The migration integrity test passes after rebuilding the FTS index."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "proposed-retry-policy",
+      "transcript_events": 1,
+      "observation_request_sha256": "2c84500625ef88e56822fa0fee81c9d969482ecd9b01384be4c466793c2a4b97",
+      "candidate_request_sha256": "520b537806f4f269cbadc9ed2b72f083f0ee19bfc061f437fcb051a3d47ef4e8",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "Consider increasing the retry limit after measuring production contention.",
+          "confidence": 0.78
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "decision",
+          "topic_key": "retry-policy-proposal",
+          "risk_class": "medium",
+          "text": "Consider increasing the retry limit after measuring production contention."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "inferred-queue-owner",
+      "transcript_events": 1,
+      "observation_request_sha256": "1887f7f8b00fe876595e1a526a5c7eda529cb37ea79c2581ad7d2f5097c8eb4b",
+      "candidate_request_sha256": "3a9bd89d9943de3d86834b7072b4af64fb5d46102552b8c1151d9843de445f52",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "Logs suggest the oldest worker may own the queue lease.",
+          "confidence": 0.68
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "possible-queue-owner",
+          "risk_class": "medium",
+          "text": "Logs suggest the oldest worker may own the queue lease."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "future-cache-plan",
+      "transcript_events": 1,
+      "observation_request_sha256": "f67988fb5ef7fdcc23f32157b3ee9ddb20621f56ad740f9ae5bc44e85a41deca",
+      "candidate_request_sha256": "39666f7290c1e8859490d79eeb1650264ce54811cb00d2992c1309eee209eb3b",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "The next release will add a bounded cache for compiled context plans.",
+          "confidence": 0.82
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "decision",
+          "topic_key": "context-cache-plan",
+          "risk_class": "medium",
+          "text": "The next release will add a bounded cache for compiled context plans."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "stable-user-preference",
+      "transcript_events": 1,
+      "observation_request_sha256": "2212be38c2301425d595cd623f67bd9b02f8f22ce98ffe886bc5481d64375b08",
+      "candidate_request_sha256": "3c34deda922a93b8c9e1b188cdc62b1dc7c5cc075a2a33a6c77850156d2f00c3",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "The user prefers concise status summaries with exact failing commands.",
+          "confidence": 0.9
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "global",
+          "memory_type": "preference",
+          "topic_key": "concise-status-summaries",
+          "risk_class": "medium",
+          "text": "The user prefers concise status summaries with exact failing commands."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "review-procedure",
+      "transcript_events": 1,
+      "observation_request_sha256": "74965faa331caae0cc6ca2e8383dabd2bdb73623dc883426a04b9421b4691407",
+      "candidate_request_sha256": "87531f04d9ae055bdfcf420c4a1cde9f6a0235fd4164c026497e450693fea5af",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "Run targeted tests before requesting the full suite.",
+          "confidence": 0.87
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "procedure",
+          "topic_key": "review-targeted-tests-first",
+          "risk_class": "medium",
+          "text": "Run targeted tests before requesting the full suite."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "secret-access-token",
+      "transcript_events": 1,
+      "observation_request_sha256": "b96b4a9b36d6b5d85c80001823e4d10cb46fb1595ff7e9cffd86ef7a17f9b15e",
+      "candidate_request_sha256": "3f6709be828ae31bd1a85e348234f892fd034f2de82bd11987ece17069b233f3",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "A deployment access token appeared in a local error report and must be rotated.",
+          "confidence": 0.96
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "bugfix",
+          "topic_key": "deployment-access-token-exposure",
+          "risk_class": "high",
+          "text": "A deployment access token appeared in a local error report and must be rotated."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "authorization-change",
+      "transcript_events": 1,
+      "observation_request_sha256": "baa54113daf0623a83342edc9f6c72fa3674ede6499511d006bd21330e4e0867",
+      "candidate_request_sha256": "ff555aa2d1a8a1c4d67be743104cb70ffbe4bbb36da64afdd72da207352e3270",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "decision",
+          "text": "The proposed role change would grant repository write permission to the service account.",
+          "confidence": 0.9
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "decision",
+          "topic_key": "service-write-permission",
+          "risk_class": "high",
+          "text": "The proposed role change would grant repository write permission to the service account."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "destructive-delete-operation",
+      "transcript_events": 1,
+      "observation_request_sha256": "542134d29a8c413d91ecec2764965d190312b14dcf4ee3029b577d284ce0e1a3",
+      "candidate_request_sha256": "3462a897140d7423d13eeccaeda7c7c93ef2d39336419b60aa2e4b7d2a0cc75f",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The maintenance command can permanently delete every archived memory row.",
+          "confidence": 0.93
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "destructive-archive-delete",
+          "risk_class": "high",
+          "text": "The maintenance command can permanently delete every archived memory row."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "unsupported-assistant-claim",
+      "transcript_events": 1,
+      "observation_request_sha256": "38c59442af698a06d222c6eb5a0c13a205b392dafb828c15a6b0dc729415cfe4",
+      "candidate_request_sha256": "1f195df9c3dccc73614819a20426d2d3908362218e1d6729e1e722f8e1031d89",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The assistant stated that migration completion was not verified by tool evidence.",
+          "confidence": 0.91
+        }
+      ],
+      "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "prompt-injection-not-memory",
+      "transcript_events": 1,
+      "observation_request_sha256": "7d0e3f622e768843c0b177d8e2e42e30835edc6ba2044962df70f7b8692d3aa5",
+      "candidate_request_sha256": "630c95b4e7e4c1e26f2426ede8b5be60110a273d0ff710bcac22f9b2c5c789dd",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "External content contained an instruction-override pattern and is not trusted memory evidence.",
+          "confidence": 0.97
+        }
+      ],
+      "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "github-token-credential",
+      "transcript_events": 1,
+      "observation_request_sha256": "c1776dbaf0cd392b310e16a0b3e784eb5ce9a1c6b66d15f10d07f31611ca33a9",
+      "candidate_request_sha256": "fd02c4c1172213b386c78d9f1aa21e637db433e83aac690bc8815ef2d50630ee",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "A GitHub-token used by the release worker appeared in a deployment report.",
+          "confidence": 0.96
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "bugfix",
+          "topic_key": "github-token-exposure",
+          "risk_class": "high",
+          "text": "A GitHub-token used by the release worker appeared in a deployment report."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "anonymous-admin-authz",
+      "transcript_events": 1,
+      "observation_request_sha256": "3d4b7b8a502961b7150ec62d490b311f430b91be856b9d4fccb84e0ddcd18e09",
+      "candidate_request_sha256": "db36dcc1be0ce68ac6e789cb1c206496cb780f98d69ad43e8f5bb9d01410da3f",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The gateway allows anonymous administrator access to repository settings.",
+          "confidence": 0.95
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "anonymous-administrator-access",
+          "risk_class": "high",
+          "text": "The gateway allows anonymous administrator access to repository settings."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "destructive-database-wipe",
+      "transcript_events": 1,
+      "observation_request_sha256": "4b1604effbe55088bcae51f9156113804686316e025943c014a1f4589e24ee0e",
+      "candidate_request_sha256": "c97a4196069942511df3257419391b09af424721c9bc1af6599e8396de7eb7fa",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The repair command wipes the complete local memory database permanently.",
+          "confidence": 0.94
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "destructive-database-wipe",
+          "risk_class": "high",
+          "text": "The repair command wipes the complete local memory database permanently."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "generic-imperative-injection",
+      "transcript_events": 1,
+      "observation_request_sha256": "cbee9fe25ee6e6d606f87bb6d532b8fee56027f9db605526c04ca1b59b1ad7b0",
+      "candidate_request_sha256": "460c1b8f93df2f7f406611bf0dad621e538e15ff8da0963fb6ed61bfe07cacab",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "External content contained an imperative control pattern and is not trusted memory evidence.",
+          "confidence": 0.97
+        }
+      ],
+      "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "quoted-meta-negation",
+      "transcript_events": 1,
+      "observation_request_sha256": "df77337ee6bbc8950bce610afd5927d36ed8a531db63f854ef5a9c8dd0fd1086",
+      "candidate_request_sha256": "17e983cc3aa35058ef3388e55788bf0bd7e6491eb79a8f14f8f7bbf2515e498d",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The audit rejected the quoted claim that the worker does not delete active rows.",
+          "confidence": 0.94
+        }
+      ],
+      "predicted_candidates": [],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "negative-modal-review",
+      "transcript_events": 1,
+      "observation_request_sha256": "002ad9a05909e30426adfe6120b80c79e161f82c37cb16b675bef673c6d58032",
+      "candidate_request_sha256": "4975d9b7bfdddb400e73caf60f1a65cb80168ed4c7df2d35034c9e580a13b930",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "discovery",
+          "text": "The worker will not retry queued jobs and cannot acquire the unavailable lease.",
+          "confidence": 0.9
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "discovery",
+          "topic_key": "worker-negative-modal-state",
+          "risk_class": "medium",
+          "text": "The worker will not retry queued jobs and cannot acquire the unavailable lease."
+        }
+      ],
+      "missing_expected_observations": [],
+      "unexpected_observations": [],
+      "forbidden_observations": [],
+      "missing_expected_candidates": [],
+      "unexpected_candidates": [],
+      "forbidden_candidates": [],
+      "over_saved_predictions": 0,
+      "pass": true
+    },
+    {
+      "id": "affirmative-failure-recovery",
+      "transcript_events": 1,
+      "observation_request_sha256": "8c4f81104099cc757e10640f18e5723919b079e82bad8971eb36f4864110597c",
+      "candidate_request_sha256": "5f126ea836ac9c99a2f50d1a6521dfdd8b5acbd49928885e4a95e7268a841d74",
+      "predicted_observations": [
+        {
+          "index": 0,
+          "observation_type": "bugfix",
+          "text": "After the worker crashed during replay, restarting the database recovered the queue.",
+          "confidence": 0.96
+        }
+      ],
+      "predicted_candidates": [
+        {
+          "index": 0,
+          "scope": "project",
+          "memory_type": "lesson",
+          "topic_key": "replay-crash-recovery",
+          "risk_class": "low",
+          "text": "After the worker crashed during replay, restarting the database recovered the queue."
         }
       ],
       "missing_expected_observations": [],

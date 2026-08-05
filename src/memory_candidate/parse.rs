@@ -182,4 +182,14 @@ mod tests {
         assert!(normalize_memory_type("status").is_err());
         assert!(normalize_memory_type("nonsense").is_err());
     }
+
+    #[test]
+    fn risk_class_is_closed_and_unknown_values_fail_closed() {
+        for (input, expected) in [(" LOW ", "low"), ("medium", "medium"), ("High", "high")] {
+            assert_eq!(normalize_risk_class(input).unwrap(), expected);
+        }
+        assert!(normalize_risk_class("").is_err());
+        assert!(normalize_risk_class("critical").is_err());
+        assert!(normalize_risk_class("unknown").is_err());
+    }
 }

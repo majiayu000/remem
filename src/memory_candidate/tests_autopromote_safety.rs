@@ -264,7 +264,7 @@ async fn memory_candidate_keeps_exact_future_tense_candidate_pending() -> Result
     assert_eq!(review_status, "pending_review");
     assert_eq!(
         block_reason.as_deref(),
-        Some("no_supporting_source_observation")
+        Some("claim_semantics_require_review")
     );
     Ok(())
 }

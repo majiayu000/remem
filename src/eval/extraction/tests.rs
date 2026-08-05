@@ -9,23 +9,26 @@ fn committed_corpus_scores_current_baseline() {
     let report = run_corpus_path(ExtractionEvalOptions::default()).unwrap();
 
     assert!(report.metrics.all_checks_passed);
-    assert_eq!(report.metadata.cases, 2);
+    assert_eq!(report.metadata.cases, 27);
     assert_eq!(
         report.metrics.observation_precision,
-        ExtractionRateMetric::new(2, 2)
+        ExtractionRateMetric::new(27, 27)
     );
     assert_eq!(
         report.metrics.observation_recall,
-        ExtractionRateMetric::new(2, 2)
+        ExtractionRateMetric::new(27, 27)
     );
     assert_eq!(
         report.metrics.candidate_precision,
-        ExtractionRateMetric::new(2, 2)
+        ExtractionRateMetric::new(23, 23)
     );
     assert_eq!(
         report.metrics.candidate_recall,
-        ExtractionRateMetric::new(2, 2)
+        ExtractionRateMetric::new(23, 23)
     );
+    assert_eq!(report.metrics.candidate_risk_classes.low, 9);
+    assert_eq!(report.metrics.candidate_risk_classes.medium, 8);
+    assert_eq!(report.metrics.candidate_risk_classes.high, 6);
     assert_eq!(report.metrics.over_saved_predictions, 0);
     assert!(report
         .cases

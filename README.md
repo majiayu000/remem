@@ -437,6 +437,17 @@ Remem is meant for the parts that should not depend on manual upkeep:
   build/test failure evidence and an explicit "stop and challenge the
   hypothesis" style lesson feed an idempotent `failure` lesson before summary
   cooldown, duplicate, or skip exits.
+- **Auditable candidate promotion**: candidate risk uses the closed
+  `low`/`medium`/`high` rubric. Observation-derived low-risk facts are checked
+  claim by claim against eligible source observations; supported negative facts
+  and ordinary engineering uses of “token” are not rejected by a bare-word
+  blacklist. Credential token variants, auth/authz state, destructive actions,
+  generic imperative controls, outer negation, and ambiguous modal claims are
+  deterministically review-gated even if a model labels them low risk. Directly
+  supported failure-and-recovery lessons may promote, while preferences,
+  procedures, secrets, instruction patterns, unsupported claims, and
+  prospective or conditional claims remain review-gated or quarantined with an
+  explicit block reason.
 - **Governance and auditability**: `remem why <id>`, `remem govern --action
   stale --dry-run --json <id>`, `remem status --json`, and `remem usage --days
   14 --weeks 8` show why a memory is visible, what would change, store health,

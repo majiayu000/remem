@@ -29,7 +29,9 @@ Verified against `main` (3c63b99), 2026-07-02:
   `risk_class_not_low`; `missing_source_observation_batch` is unreachable in
   practice on this path.
 - `MemoryType::auto_promote` allows architecture/bugfix/decision/discovery
-  only. The summary path emits decision/discovery/lesson/preference.
+  only. The observation path separately recognizes the controlled failure
+  lesson contract from #955; the summary path still emits and allowlists only
+  decision/discovery for promotion.
 - Stats already group candidates by
   `review_status + auto_promote_block_reason`
   (`src/db/query/stats.rs`), but nothing records which pipeline produced a
