@@ -122,3 +122,21 @@ trustworthy at promotion time.
 Ship scan-and-quarantine on by default (it only affects new candidates), with
 the injection-time re-scan behind a config flag for one release to measure the
 false-positive rate before defaulting it on.
+
+### v076 Dream quarantine is forward-only
+
+The `v076_dream_poisoning_quarantine` migration is pure DDL. It creates
+`dream_quarantine_artifacts`, `external_candidate_identities`, and
+`external_candidate_recurrences` with their triggers and indexes, and does not
+issue any `UPDATE` or `INSERT ... SELECT` against existing rows.
+
+Consequence for operators: after upgrading to v076, memories that Dream merged
+into the store *before* the upgrade remain active and keep being retrieved and
+injected. Those rows are identifiable — the pre-v076 write path
+(`src/dream/apply.rs`) passes `Some("dream")` as `session_id` to
+`insert_memory_full`, so `memories.session_id = 'dream' AND status = 'active'`
+selects them — but this release deliberately leaves them untouched, keeping the
+data migration separate from the code change.
+
+Backfilling that existing store is tracked in #990. Until it lands, the Dream
+poisoning defense is closed for new writes only.
