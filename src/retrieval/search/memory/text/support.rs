@@ -89,14 +89,12 @@ pub(super) fn weighted_channel_inputs(channels: &[NamedChannel]) -> Vec<Weighted
 }
 
 pub(super) fn retrieved_candidate_ids(channels: &[NamedChannel]) -> Vec<i64> {
-    let mut ids = channels
-        .iter()
-        .filter(|channel| channel.has_hits())
-        .flat_map(|channel| channel.hits.iter().map(|hit| hit.id))
-        .collect::<Vec<_>>();
-    ids.sort_unstable();
-    ids.dedup();
-    ids
+    crate::retrieval::search::common::distinct_hit_ids(
+        channels
+            .iter()
+            .filter(|channel| channel.has_hits())
+            .flat_map(|channel| channel.hits.iter()),
+    )
 }
 
 pub(super) fn resolve_explicit_entity_scope(
