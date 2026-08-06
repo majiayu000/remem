@@ -20,6 +20,10 @@
   the immutable quarantine ledger is written.
 
 ### Fixed
+- The Codex plugin runtime version probe now allows 15 seconds for cold binary
+  startup instead of hard-coding 3 seconds. `REMEM_RUNTIME_VERSION_TIMEOUT_MS`
+  can set a different positive-integer bound, and invalid explicit values fail
+  with a visible diagnostic instead of silently selecting a fallback.
 - Staged source version `0.6.50` for GH-947: the SessionStart injection path
   now applies `SearchWeights::usage`. It previously fused only its fts, entity,
   temporal, fact, and vector channels, so `usage` was validated but never

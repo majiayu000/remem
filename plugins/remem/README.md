@@ -37,6 +37,11 @@ storage. PATH binaries are never adopted silently; use `REMEM_BINARY` for
 explicit development overrides or `--adopt-path` for a deliberate local copy.
 By default, the selected binary must report the same version as the plugin
 manifest. Set `REMEM_ALLOW_VERSION_MISMATCH=1` only for explicit local debugging.
+Version probes wait up to 15 seconds by default so a healthy binary is not
+rejected during cold code-signature or filesystem-cache startup. Set
+`REMEM_RUNTIME_VERSION_TIMEOUT_MS` to a positive integer when the local runtime
+needs a different bound; invalid explicit values fail the probe with a visible
+diagnostic.
 
 Build from source when testing directly from this repository:
 

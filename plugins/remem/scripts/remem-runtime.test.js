@@ -16,12 +16,14 @@ const {
   expectedVersion,
   installRuntime,
   inspectRuntime,
+  inspectVersion,
   managedBinaryPath,
   pluginDataDir,
   releaseAssetForCurrentPlatform,
   runRememAsync,
   runtimeMetadataPath,
-  shouldCodesignRuntime
+  shouldCodesignRuntime,
+  versionInspectionTimeoutMs
 } = require("./remem-runtime");
 
 function tempDir(prefix) {
@@ -104,6 +106,61 @@ function currentPlatformKey() {
 test("plugin data prefers explicit override", () => {
   const data = tempDir("remem-plugin-data-");
   assert.equal(pluginDataDir({ pluginData: data }), data);
+});
+
+test("version inspection uses a cold-start-safe default timeout", () => {
+  let observedTimeout;
+  const version = inspectVersion("/fake/remem", {
+    env: {},
+    spawnSync: (_candidate, _args, options) => {
+      observedTimeout = options.timeout;
+      return { status: 0, stdout: "remem 0.5.17 (schema v34)\n", stderr: "" };
+    }
+  });
+
+  assert.equal(version.ok, true);
+  assert.equal(observedTimeout, 15_000);
+});
+
+test("version inspection timeout honors REMEM_RUNTIME_VERSION_TIMEOUT_MS", () => {
+  let observedTimeout;
+  const version = inspectVersion("/fake/remem", {
+    env: { REMEM_RUNTIME_VERSION_TIMEOUT_MS: "45000" },
+    spawnSync: (_candidate, _args, options) => {
+      observedTimeout = options.timeout;
+      return { status: 0, stdout: "remem 0.5.17 (schema v34)\n", stderr: "" };
+    }
+  });
+
+  assert.equal(version.ok, true);
+  assert.equal(observedTimeout, 45_000);
+});
+
+test("version inspection timeout rejects invalid explicit values", () => {
+  assert.throws(
+    () => versionInspectionTimeoutMs({ REMEM_RUNTIME_VERSION_TIMEOUT_MS: "0" }),
+    /must be a positive integer/
+  );
+  assert.throws(
+    () => versionInspectionTimeoutMs({ REMEM_RUNTIME_VERSION_TIMEOUT_MS: "unbounded" }),
+    /must be a positive integer/
+  );
+  assert.throws(
+    () => versionInspectionTimeoutMs({ REMEM_RUNTIME_VERSION_TIMEOUT_MS: "  " }),
+    /must be a positive integer/
+  );
+
+  let spawned = false;
+  const version = inspectVersion("/fake/remem", {
+    env: { REMEM_RUNTIME_VERSION_TIMEOUT_MS: "0" },
+    spawnSync: () => {
+      spawned = true;
+      throw new Error("must not spawn with invalid configuration");
+    }
+  });
+  assert.equal(version.ok, false);
+  assert.match(version.reason, /must be a positive integer/);
+  assert.equal(spawned, false);
 });
 
 test("ensureRuntimeSync copies matching repo binary into plugin data", () => {

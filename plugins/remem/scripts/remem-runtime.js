@@ -10,6 +10,7 @@ const { spawnSync } = require("node:child_process");
 
 const VERSION_RE = /remem\s+([0-9]+\.[0-9]+\.[0-9]+(?:[-+][^\s]+)?)\s+\(schema v([0-9]+)\)/;
 const REMOTE_MANIFEST_BYTES = 1_000_000;
+const DEFAULT_VERSION_INSPECTION_TIMEOUT_MS = 15_000;
 
 function binaryName() {
   return process.platform === "win32" ? "remem.exe" : "remem";
@@ -65,11 +66,35 @@ function isExecutable(candidate) {
   }
 }
 
-function inspectVersion(candidate) {
-  const result = spawnSync(candidate, ["--version"], {
+function versionInspectionTimeoutMs(env = process.env) {
+  const configured = env.REMEM_RUNTIME_VERSION_TIMEOUT_MS;
+  if (configured === undefined) return DEFAULT_VERSION_INSPECTION_TIMEOUT_MS;
+  const raw = String(configured).trim();
+  if (!/^[1-9][0-9]*$/.test(raw)) {
+    throw new Error("REMEM_RUNTIME_VERSION_TIMEOUT_MS must be a positive integer");
+  }
+  const timeout = Number(raw);
+  if (!Number.isSafeInteger(timeout)) {
+    throw new Error("REMEM_RUNTIME_VERSION_TIMEOUT_MS must be a safe integer");
+  }
+  return timeout;
+}
+
+function inspectVersion(candidate, options = {}) {
+  let timeout;
+  try {
+    timeout = versionInspectionTimeoutMs(options.env || process.env);
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error.message
+    };
+  }
+  const spawn = options.spawnSync || spawnSync;
+  const result = spawn(candidate, ["--version"], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
-    timeout: 3000
+    timeout
   });
   if (result.error) {
     return {
@@ -131,7 +156,7 @@ function candidateEntries(options = {}) {
   return entries;
 }
 
-function inspectCandidate(entry, expected, allowMismatch) {
+function inspectCandidate(entry, expected, allowMismatch, options = {}) {
   if (!isExecutable(entry.path)) {
     return {
       ...entry,
@@ -141,7 +166,7 @@ function inspectCandidate(entry, expected, allowMismatch) {
       reason: "not executable"
     };
   }
-  const version = inspectVersion(entry.path);
+  const version = inspectVersion(entry.path, options);
   const versionOk = version.ok && (allowMismatch || version.version === expected);
   return {
     ...entry,
@@ -157,9 +182,10 @@ function inspectCandidate(entry, expected, allowMismatch) {
 
 function inspectRuntime(options = {}) {
   const expected = expectedVersion(options);
-  const allowMismatch = (options.env || process.env).REMEM_ALLOW_VERSION_MISMATCH === "1";
+  const env = options.env || process.env;
+  const allowMismatch = env.REMEM_ALLOW_VERSION_MISMATCH === "1";
   const candidates = candidateEntries(options).map((entry) =>
-    inspectCandidate(entry, expected, allowMismatch)
+    inspectCandidate(entry, expected, allowMismatch, options)
   );
   const selected = candidates.find((candidate) => candidate.ok && candidate.adoptable);
   const pathMatch = candidates.find((candidate) => candidate.ok && !candidate.adoptable);
@@ -209,7 +235,7 @@ function copyRuntime(source, options = {}) {
   fs.copyFileSync(source, dest);
   fs.chmodSync(dest, 0o755);
   codesignRuntimeIfNeeded(dest, options);
-  const version = inspectVersion(dest);
+  const version = inspectVersion(dest, options);
   if (!version.ok) {
     throw new Error(`Copied runtime is not executable: ${version.reason}`);
   }
@@ -620,7 +646,7 @@ async function main(argv) {
   }
   if (command === "self-test") {
     const installed = ensureRuntimeSync();
-    const version = inspectVersion(installed);
+    const version = inspectVersion(installed, options);
     if (!version.ok) throw new Error(version.reason);
     process.stdout.write(`${version.output}\n`);
     return 0;
@@ -651,6 +677,7 @@ module.exports = {
   runRememAsync,
   runtimeMetadataPath,
   shouldCodesignRuntime,
+  versionInspectionTimeoutMs,
   versionMismatchMessage
 };
 
