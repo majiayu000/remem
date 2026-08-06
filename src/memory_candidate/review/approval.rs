@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde_json::json;
 
 use crate::memory::poisoning::{scan_instruction_pattern, validate_trust_class, SourceTrustClass};
@@ -24,6 +24,15 @@ struct ApprovalPromotionContext {
     candidate_override: Option<ParsedMemoryCandidate>,
     preserve_source_payload: bool,
     dream_audit: Option<DreamApprovalAudit>,
+    backfill_restore: Option<DreamBackfillRestore>,
+}
+
+/// GH-990: a stock-backfill candidate restores the exact pre-v076 memory its
+/// artifacts retired, instead of promoting a fresh memory from the payload.
+struct DreamBackfillRestore {
+    memory_id: i64,
+    project: String,
+    merge_payload: super::dream_provenance::DreamMergePayload,
 }
 
 struct DreamApprovalAudit {
@@ -63,6 +72,19 @@ pub(crate) fn approve_candidate_in_transaction(
     };
     let acknowledgement = approval_acknowledgement(&row, acknowledged_pattern_id)?;
     let promotion_context = dream_promotion_context(conn, &row, acknowledged_dream_review_token)?;
+    if let Some(restore) = &promotion_context.backfill_restore {
+        // GH-990: stock-backfill candidates restore the retired pre-v076
+        // memory in place; nothing is promoted or superseded.
+        let restored_id =
+            restore_backfill_memory(conn, &row, meta, restore, acknowledgement.as_ref())?;
+        if let Some(audit) = &promotion_context.dream_audit {
+            persist_dream_approval_audit(conn, &row, meta, audit, &[])?;
+        }
+        return Ok(Some(ReviewApprovalOutcome {
+            memory_id: restored_id,
+            actual_superseded_ids: Vec::new(),
+        }));
+    }
     let promotion = promote_row(
         conn,
         &row,
@@ -136,6 +158,7 @@ fn dream_promotion_context(
             candidate_override: None,
             preserve_source_payload: false,
             dream_audit: None,
+            backfill_restore: None,
         });
     }
     let provenance = super::load_dream_quarantine_provenance(conn, row.id)?
@@ -177,6 +200,19 @@ fn dream_promotion_context(
         .merge_payload
         .as_ref()
         .context("Dream candidate provenance has no canonical merge payload")?;
+    let backfill_restore = match provenance.backfill_memory_ids.as_slice() {
+        [] => None,
+        [memory_id] => Some(DreamBackfillRestore {
+            memory_id: *memory_id,
+            project: provenance
+                .artifacts
+                .first()
+                .map(|artifact| artifact.project.clone())
+                .context("Dream backfill provenance has no artifact project")?,
+            merge_payload: merge_payload.clone(),
+        }),
+        _ => bail!("dream_backfill_provenance_split"),
+    };
     let candidate_override = ParsedMemoryCandidate {
         scope: row.scope.clone(),
         memory_type: merge_payload.memory_type.clone(),
@@ -201,7 +237,142 @@ fn dream_promotion_context(
             artifact_ids,
             authorized_supersede_ids,
         }),
+        backfill_restore,
     })
+}
+
+/// Restore a pre-v076 Dream-merged memory retired by the stock backfill
+/// (GH-990). The artifact payload is immutable, so the row must still match
+/// it exactly; any drift means another path touched the row and approval
+/// fails rather than restoring the wrong content.
+fn restore_backfill_memory(
+    conn: &Connection,
+    row: &CandidateRow,
+    meta: &ReviewMeta,
+    restore: &DreamBackfillRestore,
+    acknowledgement: Option<&PatternAcknowledgement>,
+) -> Result<i64> {
+    let memory = conn
+        .query_row(
+            "SELECT project, memory_type, topic_key, title, content, status,
+                    session_id, source_trust_class
+             FROM memories WHERE id = ?1",
+            params![restore.memory_id],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, Option<String>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                    r.get::<_, String>(5)?,
+                    r.get::<_, Option<String>>(6)?,
+                    r.get::<_, String>(7)?,
+                ))
+            },
+        )
+        .optional()?
+        .context("dream_backfill_restore_target_missing")?;
+    let (project, memory_type, topic_key, title, content, status, session_id, source_trust_class) =
+        memory;
+    if project != restore.project
+        || memory_type != restore.merge_payload.memory_type
+        || session_id.as_deref() != Some("dream")
+        || source_trust_class != "external_content"
+    {
+        bail!("dream_backfill_restore_scope_mismatch");
+    }
+    let fallback_topic = format!("dream-backfill-{}", restore.memory_id);
+    let effective_topic = topic_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&fallback_topic);
+    if effective_topic != restore.merge_payload.topic_key
+        || title != restore.merge_payload.title
+        || content != restore.merge_payload.content
+    {
+        bail!("dream_backfill_restore_payload_mismatch");
+    }
+    if status != "archived" {
+        bail!("dream_backfill_restore_target_not_archived");
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let restored = conn.execute(
+        "UPDATE memories SET status = 'active', updated_at_epoch = ?2
+         WHERE id = ?1 AND status = 'archived'",
+        params![restore.memory_id, now],
+    )?;
+    if restored != 1 {
+        bail!("dream_backfill_restore_lost_atomicity");
+    }
+
+    let lifecycle_candidate = row.as_candidate();
+    let route = row.route_for(&lifecycle_candidate);
+    update_candidate_after_lifecycle(conn, row.id, &lifecycle_candidate, &route, "approved")?;
+    conn.execute(
+        "UPDATE memory_candidates
+         SET updated_at_epoch = ?1, review_actor = ?2, reviewed_at_epoch = ?1,
+             review_action_source = ?3, review_batch_id = ?4, review_reason = ?5
+         WHERE id = ?6",
+        params![
+            now,
+            meta.actor,
+            meta.action_source.as_str(),
+            meta.batch_id,
+            meta.reason,
+            row.id
+        ],
+    )?;
+    if let Some(acknowledgement) = acknowledgement {
+        conn.execute(
+            "UPDATE memory_candidates
+             SET acknowledged_pattern_id = ?1, acknowledged_pattern_version = ?2,
+                 acknowledged_at_epoch = ?3, updated_at_epoch = ?3
+             WHERE id = ?4",
+            params![
+                acknowledgement.pattern_id.as_str(),
+                acknowledgement.pattern_version,
+                now,
+                row.id
+            ],
+        )?;
+        conn.execute(
+            "UPDATE memories
+             SET acknowledged_pattern_id = ?1, acknowledged_pattern_version = ?2,
+                 acknowledged_at_epoch = ?3
+             WHERE id = ?4",
+            params![
+                acknowledgement.pattern_id.as_str(),
+                acknowledgement.pattern_version,
+                now,
+                restore.memory_id
+            ],
+        )?;
+    }
+    conn.execute(
+        "INSERT INTO memory_operation_log
+         (operation, planner_version, actor, source, owner_scope, owner_key,
+          memory_type, input_topic_key, source_candidate_id, result_memory_id,
+          reason, created_at_epoch)
+         VALUES ('dream_backfill_restore', 'gh990-v1', ?1, 'dream_backfill',
+                 'repo', ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            meta.actor,
+            project,
+            restore.merge_payload.memory_type,
+            restore.merge_payload.topic_key,
+            row.id,
+            restore.memory_id,
+            format!(
+                "restored archived stock memory on candidate {} approval",
+                row.id
+            ),
+            now,
+        ],
+    )?;
+    Ok(restore.memory_id)
 }
 
 fn persist_dream_approval_audit(

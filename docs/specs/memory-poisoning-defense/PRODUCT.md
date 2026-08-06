@@ -41,8 +41,9 @@ trustworthy at promotion time.
   future layer; this spec is pattern + provenance).
 - Network calls or LLM calls in the injection path.
 - A general secrets scanner (redaction already exists and stays unchanged).
-- Retroactive classification of the entire existing memory store in the first
-  implementation (a backfill command may follow separately).
+- Retroactive classification of the entire existing memory store. The scoped
+  Dream stock backfill is an explicit operator command, not automatic migration
+  work; unrelated historical memories remain outside this contract.
 
 ## Behavior Invariants
 
@@ -113,7 +114,9 @@ trustworthy at promotion time.
 - Mixed provenance (one candidate supported by both a user prompt and web
   content): the lowest trust class among supporting evidence wins.
 - Existing memories created before this feature have no trust class; they are
-  treated as `local_tool_output` by default and are not retro-quarantined.
+  treated as `local_tool_output` by default and are not retro-quarantined by
+  the migration. The explicit GH-990 command is the scoped exception for
+  identifiable pre-v076 Dream-merged stock.
 - Pattern-set updates: raising the pattern-set version re-scans only at
   injection time; it does not bulk-rewrite stored rows.
 
@@ -123,20 +126,38 @@ Ship scan-and-quarantine on by default (it only affects new candidates), with
 the injection-time re-scan behind a config flag for one release to measure the
 false-positive rate before defaulting it on.
 
-### v076 Dream quarantine is forward-only
+### v076 forward boundary + #990 stock backfill
 
 The `v076_dream_poisoning_quarantine` migration is pure DDL. It creates
 `dream_quarantine_artifacts`, `external_candidate_identities`, and
 `external_candidate_recurrences` with their triggers and indexes, and does not
 issue any `UPDATE` or `INSERT ... SELECT` against existing rows.
 
-Consequence for operators: after upgrading to v076, memories that Dream merged
-into the store *before* the upgrade remain active and keep being retrieved and
-injected. Those rows are identifiable — the pre-v076 write path
-(`src/dream/apply.rs`) passes `Some("dream")` as `session_id` to
-`insert_memory_full`, so `memories.session_id = 'dream' AND status = 'active'`
-selects them — but this release deliberately leaves them untouched, keeping the
-data migration separate from the code change.
+The pre-v076 stock — memories Dream merged before the upgrade, identifiable by
+`memories.session_id = 'dream' AND status = 'active' AND source_trust_class =
+'local_tool_output'` — is handled by the explicit `remem dream-backfill`
+command (#990), not by a migration:
 
-Backfilling that existing store is tracked in #990. Until it lands, the Dream
-poisoning defense is closed for new writes only.
+- Dry-run by default; `--apply` is required to write.
+- Every stock row is re-scanned with the same generated-surface scanner and
+  calling convention as the forward path.
+- A hit is retired (`status='archived'`), stamped `external_content`, and
+  bound to a quarantine artifact plus review candidate through the existing
+  ledger (v077 `backfill_memory_id`); approving the candidate restores that
+  exact memory in place, rejecting leaves it retired.
+- A clean row only has its trust class backfilled to `external_content`,
+  matching what the forward path stamps on new merges; recency signals are
+  left untouched.
+
+The dry-run report exposes a deterministic `plan_digest`. An apply can require
+that digest with `--expect-plan-digest`; regardless of that optional operator
+check, the write path re-plans inside one immediate transaction and compares
+the complete ordered plan plus exact row snapshots before any artifact or
+trust-class write. Drift aborts atomically. A completed command produces no
+second stock plan, and the backfill binding has a unique partial index so one
+retired memory cannot acquire duplicate irreversible artifacts.
+
+With #990 landed, the Dream poisoning defense is closed for both new writes
+and the pre-v076 stock. Re-running the backfill is idempotent: quarantined
+rows are archived and backfilled rows change trust class, so a second run
+finds no stock.

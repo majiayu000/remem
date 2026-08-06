@@ -4,10 +4,12 @@ use std::path::PathBuf;
 pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
 pub(in crate::cli) use super::context_types::{ContextGateAction, ContextPlanArgs};
+pub(in crate::cli) use super::dream_backfill_types::DreamBackfillArgs;
 pub(in crate::cli) use super::embedding_types::EmbeddingAction;
 pub(in crate::cli) use super::memory_types::{
     MemoryAction, MemoryCleanupType, MemorySuppressionsAction,
 };
+pub(in crate::cli) use super::model_types::ModelAction;
 pub(in crate::cli) use super::procedure_types::ProcedureAction;
 pub(in crate::cli) use super::query_types::{
     CommitAction, RawAction, RawRole, TimelineAction, UserAction, WorkstreamAction,
@@ -157,6 +159,10 @@ pub(super) enum Commands {
         #[arg(long)]
         cwd: Option<String>,
     },
+    /// Re-scan pre-v076 Dream-merged active memories against the poisoning
+    /// scanner: quarantine hits into the review queue, backfill trust class
+    /// on the rest. Reports only unless --apply is given.
+    DreamBackfill(DreamBackfillArgs),
     /// List, add, or remove remembered user preferences.
     Preferences {
         #[command(subcommand)]
@@ -587,51 +593,6 @@ pub(super) enum Commands {
     },
     /// Export curated memories to a human-editable mirror.
     Export(ExportArgs),
-}
-#[derive(Subcommand)]
-pub(in crate::cli) enum ModelAction {
-    /// Show the currently effective memory AI model configuration.
-    Current {
-        /// Host to inspect, such as codex-cli or claude-code. Omit to show installed hosts.
-        #[arg(long)]
-        host: Option<String>,
-        /// Inspect a named memory AI profile directly.
-        #[arg(long)]
-        profile: Option<String>,
-    },
-    /// List built-in Codex model presets and examples.
-    List,
-    /// Switch a host/profile to a preset or explicit model name.
-    Use {
-        /// Preset or model name: cheap, balanced, quality, auto, or an explicit model.
-        target: String,
-        /// Host to update. Defaults to [memory_ai].default_host.
-        #[arg(long)]
-        host: Option<String>,
-        /// Update a named memory AI profile directly instead of resolving a host.
-        #[arg(long)]
-        profile: Option<String>,
-        /// Codex reasoning effort: low, medium, or high.
-        #[arg(long, value_name = "low|medium|high")]
-        reasoning: Option<String>,
-        /// Print the config diff without writing files.
-        #[arg(long)]
-        dry_run: bool,
-    },
-    /// Check the selected model profile; pass --live to make a tiny AI call.
-    Test {
-        /// Host to test. Defaults to [memory_ai].default_host.
-        #[arg(long)]
-        host: Option<String>,
-        /// Test a named memory AI profile directly.
-        #[arg(long)]
-        profile: Option<String>,
-        /// Actually call the configured AI model. Without this, only config is checked.
-        #[arg(long)]
-        live: bool,
-    },
-    /// Restore the config backup saved by the last `remem model use`.
-    Rollback,
 }
 
 #[derive(Subcommand)]

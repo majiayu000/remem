@@ -385,6 +385,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "dream_poisoning_quarantine",
         sql: include_str!("../migrations/v076_dream_poisoning_quarantine.sql"),
     },
+    Migration {
+        version: 77,
+        name: "dream_backfill",
+        sql: include_str!("../migrations/v077_dream_backfill.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

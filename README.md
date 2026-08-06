@@ -1061,6 +1061,35 @@ Use `remem user claims why <id>`, `remem user claims suppress <id>`, and
 `remem user claims delete <id>` to audit or roll back active claims created by
 manual save, preference backfill, or auto-promotion.
 
+### Dream Active-Memory Backfill (GH-990)
+
+The v077 migration only adds the binding column and invariants; it never scans
+or rewrites existing memories. To rehearse the pre-v076 Dream stock, run the
+explicit command (dry-run is the default):
+
+```bash
+remem dream-backfill --dry-run --json
+```
+
+The report gives before-write stock, hit, no-hit, skipped, per-project, and
+`plan_digest` counts. A hit is archived and placed in the existing quarantined
+review queue; a no-hit only changes `source_trust_class` to `external_content`
+and leaves recency timestamps unchanged. Nothing is written during rehearsal.
+
+After reviewing the report, apply the exact rehearsal plan with:
+
+```bash
+remem dream-backfill --apply --expect-plan-digest <sha256>
+```
+
+`--apply` is the only mode that writes. The apply rechecks the complete stock
+set and every row snapshot inside one immediate transaction; any plan drift
+aborts all writes. Quarantine artifacts are immutable and bound to the retired
+memory. Approving the resulting Dream candidate with its normal pattern and
+provenance acknowledgements restores that same memory id in place; a changed
+or missing target fails closed. Re-running after a successful apply produces an
+empty plan.
+
 ### Raw Session Backfill
 
 `remem ingest-sessions` batch-ingests Claude Code and Codex JSONL transcripts
