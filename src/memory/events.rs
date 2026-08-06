@@ -20,3 +20,4 @@ pub use query::{
     get_session_files_modified,
 };
 pub use write::insert_event;
+pub(crate) use write::{insert_event_for_capture, replace_event_for_capture};

@@ -390,6 +390,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "dream_backfill",
         sql: include_str!("../migrations/v077_dream_backfill.sql"),
     },
+    Migration {
+        version: 78,
+        name: "event_capture_projection",
+        sql: include_str!("../migrations/v078_event_capture_projection.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

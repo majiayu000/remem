@@ -66,6 +66,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v073.rs",
     "src/migrate/schema_drift/invariants/v076.rs",
     "src/migrate/schema_drift/invariants/v077.rs",
+    "src/migrate/schema_drift/invariants/v078.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -225,6 +226,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v075_automatic_cleanup.sql",
     "src/migrations/v076_dream_poisoning_quarantine.sql",
     "src/migrations/v077_dream_backfill.sql",
+    "src/migrations/v078_event_capture_projection.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -499,6 +501,7 @@ mod tests {
             "src/migrate/schema_drift/invariants/v073.rs",
             "src/migrate/schema_drift/invariants/v076.rs",
             "src/migrate/schema_drift/invariants/v077.rs",
+            "src/migrate/schema_drift/invariants/v078.rs",
             "src/migrate/state.rs",
             "src/migrate/transition.rs",
             "src/migrate/types.rs",

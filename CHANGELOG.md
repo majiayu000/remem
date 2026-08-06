@@ -32,6 +32,14 @@
   the immutable quarantine ledger is written.
 
 ### Fixed
+- Staged source version `0.6.53` for GH-992: hook-originated compatibility
+  `events` rows now carry their canonical `captured_events.id`. Capture,
+  extraction-task enqueue, Git evidence, and the compatibility projection
+  commit or roll back together; exact retries reuse the one linked row,
+  projection payload drift fails closed, and spill replay cannot append a
+  duplicate after partial persistence. Cursor dual delivery updates that same
+  projection under the existing failure-wins rule. Audit-only event writers
+  and upgrade-era unlinked history remain valid and untouched.
 - The Codex plugin runtime version probe now allows 15 seconds for cold binary
   startup instead of hard-coding 3 seconds. `REMEM_RUNTIME_VERSION_TIMEOUT_MS`
   can set a different positive-integer bound, and invalid explicit values fail

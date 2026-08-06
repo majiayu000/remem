@@ -367,6 +367,9 @@ The capture pipeline starts with an append-only ledger:
 payloads out of prompt-sized rows, and `extraction_tasks` coalesces work by
 host/project/session instead of creating one LLM job per tool call. Curated
 memory remains the promoted output of this pipeline, not the raw event itself.
+Compatibility `events` projections share the canonical captured-event identity:
+a hook retry reuses the same projection, while a projection failure rolls back
+the capture and extraction task together so replay cannot create duplicates.
 
 ### Compiled preference rules
 

@@ -108,7 +108,7 @@ fn v076_creates_quarantine_and_external_identity_ledgers() -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
     run_migrations(&conn)?;
 
-    assert_eq!(super::latest_schema_version(), 77);
+    assert_eq!(super::latest_schema_version(), 78);
     for index in [
         "idx_dream_quarantine_project_recent",
         "idx_dream_quarantine_candidate",

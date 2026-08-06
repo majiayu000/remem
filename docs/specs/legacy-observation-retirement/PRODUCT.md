@@ -5,6 +5,7 @@ Date: 2026-07-28
 
 Tracking:
 - Epic issue: #684
+- Capture projection follow-up: #992
 - Related contracts: `current-memory-contracts/` (anti-rewrite convergence,
   Refs #381/#383/#384)
 - Related drain implementation: #943
@@ -224,6 +225,27 @@ Acceptance:
   separately from the lossy prompt slice, so per-message or global prompt
   eviction cannot change citation usage during a source-free retry. Distinct
   Stop boundaries on one repeated path remain distinct citation evidence.
+
+### Idempotent Legacy Event Projection
+
+As a user, a hook retry cannot duplicate the compatibility `events` row for a
+canonical captured event, and a legacy projection failure cannot leave the
+canonical capture committed by itself.
+
+Acceptance:
+
+- Hook-originated `events` rows carry the exact `captured_events.id` that
+  produced them; non-capture audit writers remain valid without that link.
+- Canonical capture, extraction-task enqueue, Git evidence, and the legacy
+  event projection commit or roll back together, including spill replay.
+- Replaying the same canonical identity returns the existing legacy event only
+  when its projected payload matches exactly. A payload mismatch is a visible
+  error and never silently overwrites history.
+- Cursor's success-to-failure precedence updates the one linked projection in
+  the same transaction as the canonical failure marker. Upgrade-era unlinked
+  history remains untouched.
+- Focused tests prove retry produces one linked row and injected projection
+  failure leaves neither a capture nor an extraction task behind.
 
 ## Rollout
 

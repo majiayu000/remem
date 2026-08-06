@@ -5,6 +5,7 @@ Date: 2026-07-28
 
 Tracking:
 - Epic issue: #684
+- Capture projection follow-up: #992
 - Related contracts: `current-memory-contracts/`
 - Related drain implementation: #943
 
@@ -120,6 +121,33 @@ production-shaped dogfood database (schema v53, 42k memories, 8.3k sessions).
 - Dogfood corroboration: the jobs queue shows 2479 failed legacy jobs, and
   AI usage attribution reports 24019 unattributed legacy calls — the legacy
   chain is not just redundant, it is actively failing and unaccounted.
+
+### `events` — verdict: keep consumers, identify capture projections
+
+- Current capture writers in `src/observe/hook.rs` and
+  `src/observe/cursor.rs` first persist `captured_events` and its extraction
+  task, then separately call the generic `insert_event`. The second write has
+  no canonical identity. A live-hook projection failure therefore leaves a
+  committed capture, while retry can append another legacy row.
+- The table cannot yet be retired. Session/recent-event queries, modified-file
+  history, Dream evidence, staleness, and governance audit readers still use
+  it. Governance, candidate review, scope cleanup, and other explicit audit
+  writers are not capture projections.
+- Migration v078 adds nullable `events.captured_event_id` referencing
+  `captured_events(id)` with `ON DELETE SET NULL`, plus a partial unique index
+  for non-null links. Existing and audit rows remain null; no ambiguous
+  historical backfill is attempted.
+- Hook projection uses a dedicated helper. Its conflict path loads the linked
+  row and accepts it only when session, project, type, summary, detail, files,
+  exit code, and retention class match. Any drift fails closed.
+- `record_observed_event` wraps canonical capture and the linked projection in
+  an outer savepoint. The capture layer's existing savepoint nests inside it,
+  so callers that already own a transaction (including spill replay) remain
+  supported.
+- Cursor failure precedence updates the captured event and its linked legacy
+  projection within one savepoint. If an upgrade-era canonical capture has no
+  linked projection, it creates the authoritative linked failure projection;
+  it never rewrites pre-v078 unlinked history.
 
 ## Design Rules
 
