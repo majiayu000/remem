@@ -57,12 +57,33 @@ fn record_cursor_tool_event(event: &CursorToolEvent) -> Result<()> {
     };
     replay_spilled_capture_events(&conn)?;
 
-    let existing = existing_cursor_event_type(&conn, &event.session_id, &event_id)?;
-    match (existing.as_deref(), event.outcome.is_failure()) {
-        (Some(_), false) => {
+    let existing = existing_cursor_event(&conn, &event.session_id, &event_id)?;
+    match (existing.as_ref(), event.outcome.is_failure()) {
+        (Some((_, existing_type)), false) if existing_type == CURSOR_TOOL_FAILURE_EVENT_TYPE => {
+            crate::log::info(
+                "observe",
+                &format!(
+                    "cursor tool failure remains authoritative over late success session={} event={}",
+                    event.session_id, event_id
+                ),
+            );
+            Ok(())
+        }
+        (Some((captured_event_id, _)), false) => {
             // Replay of a call maps to itself: the canonical per-call key is
             // already captured, and a late success never downgrades an
             // already-recorded failure (failure precedence).
+            crate::memory::insert_event_for_capture(
+                &conn,
+                *captured_event_id,
+                &event.session_id,
+                &event.workspace_root,
+                &summary.event_type,
+                &summary.summary,
+                summary.detail.as_deref(),
+                None,
+                None,
+            )?;
             crate::log::info(
                 "observe",
                 &format!(
@@ -72,7 +93,20 @@ fn record_cursor_tool_event(event: &CursorToolEvent) -> Result<()> {
             );
             Ok(())
         }
-        (Some(existing_type), true) if existing_type == CURSOR_TOOL_FAILURE_EVENT_TYPE => {
+        (Some((captured_event_id, existing_type)), true)
+            if existing_type == CURSOR_TOOL_FAILURE_EVENT_TYPE =>
+        {
+            crate::memory::replace_event_for_capture(
+                &conn,
+                *captured_event_id,
+                &event.session_id,
+                &event.workspace_root,
+                &summary.event_type,
+                &summary.summary,
+                summary.detail.as_deref(),
+                None,
+                None,
+            )?;
             crate::log::info(
                 "observe",
                 &format!(
@@ -82,7 +116,9 @@ fn record_cursor_tool_event(event: &CursorToolEvent) -> Result<()> {
             );
             Ok(())
         }
-        (Some(_), true) => promote_cursor_failure(&conn, event, &event_id, &summary),
+        (Some((captured_event_id, _)), true) => {
+            promote_cursor_failure(&conn, event, &event_id, *captured_event_id, &summary)
+        }
         (None, _) => {
             if let Err(error) = super::hook::record_observed_event_with_id(
                 &conn,
@@ -118,35 +154,46 @@ fn record_cursor_tool_event(event: &CursorToolEvent) -> Result<()> {
 
 /// Failure precedence for dual delivery on one `tool_use_id`: the captured
 /// row is promoted to the existing `cursor_tool_failure` text discriminator
-/// exactly once, and a legacy failure event row records the evidence.
+/// exactly once, and the linked legacy projection follows that authoritative
+/// outcome in the same savepoint.
 fn promote_cursor_failure(
     conn: &rusqlite::Connection,
     event: &CursorToolEvent,
     event_id: &str,
+    captured_event_id: i64,
     summary: &crate::adapter::EventSummary,
 ) -> Result<()> {
-    conn.execute(
-        "UPDATE captured_events
-         SET event_type = ?1
-         WHERE session_id = ?2 AND event_id = ?3
-           AND host_id = (SELECT id FROM hosts WHERE name = ?4)",
-        rusqlite::params![
-            CURSOR_TOOL_FAILURE_EVENT_TYPE,
-            event.session_id,
-            event_id,
-            CURSOR_HOST
-        ],
-    )?;
-    crate::memory::insert_event(
-        conn,
-        &event.session_id,
-        &event.workspace_root,
-        &summary.event_type,
-        &summary.summary,
-        summary.detail.as_deref(),
-        None,
-        None,
-    )?;
+    super::hook::with_observed_projection_savepoint(conn, || {
+        let updated = conn.execute(
+            "UPDATE captured_events
+             SET event_type = ?1
+             WHERE id = ?2 AND session_id = ?3 AND event_id = ?4
+               AND host_id = (SELECT id FROM hosts WHERE name = ?5)",
+            rusqlite::params![
+                CURSOR_TOOL_FAILURE_EVENT_TYPE,
+                captured_event_id,
+                event.session_id,
+                event_id,
+                CURSOR_HOST
+            ],
+        )?;
+        anyhow::ensure!(
+            updated == 1,
+            "cursor canonical failure promotion target drifted"
+        );
+        crate::memory::replace_event_for_capture(
+            conn,
+            captured_event_id,
+            &event.session_id,
+            &event.workspace_root,
+            &summary.event_type,
+            &summary.summary,
+            summary.detail.as_deref(),
+            None,
+            None,
+        )?;
+        Ok(())
+    })?;
     crate::log::info(
         "observe",
         &format!(
@@ -157,18 +204,18 @@ fn promote_cursor_failure(
     Ok(())
 }
 
-fn existing_cursor_event_type(
+fn existing_cursor_event(
     conn: &rusqlite::Connection,
     session_id: &str,
     event_id: &str,
-) -> Result<Option<String>> {
+) -> Result<Option<(i64, String)>> {
     Ok(conn
         .query_row(
-            "SELECT ce.event_type FROM captured_events ce
+            "SELECT ce.id, ce.event_type FROM captured_events ce
              JOIN hosts h ON h.id = ce.host_id
              WHERE h.name = ?1 AND ce.session_id = ?2 AND ce.event_id = ?3",
             rusqlite::params![CURSOR_HOST, session_id, event_id],
-            |row| row.get(0),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?)
 }

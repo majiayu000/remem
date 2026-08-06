@@ -480,6 +480,89 @@ mod cursor_observe {
                 "failure precedence lost for {event_id}"
             );
         }
+        let projections: Vec<(String, String)> = conn
+            .prepare(
+                "SELECT ce.event_id, e.event_type
+                 FROM captured_events ce
+                 JOIN events e ON e.captured_event_id = ce.id
+                 WHERE ce.session_id = 'sess-cursor-obs'
+                 ORDER BY ce.event_id",
+            )?
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(
+            projections,
+            vec![
+                (
+                    "cursor-tool:tu-x".to_string(),
+                    "cursor_tool_failure".to_string()
+                ),
+                (
+                    "cursor-tool:tu-y".to_string(),
+                    "cursor_tool_failure".to_string()
+                ),
+            ]
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn cursor_failure_projection_error_rolls_back_canonical_promotion() -> anyhow::Result<()>
+    {
+        let _dir = ScopedTestDataDir::new("cursor-observe-promotion-rollback");
+        drop(db::open_db()?);
+        crate::observe::observe_cursor_bytes(&success_payload("Read", "tu-rollback")).await?;
+
+        let conn = db::open_db()?;
+        conn.execute_batch(
+            "CREATE TRIGGER fail_cursor_projection_update
+             BEFORE UPDATE OF event_type ON events
+             BEGIN
+                 SELECT RAISE(FAIL, 'cursor projection blocked');
+             END;",
+        )?;
+        drop(conn);
+
+        let error = crate::observe::observe_cursor_bytes(&failure_payload("tu-rollback"))
+            .await
+            .expect_err("projection failure must fail the canonical promotion");
+        assert!(error.to_string().contains("cursor projection blocked"));
+        let conn = db::open_db()?;
+        let before_retry: (String, String, i64) = conn.query_row(
+            "SELECT ce.event_type, e.event_type,
+                    (SELECT COUNT(*) FROM events WHERE captured_event_id = ce.id)
+             FROM captured_events ce
+             JOIN events e ON e.captured_event_id = ce.id
+             WHERE ce.event_id = 'cursor-tool:tu-rollback'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            before_retry,
+            ("tool_result".to_string(), "tool_result".to_string(), 1)
+        );
+        conn.execute_batch("DROP TRIGGER fail_cursor_projection_update")?;
+        drop(conn);
+
+        crate::observe::observe_cursor_bytes(&failure_payload("tu-rollback")).await?;
+        let conn = db::open_db()?;
+        let after_retry: (String, String, i64) = conn.query_row(
+            "SELECT ce.event_type, e.event_type,
+                    (SELECT COUNT(*) FROM events WHERE captured_event_id = ce.id)
+             FROM captured_events ce
+             JOIN events e ON e.captured_event_id = ce.id
+             WHERE ce.event_id = 'cursor-tool:tu-rollback'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(
+            after_retry,
+            (
+                "cursor_tool_failure".to_string(),
+                "cursor_tool_failure".to_string(),
+                1,
+            )
+        );
         Ok(())
     }
 

@@ -19,6 +19,8 @@ mod tests_convergence;
 #[cfg(test)]
 mod tests_dream_poisoning;
 #[cfg(test)]
+mod tests_event_capture_projection;
+#[cfg(test)]
 mod tests_fast_path;
 #[cfg(test)]
 mod tests_job_queue_atomicity;

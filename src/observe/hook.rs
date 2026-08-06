@@ -160,24 +160,28 @@ fn record_observed_event(
     summary: &crate::adapter::EventSummary,
     git_evidence: &[crate::git_util::GitCommitEvidence],
 ) -> Result<i64> {
-    let capture_event_id = record_capture_event_with_git_evidence(
-        conn,
-        capture_host,
-        event_id,
-        event,
-        summary,
-        git_evidence,
-    )?;
-    crate::memory::insert_event(
-        conn,
-        &event.session_id,
-        &event.project,
-        &summary.event_type,
-        &summary.summary,
-        summary.detail.as_deref(),
-        summary.files_json.as_deref(),
-        summary.exit_code,
-    )?;
+    let capture_event_id = with_observed_projection_savepoint(conn, || {
+        let capture_event_id = record_capture_event_with_git_evidence(
+            conn,
+            capture_host,
+            event_id,
+            event,
+            summary,
+            git_evidence,
+        )?;
+        crate::memory::insert_event_for_capture(
+            conn,
+            capture_event_id,
+            &event.session_id,
+            &event.project,
+            &summary.event_type,
+            &summary.summary,
+            summary.detail.as_deref(),
+            summary.files_json.as_deref(),
+            summary.exit_code,
+        )?;
+        Ok(capture_event_id)
+    })?;
 
     crate::log::info(
         "observe",
@@ -211,6 +215,26 @@ fn record_observed_event(
     }
 
     Ok(capture_event_id)
+}
+
+pub(super) fn with_observed_projection_savepoint<T>(
+    conn: &rusqlite::Connection,
+    operation: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    conn.execute_batch("SAVEPOINT remem_observed_event_projection")?;
+    match operation() {
+        Ok(value) => {
+            conn.execute_batch("RELEASE SAVEPOINT remem_observed_event_projection")?;
+            Ok(value)
+        }
+        Err(error) => {
+            conn.execute_batch(
+                "ROLLBACK TO SAVEPOINT remem_observed_event_projection;
+                 RELEASE SAVEPOINT remem_observed_event_projection",
+            )?;
+            Err(error)
+        }
+    }
 }
 
 pub(super) fn detect_adapter_for_host(
@@ -312,16 +336,18 @@ fn capture_event_content_with_git_evidence(
 }
 
 #[cfg(test)]
+mod projection_tests;
+
+#[cfg(test)]
 mod tests {
     use crate::adapter::{codex::CodexAdapter, EventSummary, ParsedHookEvent};
     use crate::db::{self, test_support::ScopedTestDataDir};
     use tokio::sync::Mutex;
 
     use super::super::filter::{event_skip_reason, skip_detail};
-    use super::super::spill::spill_capture_event;
     use super::{
         capture_event_content, observe_input, record_capture_event_with_id,
-        SPILL_REASON_CAPTURE_PERSISTENCE_FAILED, SPILL_REASON_DB_OPEN_FAILED,
+        record_observed_event_with_id, SPILL_REASON_DB_OPEN_FAILED,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::const_new(());
@@ -654,147 +680,89 @@ mod tests {
         test_result
     }
 
-    #[tokio::test]
-    async fn observe_spills_persistence_failure_and_replays_capture_once() -> anyhow::Result<()> {
-        let _test_dir = ScopedTestDataDir::new("observe-persist-failure-spill");
-        let failing_input = serde_json::json!({
-            "session_id": "sess-persist-fail",
-            "cwd": "/tmp/remem",
-            "tool_name": "Edit",
-            "tool_input": {"file_path": "src/lib.rs"},
-            "tool_response": {"content": "edited"}
-        })
-        .to_string();
-
+    #[test]
+    fn observed_event_retry_reuses_one_exact_linked_projection() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("observe-linked-event-retry");
         let conn = db::open_db()?;
-        conn.execute_batch(
-            "CREATE TRIGGER fail_events_insert
-             BEFORE INSERT ON events
-             BEGIN
-                 SELECT RAISE(FAIL, 'events blocked');
-             END;",
-        )?;
-        drop(conn);
-
-        let err = observe_input(&failing_input, Some("claude-code"))
-            .await
-            .expect_err("event insert failure should spill");
-        assert!(err.to_string().contains("events blocked"), "{err}");
-        assert!(crate::db::data_dir().join("capture-spill.jsonl").exists());
-
-        let conn = db::open_db()?;
-        let partial_captures: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| row.get(0),
-        )?;
-        let partial_events: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(partial_captures, 1);
-        assert_eq!(partial_events, 0);
-        let partial_drop: (i64, i64) = conn.query_row(
-            "SELECT COUNT(*), COUNT(recovered_event_id)
-             FROM capture_drop_events
-             WHERE session_id = 'sess-persist-fail'
-               AND reason = 'capture_persistence_failed'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let partial_stats = db::query_system_stats(&conn)?;
-        assert_eq!(partial_drop, (1, 0));
-        assert_eq!(partial_stats.actionable_capture_drops, 1);
-        assert_eq!(partial_stats.unrecovered_capture_spills, 1);
-        conn.execute_batch("DROP TRIGGER fail_events_insert;")?;
-        drop(conn);
-
-        let replay_trigger = serde_json::json!({
-            "session_id": "sess-replay-trigger",
-            "cwd": "/tmp/remem",
-            "tool_name": "Edit",
-            "tool_input": {"file_path": "src/other.rs"},
-            "tool_response": {"content": "edited"}
-        })
-        .to_string();
-        observe_input(&replay_trigger, Some("claude-code")).await?;
-
-        let conn = db::open_db()?;
-        let replayed_captures: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM captured_events WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| row.get(0),
-        )?;
-        let replayed_events: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| row.get(0),
-        )?;
-        assert_eq!(replayed_captures, 1);
-        assert_eq!(replayed_events, 1);
-        let replayed_drop: (String, Option<i64>) = conn.query_row(
-            "SELECT reason, recovered_event_id
-             FROM capture_drop_events
-             WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )?;
-        let replayed_stats = db::query_system_stats(&conn)?;
-        assert_eq!(replayed_drop.0, SPILL_REASON_CAPTURE_PERSISTENCE_FAILED);
-        assert!(replayed_drop.1.is_some());
-        assert_eq!(replayed_stats.actionable_capture_drops, 0);
-        assert_eq!(replayed_stats.unrecovered_capture_spills, 0);
-        assert!(!crate::db::data_dir().join("capture-spill.jsonl").exists());
-
-        let replayed_event_id: String = conn.query_row(
-            "SELECT event_id FROM captured_events WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| row.get(0),
-        )?;
-        let replayed_summary = conn.query_row(
-            "SELECT event_type, summary, detail, files, exit_code
-             FROM events
-             WHERE session_id = 'sess-persist-fail'",
-            [],
-            |row| {
-                Ok(EventSummary {
-                    event_type: row.get(0)?,
-                    summary: row.get(1)?,
-                    detail: row.get(2)?,
-                    files_json: row.get(3)?,
-                    exit_code: row.get(4)?,
-                })
-            },
-        )?;
-        drop(conn);
-
-        let replayed_event = ParsedHookEvent {
-            session_id: "sess-persist-fail".to_string(),
-            cwd: Some("/tmp/remem".to_string()),
-            project: "/tmp/remem".to_string(),
-            reference_time_epoch: None,
-            tool_name: "Edit".to_string(),
-            tool_input: Some(serde_json::json!({"file_path": "src/lib.rs"})),
-            tool_response: Some(serde_json::json!({"content": "edited"})),
+        let event = codex_bash_event();
+        let summary = EventSummary {
+            event_type: "tool_result".to_string(),
+            summary: "cargo test completed".to_string(),
+            detail: Some("exit 0".to_string()),
+            files_json: None,
+            exit_code: Some(0),
         };
-        spill_capture_event(
-            "claude-code",
-            &replayed_event_id,
-            &replayed_event,
-            &replayed_summary,
-            SPILL_REASON_CAPTURE_PERSISTENCE_FAILED,
-            &anyhow::anyhow!("retry same partial capture"),
-        )?;
-        observe_input(&replay_trigger, Some("claude-code")).await?;
 
+        let first = record_observed_event_with_id(
+            &conn,
+            "codex-cli",
+            "tool-result-linked-retry",
+            &event,
+            &summary,
+            &[],
+        )?;
+        let replay = record_observed_event_with_id(
+            &conn,
+            "codex-cli",
+            "tool-result-linked-retry",
+            &event,
+            &summary,
+            &[],
+        )?;
+
+        assert_eq!(replay, first);
+        let counts: (i64, i64, i64) = conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM captured_events WHERE id = ?1),
+                    (SELECT COUNT(*) FROM extraction_tasks WHERE high_watermark_event_id = ?1),
+                    (SELECT COUNT(*) FROM events WHERE captured_event_id = ?1)",
+            [first],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
+        assert_eq!(counts, (1, 1, 1));
+        Ok(())
+    }
+
+    #[test]
+    fn observed_event_retry_rejects_projection_payload_drift() -> anyhow::Result<()> {
+        let _test_dir = ScopedTestDataDir::new("observe-linked-event-drift");
         let conn = db::open_db()?;
-        let retry_replayed_events: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE session_id = 'sess-persist-fail'",
-            [],
+        let event = codex_bash_event();
+        let summary = EventSummary {
+            event_type: "tool_result".to_string(),
+            summary: "cargo test completed".to_string(),
+            detail: None,
+            files_json: None,
+            exit_code: Some(0),
+        };
+        let captured_event_id = record_observed_event_with_id(
+            &conn,
+            "codex-cli",
+            "tool-result-linked-drift",
+            &event,
+            &summary,
+            &[],
+        )?;
+        conn.execute(
+            "UPDATE events SET summary = 'drifted' WHERE captured_event_id = ?1",
+            [captured_event_id],
+        )?;
+
+        let error = record_observed_event_with_id(
+            &conn,
+            "codex-cli",
+            "tool-result-linked-drift",
+            &event,
+            &summary,
+            &[],
+        )
+        .expect_err("projection drift must fail closed");
+        assert!(error.to_string().contains("payload mismatch"), "{error:#}");
+        let stored: String = conn.query_row(
+            "SELECT summary FROM events WHERE captured_event_id = ?1",
+            [captured_event_id],
             |row| row.get(0),
         )?;
-        assert_eq!(retry_replayed_events, 1);
+        assert_eq!(stored, "drifted");
         Ok(())
     }
 }
