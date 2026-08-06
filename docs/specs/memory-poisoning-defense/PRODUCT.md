@@ -6,7 +6,7 @@ Date: 2026-07-02
 Tracking:
 - Spec/tracking issue: #672
 - Related: #377 (injection accountability, closed), #383 (usage feedback),
-  #969 (Dream generated-output boundary)
+  #969 (Dream generated-output boundary), #991 (production-path security eval)
 
 ## Problem
 
@@ -79,6 +79,12 @@ trustworthy at promotion time.
    and the exact source snapshot inside one immediate transaction. Clean model
    output remains `external_content`, and a merge can reuse only a reviewed
    cluster member—not an unrelated state-key or semantic-dedup target.
+10. Any public artifact that reports poisoning-defense policy counts identifies
+    its verification path and measurement source. The `remem_default`
+    adversarial-policy condition runs capture -> observation extraction ->
+    candidate governance -> promotion and reads counts from the resulting
+    database. Direct-memory fixture insertion remains a named retrieval
+    baseline and cannot be presented as production-path evidence.
 
 ## Acceptance Criteria
 
@@ -105,6 +111,10 @@ trustworthy at promotion time.
 - [ ] Candidate API and CLI output redact secrets and neutralize terminal
       controls across every Dream-generated field without weakening the
       internal digest or exact-promotion checks.
+- [ ] Adversarial-policy run artifacts identify the production pipeline,
+      production source-scanner configuration, generated-surface verdict, and
+      database-measured active/reviewable/summary-input counts. A regression
+      that replaces those measurements with fixture-derived constants fails.
 
 ## Edge Cases
 

@@ -278,6 +278,7 @@ fn load_observation_batch(
                 COALESCE(confidence, 0.5) AS confidence
          FROM observations
          WHERE session_row_id = ?1
+           AND status IN ('active', 'stale')
            AND evidence_event_ids IS NOT NULL
            AND text IS NOT NULL
          ORDER BY id ASC",

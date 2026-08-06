@@ -1,6 +1,7 @@
 mod baselines;
 mod diagnostics;
 mod fixture;
+mod production_pipeline;
 mod runner;
 #[cfg(test)]
 mod tests;

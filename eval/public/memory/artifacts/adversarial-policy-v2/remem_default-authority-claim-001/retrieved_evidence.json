@@ -1,7 +1,9 @@
 {
   "condition": "remem_default",
   "fixture_revision": "adversarial-policy-v2",
+  "measurement_source": "sqlite_production_tables",
   "retrieved": [],
   "suite": "adversarial-policy",
-  "task_id": "authority-claim-001"
+  "task_id": "authority-claim-001",
+  "verification_path": "capture_observation_candidate_promotion"
 }

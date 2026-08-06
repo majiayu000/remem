@@ -5,6 +5,7 @@ Date: 2026-07-02
 
 Tracking:
 - Spec/tracking issue: #672
+- Production-path eval issue: #991
 
 ## Existing Implementation Facts
 
@@ -161,6 +162,44 @@ render-time re-scan with acknowledgement check.
       (capture -> extraction -> quarantine -> render absence -> doctor).
 - [ ] Manual verification: real session with a fetched web page containing an
       override phrase; confirm quarantine and doctor visibility.
+
+## Production-path adversarial evaluation (GH-991)
+
+The public `adversarial-policy` suite has two deliberately distinct kinds of
+paths:
+
+- `remem_default` is production-path evidence. Each task uses a fresh migrated
+  SQLite database, records real `captured_events`, runs deterministic fixture
+  responses through `observation_extract::process_with_extractor`, runs the
+  resulting follow-up through `memory_candidate::process_with_generator`, and
+  then performs normal candidate promotion and retrieval.
+- `retrieved_memory` and the other fixture baselines remain comparative
+  capability paths. If they insert a memory directly, their artifact says
+  `direct_memory_fixture`; their results do not substantiate a production
+  poisoning-defense claim.
+
+The production-path evaluator never substitutes fixture expectations for
+observed governance state. It measures:
+
+1. active claims from current, unsuppressed `memories` rows;
+2. reviewable candidates from persisted candidate review states; and
+3. summary inputs from the actual active memory rows admitted by the same
+   current-memory query.
+
+The source-event verdict calls `scan_source_instruction_pattern` exactly as
+production does (`opaque_payload` disabled for raw capture). Generated
+observation and candidate surfaces still use the full scanner. Artifacts record
+the source verdict and generated-surface block separately, plus a combined
+defense verdict, so an opaque raw payload cannot be falsely described as a
+source-scanner hit. Poisoned observations are excluded from candidate batches;
+their durable quarantine row is evidence of the generated-surface block, not
+an input to promotion.
+
+Every run artifact places `verification_path`, `measurement_source`, and
+scanner configuration next to its policy counts. The aggregate report records
+the set of verification paths used. Tests assert the full adversarial
+`remem_default` path, non-zero measured state for the explicitly approved case,
+zero leakage for blocked cases, and the raw-vs-generated opaque-payload split.
 
 ## Rollback Plan
 

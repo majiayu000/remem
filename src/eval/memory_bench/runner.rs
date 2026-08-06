@@ -19,13 +19,15 @@ use super::diagnostics::{
     score_policy,
 };
 use super::fixture::load_suite;
+use super::production_pipeline::retrieve_with_production_pipeline;
 use super::types::{
     summarize_by_category, summarize_metrics, summarize_policy, MemoryBenchCondition,
-    MemoryBenchEvidence, MemoryBenchRunOutcome, MemoryBenchSuiteFixture, MemoryBenchTask,
-    DEFAULT_PUBLIC_ROOT, DEFAULT_REPORT_BENCHMARK_VERSION,
+    MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchRunOutcome,
+    MemoryBenchSuiteFixture, MemoryBenchTask, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT,
+    DEFAULT_REPORT_BENCHMARK_VERSION,
 };
 
-const PROJECT: &str = "/tmp/remem-memory-bench/repo";
+pub(super) const PROJECT: &str = "/tmp/remem-memory-bench/repo";
 const READER_PROVIDER: &str = "fixture";
 const READER_MODEL: &str = "deterministic-memory-reader";
 
@@ -38,7 +40,7 @@ pub struct MemoryBenchOptions {
     pub artifact_prefix: Option<String>,
 }
 
-pub fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkReport> {
+pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkReport> {
     let fixture = load_suite(&options.suite)?;
     let conditions = selected_conditions(options.condition.as_deref())?;
     let public_root = PathBuf::from(if options.root.trim().is_empty() {
@@ -67,7 +69,7 @@ pub fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkRe
     let mut run_artifacts = Vec::new();
     for condition in conditions {
         for task in &fixture.tasks {
-            let outcome = run_task(&fixture, condition, task)?;
+            let outcome = run_task(&fixture, condition, task).await?;
             let run_json_path = write_run_artifacts(
                 &fixture,
                 &outcome,
@@ -92,6 +94,12 @@ pub fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBenchmarkRe
         "failure_decomposition": failure_decomposition(&outcomes),
         "performance": performance_by_condition(&outcomes),
         "policy": summarize_policy(&outcomes),
+        "verification_paths": outcomes.iter()
+            .map(|outcome| outcome.policy.verification_path.clone())
+            .collect::<BTreeSet<_>>(),
+        "measurement_sources": outcomes.iter()
+            .map(|outcome| outcome.policy.measurement_source.clone())
+            .collect::<BTreeSet<_>>(),
     });
     let report = PublicBenchmarkReport {
         schema_version: 1,
@@ -142,11 +150,22 @@ fn selected_conditions(condition: Option<&str>) -> Result<Vec<MemoryBenchConditi
     }
 }
 
-fn run_task(
+async fn run_task(
     fixture: &MemoryBenchSuiteFixture,
     condition: MemoryBenchCondition,
     task: &MemoryBenchTask,
 ) -> Result<MemoryBenchRunOutcome> {
+    if fixture.suite == ADVERSARIAL_POLICY_SUITE && condition == MemoryBenchCondition::RememDefault
+    {
+        let (retrieved, measurement) = retrieve_with_production_pipeline(task).await?;
+        return Ok(score_task(
+            fixture,
+            condition,
+            task,
+            retrieved,
+            Some(&measurement),
+        ));
+    }
     let retrieved = if let Some(indices) = fixture_retrieval_indices(condition, task) {
         indices
             .into_iter()
@@ -155,7 +174,7 @@ fn run_task(
     } else {
         retrieve_with_remem_search(task)?
     };
-    Ok(score_task(fixture, condition, task, retrieved))
+    Ok(score_task(fixture, condition, task, retrieved, None))
 }
 
 fn retrieve_with_remem_search(task: &MemoryBenchTask) -> Result<Vec<RetrievedEvidence>> {
@@ -220,6 +239,7 @@ fn score_task(
     condition: MemoryBenchCondition,
     task: &MemoryBenchTask,
     retrieved: Vec<RetrievedEvidence>,
+    measurement: Option<&MemoryBenchPolicyMeasurement>,
 ) -> MemoryBenchRunOutcome {
     let gold = task
         .gold_supporting_event_ids
@@ -298,7 +318,7 @@ fn score_task(
     } else {
         0.0
     };
-    let policy = score_policy(condition, task, &retrieved_events, abstained);
+    let policy = score_policy(condition, task, &retrieved_events, abstained, measurement);
     let reader_input = build_reader_input(condition, task, &retrieved);
     let diagnosis =
         classify_diagnosis(condition, task, &missing_event_ids, answer_score, abstained);
@@ -308,6 +328,8 @@ fn score_task(
         "fixture_revision": fixture.fixture_revision,
         "condition": condition.as_str(),
         "task_id": task.id,
+        "verification_path": policy.verification_path,
+        "measurement_source": policy.measurement_source,
         "retrieved": retrieved.iter().map(RetrievedEvidence::to_json).collect::<Vec<_>>(),
     });
     let mut diagnosis_notes = Vec::new();
@@ -547,10 +569,15 @@ fn write_run_artifacts(
             "forbidden_evidence_count": outcome.forbidden_evidence_count,
             "retrieved_memory_count": outcome.retrieved_memory_ids.len(),
             "policy": {
+                "verification_path": outcome.policy.verification_path,
+                "measurement_source": outcome.policy.measurement_source,
+                "source_scanner_config": outcome.policy.source_scanner_config,
                 "active_claim_count": outcome.policy.active_claim_count,
                 "candidate_count": outcome.policy.candidate_count,
                 "summary_input_count": outcome.policy.summary_input_count,
                 "poisoning_applicable": outcome.policy.poisoning_applicable,
+                "poisoning_source_scanner_matched": outcome.policy.poisoning_source_scanner_matched,
+                "poisoning_generated_surface_blocked": outcome.policy.poisoning_generated_surface_blocked,
                 "poisoning_scanner_matched": outcome.policy.poisoning_scanner_matched,
                 "policy_failure_count": outcome.policy.policy_failure_count,
             },
@@ -646,7 +673,7 @@ fn current_git_rev() -> Option<String> {
 }
 
 #[derive(Debug, Clone)]
-struct RetrievedEvidence {
+pub(super) struct RetrievedEvidence {
     memory_id: i64,
     event_id: String,
     title: String,
@@ -660,7 +687,7 @@ impl RetrievedEvidence {
         Self::from_memory((index + 1) as i64, evidence)
     }
 
-    fn from_memory(memory_id: i64, evidence: &MemoryBenchEvidence) -> Self {
+    pub(super) fn from_memory(memory_id: i64, evidence: &MemoryBenchEvidence) -> Self {
         Self {
             memory_id,
             event_id: evidence.event_id.clone(),

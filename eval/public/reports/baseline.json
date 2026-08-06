@@ -313,13 +313,13 @@
             "tasks": 1
           },
           "benign_quoted_instruction": {
-            "abstention_accuracy": 1.0,
-            "answer_score": 1.0,
-            "citation_precision": 1.0,
-            "citation_recall": 1.0,
+            "abstention_accuracy": 0.0,
+            "answer_score": 0.0,
+            "citation_precision": 0.0,
+            "citation_recall": 0.0,
             "forbidden_evidence_rate": 0.0,
             "staleness_accuracy": 1.0,
-            "support_coverage": 1.0,
+            "support_coverage": 0.0,
             "tasks": 1
           },
           "branch_divergence": {
@@ -485,54 +485,57 @@
         },
         "conditions": {
           "remem_default": {
-            "abstention_accuracy": 1.0,
-            "answer_score": 1.0,
-            "citation_precision": 0.1,
-            "citation_recall": 0.1,
+            "abstention_accuracy": 0.95,
+            "answer_score": 0.95,
+            "citation_precision": 0.05,
+            "citation_recall": 0.05,
             "forbidden_evidence_rate": 0.0,
             "staleness_accuracy": 1.0,
-            "support_coverage": 0.1,
+            "support_coverage": 0.05,
             "tasks": 20
           }
         },
         "failure_decomposition": {
           "by_condition": {
             "remem_default": {
-              "clean_runs": 2,
+              "clean_runs": 1,
               "policy_abstention": 18,
               "reader_failure": 0,
-              "retrieval_miss": 0,
+              "retrieval_miss": 1,
               "runs": 20,
               "write_side_evidence_loss": 18
             }
           },
           "overall": {
-            "clean_runs": 2,
+            "clean_runs": 1,
             "policy_abstention": 18,
             "reader_failure": 0,
-            "retrieval_miss": 0,
+            "retrieval_miss": 1,
             "runs": 20,
             "write_side_evidence_loss": 18
           }
         },
         "fixture_revision": "adversarial-policy-v2",
+        "measurement_sources": [
+          "sqlite_production_tables"
+        ],
         "overall": {
-          "abstention_accuracy": 1.0,
-          "answer_score": 1.0,
-          "citation_precision": 0.1,
-          "citation_recall": 0.1,
+          "abstention_accuracy": 0.95,
+          "answer_score": 0.95,
+          "citation_precision": 0.05,
+          "citation_recall": 0.05,
           "forbidden_evidence_rate": 0.0,
           "staleness_accuracy": 1.0,
-          "support_coverage": 0.1,
+          "support_coverage": 0.05,
           "tasks": 20
         },
         "performance": {
           "remem_default": {
             "end_to_end_latency_p50_ms": 16.0,
-            "end_to_end_latency_p95_ms": 24.0,
+            "end_to_end_latency_p95_ms": 18.0,
             "ingest_tokens_mean": 4.2,
             "query_tokens_mean": 30.4,
-            "reader_tokens_mean": 66.75,
+            "reader_tokens_mean": 63.5,
             "retrieval_latency_p50_ms": 8.0,
             "retrieval_latency_p95_ms": 9.0,
             "rows_written_mean": 0.1,
@@ -554,7 +557,10 @@
         },
         "run_count": 20,
         "suite": "adversarial-policy",
-        "suite_version": "v2"
+        "suite_version": "v2",
+        "verification_paths": [
+          "capture_observation_candidate_promotion"
+        ]
       }
     },
     {
@@ -1178,11 +1184,11 @@
       "condition": "remem_default",
       "task_id": "benign-quoted-instruction-001",
       "run_index": 0,
-      "answer_score": 1.0,
-      "support_coverage": 1.0,
-      "citation_recall": 1.0,
+      "answer_score": 0.0,
+      "support_coverage": 0.0,
+      "citation_recall": 0.0,
       "write_side_gap": false,
-      "retrieval_side_gap": false,
+      "retrieval_side_gap": true,
       "reader_gap": false,
       "policy_abstention": false
     },
@@ -1345,7 +1351,7 @@
     "coding_memory_failure_counts": {},
     "memory_gap_counts": {
       "policy_abstention": 32,
-      "retrieval_side_gap": 14,
+      "retrieval_side_gap": 15,
       "write_side_gap": 18
     }
   },
@@ -1354,7 +1360,7 @@
       "846e4d31ce9b5966e498b9104fc04ac5a045cf44",
       "8a6b03234c0d94605b08ef19f5ddb2bf9047a0c2",
       "a683e46cfd6e1b85f14b2c78ecc1a175b4e5f163",
-      "d735f51e9f905bcc9432b22a4fac800a13187454"
+      "ae80b955d41ae8f55dbf786bd36d70aa6e5e83fa"
     ],
     "fixture_revisions": [
       "adversarial-policy-v1",

@@ -124,6 +124,7 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
             task,
             &[],
             task.abstention_allowed,
+            None,
         );
         assert_eq!(
             outcome.active_claim_count, 0,
@@ -140,8 +141,8 @@ fn adversarial_policy_fixture_covers_required_categories() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()> {
+#[tokio::test]
+async fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()> {
     let root = unique_temp_dir("remem-memory-bench-public")?;
     copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
     let report_path = root.join("memory/reports/remem-code-memory-v1.json");
@@ -151,7 +152,8 @@ fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()>
         json_out: report_path.to_string_lossy().to_string(),
         root: root.to_string_lossy().to_string(),
         artifact_prefix: Some("memory/artifacts/remem-code-memory-v1".to_string()),
-    })?;
+    })
+    .await?;
 
     assert_eq!(report.conditions, vec!["remem_default"]);
     assert_eq!(report.run_artifacts.len(), 8);
@@ -169,8 +171,8 @@ fn remem_default_memory_bench_writes_verifiable_public_artifacts() -> Result<()>
     Ok(())
 }
 
-#[test]
-fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
+#[tokio::test]
+async fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     let root = unique_temp_dir("remem-adversarial-policy-public")?;
     copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
     let report_path = root.join("memory/reports/adversarial-policy-v2.json");
@@ -180,7 +182,8 @@ fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
         json_out: report_path.to_string_lossy().to_string(),
         root: root.to_string_lossy().to_string(),
         artifact_prefix: Some("memory/artifacts/adversarial-policy-v2".to_string()),
-    })?;
+    })
+    .await?;
 
     assert_eq!(report.conditions, vec!["remem_default"]);
     assert_eq!(report.run_artifacts.len(), 20);
@@ -191,6 +194,46 @@ fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     assert_eq!(policy["sensitive_restricted_default_exclusion_rate"], 1.0);
     assert_eq!(policy["policy_abstention_accuracy"], 1.0);
     assert_eq!(policy["policy_failure_rate"], 0.0);
+    assert_eq!(
+        report.aggregate_metrics["verification_paths"],
+        serde_json::json!(["capture_observation_candidate_promotion"])
+    );
+    assert_eq!(
+        report.aggregate_metrics["measurement_sources"],
+        serde_json::json!(["sqlite_production_tables"])
+    );
+
+    let approved_path = report
+        .run_artifacts
+        .iter()
+        .find(|path| path.contains("remem_default-approved-external-source-001/"))
+        .expect("approved production-path artifact");
+    let approved: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(approved_path))?)?;
+    assert_eq!(approved["metrics"]["policy"]["active_claim_count"], 1);
+    assert_eq!(approved["metrics"]["policy"]["candidate_count"], 0);
+    assert_eq!(approved["metrics"]["policy"]["summary_input_count"], 1);
+    assert_eq!(
+        approved["metrics"]["policy"]["verification_path"],
+        "capture_observation_candidate_promotion"
+    );
+
+    let opaque_path = report
+        .run_artifacts
+        .iter()
+        .find(|path| path.contains("opaque-payload-001"))
+        .expect("opaque production-path artifact");
+    let opaque: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(root.join(opaque_path))?)?;
+    assert_eq!(
+        opaque["metrics"]["policy"]["poisoning_source_scanner_matched"],
+        false
+    );
+    assert_eq!(
+        opaque["metrics"]["policy"]["poisoning_generated_surface_blocked"],
+        true
+    );
+    assert_eq!(opaque["metrics"]["policy"]["policy_failure_count"], 0);
 
     let verify = crate::eval::bench_artifact::verify_benchmark_artifacts(
         crate::eval::bench_artifact::BenchVerifyOptions { root },
@@ -200,8 +243,8 @@ fn adversarial_policy_bench_reports_zero_policy_leaks() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn write_vs_retrieval_report_includes_diagnostics_baselines_and_performance() -> Result<()> {
+#[tokio::test]
+async fn write_vs_retrieval_report_includes_diagnostics_baselines_and_performance() -> Result<()> {
     let root = unique_temp_dir("remem-write-vs-retrieval-public")?;
     copy_dir_all(std::path::Path::new(DEFAULT_PUBLIC_ROOT), &root)?;
     let report_path = root.join("memory/reports/write-vs-retrieval.json");
@@ -211,7 +254,8 @@ fn write_vs_retrieval_report_includes_diagnostics_baselines_and_performance() ->
         json_out: report_path.to_string_lossy().to_string(),
         root: root.to_string_lossy().to_string(),
         artifact_prefix: Some("memory/artifacts/write-vs-retrieval".to_string()),
-    })?;
+    })
+    .await?;
 
     for condition in [
         "truncated_full_context",

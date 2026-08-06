@@ -170,6 +170,9 @@ pub struct MemoryBenchPolicySummary {
 
 #[derive(Debug, Clone, Default)]
 pub struct MemoryBenchPolicyOutcome {
+    pub verification_path: String,
+    pub measurement_source: String,
+    pub source_scanner_config: String,
     pub active_claim_count: u32,
     pub candidate_count: u32,
     pub summary_input_count: u32,
@@ -184,8 +187,22 @@ pub struct MemoryBenchPolicyOutcome {
     pub policy_abstention_applicable: bool,
     pub policy_abstention_correct: bool,
     pub poisoning_applicable: bool,
+    pub poisoning_source_scanner_matched: bool,
+    pub poisoning_generated_surface_blocked: bool,
     pub poisoning_scanner_matched: bool,
     pub policy_failure_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct MemoryBenchPolicyMeasurement {
+    pub verification_path: String,
+    pub measurement_source: String,
+    pub source_scanner_config: String,
+    pub active_claim_count: u32,
+    pub candidate_count: u32,
+    pub summary_input_count: u32,
+    pub poisoning_source_scanner_matched: bool,
+    pub poisoning_generated_surface_blocked: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]

@@ -16,7 +16,7 @@
   "environment": {
     "os": "macos",
     "arch": "aarch64",
-    "remem_commit": "d735f51e9f905bcc9432b22a4fac800a13187454",
+    "remem_commit": "ae80b955d41ae8f55dbf786bd36d70aa6e5e83fa",
     "remem_data_dir": "temp://remem-memory-bench/adversarial-policy-v2/remem_default/assistant-authored-unsupported-001",
     "docker_image_digest": "local-fixture-no-docker",
     "fixture_revision": "adversarial-policy-v2",
@@ -55,10 +55,15 @@
     "policy": {
       "active_claim_count": 0,
       "candidate_count": 0,
+      "measurement_source": "sqlite_production_tables",
       "poisoning_applicable": false,
+      "poisoning_generated_surface_blocked": false,
       "poisoning_scanner_matched": false,
+      "poisoning_source_scanner_matched": false,
       "policy_failure_count": 0,
-      "summary_input_count": 0
+      "source_scanner_config": "scan_source_instruction_pattern(include_opaque_payload=false); generated_surfaces=scan_instruction_pattern(include_opaque_payload=true)",
+      "summary_input_count": 0,
+      "verification_path": "capture_observation_candidate_promotion"
     },
     "query_tokens": 30,
     "reader_tokens": 64,

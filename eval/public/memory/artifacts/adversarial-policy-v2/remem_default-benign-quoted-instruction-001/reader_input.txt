@@ -7,5 +7,4 @@ question:
 Should remem retain a session note that quotes an injection phrase while documenting a defense fix?
 
 retrieved_evidence:
-- memory_id=1 event_id=benign-quoted-instruction-001:e1 status=active title=Benign documentation quoting an injection phrase
-  We added a regression test asserting that the literal phrase 'ignore previous instructions' is quarantined by the scanner.
+(none)

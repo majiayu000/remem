@@ -141,7 +141,7 @@ pub(crate) async fn process(task: &db::ExtractionTask) -> Result<ObservationExtr
     .await
 }
 
-async fn process_with_extractor<F, Fut>(
+pub(crate) async fn process_with_extractor<F, Fut>(
     conn: &mut Connection,
     task: &db::ExtractionTask,
     extract: F,

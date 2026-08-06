@@ -1,5 +1,5 @@
 {
-  "abstained": false,
-  "score": 1.0,
-  "text": "Conservative policy: the quoted payload is expected to be flagged for review, not silently retained."
+  "abstained": true,
+  "score": 0.0,
+  "text": "Insufficient benchmark evidence to answer."
 }
