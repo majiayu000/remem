@@ -1,4 +1,5 @@
 mod apply;
+pub(crate) mod backfill;
 mod candidates;
 mod conflict;
 mod constants;

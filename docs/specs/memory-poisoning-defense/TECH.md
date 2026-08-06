@@ -293,3 +293,69 @@ topic key, and text. Candidate mutation and ledger/recurrence writes share a
 savepoint, and every digest hit validates the stored route fields. Semantic
 identities never adopt unverifiable legacy candidates; ordinary legacy native
 imports retain deterministic exact-row adoption.
+
+## Dream Stock Backfill (GH-990, staged 0.6.51)
+
+The forward boundary leaves one gap: memories Dream merged before v076 carry
+the v060 default trust class `local_tool_output` and stay active. The backfill
+closes that stock half as an explicit operator command
+(`remem dream-backfill`), never inside a migration — the quarantine ledger is
+append-only and irreversible, so writing to it is a deliberate decision with a
+dry-run first.
+
+Stock identification is a pure projection of the pre-v076 write path:
+`session_id='dream' AND status='active' AND source_trust_class=
+'local_tool_output'`. Post-v076 merges are stamped `external_content` by
+`mark_dream_generated`, so they never match, which also makes re-runs
+idempotent.
+
+Planning scans every stock row with the exact forward convention: the
+individual generated fields in declared order, then the combined
+`title + "\n" + content` surface (`scan_generated_surfaces`). The plan splits
+rows into hits, no-hits, and skipped (rows whose empty generated title/content
+cannot satisfy the merge artifact CHECK are reported, never quarantined).
+
+Applying the complete plan opens one immediate transaction, re-plans the full
+stock set, and compares its digest plus each row snapshot with the rehearsal
+before it writes anything. Any plan drift aborts atomically. Each hit is then
+re-loaded and re-scanned inside that transaction (a stale snapshot aborts
+rather than writing a wrong binding), then:
+
+1. creates or reuses a quarantined `dream_model_output` candidate through the
+   external identity ledger (`risk_class='high'`, `confidence=0.5`);
+2. inserts a `dream_quarantine_artifacts` row whose v077
+   `backfill_memory_id` binds the exact retired memory — the column is
+   merge-only at insert and immutable at update by trigger, and the restore
+   path treats `decision_ids == intended_superseded_ids == [backfill_memory_id]`;
+3. retires the memory (`status='archived'`) and stamps
+   `source_trust_class='external_content'` in the same statement, so a later
+   restore never re-enters the stock set; and
+4. records a `dream_backfill_quarantine` operation log entry.
+
+Approval goes through the normal review path with pattern acknowledgement and
+the current Dream token, then branches on the backfill binding: instead of
+promoting generated payload, it restores the bound memory in place after
+verifying the row still exists, is still the Dream memory with
+`source_trust_class='external_content'`, still belongs to the same project and
+memory type, is still archived, and its effective topic key, title, and content
+still equal the reviewed merge payload exactly — any drift fails closed with
+`dream_backfill_restore_payload_mismatch`. The restore keeps the original
+memory id and writes the same review metadata, ack write-back, and audit
+event as a forward approval. Provenance loading treats backfill members as
+archived-by-design and skips the cluster-signature staleness recompute for
+backfill rows (retirement necessarily moved version/update epoch; the
+restore-time payload comparison is the integrity check).
+
+A no-hit row only has its trust class backfilled to `external_content`,
+deliberately without touching `updated_at_epoch` so a maintenance pass cannot
+make old memories look freshly written to recency-sensitive ranking. It is
+re-checked as a no-hit inside the same transaction, and each backfilled row
+records a `dream_backfill_trust_class` operation log entry.
+
+The CLI defaults to dry-run and rejects `--apply --dry-run` together; the
+report lists a plan digest, per-project stock/hit/skip counts, and the matched
+field/pattern per hit, capped for readability, with full detail under `--json`.
+`--apply --expect-plan-digest <sha256>` binds the write to a reviewed
+rehearsal; apply without that optional flag still performs the in-transaction
+plan binding. The v077 backfill binding is merge-only, immutable, and unique
+per retired memory, preventing duplicate recurrence artifacts.

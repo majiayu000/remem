@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Added
+- Staged source version `0.6.51` for GH-990: new explicit
+  `remem dream-backfill` command closes the stock half of the Dream poisoning
+  boundary. Pre-v076 Dream-merged active memories (identified by
+  `session_id='dream'` plus the v060 default trust class) are re-scanned with
+  the same generated-surface scanner and calling convention as the forward
+  path. Scanner hits are archived, bound to a `dream_quarantine_artifacts`
+  row via the new `backfill_memory_id` column (v077), and enter the existing
+  review queue; approving such a candidate restores the same memory in place
+  instead of promoting a copy, while rejection leaves it retired with a full
+  audit trail. Non-hits only have `source_trust_class` backfilled to
+  `external_content` without touching recency signals. Planning is the
+  default — `--apply` is required for any write. JSON and human reports expose
+  a plan digest; `--expect-plan-digest` can bind apply to a reviewed rehearsal,
+  and the complete plan is rechecked inside one immediate transaction before
+  the immutable quarantine ledger is written.
+
 ### Fixed
 - Staged source version `0.6.50` for GH-947: the SessionStart injection path
   now applies `SearchWeights::usage`. It previously fused only its fts, entity,

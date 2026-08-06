@@ -2,6 +2,7 @@ mod admin;
 mod codex_memory_import;
 mod config_command;
 mod context_plan;
+mod dream_backfill;
 mod embedding;
 mod encrypt_state;
 mod eval;
@@ -31,6 +32,7 @@ mod user_summary;
 pub(super) use admin::run_admin;
 pub(super) use config_command::run_config;
 pub(super) use context_plan::run_context_plan;
+pub(super) use dream_backfill::run_dream_backfill;
 pub(super) use embedding::run_embedding;
 pub(super) use eval::{
     run_bench, run_eval, run_eval_associative_baseline, run_eval_capacity, run_eval_coding_bench,

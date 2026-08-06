@@ -31,6 +31,9 @@ pub(crate) struct DreamQuarantineArtifact {
     pub occurrence_count: i64,
     pub created_at_epoch: i64,
     pub updated_at_epoch: i64,
+    /// GH-990: set only on stock-backfill artifacts; binds the artifact to
+    /// the pre-v076 Dream-merged memory it retired pending review.
+    pub backfill_memory_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,6 +43,10 @@ pub(crate) struct DreamQuarantineProvenance {
     pub merge_payload: Option<DreamMergePayload>,
     pub review_token: Option<String>,
     pub blocked_reasons: Vec<String>,
+    /// Distinct pre-v076 stock memories bound by these artifacts (GH-990).
+    /// Empty for forward-path candidates; exactly one id for a restorable
+    /// stock-backfill candidate.
+    pub backfill_memory_ids: Vec<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +117,7 @@ struct RawDreamArtifact {
     occurrence_count: i64,
     created_at_epoch: i64,
     updated_at_epoch: i64,
+    backfill_memory_id: Option<i64>,
 }
 
 pub(crate) fn load_dream_quarantine_provenance(
@@ -174,7 +182,7 @@ pub(crate) fn load_dream_quarantine_provenance(
                 generated_memory_type, generated_title, generated_content,
                 generated_field, pattern_id, pattern_version, source_operation,
                 source_trust_class, occurrence_count, created_at_epoch,
-                updated_at_epoch
+                updated_at_epoch, backfill_memory_id
          FROM dream_quarantine_artifacts
          WHERE source_candidate_id = ?1
          ORDER BY id",
@@ -202,6 +210,7 @@ pub(crate) fn load_dream_quarantine_provenance(
             occurrence_count: row.get(18)?,
             created_at_epoch: row.get(19)?,
             updated_at_epoch: row.get(20)?,
+            backfill_memory_id: row.get(21)?,
         })
     })?;
 
@@ -287,6 +296,13 @@ pub(crate) fn load_dream_quarantine_provenance(
         {
             push_provenance_reason(&mut blocked_reasons, "dream_provenance_pattern_mismatch");
         }
+        if let Some(backfill_id) = row.backfill_memory_id {
+            // A stock-backfill artifact binds exactly one member: the retired
+            // pre-v076 memory itself (GH-990).
+            if member_ids != vec![backfill_id] {
+                push_provenance_reason(&mut blocked_reasons, "dream_provenance_malformed");
+            }
+        }
         let mut member_snapshots = Vec::with_capacity(member_ids.len());
         for member_id in &member_ids {
             if let Some(snapshot) = validate_member(
@@ -294,12 +310,19 @@ pub(crate) fn load_dream_quarantine_provenance(
                 *member_id,
                 &row.project,
                 &identity.memory_type,
+                row.backfill_memory_id.is_some(),
                 &mut blocked_reasons,
             )? {
                 member_snapshots.push(snapshot);
             }
         }
-        if member_snapshots.len() == member_ids.len()
+        // The forward-path staleness probe recomputes the signature from
+        // current member snapshots. A backfill artifact's only member is the
+        // retired stock memory, whose version and timestamps necessarily moved
+        // when the backfill archived it, so the signature can never match;
+        // restore-time payload comparison covers integrity instead (GH-990).
+        if row.backfill_memory_id.is_none()
+            && member_snapshots.len() == member_ids.len()
             && crate::dream::cluster_signature_sha256(
                 &row.project,
                 &identity.memory_type,
@@ -360,6 +383,7 @@ pub(crate) fn load_dream_quarantine_provenance(
             occurrence_count: row.occurrence_count,
             created_at_epoch: row.created_at_epoch,
             updated_at_epoch: row.updated_at_epoch,
+            backfill_memory_id: row.backfill_memory_id,
         });
     }
     if artifacts.is_empty() {
@@ -367,6 +391,25 @@ pub(crate) fn load_dream_quarantine_provenance(
     }
 
     let authorized_supersede_ids = authorized_ids.into_iter().collect::<Vec<_>>();
+    let backfill_memory_ids = artifacts
+        .iter()
+        .filter_map(|artifact| artifact.backfill_memory_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let backfill_artifact_count = artifacts
+        .iter()
+        .filter(|artifact| artifact.backfill_memory_id.is_some())
+        .count();
+    if !backfill_memory_ids.is_empty()
+        && (backfill_memory_ids.len() != 1
+            || backfill_artifact_count != 1
+            || artifacts
+                .iter()
+                .any(|artifact| artifact.backfill_memory_id.is_none()))
+    {
+        push_provenance_reason(&mut blocked_reasons, "dream_backfill_provenance_duplicate");
+    }
     let review_token = (blocked_reasons.is_empty()
         && matches!(
             identity.review_status.as_str(),
@@ -379,6 +422,7 @@ pub(crate) fn load_dream_quarantine_provenance(
         merge_payload,
         review_token,
         blocked_reasons,
+        backfill_memory_ids,
     }))
 }
 
@@ -447,6 +491,7 @@ fn validate_member(
     member_id: i64,
     project: &str,
     memory_type: &str,
+    backfill: bool,
     blocked_reasons: &mut Vec<String>,
 ) -> Result<Option<crate::dream::DreamClusterMemberSnapshot>> {
     let row = conn
@@ -489,14 +534,24 @@ fn validate_member(
     if member_type != memory_type {
         push_provenance_reason(blocked_reasons, "dream_provenance_member_type_mismatch");
     }
-    if status != "active" {
-        push_provenance_reason(blocked_reasons, "dream_provenance_stale");
-    }
-    if version <= 0 {
-        push_provenance_reason(blocked_reasons, "dream_provenance_stale");
-    }
-    if !member_is_canonically_current(conn, member_id)? {
-        push_provenance_reason(blocked_reasons, "dream_provenance_stale");
+    if backfill {
+        // The backfill retired this memory pending review; that retirement is
+        // the expected state. Anything else (restored, decayed, deleted from
+        // the active surface by another path) means the binding no longer
+        // describes reality.
+        if status != "archived" {
+            push_provenance_reason(blocked_reasons, "dream_provenance_stale");
+        }
+    } else {
+        if status != "active" {
+            push_provenance_reason(blocked_reasons, "dream_provenance_stale");
+        }
+        if version <= 0 {
+            push_provenance_reason(blocked_reasons, "dream_provenance_stale");
+        }
+        if !member_is_canonically_current(conn, member_id)? {
+            push_provenance_reason(blocked_reasons, "dream_provenance_stale");
+        }
     }
     Ok(Some(crate::dream::DreamClusterMemberSnapshot {
         id: member_id,
@@ -533,7 +588,7 @@ fn canonical_review_token(
     artifacts: &[DreamQuarantineArtifact],
 ) -> String {
     let mut hasher = Sha256::new();
-    feed(&mut hasher, "dream-review-v3");
+    feed(&mut hasher, "dream-review-v4");
     feed(&mut hasher, &candidate_id.to_string());
     feed(&mut hasher, &candidate_version.to_string());
     feed(&mut hasher, &artifacts.len().to_string());
@@ -571,6 +626,7 @@ fn canonical_review_token(
         feed(&mut hasher, &artifact.occurrence_count.to_string());
         feed(&mut hasher, &artifact.created_at_epoch.to_string());
         feed(&mut hasher, &artifact.updated_at_epoch.to_string());
+        feed_optional_i64(&mut hasher, artifact.backfill_memory_id);
     }
     format!("sha256:{:x}", hasher.finalize())
 }
@@ -594,6 +650,16 @@ fn feed_optional(hasher: &mut Sha256, value: Option<&str>) {
         Some(value) => {
             hasher.update([1]);
             feed(hasher, value);
+        }
+        None => hasher.update([0]),
+    }
+}
+
+fn feed_optional_i64(hasher: &mut Sha256, value: Option<i64>) {
+    match value {
+        Some(value) => {
+            hasher.update([1]);
+            feed(hasher, &value.to_string());
         }
         None => hasher.update([0]),
     }
@@ -640,6 +706,7 @@ mod tests {
             occurrence_count: 1,
             created_at_epoch: 10,
             updated_at_epoch: 10,
+            backfill_memory_id: None,
         }
     }
 
@@ -670,5 +737,15 @@ mod tests {
         let mut changed_digest = artifact;
         changed_digest.decision_payload_sha256 = "0".repeat(64);
         assert_ne!(canonical_review_token(3, 4, &[changed_digest]), original);
+    }
+
+    #[test]
+    fn review_token_binds_backfill_memory_id() {
+        let artifact = merge_artifact();
+        let original = canonical_review_token(3, 4, std::slice::from_ref(&artifact));
+
+        let mut changed_binding = artifact;
+        changed_binding.backfill_memory_id = Some(11);
+        assert_ne!(canonical_review_token(3, 4, &[changed_binding]), original);
     }
 }
