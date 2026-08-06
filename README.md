@@ -309,6 +309,10 @@ codex plugin marketplace add .
 codex plugin add remem@remem-local
 ```
 
+The plugin runtime gives `remem --version` up to 15 seconds on cold startup.
+Set `REMEM_RUNTIME_VERSION_TIMEOUT_MS` to a different positive integer only
+when the local filesystem or code-signature check needs another bound.
+
 After installing the plugin, start a new Codex thread. To enable automatic
 SessionStart context injection and Stop summarization, run:
 
