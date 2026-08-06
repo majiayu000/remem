@@ -25,7 +25,14 @@ The committed `remem_default` report checks that secrets, credentials, payment
 data, unframed third-party personal details, roleplay, negations, unsupported
 assistant claims, unapproved external sources, spliced claims, same-name repos,
 multi-task bleed, branch divergence, stale file anchors, and unresolved
-conflicts do not leak into active memory outputs unless explicitly approved.
+conflicts do not leak into active memory outputs unless explicitly approved. It
+also covers instruction injection, authority claims, opaque payloads, and a
+benign quoted-instruction control. This condition records real captured events,
+runs deterministic fixture responses through observation extraction and memory
+candidate governance, and measures persisted active/reviewable/summary-input
+state. Run artifacts name that production verification path and separate the
+raw source scanner from generated-surface quarantine. Direct-memory conditions
+remain explicitly labeled comparative fixtures.
 
 `../coding-bench/fixtures/tasks.json` is the public `issue385-v1` coding-agent
 task pack. It contains 16 deterministic tasks across the required memory
@@ -84,7 +91,7 @@ cargo run -- bench memory --suite remem-code-memory --json-out /tmp/remem-memory
 Regenerate the committed adversarial-policy report and artifacts:
 
 ```bash
-cargo run -- bench memory --suite adversarial-policy --condition remem_default --root eval/public --artifact-prefix memory/artifacts/adversarial-policy-v1 --json-out eval/public/memory/reports/adversarial-policy-v1.json
+cargo run -- bench memory --suite adversarial-policy --condition remem_default --root eval/public --artifact-prefix memory/artifacts/adversarial-policy-v2 --json-out eval/public/memory/reports/adversarial-policy-v2.json
 ```
 
 Invalid examples under `invalid-examples/` are not discovered by the verifier

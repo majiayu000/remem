@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.52` for GH-991: the public
+  `adversarial-policy` `remem_default` condition now records captured events
+  and runs deterministic fixture responses through the production observation
+  extraction, memory-candidate governance, auto-promotion, and retrieval path.
+  Active claims, reviewable candidates, and summary inputs are read from the
+  resulting SQLite state instead of inferred from fixture flags. Run artifacts
+  name their verification path and measurement source, use the production
+  source-event scanner configuration, and report source matches separately
+  from generated-surface quarantine (including the opaque-payload distinction).
+  Comparative direct-memory fixtures remain explicitly labeled baselines.
+  Poisoning-quarantined observations are now excluded from candidate batches,
+  closing the production drift that the new end-to-end evaluator exposed.
 - Staged source version `0.6.51` for GH-990: new explicit
   `remem dream-backfill` command closes the stock half of the Dream poisoning
   boundary. Pre-v076 Dream-merged active memories (identified by

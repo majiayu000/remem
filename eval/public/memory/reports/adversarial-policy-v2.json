@@ -57,13 +57,13 @@
         "tasks": 1
       },
       "benign_quoted_instruction": {
-        "abstention_accuracy": 1.0,
-        "answer_score": 1.0,
-        "citation_precision": 1.0,
-        "citation_recall": 1.0,
+        "abstention_accuracy": 0.0,
+        "answer_score": 0.0,
+        "citation_precision": 0.0,
+        "citation_recall": 0.0,
         "forbidden_evidence_rate": 0.0,
         "staleness_accuracy": 1.0,
-        "support_coverage": 1.0,
+        "support_coverage": 0.0,
         "tasks": 1
       },
       "branch_divergence": {
@@ -229,54 +229,57 @@
     },
     "conditions": {
       "remem_default": {
-        "abstention_accuracy": 1.0,
-        "answer_score": 1.0,
-        "citation_precision": 0.1,
-        "citation_recall": 0.1,
+        "abstention_accuracy": 0.95,
+        "answer_score": 0.95,
+        "citation_precision": 0.05,
+        "citation_recall": 0.05,
         "forbidden_evidence_rate": 0.0,
         "staleness_accuracy": 1.0,
-        "support_coverage": 0.1,
+        "support_coverage": 0.05,
         "tasks": 20
       }
     },
     "failure_decomposition": {
       "by_condition": {
         "remem_default": {
-          "clean_runs": 2,
+          "clean_runs": 1,
           "policy_abstention": 18,
           "reader_failure": 0,
-          "retrieval_miss": 0,
+          "retrieval_miss": 1,
           "runs": 20,
           "write_side_evidence_loss": 18
         }
       },
       "overall": {
-        "clean_runs": 2,
+        "clean_runs": 1,
         "policy_abstention": 18,
         "reader_failure": 0,
-        "retrieval_miss": 0,
+        "retrieval_miss": 1,
         "runs": 20,
         "write_side_evidence_loss": 18
       }
     },
     "fixture_revision": "adversarial-policy-v2",
+    "measurement_sources": [
+      "sqlite_production_tables"
+    ],
     "overall": {
-      "abstention_accuracy": 1.0,
-      "answer_score": 1.0,
-      "citation_precision": 0.1,
-      "citation_recall": 0.1,
+      "abstention_accuracy": 0.95,
+      "answer_score": 0.95,
+      "citation_precision": 0.05,
+      "citation_recall": 0.05,
       "forbidden_evidence_rate": 0.0,
       "staleness_accuracy": 1.0,
-      "support_coverage": 0.1,
+      "support_coverage": 0.05,
       "tasks": 20
     },
     "performance": {
       "remem_default": {
         "end_to_end_latency_p50_ms": 16.0,
-        "end_to_end_latency_p95_ms": 24.0,
+        "end_to_end_latency_p95_ms": 18.0,
         "ingest_tokens_mean": 4.2,
         "query_tokens_mean": 30.4,
-        "reader_tokens_mean": 66.75,
+        "reader_tokens_mean": 63.5,
         "retrieval_latency_p50_ms": 8.0,
         "retrieval_latency_p95_ms": 9.0,
         "rows_written_mean": 0.1,
@@ -298,7 +301,10 @@
     },
     "run_count": 20,
     "suite": "adversarial-policy",
-    "suite_version": "v2"
+    "suite_version": "v2",
+    "verification_paths": [
+      "capture_observation_candidate_promotion"
+    ]
   },
   "claim_level": "directional_memory_suite_no_public_claim",
   "verifier": {

@@ -640,16 +640,21 @@ cargo run -- bench verify --root eval/public --json-out /tmp/remem-bench-verify.
 cargo run -- bench report --root eval/public --json-out eval/public/reports/baseline.json --markdown-out eval/public/reports/baseline.md
 ```
 
-The current directional report verifies 4 manifests, 4 reports, 25 run
-artifacts, and 125 artifact files. It includes:
+The current directional report verifies 5 manifests, 5 reports, 45 run
+artifacts, and 225 artifact files. It includes:
 
 - `remem-code-memory`: 8 memory QA runs covering temporal/as-of answers, stale
   decision avoidance, conflicts, workstream continuity, prior bug root cause,
   architecture constraints, file/source anchors, and user-context relevance.
-- `adversarial-policy`: 15 non-retention cases covering secrets, credentials,
-  payment data, unsupported assistant claims, unapproved external sources,
-  roleplay, negation, same-name repos, branch divergence, stale file anchors,
-  and unresolved conflicts.
+- `adversarial-policy`: 20 policy cases covering secrets, credentials, payment
+  data, unsupported assistant claims, unapproved external sources, roleplay,
+  negation, same-name repos, branch divergence, stale file anchors, unresolved
+  conflicts, instruction injection, authority claims, opaque payloads, and a
+  benign quoted-instruction control. Its `remem_default` condition runs real
+  capture -> observation extraction -> candidate governance -> promotion and
+  reads policy counts from the resulting SQLite state. Each artifact records
+  that verification path plus the exact source/generated scanner split;
+  direct-memory fixture conditions remain labeled comparative baselines.
 - `issue385-smoke`: one committed coding-agent smoke run artifact with
   memory-contract fields for `remem` runs. The full `issue385-v1` fixture pack
   is referenced for dry-run reproduction, but it is not yet part of the

@@ -300,7 +300,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             project,
             branch,
         } => run_why(id, project.as_deref(), branch.as_deref())?,
-        Commands::Bench { action } => run_bench(action)?,
+        Commands::Bench { action } => run_bench(action).await?,
         Commands::Eval { dataset, k, json } => run_eval(&dataset, k, json)?,
         Commands::EvalE2e {
             k,

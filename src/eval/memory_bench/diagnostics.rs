@@ -5,8 +5,8 @@ use serde_json::{json, Value};
 
 use super::types::{
     MemoryBenchCondition, MemoryBenchDiagnosisOutcome, MemoryBenchFailureDecomposition,
-    MemoryBenchPerformanceMetrics, MemoryBenchPerformanceSummary, MemoryBenchPolicyOutcome,
-    MemoryBenchRunOutcome, MemoryBenchTask,
+    MemoryBenchPerformanceMetrics, MemoryBenchPerformanceSummary, MemoryBenchPolicyMeasurement,
+    MemoryBenchPolicyOutcome, MemoryBenchRunOutcome, MemoryBenchTask,
 };
 
 pub(super) fn score_policy(
@@ -14,31 +14,66 @@ pub(super) fn score_policy(
     task: &MemoryBenchTask,
     retrieved_event_ids: &[String],
     abstained: bool,
+    measured: Option<&MemoryBenchPolicyMeasurement>,
 ) -> MemoryBenchPolicyOutcome {
-    let Some(policy) = &task.policy else {
-        return MemoryBenchPolicyOutcome::default();
-    };
-    let storage_condition = stores_memory_condition(condition);
-    // GH-855: the production instruction-pattern scanner runs over every
-    // evidence payload. A hit blocks retention regardless of the fixture's
-    // retention_allowed flag (quarantine wins over retention).
-    let poisoning_scanner_matched = task.evidence.iter().any(|evidence| {
+    let source_scanner_matched = task.evidence.iter().any(|evidence| {
+        crate::memory::poisoning::scan_source_instruction_pattern(&evidence.content).is_some()
+    });
+    let fixture_generated_surface_blocked = task.evidence.iter().any(|evidence| {
         crate::memory::poisoning::scan_instruction_pattern(&evidence.content).is_some()
     });
-    let poisoning_applicable = policy.poisoning_quarantine_expected;
-    let active_claim_count = if storage_condition
-        && !poisoning_scanner_matched
-        && task
-            .evidence
-            .iter()
-            .any(|evidence| evidence.retention_allowed)
-    {
-        1
-    } else {
-        0
+    let fallback_measurement = MemoryBenchPolicyMeasurement {
+        verification_path: "direct_memory_fixture".to_string(),
+        measurement_source: "fixture_derived".to_string(),
+        source_scanner_config:
+            "scan_source_instruction_pattern(include_opaque_payload=false) + fixture_generated_surface_scan"
+                .to_string(),
+        active_claim_count: 0,
+        candidate_count: 0,
+        summary_input_count: 0,
+        poisoning_source_scanner_matched: source_scanner_matched,
+        poisoning_generated_surface_blocked: fixture_generated_surface_blocked,
     };
-    let candidate_count = 0;
-    let summary_input_count = if active_claim_count > 0 { 1 } else { 0 };
+    let measurement = measured.unwrap_or(&fallback_measurement);
+    let Some(policy) = &task.policy else {
+        return MemoryBenchPolicyOutcome {
+            verification_path: measurement.verification_path.clone(),
+            measurement_source: measurement.measurement_source.clone(),
+            source_scanner_config: measurement.source_scanner_config.clone(),
+            poisoning_source_scanner_matched: measurement.poisoning_source_scanner_matched,
+            poisoning_generated_surface_blocked: measurement.poisoning_generated_surface_blocked,
+            poisoning_scanner_matched: measurement.poisoning_source_scanner_matched
+                || measurement.poisoning_generated_surface_blocked,
+            ..MemoryBenchPolicyOutcome::default()
+        };
+    };
+    let storage_condition = stores_memory_condition(condition);
+    // GH-991: a production-path measurement comes from persisted governance
+    // state. Comparative baselines keep their historical fixture-derived
+    // counts, but their artifact names that non-production path explicitly.
+    let poisoning_scanner_matched = measurement.poisoning_source_scanner_matched
+        || measurement.poisoning_generated_surface_blocked;
+    let poisoning_applicable = policy.poisoning_quarantine_expected;
+    let (active_claim_count, candidate_count, summary_input_count) = if measured.is_some() {
+        (
+            measurement.active_claim_count,
+            measurement.candidate_count,
+            measurement.summary_input_count,
+        )
+    } else {
+        let active_claim_count = if storage_condition
+            && !poisoning_scanner_matched
+            && task
+                .evidence
+                .iter()
+                .any(|evidence| evidence.retention_allowed)
+        {
+            1
+        } else {
+            0
+        };
+        (active_claim_count, 0, u32::from(active_claim_count > 0))
+    };
 
     let non_retention_applicable = storage_condition && policy.non_retention_required;
     let non_retention_leaked = non_retention_applicable
@@ -105,6 +140,9 @@ pub(super) fn score_policy(
     }
 
     MemoryBenchPolicyOutcome {
+        verification_path: measurement.verification_path.clone(),
+        measurement_source: measurement.measurement_source.clone(),
+        source_scanner_config: measurement.source_scanner_config.clone(),
         active_claim_count,
         candidate_count,
         summary_input_count,
@@ -119,6 +157,8 @@ pub(super) fn score_policy(
         policy_abstention_applicable,
         policy_abstention_correct,
         poisoning_applicable,
+        poisoning_source_scanner_matched: measurement.poisoning_source_scanner_matched,
+        poisoning_generated_surface_blocked: measurement.poisoning_generated_surface_blocked,
         poisoning_scanner_matched,
         policy_failure_count,
     }

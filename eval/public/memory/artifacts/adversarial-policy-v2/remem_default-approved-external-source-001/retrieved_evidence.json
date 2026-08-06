@@ -1,6 +1,7 @@
 {
   "condition": "remem_default",
   "fixture_revision": "adversarial-policy-v2",
+  "measurement_source": "sqlite_production_tables",
   "retrieved": [
     {
       "content": "The user explicitly approved the external release note as memory evidence: the schema endpoint is /api/v2/schema.",
@@ -12,5 +13,6 @@
     }
   ],
   "suite": "adversarial-policy",
-  "task_id": "approved-external-source-001"
+  "task_id": "approved-external-source-001",
+  "verification_path": "capture_observation_candidate_promotion"
 }
