@@ -141,11 +141,15 @@ fn ensure_vec_index_profile(conn: &Connection, dimensions: usize) -> Result<()> 
         },
     )?;
     let batch = crate::db::query::collect_rows(rows)?;
+    // vec0 rejects INSERT OR REPLACE / upsert conflict clauses, so replacing
+    // a dual-written row is an explicit delete-then-insert.
+    let mut delete = conn.prepare(&format!("DELETE FROM {table} WHERE memory_id = ?1"))?;
     let mut insert = conn.prepare(&format!(
-        "INSERT OR REPLACE INTO {table} (memory_id, embedding, model) VALUES (?1, ?2, ?3)"
+        "INSERT INTO {table} (memory_id, embedding, model) VALUES (?1, ?2, ?3)"
     ))?;
     let mut advanced = cursor;
     for (memory_id, embedding, model) in &batch {
+        delete.execute([memory_id])?;
         insert.execute(rusqlite::params![memory_id, embedding, model])?;
         advanced = *memory_id;
     }
@@ -196,13 +200,18 @@ pub(crate) fn sync_vec_upsert(
     if !vec_extension_loaded(conn) || !vec_table_exists(conn, dimensions)? {
         return Ok(());
     }
+    let table = vec_table_name(dimensions);
+    conn.execute(
+        &format!("DELETE FROM {table} WHERE memory_id = ?1"),
+        [memory_id],
+    )
+    .with_context(|| format!("clear vec index row for memory id={memory_id}"))?;
     conn.execute(
         &format!(
-            "INSERT OR REPLACE INTO {} (memory_id, embedding, model)
+            "INSERT INTO {table} (memory_id, embedding, model)
              SELECT memory_id, embedding, model
              FROM memory_embeddings
-             WHERE memory_id = ?1 AND model = ?2 AND dimensions = ?3",
-            vec_table_name(dimensions)
+             WHERE memory_id = ?1 AND model = ?2 AND dimensions = ?3"
         ),
         rusqlite::params![memory_id, model, dimensions as i64],
     )
@@ -222,10 +231,23 @@ pub(crate) fn sync_vec_upsert_batch(
     {
         return Ok(());
     }
-    let placeholders = memory_ids
+    let table = vec_table_name(dimensions);
+    let id_values: Vec<Box<dyn rusqlite::types::ToSql>> = memory_ids
         .iter()
-        .enumerate()
-        .map(|(index, _)| format!("?{}", index + 2))
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    let delete_placeholders = (1..=memory_ids.len())
+        .map(|index| format!("?{index}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let id_refs = crate::db::to_sql_refs(&id_values);
+    conn.execute(
+        &format!("DELETE FROM {table} WHERE memory_id IN ({delete_placeholders})"),
+        id_refs.as_slice(),
+    )?;
+
+    let insert_placeholders = (2..=memory_ids.len() + 1)
+        .map(|index| format!("?{index}"))
         .collect::<Vec<_>>()
         .join(", ");
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(dimensions as i64)];
@@ -237,11 +259,10 @@ pub(crate) fn sync_vec_upsert_batch(
     let refs = crate::db::to_sql_refs(&values);
     conn.execute(
         &format!(
-            "INSERT OR REPLACE INTO {} (memory_id, embedding, model)
+            "INSERT INTO {table} (memory_id, embedding, model)
              SELECT memory_id, embedding, model
              FROM memory_embeddings
-             WHERE dimensions = ?1 AND memory_id IN ({placeholders})",
-            vec_table_name(dimensions)
+             WHERE dimensions = ?1 AND memory_id IN ({insert_placeholders})"
         ),
         refs.as_slice(),
     )?;
@@ -352,12 +373,20 @@ pub(crate) fn knn_candidates(
     let rows = stmt.query_map(refs.as_slice(), |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, f32>(1)?))
     })?;
-    let hits = crate::db::query::collect_rows(rows)?
+    let mut hits = crate::db::query::collect_rows(rows)?
         .into_iter()
         .map(|(memory_id, distance)| VectorHit {
             memory_id,
             distance,
         })
         .collect::<Vec<_>>();
+    // vec0 allows only the bare `ORDER BY distance` clause, so the
+    // deterministic tie-break happens here, matching the brute-force path.
+    hits.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.memory_id.cmp(&b.memory_id))
+    });
     Ok(Some(hits))
 }

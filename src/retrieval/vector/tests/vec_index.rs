@@ -159,6 +159,36 @@ fn dual_write_keeps_index_current_without_new_backfill() -> Result<()> {
 }
 
 #[test]
+fn re_upserting_same_memory_replaces_mirror_row() -> Result<()> {
+    let ctx = setup_vec_conn()?;
+    insert_embedded_memory(&ctx.conn, 1, "Original", "First version of the note.")?;
+    ensure_vec_index(&ctx.conn)?;
+
+    // vec0 has no upsert; the mirror must replace, not fail, on re-embedding.
+    upsert_memory_embedding(
+        &ctx.conn,
+        1,
+        "Rewritten",
+        "Second version of the note.",
+        "architecture",
+        None,
+        "",
+    )?;
+
+    let mirrored: i64 = ctx.conn.query_row(
+        &format!("SELECT COUNT(*) FROM memory_embedding_vec_{EMBEDDING_DIMENSIONS}"),
+        [],
+        |row| row.get(0),
+    )?;
+    assert_eq!(mirrored, 1);
+    let query = embed_query_text("second version note");
+    let outcome = vector_search_filtered(&ctx.conn, &query, VectorSearchFilters::default(), 1)?;
+    assert!(served_by_knn(&outcome));
+    assert_eq!(outcome.hits[0].memory_id, 1);
+    Ok(())
+}
+
+#[test]
 fn backfill_marks_profile_done_and_is_idempotent() -> Result<()> {
     let ctx = setup_vec_conn()?;
     insert_embedded_memory(&ctx.conn, 1, "One", "First memory body.")?;
