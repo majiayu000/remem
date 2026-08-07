@@ -81,6 +81,8 @@ pub fn setup_memory_schema(conn: &Connection) -> Result<()> {
             status TEXT NOT NULL DEFAULT 'active',
             branch TEXT,
             scope TEXT DEFAULT 'project',
+            last_accessed_epoch INTEGER,
+            access_count INTEGER NOT NULL DEFAULT 0,
             source_project TEXT,
             target_project TEXT,
             owner_scope TEXT,
