@@ -9,6 +9,7 @@ mod candidate_edges;
 mod existing_preferences;
 mod poisoning;
 mod preference_reinforcement;
+mod spo_facts;
 mod ttl;
 
 pub(super) fn setup_conn() -> Connection {

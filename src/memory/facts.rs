@@ -25,6 +25,12 @@ impl FactPredicate {
         }
     }
 
+    /// Parse an externally supplied predicate label (e.g. from the
+    /// extraction LLM). Same closed vocabulary as the DB encoding.
+    pub fn parse_public(raw: &str) -> Option<Self> {
+        Self::parse_db(raw.trim().to_ascii_lowercase().as_str())
+    }
+
     fn parse_db(raw: &str) -> Option<Self> {
         match raw {
             "fixed_by" => Some(Self::FixedBy),
@@ -214,6 +220,36 @@ pub(crate) fn insert_temporal_fact_in_current_tx(
     )?;
     let id = conn.last_insert_rowid();
     Ok(id)
+}
+
+/// The currently valid fact for (project, subject, predicate), as
+/// `(id, object)`. Used by extraction writes to decide between no-op
+/// (same object) and supersede (contradicting object).
+pub(crate) fn find_active_fact(
+    conn: &Connection,
+    project: &str,
+    subject: &str,
+    predicate: FactPredicate,
+) -> Result<Option<(i64, String)>> {
+    let has_invalidated = invalidated_at_epoch_available(conn)?;
+    let current_filter = current_fact_filter_sql("f", has_invalidated);
+    let now = chrono::Utc::now().timestamp();
+    let row = conn
+        .query_row(
+            &format!(
+                "SELECT f.id, f.object FROM memory_facts f
+                 WHERE f.project = ?1 AND f.subject = ?2 AND f.predicate = ?3
+                   AND (f.valid_from_epoch IS NULL OR f.valid_from_epoch <= ?4)
+                   AND (f.valid_to_epoch IS NULL OR f.valid_to_epoch > ?4)
+                   AND {current_filter}
+                 ORDER BY f.id DESC
+                 LIMIT 1"
+            ),
+            params![project, subject, predicate.db_value(), now],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    Ok(row)
 }
 
 pub fn list_current_facts(

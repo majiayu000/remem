@@ -13,6 +13,7 @@ use crate::memory::MemoryType;
 
 mod apply;
 mod auto_promote;
+mod fact_extract;
 mod parse;
 mod prompt;
 pub(crate) mod review;
@@ -88,6 +89,7 @@ pub(crate) struct ParsedMemoryCandidate {
     pub(crate) text: String,
     pub(crate) confidence: f64,
     pub(crate) risk_class: String,
+    pub(crate) facts: Vec<fact_extract::ParsedCandidateFact>,
 }
 
 pub(crate) fn parse_candidate_output(text: &str) -> Result<Vec<ParsedMemoryCandidate>> {
@@ -485,10 +487,10 @@ fn persist_candidate_rows(
               routing_confidence, routing_reason, context_class, expires_at_epoch,
               valid_from_epoch, state_key, state_key_confidence, state_key_reason,
               source_kind, source_trust_class, quarantine_pattern_id,
-              quarantine_pattern_version)
+              quarantine_pattern_version, facts)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
                      ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                     ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
+                     ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
             params![
                 source.project_id,
                 candidate.scope,
@@ -519,6 +521,7 @@ fn persist_candidate_rows(
                 source_trust.as_str(),
                 quarantine_match.map(|matched| matched.pattern_id),
                 quarantine_match.map(|matched| matched.pattern_set_version),
+                fact_extract::facts_to_json(&candidate.facts),
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();

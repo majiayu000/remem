@@ -376,6 +376,18 @@ pub(super) fn promote_candidate_to_memory_with_route_and_policy(
         .with_context(|| {
             format!("failed to write temporal fact for promoted candidate id={candidate_id}")
         })?;
+        super::fact_extract::write_candidate_facts(
+            conn,
+            &memory_project,
+            memory_id,
+            &candidate.facts,
+            &evidence_event_ids,
+            reference_time_epoch,
+            candidate.confidence,
+        )
+        .with_context(|| {
+            format!("failed to write extracted SPO facts for promoted candidate id={candidate_id}")
+        })?;
         Ok(CandidateApplyOutcome {
             memory_id: Some(memory_id),
             promoted: true,

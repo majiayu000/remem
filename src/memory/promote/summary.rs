@@ -199,6 +199,7 @@ fn summary_memory_candidates(
                 text: text.to_string(),
                 confidence: SUMMARY_CANDIDATE_CONFIDENCE,
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
+                facts: Vec::new(),
             });
         }
     }
@@ -238,6 +239,7 @@ fn append_learned_candidates(
                 text: content,
                 confidence: lesson_confidence(item),
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
+                facts: Vec::new(),
             });
         } else {
             candidates.push(ParsedMemoryCandidate {
@@ -248,6 +250,7 @@ fn append_learned_candidates(
                 text: content,
                 confidence: SUMMARY_CANDIDATE_CONFIDENCE,
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
+                facts: Vec::new(),
             });
         }
     }
@@ -295,6 +298,7 @@ fn append_standard_candidates(
                 text: candidate_text,
                 confidence: SUMMARY_CANDIDATE_CONFIDENCE,
                 risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
+                facts: Vec::new(),
             });
         }
     } else {
@@ -313,6 +317,7 @@ fn append_standard_candidates(
             text: candidate_text,
             confidence: SUMMARY_CANDIDATE_CONFIDENCE,
             risk_class: SUMMARY_CANDIDATE_RISK.to_string(),
+            facts: Vec::new(),
         });
     }
 }
