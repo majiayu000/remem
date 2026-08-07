@@ -20,7 +20,6 @@ ALLOWLIST = {
     "src/api/tests.rs": 2041,
     "src/cli/tests.rs": 922,
     "src/context/tests/load.rs": 823,
-    "src/context/tests/render.rs": 818,
     "src/db/extraction/tests.rs": 896,
     "src/db/query/stats/tests.rs": 822,
     "src/doctor/tests.rs": 858,
