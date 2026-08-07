@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.55` for GH-957: the semantic vector channel now
+  serves globally nearest candidates from a statically linked sqlite-vec
+  `vec0` index (one mirror table per embedding dimension profile) instead of
+  sampling at most 4096 embedding ids, removing the recency/bucket truncation
+  that made older relevant memories unreachable. Backfill advances one
+  512-row batch per connection open, writers dual-write, the inactive-profile
+  prune drops retired mirror tables, and any unavailable extension, table, or
+  incomplete backfill degrades to the previous bounded brute-force cosine
+  scan without changing the search contract.
 - Staged source version `0.6.54` for GH-947: the usage feedback channel is
   gray-released at the calibrated default `USAGE_WEIGHT = 0.25`, closing the
   M5 write-only loop on both the SessionStart injection path and the search

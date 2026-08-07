@@ -119,13 +119,13 @@ fn ensure_vec_index_profile(conn: &Connection, dimensions: usize) -> Result<()> 
     create_vec_table(conn, dimensions)?;
 
     let table = vec_table_name(dimensions);
-    let mut stmt = conn.prepare(&format!(
+    let mut stmt = conn.prepare(
         "SELECT memory_id, embedding, model
          FROM memory_embeddings
          WHERE dimensions = ?1 AND memory_id > ?2
          ORDER BY memory_id
-         LIMIT ?3"
-    ))?;
+         LIMIT ?3",
+    )?;
     let rows = stmt.query_map(
         rusqlite::params![
             dimensions as i64,
