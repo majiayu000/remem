@@ -22,6 +22,15 @@ mod context_gate;
 use context_gate::run_context_gate_status;
 
 pub(super) async fn run_cli(cli: Cli) -> Result<()> {
+    if matches!(
+        cli.command,
+        Commands::Context { .. }
+            | Commands::SessionInit { .. }
+            | Commands::Observe { .. }
+            | Commands::Summarize { .. }
+    ) {
+        crate::hook_runtime::enter_hook_runtime_mode();
+    }
     match cli.command {
         Commands::Context {
             cwd,
