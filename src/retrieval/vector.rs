@@ -7,6 +7,9 @@ pub use super::vector_candidates::VECTOR_SEARCH_CANDIDATE_LIMIT;
 mod backfill;
 mod coverage;
 mod reindex;
+mod vec_index;
+
+pub(crate) use vec_index::ensure_vec_index;
 
 pub use super::embedding::{
     LOCAL_EMBEDDING_DIMENSIONS as EMBEDDING_DIMENSIONS,
@@ -102,13 +105,56 @@ pub struct VectorSearchFilters<'a> {
     pub include_stale: bool,
 }
 
-/// Load a native vector extension when one is configured.
-///
-/// The current production path is a portable SQLite table plus in-process
-/// cosine scan. That keeps vector recall available in the single-binary build;
-/// sqlite-vec can replace the scan later without changing the search contract.
-pub fn load_vec_extension(_conn: &Connection) -> Result<()> {
+/// Register the statically linked sqlite-vec extension on this connection
+/// (GH-957). The crate compiles `sqlite-vec.c` with `SQLITE_CORE`, so direct
+/// initialization with a null API pointer is the supported pattern and no
+/// dynamic loading is involved. An init failure logs at error level and
+/// leaves the connection on the portable brute-force cosine scan; the search
+/// contract is unchanged either way.
+pub fn load_vec_extension(conn: &Connection) -> Result<()> {
+    if vec_extension_loaded(conn) {
+        return Ok(());
+    }
+    // The crate declares the entry point with a zero-arg signature (intended
+    // for transmute into `sqlite3_auto_extension`, which would only serve
+    // connections opened after registration). Rebind the same symbol with the
+    // true SQLite extension entry-point signature so every connection is
+    // initialized deterministically at open time.
+    type SqliteVecInit = unsafe extern "C" fn(
+        db: *mut rusqlite::ffi::sqlite3,
+        pz_err_msg: *mut *mut std::ffi::c_char,
+        p_api: *const std::ffi::c_void,
+    ) -> std::ffi::c_int;
+    // SAFETY: `sqlite-vec` is compiled with SQLITE_CORE (see its build.rs), so
+    // the p_api argument is unused and null is valid; the transmute only
+    // restores the entry point's real signature (the crate's own test uses the
+    // same address for auto-extension registration). The handle comes from a
+    // live rusqlite connection on this thread.
+    let init: SqliteVecInit =
+        unsafe { std::mem::transmute(sqlite_vec::sqlite3_vec_init as *const ()) };
+    let rc = unsafe { init(conn.handle(), std::ptr::null_mut(), std::ptr::null()) };
+    if rc != rusqlite::ffi::SQLITE_OK {
+        crate::log::error(
+            "retrieval",
+            &format!(
+                "sqlite-vec init failed with rc={rc}; vector index disabled, brute-force scan remains"
+            ),
+        );
+        return Ok(());
+    }
+    if !vec_extension_loaded(conn) {
+        crate::log::error(
+            "retrieval",
+            "sqlite-vec init reported success but vec_version() is unavailable; brute-force scan remains",
+        );
+    }
     Ok(())
+}
+
+/// True when sqlite-vec functions answer on this connection.
+pub(crate) fn vec_extension_loaded(conn: &Connection) -> bool {
+    conn.query_row("SELECT vec_version()", [], |row| row.get::<_, String>(0))
+        .is_ok()
 }
 
 pub fn ensure_vec_table(conn: &Connection) -> Result<()> {
@@ -302,6 +348,28 @@ pub fn vector_search_embedding_filtered(
     }
     let mut timings = Vec::new();
     let profile = query_embedding.profile();
+    let knn_hits = crate::perf::time_result(&mut timings, "vector_knn_index", || {
+        vec_index::knn_candidates(
+            conn,
+            query_embedding.values(),
+            profile,
+            filters,
+            super::vector_candidates::vector_candidate_limit(limit),
+        )
+    })?;
+    if let Some(mut hits) = knn_hits {
+        // An empty KNN answer falls through to the portable path so the
+        // caller still gets its empty-store / missing-profile diagnostics.
+        if !hits.is_empty() {
+            let candidates_scanned = hits.len();
+            hits.truncate(limit);
+            return Ok(VectorSearchOutcome::ready_with_scan_count_and_timings(
+                hits,
+                candidates_scanned,
+                timings,
+            ));
+        }
+    }
     let candidate_ids = crate::perf::time_result(&mut timings, "vector_select_candidates", || {
         super::vector_candidates::select_candidate_ids(conn, filters, profile, limit)
     })?;
@@ -441,7 +509,8 @@ fn upsert_embedding_with_metadata(
         content_hash,
         embedding,
         updated_at_epoch,
-    )
+    )?;
+    vec_index::sync_vec_upsert(conn, memory_id, model, embedding.len())
 }
 
 fn execute_embedding_upsert(

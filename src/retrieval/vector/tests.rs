@@ -12,6 +12,7 @@ mod filters;
 mod index_snapshot;
 mod profile_pinning;
 mod pruning;
+mod vec_index;
 
 struct ScopedEmbeddingProvider {
     _guard: crate::runtime_config::TestEnvGuard,

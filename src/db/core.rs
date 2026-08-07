@@ -128,8 +128,21 @@ pub fn open_db() -> Result<Connection> {
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::run_migrations(&conn)?;
     crate::retrieval::vector::ensure_vec_table(&conn)?;
+    advance_vec_index(&conn);
     crate::memory::retrieval_enrichment::enforce_binary_policy_floor(&conn)?;
     Ok(conn)
+}
+
+/// Advance the sqlite-vec KNN index by one backfill batch. Index maintenance
+/// failure keeps the connection usable: retrieval degrades to the portable
+/// brute-force scan, so log at error level instead of failing the open.
+fn advance_vec_index(conn: &Connection) {
+    if let Err(error) = crate::retrieval::vector::ensure_vec_index(conn) {
+        crate::log::error(
+            "db",
+            &format!("vec index maintenance failed; brute-force vector scan remains: {error:#}"),
+        );
+    }
 }
 
 pub fn open_db_no_migrate() -> Result<Connection> {
@@ -142,6 +155,7 @@ pub fn open_db_no_migrate() -> Result<Connection> {
     let conn = open_configured_existing_read_write_connection(&path, key.as_ref())?;
     crate::retrieval::vector::load_vec_extension(&conn)?;
     crate::migrate::ensure_schema_current(&conn)?;
+    advance_vec_index(&conn);
     crate::memory::retrieval_enrichment::enforce_binary_policy_floor(&conn)?;
     Ok(conn)
 }

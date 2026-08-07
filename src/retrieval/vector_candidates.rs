@@ -185,7 +185,7 @@ fn append_ids_from_query(
     Ok(())
 }
 
-fn memory_filter_conditions(
+pub(crate) fn memory_filter_conditions(
     filters: VectorSearchFilters<'_>,
     start_idx: usize,
 ) -> (Vec<String>, Vec<Box<dyn rusqlite::types::ToSql>>) {
