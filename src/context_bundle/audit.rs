@@ -3,8 +3,10 @@
 
 use std::collections::HashMap;
 
+use crate::retrieval_router::RetrievalPlan;
+
 use super::domain::{
-    AuditEntry, ContextAudit, ContextItem, ContextPlan, DegradedMode, CONTEXT_BUNDLE_SCHEMA_VERSION,
+    AuditEntry, ContextAudit, ContextItem, DegradedMode, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 use super::policy::estimate_tokens;
 
@@ -49,7 +51,7 @@ impl AuditBuilder {
 
     pub(super) fn finalize(
         mut self,
-        plan: &ContextPlan,
+        plan: &RetrievalPlan,
         degraded_mode: DegradedMode,
     ) -> ContextAudit {
         // Deterministic order regardless of drop/select interleaving.

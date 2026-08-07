@@ -42,11 +42,32 @@ fn explicit_intent_wins_over_keywords() {
 }
 
 #[test]
-fn explicit_session_start_falls_back_to_generic_policy() {
+fn explicit_session_start_is_honored_as_its_own_intent() {
     let resolved = resolve_intent(Some(ContextIntent::SessionStart), "anything");
-    assert_eq!(resolved.intent, ContextIntent::ExploreHistory);
-    assert_eq!(resolved.source, IntentSource::DefaultFallback);
-    assert_eq!(resolved.reason_code, "session_start_not_routable");
+    assert_eq!(resolved.intent, ContextIntent::SessionStart);
+    assert_eq!(resolved.source, IntentSource::Explicit);
+    assert_eq!(resolved.reason_code, "explicit_intent");
+}
+
+/// A session start is a host lifecycle event, not something inferable
+/// from task text: no keyword rule and no fallback may produce it, or an
+/// ordinary task would silently acquire the SessionStart section budgets.
+#[test]
+fn session_start_is_never_inferred_from_task_text() {
+    for task in [
+        "session start",
+        "sessionstart hook fired",
+        "会话开始",
+        "start a new session",
+        "",
+    ] {
+        let resolved = resolve_intent(None, task);
+        assert_ne!(
+            resolved.intent,
+            ContextIntent::SessionStart,
+            "task {task:?} must not infer SessionStart"
+        );
+    }
 }
 
 #[test]

@@ -1,10 +1,11 @@
 mod executor;
-mod planner;
 mod schema;
 
+use crate::retrieval_router::{plan, RetrievalPlan};
+
 use super::domain::{
-    AgentRole, ChannelKind, ContextItem, ContextRequest, ItemValidity, ProjectRef, RiskClass,
-    SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
+    AgentRole, ChannelKind, ContextIntent, ContextItem, ContextRequest, ItemValidity, ProjectRef,
+    RiskClass, SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 
 pub(super) fn request() -> ContextRequest {
@@ -39,4 +40,10 @@ pub(super) fn item(stable_key: &str, channel: ChannelKind, title: &str, text: &s
         project: Some("demo/project".to_string()),
         branch: None,
     }
+}
+
+/// The SessionStart plan the executor tests run against. SessionStart is
+/// an explicit intent, never keyword-inferred, so tests always pass it.
+pub(super) fn session_start_plan(request: &ContextRequest) -> RetrievalPlan {
+    plan(request, Some(ContextIntent::SessionStart)).expect("plan")
 }

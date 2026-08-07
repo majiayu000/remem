@@ -87,6 +87,30 @@ fn print_plan_summary(plan: &crate::retrieval_router::RetrievalPlan) {
         .map(|c| c.channel.name())
         .collect();
     println!("disabled channels: {}", disabled.join(", "));
+    if plan.output_sections.is_empty() {
+        println!("output sections: none (ranked result list, no sections)");
+    } else {
+        println!("output sections (item limit/relevance-governed):");
+        for section in &plan.output_sections {
+            println!(
+                "  {:<14} {} / {}",
+                enum_name(&section.channel),
+                section.item_limit,
+                section.relevance_governed
+            );
+        }
+    }
+    println!(
+        "section budgets (tokens): total={} preferences={} lessons={} core={} \
+workstreams={} memory_index={} sessions={}",
+        plan.section_budgets.total_tokens,
+        plan.section_budgets.preferences,
+        plan.section_budgets.lessons,
+        plan.section_budgets.core,
+        plan.section_budgets.workstreams,
+        plan.section_budgets.memory_index,
+        plan.section_budgets.sessions
+    );
     println!("reason_codes: {}", plan.reason_codes.join(", "));
 }
 
@@ -100,6 +124,7 @@ fn enum_name<T: serde::Serialize>(value: &T) -> String {
 
 fn parse_intent(value: &str) -> Result<ContextIntent> {
     Ok(match value {
+        "session-start" => ContextIntent::SessionStart,
         "resume-work" => ContextIntent::ResumeWork,
         "explain-decision" => ContextIntent::ExplainDecision,
         "debug-failure" => ContextIntent::DebugFailure,
@@ -107,8 +132,9 @@ fn parse_intent(value: &str) -> Result<ContextIntent> {
         "review-change" => ContextIntent::ReviewChange,
         "explore-history" => ContextIntent::ExploreHistory,
         other => bail!(
-            "unknown intent {other:?}; expected resume-work, explain-decision, \
-             debug-failure, apply-preference, review-change, or explore-history"
+            "unknown intent {other:?}; expected session-start, resume-work, \
+             explain-decision, debug-failure, apply-preference, review-change, \
+             or explore-history"
         ),
     })
 }
@@ -162,7 +188,10 @@ mod tests {
             parse_intent("explore-history").unwrap(),
             ContextIntent::ExploreHistory
         );
-        assert!(parse_intent("session-start").is_err());
+        assert_eq!(
+            parse_intent("session-start").unwrap(),
+            ContextIntent::SessionStart
+        );
         assert!(parse_intent("bogus").is_err());
     }
 

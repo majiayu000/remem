@@ -4,39 +4,100 @@
 
 use serde_json::json;
 
-use super::{item, request};
-use crate::context_bundle::{execute, plan, ChannelKind, ExecutorInputs};
+use super::{item, request, session_start_plan};
+use crate::context_bundle::{execute, ChannelKind, ContextIntent, ExecutorInputs};
 
 /// Stable across processes and runs: same request + compiled policy.
-const EXPECTED_PLAN_HASH: &str = "2068028822d3c7f14a5e20bad6265e5a910034861ad63eccc82cddba02376ad6";
+const EXPECTED_PLAN_HASH: &str = "8e0e78f1e61dda98fe1724c96788bb5cd4c6899caffaca0e35eb79894ec97660";
 
+/// The plan's top-level key set is the contract boundary. Pinning it
+/// catches an added/removed/renamed field, which must be a deliberate
+/// schema or policy version bump. Per-channel values are locked by
+/// `retrieval_router::tests`; repeating all 15 channel plans here would
+/// duplicate that coverage without adding contract signal.
 #[test]
-fn plan_json_schema_snapshot() {
-    let planned = plan(&request()).expect("plan");
+fn plan_json_top_level_keys_are_pinned() {
+    let planned = session_start_plan(&request());
+    let actual = serde_json::to_value(&planned).expect("json");
+    let mut keys: Vec<&str> = actual
+        .as_object()
+        .expect("plan is a JSON object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort_unstable();
+
+    assert_eq!(
+        keys,
+        [
+            "abstention_policy",
+            "channel_plans",
+            "filters",
+            "freshness_policy",
+            "intent",
+            "intent_source",
+            "output_sections",
+            "plan_hash",
+            "policy_version",
+            "reason_codes",
+            "relevance_k",
+            "relevance_policy_version",
+            "relevance_query",
+            "rerank_policy",
+            "risk",
+            "role",
+            "schema_version",
+            "section_budgets",
+            "token_budget",
+            "trust_policy",
+        ]
+    );
+}
+
+/// The output-section side of the plan: what the executor fills and how
+/// much budget each section gets.
+#[test]
+fn plan_output_section_schema_snapshot() {
+    let planned = session_start_plan(&request());
     let actual = serde_json::to_value(&planned).expect("json");
 
-    let expected = json!({
-        "schema_version": 1,
-        "policy_version": "context_bundle_v1",
-        "relevance_policy_version": "sessionstart_significant_token_v1",
-        "intent": "session_start",
-        "relevance_query": "fix startup migration races",
-        "relevance_k": 1,
-        "channels": [
+    assert_eq!(actual["schema_version"], json!(1));
+    assert_eq!(actual["policy_version"], json!("retrieval_router_v2"));
+    assert_eq!(
+        actual["relevance_policy_version"],
+        json!("sessionstart_significant_token_v1")
+    );
+    assert_eq!(actual["intent"], json!("session_start"));
+    assert_eq!(actual["intent_source"], json!("explicit"));
+    assert_eq!(
+        actual["relevance_query"],
+        json!("fix startup migration races")
+    );
+    assert_eq!(actual["relevance_k"], json!(1));
+    assert_eq!(actual["plan_hash"], json!(EXPECTED_PLAN_HASH));
+    assert_eq!(
+        actual["output_sections"],
+        json!([
             {"channel": "preferences", "item_limit": 25, "relevance_governed": false},
             {"channel": "lessons", "item_limit": 4, "relevance_governed": true},
             {"channel": "core", "item_limit": 6, "relevance_governed": false},
             {"channel": "workstreams", "item_limit": 5, "relevance_governed": false},
             {"channel": "memory_index", "item_limit": 50, "relevance_governed": true},
             {"channel": "sessions", "item_limit": 5, "relevance_governed": true},
-        ],
-        "filters": {
+        ])
+    );
+    assert_eq!(
+        actual["filters"],
+        json!({
             "project": "demo/project",
             "branch": "main",
             "include_superseded": false,
             "as_of_epoch": 1_710_000_000,
-        },
-        "section_budgets": {
+        })
+    );
+    assert_eq!(
+        actual["section_budgets"],
+        json!({
             "total_tokens": 3000,
             "preferences": 375,
             "lessons": 300,
@@ -44,15 +105,22 @@ fn plan_json_schema_snapshot() {
             "workstreams": 300,
             "memory_index": 1000,
             "sessions": 550,
-        },
-        "plan_hash": EXPECTED_PLAN_HASH,
-    });
-    assert_eq!(actual, expected);
+        })
+    );
+}
+
+/// Task intents produce a ranked result list, not sections; only
+/// SessionStart plans sections.
+#[test]
+fn task_intents_plan_no_output_sections() {
+    let planned =
+        crate::retrieval_router::plan(&request(), Some(ContextIntent::DebugFailure)).expect("plan");
+    assert!(planned.output_sections.is_empty());
 }
 
 #[test]
 fn bundle_json_schema_snapshot() {
-    let planned = plan(&request()).expect("plan");
+    let planned = session_start_plan(&request());
     let bundle = execute(
         &planned,
         &ExecutorInputs {
@@ -94,7 +162,7 @@ fn bundle_json_schema_snapshot() {
         "recent_sessions": [],
         "audit": {
             "schema_version": 1,
-            "policy_version": "context_bundle_v1",
+            "policy_version": "retrieval_router_v2",
             "relevance_policy_version": "sessionstart_significant_token_v1",
             "plan_hash": EXPECTED_PLAN_HASH,
             "degraded_mode": "full",

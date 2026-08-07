@@ -1,6 +1,6 @@
-use super::{item, request};
+use super::{item, request, session_start_plan};
 use crate::context_bundle::{
-    execute, plan, ChannelKind, DegradedMode, ExecutorInputs, ItemValidity, SourceKind, TrustClass,
+    execute, ChannelKind, DegradedMode, ExecutorInputs, ItemValidity, SourceKind, TrustClass,
 };
 
 fn inputs(candidates: Vec<crate::context_bundle::ContextItem>) -> ExecutorInputs {
@@ -23,7 +23,7 @@ fn reason_for(bundle: &crate::context_bundle::ContextBundle, stable_key: &str) -
 
 #[test]
 fn executor_reuses_sessionstart_relevance_selection() {
-    let planned = plan(&request()).expect("plan");
+    let planned = session_start_plan(&request());
     let candidates = vec![
         item(
             "memory:1",
@@ -66,7 +66,7 @@ fn executor_reuses_sessionstart_relevance_selection() {
 
 #[test]
 fn executor_drops_out_of_scope_quarantined_and_superseded_items() {
-    let planned = plan(&request()).expect("plan");
+    let planned = session_start_plan(&request());
     let mut other_project = item("memory:10", ChannelKind::Core, "Other", "text");
     other_project.project = Some("other/project".to_string());
     let mut other_branch = item("memory:11", ChannelKind::Core, "Branch", "text");
@@ -92,7 +92,7 @@ fn executor_drops_out_of_scope_quarantined_and_superseded_items() {
 fn include_superseded_keeps_superseded_items() {
     let mut with_superseded = request();
     with_superseded.include_superseded = true;
-    let planned = plan(&with_superseded).expect("plan");
+    let planned = session_start_plan(&with_superseded);
     let mut superseded = item("memory:12", ChannelKind::Core, "Old", "text");
     superseded.validity = ItemValidity::Superseded;
 
@@ -103,7 +103,7 @@ fn include_superseded_keeps_superseded_items() {
 
 #[test]
 fn missing_enrichment_degrades_to_canonical_only() {
-    let planned = plan(&request()).expect("plan");
+    let planned = session_start_plan(&request());
     let mut generated = item("memory:20", ChannelKind::Core, "Derived", "generated text");
     generated.source_kind = SourceKind::Generated;
     let canonical = item(
@@ -129,8 +129,8 @@ fn missing_enrichment_degrades_to_canonical_only() {
 
 #[test]
 fn executor_enforces_channel_item_limit_and_token_budgets() {
-    let mut planned = plan(&request()).expect("plan");
-    for channel in &mut planned.channels {
+    let mut planned = session_start_plan(&request());
+    for channel in &mut planned.output_sections {
         if channel.channel == ChannelKind::Core {
             channel.item_limit = 1;
         }
@@ -145,7 +145,7 @@ fn executor_enforces_channel_item_limit_and_token_budgets() {
     assert_eq!(bundle.current_truth.len(), 1);
     assert_eq!(reason_for(&bundle, "memory:31"), "channel_item_limit");
 
-    let mut planned = plan(&request()).expect("plan");
+    let mut planned = session_start_plan(&request());
     planned.section_budgets.core = 4;
     let bundle = execute(
         &planned,
@@ -160,7 +160,7 @@ fn executor_enforces_channel_item_limit_and_token_budgets() {
 
 #[test]
 fn executor_enforces_the_total_token_budget_and_records_truncation() {
-    let mut planned = plan(&request()).expect("plan");
+    let mut planned = session_start_plan(&request());
     planned.section_budgets.total_tokens = 5;
     let bundle = execute(
         &planned,
@@ -181,7 +181,7 @@ fn executor_enforces_the_total_token_budget_and_records_truncation() {
 
 #[test]
 fn tampered_plan_produces_a_blocked_bundle() {
-    let mut planned = plan(&request()).expect("plan");
+    let mut planned = session_start_plan(&request());
     planned.policy_version = "context_bundle_v0_forged".to_string();
     let bundle = execute(
         &planned,
@@ -196,7 +196,7 @@ fn tampered_plan_produces_a_blocked_bundle() {
 
 #[test]
 fn execution_is_deterministic_for_identical_inputs() {
-    let planned = plan(&request()).expect("plan");
+    let planned = session_start_plan(&request());
     let candidates = vec![
         item(
             "memory:1",
