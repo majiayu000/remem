@@ -263,6 +263,7 @@ mod tests {
             text: text.to_string(),
             confidence: 0.9,
             risk_class: "low".to_string(),
+            facts: Vec::new(),
         }
     }
 

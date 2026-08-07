@@ -39,6 +39,9 @@ fn parse_candidate_content(content: &str) -> Result<ParsedMemoryCandidate> {
     let risk_class = normalize_risk_class(required_field(content, "risk_class")?.as_str())?;
     let confidence = parse_confidence(required_field(content, "confidence")?.as_str())?;
     let text = required_field(content, "text")?;
+    let facts = super::fact_extract::parse_candidate_facts(content, |tag, attr| {
+        extract_attr(tag, attr).map(str::to_string)
+    });
     Ok(ParsedMemoryCandidate {
         scope,
         memory_type,
@@ -47,6 +50,7 @@ fn parse_candidate_content(content: &str) -> Result<ParsedMemoryCandidate> {
         text,
         confidence,
         risk_class,
+        facts,
     })
 }
 

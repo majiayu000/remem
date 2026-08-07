@@ -395,6 +395,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "event_capture_projection",
         sql: include_str!("../migrations/v078_event_capture_projection.sql"),
     },
+    Migration {
+        version: 79,
+        name: "candidate_spo_facts",
+        sql: include_str!("../migrations/v079_candidate_spo_facts.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

@@ -221,6 +221,9 @@ fn dream_promotion_context(
         text: merge_payload.content.clone(),
         confidence: row.confidence,
         risk_class: row.risk_class.clone(),
+        // Dream merge overrides rewrite the memory text wholesale; extracted
+        // facts belong to the original evidence, not the merged narrative.
+        facts: Vec::new(),
     };
     Ok(ApprovalPromotionContext {
         supersede_policy: SupersedePolicy::RequireExact {
