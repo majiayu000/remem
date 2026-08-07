@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.56` for GH-952: hook and one-shot CLI
+  invocations now run on a current_thread tokio runtime (only mcp, api,
+  worker, eval-e2e, bench, and dream keep the multi-thread pool), hook
+  processes cap the embedding network deadline at 2s by default
+  (`REMEM_EMBEDDINGS_HOOK_TIMEOUT_SECS`) so a slow provider degrades through
+  the configured fallback chain instead of hanging SessionStart behind the
+  30s API timeout, and the rerank model cache moved from thread_local to
+  process-level so long-lived MCP/API servers load the model once per
+  process instead of once per worker thread.
 - Staged source version `0.6.55` for GH-957: the semantic vector channel now
   serves globally nearest candidates from a statically linked sqlite-vec
   `vec0` index (one mirror table per embedding dimension profile) instead of

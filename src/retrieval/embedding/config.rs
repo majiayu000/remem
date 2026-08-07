@@ -12,8 +12,21 @@ pub(crate) fn resolve_embedding_config() -> Result<EmbeddingConfig> {
     let _test_env_guard = lock_test_env();
     let mut config = config_from_file()?.unwrap_or_default();
     apply_env_overrides(&mut config)?;
+    // Hook processes cap the network deadline (GH-952): a slow provider must
+    // degrade through the fallback chain inside the host's hook budget, never
+    // hang SessionStart behind the full API timeout.
+    if crate::hook_runtime::hook_runtime_mode() {
+        cap_hook_timeout(
+            &mut config,
+            crate::hook_runtime::hook_embedding_timeout_secs()?,
+        );
+    }
     validate_config(&config)?;
     Ok(config)
+}
+
+fn cap_hook_timeout(config: &mut EmbeddingConfig, cap_secs: u64) {
+    config.timeout_secs = config.timeout_secs.min(cap_secs);
 }
 
 #[cfg(test)]
@@ -183,4 +196,27 @@ pub(super) fn env_value(key: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cap_hook_timeout;
+    use super::EmbeddingConfig;
+
+    #[test]
+    fn hook_cap_lowers_only_longer_timeouts() {
+        let mut config = EmbeddingConfig {
+            timeout_secs: 30,
+            ..EmbeddingConfig::default()
+        };
+        cap_hook_timeout(&mut config, 2);
+        assert_eq!(config.timeout_secs, 2);
+
+        let mut short = EmbeddingConfig {
+            timeout_secs: 1,
+            ..EmbeddingConfig::default()
+        };
+        cap_hook_timeout(&mut short, 2);
+        assert_eq!(short.timeout_secs, 1);
+    }
 }

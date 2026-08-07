@@ -34,9 +34,9 @@ const SCORE_BATCH_SIZE: usize = 8;
 
 #[cfg(feature = "local-onnx")]
 mod runtime {
-    use std::cell::RefCell;
     use std::collections::{hash_map::Entry, HashMap};
     use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
     use std::time::Instant;
 
     use anyhow::{Context, Result};
@@ -50,15 +50,15 @@ mod runtime {
         install_dir: PathBuf,
     }
 
-    // Per-thread cache keyed by manifest hash: a manifest upgrade atomically
-    // publishes a new hash, so new requests load the new version while
-    // requests already holding the old read-only instance keep using it.
-    // Failed initialization inserts nothing, so no half-initialized instance
-    // is ever observable (mirrors the local embedding cache pattern).
-    thread_local! {
-        static RERANK_MODEL_CACHE: RefCell<HashMap<RerankModelCacheKey, fastembed::TextRerank>> =
-            RefCell::new(HashMap::new());
-    }
+    // Process-level cache keyed by manifest hash (GH-952): long-lived MCP/API
+    // servers pay one model load instead of one per worker thread. A manifest
+    // upgrade atomically publishes a new hash, so new requests load the new
+    // version under a new key. Failed initialization inserts nothing, so no
+    // half-initialized instance is ever observable (mirrors the local
+    // embedding ProcessModelCache pattern).
+    static RERANK_MODEL_CACHE: OnceLock<
+        Mutex<HashMap<RerankModelCacheKey, fastembed::TextRerank>>,
+    > = OnceLock::new();
 
     fn build_model(verified: &VerifiedRerankerModel) -> Result<fastembed::TextRerank> {
         let roles = &verified.manifest.roles;
@@ -99,8 +99,11 @@ mod runtime {
             manifest_sha256: verified.manifest_sha256.clone(),
             install_dir: verified.install_dir.clone(),
         };
-        RERANK_MODEL_CACHE.with(|cache| {
-            let mut cache = cache.borrow_mut();
+        {
+            let mut cache = RERANK_MODEL_CACHE
+                .get_or_init(|| Mutex::new(HashMap::new()))
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let mut load_ms = None;
             let model = match cache.entry(key) {
                 Entry::Occupied(entry) => entry.into_mut(),
@@ -147,7 +150,7 @@ mod runtime {
                 load_ms,
                 inference_ms: inference_start.elapsed().as_millis() as u64,
             })
-        })
+        }
     }
 }
 
