@@ -14,6 +14,10 @@ const TOP_RESULT_CHANGE_SAMPLE_LIMIT: usize = 10;
 pub struct UsageShadowReport {
     pub default_usage_weight: f64,
     pub default_usage_weight_zero: bool,
+    /// The shadow always measures against a zero-usage baseline so the report
+    /// keeps documenting the usage channel's effect after the GH-947 default
+    /// flip; without a fixed baseline the comparisons would decay to zero.
+    pub baseline_usage_weight: f64,
     pub candidate_usage_weights: Vec<f64>,
     pub recommendation_boundary: &'static str,
     pub comparisons: Vec<UsageShadowComparison>,
@@ -72,7 +76,11 @@ pub(super) fn build_usage_shadow_report(
     k: usize,
 ) -> Result<UsageShadowReport> {
     let default_weights = SearchWeights::default();
-    let baseline = run_usage_shadow_candidate(conn, dataset, k, default_weights)?;
+    let baseline_weights = SearchWeights {
+        usage: 0.0,
+        ..default_weights
+    };
+    let baseline = run_usage_shadow_candidate(conn, dataset, k, baseline_weights)?;
     let mut comparisons = Vec::with_capacity(USAGE_SHADOW_WEIGHTS.len());
     for usage_weight in USAGE_SHADOW_WEIGHTS {
         let candidate_weights = SearchWeights {
@@ -90,6 +98,7 @@ pub(super) fn build_usage_shadow_report(
     Ok(UsageShadowReport {
         default_usage_weight: default_weights.usage,
         default_usage_weight_zero: default_weights.usage == 0.0,
+        baseline_usage_weight: baseline_weights.usage,
         candidate_usage_weights: USAGE_SHADOW_WEIGHTS.to_vec(),
         recommendation_boundary:
             "report_only_no_default_change_without_eval_gates_and_coding_agent_ab",
@@ -375,7 +384,8 @@ mod tests {
 
         let report = build_usage_shadow_report(&conn, &dataset, 5)?;
 
-        assert!(report.default_usage_weight_zero);
+        assert!(!report.default_usage_weight_zero);
+        assert_eq!(report.baseline_usage_weight, 0.0);
         let strongest = report
             .comparisons
             .iter()

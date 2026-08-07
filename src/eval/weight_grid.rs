@@ -556,7 +556,8 @@ mod tests {
             .candidates
             .iter()
             .any(|candidate| candidate.weights == default));
-        assert!(report.usage_shadow.default_usage_weight_zero);
+        assert!(!report.usage_shadow.default_usage_weight_zero);
+        assert_eq!(report.usage_shadow.baseline_usage_weight, 0.0);
         assert!(report
             .usage_shadow
             .comparisons
