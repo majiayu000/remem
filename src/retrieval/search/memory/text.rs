@@ -176,7 +176,7 @@ pub(super) fn search_with_query(
         include_stale,
         branch,
         include_suppressed,
-        SearchWeights::default(),
+        SearchWeights::production(),
     )
 }
 

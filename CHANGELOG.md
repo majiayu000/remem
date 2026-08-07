@@ -3,6 +3,18 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.54` for GH-947: the usage feedback channel is
+  gray-released at the calibrated default `USAGE_WEIGHT = 0.25`, closing the
+  M5 write-only loop on both the SessionStart injection path and the search
+  path through a single `SearchWeights::production()` constructor. The
+  `eval-weight-grid` shadow evidence (eval/weight-grid/report.json) shows zero
+  scored-query, abstention, and top-result movement for every shadowed usage
+  weight against the fixed zero-usage baseline, and eval-gates golden
+  recall@5 moves 0.5167 -> 0.5246 (no drop). Operators can roll back
+  byte-identically with `REMEM_USAGE_WEIGHT=0`; invalid override values log an
+  error and keep the calibrated default. The usage shadow report now always
+  measures against an explicit zero-usage baseline so the artifact keeps
+  documenting the channel's effect after the default flip.
 - Staged source version `0.6.52` for GH-991: the public
   `adversarial-policy` `remem_default` condition now records captured events
   and runs deterministic fixture responses through the production observation

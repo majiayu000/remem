@@ -42,12 +42,14 @@ pub(super) fn query_hybrid_context_memories(
         current_branch,
         excluded_types,
         limit,
-        SearchWeights::default(),
+        SearchWeights::production(),
     )
 }
 
 /// Injection retrieval against explicit weights. `query_hybrid_context_memories`
-/// is the production caller and passes `SearchWeights::default()`; taking the
+/// is the production caller and passes `SearchWeights::production()` (the
+/// calibrated defaults plus the GH-947 `REMEM_USAGE_WEIGHT` operator
+/// override); taking the
 /// weights as a parameter is what lets a test prove that an explicit
 /// `SearchWeights` value reaches this path. Applying a generated
 /// `eval-weight-grid` result remains later staged work (GH953).
