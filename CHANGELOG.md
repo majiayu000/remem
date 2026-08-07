@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.57` for GH-956: the extraction LLM pass now
+  produces subject-predicate-object temporal facts over the closed
+  FactPredicate vocabulary, persisted through the candidate row (new `facts`
+  column, v079) and written into `memory_facts` inside the promotion
+  transaction. Contradicting facts supersede (valid_to closes) instead of
+  being deleted, identical triples are idempotent, and validity timestamps
+  ground on evidence events rather than model output, so the bi-temporal
+  read side finally receives production data.
 - Staged source version `0.6.56` for GH-952: hook and one-shot CLI
   invocations now run on a current_thread tokio runtime (only mcp, api,
   worker, eval-e2e, bench, and dream keep the multi-thread pool), hook
