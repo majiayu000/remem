@@ -182,6 +182,7 @@ fn prune_inactive_memory_embeddings_pinned(
          )",
         params![target.model.as_str(), target.dimensions as i64],
     )? as i64;
+    super::vec_index::sync_vec_keep_only_profile(conn, target.model.as_str(), target.dimensions)?;
     Ok(InactiveEmbeddingPruneReport {
         pruned,
         active_model: target.model.clone(),

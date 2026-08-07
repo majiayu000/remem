@@ -405,6 +405,17 @@ fn upsert_prepared_memory_embedding_batch(
                 })?;
             }
         }
+        let mut by_dimensions: std::collections::BTreeMap<usize, Vec<i64>> =
+            std::collections::BTreeMap::new();
+        for embedding in prepared {
+            by_dimensions
+                .entry(embedding.values.len())
+                .or_default()
+                .push(embedding.memory_id);
+        }
+        for (dimensions, memory_ids) in by_dimensions {
+            super::vec_index::sync_vec_upsert_batch(conn, dimensions, &memory_ids)?;
+        }
         crate::perf::push_elapsed(timings, "upsert_embeddings", upsert_start);
         Ok(())
     })();

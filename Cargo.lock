@@ -2080,7 +2080,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "remem-ai"
-version = "0.6.54"
+version = "0.6.55"
 dependencies = [
  "anyhow",
  "axum",
@@ -2105,6 +2105,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "sqlite-vec",
  "tokenizers",
  "tokio",
  "toml_edit",
@@ -2488,6 +2489,15 @@ dependencies = [
  "nom",
  "serde",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "sqlite-vec"
+version = "0.1.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0ba424237a9a5db2f6071f193319e2b6a32f7f3961debb2fbbfe67067abce3f"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
