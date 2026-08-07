@@ -89,9 +89,17 @@ pub(in crate::context) fn render_lessons_with_summary_and_staleness(
         let memory = &lesson.memory;
         let metadata = &lesson.metadata;
         let memory_title = inline_context_text(&memory.title);
+        // GH-958: failure lessons carry an explicit guardrail marker so the
+        // model reads them as "this approach failed before", not as guidance.
+        let guardrail_prefix = if metadata.outcome_kind == "failure" {
+            "guardrail — this failed before: "
+        } else {
+            ""
+        };
         let title = format!(
-            "**#{} {}** (confidence {:.2}, reinforced {}, {}; {})\n",
+            "**#{} {}{}** (confidence {:.2}, reinforced {}, {}; {})\n",
             memory.id,
+            guardrail_prefix,
             memory_title,
             metadata.confidence,
             metadata.reinforcement_count,

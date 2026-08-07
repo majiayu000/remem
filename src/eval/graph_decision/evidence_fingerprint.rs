@@ -68,6 +68,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v077.rs",
     "src/migrate/schema_drift/invariants/v078.rs",
     "src/migrate/schema_drift/invariants/v079.rs",
+    "src/migrate/schema_drift/invariants/v080.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -229,6 +230,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v077_dream_backfill.sql",
     "src/migrations/v078_event_capture_projection.sql",
     "src/migrations/v079_candidate_spo_facts.sql",
+    "src/migrations/v080_candidate_outcome.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -505,6 +507,7 @@ mod tests {
             "src/migrate/schema_drift/invariants/v077.rs",
             "src/migrate/schema_drift/invariants/v078.rs",
             "src/migrate/schema_drift/invariants/v079.rs",
+            "src/migrate/schema_drift/invariants/v080.rs",
             "src/migrate/state.rs",
             "src/migrate/transition.rs",
             "src/migrate/types.rs",

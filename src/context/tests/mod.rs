@@ -13,6 +13,7 @@ mod render;
 mod render_inline;
 mod render_poisoning;
 mod render_stability;
+mod render_workstreams;
 mod retrieval;
 mod sessions;
 mod staleness;

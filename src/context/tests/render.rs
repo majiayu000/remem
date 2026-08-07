@@ -1,5 +1,4 @@
 use crate::memory::lesson::{LessonMemory, LessonMetadata};
-use crate::workstream::{WorkStream, WorkStreamStatus};
 
 use super::super::host::HostKind;
 use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
@@ -13,10 +12,10 @@ use super::super::sections::{
     render_core_memory, render_core_memory_with_limits, render_lessons_with_limit,
     render_memory_index, render_memory_index_with_limits,
     render_memory_index_with_limits_excluding, render_recent_sessions,
-    render_recent_sessions_with_limit, render_workstreams, render_workstreams_with_limits,
+    render_recent_sessions_with_limit,
 };
 use super::super::types::{ContextRequest, SessionSummaryBrief};
-use super::{insert_memory, sample_memory, sample_memory_with_epoch, sample_workstream};
+use super::{insert_memory, sample_memory, sample_memory_with_epoch};
 
 #[test]
 fn render_recent_sessions_truncates_completed_line() {
@@ -213,6 +212,27 @@ fn render_lessons_respects_item_and_char_limits() {
 }
 
 #[test]
+fn render_lessons_presents_failure_guardrail_alongside_success() {
+    let mut output = String::new();
+    let mut failure = sample_lesson(1, "Skipping codesign after cp", 0.9, 2);
+    failure.metadata.outcome_kind = "failure".to_string();
+    failure.metadata.failure_count = 1;
+    let mut success = sample_lesson(2, "Codesign after replacing the binary", 0.85, 3);
+    success.metadata.outcome_kind = "success".to_string();
+    success.metadata.success_count = 1;
+
+    let rendered = render_lessons_with_limit(&mut output, &[failure, success], 5, 2_000);
+
+    assert_eq!(rendered, 2, "failure and success lessons must co-present");
+    assert!(output.contains("guardrail — this failed before: Skipping codesign after cp"));
+    assert!(output.contains("Codesign after replacing the binary"));
+    assert!(
+        !output.contains("guardrail — this failed before: Codesign after replacing the binary"),
+        "success lessons must not carry the failure guardrail marker"
+    );
+}
+
+#[test]
 fn render_memory_index_respects_item_limit() {
     let mut output = String::new();
     let limits = ContextLimits {
@@ -280,71 +300,6 @@ fn render_memory_index_can_skip_core_selected_ids() {
     assert_eq!(rendered, 1);
     assert!(!index_output.contains("Core bugfix"));
     assert!(index_output.contains("Index decision"));
-}
-
-#[test]
-fn render_workstreams_includes_next_action_when_present() {
-    let mut output = String::new();
-    let workstreams = vec![WorkStream {
-        id: 7,
-        project: "demo/project".to_string(),
-        title: "Refactor context".to_string(),
-        description: None,
-        status: WorkStreamStatus::Active,
-        progress: None,
-        next_action: Some("split renderers".to_string()),
-        blockers: None,
-        created_at_epoch: 0,
-        updated_at_epoch: 0,
-        completed_at_epoch: None,
-    }];
-
-    render_workstreams(&mut output, &workstreams);
-
-    assert!(output.contains("#7 [active] Refactor context -> split renderers"));
-}
-
-#[test]
-fn render_workstreams_includes_blockers_when_present() {
-    let mut output = String::new();
-    let mut workstream = sample_workstream(7, "Refactor context", Some("split renderers"));
-    workstream.blockers = Some("waiting for review".to_string());
-
-    render_workstreams(&mut output, &[workstream]);
-
-    assert!(output.contains("blockers: waiting for review"));
-}
-
-#[test]
-fn render_workstreams_respects_item_and_char_limits() {
-    let mut output = String::new();
-    let workstreams = vec![
-        sample_workstream(1, "First stream", Some("ship the first fix")),
-        sample_workstream(2, "Second stream", Some("ship the second fix")),
-        sample_workstream(3, "Third stream", Some("ship the third fix")),
-    ];
-
-    render_workstreams_with_limits(&mut output, &workstreams, 2, 200);
-
-    assert!(output.contains("#1 [active] First stream"));
-    assert!(output.contains("#2 [active] Second stream"));
-    assert!(!output.contains("#3 [active] Third stream"));
-    assert!(output.chars().count() <= 200);
-}
-
-#[test]
-fn render_workstreams_stops_at_char_limit() {
-    let mut output = String::new();
-    let workstreams = vec![
-        sample_workstream(1, "First", Some("fix")),
-        sample_workstream(2, "Second", Some("fix")),
-    ];
-
-    render_workstreams_with_limits(&mut output, &workstreams, 10, 48);
-
-    assert!(output.contains("#1 [active] First"));
-    assert!(!output.contains("#2 [active] Second"));
-    assert!(output.chars().count() <= 48);
 }
 
 #[test]
