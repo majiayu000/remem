@@ -3,6 +3,15 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.59` for GH-932: the Context Bundle executor now
+  has a production path. `compile_session_start_bundle` goes request -> plan
+  -> candidates -> bundle against a database connection, where previously
+  candidates only ever arrived from tests. Preferences are pulled in through
+  their own SessionStart selection (they never reach `LoadedContext`), so the
+  bundle's preferences section is populated rather than silently empty, and a
+  canonical load failure fails closed into a `Blocked` bundle carrying
+  `truncation_reason=canonical_load_failed` instead of a shorter candidate
+  list.
 - Staged source version `0.6.58` for GH-958: extraction now captures failure
   trajectories as preventive guardrail lessons instead of only successes. The
   candidate prompt asks for compile/test error chains, reverted approaches, and
@@ -78,6 +87,17 @@
   a plan digest; `--expect-plan-digest` can bind apply to a reviewed rehearsal,
   and the complete plan is rechecked inside one immediate transaction before
   the immutable quarantine ledger is written.
+
+### Changed
+- GH-932/GH-934: one plan type instead of two. `ContextPlan` and the
+  `context_bundle` planner are removed; `RetrievalPlan` now carries both the
+  retrieval-source side (`channel_plans`) and the output-section side
+  (`output_sections`, `section_budgets`) under a single `plan_hash`, so the
+  router's intent, rerank, trust, and abstention policy reach the executor
+  instead of stopping at a plan nothing could execute. `SessionStart` becomes
+  a routable explicit intent with its own channel set; keyword resolution
+  still cannot produce it, since a session start is a host lifecycle event
+  rather than something inferable from task text.
 
 ### Fixed
 - Staged source version `0.6.53` for GH-992: hook-originated compatibility

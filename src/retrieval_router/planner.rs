@@ -7,9 +7,10 @@
 use anyhow::Result;
 use sha2::{Digest, Sha256};
 
+use crate::context::{ContextLimits, SESSIONSTART_RELEVANCE_POLICY_VERSION};
 use crate::context_bundle::{
-    validate_request, AgentRole, ContextFilters, ContextIntent, ContextRequest, ItemValidity,
-    RiskClass, TrustClass,
+    section_budgets, validate_request, AgentRole, ChannelKind, ContextFilters, ContextIntent,
+    ContextRequest, ItemValidity, PlannedChannel, RiskClass, TrustClass,
 };
 
 use super::domain::{
@@ -153,15 +154,71 @@ fn intent_priority_channels(intent: ContextIntent) -> Vec<ChannelSpec> {
             ChannelSpec::priority(C::GitEvidence, 0.6, 5, 3),
         ],
         // timeline, session summaries, historical/superseded claims,
-        // graph expansion. Also the conservative fallback / generic
-        // policy for SessionStart and unclassified tasks.
-        ContextIntent::ExploreHistory | ContextIntent::SessionStart => vec![
+        // graph expansion. Also the conservative fallback for
+        // unclassified tasks.
+        ContextIntent::ExploreHistory => vec![
             ChannelSpec::history(C::Temporal, 1.0, 15, 8),
             ChannelSpec::priority(C::SessionOutcomes, 0.9, 10, 5),
             ChannelSpec::history(C::SupersededHistory, 0.7, 10, 5),
             ChannelSpec::priority(C::GraphExpansion, 0.5, 10, 3),
         ],
+        // Session start has no task text to search: it loads the
+        // standing sections a fresh session needs. The channels mirror
+        // `output_sections` one-to-one rather than reusing the history
+        // policy, which would have surfaced superseded claims at
+        // session start.
+        ContextIntent::SessionStart => vec![
+            ChannelSpec::priority(C::Preferences, 1.0, 25, 25),
+            ChannelSpec::priority(C::FailureLessons, 0.9, 10, 4),
+            ChannelSpec::priority(C::Workstreams, 0.9, 5, 5),
+            ChannelSpec::priority(C::Decisions, 0.8, 50, 50),
+            ChannelSpec::priority(C::SessionOutcomes, 0.7, 5, 5),
+        ],
     }
+}
+
+/// Output-section plan. Only `SessionStart` renders the full standing
+/// section set today; the task intents produce a single ranked result
+/// list and therefore plan no sections. Sections stay in
+/// [`ChannelKind::ORDERED`] order so budget application is deterministic.
+fn output_sections_for(intent: ContextIntent, limits: &ContextLimits) -> Vec<PlannedChannel> {
+    if intent != ContextIntent::SessionStart {
+        return Vec::new();
+    }
+    // Mirrors the SessionStart sections: preferences/core/workstreams are
+    // not relevance-governed; lessons/memory_index/sessions are.
+    vec![
+        PlannedChannel {
+            channel: ChannelKind::Preferences,
+            item_limit: (limits.preference_project_limit + limits.preference_global_limit) as u32,
+            relevance_governed: false,
+        },
+        PlannedChannel {
+            channel: ChannelKind::Lessons,
+            item_limit: limits.lesson_limit as u32,
+            relevance_governed: true,
+        },
+        PlannedChannel {
+            channel: ChannelKind::Core,
+            item_limit: limits.core_item_limit as u32,
+            relevance_governed: false,
+        },
+        PlannedChannel {
+            channel: ChannelKind::Workstreams,
+            item_limit: 5,
+            relevance_governed: false,
+        },
+        PlannedChannel {
+            channel: ChannelKind::MemoryIndex,
+            item_limit: limits.memory_index_limit as u32,
+            relevance_governed: true,
+        },
+        PlannedChannel {
+            channel: ChannelKind::Sessions,
+            item_limit: limits.session_limit as u32,
+            relevance_governed: true,
+        },
+    ]
 }
 
 /// Which intents enable second-stage rerank (GH-851 owns the mechanism;
@@ -250,6 +307,7 @@ pub fn plan(
         }
     }
 
+    let limits = ContextLimits::default();
     let mut plan = RetrievalPlan {
         schema_version: RETRIEVAL_PLAN_SCHEMA_VERSION,
         policy_version: RETRIEVAL_ROUTER_POLICY_VERSION.to_string(),
@@ -259,6 +317,11 @@ pub fn plan(
         risk: request.risk,
         reason_codes,
         channel_plans,
+        output_sections: output_sections_for(resolved.intent, &limits),
+        section_budgets: section_budgets(request.token_budget),
+        relevance_query: normalized_relevance_query(&request.task),
+        relevance_k: limits.sessionstart_relevance_k as u32,
+        relevance_policy_version: SESSIONSTART_RELEVANCE_POLICY_VERSION.to_string(),
         filters: ContextFilters {
             project: request.project.key.clone(),
             branch: request.branch.clone(),
@@ -274,6 +337,15 @@ pub fn plan(
     };
     plan.plan_hash = plan_content_hash(&plan)?;
     Ok(plan)
+}
+
+fn normalized_relevance_query(task: &str) -> Option<String> {
+    let trimmed = task.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 /// Build one `ChannelPlan` per known channel (enabled or disabled) in

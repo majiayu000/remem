@@ -1,4 +1,4 @@
-//! Deterministic v1 executor: applies a [`ContextPlan`] to caller-provided
+//! Deterministic v1 executor: applies a [`RetrievalPlan`] to caller-provided
 //! candidates by reusing the SessionStart relevance selector, enforces
 //! section and total token budgets, and emits an audited [`ContextBundle`].
 //!
@@ -10,15 +10,18 @@ use std::collections::HashMap;
 use crate::context::{build_sessionstart_relevance_plan, RelevanceCandidate, RelevanceSection};
 
 use super::audit::AuditBuilder;
+use crate::retrieval_router::RetrievalPlan;
+
 use super::domain::{
-    ChannelKind, ContextBundle, ContextItem, ContextPlan, DegradedMode, ItemValidity, SourceKind,
-    TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
+    ChannelKind, ContextBundle, ContextItem, DegradedMode, ItemValidity, SourceKind, TrustClass,
+    CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 use super::policy::{
-    estimate_tokens, validate_plan, REASON_BRANCH_SCOPE_MISMATCH, REASON_CANONICAL_ONLY_DEGRADED,
-    REASON_CHANNEL_ITEM_LIMIT, REASON_CHANNEL_TOKEN_BUDGET, REASON_PLAN_BLOCKED,
-    REASON_PROJECT_SCOPE_MISMATCH, REASON_QUARANTINED_TRUST, REASON_SELECTED_CHANNEL,
-    REASON_SELECTED_RELEVANCE, REASON_SUPERSEDED_EXCLUDED, REASON_TOTAL_TOKEN_BUDGET,
+    estimate_tokens, validate_plan, REASON_BRANCH_SCOPE_MISMATCH, REASON_CANONICAL_LOAD_FAILED,
+    REASON_CANONICAL_ONLY_DEGRADED, REASON_CHANNEL_ITEM_LIMIT, REASON_CHANNEL_TOKEN_BUDGET,
+    REASON_PLAN_BLOCKED, REASON_PROJECT_SCOPE_MISMATCH, REASON_QUARANTINED_TRUST,
+    REASON_SELECTED_CHANNEL, REASON_SELECTED_RELEVANCE, REASON_SUPERSEDED_EXCLUDED,
+    REASON_TOTAL_TOKEN_BUDGET,
 };
 
 /// Candidate inputs for one execution. `enrichment_available = false`
@@ -36,7 +39,7 @@ pub struct ExecutorInputs {
 /// Deterministic: same plan + same inputs always produce the same bundle.
 /// An invalid plan (schema/policy/scope) produces a `blocked` bundle whose
 /// audit drops every candidate; it never partially executes.
-pub fn execute(plan: &ContextPlan, inputs: &ExecutorInputs) -> ContextBundle {
+pub fn execute(plan: &RetrievalPlan, inputs: &ExecutorInputs) -> ContextBundle {
     if let Err(error) = validate_plan(plan) {
         return blocked_bundle(plan, inputs, &error.to_string());
     }
@@ -76,7 +79,7 @@ pub fn execute(plan: &ContextPlan, inputs: &ExecutorInputs) -> ContextBundle {
 }
 
 fn scope_drop_reason(
-    plan: &ContextPlan,
+    plan: &RetrievalPlan,
     degraded_mode: DegradedMode,
     item: &ContextItem,
 ) -> Option<&'static str> {
@@ -102,8 +105,8 @@ fn scope_drop_reason(
     None
 }
 
-fn channel_relevance_governed(plan: &ContextPlan, channel: ChannelKind) -> bool {
-    plan.channels
+fn channel_relevance_governed(plan: &RetrievalPlan, channel: ChannelKind) -> bool {
+    plan.output_sections
         .iter()
         .find(|planned| planned.channel == channel)
         .is_some_and(|planned| planned.relevance_governed)
@@ -122,7 +125,7 @@ fn relevance_section(channel: ChannelKind) -> Option<RelevanceSection> {
 /// Returns `stable_key -> (selected, drop_reason)`; drop reasons are the
 /// SessionStart reason strings.
 fn relevance_decisions<'a>(
-    plan: &ContextPlan,
+    plan: &RetrievalPlan,
     in_scope: &[&'a ContextItem],
     audit: &mut AuditBuilder,
 ) -> HashMap<&'a str, (bool, &'static str)> {
@@ -159,7 +162,7 @@ fn relevance_decisions<'a>(
 /// Enforce per-channel item limits, per-channel token budgets, and the
 /// total token budget in the fixed [`ChannelKind::ORDERED`] order.
 fn apply_budgets(
-    plan: &ContextPlan,
+    plan: &RetrievalPlan,
     _degraded_mode: DegradedMode,
     survivors: &[&ContextItem],
     bundle: &mut ContextBundle,
@@ -169,7 +172,7 @@ fn apply_budgets(
     let total_budget = plan.section_budgets.total_tokens;
     for channel in ChannelKind::ORDERED {
         let item_limit = plan
-            .channels
+            .output_sections
             .iter()
             .find(|planned| planned.channel == channel)
             .map(|planned| planned.item_limit)
@@ -207,7 +210,7 @@ fn apply_budgets(
     }
 }
 
-fn empty_bundle(plan: &ContextPlan, degraded_mode: DegradedMode) -> ContextBundle {
+fn empty_bundle(plan: &RetrievalPlan, degraded_mode: DegradedMode) -> ContextBundle {
     ContextBundle {
         schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
         plan_hash: plan.plan_hash.clone(),
@@ -235,7 +238,7 @@ fn empty_bundle(plan: &ContextPlan, degraded_mode: DegradedMode) -> ContextBundl
     }
 }
 
-fn blocked_bundle(plan: &ContextPlan, inputs: &ExecutorInputs, error: &str) -> ContextBundle {
+fn blocked_bundle(plan: &RetrievalPlan, inputs: &ExecutorInputs, error: &str) -> ContextBundle {
     crate::log::error(
         "context-bundle",
         &format!("plan validation failed; emitting blocked bundle: {error}"),
@@ -245,6 +248,24 @@ fn blocked_bundle(plan: &ContextPlan, inputs: &ExecutorInputs, error: &str) -> C
         audit.dropped(item, REASON_PLAN_BLOCKED);
     }
     audit.set_truncation_reason(REASON_PLAN_BLOCKED);
+    let mut bundle = empty_bundle(plan, DegradedMode::Blocked);
+    bundle.audit = audit.finalize(plan, DegradedMode::Blocked);
+    bundle
+}
+
+/// A `Blocked` bundle for a failure that happened before any candidate
+/// existed — a canonical load error, most importantly.
+///
+/// The bundle is empty and its audit records `reason` as the truncation
+/// reason, so a caller cannot mistake "canonical data could not be read"
+/// for "this project has no memory".
+pub fn blocked_before_load(plan: &RetrievalPlan, reason: &str) -> ContextBundle {
+    crate::log::error(
+        "context-bundle",
+        &format!("canonical load failed; emitting blocked bundle: {reason}"),
+    );
+    let mut audit = AuditBuilder::default();
+    audit.set_truncation_reason(REASON_CANONICAL_LOAD_FAILED);
     let mut bundle = empty_bundle(plan, DegradedMode::Blocked);
     bundle.audit = audit.finalize(plan, DegradedMode::Blocked);
     bundle

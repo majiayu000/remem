@@ -11,7 +11,6 @@ use crate::context_bundle::ContextIntent;
 use super::domain::{IntentSource, ResolvedIntent};
 
 pub(super) const REASON_EXPLICIT_INTENT: &str = "explicit_intent";
-pub(super) const REASON_SESSION_START_NOT_ROUTABLE: &str = "session_start_not_routable";
 pub(super) const REASON_KEYWORD_MATCH_PREFIX: &str = "keyword_match_";
 pub(super) const REASON_UNCLASSIFIED_FALLBACK: &str = "unclassified_conservative_fallback";
 
@@ -101,18 +100,18 @@ const KEYWORD_RULES: [(ContextIntent, &str, &[&str]); 5] = [
 
 /// Resolve the routing intent for a request.
 ///
-/// - `Some(intent)` other than `SessionStart` is honored as-is;
-/// - explicit `SessionStart` is not a router intent and conservatively
-///   falls back to `ExploreHistory` with its own reason code;
+/// - `Some(intent)` is honored as-is, including `SessionStart`: the hook
+///   declares it explicitly, so the router compiles a SessionStart plan
+///   rather than guessing one;
 /// - with no explicit intent, keyword rules run in fixed order;
 /// - anything unclassifiable falls back to `ExploreHistory`.
+///
+/// Keyword resolution can never *produce* `SessionStart` — a session
+/// start is a host lifecycle event, not something inferable from task
+/// text — so an unlabeled request never silently acquires the
+/// SessionStart section budgets.
 pub fn resolve_intent(explicit: Option<ContextIntent>, task: &str) -> ResolvedIntent {
     match explicit {
-        Some(ContextIntent::SessionStart) => ResolvedIntent {
-            intent: ContextIntent::ExploreHistory,
-            source: IntentSource::DefaultFallback,
-            reason_code: REASON_SESSION_START_NOT_ROUTABLE.to_string(),
-        },
         Some(intent) => ResolvedIntent {
             intent,
             source: IntentSource::Explicit,

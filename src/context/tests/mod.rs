@@ -2,6 +2,7 @@ use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
 use rusqlite::{params, Connection};
 
+mod bundle_candidates;
 mod codex_hook_stdout;
 mod cursor_hook;
 mod diagnostics;

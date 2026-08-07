@@ -1,5 +1,6 @@
 mod abstention;
 mod audit;
+mod bundle_candidates;
 pub mod claude_memory;
 mod commit_signals;
 mod debug;
@@ -32,6 +33,7 @@ use std::ffi::OsString;
 mod tests;
 mod types;
 
+pub(crate) use bundle_candidates::load_session_start_candidates;
 pub(crate) use hybrid_context::{
     query_hybrid_context_memories_with_rank_signal_mode, InjectionRankSignalMode,
 };

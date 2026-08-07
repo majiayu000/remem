@@ -9,7 +9,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::context_bundle::{
-    AgentRole, ContextFilters, ContextIntent, ItemValidity, RiskClass, TrustClass,
+    AgentRole, ContextFilters, ContextIntent, ItemValidity, PlannedChannel, RiskClass,
+    SectionBudgets, TrustClass,
 };
 
 /// Version of the RetrievalPlan JSON shape.
@@ -197,7 +198,19 @@ pub struct ResolvedIntent {
     pub reason_code: String,
 }
 
-/// The compiled, deterministic retrieval plan (GH-934 v1).
+/// The compiled, deterministic retrieval plan (GH-934 / GH-932 v1).
+///
+/// The plan spans two distinct layers and they must not be conflated:
+///
+/// - `channel_plans` is the **retrieval-source** side: where candidates
+///   are fetched from, with weights, trust floors, and timeouts.
+/// - `output_sections` / `section_budgets` are the **output-section**
+///   side: which bundle sections the executor fills and how much budget
+///   each gets.
+///
+/// One plan carries both so a single `plan_hash` covers the whole
+/// compile — there is no second plan type and no lossy projection
+/// between them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalPlan {
     pub schema_version: u32,
@@ -214,14 +227,26 @@ pub struct RetrievalPlan {
     /// One entry per known channel, enabled or disabled, in
     /// [`RetrievalChannel::ORDERED`] order.
     pub channel_plans: Vec<ChannelPlan>,
+    /// Output-section side: which bundle sections the executor fills,
+    /// with per-section item limits and whether the SessionStart
+    /// relevance selector governs them.
+    pub output_sections: Vec<PlannedChannel>,
+    pub section_budgets: SectionBudgets,
+    /// Query the relevance selector scores governed sections against.
+    /// `None` disables relevance governance (every candidate survives
+    /// the relevance stage and only budgets apply).
+    pub relevance_query: Option<String>,
+    pub relevance_k: u32,
+    /// Version of the SessionStart relevance policy the executor will
+    /// apply; travels in the plan so an audit pins both policies.
+    pub relevance_policy_version: String,
     pub filters: ContextFilters,
     pub rerank_policy: RerankPolicy,
     pub trust_policy: TrustPolicy,
     pub freshness_policy: FreshnessPolicy,
     pub token_budget: u32,
     pub abstention_policy: AbstentionPolicy,
-    /// SHA-256 over the canonical plan JSON with this field empty
-    /// (same convention as `ContextPlan.plan_hash`).
+    /// SHA-256 over the canonical plan JSON with this field empty.
     pub plan_hash: String,
 }
 

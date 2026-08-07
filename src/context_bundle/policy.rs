@@ -5,10 +5,11 @@ use anyhow::{bail, Result};
 
 use crate::context::ContextLimits;
 
-use super::domain::{ContextPlan, ContextRequest, SectionBudgets, CONTEXT_BUNDLE_SCHEMA_VERSION};
+use crate::retrieval_router::{
+    RetrievalPlan, RETRIEVAL_PLAN_SCHEMA_VERSION, RETRIEVAL_ROUTER_POLICY_VERSION,
+};
 
-/// Bump when planner/executor selection or budget policy changes.
-pub const CONTEXT_BUNDLE_POLICY_VERSION: &str = "context_bundle_v1";
+use super::domain::{ContextRequest, SectionBudgets, CONTEXT_BUNDLE_SCHEMA_VERSION};
 
 /// Chars-per-token heuristic shared by budgets and item estimates.
 const CHARS_PER_TOKEN: u32 = 4;
@@ -28,6 +29,7 @@ pub(super) const REASON_CHANNEL_ITEM_LIMIT: &str = "channel_item_limit";
 pub(super) const REASON_CHANNEL_TOKEN_BUDGET: &str = "channel_token_budget";
 pub(super) const REASON_TOTAL_TOKEN_BUDGET: &str = "total_token_budget";
 pub(super) const REASON_PLAN_BLOCKED: &str = "plan_blocked";
+pub(super) const REASON_CANONICAL_LOAD_FAILED: &str = "canonical_load_failed";
 
 /// Rough token estimate; deterministic and monotonic in text length.
 pub(super) fn estimate_tokens(text: &str) -> u32 {
@@ -56,29 +58,29 @@ pub(crate) fn validate_request(request: &ContextRequest) -> Result<()> {
 
 /// Executor-side plan validation. A failure here means canonical scope
 /// safety cannot be guaranteed and the bundle must be `Blocked`.
-pub(super) fn validate_plan(plan: &ContextPlan) -> Result<()> {
-    if plan.schema_version != CONTEXT_BUNDLE_SCHEMA_VERSION {
+pub(super) fn validate_plan(plan: &RetrievalPlan) -> Result<()> {
+    if plan.schema_version != RETRIEVAL_PLAN_SCHEMA_VERSION {
         bail!(
-            "unsupported ContextPlan schema_version {} (expected {})",
+            "unsupported RetrievalPlan schema_version {} (expected {})",
             plan.schema_version,
-            CONTEXT_BUNDLE_SCHEMA_VERSION
+            RETRIEVAL_PLAN_SCHEMA_VERSION
         );
     }
-    if plan.policy_version != CONTEXT_BUNDLE_POLICY_VERSION {
+    if plan.policy_version != RETRIEVAL_ROUTER_POLICY_VERSION {
         bail!(
-            "unsupported ContextPlan policy_version {:?} (expected {:?})",
+            "unsupported RetrievalPlan policy_version {:?} (expected {:?})",
             plan.policy_version,
-            CONTEXT_BUNDLE_POLICY_VERSION
+            RETRIEVAL_ROUTER_POLICY_VERSION
         );
     }
     if plan.filters.project.trim().is_empty() {
-        bail!("ContextPlan.filters.project must not be empty");
+        bail!("RetrievalPlan.filters.project must not be empty");
     }
     if plan.section_budgets.total_tokens == 0 {
-        bail!("ContextPlan.section_budgets.total_tokens must be greater than zero");
+        bail!("RetrievalPlan.section_budgets.total_tokens must be greater than zero");
     }
     if plan.plan_hash.is_empty() {
-        bail!("ContextPlan.plan_hash must not be empty");
+        bail!("RetrievalPlan.plan_hash must not be empty");
     }
     Ok(())
 }
@@ -88,7 +90,7 @@ pub(super) fn validate_plan(plan: &ContextPlan) -> Result<()> {
 /// v1 intentionally uses `ContextLimits::default()` rather than the env
 /// reader so a plan is a pure function of the request and the compiled
 /// policy version; env overrides are follow-up work on GH-932.
-pub(super) fn section_budgets(total_token_budget: u32) -> SectionBudgets {
+pub(crate) fn section_budgets(total_token_budget: u32) -> SectionBudgets {
     let limits = ContextLimits::default();
     let to_tokens = |chars: usize| (chars as u32).div_ceil(CHARS_PER_TOKEN);
     SectionBudgets {

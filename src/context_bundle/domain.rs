@@ -183,21 +183,6 @@ impl SectionBudgets {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ContextPlan {
-    pub schema_version: u32,
-    pub policy_version: String,
-    pub relevance_policy_version: String,
-    pub intent: ContextIntent,
-    pub relevance_query: Option<String>,
-    pub relevance_k: u32,
-    pub channels: Vec<PlannedChannel>,
-    pub filters: ContextFilters,
-    pub section_budgets: SectionBudgets,
-    /// SHA-256 over the canonical plan JSON with this field empty.
-    pub plan_hash: String,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AuditEntry {
     pub stable_key: String,
