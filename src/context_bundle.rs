@@ -21,16 +21,18 @@
 //! benchmark artifact hashes are follow-up work on GH-932.
 
 mod audit;
+mod compile;
 mod domain;
 mod executor;
 mod policy;
 #[cfg(test)]
 mod tests;
 
+pub use compile::compile_session_start_bundle;
 pub use domain::{
     AgentRole, AuditEntry, ChannelKind, ContextAudit, ContextBundle, ContextFilters, ContextIntent,
     ContextItem, ContextRequest, DegradedMode, ItemValidity, PlannedChannel, ProjectRef, RiskClass,
     SectionBudgets, SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
-pub use executor::{execute, ExecutorInputs};
+pub use executor::{blocked_before_load, execute, ExecutorInputs};
 pub(crate) use policy::{section_budgets, validate_request};

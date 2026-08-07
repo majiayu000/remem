@@ -29,6 +29,7 @@ pub(super) const REASON_CHANNEL_ITEM_LIMIT: &str = "channel_item_limit";
 pub(super) const REASON_CHANNEL_TOKEN_BUDGET: &str = "channel_token_budget";
 pub(super) const REASON_TOTAL_TOKEN_BUDGET: &str = "total_token_budget";
 pub(super) const REASON_PLAN_BLOCKED: &str = "plan_blocked";
+pub(super) const REASON_CANONICAL_LOAD_FAILED: &str = "canonical_load_failed";
 
 /// Rough token estimate; deterministic and monotonic in text length.
 pub(super) fn estimate_tokens(text: &str) -> u32 {

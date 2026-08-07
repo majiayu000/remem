@@ -17,10 +17,11 @@ use super::domain::{
     CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 use super::policy::{
-    estimate_tokens, validate_plan, REASON_BRANCH_SCOPE_MISMATCH, REASON_CANONICAL_ONLY_DEGRADED,
-    REASON_CHANNEL_ITEM_LIMIT, REASON_CHANNEL_TOKEN_BUDGET, REASON_PLAN_BLOCKED,
-    REASON_PROJECT_SCOPE_MISMATCH, REASON_QUARANTINED_TRUST, REASON_SELECTED_CHANNEL,
-    REASON_SELECTED_RELEVANCE, REASON_SUPERSEDED_EXCLUDED, REASON_TOTAL_TOKEN_BUDGET,
+    estimate_tokens, validate_plan, REASON_BRANCH_SCOPE_MISMATCH, REASON_CANONICAL_LOAD_FAILED,
+    REASON_CANONICAL_ONLY_DEGRADED, REASON_CHANNEL_ITEM_LIMIT, REASON_CHANNEL_TOKEN_BUDGET,
+    REASON_PLAN_BLOCKED, REASON_PROJECT_SCOPE_MISMATCH, REASON_QUARANTINED_TRUST,
+    REASON_SELECTED_CHANNEL, REASON_SELECTED_RELEVANCE, REASON_SUPERSEDED_EXCLUDED,
+    REASON_TOTAL_TOKEN_BUDGET,
 };
 
 /// Candidate inputs for one execution. `enrichment_available = false`
@@ -247,6 +248,24 @@ fn blocked_bundle(plan: &RetrievalPlan, inputs: &ExecutorInputs, error: &str) ->
         audit.dropped(item, REASON_PLAN_BLOCKED);
     }
     audit.set_truncation_reason(REASON_PLAN_BLOCKED);
+    let mut bundle = empty_bundle(plan, DegradedMode::Blocked);
+    bundle.audit = audit.finalize(plan, DegradedMode::Blocked);
+    bundle
+}
+
+/// A `Blocked` bundle for a failure that happened before any candidate
+/// existed — a canonical load error, most importantly.
+///
+/// The bundle is empty and its audit records `reason` as the truncation
+/// reason, so a caller cannot mistake "canonical data could not be read"
+/// for "this project has no memory".
+pub fn blocked_before_load(plan: &RetrievalPlan, reason: &str) -> ContextBundle {
+    crate::log::error(
+        "context-bundle",
+        &format!("canonical load failed; emitting blocked bundle: {reason}"),
+    );
+    let mut audit = AuditBuilder::default();
+    audit.set_truncation_reason(REASON_CANONICAL_LOAD_FAILED);
     let mut bundle = empty_bundle(plan, DegradedMode::Blocked);
     bundle.audit = audit.finalize(plan, DegradedMode::Blocked);
     bundle
