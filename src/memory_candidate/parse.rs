@@ -42,6 +42,7 @@ fn parse_candidate_content(content: &str) -> Result<ParsedMemoryCandidate> {
     let facts = super::fact_extract::parse_candidate_facts(content, |tag, attr| {
         extract_attr(tag, attr).map(str::to_string)
     });
+    let outcome = parse_outcome(content, &memory_type);
     Ok(ParsedMemoryCandidate {
         scope,
         memory_type,
@@ -50,8 +51,34 @@ fn parse_candidate_content(content: &str) -> Result<ParsedMemoryCandidate> {
         text,
         confidence,
         risk_class,
+        outcome,
         facts,
     })
+}
+
+/// Optional `<outcome>` on lesson candidates (GH-958). Anything outside the
+/// closed success/failure pair — or an outcome on a non-lesson type — is
+/// dropped with an error log so a hallucinated flag cannot fail the block.
+fn parse_outcome(content: &str, memory_type: &str) -> Option<String> {
+    let raw = crate::memory::format::extract_field(content, "outcome")?;
+    let value = raw.trim().to_ascii_lowercase();
+    if memory_type != "lesson" {
+        crate::log::error(
+            "extraction",
+            &format!("dropping candidate outcome '{value}': only lesson candidates carry one"),
+        );
+        return None;
+    }
+    match value.as_str() {
+        "success" | "failure" => Some(value),
+        other => {
+            crate::log::error(
+                "extraction",
+                &format!("dropping candidate outcome '{other}': not in success/failure"),
+            );
+            None
+        }
+    }
 }
 
 fn required_field(content: &str, field: &str) -> Result<String> {

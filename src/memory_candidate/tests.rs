@@ -7,6 +7,7 @@ use super::{process_with_generator, MemoryCandidateResult};
 
 mod candidate_edges;
 mod existing_preferences;
+mod lesson_outcome;
 mod poisoning;
 mod preference_reinforcement;
 mod spo_facts;

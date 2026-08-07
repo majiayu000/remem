@@ -89,6 +89,8 @@ pub(crate) struct ParsedMemoryCandidate {
     pub(crate) text: String,
     pub(crate) confidence: f64,
     pub(crate) risk_class: String,
+    /// GH-958 lesson outcome ("success"/"failure"); None means unknown.
+    pub(crate) outcome: Option<String>,
     pub(crate) facts: Vec<fact_extract::ParsedCandidateFact>,
 }
 
@@ -487,10 +489,10 @@ fn persist_candidate_rows(
               routing_confidence, routing_reason, context_class, expires_at_epoch,
               valid_from_epoch, state_key, state_key_confidence, state_key_reason,
               source_kind, source_trust_class, quarantine_pattern_id,
-              quarantine_pattern_version, facts)
+              quarantine_pattern_version, facts, outcome)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10,
                      ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                     ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28)",
+                     ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29)",
             params![
                 source.project_id,
                 candidate.scope,
@@ -522,6 +524,7 @@ fn persist_candidate_rows(
                 quarantine_match.map(|matched| matched.pattern_id),
                 quarantine_match.map(|matched| matched.pattern_set_version),
                 fact_extract::facts_to_json(&candidate.facts),
+                candidate.outcome.as_deref(),
             ],
         )?;
         let candidate_id = tx.last_insert_rowid();

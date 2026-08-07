@@ -709,13 +709,24 @@ fn insert_lesson_metadata(
     evidence_json: &str,
     now: i64,
 ) -> Result<()> {
+    let outcome_kind = candidate.outcome.as_deref().unwrap_or("unknown");
+    let success = i64::from(outcome_kind == "success");
+    let failure = i64::from(outcome_kind == "failure");
     conn.execute(
         "INSERT INTO memory_lessons
          (memory_id, confidence, reinforcement_count, source_evidence,
           last_reinforced_at_epoch, stale_after_epoch, outcome_kind,
           success_count, failure_count, recovery_count, correction_count, revert_count)
-         VALUES (?1, ?2, 1, ?3, ?4, NULL, 'unknown', 0, 0, 0, 0, 0)",
-        params![memory_id, candidate.confidence, evidence_json, now],
+         VALUES (?1, ?2, 1, ?3, ?4, NULL, ?5, ?6, ?7, 0, 0, 0)",
+        params![
+            memory_id,
+            candidate.confidence,
+            evidence_json,
+            now,
+            outcome_kind,
+            success,
+            failure
+        ],
     )?;
     Ok(())
 }
