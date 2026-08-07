@@ -24,7 +24,6 @@ Captured from `origin/main` on 2026-06-25:
 | 833 | `src/git_trace.rs` | First production split target |
 | 823 | `src/context/tests/load.rs` | Test split |
 | 822 | `src/db/query/stats/tests.rs` | Test split |
-| 818 | `src/context/tests/render.rs` | Test split |
 | 809 | `src/retrieval/search/memory/tests.rs` | Test split |
 | 803 | `src/memory/staleness/tests.rs` | Test split |
 | 803 | `plugins/remem/apps/remem/server.test.js` | Test split |
