@@ -3,6 +3,16 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.58` for GH-958: extraction now captures failure
+  trajectories as preventive guardrail lessons instead of only successes. The
+  candidate prompt asks for compile/test error chains, reverted approaches, and
+  repeated same-topic corrections, and a lesson block may declare
+  `<outcome>success|failure</outcome>`. The outcome persists on the candidate
+  row (new `outcome` column, v080) so it survives the pending_review round-trip
+  and lands in `memory_lessons.outcome_kind` with the matching success/failure
+  count. On injection, failure lessons render with an explicit
+  `guardrail — this failed before:` marker and co-present with success lessons
+  in one section, so the model reads dead ends as warnings rather than guidance.
 - Staged source version `0.6.57` for GH-956: the extraction LLM pass now
   produces subject-predicate-object temporal facts over the closed
   FactPredicate vocabulary, persisted through the candidate row (new `facts`
