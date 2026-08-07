@@ -176,6 +176,7 @@ struct CandidateRow {
     quarantine_pattern_id: Option<String>,
     quarantine_pattern_version: Option<i64>,
     facts_json: Option<String>,
+    outcome: Option<String>,
 }
 
 pub(crate) fn list_pending(
@@ -192,7 +193,7 @@ pub(crate) fn list_pending(
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
                     c.routing_confidence, c.routing_reason, c.context_class,
                     c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
-                    c.quarantine_pattern_version, c.facts
+                    c.quarantine_pattern_version, c.facts, c.outcome
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status IN ('pending_review', 'quarantined')
@@ -212,7 +213,7 @@ pub(crate) fn list_pending(
                     c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
                     c.routing_confidence, c.routing_reason, c.context_class,
                     c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
-                    c.quarantine_pattern_version, c.facts
+                    c.quarantine_pattern_version, c.facts, c.outcome
              FROM memory_candidates c
              LEFT JOIN projects p ON p.id = c.project_id
              WHERE c.review_status IN ('pending_review', 'quarantined')
@@ -596,6 +597,7 @@ impl CandidateRow {
             quarantine_pattern_id: row.get(21)?,
             quarantine_pattern_version: row.get(22)?,
             facts_json: row.get(23)?,
+            outcome: row.get(24)?,
         })
     }
 
@@ -615,6 +617,7 @@ impl CandidateRow {
             text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
+            outcome: self.outcome.clone(),
             facts: super::fact_extract::facts_from_json(self.facts_json.as_deref()),
         }
     }
@@ -654,6 +657,7 @@ impl CandidateRow {
             text,
             confidence: self.confidence,
             risk_class: self.risk_class.clone(),
+            outcome: existing.outcome,
             facts: existing.facts,
         })
     }
@@ -712,7 +716,7 @@ fn load_candidate(conn: &Connection, id: i64) -> Result<Option<CandidateRow>> {
                 c.target_project, c.owner_scope, c.owner_key, c.topic_domain,
                 c.routing_confidence, c.routing_reason, c.context_class,
                 c.source_kind, c.source_trust_class, c.quarantine_pattern_id,
-                c.quarantine_pattern_version, c.facts
+                c.quarantine_pattern_version, c.facts, c.outcome
          FROM memory_candidates c
          LEFT JOIN projects p ON p.id = c.project_id
          WHERE c.id = ?1",

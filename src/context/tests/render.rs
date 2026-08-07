@@ -213,6 +213,27 @@ fn render_lessons_respects_item_and_char_limits() {
 }
 
 #[test]
+fn render_lessons_presents_failure_guardrail_alongside_success() {
+    let mut output = String::new();
+    let mut failure = sample_lesson(1, "Skipping codesign after cp", 0.9, 2);
+    failure.metadata.outcome_kind = "failure".to_string();
+    failure.metadata.failure_count = 1;
+    let mut success = sample_lesson(2, "Codesign after replacing the binary", 0.85, 3);
+    success.metadata.outcome_kind = "success".to_string();
+    success.metadata.success_count = 1;
+
+    let rendered = render_lessons_with_limit(&mut output, &[failure, success], 5, 2_000);
+
+    assert_eq!(rendered, 2, "failure and success lessons must co-present");
+    assert!(output.contains("guardrail — this failed before: Skipping codesign after cp"));
+    assert!(output.contains("Codesign after replacing the binary"));
+    assert!(
+        !output.contains("guardrail — this failed before: Codesign after replacing the binary"),
+        "success lessons must not carry the failure guardrail marker"
+    );
+}
+
+#[test]
 fn render_memory_index_respects_item_limit() {
     let mut output = String::new();
     let limits = ContextLimits {

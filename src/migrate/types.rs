@@ -400,6 +400,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         name: "candidate_spo_facts",
         sql: include_str!("../migrations/v079_candidate_spo_facts.sql"),
     },
+    Migration {
+        version: 80,
+        name: "candidate_outcome",
+        sql: include_str!("../migrations/v080_candidate_outcome.sql"),
+    },
 ];
 
 pub(crate) const OLD_BASELINE_VERSION: i64 = 13;

@@ -223,6 +223,7 @@ fn dream_promotion_context(
         risk_class: row.risk_class.clone(),
         // Dream merge overrides rewrite the memory text wholesale; extracted
         // facts belong to the original evidence, not the merged narrative.
+        outcome: None,
         facts: Vec::new(),
     };
     Ok(ApprovalPromotionContext {
