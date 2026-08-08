@@ -5,14 +5,13 @@ use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::db;
-use crate::memory::format::{xml_escape_attr, xml_escape_text};
 use crate::memory::poisoning::{
     derive_source_trust_class, scan_instruction_pattern, SourceTrustClass,
 };
-use crate::memory::MemoryType;
 
 mod apply;
 mod auto_promote;
+mod evidence_binding;
 mod fact_extract;
 mod parse;
 mod prompt;
@@ -27,9 +26,10 @@ use apply::{
 };
 pub(crate) use auto_promote::contains_unsafe_memory_marker;
 use auto_promote::{candidate_promotion_decision, CandidatePromotionDecision};
+use evidence_binding::SummaryEvidenceResolver;
 use parse::{normalize_memory_type, normalize_scope, normalize_topic_key};
 use parse::{parse_defer_reason, parse_memory_candidates};
-use prompt::MEMORY_CANDIDATE_SYSTEM;
+use prompt::{build_candidate_prompt, MEMORY_CANDIDATE_SYSTEM};
 pub(super) use route::{route_candidate, CandidateRoute};
 
 const SOURCE_KIND_OBSERVATION: &str = "observation";
@@ -439,10 +439,26 @@ fn persist_candidate_rows(
     candidates: &[ParsedMemoryCandidate],
     auto_promote_batch: Option<&ObservationBatch>,
 ) -> Result<CandidatePersistSummary> {
-    let evidence_json = serde_json::to_string(source.evidence_event_ids)?;
     let tx = conn.transaction()?;
     let mut summary = CandidatePersistSummary::default();
+    let summary_evidence_resolver = if source.source_kind == SOURCE_KIND_SUMMARY {
+        Some(SummaryEvidenceResolver::load(
+            &tx,
+            source.evidence_event_ids,
+            source.source_kind,
+        )?)
+    } else {
+        None
+    };
     for candidate in candidates {
+        let summary_evidence = summary_evidence_resolver
+            .as_ref()
+            .map(|resolver| resolver.resolve(candidate));
+        let evidence_event_ids = summary_evidence
+            .as_ref()
+            .and_then(|evidence| evidence.event_ids.as_deref())
+            .unwrap_or(source.evidence_event_ids);
+        let evidence_json = serde_json::to_string(evidence_event_ids)?;
         let now = chrono::Utc::now().timestamp();
         let (expires_at_epoch, valid_from_epoch) = crate::memory::lifecycle::ttl_metadata(
             &candidate.memory_type,
@@ -473,8 +489,7 @@ fn persist_candidate_rows(
             &candidate_title(candidate),
             &candidate.text,
         );
-        let source_trust =
-            derive_source_trust_class(&tx, source.evidence_event_ids, source.source_kind)?;
+        let source_trust = derive_source_trust_class(&tx, evidence_event_ids, source.source_kind)?;
         let quarantine_match = scan_instruction_pattern(&candidate.text);
         let review_status = if quarantine_match.is_some() {
             "quarantined"
@@ -552,6 +567,17 @@ fn persist_candidate_rows(
             continue;
         }
 
+        let bound_source_texts = summary_evidence
+            .as_ref()
+            .map(|evidence| {
+                evidence
+                    .source_texts
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| source.source_texts.clone());
+
         match candidate_promotion_decision(
             candidate,
             auto_promote_batch,
@@ -560,7 +586,7 @@ fn persist_candidate_rows(
             source.source_kind,
             source_trust,
             source.summary_gate_mode,
-            &source.source_texts,
+            &bound_source_texts,
         ) {
             CandidatePromotionDecision::Promote => {
                 let outcome = promote_source_candidate(
@@ -698,71 +724,6 @@ fn candidate_title(candidate: &ParsedMemoryCandidate) -> String {
         .find(|line| !line.is_empty())
         .unwrap_or(&candidate.topic_key);
     crate::db::truncate_str(first_line, 96).to_string()
-}
-
-fn build_candidate_prompt(
-    task: &db::ExtractionTask,
-    batch: &ObservationBatch,
-    existing_preferences: &[CandidatePromptPreference],
-) -> String {
-    let mut prompt = format!(
-        "Task: memory_candidate\nProject: {}\nHost: {}\nSession: {}\nCovered evidence events: {}..{}\n\n",
-        task.project,
-        task.host,
-        task.session_id.as_deref().unwrap_or("<unknown>"),
-        batch.from_event_id,
-        batch.to_event_id
-    );
-    append_existing_preferences(&mut prompt, existing_preferences);
-    // 单一真实来源：从 MemoryType::ALL 动态生成合法 candidate type 列表注入 prompt，
-    // 避免与枚举漂移（曾因 LLM 把 observation type feature/change 抄进 <type> 整批失败）。
-    let valid_candidate_types = MemoryType::ALL
-        .iter()
-        .copied()
-        .filter(|memory_type| *memory_type != MemoryType::SessionActivity)
-        .map(|memory_type| memory_type.as_str())
-        .collect::<Vec<_>>()
-        .join(", ");
-    prompt.push_str(&format!(
-        "Valid candidate <type> values: {valid_candidate_types}.\nDo not copy an observation's type verbatim; observations use a different vocabulary and feature/refactor/change must be mapped to discovery. Factual findings use discovery; never use fact.\n\n"
-    ));
-    for observation in &batch.observations {
-        let evidence = observation
-            .evidence_event_ids
-            .iter()
-            .map(i64::to_string)
-            .collect::<Vec<_>>()
-            .join(",");
-        prompt.push_str(&format!(
-            "<observation id=\"{}\" type=\"{}\" confidence=\"{}\" evidence_event_ids=\"{}\">\n",
-            observation.id,
-            xml_escape_attr(&observation.observation_type),
-            observation.confidence,
-            xml_escape_attr(&evidence)
-        ));
-        prompt.push_str(&xml_escape_text(&observation.text));
-        prompt.push_str("\n</observation>\n\n");
-    }
-    prompt
-}
-
-fn append_existing_preferences(prompt: &mut String, preferences: &[CandidatePromptPreference]) {
-    if preferences.is_empty() {
-        return;
-    }
-    prompt.push_str("<existing_active_preferences>\n");
-    prompt.push_str(
-        "These preferences are already active for this project. When the current observations provide new evidence of the same correction, emit that preference candidate again so remem can count an evidence-backed reinforcement. Do not emit unsupported restatements or paraphrases. Also emit net-new preferences, material refinements, or explicit contradictions supported by the observations.\n",
-    );
-    for preference in preferences {
-        prompt.push_str(&format!(
-            "<preference id=\"{}\">\n",
-            xml_escape_attr(&preference.id.to_string())
-        ));
-        prompt.push_str(&xml_escape_text(&preference.text));
-        prompt.push_str("\n</preference>\n");
-    }
-    prompt.push_str("</existing_active_preferences>\n\n");
 }
 
 fn eval_task(

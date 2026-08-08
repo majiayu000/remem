@@ -5,6 +5,7 @@ Date: 2026-07-02
 
 Tracking:
 - Spec/tracking issue: #674
+- Production evidence follow-up: #942
 - Evidence baseline: re-verification comment on #674 (2026-07-02)
 - Downstream evidence consumers: #381, #383
 
@@ -51,6 +52,21 @@ landing first:
 Rationale: the non-goal in #674 forbids bulk auto-approval of the existing
 backlog without sampling evidence. Shadow mode produces that evidence on real
 traffic before any behavior change.
+
+### Candidate-specific evidence binding hardening
+
+Production sampling for #942 found that the enforced gate still promoted zero
+summary candidates after Phase 2. A summary candidate inherited every event id
+in its rollup window, and source trust used the least-trusted event in that
+window. An unrelated `session_stop` therefore downgraded a claim supported by a
+trusted user or local-tool event to `external_content`.
+
+The gate now binds each summary candidate claim to the captured event that
+actually supports it. Only those supporting event ids determine persisted
+evidence and source trust. If every claim cannot be bound to a captured event,
+the candidate remains review-gated with its original evidence window intact.
+Transcript-only text without a captured-event identity is not sufficient for
+automatic promotion.
 
 ## Goals
 
@@ -99,6 +115,14 @@ traffic before any behavior change.
 - Doctor output on a mixed store splits pending counts by source path.
 - Post-change sampling on a real session shows summary-derived durable facts
   either promoting or visibly accounted for, feeding #381/#383 evidence.
+- A qualifying claim supported by a trusted event still promotes when an
+  unrelated `session_stop` appears in the same rollup window; the persisted
+  evidence excludes the unrelated event.
+- A claim whose supporting event is external remains review-gated even when an
+  unrelated trusted event appears in the same window.
+- A multi-claim candidate promotes only when every claim binds to captured
+  evidence; its persisted evidence is the deterministic union of those
+  supporting events.
 
 ## Risks
 

@@ -2,7 +2,10 @@ use anyhow::Result;
 use rusqlite::Connection;
 
 use super::super::promote_summary_to_memory_candidates;
-use super::super::summary::promote_summary_to_memory_candidates_with_gate_mode;
+use super::super::summary::{
+    promote_summary_to_memory_candidates_with_evidence,
+    promote_summary_to_memory_candidates_with_gate_mode,
+};
 use super::promote::{record_summary_evidence, record_summary_evidence_with_content, setup_conn};
 use crate::db;
 use crate::runtime_config::SummaryGateMode;
@@ -135,6 +138,175 @@ fn summary_decision_enforce_gate_auto_promotes_supported_candidate() -> Result<(
     assert_eq!(block_reason, None);
     assert_eq!(memory_type, "decision");
     assert_eq!(content, decision);
+    Ok(())
+}
+
+#[test]
+fn summary_gate_binds_trusted_support_without_unrelated_session_stop() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-bound-trusted";
+    let project = "test/proj";
+    let decision = "Use candidate specific evidence for summary promotion decisions";
+    let trusted_id =
+        record_trusted_summary_evidence_with_content(&conn, session_id, project, decision)?;
+    let stop_id =
+        record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, "{}")?;
+
+    let count = promote_summary_to_memory_candidates_with_evidence(
+        &mut conn,
+        session_id,
+        1,
+        project,
+        &[trusted_id, stop_id],
+        &[decision.to_string(), "{}".to_string()],
+        None,
+        Some(decision),
+        None,
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (review_status, evidence_json, source_trust): (String, String, String) = conn.query_row(
+        "SELECT review_status, evidence_event_ids, source_trust_class
+             FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+    )?;
+    assert_eq!(review_status, "auto_promoted");
+    assert_eq!(evidence_json, serde_json::to_string(&vec![trusted_id])?);
+    assert_eq!(source_trust, "local_tool_output");
+    Ok(())
+}
+
+#[test]
+fn summary_gate_does_not_launder_external_support_through_trusted_event() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-bound-external";
+    let project = "test/proj";
+    let decision = "Use candidate specific evidence for summary promotion decisions";
+    let external_id =
+        record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, decision)?;
+    let trusted_id = record_trusted_summary_evidence_with_content(
+        &conn,
+        session_id,
+        project,
+        "cargo test passed for the release build",
+    )?;
+
+    let count = promote_summary_to_memory_candidates_with_evidence(
+        &mut conn,
+        session_id,
+        1,
+        project,
+        &[external_id, trusted_id],
+        &[
+            decision.to_string(),
+            "cargo test passed for the release build".to_string(),
+        ],
+        None,
+        Some(decision),
+        None,
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (review_status, block_reason, evidence_json, source_trust): (
+        String,
+        String,
+        String,
+        String,
+    ) = conn.query_row(
+        "SELECT review_status, auto_promote_block_reason, evidence_event_ids,
+                source_trust_class
+         FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(block_reason, "source_trust_below_floor");
+    assert_eq!(evidence_json, serde_json::to_string(&vec![external_id])?);
+    assert_eq!(source_trust, "external_content");
+    Ok(())
+}
+
+#[test]
+fn summary_gate_binds_every_claim_to_its_supporting_event() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-bound-multi-claim";
+    let project = "test/proj";
+    let first = "The summary gate binds each durable claim to captured evidence.";
+    let second = "The promotion gate preserves deterministic evidence ordering.";
+    let decision = format!("{first} {second}");
+    let first_id = record_trusted_summary_evidence_with_content(&conn, session_id, project, first)?;
+    let second_id =
+        record_trusted_summary_evidence_with_content(&conn, session_id, project, second)?;
+    let stop_id =
+        record_summary_evidence_with_content(&conn, "codex-cli", session_id, project, "{}")?;
+
+    let count = promote_summary_to_memory_candidates_with_evidence(
+        &mut conn,
+        session_id,
+        1,
+        project,
+        &[stop_id, second_id, first_id],
+        &["{}".to_string(), second.to_string(), first.to_string()],
+        None,
+        Some(&decision),
+        None,
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (review_status, evidence_json): (String, String) = conn.query_row(
+        "SELECT review_status, evidence_event_ids FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(review_status, "auto_promoted");
+    assert_eq!(
+        evidence_json,
+        serde_json::to_string(&vec![first_id, second_id])?
+    );
+    Ok(())
+}
+
+#[test]
+fn summary_gate_does_not_promote_from_transcript_text_without_event_identity() -> Result<()> {
+    let mut conn = setup_conn()?;
+    let session_id = "session-summary-transcript-only";
+    let project = "test/proj";
+    let decision = "Use candidate specific evidence for summary promotion decisions";
+    let trusted_id = record_trusted_summary_evidence_with_content(
+        &conn,
+        session_id,
+        project,
+        "cargo test passed for the release build",
+    )?;
+
+    let count = promote_summary_to_memory_candidates_with_evidence(
+        &mut conn,
+        session_id,
+        1,
+        project,
+        &[trusted_id],
+        &[
+            "cargo test passed for the release build".to_string(),
+            decision.to_string(),
+        ],
+        None,
+        Some(decision),
+        None,
+        None,
+    )?;
+    assert_eq!(count, 1);
+
+    let (review_status, block_reason): (String, String) = conn.query_row(
+        "SELECT review_status, auto_promote_block_reason FROM memory_candidates",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(review_status, "pending_review");
+    assert_eq!(block_reason, "summary_source_support_failed");
     Ok(())
 }
 
