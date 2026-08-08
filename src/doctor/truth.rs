@@ -15,6 +15,10 @@ use crate::truth::{
 
 use super::types::DoctorOutcome;
 
+#[path = "truth_reference.rs"]
+mod reference_diagnostics;
+use reference_diagnostics::collect_dangling_memory_edge_refs;
+
 const TRUTH_DOCTOR_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -506,6 +510,7 @@ fn load_reference_issues(
 ) -> Result<Vec<ReferenceIssue>> {
     let mut issues = BTreeSet::new();
     collect_noncurrent_memory_edge_refs(conn, opts, reference_epoch, &mut issues)?;
+    collect_dangling_memory_edge_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_noncurrent_graph_edge_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_dangling_graph_edge_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_noncurrent_user_claim_refs(conn, opts, reference_epoch, &mut issues)?;
@@ -578,8 +583,7 @@ fn collect_noncurrent_graph_edge_refs(
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
            AND NOT (((ge.edge_type = 'supersedes' AND endpoint.id = ge.to_node_id)
-                  OR (ge.edge_type = 'merged_into' AND endpoint.id = ge.from_node_id)
-                  OR ge.edge_type = 'duplicates')
+                  OR (ge.edge_type = 'merged_into' AND endpoint.id = ge.from_node_id))
                     AND endpoint.created_at_epoch <= ?3
                     AND (endpoint.valid_from_epoch IS NULL OR endpoint.valid_from_epoch <= ?3)
                     AND endpoint.status IN ('active', 'stale', 'superseded', 'archived')

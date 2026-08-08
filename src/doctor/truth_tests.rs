@@ -507,6 +507,71 @@ fn subject_excludes_unrelated_lifecycle_and_relation_diagnostics() -> Result<()>
 }
 
 #[test]
+fn dangling_memory_edge_endpoints_warn_but_candidate_derived_from_is_valid() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "active", 10)?;
+    let (_, candidate_id, _) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (id, edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES (1, 'supersedes', NULL, 1, 20),
+                (2, 'conflicts', 1, NULL, 20)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (id, edge_type, from_memory_id, to_memory_id, source_candidate_id,
+          created_at_epoch)
+         VALUES (3, 'derived_from', NULL, 1, ?1, 20)",
+        [candidate_id],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+    let refs: BTreeSet<_> = report
+        .reference_issues
+        .iter()
+        .map(|issue| (issue.relation_ref.as_str(), issue.claim_ref.as_str()))
+        .collect();
+
+    assert_eq!(report.status, "warn");
+    assert_eq!(refs.len(), 2);
+    assert!(refs.contains(&("memory_edge:1", "memory_edge:1:from_memory_id:null")));
+    assert!(refs.contains(&("memory_edge:2", "memory_edge:2:to_memory_id:null")));
+    assert!(!report
+        .reference_issues
+        .iter()
+        .any(|issue| issue.relation_ref == "memory_edge:3"));
+    Ok(())
+}
+
+#[test]
+fn graph_duplicates_require_both_endpoints_to_remain_current() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "active", 10)?;
+    insert_memory(&conn, 2, "deploy", "stale", 10)?;
+    let (event_id, candidate_id, operation_id) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind,
+          to_node_id, source_event_ids, source_candidate_id, source_operation_id,
+          confidence, reason, created_at_epoch)
+         VALUES ('duplicates', 'trusted', 'memory', 1, 'memory', 2,
+                 ?1, ?2, ?3, 0.9, 'support relation', 20)",
+        params![format!("[{event_id}]"), candidate_id, operation_id],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    assert_eq!(report.status, "warn");
+    assert!(report.reference_issues.iter().any(|issue| {
+        issue.relation_ref == "graph_edge:1"
+            && issue.claim_ref == "memory:2"
+            && issue.stored_status.as_deref() == Some("stale")
+    }));
+    Ok(())
+}
+
+#[test]
 fn replacement_edges_accept_stale_historical_memory_endpoints() -> Result<()> {
     let conn = test_conn()?;
     insert_memory(&conn, 1, "deploy", "stale", 10)?;

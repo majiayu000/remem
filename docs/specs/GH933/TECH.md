@@ -41,8 +41,12 @@ follows the graph contract's current-to-old direction (unlike the old-to-new
 projection admits either scoped endpoint, including cross-project edges. The
 same subject predicate scopes memory, candidate, user-claim, and relation
 lifecycle counts; observations have no selector-addressable subject identity
-and are omitted from subject-focused lifecycle summaries. These changes are a
-v1 contract correction before its first production consumer, so the consumer
+and are omitted from subject-focused lifecycle summaries. Reference checks
+validate nullable `memory_edges` endpoints while preserving the intentional
+candidate-backed one-ended `derived_from` form; trusted graph `duplicates`
+remain ordinary two-ended support relations and never receive a historical
+endpoint exemption. These changes are a v1 contract correction before its
+first production consumer, so the consumer
 retains `projection_version=1`; version 2 remains reserved for the approved
 0.7 breaking contract below. The report holds one read transaction across all
 projection and diagnostic queries, samples one effective reference epoch for
