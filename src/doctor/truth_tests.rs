@@ -104,7 +104,7 @@ fn report_surfaces_conflicts_supersedes_and_noncurrent_references() -> Result<()
     conn.execute(
         "INSERT INTO memory_edges
          (edge_type, from_memory_id, to_memory_id, created_at_epoch)
-         VALUES ('duplicates', 1, 2, 21)",
+         VALUES ('conflicts', 1, 2, 21)",
         [],
     )?;
     let before = conn.total_changes();
@@ -243,7 +243,9 @@ fn replacement_edges_accept_stale_historical_memory_endpoints() -> Result<()> {
     conn.execute(
         "INSERT INTO memory_edges
          (edge_type, from_memory_id, to_memory_id, created_at_epoch)
-         VALUES ('supersedes', 1, 2, 20), ('merged_into', 1, 2, 20)",
+         VALUES ('supersedes', 1, 2, 20),
+                ('merged_into', 1, 2, 20),
+                ('duplicates', 1, 2, 20)",
         [],
     )?;
 

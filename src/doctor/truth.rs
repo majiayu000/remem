@@ -502,7 +502,7 @@ fn collect_noncurrent_memory_edge_refs(
          JOIN memories endpoint ON endpoint.id IN (me.from_memory_id, me.to_memory_id)
          WHERE old.project = ?1 AND new.project = ?1 AND endpoint.status != 'active'
            AND me.created_at_epoch <= ?3
-           AND NOT (me.edge_type IN ('supersedes', 'merged_into')
+           AND NOT (me.edge_type IN ('supersedes', 'merged_into', 'duplicates')
                     AND endpoint.id = me.from_memory_id
                     AND endpoint.status IN ('stale', 'superseded'))
            AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
