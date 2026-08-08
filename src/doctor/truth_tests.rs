@@ -406,12 +406,17 @@ fn subject_accepts_bare_and_composite_user_claim_keys() -> Result<()> {
         let report = build_truth_report(&conn, &scoped)?;
         assert_eq!(report.counts.truth_items, 1, "selector {selector}");
         assert_eq!(report.counts.current, 1, "selector {selector}");
+        assert!(report.lifecycle_mappings.iter().any(|mapping| {
+            mapping.object_kind == "user_context_claim"
+                && mapping.stored_status == "active"
+                && mapping.count == 1
+        }));
     }
     Ok(())
 }
 
 #[test]
-fn subject_excludes_unrelated_relation_diagnostics() -> Result<()> {
+fn subject_excludes_unrelated_lifecycle_and_relation_diagnostics() -> Result<()> {
     let conn = test_conn()?;
     insert_memory(&conn, 1, "deploy", "stale", 10)?;
     insert_memory(&conn, 2, "deploy", "active", 20)?;
@@ -424,6 +429,32 @@ fn subject_excludes_unrelated_relation_diagnostics() -> Result<()> {
         [],
     )?;
     let (event_id, candidate_id, operation_id) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         SELECT project_id, 'project', 'decision', 'runtime', 'runtime',
+                evidence_event_ids, 0.9, 'low', 'rejected', 1, 1
+         FROM memory_candidates WHERE id = ?1",
+        [candidate_id],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('repo', '/repo', 'preference', 'deploy', 'Deploy carefully', 1.0,
+                 'normal', 'manual', '[]', 'active', 10, 10),
+                ('repo', '/repo', 'preference', 'runtime', 'Runtime only', 1.0,
+                 'normal', 'manual', '[]', 'suppressed', 10, 10)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, created_at_epoch, status)
+         VALUES ('subject-scope', '/repo', 'discovery', 10, 'active')",
+        [],
+    )?;
     conn.execute(
         "INSERT INTO graph_edges
          (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind,
@@ -449,6 +480,29 @@ fn subject_excludes_unrelated_relation_diagnostics() -> Result<()> {
         .lifecycle_mappings
         .iter()
         .any(|mapping| mapping.object_kind == "trusted_graph_relation"));
+    assert!(report.lifecycle_mappings.iter().any(|mapping| {
+        mapping.object_kind == "memory" && mapping.stored_status == "active" && mapping.count == 1
+    }));
+    assert!(report.lifecycle_mappings.iter().any(|mapping| {
+        mapping.object_kind == "memory_candidate"
+            && mapping.stored_status == "accepted"
+            && mapping.count == 1
+    }));
+    assert!(report.lifecycle_mappings.iter().any(|mapping| {
+        mapping.object_kind == "user_context_claim"
+            && mapping.stored_status == "active"
+            && mapping.count == 1
+    }));
+    assert!(!report
+        .lifecycle_mappings
+        .iter()
+        .any(|mapping| mapping.object_kind == "observation"));
+    assert!(!report.lifecycle_mappings.iter().any(|mapping| {
+        mapping.object_kind == "memory_candidate" && mapping.stored_status == "rejected"
+    }));
+    assert!(!report.lifecycle_mappings.iter().any(|mapping| {
+        mapping.object_kind == "user_context_claim" && mapping.stored_status == "suppressed"
+    }));
     Ok(())
 }
 

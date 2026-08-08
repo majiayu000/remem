@@ -38,8 +38,11 @@ visibility, and warning reports exit 1 even in quiet mode. Lifecycle summaries
 exclude objects created after an explicit as-of epoch. Graph `supersedes`
 follows the graph contract's current-to-old direction (unlike the old-to-new
 `memory_edges` writer), and relation diagnostics include an edge whenever the
-projection admits either scoped endpoint, including cross-project edges. This
-is a v1 contract correction before its first production consumer, so it
+projection admits either scoped endpoint, including cross-project edges. The
+same subject predicate scopes memory, candidate, user-claim, and relation
+lifecycle counts; observations have no selector-addressable subject identity
+and are omitted from subject-focused lifecycle summaries. These changes are a
+v1 contract correction before its first production consumer, so the consumer
 retains `projection_version=1`; version 2 remains reserved for the approved
 0.7 breaking contract below. The report holds one read transaction across all
 projection and diagnostic queries, samples one effective reference epoch for

@@ -288,8 +288,9 @@ fn load_lifecycle_mappings(
         "SELECT status, COUNT(*) FROM memories
          WHERE project = ?1 AND (?2 IS NULL OR branch IS NULL OR branch = ?2)
            AND created_at_epoch <= ?3
+           AND (?4 IS NULL OR topic_key = ?4)
          GROUP BY status ORDER BY status",
-        params![opts.project, opts.branch, reference_epoch],
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
         crate::truth::memory_lifecycle,
     )?;
     append_status_counts(
@@ -299,8 +300,9 @@ fn load_lifecycle_mappings(
         "SELECT status, COUNT(*) FROM observations
          WHERE project = ?1 AND (?2 IS NULL OR branch IS NULL OR branch = ?2)
            AND created_at_epoch <= ?3
+           AND ?4 IS NULL
          GROUP BY status ORDER BY status",
-        params![opts.project, opts.branch, reference_epoch],
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
         crate::truth::observation_lifecycle,
     )?;
     append_status_counts(
@@ -312,8 +314,9 @@ fn load_lifecycle_mappings(
          LEFT JOIN projects p ON p.id = mc.project_id
          WHERE COALESCE(mc.target_project, mc.source_project, p.project_path) = ?1
            AND mc.created_at_epoch <= ?2
+           AND (?3 IS NULL OR mc.topic_key = ?3)
          GROUP BY mc.review_status ORDER BY mc.review_status",
-        params![opts.project, reference_epoch],
+        params![opts.project, reference_epoch, opts.subject],
         crate::truth::candidate_lifecycle,
     )?;
     append_status_counts(
@@ -323,8 +326,11 @@ fn load_lifecycle_mappings(
         "SELECT status, COUNT(*) FROM user_context_claims
          WHERE owner_scope = 'repo' AND owner_key = ?1
            AND created_at_epoch <= ?2
+           AND (?3 IS NULL
+                OR claim_key = ?3
+                OR claim_type || ':' || claim_key = ?3)
          GROUP BY status ORDER BY status",
-        params![opts.project, reference_epoch],
+        params![opts.project, reference_epoch, opts.subject],
         crate::truth::user_claim_lifecycle,
     )?;
 
