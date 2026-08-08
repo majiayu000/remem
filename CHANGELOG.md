@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.60` for GH-942: summary-derived candidates now
+  bind each claim to the strongest captured event that actually supports it
+  before deriving trust or persisting evidence. An unrelated low-trust
+  `session_stop` no longer poisons a trusted claim's entire rollup window,
+  while externally supported claims and transcript-only support remain
+  review-gated. Multi-claim candidates persist a deterministic union of their
+  supporting event ids.
 - Staged source version `0.6.59` for GH-932: the Context Bundle executor now
   has a production path. `compile_session_start_bundle` goes request -> plan
   -> candidates -> bundle against a database connection, where previously

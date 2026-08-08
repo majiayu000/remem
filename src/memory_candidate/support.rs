@@ -81,20 +81,49 @@ pub(crate) fn has_conservative_source_support(
 }
 
 pub(crate) fn has_claim_level_source_support(candidate_text: &str, source_texts: &[&str]) -> bool {
+    supporting_source_groups(candidate_text, source_texts).is_some()
+}
+
+/// Return the source indices that conservatively support each candidate claim.
+///
+/// Callers that persist provenance use the per-claim groups to bind a
+/// generated candidate to immutable source records instead of inheriting an
+/// entire extraction window. `None` means at least one claim is unsafe or
+/// unsupported.
+pub(crate) fn supporting_source_groups(
+    candidate_text: &str,
+    source_texts: &[&str],
+) -> Option<Vec<Vec<usize>>> {
     let candidate_text = normalize_support_text(candidate_text);
     let source_texts = source_texts
         .iter()
         .map(|source_text| normalize_support_text(source_text))
         .collect::<Vec<_>>();
     let claims = support_sentence_segments(&candidate_text);
-    !claims.is_empty()
-        && claims.iter().all(|claim| {
-            is_promotable_assertion(claim)
-                && source_texts.iter().any(|source_text| {
-                    has_conservative_exact_support(claim, source_text)
-                        || has_conservative_support_token_overlap(claim, source_text)
-                })
-        })
+    if claims.is_empty() {
+        return None;
+    }
+
+    let mut groups = Vec::with_capacity(claims.len());
+    for claim in claims {
+        if !is_promotable_assertion(&claim) {
+            return None;
+        }
+        let supporting = source_texts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, source_text)| {
+                (has_conservative_exact_support(&claim, source_text)
+                    || has_conservative_support_token_overlap(&claim, source_text))
+                .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        if supporting.is_empty() {
+            return None;
+        }
+        groups.push(supporting);
+    }
+    Some(groups)
 }
 
 pub(crate) fn claim_semantics_require_review(candidate_text: &str) -> bool {

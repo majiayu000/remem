@@ -5,6 +5,7 @@ Date: 2026-07-02
 
 Tracking:
 - Spec/tracking issue: #674
+- Production evidence follow-up: #942
 
 ## Existing Implementation Facts
 
@@ -90,6 +91,26 @@ observation text before it can promote:
   construction — the type allowlist and confidence floor replace the risk
   screen on this path
 
+Before evaluating those predicates, `persist_candidate_rows` delegates to
+`memory_candidate::evidence_binding` for candidate-specific summary evidence:
+
+1. Load captured-event content for the supplied evidence ids. Transcript-only
+   source strings are retained for review support but cannot authorize an
+   automatic promotion because they have no immutable event identity.
+2. Split the candidate into the same conservative claim segments used by the
+   source-support gate.
+3. For each claim, find captured events that satisfy exact or ordered-token
+   support with matching semantic signatures.
+4. Choose the strongest-trust supporting event for that claim, breaking ties
+   by ascending event id. Persist the sorted union across all claims.
+5. If any claim has no captured-event support, preserve the original evidence
+   window and let the existing source-support or trust predicate keep it in
+   review; do not promote from transcript-only text.
+
+Trust is derived only from the selected supporting events. This removes
+unrelated low-trust window events without laundering an externally supported
+claim through an unrelated trusted event.
+
 Block reasons mirror the check order with summary-specific entries
 (`summary_type_not_allowlisted`, `summary_confidence_below_floor`, ...);
 the shared reasons reuse the existing vocabulary.
@@ -142,6 +163,16 @@ Phase 2 (enforce):
   auto-promotes; lesson does not); source-support failure fixture stays
   pending; real-session sampling recorded in the tracking issue for #381/#383
 - verify: `cargo test`, manual `remem status` funnel delta on a live install
+
+GH-942 production hardening:
+- fixture: trusted supporting event plus unrelated `session_stop` promotes and
+  persists only the trusted event id
+- fixture: external supporting event plus unrelated trusted event remains
+  blocked by `source_trust_below_floor`
+- fixture: multi-claim candidate persists the deterministic supporting-event
+  union and fails closed when any claim is unbound
+- verify: focused summary-promotion tests, full `cargo test`, then repeat the
+  production promotion-funnel sample before closing #942
 
 ## Compatibility
 

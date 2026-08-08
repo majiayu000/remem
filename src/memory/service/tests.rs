@@ -610,17 +610,19 @@ fn resolve_base_dir_itself_is_rejected() {
 fn resolve_none_local_path_returns_default() {
     let _dir = ScopedTestDataDir::new("path-default");
     unsafe { std::env::remove_var("REMEM_SAVE_MEMORY_LOCAL_DIR") };
+    let base = crate::db::data_dir();
+    std::fs::create_dir_all(&base).expect("create data directory");
+    let expected_base = base.canonicalize().expect("canonicalize data directory");
 
     let got = resolve_local_note_path("proj", Some("title"), None);
     assert!(got.is_ok());
     let path = got.unwrap();
     assert!(path.is_absolute());
-    let base = crate::db::data_dir();
     assert!(
-        path.starts_with(&base),
+        path.starts_with(&expected_base),
         "default path {:?} should be inside {:?}",
         path,
-        base
+        expected_base
     );
 }
 
