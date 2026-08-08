@@ -49,6 +49,15 @@ cargo run -- eval-gates --json-out /tmp/remem-eval-gates.json
 Use repo-local skills under `.agents/skills/` for fragile maintenance flows
 such as plugin version synchronization and first-run smoke validation.
 
+### Local preflight resource cap
+
+The full local PR preflight runs its final Rust test harness with four threads
+by default, which keeps local verification from consuming every CPU core. To
+choose a different positive thread count, pass
+`--cargo-test-threads N` to `scripts/ci/check_pr_preflight.py`. This cap and
+override apply only to the local preflight; CI's direct `cargo test` command is
+unchanged. `--fast` continues to omit `cargo test`.
+
 ## Guidelines
 
 - Follow existing code style

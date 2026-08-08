@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_CARGO_TEST_THREADS = 4
 
 
 @dataclass
@@ -146,6 +147,21 @@ def full_steps() -> list[tuple[str, list[str]]]:
     ]
 
 
+def positive_int(value: str) -> int:
+    """Parse a positive integer CLI value with an actionable error."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def cargo_test_command(test_threads: int) -> list[str]:
+    return ["cargo", "test", "--", "--test-threads", str(test_threads)]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -166,6 +182,16 @@ def parse_args() -> argparse.Namespace:
         "--fast",
         action="store_true",
         help="Run fast/mechanical gates only; omit smoke, eval, and cargo test",
+    )
+    parser.add_argument(
+        "--cargo-test-threads",
+        type=positive_int,
+        default=DEFAULT_CARGO_TEST_THREADS,
+        metavar="N",
+        help=(
+            "Rust test-harness thread count for the local full preflight "
+            f"(default: {DEFAULT_CARGO_TEST_THREADS})"
+        ),
     )
     return parser.parse_args()
 
@@ -231,7 +257,7 @@ def main() -> int:
                     tmp / "eval-gates-capacity-regression.log",
                 )
             )
-        results.append(run("Run cargo test", ["cargo", "test"]))
+        results.append(run("Run cargo test", cargo_test_command(args.cargo_test_threads)))
 
     return print_summary(results)
 
