@@ -4,6 +4,7 @@ use std::path::PathBuf;
 pub(in crate::cli) use super::archive_types::{ExportArgs, ImportAction};
 pub(in crate::cli) use super::config_types::ConfigAction;
 pub(in crate::cli) use super::context_types::{ContextGateAction, ContextPlanArgs};
+pub(in crate::cli) use super::doctor_types::DoctorAction;
 pub(in crate::cli) use super::dream_backfill_types::DreamBackfillArgs;
 pub(in crate::cli) use super::embedding_types::EmbeddingAction;
 pub(in crate::cli) use super::memory_types::{
@@ -368,13 +369,16 @@ pub(super) enum Commands {
     },
     /// Check install, hook, MCP, database, and queue health.
     Doctor {
+        /// Run one focused doctor diagnostic instead of the full system check.
+        #[command(subcommand)]
+        action: Option<DoctorAction>,
         /// Emit a single JSON object with per-check status. Stable shape;
         /// fields: `version`, `status`, `fails`, `warns`, `checks[]`.
-        #[arg(long)]
+        #[arg(long, global = true)]
         json: bool,
         /// Suppress human-readable output. Useful when only the exit code
         /// matters (CI/scripts). Has no effect when `--json` is set.
-        #[arg(long, short)]
+        #[arg(long, short, global = true)]
         quiet: bool,
     },
     /// Search curated memories from the terminal.

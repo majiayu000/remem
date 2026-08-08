@@ -46,6 +46,10 @@ replayability.
 - [x] Deterministic supersedes/refutes/trust/recency resolver.
 - [x] Explicit conflict and abstention results.
 - [x] SELECT-only design intent and 18 baseline truth tests.
+- [x] Focused `remem doctor truth` v1 consumer with project/branch/as-of/subject
+      selectors, lifecycle mapping counts, conflict/abstention summaries,
+      supersedes links, and non-current/dangling reference diagnostics. It
+      omits claim text and uses a current-schema read-only connection.
 
 These checks describe released v1 evidence only; they do not satisfy the
 pending v2 requirements below.
