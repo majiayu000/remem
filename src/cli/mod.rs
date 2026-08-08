@@ -4,6 +4,7 @@ mod config_types;
 mod context_types;
 mod cwd;
 mod dispatch;
+mod doctor_types;
 mod dream_backfill_types;
 mod embedding_types;
 mod eval_types;
@@ -18,6 +19,8 @@ mod rule_types;
 mod tests;
 #[cfg(test)]
 mod tests_config;
+#[cfg(test)]
+mod tests_doctor;
 #[cfg(test)]
 mod tests_eval;
 #[cfg(test)]

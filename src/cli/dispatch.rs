@@ -15,7 +15,7 @@ use super::actions::{
     GovernanceCliRequest, RerouteCliRequest,
 };
 use super::cwd::resolve_cwd_arg;
-use super::types::{Cli, Commands, ContextGateAction, RulesAction};
+use super::types::{Cli, Commands, ContextGateAction, DoctorAction, RulesAction};
 
 #[path = "actions/context_gate.rs"]
 mod context_gate;
@@ -250,13 +250,32 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
             weeks,
         } => run_usage(project.as_deref(), days, weeks)?,
         Commands::Status { json, share } => run_status(json, share)?,
-        Commands::Doctor { json, quiet } => {
-            let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;
-            let code = outcome.exit_code();
-            if code != 0 {
-                std::process::exit(code);
+        Commands::Doctor {
+            action,
+            json,
+            quiet,
+        } => match action {
+            Some(DoctorAction::Truth(args)) => {
+                let project = args
+                    .project
+                    .unwrap_or_else(|| db::project_from_cwd(&resolve_cwd_arg(args.cwd)));
+                doctor::run_truth_doctor(doctor::TruthDoctorOptions {
+                    project,
+                    branch: args.branch,
+                    as_of_epoch: args.as_of_epoch,
+                    subject: args.subject,
+                    json,
+                    quiet,
+                })?;
             }
-        }
+            None => {
+                let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;
+                let code = outcome.exit_code();
+                if code != 0 {
+                    std::process::exit(code);
+                }
+            }
+        },
         Commands::Search {
             query,
             project,

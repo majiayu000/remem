@@ -23,6 +23,17 @@ No projection query may write/migrate/call external systems/change Context Bundl
 The v2 migration is Unix-only and `operator_only`: plan fsyncs a nonce-bound preparation journal before the sole backup; restart adopts only exact `backup_ready` output or removes exact owned temp. Apply writes `approved`; a pure full rebuild validates before start and repeats under the write lock; started cannot retire and only exact-resumes/completes. Windows remains on v1 and plan/apply fail typed before side effects.
 Atomic route/lifecycle instrumentation and duplicate timestamp preservation are the only added writer scope; split `src/truth/tests.rs` before v2 tests, and keep every source file below 800 lines.
 
+## Shipped v1 Diagnostic Consumer
+
+`remem doctor truth` is the first production consumer of the released v1 read
+model. `src/doctor/truth.rs` opens `open_db_read_only_current`, projects exact
+project plus repo-owner claims, and emits only counts and canonical references:
+it never includes claim text. The focused surface accepts project/cwd, branch,
+as-of, and subject selectors, reports lifecycle mappings, explicit supersedes
+links, contradictions, abstentions, and non-current/dangling references, and
+asserts SELECT-only behavior in regression tests. This consumer does not claim
+any pending v2 behavior or authorize the v2 migration/cutover.
+
 ## Public v2 Types
 
 All enums serialize with snake_case. `TruthScope` is internally tagged with
