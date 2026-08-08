@@ -396,16 +396,20 @@ fn load_supersedes_links(
          WHERE me.edge_type = 'supersedes'
            AND old.project = ?1 AND new.project = ?1
            AND me.created_at_epoch <= ?3
+           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
     )?;
-    let rows = stmt.query_map(params![opts.project, opts.branch, reference_epoch], |row| {
-        Ok(SupersedesLink {
-            relation_ref: row.get(0)?,
-            newer_claim_ref: row.get(1)?,
-            older_claim_ref: row.get(2)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
+        |row| {
+            Ok(SupersedesLink {
+                relation_ref: row.get(0)?,
+                newer_claim_ref: row.get(1)?,
+                older_claim_ref: row.get(2)?,
+            })
+        },
+    )?;
     for row in rows {
         links.insert(row?);
     }
@@ -421,16 +425,20 @@ fn load_supersedes_links(
            AND ge.created_at_epoch <= ?3
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
+           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
     )?;
-    let rows = stmt.query_map(params![opts.project, opts.branch, reference_epoch], |row| {
-        Ok(SupersedesLink {
-            relation_ref: row.get(0)?,
-            newer_claim_ref: row.get(1)?,
-            older_claim_ref: row.get(2)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
+        |row| {
+            Ok(SupersedesLink {
+                relation_ref: row.get(0)?,
+                newer_claim_ref: row.get(1)?,
+                older_claim_ref: row.get(2)?,
+            })
+        },
+    )?;
     for row in rows {
         links.insert(row?);
     }
@@ -443,15 +451,23 @@ fn load_supersedes_links(
          JOIN user_context_claims old ON old.id = current.supersedes_claim_id
          WHERE current.owner_scope = 'repo' AND current.owner_key = ?1
            AND old.owner_scope = current.owner_scope AND old.owner_key = current.owner_key
-           AND current.created_at_epoch <= ?2",
+           AND current.created_at_epoch <= ?2
+           AND (?3 IS NULL
+                OR current.claim_key = ?3
+                OR current.claim_type || ':' || current.claim_key = ?3
+                OR old.claim_key = ?3
+                OR old.claim_type || ':' || old.claim_key = ?3)",
     )?;
-    let rows = stmt.query_map(params![opts.project, reference_epoch], |row| {
-        Ok(SupersedesLink {
-            relation_ref: row.get(0)?,
-            newer_claim_ref: row.get(1)?,
-            older_claim_ref: row.get(2)?,
-        })
-    })?;
+    let rows = stmt.query_map(
+        params![opts.project, reference_epoch, opts.subject],
+        |row| {
+            Ok(SupersedesLink {
+                relation_ref: row.get(0)?,
+                newer_claim_ref: row.get(1)?,
+                older_claim_ref: row.get(2)?,
+            })
+        },
+    )?;
     for row in rows {
         links.insert(row?);
     }
@@ -486,12 +502,13 @@ fn collect_noncurrent_memory_edge_refs(
          JOIN memories endpoint ON endpoint.id IN (me.from_memory_id, me.to_memory_id)
          WHERE old.project = ?1 AND new.project = ?1 AND endpoint.status != 'active'
            AND me.created_at_epoch <= ?3
-           AND NOT (me.edge_type = 'supersedes'
+           AND NOT (me.edge_type IN ('supersedes', 'merged_into')
                     AND endpoint.id = me.from_memory_id
-                    AND endpoint.status = 'superseded')
+                    AND endpoint.status IN ('stale', 'superseded'))
+           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
-        params![opts.project, opts.branch, reference_epoch],
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
     )
 }
@@ -515,12 +532,13 @@ fn collect_noncurrent_graph_edge_refs(
            AND ge.created_at_epoch <= ?3
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
-           AND NOT (ge.edge_type = 'supersedes'
+           AND NOT (ge.edge_type IN ('supersedes', 'merged_into')
                     AND endpoint.id = ge.from_node_id
-                    AND endpoint.status = 'superseded')
+                    AND endpoint.status IN ('stale', 'superseded'))
+           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
-        params![opts.project, opts.branch, reference_epoch],
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
     )
 }
@@ -545,17 +563,21 @@ fn collect_dangling_graph_edge_refs(
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
            AND ((fm.id IS NULL AND tm.project = ?1)
              OR (tm.id IS NULL AND fm.project = ?1))
+           AND (?4 IS NULL OR COALESCE(fm.topic_key, tm.topic_key) = ?4)
            AND (?2 IS NULL OR COALESCE(fm.branch, tm.branch) IS NULL
                             OR COALESCE(fm.branch, tm.branch) = ?2)",
     )?;
-    let rows = stmt.query_map(params![opts.project, opts.branch, reference_epoch], |row| {
-        Ok(ReferenceIssue {
-            relation_ref: row.get(0)?,
-            claim_ref: row.get(1)?,
-            problem: "dangling_claim_reference",
-            stored_status: None,
-        })
-    })?;
+    let rows = stmt.query_map(
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
+        |row| {
+            Ok(ReferenceIssue {
+                relation_ref: row.get(0)?,
+                claim_ref: row.get(1)?,
+                problem: "dangling_claim_reference",
+                stored_status: None,
+            })
+        },
+    )?;
     for row in rows {
         out.insert(row?);
     }
@@ -572,14 +594,21 @@ fn collect_noncurrent_user_claim_refs(
         conn,
         out,
         "SELECT 'user_claim_supersedes:' || current.id,
-                'user_claim:' || old.id, old.status
+                'user_claim:' || endpoint.id, endpoint.status
          FROM user_context_claims current
          JOIN user_context_claims old ON old.id = current.supersedes_claim_id
+         JOIN user_context_claims endpoint ON endpoint.id IN (current.id, old.id)
          WHERE current.owner_scope = 'repo' AND current.owner_key = ?1
            AND old.owner_scope = current.owner_scope AND old.owner_key = current.owner_key
            AND current.created_at_epoch <= ?2
-           AND old.status NOT IN ('active', 'superseded')",
-        params![opts.project, reference_epoch],
+           AND endpoint.status != 'active'
+           AND NOT (endpoint.id = old.id AND endpoint.status = 'superseded')
+           AND (?3 IS NULL
+                OR current.claim_key = ?3
+                OR current.claim_type || ':' || current.claim_key = ?3
+                OR old.claim_key = ?3
+                OR old.claim_type || ':' || old.claim_key = ?3)",
+        params![opts.project, reference_epoch, opts.subject],
         "references_noncurrent_claim",
     )
 }

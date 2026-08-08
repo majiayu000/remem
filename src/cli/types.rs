@@ -372,8 +372,8 @@ pub(super) enum Commands {
         /// Run one focused doctor diagnostic instead of the full system check.
         #[command(subcommand)]
         action: Option<DoctorAction>,
-        /// Emit a single JSON object with per-check status. Stable shape;
-        /// fields: `version`, `status`, `fails`, `warns`, `checks[]`.
+        /// Emit one JSON object. The default doctor and focused diagnostics
+        /// expose command-specific, versioned schemas; inspect their docs.
         #[arg(long, global = true)]
         json: bool,
         /// Suppress human-readable output. Useful when only the exit code

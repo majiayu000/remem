@@ -44,3 +44,14 @@ fn cli_preserves_default_doctor_and_parses_truth_diagnostic() {
         _ => panic!("expected doctor truth command"),
     }
 }
+
+#[test]
+fn truth_help_describes_its_command_specific_json_schema() {
+    let help = match Cli::try_parse_from(["remem", "doctor", "truth", "--help"]) {
+        Err(error) => error.to_string(),
+        Ok(_) => panic!("help exits before parsing"),
+    };
+
+    assert!(help.contains("command-specific, versioned schemas"));
+    assert!(!help.contains("fields: `version`, `status`, `fails`, `warns`, `checks[]`"));
+}

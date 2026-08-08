@@ -206,3 +206,116 @@ fn subject_accepts_bare_and_composite_user_claim_keys() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn subject_excludes_unrelated_relation_diagnostics() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "stale", 10)?;
+    insert_memory(&conn, 2, "deploy", "active", 20)?;
+    insert_memory(&conn, 3, "runtime", "stale", 10)?;
+    insert_memory(&conn, 4, "runtime", "active", 20)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES ('supersedes', 1, 2, 20), ('duplicates', 3, 4, 20)",
+        [],
+    )?;
+
+    let mut scoped = options();
+    scoped.subject = Some("deploy".to_string());
+    let report = build_truth_report(&conn, &scoped)?;
+
+    assert_eq!(report.status, "ok");
+    assert_eq!(report.counts.supersedes_relations, 1);
+    assert_eq!(report.counts.reference_issues, 0);
+    assert!(report
+        .supersedes
+        .iter()
+        .all(|link| link.relation_ref == "memory_edge:1"));
+    Ok(())
+}
+
+#[test]
+fn replacement_edges_accept_stale_historical_memory_endpoints() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "stale", 10)?;
+    insert_memory(&conn, 2, "deploy", "active", 20)?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES ('supersedes', 1, 2, 20), ('merged_into', 1, 2, 20)",
+        [],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    assert_eq!(report.status, "ok");
+    assert!(report.reference_issues.is_empty());
+    Ok(())
+}
+
+#[test]
+fn user_claim_replacement_checks_the_newer_endpoint() -> Result<()> {
+    let conn = test_conn()?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, 'repo', '/repo', 'preference', 'editor', 'Use Vim', 1.0,
+                 'normal', 'manual', '[]', 'superseded', 10, 10)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status, supersedes_claim_id,
+          created_at_epoch, updated_at_epoch)
+         VALUES (2, 'repo', '/repo', 'preference', 'editor', 'Use Helix', 1.0,
+                 'normal', 'manual', '[]', 'suppressed', 1, 20, 20)",
+        [],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    assert_eq!(report.status, "warn");
+    assert_eq!(report.reference_issues.len(), 1);
+    assert_eq!(report.reference_issues[0].claim_ref, "user_claim:2");
+    assert_eq!(
+        report.reference_issues[0].stored_status.as_deref(),
+        Some("suppressed")
+    );
+    Ok(())
+}
+
+#[test]
+fn subject_excludes_unrelated_user_claim_reference_issues() -> Result<()> {
+    let conn = test_conn()?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, 'repo', '/repo', 'preference', 'theme', 'Use dark mode', 1.0,
+                 'normal', 'manual', '[]', 'superseded', 10, 10)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status, supersedes_claim_id,
+          created_at_epoch, updated_at_epoch)
+         VALUES (2, 'repo', '/repo', 'preference', 'theme', 'Use light mode', 1.0,
+                 'normal', 'manual', '[]', 'suppressed', 1, 20, 20)",
+        [],
+    )?;
+
+    let mut scoped = options();
+    scoped.subject = Some("editor".to_string());
+    let report = build_truth_report(&conn, &scoped)?;
+
+    assert_eq!(report.status, "ok");
+    assert!(report.supersedes.is_empty());
+    assert!(report.reference_issues.is_empty());
+    Ok(())
+}
