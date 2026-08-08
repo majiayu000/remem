@@ -34,8 +34,13 @@ links, contradictions, abstentions, and non-current/dangling references, and
 asserts SELECT-only behavior in regression tests. Relationship summaries use
 the projection's effective-time boundary; user-claim subjects accept bare keys
 or explicit `type:key` keys, quarantined observations map to suppressed
-visibility, and warning reports exit 1 even in quiet mode. This consumer does
-not claim any pending v2 behavior or authorize the v2 migration/cutover.
+visibility, and warning reports exit 1 even in quiet mode. Lifecycle summaries
+exclude objects created after an explicit as-of epoch. Graph `supersedes`
+follows the graph contract's current-to-old direction (unlike the old-to-new
+`memory_edges` writer), and relation diagnostics include an edge whenever the
+projection admits either scoped endpoint, including cross-project edges. This
+consumer does not claim any pending v2 behavior or authorize the v2
+migration/cutover.
 
 ## Public v2 Types
 

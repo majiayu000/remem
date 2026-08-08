@@ -275,8 +275,9 @@ fn load_lifecycle_mappings(
         "memory",
         "SELECT status, COUNT(*) FROM memories
          WHERE project = ?1 AND (?2 IS NULL OR branch IS NULL OR branch = ?2)
+           AND created_at_epoch <= ?3
          GROUP BY status ORDER BY status",
-        params![opts.project, opts.branch],
+        params![opts.project, opts.branch, reference_epoch],
         crate::truth::memory_lifecycle,
     )?;
     append_status_counts(
@@ -285,8 +286,9 @@ fn load_lifecycle_mappings(
         "observation",
         "SELECT status, COUNT(*) FROM observations
          WHERE project = ?1 AND (?2 IS NULL OR branch IS NULL OR branch = ?2)
+           AND created_at_epoch <= ?3
          GROUP BY status ORDER BY status",
-        params![opts.project, opts.branch],
+        params![opts.project, opts.branch, reference_epoch],
         crate::truth::observation_lifecycle,
     )?;
     append_status_counts(
@@ -297,8 +299,9 @@ fn load_lifecycle_mappings(
          FROM memory_candidates mc
          LEFT JOIN projects p ON p.id = mc.project_id
          WHERE COALESCE(mc.target_project, mc.source_project, p.project_path) = ?1
+           AND mc.created_at_epoch <= ?2
          GROUP BY mc.review_status ORDER BY mc.review_status",
-        params![opts.project],
+        params![opts.project, reference_epoch],
         crate::truth::candidate_lifecycle,
     )?;
     append_status_counts(
@@ -307,8 +310,9 @@ fn load_lifecycle_mappings(
         "user_context_claim",
         "SELECT status, COUNT(*) FROM user_context_claims
          WHERE owner_scope = 'repo' AND owner_key = ?1
+           AND created_at_epoch <= ?2
          GROUP BY status ORDER BY status",
-        params![opts.project],
+        params![opts.project, reference_epoch],
         crate::truth::user_claim_lifecycle,
     )?;
 
@@ -324,11 +328,10 @@ fn load_lifecycle_mappings(
          JOIN memories fm ON ge.from_node_kind = 'memory' AND fm.id = ge.from_node_id
          JOIN memories tm ON ge.to_node_kind = 'memory' AND tm.id = ge.to_node_id
          WHERE ge.edge_trust = 'trusted'
-           AND fm.project = ?1 AND tm.project = ?1
+           AND ((fm.project = ?1 AND (?2 IS NULL OR fm.branch IS NULL OR fm.branch = ?2))
+             OR (tm.project = ?1 AND (?2 IS NULL OR tm.branch IS NULL OR tm.branch = ?2)))
            AND ge.created_at_epoch <= ?3
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
-           AND (?2 IS NULL OR (fm.branch IS NULL OR fm.branch = ?2)
-                            AND (tm.branch IS NULL OR tm.branch = ?2))
          GROUP BY relation_status ORDER BY relation_status",
         params![opts.project, opts.branch, reference_epoch],
         relation_lifecycle,
@@ -394,11 +397,12 @@ fn load_supersedes_links(
          JOIN memories old ON old.id = me.from_memory_id
          JOIN memories new ON new.id = me.to_memory_id
          WHERE me.edge_type = 'supersedes'
-           AND old.project = ?1 AND new.project = ?1
+           AND ((old.project = ?1 AND (?2 IS NULL OR old.branch IS NULL OR old.branch = ?2)
+                                  AND (?4 IS NULL OR old.topic_key = ?4))
+             OR (new.project = ?1 AND (?2 IS NULL OR new.branch IS NULL OR new.branch = ?2)
+                                  AND (?4 IS NULL OR new.topic_key = ?4)))
            AND me.created_at_epoch <= ?3
-           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
-           AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
-                            AND (new.branch IS NULL OR new.branch = ?2))",
+           ",
     )?;
     let rows = stmt.query_map(
         params![opts.project, opts.branch, reference_epoch, opts.subject],
@@ -415,19 +419,20 @@ fn load_supersedes_links(
     }
 
     let mut stmt = conn.prepare(
-        "SELECT 'graph_edge:' || ge.id, 'memory:' || ge.to_node_id,
-                'memory:' || ge.from_node_id
+        "SELECT 'graph_edge:' || ge.id, 'memory:' || ge.from_node_id,
+                'memory:' || ge.to_node_id
          FROM graph_edges ge
-         JOIN memories old ON ge.from_node_kind = 'memory' AND old.id = ge.from_node_id
-         JOIN memories new ON ge.to_node_kind = 'memory' AND new.id = ge.to_node_id
+         JOIN memories new ON ge.from_node_kind = 'memory' AND new.id = ge.from_node_id
+         JOIN memories old ON ge.to_node_kind = 'memory' AND old.id = ge.to_node_id
          WHERE ge.edge_type = 'supersedes' AND ge.edge_trust = 'trusted'
-           AND old.project = ?1 AND new.project = ?1
+           AND ((old.project = ?1 AND (?2 IS NULL OR old.branch IS NULL OR old.branch = ?2)
+                                  AND (?4 IS NULL OR old.topic_key = ?4))
+             OR (new.project = ?1 AND (?2 IS NULL OR new.branch IS NULL OR new.branch = ?2)
+                                  AND (?4 IS NULL OR new.topic_key = ?4)))
            AND ge.created_at_epoch <= ?3
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
-           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
-           AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
-                            AND (new.branch IS NULL OR new.branch = ?2))",
+           ",
     )?;
     let rows = stmt.query_map(
         params![opts.project, opts.branch, reference_epoch, opts.subject],
@@ -500,14 +505,16 @@ fn collect_noncurrent_memory_edge_refs(
          JOIN memories old ON old.id = me.from_memory_id
          JOIN memories new ON new.id = me.to_memory_id
          JOIN memories endpoint ON endpoint.id IN (me.from_memory_id, me.to_memory_id)
-         WHERE old.project = ?1 AND new.project = ?1 AND endpoint.status != 'active'
+         WHERE endpoint.status != 'active'
+           AND ((old.project = ?1 AND (?2 IS NULL OR old.branch IS NULL OR old.branch = ?2)
+                                  AND (?4 IS NULL OR old.topic_key = ?4))
+             OR (new.project = ?1 AND (?2 IS NULL OR new.branch IS NULL OR new.branch = ?2)
+                                  AND (?4 IS NULL OR new.topic_key = ?4)))
            AND me.created_at_epoch <= ?3
            AND NOT (me.edge_type IN ('supersedes', 'merged_into', 'duplicates')
                     AND endpoint.id = me.from_memory_id
                     AND endpoint.status IN ('stale', 'superseded'))
-           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
-           AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
-                            AND (new.branch IS NULL OR new.branch = ?2))",
+           ",
         params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
     )
@@ -524,20 +531,22 @@ fn collect_noncurrent_graph_edge_refs(
         out,
         "SELECT 'graph_edge:' || ge.id, 'memory:' || endpoint.id, endpoint.status
          FROM graph_edges ge
-         JOIN memories old ON ge.from_node_kind = 'memory' AND old.id = ge.from_node_id
-         JOIN memories new ON ge.to_node_kind = 'memory' AND new.id = ge.to_node_id
+         JOIN memories new ON ge.from_node_kind = 'memory' AND new.id = ge.from_node_id
+         JOIN memories old ON ge.to_node_kind = 'memory' AND old.id = ge.to_node_id
          JOIN memories endpoint ON endpoint.id IN (ge.from_node_id, ge.to_node_id)
          WHERE ge.edge_trust = 'trusted'
-           AND old.project = ?1 AND new.project = ?1 AND endpoint.status != 'active'
+           AND endpoint.status != 'active'
+           AND ((old.project = ?1 AND (?2 IS NULL OR old.branch IS NULL OR old.branch = ?2)
+                                  AND (?4 IS NULL OR old.topic_key = ?4))
+             OR (new.project = ?1 AND (?2 IS NULL OR new.branch IS NULL OR new.branch = ?2)
+                                  AND (?4 IS NULL OR new.topic_key = ?4)))
            AND ge.created_at_epoch <= ?3
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
-           AND NOT (ge.edge_type IN ('supersedes', 'merged_into')
-                    AND endpoint.id = ge.from_node_id
+           AND NOT (((ge.edge_type = 'supersedes' AND endpoint.id = ge.to_node_id)
+                  OR (ge.edge_type = 'merged_into' AND endpoint.id = ge.from_node_id))
                     AND endpoint.status IN ('stale', 'superseded'))
-           AND (?4 IS NULL OR old.topic_key = ?4 OR new.topic_key = ?4)
-           AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
-                            AND (new.branch IS NULL OR new.branch = ?2))",
+           ",
         params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
     )

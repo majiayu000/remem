@@ -185,6 +185,124 @@ fn as_of_excludes_future_and_not_yet_valid_relations() -> Result<()> {
 }
 
 #[test]
+fn graph_supersedes_uses_current_to_old_direction() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "stale", 10)?;
+    insert_memory(&conn, 2, "deploy", "active", 20)?;
+    let (event_id, candidate_id, operation_id) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind,
+          to_node_id, source_event_ids, source_candidate_id, source_operation_id,
+          confidence, reason, created_at_epoch)
+         VALUES ('supersedes', 'trusted', 'memory', 2, 'memory', 1,
+                 ?1, ?2, ?3, 0.9, 'current replaces old', 20)",
+        params![format!("[{event_id}]"), candidate_id, operation_id],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    assert_eq!(report.status, "ok");
+    assert_eq!(report.counts.current, 1);
+    assert_eq!(report.counts.abstentions, 0);
+    assert!(report.reference_issues.is_empty());
+    assert_eq!(report.supersedes.len(), 1);
+    assert_eq!(report.supersedes[0].newer_claim_ref, "memory:2");
+    assert_eq!(report.supersedes[0].older_claim_ref, "memory:1");
+    Ok(())
+}
+
+#[test]
+fn lifecycle_mappings_exclude_objects_created_after_as_of() -> Result<()> {
+    let conn = test_conn()?;
+    conn.execute(
+        "INSERT INTO memories
+         (id, project, topic_key, title, content, memory_type,
+          created_at_epoch, updated_at_epoch, status)
+         VALUES (1, '/repo', 'future', 'Future', 'future', 'decision',
+                 101, 101, 'archived')",
+        [],
+    )?;
+    let (event_id, _, _) = seed_graph_provenance(&conn)?;
+    let (project_id, session_row_id): (i64, i64) = conn.query_row(
+        "SELECT project_id, session_row_id FROM captured_events WHERE id = ?1",
+        [event_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    conn.execute(
+        "INSERT INTO observations
+         (memory_session_id, project, type, title, status, session_row_id,
+          created_at_epoch)
+         VALUES ('doctor-truth-session', '/repo', 'decision', 'Future',
+                 'compressed', ?1, 101)",
+        [session_row_id],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', 'decision', 'future', 'future', '[]',
+                 0.9, 'low', 'noop', 101, 101)",
+        [project_id],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES ('repo', '/repo', 'preference', 'future', 'future', 1.0,
+                 'normal', 'manual', '[]', 'pending_review', 101, 101)",
+        [],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    for (object_kind, status) in [
+        ("memory", "archived"),
+        ("observation", "compressed"),
+        ("memory_candidate", "noop"),
+        ("user_context_claim", "pending_review"),
+    ] {
+        assert!(!report.lifecycle_mappings.iter().any(|mapping| {
+            mapping.object_kind == object_kind && mapping.stored_status == status
+        }));
+    }
+    Ok(())
+}
+
+#[test]
+fn cross_project_graph_relation_is_visible_when_it_affects_projection() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "active", 10)?;
+    insert_memory(&conn, 2, "deploy", "active", 20)?;
+    conn.execute("UPDATE memories SET project = '/other' WHERE id = 2", [])?;
+    let (event_id, candidate_id, operation_id) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind,
+          to_node_id, source_event_ids, source_candidate_id, source_operation_id,
+          confidence, reason, created_at_epoch)
+         VALUES ('supersedes', 'trusted', 'memory', 2, 'memory', 1,
+                 ?1, ?2, ?3, 0.9, 'cross-project replacement', 20)",
+        params![format!("[{event_id}]"), candidate_id, operation_id],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    assert_eq!(report.counts.current, 0);
+    assert_eq!(report.counts.abstentions, 1);
+    assert_eq!(report.counts.supersedes_relations, 1);
+    assert_eq!(report.supersedes[0].newer_claim_ref, "memory:2");
+    assert_eq!(report.supersedes[0].older_claim_ref, "memory:1");
+    assert!(report.lifecycle_mappings.iter().any(|mapping| {
+        mapping.object_kind == "trusted_graph_relation"
+            && mapping.stored_status == "current"
+            && mapping.count == 1
+    }));
+    Ok(())
+}
+
+#[test]
 fn subject_accepts_bare_and_composite_user_claim_keys() -> Result<()> {
     let conn = test_conn()?;
     conn.execute(

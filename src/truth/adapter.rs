@@ -203,9 +203,10 @@ fn trust_class_evidence(memory_id: i64, class: Option<&str>) -> Option<EvidenceV
 
 /// Relations from `memory_edges` and trusted memory-to-memory `graph_edges`.
 ///
-/// Stored replacement rows are `(from=old, to=new)`; the DTO normalizes to
-/// "`from_ref` supersedes `to_ref`". Diagnostic-hint graph edges never enter
-/// the truth projection.
+/// `memory_edges` stores replacements as `(from=old, to=new)`, while the graph
+/// contract stores `supersedes` as `(from=current, to=old)`. Both are
+/// normalized to "`from_ref` supersedes `to_ref`". Diagnostic-hint graph edges
+/// never enter the truth projection.
 fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<RelationView>> {
     if memory_ids.is_empty() {
         return Ok(Vec::new());
@@ -279,7 +280,7 @@ fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<Re
         if !memory_ids.contains(&from_id) && !memory_ids.contains(&to_id) {
             continue;
         }
-        let Some(view) = replacement_relation(
+        let Some(view) = graph_relation(
             format!("graph_edge:{id}"),
             &edge_type,
             from_id,
@@ -293,6 +294,37 @@ fn load_memory_relations(conn: &Connection, memory_ids: &[i64]) -> Result<Vec<Re
         relations.push(view);
     }
     Ok(relations)
+}
+
+fn graph_relation(
+    relation_ref: String,
+    edge_type: &str,
+    from_id: i64,
+    to_id: i64,
+    created_at_epoch: i64,
+    valid_from_epoch: Option<i64>,
+    valid_to_epoch: Option<i64>,
+) -> Option<RelationView> {
+    if edge_type == "supersedes" {
+        return Some(RelationView {
+            relation_ref,
+            kind: ClaimRelationKind::Supersedes,
+            from_ref: memory_ref(from_id),
+            to_ref: memory_ref(to_id),
+            created_at_epoch,
+            valid_from_epoch,
+            valid_to_epoch,
+        });
+    }
+    replacement_relation(
+        relation_ref,
+        edge_type,
+        from_id,
+        to_id,
+        created_at_epoch,
+        valid_from_epoch,
+        valid_to_epoch,
+    )
 }
 
 fn replacement_relation(
