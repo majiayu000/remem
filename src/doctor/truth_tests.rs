@@ -209,6 +209,11 @@ fn graph_supersedes_uses_current_to_old_direction() -> Result<()> {
     assert_eq!(report.supersedes.len(), 1);
     assert_eq!(report.supersedes[0].newer_claim_ref, "memory:2");
     assert_eq!(report.supersedes[0].older_claim_ref, "memory:1");
+
+    conn.execute("UPDATE memories SET status = 'archived' WHERE id = 1", [])?;
+    let archived = build_truth_report(&conn, &options())?;
+    assert_eq!(archived.status, "ok");
+    assert!(archived.reference_issues.is_empty());
     Ok(())
 }
 
@@ -371,6 +376,23 @@ fn replacement_edges_accept_stale_historical_memory_endpoints() -> Result<()> {
 
     assert_eq!(report.status, "ok");
     assert!(report.reference_issues.is_empty());
+
+    conn.execute("UPDATE memories SET status = 'archived' WHERE id = 1", [])?;
+    let archived = build_truth_report(&conn, &options())?;
+    assert_eq!(archived.status, "ok");
+    assert!(archived.reference_issues.is_empty());
+    Ok(())
+}
+
+#[test]
+fn report_releases_its_read_snapshot() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "active", 10)?;
+
+    assert!(conn.is_autocommit());
+    let report = build_truth_report(&conn, &options())?;
+    assert_eq!(report.status, "ok");
+    assert!(conn.is_autocommit());
     Ok(())
 }
 

@@ -2,8 +2,10 @@
 
 use serde::Serialize;
 
-/// Version stamp carried by every projection payload. Bump when the DTO
-/// shape or the resolution policy changes observable output.
+/// Version stamp carried by every projection payload. Bump when the DTO shape
+/// or documented resolution contract changes. An implementation correction
+/// that restores the unchanged graph contract retains v1; v2 is reserved for
+/// the approved GH933 0.7 breaking contract and migration.
 pub const TRUTH_PROJECTION_VERSION: u32 = 1;
 
 /// How a claim entered the published knowledge base.

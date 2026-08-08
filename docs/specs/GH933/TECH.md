@@ -39,8 +39,13 @@ exclude objects created after an explicit as-of epoch. Graph `supersedes`
 follows the graph contract's current-to-old direction (unlike the old-to-new
 `memory_edges` writer), and relation diagnostics include an edge whenever the
 projection admits either scoped endpoint, including cross-project edges. This
-consumer does not claim any pending v2 behavior or authorize the v2
-migration/cutover.
+is a v1 contract correction before its first production consumer, so it
+retains `projection_version=1`; version 2 remains reserved for the approved
+0.7 breaking contract below. The report holds one read transaction across all
+projection and diagnostic queries, and normal archival of historical
+replacement endpoints does not create a false reference warning. This
+consumer does not claim any pending v2 behavior or authorize the v2 migration
+or cutover.
 
 ## Public v2 Types
 

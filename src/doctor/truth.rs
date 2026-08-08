@@ -148,6 +148,20 @@ fn truth_outcome(report: &TruthDoctorReport) -> DoctorOutcome {
 }
 
 fn build_truth_report(conn: &Connection, opts: &TruthDoctorOptions) -> Result<TruthDoctorReport> {
+    let snapshot = conn
+        .unchecked_transaction()
+        .context("begin read snapshot for doctor truth")?;
+    let report = build_truth_report_from_snapshot(&snapshot, opts)?;
+    snapshot
+        .commit()
+        .context("finish read snapshot for doctor truth")?;
+    Ok(report)
+}
+
+fn build_truth_report_from_snapshot(
+    conn: &Connection,
+    opts: &TruthDoctorOptions,
+) -> Result<TruthDoctorReport> {
     let query = TruthQuery {
         project: opts.project.clone(),
         branch: opts.branch.clone(),
@@ -513,7 +527,7 @@ fn collect_noncurrent_memory_edge_refs(
            AND me.created_at_epoch <= ?3
            AND NOT (me.edge_type IN ('supersedes', 'merged_into', 'duplicates')
                     AND endpoint.id = me.from_memory_id
-                    AND endpoint.status IN ('stale', 'superseded'))
+                    AND endpoint.status IN ('stale', 'superseded', 'archived'))
            ",
         params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
@@ -544,8 +558,9 @@ fn collect_noncurrent_graph_edge_refs(
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
            AND NOT (((ge.edge_type = 'supersedes' AND endpoint.id = ge.to_node_id)
-                  OR (ge.edge_type = 'merged_into' AND endpoint.id = ge.from_node_id))
-                    AND endpoint.status IN ('stale', 'superseded'))
+                  OR (ge.edge_type = 'merged_into' AND endpoint.id = ge.from_node_id)
+                  OR ge.edge_type = 'duplicates')
+                    AND endpoint.status IN ('stale', 'superseded', 'archived'))
            ",
         params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
