@@ -423,6 +423,16 @@ fn subject_excludes_unrelated_relation_diagnostics() -> Result<()> {
          VALUES ('supersedes', 1, 2, 20), ('duplicates', 3, 4, 20)",
         [],
     )?;
+    let (event_id, candidate_id, operation_id) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind,
+          to_node_id, source_event_ids, source_candidate_id, source_operation_id,
+          confidence, reason, created_at_epoch)
+         VALUES ('conflicts', 'trusted', 'memory', 3, 'memory', 4,
+                 ?1, ?2, ?3, 0.9, 'unrelated runtime relation', 20)",
+        params![format!("[{event_id}]"), candidate_id, operation_id],
+    )?;
 
     let mut scoped = options();
     scoped.subject = Some("deploy".to_string());
@@ -435,6 +445,10 @@ fn subject_excludes_unrelated_relation_diagnostics() -> Result<()> {
         .supersedes
         .iter()
         .all(|link| link.relation_ref == "memory_edge:1"));
+    assert!(!report
+        .lifecycle_mappings
+        .iter()
+        .any(|mapping| mapping.object_kind == "trusted_graph_relation"));
     Ok(())
 }
 

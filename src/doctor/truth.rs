@@ -340,12 +340,14 @@ fn load_lifecycle_mappings(
          JOIN memories fm ON ge.from_node_kind = 'memory' AND fm.id = ge.from_node_id
          JOIN memories tm ON ge.to_node_kind = 'memory' AND tm.id = ge.to_node_id
          WHERE ge.edge_trust = 'trusted'
-           AND ((fm.project = ?1 AND (?2 IS NULL OR fm.branch IS NULL OR fm.branch = ?2))
-             OR (tm.project = ?1 AND (?2 IS NULL OR tm.branch IS NULL OR tm.branch = ?2)))
+           AND ((fm.project = ?1 AND (?2 IS NULL OR fm.branch IS NULL OR fm.branch = ?2)
+                                 AND (?4 IS NULL OR fm.topic_key = ?4))
+             OR (tm.project = ?1 AND (?2 IS NULL OR tm.branch IS NULL OR tm.branch = ?2)
+                                 AND (?4 IS NULL OR tm.topic_key = ?4)))
            AND ge.created_at_epoch <= ?3
            AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
          GROUP BY relation_status ORDER BY relation_status",
-        params![opts.project, opts.branch, reference_epoch],
+        params![opts.project, opts.branch, reference_epoch, opts.subject],
         relation_lifecycle,
     )?;
     Ok(out)
