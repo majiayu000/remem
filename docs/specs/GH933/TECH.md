@@ -42,10 +42,12 @@ projection admits either scoped endpoint, including cross-project edges. This
 is a v1 contract correction before its first production consumer, so it
 retains `projection_version=1`; version 2 remains reserved for the approved
 0.7 breaking contract below. The report holds one read transaction across all
-projection and diagnostic queries, and normal archival of historical
-replacement endpoints does not create a false reference warning. This
-consumer does not claim any pending v2 behavior or authorize the v2 migration
-or cutover.
+projection and diagnostic queries, samples one effective reference epoch for
+that transaction, and returns that epoch even when the caller omitted the
+selector. Reference checks apply the same creation and validity windows as the
+projection, while normal archival or expiry of historical replacement
+endpoints does not create a false warning. This consumer does not claim any
+pending v2 behavior or authorize the v2 migration or cutover.
 
 ## Public v2 Types
 

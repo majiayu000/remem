@@ -162,16 +162,19 @@ fn build_truth_report_from_snapshot(
     conn: &Connection,
     opts: &TruthDoctorOptions,
 ) -> Result<TruthDoctorReport> {
+    let reference_epoch = opts
+        .as_of_epoch
+        .unwrap_or_else(|| chrono::Utc::now().timestamp());
     let query = TruthQuery {
         project: opts.project.clone(),
         branch: opts.branch.clone(),
-        as_of_epoch: opts.as_of_epoch,
+        as_of_epoch: Some(reference_epoch),
         subject_key: opts.subject.clone(),
     };
     let project_projection = project_current_truth(conn, &query)
         .context("project memory-backed CurrentTruth for doctor")?;
     let mut owner_projection =
-        project_user_claim_truth(conn, "repo", &opts.project, opts.as_of_epoch)
+        project_user_claim_truth(conn, "repo", &opts.project, Some(reference_epoch))
             .context("project repo-owned user claims for doctor")?;
     if let Some(subject) = opts.subject.as_deref() {
         owner_projection
@@ -197,9 +200,9 @@ fn build_truth_report_from_snapshot(
         &mut abstentions,
     );
 
-    let lifecycle_mappings = load_lifecycle_mappings(conn, opts)?;
-    let supersedes = load_supersedes_links(conn, opts)?;
-    let reference_issues = load_reference_issues(conn, opts)?;
+    let lifecycle_mappings = load_lifecycle_mappings(conn, opts, reference_epoch)?;
+    let supersedes = load_supersedes_links(conn, opts, reference_epoch)?;
+    let reference_issues = load_reference_issues(conn, opts, reference_epoch)?;
     counts.supersedes_relations = supersedes.len();
     counts.reference_issues = reference_issues.len();
     let status = if counts.contradicted > 0 || counts.reference_issues > 0 {
@@ -214,7 +217,7 @@ fn build_truth_report_from_snapshot(
         status,
         project: opts.project.clone(),
         branch: opts.branch.clone(),
-        as_of_epoch: opts.as_of_epoch,
+        as_of_epoch: Some(reference_epoch),
         subject: opts.subject.clone(),
         counts,
         lifecycle_mappings,
@@ -230,11 +233,6 @@ fn user_claim_subject_matches(composite_key: &str, selector: &str) -> bool {
         || composite_key
             .split_once(':')
             .is_some_and(|(_, claim_key)| claim_key == selector)
-}
-
-fn reference_epoch(opts: &TruthDoctorOptions) -> i64 {
-    opts.as_of_epoch
-        .unwrap_or_else(|| chrono::Utc::now().timestamp())
 }
 
 fn accumulate_projection(
@@ -280,9 +278,9 @@ fn accumulate_projection(
 fn load_lifecycle_mappings(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
 ) -> Result<Vec<LifecycleMappingCount>> {
     let mut out = Vec::new();
-    let reference_epoch = reference_epoch(opts);
     append_status_counts(
         conn,
         &mut out,
@@ -401,9 +399,9 @@ fn relation_lifecycle(status: &str) -> Lifecycle {
 fn load_supersedes_links(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
 ) -> Result<Vec<SupersedesLink>> {
     let mut links = BTreeSet::new();
-    let reference_epoch = reference_epoch(opts);
     let mut stmt = conn.prepare(
         "SELECT 'memory_edge:' || me.id, 'memory:' || me.to_memory_id,
                 'memory:' || me.from_memory_id
@@ -496,21 +494,22 @@ fn load_supersedes_links(
 fn load_reference_issues(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
 ) -> Result<Vec<ReferenceIssue>> {
     let mut issues = BTreeSet::new();
-    collect_noncurrent_memory_edge_refs(conn, opts, &mut issues)?;
-    collect_noncurrent_graph_edge_refs(conn, opts, &mut issues)?;
-    collect_dangling_graph_edge_refs(conn, opts, &mut issues)?;
-    collect_noncurrent_user_claim_refs(conn, opts, &mut issues)?;
+    collect_noncurrent_memory_edge_refs(conn, opts, reference_epoch, &mut issues)?;
+    collect_noncurrent_graph_edge_refs(conn, opts, reference_epoch, &mut issues)?;
+    collect_dangling_graph_edge_refs(conn, opts, reference_epoch, &mut issues)?;
+    collect_noncurrent_user_claim_refs(conn, opts, reference_epoch, &mut issues)?;
     Ok(issues.into_iter().collect())
 }
 
 fn collect_noncurrent_memory_edge_refs(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
-    let reference_epoch = reference_epoch(opts);
     collect_reference_rows(
         conn,
         out,
@@ -519,7 +518,11 @@ fn collect_noncurrent_memory_edge_refs(
          JOIN memories old ON old.id = me.from_memory_id
          JOIN memories new ON new.id = me.to_memory_id
          JOIN memories endpoint ON endpoint.id IN (me.from_memory_id, me.to_memory_id)
-         WHERE endpoint.status != 'active'
+         WHERE (endpoint.status != 'active'
+             OR endpoint.created_at_epoch > ?3
+             OR endpoint.valid_from_epoch > ?3
+             OR endpoint.valid_to_epoch <= ?3
+             OR endpoint.expires_at_epoch <= ?3)
            AND ((old.project = ?1 AND (?2 IS NULL OR old.branch IS NULL OR old.branch = ?2)
                                   AND (?4 IS NULL OR old.topic_key = ?4))
              OR (new.project = ?1 AND (?2 IS NULL OR new.branch IS NULL OR new.branch = ?2)
@@ -527,7 +530,12 @@ fn collect_noncurrent_memory_edge_refs(
            AND me.created_at_epoch <= ?3
            AND NOT (me.edge_type IN ('supersedes', 'merged_into', 'duplicates')
                     AND endpoint.id = me.from_memory_id
-                    AND endpoint.status IN ('stale', 'superseded', 'archived'))
+                    AND endpoint.created_at_epoch <= ?3
+                    AND (endpoint.valid_from_epoch IS NULL OR endpoint.valid_from_epoch <= ?3)
+                    AND endpoint.status IN ('active', 'stale', 'superseded', 'archived')
+                    AND (endpoint.status != 'active'
+                      OR endpoint.valid_to_epoch <= ?3
+                      OR endpoint.expires_at_epoch <= ?3))
            ",
         params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
@@ -537,9 +545,9 @@ fn collect_noncurrent_memory_edge_refs(
 fn collect_noncurrent_graph_edge_refs(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
-    let reference_epoch = reference_epoch(opts);
     collect_reference_rows(
         conn,
         out,
@@ -549,7 +557,11 @@ fn collect_noncurrent_graph_edge_refs(
          JOIN memories old ON ge.to_node_kind = 'memory' AND old.id = ge.to_node_id
          JOIN memories endpoint ON endpoint.id IN (ge.from_node_id, ge.to_node_id)
          WHERE ge.edge_trust = 'trusted'
-           AND endpoint.status != 'active'
+           AND (endpoint.status != 'active'
+             OR endpoint.created_at_epoch > ?3
+             OR endpoint.valid_from_epoch > ?3
+             OR endpoint.valid_to_epoch <= ?3
+             OR endpoint.expires_at_epoch <= ?3)
            AND ((old.project = ?1 AND (?2 IS NULL OR old.branch IS NULL OR old.branch = ?2)
                                   AND (?4 IS NULL OR old.topic_key = ?4))
              OR (new.project = ?1 AND (?2 IS NULL OR new.branch IS NULL OR new.branch = ?2)
@@ -560,7 +572,12 @@ fn collect_noncurrent_graph_edge_refs(
            AND NOT (((ge.edge_type = 'supersedes' AND endpoint.id = ge.to_node_id)
                   OR (ge.edge_type = 'merged_into' AND endpoint.id = ge.from_node_id)
                   OR ge.edge_type = 'duplicates')
-                    AND endpoint.status IN ('stale', 'superseded', 'archived'))
+                    AND endpoint.created_at_epoch <= ?3
+                    AND (endpoint.valid_from_epoch IS NULL OR endpoint.valid_from_epoch <= ?3)
+                    AND endpoint.status IN ('active', 'stale', 'superseded', 'archived')
+                    AND (endpoint.status != 'active'
+                      OR endpoint.valid_to_epoch <= ?3
+                      OR endpoint.expires_at_epoch <= ?3))
            ",
         params![opts.project, opts.branch, reference_epoch, opts.subject],
         "references_noncurrent_claim",
@@ -570,9 +587,9 @@ fn collect_noncurrent_graph_edge_refs(
 fn collect_dangling_graph_edge_refs(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
-    let reference_epoch = reference_epoch(opts);
     let mut stmt = conn.prepare(
         "SELECT 'graph_edge:' || ge.id,
                 CASE WHEN fm.id IS NULL THEN 'memory:' || ge.from_node_id
@@ -611,9 +628,9 @@ fn collect_dangling_graph_edge_refs(
 fn collect_noncurrent_user_claim_refs(
     conn: &Connection,
     opts: &TruthDoctorOptions,
+    reference_epoch: i64,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
-    let reference_epoch = reference_epoch(opts);
     collect_reference_rows(
         conn,
         out,
@@ -625,8 +642,15 @@ fn collect_noncurrent_user_claim_refs(
          WHERE current.owner_scope = 'repo' AND current.owner_key = ?1
            AND old.owner_scope = current.owner_scope AND old.owner_key = current.owner_key
            AND current.created_at_epoch <= ?2
-           AND endpoint.status != 'active'
-           AND NOT (endpoint.id = old.id AND endpoint.status = 'superseded')
+           AND (endpoint.status != 'active'
+             OR endpoint.created_at_epoch > ?2
+             OR endpoint.valid_from_epoch > ?2
+             OR endpoint.valid_to_epoch <= ?2)
+           AND NOT (endpoint.id = old.id
+                    AND endpoint.created_at_epoch <= ?2
+                    AND (endpoint.valid_from_epoch IS NULL OR endpoint.valid_from_epoch <= ?2)
+                    AND endpoint.status IN ('active', 'stale', 'superseded')
+                    AND (endpoint.status != 'active' OR endpoint.valid_to_epoch <= ?2))
            AND (?3 IS NULL
                 OR current.claim_key = ?3
                 OR current.claim_type || ':' || current.claim_key = ?3

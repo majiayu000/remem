@@ -185,6 +185,86 @@ fn as_of_excludes_future_and_not_yet_valid_relations() -> Result<()> {
 }
 
 #[test]
+fn omitted_as_of_is_sampled_once_and_reported() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "active", 10)?;
+    let mut current = options();
+    current.as_of_epoch = None;
+    let before = chrono::Utc::now().timestamp();
+
+    let report = build_truth_report(&conn, &current)?;
+
+    let after = chrono::Utc::now().timestamp();
+    let sampled = report.as_of_epoch.expect("effective reference epoch");
+    assert!((before..=after).contains(&sampled));
+    Ok(())
+}
+
+#[test]
+fn reference_issues_apply_endpoint_time_eligibility() -> Result<()> {
+    let conn = test_conn()?;
+    for (id, topic) in [
+        (1, "memory-old"),
+        (2, "memory-new"),
+        (3, "graph-a"),
+        (4, "graph-b"),
+    ] {
+        insert_memory(&conn, id, topic, "active", 20)?;
+    }
+    conn.execute("UPDATE memories SET valid_to_epoch = 50 WHERE id = 1", [])?;
+    conn.execute(
+        "UPDATE memories SET valid_from_epoch = 101 WHERE id = 3",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_edges
+         (edge_type, from_memory_id, to_memory_id, created_at_epoch)
+         VALUES ('conflicts', 1, 2, 20)",
+        [],
+    )?;
+    let (event_id, candidate_id, operation_id) = seed_graph_provenance(&conn)?;
+    conn.execute(
+        "INSERT INTO graph_edges
+         (edge_type, edge_trust, from_node_kind, from_node_id, to_node_kind,
+          to_node_id, source_event_ids, source_candidate_id, source_operation_id,
+          confidence, reason, created_at_epoch)
+         VALUES ('conflicts', 'trusted', 'memory', 3, 'memory', 4,
+                 ?1, ?2, ?3, 0.9, 'time eligibility', 20)",
+        params![format!("[{event_id}]"), candidate_id, operation_id],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, 'repo', '/repo', 'preference', 'editor', 'Use Vim', 1.0,
+                 'normal', 'manual', '[]', 'active', 10, 10)",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status, supersedes_claim_id,
+          valid_from_epoch, created_at_epoch, updated_at_epoch)
+         VALUES (2, 'repo', '/repo', 'preference', 'editor', 'Use Helix', 1.0,
+                 'normal', 'manual', '[]', 'active', 1, 101, 20, 20)",
+        [],
+    )?;
+
+    let report = build_truth_report(&conn, &options())?;
+    let refs: BTreeSet<_> = report
+        .reference_issues
+        .iter()
+        .map(|issue| (issue.relation_ref.as_str(), issue.claim_ref.as_str()))
+        .collect();
+
+    assert!(refs.contains(&("memory_edge:1", "memory:1")));
+    assert!(refs.contains(&("graph_edge:1", "memory:3")));
+    assert!(refs.contains(&("user_claim_supersedes:2", "user_claim:2")));
+    Ok(())
+}
+
+#[test]
 fn graph_supersedes_uses_current_to_old_direction() -> Result<()> {
     let conn = test_conn()?;
     insert_memory(&conn, 1, "deploy", "stale", 10)?;

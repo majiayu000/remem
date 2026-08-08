@@ -140,6 +140,9 @@ migrates or writes the database. `--project` accepts an exact stored project key
 otherwise `--cwd` (or the current directory) is normalized to the project key.
 `--subject` accepts an exact memory topic key, a bare user-claim key, or its
 explicit `type:key` form. Warnings exit with status 1, including in quiet mode.
+When `--as-of-epoch` is omitted, the report samples one effective epoch,
+returns it as `as_of_epoch`, and uses it for every projection and diagnostic
+query in the same read snapshot.
 
 For Codex CLI, `remem install` creates or updates:
 
