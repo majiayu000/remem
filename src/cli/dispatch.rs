@@ -259,7 +259,7 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
                 let project = args
                     .project
                     .unwrap_or_else(|| db::project_from_cwd(&resolve_cwd_arg(args.cwd)));
-                doctor::run_truth_doctor(doctor::TruthDoctorOptions {
+                let outcome = doctor::run_truth_doctor(doctor::TruthDoctorOptions {
                     project,
                     branch: args.branch,
                     as_of_epoch: args.as_of_epoch,
@@ -267,6 +267,10 @@ pub(super) async fn run_cli(cli: Cli) -> Result<()> {
                     json,
                     quiet,
                 })?;
+                let code = outcome.exit_code();
+                if code != 0 {
+                    std::process::exit(code);
+                }
             }
             None => {
                 let outcome = doctor::run_doctor(doctor::DoctorOptions { json, quiet })?;

@@ -20,7 +20,7 @@ pub(in crate::cli) struct DoctorTruthArgs {
     /// Evaluate truth at this Unix epoch instead of the current time.
     #[arg(long)]
     pub(in crate::cli) as_of_epoch: Option<i64>,
-    /// Restrict the projection to one exact topic/claim key.
+    /// Restrict to one exact memory topic key or user-claim key (`type:key` also works).
     #[arg(long)]
     pub(in crate::cli) subject: Option<String>,
 }

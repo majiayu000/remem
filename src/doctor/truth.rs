@@ -13,6 +13,8 @@ use crate::truth::{
     TRUTH_PROJECTION_VERSION,
 };
 
+use super::types::DoctorOutcome;
+
 const TRUTH_DOCTOR_SCHEMA_VERSION: u32 = 1;
 
 #[derive(Debug, Clone)]
@@ -94,13 +96,16 @@ struct TruthDoctorReport {
     reference_issues: Vec<ReferenceIssue>,
 }
 
-pub(crate) fn run_truth_doctor(opts: TruthDoctorOptions) -> Result<()> {
+pub(crate) fn run_truth_doctor(opts: TruthDoctorOptions) -> Result<DoctorOutcome> {
     let stdout = io::stdout();
     let mut sink = stdout.lock();
     run_truth_doctor_with_writer(opts, &mut sink)
 }
 
-fn run_truth_doctor_with_writer<W: Write>(opts: TruthDoctorOptions, out: &mut W) -> Result<()> {
+fn run_truth_doctor_with_writer<W: Write>(
+    opts: TruthDoctorOptions,
+    out: &mut W,
+) -> Result<DoctorOutcome> {
     if opts.project.trim().is_empty() {
         bail!("doctor truth requires a non-blank project selector");
     }
@@ -122,8 +127,9 @@ fn run_truth_doctor_with_writer<W: Write>(opts: TruthDoctorOptions, out: &mut W)
     let conn = crate::db::open_db_read_only_current()
         .context("open the current remem database read-only for doctor truth")?;
     let report = build_truth_report(&conn, &opts)?;
+    let outcome = truth_outcome(&report);
     if opts.quiet && !opts.json {
-        return Ok(());
+        return Ok(outcome);
     }
     if opts.json {
         serde_json::to_writer_pretty(&mut *out, &report)?;
@@ -131,7 +137,14 @@ fn run_truth_doctor_with_writer<W: Write>(opts: TruthDoctorOptions, out: &mut W)
     } else {
         write_human(out, &report)?;
     }
-    Ok(())
+    Ok(outcome)
+}
+
+fn truth_outcome(report: &TruthDoctorReport) -> DoctorOutcome {
+    DoctorOutcome {
+        fails: 0,
+        warns: usize::from(report.status == "warn"),
+    }
 }
 
 fn build_truth_report(conn: &Connection, opts: &TruthDoctorOptions) -> Result<TruthDoctorReport> {
@@ -149,7 +162,7 @@ fn build_truth_report(conn: &Connection, opts: &TruthDoctorOptions) -> Result<Tr
     if let Some(subject) = opts.subject.as_deref() {
         owner_projection
             .truths
-            .retain(|truth| truth.subject_key == subject);
+            .retain(|truth| user_claim_subject_matches(&truth.subject_key, subject));
     }
 
     let mut conflicts = Vec::new();
@@ -198,6 +211,18 @@ fn build_truth_report(conn: &Connection, opts: &TruthDoctorOptions) -> Result<Tr
     })
 }
 
+fn user_claim_subject_matches(composite_key: &str, selector: &str) -> bool {
+    composite_key == selector
+        || composite_key
+            .split_once(':')
+            .is_some_and(|(_, claim_key)| claim_key == selector)
+}
+
+fn reference_epoch(opts: &TruthDoctorOptions) -> i64 {
+    opts.as_of_epoch
+        .unwrap_or_else(|| chrono::Utc::now().timestamp())
+}
+
 fn accumulate_projection(
     scope_kind: &'static str,
     projection: &CurrentTruthProjection,
@@ -243,6 +268,7 @@ fn load_lifecycle_mappings(
     opts: &TruthDoctorOptions,
 ) -> Result<Vec<LifecycleMappingCount>> {
     let mut out = Vec::new();
+    let reference_epoch = reference_epoch(opts);
     append_status_counts(
         conn,
         &mut out,
@@ -286,9 +312,6 @@ fn load_lifecycle_mappings(
         crate::truth::user_claim_lifecycle,
     )?;
 
-    let reference_epoch = opts
-        .as_of_epoch
-        .unwrap_or_else(|| chrono::Utc::now().timestamp());
     append_status_counts(
         conn,
         &mut out,
@@ -302,6 +325,8 @@ fn load_lifecycle_mappings(
          JOIN memories tm ON ge.to_node_kind = 'memory' AND tm.id = ge.to_node_id
          WHERE ge.edge_trust = 'trusted'
            AND fm.project = ?1 AND tm.project = ?1
+           AND ge.created_at_epoch <= ?3
+           AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
            AND (?2 IS NULL OR (fm.branch IS NULL OR fm.branch = ?2)
                             AND (tm.branch IS NULL OR tm.branch = ?2))
          GROUP BY relation_status ORDER BY relation_status",
@@ -361,6 +386,7 @@ fn load_supersedes_links(
     opts: &TruthDoctorOptions,
 ) -> Result<Vec<SupersedesLink>> {
     let mut links = BTreeSet::new();
+    let reference_epoch = reference_epoch(opts);
     let mut stmt = conn.prepare(
         "SELECT 'memory_edge:' || me.id, 'memory:' || me.to_memory_id,
                 'memory:' || me.from_memory_id
@@ -369,10 +395,11 @@ fn load_supersedes_links(
          JOIN memories new ON new.id = me.to_memory_id
          WHERE me.edge_type = 'supersedes'
            AND old.project = ?1 AND new.project = ?1
+           AND me.created_at_epoch <= ?3
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
     )?;
-    let rows = stmt.query_map(params![opts.project, opts.branch], |row| {
+    let rows = stmt.query_map(params![opts.project, opts.branch, reference_epoch], |row| {
         Ok(SupersedesLink {
             relation_ref: row.get(0)?,
             newer_claim_ref: row.get(1)?,
@@ -391,10 +418,13 @@ fn load_supersedes_links(
          JOIN memories new ON ge.to_node_kind = 'memory' AND new.id = ge.to_node_id
          WHERE ge.edge_type = 'supersedes' AND ge.edge_trust = 'trusted'
            AND old.project = ?1 AND new.project = ?1
+           AND ge.created_at_epoch <= ?3
+           AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
+           AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
     )?;
-    let rows = stmt.query_map(params![opts.project, opts.branch], |row| {
+    let rows = stmt.query_map(params![opts.project, opts.branch, reference_epoch], |row| {
         Ok(SupersedesLink {
             relation_ref: row.get(0)?,
             newer_claim_ref: row.get(1)?,
@@ -412,9 +442,10 @@ fn load_supersedes_links(
          FROM user_context_claims current
          JOIN user_context_claims old ON old.id = current.supersedes_claim_id
          WHERE current.owner_scope = 'repo' AND current.owner_key = ?1
-           AND old.owner_scope = current.owner_scope AND old.owner_key = current.owner_key",
+           AND old.owner_scope = current.owner_scope AND old.owner_key = current.owner_key
+           AND current.created_at_epoch <= ?2",
     )?;
-    let rows = stmt.query_map(params![opts.project], |row| {
+    let rows = stmt.query_map(params![opts.project, reference_epoch], |row| {
         Ok(SupersedesLink {
             relation_ref: row.get(0)?,
             newer_claim_ref: row.get(1)?,
@@ -444,6 +475,7 @@ fn collect_noncurrent_memory_edge_refs(
     opts: &TruthDoctorOptions,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
+    let reference_epoch = reference_epoch(opts);
     collect_reference_rows(
         conn,
         out,
@@ -453,12 +485,13 @@ fn collect_noncurrent_memory_edge_refs(
          JOIN memories new ON new.id = me.to_memory_id
          JOIN memories endpoint ON endpoint.id IN (me.from_memory_id, me.to_memory_id)
          WHERE old.project = ?1 AND new.project = ?1 AND endpoint.status != 'active'
+           AND me.created_at_epoch <= ?3
            AND NOT (me.edge_type = 'supersedes'
                     AND endpoint.id = me.from_memory_id
                     AND endpoint.status = 'superseded')
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
-        params![opts.project, opts.branch],
+        params![opts.project, opts.branch, reference_epoch],
         "references_noncurrent_claim",
     )
 }
@@ -468,6 +501,7 @@ fn collect_noncurrent_graph_edge_refs(
     opts: &TruthDoctorOptions,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
+    let reference_epoch = reference_epoch(opts);
     collect_reference_rows(
         conn,
         out,
@@ -478,12 +512,15 @@ fn collect_noncurrent_graph_edge_refs(
          JOIN memories endpoint ON endpoint.id IN (ge.from_node_id, ge.to_node_id)
          WHERE ge.edge_trust = 'trusted'
            AND old.project = ?1 AND new.project = ?1 AND endpoint.status != 'active'
+           AND ge.created_at_epoch <= ?3
+           AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
+           AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
            AND NOT (ge.edge_type = 'supersedes'
                     AND endpoint.id = ge.from_node_id
                     AND endpoint.status = 'superseded')
            AND (?2 IS NULL OR (old.branch IS NULL OR old.branch = ?2)
                             AND (new.branch IS NULL OR new.branch = ?2))",
-        params![opts.project, opts.branch],
+        params![opts.project, opts.branch, reference_epoch],
         "references_noncurrent_claim",
     )
 }
@@ -493,6 +530,7 @@ fn collect_dangling_graph_edge_refs(
     opts: &TruthDoctorOptions,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
+    let reference_epoch = reference_epoch(opts);
     let mut stmt = conn.prepare(
         "SELECT 'graph_edge:' || ge.id,
                 CASE WHEN fm.id IS NULL THEN 'memory:' || ge.from_node_id
@@ -502,12 +540,15 @@ fn collect_dangling_graph_edge_refs(
          LEFT JOIN memories tm ON ge.to_node_kind = 'memory' AND tm.id = ge.to_node_id
          WHERE ge.edge_trust = 'trusted'
            AND ge.from_node_kind = 'memory' AND ge.to_node_kind = 'memory'
+           AND ge.created_at_epoch <= ?3
+           AND (ge.valid_from_epoch IS NULL OR ge.valid_from_epoch <= ?3)
+           AND (ge.valid_to_epoch IS NULL OR ge.valid_to_epoch > ?3)
            AND ((fm.id IS NULL AND tm.project = ?1)
              OR (tm.id IS NULL AND fm.project = ?1))
            AND (?2 IS NULL OR COALESCE(fm.branch, tm.branch) IS NULL
                             OR COALESCE(fm.branch, tm.branch) = ?2)",
     )?;
-    let rows = stmt.query_map(params![opts.project, opts.branch], |row| {
+    let rows = stmt.query_map(params![opts.project, opts.branch, reference_epoch], |row| {
         Ok(ReferenceIssue {
             relation_ref: row.get(0)?,
             claim_ref: row.get(1)?,
@@ -526,6 +567,7 @@ fn collect_noncurrent_user_claim_refs(
     opts: &TruthDoctorOptions,
     out: &mut BTreeSet<ReferenceIssue>,
 ) -> Result<()> {
+    let reference_epoch = reference_epoch(opts);
     collect_reference_rows(
         conn,
         out,
@@ -535,8 +577,9 @@ fn collect_noncurrent_user_claim_refs(
          JOIN user_context_claims old ON old.id = current.supersedes_claim_id
          WHERE current.owner_scope = 'repo' AND current.owner_key = ?1
            AND old.owner_scope = current.owner_scope AND old.owner_key = current.owner_key
+           AND current.created_at_epoch <= ?2
            AND old.status NOT IN ('active', 'superseded')",
-        params![opts.project],
+        params![opts.project, reference_epoch],
         "references_noncurrent_claim",
     )
 }
@@ -646,97 +689,5 @@ fn write_human<W: Write>(out: &mut W, report: &TruthDoctorReport) -> Result<()> 
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn test_conn() -> Result<Connection> {
-        let conn = Connection::open_in_memory()?;
-        crate::migrate::run_migrations(&conn)?;
-        Ok(conn)
-    }
-
-    fn insert_memory(
-        conn: &Connection,
-        id: i64,
-        topic: &str,
-        status: &str,
-        updated_at: i64,
-    ) -> Result<()> {
-        conn.execute(
-            "INSERT INTO memories
-             (id, project, topic_key, title, content, memory_type,
-              created_at_epoch, updated_at_epoch, status)
-             VALUES (?1, '/repo', ?2, 'Decision', ?2, 'decision', 1, ?3, ?4)",
-            params![id, topic, updated_at, status],
-        )?;
-        Ok(())
-    }
-
-    fn options() -> TruthDoctorOptions {
-        TruthDoctorOptions {
-            project: "/repo".to_string(),
-            branch: None,
-            as_of_epoch: Some(100),
-            subject: None,
-            json: true,
-            quiet: false,
-        }
-    }
-
-    #[test]
-    fn report_surfaces_conflicts_supersedes_and_noncurrent_references() -> Result<()> {
-        let conn = test_conn()?;
-        insert_memory(&conn, 1, "deploy", "superseded", 10)?;
-        insert_memory(&conn, 2, "deploy", "active", 20)?;
-        conn.execute(
-            "INSERT INTO memory_edges
-             (edge_type, from_memory_id, to_memory_id, created_at_epoch)
-             VALUES ('supersedes', 1, 2, 20)",
-            [],
-        )?;
-        conn.execute(
-            "INSERT INTO memory_edges
-             (edge_type, from_memory_id, to_memory_id, created_at_epoch)
-             VALUES ('duplicates', 1, 2, 21)",
-            [],
-        )?;
-        let before = conn.total_changes();
-
-        let report = build_truth_report(&conn, &options())?;
-
-        assert_eq!(
-            conn.total_changes(),
-            before,
-            "diagnostic must be SELECT-only"
-        );
-        assert_eq!(report.counts.truth_items, 1);
-        assert_eq!(report.counts.current, 1);
-        assert_eq!(report.counts.supersedes_relations, 1);
-        assert_eq!(report.counts.reference_issues, 1);
-        assert!(report.reference_issues.iter().any(|issue| {
-            issue.claim_ref == "memory:1" && issue.stored_status.as_deref() == Some("superseded")
-        }));
-        assert!(report.lifecycle_mappings.iter().any(|mapping| {
-            mapping.object_kind == "memory"
-                && mapping.stored_status == "superseded"
-                && mapping.validity == ValidityState::Superseded
-        }));
-        Ok(())
-    }
-
-    #[test]
-    fn unresolved_equal_claims_are_reported_without_claim_text() -> Result<()> {
-        let conn = test_conn()?;
-        insert_memory(&conn, 1, "runtime", "active", 20)?;
-        insert_memory(&conn, 2, "runtime", "active", 20)?;
-
-        let report = build_truth_report(&conn, &options())?;
-        let encoded = serde_json::to_string(&report)?;
-
-        assert_eq!(report.status, "warn");
-        assert_eq!(report.counts.contradicted, 1);
-        assert_eq!(report.conflicts[0].claim_refs, ["memory:1", "memory:2"]);
-        assert!(!encoded.contains("Decision: runtime"));
-        Ok(())
-    }
-}
+#[path = "truth_tests.rs"]
+mod tests;

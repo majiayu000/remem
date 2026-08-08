@@ -138,6 +138,8 @@ supersedes links, non-current or dangling claim references, and the explicit
 stored-status to lifecycle mapping. It does not print claim text and never
 migrates or writes the database. `--project` accepts an exact stored project key;
 otherwise `--cwd` (or the current directory) is normalized to the project key.
+`--subject` accepts an exact memory topic key, a bare user-claim key, or its
+explicit `type:key` form. Warnings exit with status 1, including in quiet mode.
 
 For Codex CLI, `remem install` creates or updates:
 

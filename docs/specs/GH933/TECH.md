@@ -31,8 +31,11 @@ project plus repo-owner claims, and emits only counts and canonical references:
 it never includes claim text. The focused surface accepts project/cwd, branch,
 as-of, and subject selectors, reports lifecycle mappings, explicit supersedes
 links, contradictions, abstentions, and non-current/dangling references, and
-asserts SELECT-only behavior in regression tests. This consumer does not claim
-any pending v2 behavior or authorize the v2 migration/cutover.
+asserts SELECT-only behavior in regression tests. Relationship summaries use
+the projection's effective-time boundary; user-claim subjects accept bare keys
+or explicit `type:key` keys, quarantined observations map to suppressed
+visibility, and warning reports exit 1 even in quiet mode. This consumer does
+not claim any pending v2 behavior or authorize the v2 migration/cutover.
 
 ## Public v2 Types
 

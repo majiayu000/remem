@@ -79,7 +79,8 @@ pub fn memory_lifecycle(status: &str) -> Lifecycle {
 
 /// `observations.status` -> lifecycle.
 ///
-/// Writers today produce: `active`, `stale`, `compressed`.
+/// Writers today produce: `active`, `stale`, `compressed`,
+/// `poisoning_quarantined`.
 pub fn observation_lifecycle(status: &str) -> Lifecycle {
     match status {
         "active" => lifecycle(
@@ -100,6 +101,12 @@ pub fn observation_lifecycle(status: &str) -> Lifecycle {
             ValidityState::Current,
             RetentionState::Archived,
             Visibility::Visible,
+        ),
+        "poisoning_quarantined" => lifecycle(
+            PublicationState::Candidate,
+            ValidityState::Unknown,
+            RetentionState::Live,
+            Visibility::Suppressed,
         ),
         _ => UNKNOWN_STATUS,
     }
@@ -259,6 +266,10 @@ mod tests {
             (
                 "compressed",
                 (P::Active, V::Current, R::Archived, Vis::Visible),
+            ),
+            (
+                "poisoning_quarantined",
+                (P::Candidate, V::Unknown, R::Live, Vis::Suppressed),
             ),
         ];
         for (status, expected) in cases {
