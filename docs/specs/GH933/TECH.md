@@ -45,7 +45,10 @@ and are omitted from subject-focused lifecycle summaries. Reference checks
 validate nullable `memory_edges` endpoints while preserving the intentional
 candidate-backed one-ended `derived_from` form; trusted graph `duplicates`
 remain ordinary two-ended support relations and never receive a historical
-endpoint exemption. These changes are a v1 contract correction before its
+endpoint exemption. Missing and self-referential user-claim replacement refs
+also warn. An explicit cutoff that predates an in-place memory or user-claim
+update reports `unreconstructable_historical_truth` rather than presenting the
+current row state as historical truth. These changes are a v1 contract correction before its
 first production consumer, so the consumer
 retains `projection_version=1`; version 2 remains reserved for the approved
 0.7 breaking contract below. The report holds one read transaction across all

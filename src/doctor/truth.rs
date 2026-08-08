@@ -17,7 +17,10 @@ use super::types::DoctorOutcome;
 
 #[path = "truth_reference.rs"]
 mod reference_diagnostics;
-use reference_diagnostics::collect_dangling_memory_edge_refs;
+use reference_diagnostics::{
+    collect_dangling_memory_edge_refs, collect_invalid_user_claim_replacement_refs,
+    collect_self_referential_memory_edge_refs, collect_unreconstructable_historical_refs,
+};
 
 const TRUTH_DOCTOR_SCHEMA_VERSION: u32 = 1;
 
@@ -509,10 +512,13 @@ fn load_reference_issues(
     reference_epoch: i64,
 ) -> Result<Vec<ReferenceIssue>> {
     let mut issues = BTreeSet::new();
+    collect_unreconstructable_historical_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_noncurrent_memory_edge_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_dangling_memory_edge_refs(conn, opts, reference_epoch, &mut issues)?;
+    collect_self_referential_memory_edge_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_noncurrent_graph_edge_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_dangling_graph_edge_refs(conn, opts, reference_epoch, &mut issues)?;
+    collect_invalid_user_claim_replacement_refs(conn, opts, reference_epoch, &mut issues)?;
     collect_noncurrent_user_claim_refs(conn, opts, reference_epoch, &mut issues)?;
     Ok(issues.into_iter().collect())
 }

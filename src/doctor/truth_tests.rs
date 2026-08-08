@@ -201,6 +201,40 @@ fn omitted_as_of_is_sampled_once_and_reported() -> Result<()> {
 }
 
 #[test]
+fn explicit_as_of_warns_when_truth_was_updated_after_cutoff() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(&conn, 1, "deploy", "active", 10)?;
+    conn.execute(
+        "UPDATE memories SET status = 'stale', updated_at_epoch = 20 WHERE id = 1",
+        [],
+    )?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, 'repo', '/repo', 'preference', 'editor', 'Use Vim', 1.0,
+                 'normal', 'manual', '[]', 'active', 10, 20)",
+        [],
+    )?;
+    let mut historical = options();
+    historical.as_of_epoch = Some(15);
+
+    let report = build_truth_report(&conn, &historical)?;
+    let refs: BTreeSet<_> = report
+        .reference_issues
+        .iter()
+        .filter(|issue| issue.problem == "unreconstructable_historical_truth")
+        .map(|issue| issue.claim_ref.as_str())
+        .collect();
+
+    assert_eq!(report.status, "warn");
+    assert_eq!(truth_outcome(&report).exit_code(), 1);
+    assert_eq!(refs, BTreeSet::from(["memory:1", "user_claim:1"]));
+    Ok(())
+}
+
+#[test]
 fn reference_issues_apply_endpoint_time_eligibility() -> Result<()> {
     let conn = test_conn()?;
     for (id, topic) in [
@@ -507,7 +541,7 @@ fn subject_excludes_unrelated_lifecycle_and_relation_diagnostics() -> Result<()>
 }
 
 #[test]
-fn dangling_memory_edge_endpoints_warn_but_candidate_derived_from_is_valid() -> Result<()> {
+fn invalid_memory_edges_warn_but_candidate_derived_from_is_valid() -> Result<()> {
     let conn = test_conn()?;
     insert_memory(&conn, 1, "deploy", "active", 10)?;
     let (_, candidate_id, _) = seed_graph_provenance(&conn)?;
@@ -515,7 +549,8 @@ fn dangling_memory_edge_endpoints_warn_but_candidate_derived_from_is_valid() -> 
         "INSERT INTO memory_edges
          (id, edge_type, from_memory_id, to_memory_id, created_at_epoch)
          VALUES (1, 'supersedes', NULL, 1, 20),
-                (2, 'conflicts', 1, NULL, 20)",
+                (2, 'conflicts', 1, NULL, 20),
+                (4, 'supersedes', 1, 1, 20)",
         [],
     )?;
     conn.execute(
@@ -534,9 +569,13 @@ fn dangling_memory_edge_endpoints_warn_but_candidate_derived_from_is_valid() -> 
         .collect();
 
     assert_eq!(report.status, "warn");
-    assert_eq!(refs.len(), 2);
+    assert_eq!(refs.len(), 3);
     assert!(refs.contains(&("memory_edge:1", "memory_edge:1:from_memory_id:null")));
     assert!(refs.contains(&("memory_edge:2", "memory_edge:2:to_memory_id:null")));
+    assert!(refs.contains(&("memory_edge:4", "memory:1")));
+    assert!(report.reference_issues.iter().any(|issue| {
+        issue.relation_ref == "memory_edge:4" && issue.problem == "self_referential_relation"
+    }));
     assert!(!report
         .reference_issues
         .iter()
@@ -640,6 +679,40 @@ fn user_claim_replacement_checks_the_newer_endpoint() -> Result<()> {
         report.reference_issues[0].stored_status.as_deref(),
         Some("suppressed")
     );
+    Ok(())
+}
+
+#[test]
+fn invalid_user_claim_replacement_endpoints_warn() -> Result<()> {
+    let conn = test_conn()?;
+    conn.execute_batch("PRAGMA foreign_keys = OFF")?;
+    conn.execute(
+        "INSERT INTO user_context_claims
+         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
+          sensitivity, source_kind, source_refs_json, status, supersedes_claim_id,
+          created_at_epoch, updated_at_epoch)
+         VALUES (1, 'repo', '/repo', 'preference', 'dangling', 'Missing old', 1.0,
+                 'normal', 'manual', '[]', 'active', 999, 10, 10),
+                (2, 'repo', '/repo', 'preference', 'self', 'Self old', 1.0,
+                 'normal', 'manual', '[]', 'active', 2, 10, 10)",
+        [],
+    )?;
+    conn.execute_batch("PRAGMA foreign_keys = ON")?;
+
+    let report = build_truth_report(&conn, &options())?;
+
+    assert_eq!(report.status, "warn");
+    assert!(report.reference_issues.iter().any(|issue| {
+        issue.relation_ref == "user_claim_supersedes:1"
+            && issue.claim_ref == "user_claim:999"
+            && issue.problem == "dangling_claim_reference"
+            && issue.stored_status.is_none()
+    }));
+    assert!(report.reference_issues.iter().any(|issue| {
+        issue.relation_ref == "user_claim_supersedes:2"
+            && issue.claim_ref == "user_claim:2"
+            && issue.problem == "self_referential_relation"
+    }));
     Ok(())
 }
 
