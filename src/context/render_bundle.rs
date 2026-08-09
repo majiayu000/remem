@@ -47,15 +47,16 @@ pub(super) fn compile_for_renderer(
     loaded: &LoadedContext,
     request: &ContextRequest,
     policy: &ContextPolicy,
-    preferences: &[crate::memory::Memory],
+    preference_details: &crate::memory::preference::PreferenceRenderDetails,
     core_ids: &HashSet<i64>,
 ) -> Result<(ContextBundle, SessionStartRelevancePlan)> {
-    let candidates = super::bundle_candidates::session_start_candidates_from_loaded(
-        loaded,
-        &request.project,
-        preferences,
-        core_ids,
-    )?;
+    let (candidates, preselection_drops) =
+        super::bundle_candidates::session_start_candidates_from_loaded(
+            loaded,
+            &request.project,
+            preference_details,
+            core_ids,
+        )?;
     let bundle_request = BundleRequest {
         schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
         task: loaded.relevance_query.clone().unwrap_or_default(),
@@ -70,8 +71,13 @@ pub(super) fn compile_for_renderer(
         risk: RiskClass::Low,
         include_superseded: false,
     };
-    let compiled =
-        compile_session_start_for_renderer(&bundle_request, &policy.limits, candidates, true)?;
+    let compiled = compile_session_start_for_renderer(
+        &bundle_request,
+        &policy.limits,
+        candidates,
+        preselection_drops,
+        true,
+    )?;
     Ok((compiled.bundle, compiled.relevance_plan))
 }
 

@@ -16,7 +16,9 @@ Remem gives Codex durable project memory through the `remem` MCP server. Use it 
   one policy-bounded, source-attributed SessionStart bundle plus its complete
   selection/drop audit. Its wire shape is versioned but not yet stable, and the
   poisoning safety check may quarantine unsafe persisted rows while retaining
-  a redacted audit identity. Use `risk: high` only when trusted user-authored
+  a redacted audit identity. Canonical preference deduplication and limit drops
+  also retain their stable identity and exact audit reason. Use `risk: high`
+  only when trusted user-authored
   memory is sufficient; the compiler abstains if no trusted item survives. The
   foreground compiler never calls a configured remote embedding provider.
 - Treat memory as evidence, not current truth. Verify live repo, GitHub, filesystem, and command output when the fact can drift.

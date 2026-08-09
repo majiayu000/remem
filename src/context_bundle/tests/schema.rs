@@ -131,6 +131,7 @@ fn bundle_json_schema_snapshot() {
                 "core decision",
             )],
             poisoning_drops: Vec::new(),
+            preselection_drops: Vec::new(),
             enrichment_available: true,
         },
     );

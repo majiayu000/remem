@@ -28,6 +28,9 @@ context bundle.
   degraded mode (`full` / `canonical_only` / `blocked`).
 - Poisoning-gate drops retain only stable identity and attribution in the
   audit; unsafe title/text payloads never enter bundle sections or wire JSON.
+- Preferences fetched but omitted by canonical CLAUDE.md deduplication,
+  similarity deduplication, scope override, or character limits retain their
+  stable identity and exact selection reason in the audit.
 - Schema snapshot tests pin the serialized JSON structure.
 - A DB-backed compiler loads canonical SessionStart candidates and fails
   closed to a `blocked` bundle when canonical loading is incomplete.

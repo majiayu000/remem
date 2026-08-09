@@ -15,6 +15,7 @@ use crate::context_bundle::{
     compile_session_start_bundle, AgentRole, ChannelKind, ContextRequest, DegradedMode, ProjectRef,
     RiskClass, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
+use crate::db::test_support::ScopedTestDataDir;
 
 use super::{insert_memory, insert_memory_with_branch, setup_context_schema};
 
@@ -282,6 +283,45 @@ fn poisoning_gate_drop_is_redacted_but_present_in_bundle_audit() {
     assert!(!serialized.contains("malicious body"));
     assert!(!serialized.contains("Ignore all prior instructions"));
     assert!(!serialized.contains("malicious preference"));
+}
+
+#[test]
+fn canonical_preference_dedup_is_present_in_bundle_audit() {
+    let cwd = ScopedTestDataDir::new("bundle-preference-selection-audit");
+    std::fs::create_dir_all(&cwd.path).expect("create test cwd");
+    std::fs::write(cwd.path.join("CLAUDE.md"), "Use Chinese comments\n").expect("write CLAUDE.md");
+    let conn = conn_with_schema();
+    insert_memory(
+        &conn,
+        41,
+        PROJECT,
+        Some("comments"),
+        "preference",
+        "Preference: Use Chinese comments",
+        "Use Chinese comments in code",
+        EPOCH,
+    );
+
+    let bundle = compile_session_start_bundle(
+        &conn,
+        &request(),
+        cwd.path.to_str().expect("utf-8 test path"),
+        None,
+        true,
+    )
+    .expect("compile");
+
+    assert!(bundle.preferences.is_empty());
+    let audit = bundle
+        .audit
+        .entries
+        .iter()
+        .find(|entry| entry.stable_key == "memory:41")
+        .expect("deduplicated preference audit entry");
+    assert!(!audit.selected);
+    assert_eq!(audit.reason, "claude_md_dedup");
+    assert_eq!(bundle.audit.candidates_considered, 1);
+    assert_eq!(bundle.audit.dropped_count, 1);
 }
 
 /// Without the enrichment stack the bundle degrades rather than serving

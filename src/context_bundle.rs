@@ -35,5 +35,5 @@ pub use domain::{
     ContextItem, ContextRequest, DegradedMode, ItemValidity, PlannedChannel, ProjectRef, RiskClass,
     SectionBudgets, SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
-pub use executor::{blocked_before_load, execute, ExecutorInputs};
+pub use executor::{blocked_before_load, execute, ExecutorInputs, PreselectionDrop};
 pub(crate) use policy::{section_budgets, section_budgets_from_limits, validate_request};

@@ -16,7 +16,9 @@
 use anyhow::{bail, Result};
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::context_bundle::{ChannelKind, ContextItem, ItemValidity, SourceKind, TrustClass};
+use crate::context_bundle::{
+    ChannelKind, ContextItem, ItemValidity, PreselectionDrop, SourceKind, TrustClass,
+};
 use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
 use std::collections::HashSet;
 
@@ -53,6 +55,7 @@ pub(crate) fn load_session_start_candidates(
 pub(crate) struct LoadedBundleCandidates {
     pub(crate) candidates: Vec<ContextItem>,
     pub(crate) poisoning_drops: Vec<ContextItem>,
+    pub(crate) preselection_drops: Vec<PreselectionDrop>,
 }
 
 /// Load candidates against the same already-resolved limits that were hashed
@@ -92,7 +95,7 @@ pub(crate) fn load_session_start_candidates_with_limits(
     );
     let core_ids = core.ids.into_iter().collect::<HashSet<_>>();
     let mut items = candidates_from_loaded(&loaded, project, &core_ids);
-    let (preferences, preference_poisoning_drops) =
+    let (preferences, preference_poisoning_drops, preselection_drops) =
         preference_candidates(conn, project, cwd, &policy)?;
     items.extend(preferences);
     apply_persisted_memory_trust(conn, &mut items)?;
@@ -103,6 +106,7 @@ pub(crate) fn load_session_start_candidates_with_limits(
             preference_poisoning_drops,
             project,
         ),
+        preselection_drops,
     })
 }
 
@@ -188,9 +192,9 @@ fn redact_poisoned(mut item: ContextItem) -> ContextItem {
 pub(super) fn session_start_candidates_from_loaded(
     loaded: &LoadedContext,
     project: &str,
-    preferences: &[Memory],
+    preference_details: &crate::memory::preference::PreferenceRenderDetails,
     core_ids: &HashSet<i64>,
-) -> Result<Vec<ContextItem>> {
+) -> Result<(Vec<ContextItem>, Vec<PreselectionDrop>)> {
     if !loaded.errors.is_empty() {
         bail!(
             "canonical context load failed for sections [{}]",
@@ -203,8 +207,14 @@ pub(super) fn session_start_candidates_from_loaded(
         );
     }
     let mut items = candidates_from_loaded(loaded, project, core_ids);
-    items.extend(ordered_preference_candidates(preferences, project));
-    Ok(items)
+    items.extend(ordered_preference_candidates(
+        &preference_details.rendered_memories,
+        project,
+    ));
+    Ok((
+        items,
+        preference_preselection_drops(preference_details, project),
+    ))
 }
 
 /// Preferences never reach `LoadedContext`: SessionStart selects and
@@ -216,7 +226,7 @@ fn preference_candidates(
     project: &str,
     cwd: &str,
     policy: &ContextPolicy,
-) -> Result<(Vec<ContextItem>, Vec<Memory>)> {
+) -> Result<(Vec<ContextItem>, Vec<Memory>, Vec<PreselectionDrop>)> {
     let mut discarded_render = String::new();
     let limits = &policy.limits;
     let details = crate::memory::preference::render_preferences_with_context_details(
@@ -228,25 +238,41 @@ fn preference_candidates(
         limits.preference_global_limit,
         limits.preference_char_limit,
     )?;
+    let preselection_drops = preference_preselection_drops(&details, project);
     Ok((
         ordered_preference_candidates(&details.rendered_memories, project),
         details.poisoning_drops,
+        preselection_drops,
     ))
+}
+
+fn preference_preselection_drops(
+    details: &crate::memory::preference::PreferenceRenderDetails,
+    project: &str,
+) -> Vec<PreselectionDrop> {
+    details
+        .selection_drops
+        .iter()
+        .map(|drop| PreselectionDrop {
+            item: ordered_preference_candidate(&drop.memory, project),
+            reason: drop.reason.to_string(),
+        })
+        .collect()
 }
 
 fn ordered_preference_candidates(selected: &[Memory], project: &str) -> Vec<ContextItem> {
     selected
         .iter()
-        .map(|memory| {
-            let mut item = bundle_memory_item(memory, ChannelKind::Preferences, None, project);
-            // The canonical preference selector is deliberately branch
-            // agnostic. Once it admitted a preference for SessionStart, do
-            // not let the generic bundle scope check impose a new branch
-            // filter that the byte-compatible renderer never applied.
-            item.branch = None;
-            item
-        })
+        .map(|memory| ordered_preference_candidate(memory, project))
         .collect()
+}
+
+fn ordered_preference_candidate(memory: &Memory, project: &str) -> ContextItem {
+    let mut item = bundle_memory_item(memory, ChannelKind::Preferences, None, project);
+    // The canonical preference selector is deliberately branch agnostic.
+    // Apply the same scope shape to selected and audit-only dropped rows.
+    item.branch = None;
+    item
 }
 
 fn candidates_from_loaded(

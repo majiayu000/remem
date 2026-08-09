@@ -148,6 +148,10 @@ is the explicit rollback.
   `reason=poisoning_gate`, stable identity, channel, source, and validity only;
   their title and text are cleared before executor input and cannot reach the
   returned JSON.
+- The canonical preference selector returns every fetched-but-omitted identity
+  alongside `claude_md_dedup`, `preference_similarity_dedup`,
+  `project_topic_override`, or `preference_char_limit`. Both DB-backed MCP and
+  production-renderer compilers pass these as audit-only preselection drops.
 
 ## Tests
 
@@ -157,7 +161,8 @@ is the explicit rollback.
   item limits.
 - Scope/trust/validity drops with exact reasons.
 - High-risk trust floor and low-evidence abstention, persisted user-authored
-  trust mapping, and redacted poisoning-gate audit coverage.
+  trust mapping, redacted poisoning-gate audit coverage, and canonical
+  preference preselection-drop coverage.
 - Degraded modes: `canonical_only` and `blocked`.
 - Schema snapshots: serialized plan and bundle JSON compared against
   fixed `serde_json::json!` literals.

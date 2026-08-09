@@ -8,6 +8,7 @@ fn inputs(candidates: Vec<crate::context_bundle::ContextItem>) -> ExecutorInputs
     ExecutorInputs {
         candidates,
         poisoning_drops: Vec::new(),
+        preselection_drops: Vec::new(),
         enrichment_available: true,
     }
 }
@@ -119,6 +120,7 @@ fn missing_enrichment_degrades_to_canonical_only() {
         &ExecutorInputs {
             candidates: vec![generated, canonical],
             poisoning_drops: Vec::new(),
+            preselection_drops: Vec::new(),
             enrichment_available: false,
         },
     );
@@ -222,6 +224,7 @@ fn executor_audits_poisoning_gate_drops_without_exposing_payload() {
         &ExecutorInputs {
             candidates: Vec::new(),
             poisoning_drops: vec![poisoned],
+            preselection_drops: Vec::new(),
             enrichment_available: true,
         },
     );
@@ -271,6 +274,7 @@ fn renderer_deferred_mode_preserves_scope_survivors_for_exact_sealing() {
                 item("memory:43", ChannelKind::Core, "Second", &"y".repeat(100)),
             ],
             poisoning_drops: Vec::new(),
+            preselection_drops: Vec::new(),
             enrichment_available: true,
         },
         BudgetEnforcement::DeferToRenderer,

@@ -37,7 +37,8 @@ external database.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
 - The experimental MCP `context_bundle` tool compiles a versioned, budgeted,
   source-attributed SessionStart context bundle with a complete selection/drop
-  audit, including redacted poisoning-gate drops. High-risk requests return
+  audit, including redacted poisoning-gate drops and canonical preference
+  deduplication/limit reasons. High-risk requests return
   only user-authored trusted memories and abstain when none survive. It requires
   `schema_version: 1`; its foreground query embeddings are local-only, and the
   shape is intentionally not yet a stable API commitment.
@@ -299,8 +300,9 @@ After restarting Codex, remem automatically injects relevant project memory at
 session start and summarizes the session at stop. Codex can also call the MCP
 tools exposed by `remem mcp`: current-state, curated/raw search, contextual
 recall, timeline/detail/commit lookup, memory save/governance, reports, and
-workstream tools. All 14 tools publish explicit side-effect annotations. The 13
-JSON tools return both their legacy text content and matching structured
+workstream tools, plus the experimental `context_bundle` compiler. All 15 tools
+publish explicit side-effect annotations. The 14 JSON tools return both their
+legacy text content and matching structured
 content with an output schema; `timeline_report` remains Markdown.
 
 SessionStart keeps Core, Preferences, and Workstreams on their existing paths,

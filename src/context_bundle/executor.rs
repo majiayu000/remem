@@ -38,7 +38,16 @@ pub struct ExecutorInputs {
     /// title/text never enter the returned bundle, but their redacted identity
     /// remains in the audit so the endpoint accounts for every loaded row.
     pub poisoning_drops: Vec<ContextItem>,
+    /// Safe canonical rows intentionally omitted by an upstream canonical
+    /// selector. These are audit-only and never enter a returned section.
+    pub preselection_drops: Vec<PreselectionDrop>,
     pub enrichment_available: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct PreselectionDrop {
+    pub item: ContextItem,
+    pub reason: String,
 }
 
 /// SessionStart's compatibility renderer owns exact character and item
@@ -85,6 +94,9 @@ pub(crate) fn execute_with_trace(
     let mut audit = AuditBuilder::default();
     for item in &inputs.poisoning_drops {
         audit.dropped(item, REASON_POISONING_GATE);
+    }
+    for dropped in &inputs.preselection_drops {
+        audit.dropped(&dropped.item, &dropped.reason);
     }
     let mut in_scope: Vec<&ContextItem> = Vec::new();
     for item in &inputs.candidates {
@@ -347,6 +359,9 @@ fn blocked_bundle(plan: &RetrievalPlan, inputs: &ExecutorInputs, error: &str) ->
     }
     for item in &inputs.poisoning_drops {
         audit.dropped(item, REASON_POISONING_GATE);
+    }
+    for dropped in &inputs.preselection_drops {
+        audit.dropped(&dropped.item, &dropped.reason);
     }
     audit.set_truncation_reason(REASON_PLAN_BLOCKED);
     let mut bundle = empty_bundle(plan, DegradedMode::Blocked);

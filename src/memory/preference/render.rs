@@ -28,10 +28,25 @@ pub(crate) struct PreferenceRenderDetails {
     /// Unsafe rows rejected before rendering. Bundle consumers retain only a
     /// redacted identity for their selection/drop audit.
     pub poisoning_drops: Vec<Memory>,
+    /// Safe canonical rows intentionally omitted by preference selection.
+    /// Context Bundle consumers use these identities and stable reasons to
+    /// account for every fetched row without re-running the selector.
+    pub selection_drops: Vec<PreferenceSelectionDrop>,
     /// Character offsets, relative to the start of this preference render,
     /// immediately after each rendered list item.
     pub item_end_chars: Vec<usize>,
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct PreferenceSelectionDrop {
+    pub(crate) memory: Memory,
+    pub(crate) reason: &'static str,
+}
+
+pub(crate) const DROP_CLAUDE_MD_DEDUP: &str = "claude_md_dedup";
+pub(crate) const DROP_PREFERENCE_SIMILARITY_DEDUP: &str = "preference_similarity_dedup";
+pub(crate) const DROP_PREFERENCE_CHAR_LIMIT: &str = "preference_char_limit";
+pub(crate) const DROP_PROJECT_TOPIC_OVERRIDE: &str = "project_topic_override";
 
 impl PreferenceRenderDetails {
     pub(crate) fn absolute_item_end_chars(&self, output_start: usize) -> Vec<usize> {
@@ -139,12 +154,18 @@ pub(crate) fn render_preferences_with_context_details(
         .iter()
         .filter_map(|(memory, _)| memory.topic_key.clone())
         .collect();
+    let mut selection_drops = Vec::new();
     for global_pref in global_prefs {
         if let Some(ref topic_key) = global_pref.topic_key {
-            if !project_topics.contains(topic_key) {
-                all_prefs.push((global_pref, PreferenceSource::Global));
+            if project_topics.contains(topic_key) {
+                selection_drops.push(PreferenceSelectionDrop {
+                    memory: global_pref,
+                    reason: DROP_PROJECT_TOPIC_OVERRIDE,
+                });
+                continue;
             }
         }
+        all_prefs.push((global_pref, PreferenceSource::Global));
     }
     let (filtered_prefs, poisoning_drops) =
         filter_unacknowledged_poisoned_preferences(conn, all_prefs)?;
@@ -153,6 +174,7 @@ pub(crate) fn render_preferences_with_context_details(
     if all_prefs.is_empty() {
         return Ok(PreferenceRenderDetails {
             poisoning_drops,
+            selection_drops,
             ..PreferenceRenderDetails::default()
         });
     }
@@ -162,16 +184,32 @@ pub(crate) fn render_preferences_with_context_details(
         .map(|(memory, _)| memory.clone())
         .collect::<Vec<_>>();
     let keep_indices = dedup_with_claude_md(&memories, cwd);
+    record_selection_drops(
+        &all_prefs,
+        &(0..all_prefs.len()).collect::<Vec<_>>(),
+        &keep_indices,
+        DROP_CLAUDE_MD_DEDUP,
+        &mut selection_drops,
+    );
     if keep_indices.is_empty() {
         return Ok(PreferenceRenderDetails {
             poisoning_drops,
+            selection_drops,
             ..PreferenceRenderDetails::default()
         });
     }
-    let keep_indices = dedup_with_preference_similarity(&memories, &keep_indices);
-    if keep_indices.is_empty() {
+    let similarity_keep_indices = dedup_with_preference_similarity(&memories, &keep_indices);
+    record_selection_drops(
+        &all_prefs,
+        &keep_indices,
+        &similarity_keep_indices,
+        DROP_PREFERENCE_SIMILARITY_DEDUP,
+        &mut selection_drops,
+    );
+    if similarity_keep_indices.is_empty() {
         return Ok(PreferenceRenderDetails {
             poisoning_drops,
+            selection_drops,
             ..PreferenceRenderDetails::default()
         });
     }
@@ -183,7 +221,7 @@ pub(crate) fn render_preferences_with_context_details(
     let mut rendered_memories = Vec::new();
     let mut item_end_chars = Vec::new();
     let header_chars = "## Your Preferences (always apply these)\n".chars().count();
-    for &idx in &keep_indices {
+    for (position, &idx) in similarity_keep_indices.iter().enumerate() {
         let (pref, source) = &all_prefs[idx];
         let text = normalize_rendered_preference_text(&pref.text);
         let preview: String = text.chars().take(120).collect();
@@ -194,6 +232,12 @@ pub(crate) fn render_preferences_with_context_details(
         };
         let line_chars = line.chars().count();
         if total_chars + line_chars > char_limit && total_chars > 0 {
+            selection_drops.extend(similarity_keep_indices[position..].iter().map(|&drop_idx| {
+                PreferenceSelectionDrop {
+                    memory: all_prefs[drop_idx].0.clone(),
+                    reason: DROP_PREFERENCE_CHAR_LIMIT,
+                }
+            }));
             break;
         }
         output.push_str(&line);
@@ -214,8 +258,27 @@ pub(crate) fn render_preferences_with_context_details(
         rendered_ids,
         rendered_memories,
         poisoning_drops,
+        selection_drops,
         item_end_chars,
     })
+}
+
+fn record_selection_drops(
+    prefs: &[(Memory, PreferenceSource)],
+    before: &[usize],
+    after: &[usize],
+    reason: &'static str,
+    drops: &mut Vec<PreferenceSelectionDrop>,
+) {
+    drops.extend(
+        before
+            .iter()
+            .filter(|idx| !after.contains(idx))
+            .map(|&idx| PreferenceSelectionDrop {
+                memory: prefs[idx].0.clone(),
+                reason,
+            }),
+    );
 }
 
 #[derive(Debug, Default)]

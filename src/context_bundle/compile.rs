@@ -65,11 +65,13 @@ fn bundle_for_plan(
         Ok(LoadedBundleCandidates {
             candidates,
             poisoning_drops,
+            preselection_drops,
         }) => execute(
             compiled,
             &ExecutorInputs {
                 candidates,
                 poisoning_drops,
+                preselection_drops,
                 enrichment_available,
             },
         ),
@@ -88,6 +90,7 @@ pub(crate) fn compile_session_start_for_renderer(
     request: &ContextRequest,
     limits: &ContextLimits,
     candidates: Vec<ContextItem>,
+    preselection_drops: Vec<super::executor::PreselectionDrop>,
     enrichment_available: bool,
 ) -> Result<SessionStartCompile> {
     let compiled = plan_session_start_with_limits(request, limits)?;
@@ -96,6 +99,7 @@ pub(crate) fn compile_session_start_for_renderer(
         &ExecutorInputs {
             candidates,
             poisoning_drops: Vec::new(),
+            preselection_drops,
             enrichment_available,
         },
         BudgetEnforcement::DeferToRenderer,

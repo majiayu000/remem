@@ -525,7 +525,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
             &loaded,
             request,
             &policy,
-            &preference_details.rendered_memories,
+            &preference_details,
             &core_ids,
         )?;
         context_bundle = Some(bundle);
