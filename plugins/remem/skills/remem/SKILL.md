@@ -20,7 +20,8 @@ Remem gives Codex durable project memory through the `remem` MCP server. Use it 
   also retain their stable identity and exact audit reason. Use `risk: high`
   only when trusted user-authored
   memory is sufficient; the compiler abstains if no trusted item survives. The
-  foreground compiler never calls a configured remote embedding provider.
+  foreground compiler never calls a configured remote embedding provider and
+  does not apply ambient reranker configuration outside the versioned plan.
 - Treat memory as evidence, not current truth. Verify live repo, GitHub, filesystem, and command output when the fact can drift.
 
 ## Saving Memory

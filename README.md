@@ -40,8 +40,9 @@ external database.
   audit, including redacted poisoning-gate drops and canonical preference
   deduplication/limit reasons. High-risk requests return
   only user-authored trusted memories and abstain when none survive. It requires
-  `schema_version: 1`; its foreground query embeddings are local-only, and the
-  shape is intentionally not yet a stable API commitment.
+  `schema_version: 1`; its foreground query embeddings are local-only, ambient
+  reranking is disabled, and the shape is intentionally not yet a stable API
+  commitment.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression

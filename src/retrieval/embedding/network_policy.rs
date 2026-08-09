@@ -8,22 +8,17 @@ pub(crate) fn embed_query_if_enabled(query: &str) -> Result<Option<TextEmbedding
     }
 }
 
-/// Embed a query only when the already-resolved active provider is local.
+/// Embed a query only when the resolved active provider is local.
 ///
 /// Foreground contracts such as the MCP Context Bundle advertise that they do
-/// not make network calls. Resolve the provider once and execute the selected
-/// local implementation directly so a concurrent config/env change cannot
-/// turn the guarded call into an API request.
+/// not make network calls. Resolve the complete provider/fallback chain once
+/// and execute only a selected local implementation directly, so an API
+/// provider may safely degrade to its configured local fallback without any
+/// chance of contacting the remote endpoint.
 pub(crate) fn embed_query_local_only_if_enabled(query: &str) -> Result<Option<TextEmbedding>> {
     #[cfg(test)]
     let _test_env_guard = config::lock_test_env();
     let config = resolve_embedding_config()?;
-    if matches!(
-        config.provider,
-        EmbeddingProvider::OpenAi | EmbeddingProvider::Off
-    ) {
-        return Ok(None);
-    }
     let mut cache = EmbeddingFallbackCache::default();
     match active_provider(&config)? {
         ActiveEmbeddingProvider::Local => Ok(Some(fallback::embed_local_with_auto_race_fallback(

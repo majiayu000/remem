@@ -48,6 +48,8 @@ context bundle.
   fields and returns the complete `ContextBundle` JSON contract. It reuses the
   DB-backed SessionStart compiler, performs no foreground LLM or network call,
   disables remote query embeddings even when an API provider is configured,
+  permits the resolved local fallback for that provider, disables ambient
+  reranking because it is absent from the v1 plan and plan hash,
   and publishes a closed MCP output schema while preserving the same JSON in
   the legacy text content field for older MCP clients.
 
@@ -55,7 +57,9 @@ context bundle.
 
 - No REST endpoint. The first external consumer is the experimental MCP tool;
   general REST exposure and a stable public API commitment remain deferred.
-- No rerank, graph expansion, or LLM calls in plan or execute.
+- No rerank, graph expansion, or LLM calls in plan or execute. The MCP loader
+  also disables a globally configured reranker rather than applying an
+  unplanned top-k cut.
 - No change to the existing SessionStart rendered output or gating.
 - No benchmark artifact yet; plan/audit hash persistence remains a follow-up
   item on #932.

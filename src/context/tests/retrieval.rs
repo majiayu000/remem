@@ -8,7 +8,9 @@ use std::sync::{
 
 use super::super::hybrid_context::query_hybrid_context_memories;
 use super::super::policy::{ContextLimits, ContextPolicy};
-use super::super::query::load_context_data_with_policy;
+use super::super::query::{
+    load_context_data_with_policy, load_context_data_with_policy_local_only,
+};
 use super::super::sections::render_core_memory_with_limits;
 use super::{insert_global_memory, insert_memory, setup_context_schema};
 
@@ -29,6 +31,13 @@ const EMBEDDING_ENV_KEYS: &[&str] = &[
     "REMEM_EMBEDDINGS_TIMEOUT_SECS",
     "REMEM_EMBEDDINGS_MODEL_DIR",
     "OPENAI_API_KEY",
+];
+
+const RERANK_ENV_KEYS: &[&str] = &[
+    "REMEM_CONFIG",
+    "REMEM_RERANK_ENABLED",
+    "REMEM_RERANK_TOP_N",
+    "REMEM_RERANK_TOP_K",
 ];
 
 struct ScopedApiFallbackEnv {
@@ -62,6 +71,52 @@ impl ScopedApiFallbackEnv {
 }
 
 impl Drop for ScopedApiFallbackEnv {
+    fn drop(&mut self) {
+        for (key, value) in self.saved.drain(..) {
+            match value {
+                Some(value) => unsafe { std::env::set_var(key, value) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+        }
+    }
+}
+
+struct ScopedInvalidRerankEnv {
+    _guard: crate::runtime_config::TestEnvGuard,
+    saved: Vec<(&'static str, Option<String>)>,
+}
+
+impl ScopedInvalidRerankEnv {
+    fn new() -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = RERANK_ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in RERANK_ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        let isolated_config = std::env::temp_dir().join(format!(
+            "remem-context-local-only-rerank-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        unsafe {
+            std::env::set_var("REMEM_CONFIG", isolated_config);
+            std::env::set_var("REMEM_RERANK_ENABLED", "true");
+            std::env::set_var("REMEM_RERANK_TOP_N", "1");
+            std::env::set_var("REMEM_RERANK_TOP_K", "2");
+        }
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
+}
+
+impl Drop for ScopedInvalidRerankEnv {
     fn drop(&mut self) {
         for (key, value) in self.saved.drain(..) {
             match value {
@@ -647,5 +702,36 @@ fn local_only_hybrid_context_never_calls_configured_api_provider() -> anyhow::Re
         .iter()
         .any(|memory| memory.title == "Credential store"));
     assert_eq!(server.call_count(), 0);
+    Ok(())
+}
+
+#[test]
+fn local_only_context_loader_never_resolves_or_applies_rerank() -> anyhow::Result<()> {
+    let _env = ScopedInvalidRerankEnv::new();
+    let conn = Connection::open_in_memory()?;
+    setup_context_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("rerank-policy"),
+        "architecture",
+        "Context bundle retrieval policy",
+        "The experimental bundle uses its planned canonical order.",
+        now,
+    );
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let local_only = load_context_data_with_policy_local_only(&conn, project, None, &policy, false);
+    assert!(local_only.rerank.is_none());
+    assert!(local_only
+        .errors
+        .iter()
+        .all(|error| error.section != "rerank"));
+
+    let default = load_context_data_with_policy(&conn, project, None, &policy, false);
+    assert!(default.errors.iter().any(|error| error.section == "rerank"));
     Ok(())
 }

@@ -143,7 +143,10 @@ is the explicit rollback.
   read-only or idempotent behavior even though the compilation path performs no
   foreground LLM or network call. Query embeddings on this endpoint are
   restricted to local/local-feature-hash providers; configured API providers
-  are skipped rather than contacted.
+  are skipped rather than contacted, while their resolved local fallback
+  remains available. The loader does not invoke the shared SessionStart
+  reranker because rerank configuration and drops are not represented in the
+  v1 retrieval plan or audit.
 - Rows removed by the poisoning gate remain in `ContextAudit` with
   `reason=poisoning_gate`, stable identity, channel, source, and validity only;
   their title and text are cleared before executor input and cannot reach the
@@ -177,3 +180,6 @@ is the explicit rollback.
   unsupported schema versions.
 - MCP output contract: typed nested bundle/audit schemas, real served-wire
   success validation, and exact legacy-text / `structuredContent` parity.
+- MCP execution isolation: a configured remote embedding provider is never
+  contacted, its resolved local fallback remains usable, and ambient invalid
+  or enabled rerank configuration is not evaluated by the bundle loader.

@@ -26,6 +26,22 @@ const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
 const SUMMARY_MAX_SCAN: usize = 200;
 const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
 
+#[derive(Clone, Copy)]
+struct ContextLoadExecutionPolicy {
+    allow_remote_embedding: bool,
+    allow_rerank: bool,
+}
+
+const DEFAULT_EXECUTION_POLICY: ContextLoadExecutionPolicy = ContextLoadExecutionPolicy {
+    allow_remote_embedding: true,
+    allow_rerank: true,
+};
+
+const LOCAL_ONLY_EXECUTION_POLICY: ContextLoadExecutionPolicy = ContextLoadExecutionPolicy {
+    allow_remote_embedding: false,
+    allow_rerank: false,
+};
+
 #[cfg(test)]
 pub(super) fn load_context_data(
     conn: &Connection,
@@ -43,13 +59,13 @@ pub(super) fn load_context_data_with_policy(
     policy: &ContextPolicy,
     collect_diagnostics: bool,
 ) -> LoadedContext {
-    load_context_data_with_policy_and_remote_embedding(
+    load_context_data_with_execution_policy(
         conn,
         project,
         current_branch,
         policy,
         collect_diagnostics,
-        true,
+        DEFAULT_EXECUTION_POLICY,
     )
 }
 
@@ -60,23 +76,23 @@ pub(super) fn load_context_data_with_policy_local_only(
     policy: &ContextPolicy,
     collect_diagnostics: bool,
 ) -> LoadedContext {
-    load_context_data_with_policy_and_remote_embedding(
+    load_context_data_with_execution_policy(
         conn,
         project,
         current_branch,
         policy,
         collect_diagnostics,
-        false,
+        LOCAL_ONLY_EXECUTION_POLICY,
     )
 }
 
-fn load_context_data_with_policy_and_remote_embedding(
+fn load_context_data_with_execution_policy(
     conn: &Connection,
     project: &str,
     current_branch: Option<&str>,
     policy: &ContextPolicy,
     collect_diagnostics: bool,
-    allow_remote_embedding: bool,
+    execution_policy: ContextLoadExecutionPolicy,
 ) -> LoadedContext {
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let mut errors = Vec::new();
@@ -107,7 +123,7 @@ fn load_context_data_with_policy_and_remote_embedding(
         current_branch,
         policy,
         collect_diagnostics,
-        allow_remote_embedding,
+        execution_policy.allow_remote_embedding,
         &commit_messages,
         &summaries,
         &workstreams,
@@ -155,30 +171,34 @@ fn load_context_data_with_policy_and_remote_embedding(
         staleness_start,
     )];
 
-    // Shared final rerank stage (GH-851): runs after the complete baseline
-    // assembly (union, dedupe, eligibility, branch policy) so no later sort
-    // can override its order. Off/failure keeps the exact baseline order.
-    let verify_before_trust_ids: HashSet<i64> = staleness_labels
-        .iter()
-        .filter(|(_, label)| label.source_anchor == "verify-before-trust")
-        .map(|(id, _)| *id)
-        .collect();
-    let rerank = match crate::retrieval::rerank::apply_with_vbt(
-        relevance_query.as_deref(),
-        &mut memories,
-        &verify_before_trust_ids,
-    ) {
-        Ok(outcome) => {
-            let requested = outcome.disabled_reason()
-                != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
-            Some(outcome.to_explain(requested))
+    // Shared final rerank stage (GH-851): runs after baseline assembly so no
+    // later sort can override it. Off/failure preserves the baseline. The MCP
+    // bundle disables this stage because v1 does not plan or hash reranking.
+    let rerank = if execution_policy.allow_rerank {
+        let verify_before_trust_ids: HashSet<i64> = staleness_labels
+            .iter()
+            .filter(|(_, label)| label.source_anchor == "verify-before-trust")
+            .map(|(id, _)| *id)
+            .collect();
+        match crate::retrieval::rerank::apply_with_vbt(
+            relevance_query.as_deref(),
+            &mut memories,
+            &verify_before_trust_ids,
+        ) {
+            Ok(outcome) => {
+                let requested = outcome.disabled_reason()
+                    != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
+                Some(outcome.to_explain(requested))
+            }
+            Err(error) => {
+                let message = format!("rerank stage failed for {project}: {error}");
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("rerank", message));
+                None
+            }
         }
-        Err(error) => {
-            let message = format!("rerank stage failed for {project}: {error}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("rerank", message));
-            None
-        }
+    } else {
+        None
     };
 
     LoadedContext {

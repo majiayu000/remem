@@ -531,6 +531,23 @@ fn api_provider_without_key_uses_configured_fallback_visibly() -> Result<()> {
 }
 
 #[test]
+fn local_only_query_uses_resolved_feature_hash_fallback_without_api_key() -> Result<()> {
+    with_clean_env(|| {
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+            std::env::set_var(ENV_FALLBACK, "feature-hash");
+        }
+
+        let embedding = embed_query_local_only_if_enabled("local fallback context")?
+            .context("resolved local fallback should remain available")?;
+
+        assert_eq!(embedding.model(), FEATURE_HASH_EMBEDDING_MODEL);
+        assert_eq!(embedding.dimensions(), FEATURE_HASH_EMBEDDING_DIMENSIONS);
+        Ok(())
+    })
+}
+
+#[test]
 fn api_provider_call_failure_uses_configured_feature_hash_fallback() -> Result<()> {
     with_clean_env(|| {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;

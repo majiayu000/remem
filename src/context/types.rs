@@ -43,7 +43,7 @@ pub(super) struct LoadedContext {
     /// Measurable sub-phases inside `load_context_data`.
     pub load_phase_timings: Vec<crate::perf::PhaseTiming>,
     /// Shared rerank stage outcome for the SessionStart implicit query
-    /// (GH-851); `None` only in fixtures that bypass `load_context_data`.
+    /// (GH-851); `None` in fixtures and execution policies that disable rerank.
     pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
 }
 
