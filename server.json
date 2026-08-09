@@ -6,13 +6,13 @@
     "url": "https://github.com/majiayu000/remem",
     "source": "github"
   },
-  "version": "0.6.62",
+  "version": "0.6.63",
   "websiteUrl": "https://majiayu000.github.io/remem/",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@remem-ai/remem",
-      "version": "0.6.62",
+      "version": "0.6.63",
       "transport": {
         "type": "stdio"
       },

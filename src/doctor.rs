@@ -2,6 +2,7 @@ mod capture_capability;
 mod capture_liveness;
 mod cleanup;
 mod codex_native_memory;
+mod context_compiler;
 mod cursor_install;
 mod database;
 mod embedding;

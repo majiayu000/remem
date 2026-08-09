@@ -312,6 +312,13 @@ host-visible output byte-compatible. Operators can temporarily restore the
 legacy relevance path with `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy`; unset or
 `bundle` uses the bundle-backed path.
 
+`remem doctor` reports this production consumer as `Context compiler` without
+loading or printing memory payloads. Bundle mode is healthy, the explicit
+legacy rollback is a warning, and an invalid render-mode value is a failure;
+the check also names the active bundle/plan schemas and policy versions. Use
+`remem context-plan --task <task> --json` when a request-specific retrieval
+plan is needed.
+
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.
 For Codex hook invocations, remem emits the supported

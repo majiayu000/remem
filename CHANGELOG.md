@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.63` for GH-932: default `remem doctor` now reports
+  a payload-free `Context compiler` capability check for the production
+  SessionStart consumer. It exposes the active render/degraded mode plus
+  bundle, plan, router, and relevance contract versions; explicit legacy
+  rollback warns, invalid configuration fails, and request-specific plan
+  inspection remains available through `remem context-plan`.
 - Staged source version `0.6.62` for GH-932: healthy production SessionStart
   renders now consume Context Bundle v1 from the same canonical load snapshot.
   The unified plan hashes the effective runtime limits; the bundle owns scope,

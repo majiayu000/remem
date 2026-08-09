@@ -18,6 +18,8 @@ src/retrieval_router/
 src/context/
   bundle_candidates.rs     same-snapshot SessionStart candidate adapter
   render.rs                production consumer and exact bundle sealing
+src/doctor/
+  context_compiler.rs      payload-free compiler capability/degraded check
 ```
 
 ## Contract
@@ -84,6 +86,22 @@ indexed Core-type memories are routed to `memory_index`. No SessionStart
 output bytes or gate behavior change. `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy`
 is the explicit rollback.
 
+## Doctor Capability Check
+
+- `context::context_bundle_render_mode()` is the single parser for
+  `REMEM_CONTEXT_BUNDLE_RENDER_MODE`; production rendering and doctor use the
+  same result, so diagnostics cannot disagree with runtime behavior.
+- `ContextBundleRenderMode::Bundle` reports `Status::Ok` with
+  `degraded_mode=full`. `Legacy` reports `Status::Warn` with
+  `degraded_mode=legacy_rollback`. Invalid/non-Unicode configuration reports
+  `Status::Fail` with the parser error.
+- Detail is deliberately payload-free and stable enough for both human and
+  `doctor --json` check output: production consumer, render/degraded mode,
+  bundle schema, plan schema, router policy, and SessionStart relevance policy.
+- Request-specific plan inspection remains `remem context-plan`; doctor names
+  that command rather than compiling a synthetic project/task or touching the
+  memory database.
+
 ## Tests
 
 - Plan determinism: repeated planning yields identical JSON and hash;
@@ -97,3 +115,5 @@ is the explicit rollback.
   cloned snapshot and must emit byte-identical output.
 - Deferred-budget sealing: executor candidates survive approximate token
   budgets until the exact renderer seals the bundle.
+- Doctor capability: bundle / legacy / invalid render-mode states, plus full
+  doctor human and JSON inclusion without memory payload text.

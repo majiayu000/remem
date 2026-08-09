@@ -33,14 +33,21 @@ context bundle.
   loaded snapshot. The established section renderer still owns exact
   item/character boundaries, then seals the bundle to the identities that
   survived. Host-visible output remains byte-identical to the legacy path.
+- `remem doctor` includes a payload-free `Context compiler` capability check.
+  It reports the production render mode, expected degraded state, bundle and
+  plan schema versions, router/relevance policy versions, and points operators
+  to `remem context-plan` for a request-specific plan summary. Explicit legacy
+  rollback is visible as a warning; an invalid render-mode value fails loudly.
 
 ## v1 Non-Goals (deferred follow-up work)
 
 - No MCP or REST endpoint. The contract is an internal Rust API only.
 - No rerank, graph expansion, or LLM calls in plan or execute.
 - No change to the existing SessionStart rendered output or gating.
-- No MCP/REST bundle consumer, doctor plan summary, or benchmark artifact;
-  those remain follow-up items on #932.
+- No MCP/REST bundle consumer or benchmark artifact; those remain follow-up
+  items on #932.
+- The doctor capability check does not expose memory payloads or persist
+  per-session audit entries. Durable audit history remains a later phase.
 - Load-error fail-open rendering remains on the compatibility path so existing
   user-visible diagnostics are not hidden behind a second failure. Healthy
   loads use the bundle path; the standalone DB compiler still represents an
@@ -58,3 +65,5 @@ context bundle.
   same snapshot and effective policy.
 - `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy` provides an explicit rollback to
   the compatibility relevance path; unset or `bundle` uses the bundle.
+- `remem doctor` reports bundle mode as healthy, legacy rollback as degraded,
+  and invalid configuration as failed, without loading or printing memories.
