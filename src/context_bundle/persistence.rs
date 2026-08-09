@@ -12,7 +12,10 @@ use super::{ContextAudit, ContextBundle, DegradedMode};
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct PersistedContextBundleAudit {
     pub injection_run_id: String,
+    pub bundle_schema_version: u32,
+    pub plan_schema_version: u32,
     pub audit_hash: String,
+    pub canonical_audit_json: String,
     pub audit: ContextAudit,
     pub created_at_epoch: i64,
 }
@@ -44,7 +47,7 @@ pub(crate) fn persist_context_bundle_audit(
     created_at_epoch: i64,
 ) -> Result<String> {
     validate_bundle_summary(bundle)?;
-    let (audit_json, audit_hash) = canonical_audit(&bundle.audit)?;
+    let (audit_json, audit_hash) = canonical_context_audit(&bundle.audit)?;
 
     if let Some(existing) = load_verified_context_bundle_audit(conn, injection_run_id)? {
         if existing.audit_hash == audit_hash {
@@ -153,14 +156,13 @@ pub(crate) fn load_verified_context_bundle_audit(
         );
     }
 
-    let value: Value = serde_json::from_str(&row.audit_json).with_context(|| {
-        format!(
-            "parse persisted ContextAudit for injection_run_id={}",
-            row.injection_run_id
-        )
-    })?;
-    let canonical = canonical_json_bytes(&value)?;
-    let actual_hash = format!("{:x}", Sha256::digest(&canonical));
+    let (audit, actual_hash) =
+        decode_verified_context_audit_json(&row.audit_json).with_context(|| {
+            format!(
+                "verify persisted ContextAudit for injection_run_id={}",
+                row.injection_run_id
+            )
+        })?;
     if actual_hash != row.audit_hash {
         bail!(
             "context bundle audit hash mismatch for injection_run_id={}: stored={} actual={actual_hash}",
@@ -168,17 +170,14 @@ pub(crate) fn load_verified_context_bundle_audit(
             row.audit_hash
         );
     }
-    let audit: ContextAudit = serde_json::from_value(value).with_context(|| {
-        format!(
-            "decode persisted ContextAudit for injection_run_id={}",
-            row.injection_run_id
-        )
-    })?;
     verify_stored_summary(&row, &audit)?;
 
     Ok(Some(PersistedContextBundleAudit {
         injection_run_id: row.injection_run_id,
+        bundle_schema_version: row.bundle_schema_version,
+        plan_schema_version: row.plan_schema_version,
         audit_hash: row.audit_hash,
+        canonical_audit_json: row.audit_json,
         audit,
         created_at_epoch: row.created_at_epoch,
     }))
@@ -246,12 +245,25 @@ fn verify_stored_summary(row: &StoredAuditRow, audit: &ContextAudit) -> Result<(
     Ok(())
 }
 
-fn canonical_audit(audit: &ContextAudit) -> Result<(String, String)> {
+pub(crate) fn canonical_context_audit(audit: &ContextAudit) -> Result<(String, String)> {
     let value = serde_json::to_value(audit)?;
     let bytes = canonical_json_bytes(&value)?;
     let json = String::from_utf8(bytes.clone()).context("canonical ContextAudit is UTF-8")?;
     let hash = format!("{:x}", Sha256::digest(&bytes));
     Ok((json, hash))
+}
+
+pub(crate) fn decode_verified_context_audit_json(
+    audit_json: &str,
+) -> Result<(ContextAudit, String)> {
+    let value: Value = serde_json::from_str(audit_json).context("parse canonical ContextAudit")?;
+    let canonical = canonical_json_bytes(&value)?;
+    if canonical.as_slice() != audit_json.as_bytes() {
+        bail!("ContextAudit JSON is not canonical");
+    }
+    let audit = serde_json::from_value(value).context("decode canonical ContextAudit")?;
+    let hash = format!("{:x}", Sha256::digest(&canonical));
+    Ok((audit, hash))
 }
 
 fn canonical_json_bytes(value: &Value) -> Result<Vec<u8>> {
@@ -453,7 +465,7 @@ mod tests {
         conn.execute(
             "UPDATE context_bundle_audits SET audit_json = ?1, token_estimate = 99
              WHERE injection_run_id = 'run-tamper'",
-            params![canonical_audit(&bundle("ignored").audit)?.0],
+            params![canonical_context_audit(&bundle("ignored").audit)?.0],
         )?;
         let error = load_verified_context_bundle_audit(&conn, "run-tamper")
             .expect_err("tampered summary must fail verification");

@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+use super::audit_contract::{RememContextAuditSnapshot, RememContextAuditStatus};
+
 #[derive(Debug, Clone)]
 pub struct CodingBenchOptions {
     pub fixture_path: String,
@@ -204,6 +206,11 @@ pub struct RunReport {
     pub unauthorized_path_changes: Vec<String>,
     pub runner_exit_code: Option<i32>,
     pub runner_timed_out: bool,
+    pub runtime_contract_failure: bool,
+    pub runtime_contract_failure_reason: Option<String>,
+    pub context_audit_status: RememContextAuditStatus,
+    pub context_audit_failure_reason: Option<String>,
+    pub remem_context_audit: Option<RememContextAuditSnapshot>,
     pub score_commands: Vec<CommandReport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub memory_contract: Option<CodingMemoryAttribution>,

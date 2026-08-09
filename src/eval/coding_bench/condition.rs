@@ -8,12 +8,16 @@ use anyhow::{bail, Context, Result};
 use super::types::{
     BenchCondition, CodingBenchFixture, CodingBenchTask, CodingMemoryAttributionInput, SeedMemory,
 };
+use super::{RememContextAuditSnapshot, RememContextAuditStatus};
 
 #[derive(Debug, Clone)]
 pub struct ConditionSetup {
     pub env: Vec<(String, String)>,
     pub prompt_note: Option<String>,
     pub memory_attribution: CodingMemoryAttributionInput,
+    pub context_audit_status: RememContextAuditStatus,
+    pub context_audit_failure_reason: Option<String>,
+    pub remem_context_audit: Option<RememContextAuditSnapshot>,
 }
 
 pub fn apply_condition(
@@ -28,6 +32,9 @@ pub fn apply_condition(
             env: vec![("REMEM_DISABLE_HOOKS".to_string(), "1".to_string())],
             prompt_note: None,
             memory_attribution: CodingMemoryAttributionInput::default(),
+            context_audit_status: RememContextAuditStatus::NotApplicable,
+            context_audit_failure_reason: None,
+            remem_context_audit: None,
         }),
         BenchCondition::CuratedFile => {
             let content = task
@@ -43,10 +50,13 @@ pub fn apply_condition(
                         .to_string(),
                 ),
                 memory_attribution: CodingMemoryAttributionInput::default(),
+                context_audit_status: RememContextAuditStatus::NotApplicable,
+                context_audit_failure_reason: None,
+                remem_context_audit: None,
             })
         }
         BenchCondition::Remem => {
-            let (rendered, memory_attribution) =
+            let (rendered, memory_attribution, audit_contract) =
                 render_seeded_remem_context(data_dir, repo_dir, task)?;
             fs::write(repo_dir.join("REMEM_CONTEXT.md"), rendered)
                 .context("write remem benchmark context")?;
@@ -63,20 +73,30 @@ pub fn apply_condition(
                         .to_string(),
                 ),
                 memory_attribution,
+                context_audit_status: audit_contract.status,
+                context_audit_failure_reason: audit_contract.failure_reason,
+                remem_context_audit: audit_contract.snapshot,
             })
         }
     }
 }
 
-pub fn render_seeded_remem_context(
+struct RememAuditContract {
+    status: RememContextAuditStatus,
+    failure_reason: Option<String>,
+    snapshot: Option<RememContextAuditSnapshot>,
+}
+
+fn render_seeded_remem_context(
     data_dir: &Path,
     repo_dir: &Path,
     task: &CodingBenchTask,
-) -> Result<(String, CodingMemoryAttributionInput)> {
+) -> Result<(String, CodingMemoryAttributionInput, RememAuditContract)> {
     fs::create_dir_all(data_dir).context("create benchmark REMEM_DATA_DIR")?;
     let _env = ScopedEnvVars::set_many([
         ("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string()),
         ("REMEM_ALLOW_PLAINTEXT_DB", OsString::from("1")),
+        ("REMEM_CONTEXT_BUNDLE_RENDER_MODE", OsString::from("bundle")),
     ]);
     let conn = crate::db::open_db().context("open benchmark remem database")?;
     let project = repo_dir.to_string_lossy().to_string();
@@ -92,17 +112,63 @@ pub fn render_seeded_remem_context(
             project
         );
     }
-    let snapshot =
-        crate::context::session_start_eval_snapshot(&project, &project, Some("main"), "codex-cli")
-            .context("render benchmark SessionStart context")?;
-    let mut injected_memory_ids = query_injected_memory_ids(&conn, &project)?;
+    let emission =
+        crate::context::session_start_benchmark_emission(&project, &project, "codex-cli")
+            .context("render and persist benchmark SessionStart context")?;
+    let audit_contract = match emission.injection_run_id.as_deref() {
+        Some(injection_run_id) => {
+            match super::audit_contract::load_context_audit_snapshot(&conn, injection_run_id) {
+                Ok(Some(snapshot)) => {
+                    match super::audit_contract::verify_snapshot_against_persisted_injection(
+                        &conn, &snapshot,
+                    ) {
+                        Ok(()) => RememAuditContract {
+                            status: RememContextAuditStatus::Verified,
+                            failure_reason: None,
+                            snapshot: Some(snapshot),
+                        },
+                        Err(error) => RememAuditContract {
+                            status: RememContextAuditStatus::ContractFailure,
+                            failure_reason: Some(format!(
+                                "ContextAudit differs from persisted injection_run_id={injection_run_id}: {error}"
+                            )),
+                            snapshot: None,
+                        },
+                    }
+                }
+                Ok(None) => RememAuditContract {
+                    status: RememContextAuditStatus::ContractFailure,
+                    failure_reason: Some(format!(
+                        "missing ContextAudit for injection_run_id={injection_run_id}"
+                    )),
+                    snapshot: None,
+                },
+                Err(error) => RememAuditContract {
+                    status: RememContextAuditStatus::ContractFailure,
+                    failure_reason: Some(format!(
+                        "invalid ContextAudit for injection_run_id={injection_run_id}: {error}"
+                    )),
+                    snapshot: None,
+                },
+            }
+        }
+        None => RememAuditContract {
+            status: RememContextAuditStatus::ContractFailure,
+            failure_reason: Some(
+                "SessionStart emitted remem context without a persisted ContextAudit".to_string(),
+            ),
+            snapshot: None,
+        },
+    };
+    let mut injected_memory_ids =
+        query_injected_memory_ids(&conn, emission.injection_run_id.as_deref())?;
     injected_memory_ids.extend(seeded_ids.iter().copied());
     injected_memory_ids.sort_unstable();
     injected_memory_ids.dedup();
-    let mut output = snapshot.rendered_output;
+    let mut output = emission.rendered_output;
     append_benchmark_memory_details(&mut output, &seeded_memories);
     let memory_attribution = build_attribution_input(task, &seeded, injected_memory_ids);
-    Ok((output, memory_attribution))
+    Ok((output, memory_attribution, audit_contract))
 }
 
 fn save_seed_memory(
@@ -211,17 +277,22 @@ fn build_attribution_input(
     }
 }
 
-fn query_injected_memory_ids(conn: &rusqlite::Connection, project: &str) -> Result<Vec<i64>> {
+fn query_injected_memory_ids(
+    conn: &rusqlite::Connection,
+    injection_run_id: Option<&str>,
+) -> Result<Vec<i64>> {
+    let Some(injection_run_id) = injection_run_id else {
+        return Ok(Vec::new());
+    };
     let mut stmt = conn.prepare(
         "SELECT DISTINCT memory_id
          FROM context_injection_items
-         WHERE project = ?1
-           AND session_id = 'eval-session-start'
+         WHERE injection_run_id = ?1
            AND status = 'injected'
            AND memory_id IS NOT NULL
          ORDER BY memory_id ASC",
     )?;
-    let rows = stmt.query_map([project], |row| row.get::<_, i64>(0))?;
+    let rows = stmt.query_map([injection_run_id], |row| row.get::<_, i64>(0))?;
     let mut ids = Vec::new();
     for row in rows {
         ids.push(row?);
@@ -287,6 +358,56 @@ impl Drop for ScopedEnvVars {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_conditions_mark_context_audit_not_applicable() -> Result<()> {
+        let fixture = super::super::fixture::load_fixture("eval/coding-bench/fixtures/tasks.json")?;
+        let task = fixture.tasks.first().context("missing coding-bench task")?;
+        let root = crate::db::test_support::ScopedTestDataDir::new("coding-bench-controls");
+        let repo_dir = root.path.join("repo");
+        let data_dir = root.path.join("remem-data");
+        fs::create_dir_all(&repo_dir)?;
+
+        for condition in [BenchCondition::NoMemory, BenchCondition::CuratedFile] {
+            let setup = apply_condition(condition, &fixture, task, &repo_dir, &data_dir)?;
+            assert_eq!(
+                setup.context_audit_status,
+                RememContextAuditStatus::NotApplicable
+            );
+            assert!(setup.context_audit_failure_reason.is_none());
+            assert!(setup.remem_context_audit.is_none());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn remem_condition_reads_verified_production_sessionstart_audit() -> Result<()> {
+        let fixture = super::super::fixture::load_fixture("eval/coding-bench/fixtures/tasks.json")?;
+        let task = fixture.tasks.first().context("missing coding-bench task")?;
+        let root = crate::db::test_support::ScopedTestDataDir::new("coding-bench-audit");
+        let repo_dir = root.path.join("repo");
+        let data_dir = root.path.join("remem-data");
+        fs::create_dir_all(&repo_dir)?;
+
+        let (_output, _attribution, contract) =
+            render_seeded_remem_context(&data_dir, &repo_dir, task)?;
+        assert_eq!(contract.status, RememContextAuditStatus::Verified);
+        assert!(contract.failure_reason.is_none());
+        let snapshot = contract
+            .snapshot
+            .context("missing verified audit snapshot")?;
+        super::super::verify_context_audit_snapshot(&snapshot)?;
+        assert!(!snapshot.injection_run_id.is_empty());
+        assert_eq!(
+            snapshot.plan_schema_version,
+            crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION
+        );
+        for memory in task.seed_memories() {
+            assert!(!snapshot.canonical_audit_json.contains(&memory.title));
+            assert!(!snapshot.canonical_audit_json.contains(&memory.text));
+        }
+        Ok(())
+    }
 
     #[test]
     fn remem_context_preloads_full_detail_for_indexed_memory() {

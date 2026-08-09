@@ -48,6 +48,53 @@ fn memory_contract() -> CodingMemoryAttribution {
     }
 }
 
+fn context_audit_snapshot() -> Result<RememContextAuditSnapshot> {
+    let audit = crate::context_bundle::ContextAudit {
+        schema_version: crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION,
+        policy_version: "retrieval_router_v2".to_string(),
+        relevance_policy_version: "sessionstart_significant_token_v1".to_string(),
+        plan_hash: "a".repeat(64),
+        degraded_mode: crate::context_bundle::DegradedMode::Full,
+        candidates_considered: 1,
+        selected_count: 1,
+        dropped_count: 0,
+        token_estimate: 10,
+        token_budget: 100,
+        truncation_reason: None,
+        entries: Vec::new(),
+    };
+    let (canonical_audit_json, audit_hash) =
+        crate::context_bundle::persistence::canonical_context_audit(&audit)?;
+    Ok(RememContextAuditSnapshot {
+        injection_run_id: "coding-bench-run-1".to_string(),
+        bundle_schema_version: audit.schema_version,
+        plan_schema_version: crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION,
+        policy_version: audit.policy_version,
+        relevance_policy_version: audit.relevance_policy_version,
+        plan_hash: audit.plan_hash,
+        audit_hash,
+        degraded_mode: audit.degraded_mode,
+        candidates_considered: audit.candidates_considered,
+        selected_count: audit.selected_count,
+        dropped_count: audit.dropped_count,
+        token_budget: audit.token_budget,
+        token_estimate: audit.token_estimate,
+        truncation_reason: audit.truncation_reason,
+        canonical_audit_json,
+    })
+}
+
+fn valid_remem_contract_snapshot(
+    contract_report: crate::eval::current_memory_contracts::CurrentMemoryContractEvalReport,
+    captured_at_epoch: i64,
+) -> Result<RememContractSnapshot> {
+    Ok(build_remem_contract_snapshot(
+        contract_report,
+        captured_at_epoch,
+        Some(context_audit_snapshot()?),
+    ))
+}
+
 fn remem_run(snapshot: RememContractSnapshot) -> CodingBenchRunReport {
     remem_run_for_task(snapshot, "fixture-task", 0)
 }
@@ -71,6 +118,8 @@ fn remem_run_for_task(
         runtime_contract_failure: !snapshot.contract_health.all_checks_passed,
         runtime_contract_failure_reason: (!snapshot.contract_health.all_checks_passed)
             .then(|| snapshot.contract_health.failing_examples.join("; ")),
+        context_audit_status: RememContextAuditStatus::Verified,
+        context_audit_failure_reason: None,
         score: score_evidence(),
         metrics: metrics(),
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
@@ -95,6 +144,8 @@ fn control_run(
         memory_contract_status: CodingBenchMemoryContractStatus::NotApplicable,
         runtime_contract_failure: false,
         runtime_contract_failure_reason: None,
+        context_audit_status: RememContextAuditStatus::NotApplicable,
+        context_audit_failure_reason: None,
         score: score_evidence(),
         metrics: metrics(),
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
@@ -111,10 +162,10 @@ fn condition_report(
 ) -> Result<CodingBenchConditionReport> {
     let runs = match name {
         CodingBenchCondition::Remem => {
-            let snapshot = build_remem_contract_snapshot(
+            let snapshot = valid_remem_contract_snapshot(
                 crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?,
                 1_800_000_000,
-            );
+            )?;
             (0..TEST_RUNS_PER_CONDITION)
                 .map(|run_index| remem_run_for_task(snapshot.clone(), task_id, run_index))
                 .collect()
@@ -160,7 +211,7 @@ fn report_with_run(run: CodingBenchRunReport) -> Result<CodingBenchReport> {
 fn remem_run_artifact_includes_current_memory_contract_snapshot() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let report = report_with_run(remem_run(snapshot))?;
 
     validate_contract_snapshots(&report)?;
@@ -181,6 +232,15 @@ fn remem_run_artifact_includes_current_memory_contract_snapshot() -> Result<()> 
         .as_array()
         .is_some_and(|changes| changes.is_empty()));
     assert_eq!(run["memory_contract_status"], "passed");
+    assert_eq!(run["context_audit_status"], "verified");
+    assert_eq!(
+        run["remem_contract_snapshot"]["context_audit"]["plan_hash"],
+        "a".repeat(64)
+    );
+    assert_eq!(
+        run["remem_contract_snapshot"]["context_audit"]["selected_count"],
+        1
+    );
     assert_eq!(
         run["remem_contract_snapshot"]["contract_health"]["all_checks_passed"],
         true
@@ -219,6 +279,43 @@ fn remem_run_artifact_includes_current_memory_contract_snapshot() -> Result<()> 
 }
 
 #[test]
+fn missing_context_audit_is_a_remem_contract_failure() -> Result<()> {
+    let contract_report =
+        crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
+    let mut snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
+    snapshot.context_audit = None;
+    let mut run = remem_run(snapshot);
+    run.context_audit_status = RememContextAuditStatus::ContractFailure;
+    run.context_audit_failure_reason = Some("missing persisted ContextAudit".to_string());
+    run.memory_contract_status = CodingBenchMemoryContractStatus::Failed;
+    run.runtime_contract_failure = true;
+    run.runtime_contract_failure_reason = Some("missing persisted ContextAudit".to_string());
+    let report = report_with_run(run)?;
+
+    validate_contract_snapshots(&report)?;
+    Ok(())
+}
+
+#[test]
+fn verifier_rejects_tampered_context_audit_hash() -> Result<()> {
+    let contract_report =
+        crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
+    let mut snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
+    snapshot
+        .context_audit
+        .as_mut()
+        .expect("fixture audit")
+        .audit_hash = "b".repeat(64);
+    let report = report_with_run(remem_run(snapshot))?;
+
+    assert!(validate_contract_snapshots(&report)
+        .unwrap_err()
+        .to_string()
+        .contains("hash mismatch"));
+    Ok(())
+}
+
+#[test]
 fn runtime_contract_failure_is_distinct_from_agent_task_failure() -> Result<()> {
     let mut contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
@@ -226,7 +323,7 @@ fn runtime_contract_failure_is_distinct_from_agent_task_failure() -> Result<()> 
     contract_report
         .failing_examples
         .push("usage.citation_event_matched expected 1.0 but got 0.0".to_string());
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let report = report_with_run(remem_run(snapshot))?;
 
     validate_contract_snapshots(&report)?;
@@ -250,7 +347,7 @@ fn runtime_contract_failure_is_distinct_from_agent_task_failure() -> Result<()> 
 fn validator_rejects_stale_runtime_contract_failure_reason() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let mut run = remem_run(snapshot);
     run.runtime_contract_failure = false;
     run.runtime_contract_failure_reason = Some("stale contract failure".to_string());
@@ -271,7 +368,7 @@ fn validator_rejects_blank_runtime_contract_failure_reason() -> Result<()> {
     contract_report
         .failing_examples
         .push("usage.citation_event_matched expected 1.0 but got 0.0".to_string());
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let mut run = remem_run(snapshot);
     run.runtime_contract_failure_reason = Some(" \n\t ".to_string());
     let report = report_with_run(run)?;
@@ -287,7 +384,7 @@ fn validator_rejects_blank_runtime_contract_failure_reason() -> Result<()> {
 fn validator_rejects_stale_task_failure_reason_on_resolved_run() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let mut run = remem_run(snapshot);
     run.task_success = true;
     run.task_failure_reason = Some(CodingBenchFailureReason::TestFailure);
@@ -304,7 +401,7 @@ fn validator_rejects_stale_task_failure_reason_on_resolved_run() -> Result<()> {
 fn validator_requires_score_and_patch_evidence() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
 
     let mut missing_score = remem_run(snapshot.clone());
     missing_score.score.commands.clear();
@@ -358,7 +455,7 @@ fn validator_requires_score_and_patch_evidence() -> Result<()> {
 fn validator_requires_token_accounting_or_unsupported_provider_note() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let mut missing_tokens = remem_run(snapshot.clone());
     missing_tokens.metrics.tokens_input = None;
     missing_tokens.metrics.tokens_output = None;
@@ -402,7 +499,7 @@ fn validator_requires_token_accounting_or_unsupported_provider_note() -> Result<
 fn validator_requires_turns_and_wall_time_metrics() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
 
     let mut missing_turns = remem_run(snapshot.clone());
     missing_turns.metrics.turns = None;
@@ -428,7 +525,7 @@ fn validator_requires_turns_and_wall_time_metrics() -> Result<()> {
 fn validator_requires_full_condition_matrix() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     let report = report_with_run(remem_run(snapshot))?;
 
     let mut missing_condition = report.clone();
@@ -464,7 +561,7 @@ fn validator_requires_full_condition_matrix() -> Result<()> {
 fn validator_derives_contract_health_from_embedded_report() -> Result<()> {
     let contract_report =
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?;
-    let mut snapshot = build_remem_contract_snapshot(contract_report, 1_800_000_000);
+    let mut snapshot = valid_remem_contract_snapshot(contract_report, 1_800_000_000)?;
     snapshot.current_memory_contracts.metrics.all_checks_passed = false;
     let report = report_with_run(remem_run(snapshot))?;
 
@@ -486,6 +583,8 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         memory_contract_status: CodingBenchMemoryContractStatus::Passed,
         runtime_contract_failure: false,
         runtime_contract_failure_reason: None,
+        context_audit_status: RememContextAuditStatus::Verified,
+        context_audit_failure_reason: None,
         score: score_evidence(),
         metrics: metrics(),
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
@@ -499,10 +598,10 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         .to_string()
         .contains("missing current memory contract snapshot"));
 
-    let snapshot = build_remem_contract_snapshot(
+    let snapshot = valid_remem_contract_snapshot(
         crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?,
         1_800_000_000,
-    );
+    )?;
     let non_remem_snapshot = report_with_run(CodingBenchRunReport {
         condition: CodingBenchCondition::NoMemory,
         task_id: "bad-no-memory".to_string(),
@@ -512,6 +611,8 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         memory_contract_status: CodingBenchMemoryContractStatus::NotApplicable,
         runtime_contract_failure: false,
         runtime_contract_failure_reason: None,
+        context_audit_status: RememContextAuditStatus::NotApplicable,
+        context_audit_failure_reason: None,
         score: score_evidence(),
         metrics: metrics(),
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),
@@ -534,6 +635,8 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         memory_contract_status: CodingBenchMemoryContractStatus::NotApplicable,
         runtime_contract_failure: true,
         runtime_contract_failure_reason: Some("current-memory contract failed".to_string()),
+        context_audit_status: RememContextAuditStatus::NotApplicable,
+        context_audit_failure_reason: None,
         score: score_evidence(),
         metrics: metrics(),
         final_head_sha: Some(TEST_FINAL_HEAD_SHA.to_string()),

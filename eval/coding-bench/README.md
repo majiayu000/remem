@@ -143,7 +143,12 @@ to carry current-memory evidence. The contract helper in
 `src/eval/coding_bench` defines the canonical fields:
 
 - `remem_contract_snapshot`, built from the current-memory-contracts
-  deterministic report;
+  deterministic report and the exact persisted SessionStart ContextAudit;
+- `context_audit_status`: `verified`, `contract_failure`, or
+  `not_applicable`, plus a diagnostic failure reason when applicable;
+- the payload-free ContextAudit snapshot: injection run id, bundle/plan and
+  policy versions, plan/audit hashes, degraded mode, candidate/selection/drop
+  counts, token budget/estimate, truncation reason, and canonical audit JSON;
 - `memory_contract_status`: `passed`, `failed`, or `not_applicable`;
 - `runtime_contract_failure` and `runtime_contract_failure_reason`;
 - `memory_contract`, with injected memory ids, cited/used memory ids, citation
@@ -151,10 +156,16 @@ to carry current-memory evidence. The contract helper in
   relevant memory count, `memory_helped`, and `memory_hurt`;
 - score command evidence, patch evidence, token metrics, turns, and wall time.
 
-`no_memory` and curated-file runs must set `memory_contract_status` to
-`not_applicable` and must not include remem contract evidence or memory
-attribution. `curated_file_budgeted` runs must additionally attach the curator
-log artifact and a `MEMORY.md` hash matching `final_file_sha256`.
+`no_memory` and curated-file runs must set both `memory_contract_status` and
+`context_audit_status` to `not_applicable` and must not include remem contract
+evidence or memory attribution. `curated_file_budgeted` runs must additionally
+attach the curator log artifact and a `MEMORY.md` hash matching
+`final_file_sha256`.
+
+The verifier canonicalizes the embedded ContextAudit JSON, recomputes its
+SHA-256, checks every summary field, and binds the snapshot to the persisted
+`injection_run_id` loaded during condition setup. A missing or invalid audit is
+a runtime contract failure even when the coding task resolves.
 
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must

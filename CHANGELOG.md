@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.66` for GH-932/GH-931/GH-934: coding-bench remem
+  runs now consume the exact persisted production SessionStart ContextAudit,
+  embed its payload-free canonical JSON plus plan/policy/hash/degraded/count/
+  budget contract, and independently recompute SHA-256 during verification.
+  Missing audit evidence is an explicit runtime contract failure, while
+  `no_memory` and curated-file controls mark the contract not applicable.
 - Staged source version `0.6.65` for GH-932: Bundle-backed SessionStart
   emissions now atomically persist a payload-free canonical `ContextAudit`
   beside the existing item-level injection rows. The append-only v081 record

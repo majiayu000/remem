@@ -117,6 +117,14 @@ The Rust runner (`src/eval/coding_bench`) needs:
 5. Report additions: failure `stage` attribution (6-stage enum), curator
    maintenance metrics, and paired task-cluster bootstrap statistics.
 
+The ContextAudit binding slice is implemented independently of the remaining
+flagship runner work: remem-backed runs execute the production SessionStart
+emission path, resolve its persisted `injection_run_id`, embed the payload-free
+canonical audit plus version/hash/count/budget summary, and recompute the hash
+during verification. Missing evidence is a runtime contract failure; control
+conditions are explicitly not applicable. The same contract is required when
+`remem_e2e` execution support lands.
+
 ## Completion implementation contract (pending)
 
 The implementation must preserve these fail-closed boundaries:

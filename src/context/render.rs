@@ -37,7 +37,9 @@ mod stats;
 mod timer;
 mod truncation;
 pub(in crate::context) use super::render_error::render_context_load_errors;
-pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
+pub(crate) use eval::{
+    governance_eval_snapshot, session_start_benchmark_emission, session_start_eval_snapshot,
+};
 use finalize::{finalize_context_output, RenderedIdentityBounds};
 use helpers::{
     build_context_header_with_style, context_debug_enabled, context_source_note,

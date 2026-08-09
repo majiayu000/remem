@@ -148,6 +148,30 @@ is the explicit rollback.
   a plan/audit. Any write failure is logged at error level while preserving the
   existing hook fail-open output contract.
 
+## Coding-bench Consumer
+
+- The remem condition invokes the production SessionStart render/emission path
+  against its isolated `REMEM_DATA_DIR`, then resolves the exact persisted row
+  by the returned `injection_run_id`. It does not select a project-wide latest
+  audit or synthesize a benchmark-only plan.
+- `RememContextAuditSnapshot` carries `injection_run_id`, bundle/plan schema
+  versions, router and relevance-policy versions, `plan_hash`, `audit_hash`,
+  degraded mode, candidate/selected/dropped counts, token budget/estimate,
+  truncation reason, and the canonical payload-free audit JSON.
+- Snapshot construction first calls the production verified loader. The
+  coding-bench verifier independently parses and canonicalizes the embedded
+  JSON, recomputes SHA-256, compares every summary field, and rejects a
+  snapshot that differs from the persisted injection row.
+- `CodingBenchRunReport` and the executable runner report carry an explicit
+  audit-contract status: `verified`, `contract_failure`, or `not_applicable`.
+  Remem requires `verified` plus a snapshot; a missing, malformed, tampered, or
+  mismatched audit becomes `contract_failure` with a diagnostic reason.
+  `no_memory` and curated-file conditions require `not_applicable`, no failure
+  reason, and no snapshot.
+- The embedded canonical audit contains only the already-redacted
+  `ContextAudit` contract. It must not contain bundle sections, memory title or
+  body text, rendered hook output, task prompt, or gold benchmark evidence.
+
 ## Doctor Capability Check
 
 - `context::context_bundle_render_mode()` is the single parser for

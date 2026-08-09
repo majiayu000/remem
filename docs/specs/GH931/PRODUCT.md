@@ -29,6 +29,10 @@ increasing stale/irrelevant memory harm.
 - Every memory failure is attributed to exactly one of six stages (capture,
   extraction, consolidation, retrieval, context compilation, reader/use) via a
   fixed 12-enum taxonomy.
+- Every remem-backed run binds its artifact to the exact persisted production
+  SessionStart ContextAudit. Missing or hash/summary-invalid audit evidence is
+  a runtime contract failure; non-remem controls mark the contract not
+  applicable.
 - Public wording is governed by a pre-registered claim registry with an
   automatic wording gate: `PASS` / `FAIL` / `INSUFFICIENT`, allowed and
   forbidden wording, and a supporting report hash. `INSUFFICIENT` wording must

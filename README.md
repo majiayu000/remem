@@ -742,6 +742,11 @@ coding-task outcome claims until the public claim gate in
 predates the public 16-task v1 fixture pack and must be regenerated before it
 supports stronger product claims.
 
+New remem-backed coding-bench runs bind their report to the exact production
+SessionStart injection audit. Missing or tampered audit evidence is reported as
+a runtime contract failure; `no_memory` and curated-file controls mark that
+contract as not applicable.
+
 ### LoCoMo (Informational Only)
 
 Full [LoCoMo](https://github.com/snap-research/locomo) benchmark (10 conversations, 1540 QA pairs after adversarial skip):

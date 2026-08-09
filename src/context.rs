@@ -51,6 +51,7 @@ pub(crate) use relevance::{
     SessionStartRelevancePlan, SESSIONSTART_RELEVANCE_POLICY_VERSION,
 };
 pub(crate) use render::governance_eval_snapshot;
+pub(crate) use render::session_start_benchmark_emission;
 pub(crate) use render::session_start_eval_snapshot;
 pub(crate) use render::RENDER_CONTRACT_VERSION;
 pub use render::{
