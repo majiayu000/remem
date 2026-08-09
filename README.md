@@ -144,9 +144,9 @@ The selector also scopes lifecycle counts; object kinds without a matching
 subject identity are omitted from a subject-focused report.
 When `--as-of-epoch` is omitted, the report samples one effective epoch,
 returns it as `as_of_epoch`, and uses it for every projection and diagnostic
-query in the same read snapshot. An explicit cutoff that predates an in-place
-memory or user-claim update is reported as unreconstructable and exits with a
-warning until versioned lifecycle history is available.
+query in the same read snapshot. Every explicit historical cutoff is reported
+as unreconstructable and exits with a warning until versioned lifecycle
+history can prove in-place status changes.
 
 For Codex CLI, `remem install` creates or updates:
 

@@ -27,11 +27,17 @@ fn options() -> TruthDoctorOptions {
     TruthDoctorOptions {
         project: "/repo".to_string(),
         branch: None,
-        as_of_epoch: Some(100),
+        as_of_epoch: None,
         subject: None,
         json: true,
         quiet: false,
     }
+}
+
+fn historical_options(as_of_epoch: i64) -> TruthDoctorOptions {
+    let mut opts = options();
+    opts.as_of_epoch = Some(as_of_epoch);
+    opts
 }
 
 fn seed_graph_provenance(conn: &Connection) -> Result<(i64, i64, i64)> {
@@ -170,7 +176,7 @@ fn as_of_excludes_future_and_not_yet_valid_relations() -> Result<()> {
         params![format!("[{event_id}]"), candidate_id, operation_id],
     )?;
 
-    let report = build_truth_report(&conn, &options())?;
+    let report = build_truth_report(&conn, &historical_options(100))?;
 
     assert_eq!(report.counts.supersedes_relations, 1);
     assert!(report
@@ -201,36 +207,20 @@ fn omitted_as_of_is_sampled_once_and_reported() -> Result<()> {
 }
 
 #[test]
-fn explicit_as_of_warns_when_truth_was_updated_after_cutoff() -> Result<()> {
+fn explicit_as_of_warns_until_lifecycle_history_exists() -> Result<()> {
     let conn = test_conn()?;
     insert_memory(&conn, 1, "deploy", "active", 10)?;
-    conn.execute(
-        "UPDATE memories SET status = 'stale', updated_at_epoch = 20 WHERE id = 1",
-        [],
-    )?;
-    conn.execute(
-        "INSERT INTO user_context_claims
-         (id, owner_scope, owner_key, claim_type, claim_key, claim_text, confidence,
-          sensitivity, source_kind, source_refs_json, status,
-          created_at_epoch, updated_at_epoch)
-         VALUES (1, 'repo', '/repo', 'preference', 'editor', 'Use Vim', 1.0,
-                 'normal', 'manual', '[]', 'active', 10, 20)",
-        [],
-    )?;
-    let mut historical = options();
-    historical.as_of_epoch = Some(15);
 
-    let report = build_truth_report(&conn, &historical)?;
-    let refs: BTreeSet<_> = report
-        .reference_issues
-        .iter()
-        .filter(|issue| issue.problem == "unreconstructable_historical_truth")
-        .map(|issue| issue.claim_ref.as_str())
-        .collect();
+    let report = build_truth_report(&conn, &historical_options(15))?;
 
     assert_eq!(report.status, "warn");
     assert_eq!(truth_outcome(&report).exit_code(), 1);
-    assert_eq!(refs, BTreeSet::from(["memory:1", "user_claim:1"]));
+    assert!(report.reference_issues.iter().any(|issue| {
+        issue.relation_ref == "historical_cutoff:15"
+            && issue.claim_ref == "truth_scope:/repo"
+            && issue.problem == "unreconstructable_historical_truth"
+            && issue.stored_status.is_none()
+    }));
     Ok(())
 }
 
@@ -285,7 +275,7 @@ fn reference_issues_apply_endpoint_time_eligibility() -> Result<()> {
         [],
     )?;
 
-    let report = build_truth_report(&conn, &options())?;
+    let report = build_truth_report(&conn, &historical_options(100))?;
     let refs: BTreeSet<_> = report
         .reference_issues
         .iter()
@@ -374,7 +364,7 @@ fn lifecycle_mappings_exclude_objects_created_after_as_of() -> Result<()> {
         [],
     )?;
 
-    let report = build_truth_report(&conn, &options())?;
+    let report = build_truth_report(&conn, &historical_options(100))?;
 
     for (object_kind, status) in [
         ("memory", "archived"),
@@ -694,7 +684,11 @@ fn invalid_user_claim_replacement_endpoints_warn() -> Result<()> {
          VALUES (1, 'repo', '/repo', 'preference', 'dangling', 'Missing old', 1.0,
                  'normal', 'manual', '[]', 'active', 999, 10, 10),
                 (2, 'repo', '/repo', 'preference', 'self', 'Self old', 1.0,
-                 'normal', 'manual', '[]', 'active', 2, 10, 10)",
+                 'normal', 'manual', '[]', 'active', 2, 10, 10),
+                (3, 'repo', '/other', 'preference', 'other', 'Other repo', 1.0,
+                 'normal', 'manual', '[]', 'active', NULL, 10, 10),
+                (4, 'repo', '/repo', 'preference', 'cross-owner', 'Wrong old', 1.0,
+                 'normal', 'manual', '[]', 'active', 3, 10, 10)",
         [],
     )?;
     conn.execute_batch("PRAGMA foreign_keys = ON")?;
@@ -712,6 +706,11 @@ fn invalid_user_claim_replacement_endpoints_warn() -> Result<()> {
         issue.relation_ref == "user_claim_supersedes:2"
             && issue.claim_ref == "user_claim:2"
             && issue.problem == "self_referential_relation"
+    }));
+    assert!(report.reference_issues.iter().any(|issue| {
+        issue.relation_ref == "user_claim_supersedes:4"
+            && issue.claim_ref == "user_claim:3"
+            && issue.problem == "replacement_scope_mismatch"
     }));
     Ok(())
 }
