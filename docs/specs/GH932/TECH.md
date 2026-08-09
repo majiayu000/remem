@@ -58,6 +58,12 @@ src/mcp/
 - SessionStart plans also carry a SHA-256 fingerprint of effective project,
   branch, and worktree scope in `reason_codes`, so worktree-specific preference
   loading cannot reuse an indistinguishable plan hash.
+- MCP Context Bundle plans additionally carry a SHA-256 fingerprint of the
+  effective local-only embedding execution profile: policy version, execution
+  mode, resolved provider, model identity (including the verified local model
+  artifact digest), and dimensions. Switching among local, feature-hash,
+  skipped remote/off, or blocked profiles therefore changes `plan_hash` before
+  candidate loading without exposing configuration or model paths.
 - `plan_hash` = SHA-256 over the canonical serde JSON of the plan with an
   empty `plan_hash` field. No timestamps or randomness are hashed.
 
@@ -95,7 +101,9 @@ src/mcp/
 - The MCP/local-only adapter uses `SearchWeights::context_bundle_v1()` and
   ignores `REMEM_USAGE_WEIGHT`; changing those fixed weights requires a router
   policy version bump. A missing key for a configured remote embedding provider
-  skips the vector channel rather than blocking usable lexical channels.
+  skips the vector channel rather than blocking usable lexical channels. The
+  same local-only provider resolution feeds both execution and the embedding
+  profile fingerprint bound into the plan hash.
 
 ## Reuse, Not Rewrite
 
@@ -193,4 +201,6 @@ is the explicit rollback.
   success validation, and exact legacy-text / `structuredContent` parity.
 - MCP execution isolation: a configured remote embedding provider is never
   contacted, its resolved local fallback remains usable, and ambient invalid
-  or enabled rerank configuration is not evaluated by the bundle loader.
+  or enabled rerank configuration is not evaluated by the bundle loader. The
+  local-only embedding profile fingerprint changes when effective vector
+  provider/model/dimensions or skipped/blocked mode changes.

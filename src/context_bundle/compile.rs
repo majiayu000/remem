@@ -13,7 +13,10 @@ use crate::context::{
     load_session_start_candidates_with_limits, ContextLimits, LoadedBundleCandidates,
     SessionStartRelevancePlan,
 };
-use crate::retrieval_router::{plan_session_start_with_limits, RetrievalPlan};
+use crate::retrieval::embedding::local_only_embedding_profile_fingerprint;
+use crate::retrieval_router::{
+    plan_context_bundle_with_limits, plan_session_start_with_limits, RetrievalPlan,
+};
 
 use super::domain::{ContextBundle, ContextItem, ContextRequest};
 use super::executor::{
@@ -39,7 +42,8 @@ pub fn compile_session_start_bundle(
     enrichment_available: bool,
 ) -> Result<ContextBundle> {
     let limits = ContextLimits::from_env();
-    let compiled = plan_session_start_with_limits(request, &limits)?;
+    let local_embedding_fingerprint = local_only_embedding_profile_fingerprint();
+    let compiled = plan_context_bundle_with_limits(request, &limits, &local_embedding_fingerprint)?;
     Ok(bundle_for_plan(
         conn,
         &compiled,

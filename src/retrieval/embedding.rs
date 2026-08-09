@@ -9,6 +9,8 @@ mod fallback;
 mod index_text;
 mod local_semantic;
 mod network_policy;
+#[cfg(test)]
+mod network_policy_tests;
 mod status;
 
 use config::env_value;
@@ -21,7 +23,10 @@ use local_semantic::LocalEmbeddingInputKind;
 pub use local_semantic::{
     LocalEmbeddingDownloadReport, LocalEmbeddingInventoryReport, LocalEmbeddingModelInventory,
 };
-pub(crate) use network_policy::{embed_query_if_enabled, embed_query_local_only_if_enabled};
+pub(crate) use network_policy::{
+    embed_query_if_enabled, embed_query_local_only_if_enabled,
+    local_only_embedding_profile_fingerprint,
+};
 pub(crate) use status::is_embedding_provider_off_error;
 
 pub const FEATURE_HASH_EMBEDDING_DIMENSIONS: usize = 768;

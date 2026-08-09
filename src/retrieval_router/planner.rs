@@ -32,6 +32,7 @@ const REASON_HIGH_RISK_ABSTAIN_ON_LOW_EVIDENCE: &str = "high_risk_abstain_on_low
 const REASON_REVIEWER_CONSTRAINTS_ENABLED: &str = "reviewer_constraints_enabled";
 const SESSIONSTART_LIMITS_REASON_PREFIX: &str = "sessionstart_limits_sha256:";
 const SESSIONSTART_SCOPE_REASON_PREFIX: &str = "sessionstart_scope_sha256:";
+const CONTEXT_BUNDLE_EMBEDDING_REASON_PREFIX: &str = "context_bundle_embedding_sha256:";
 
 // Baseline mechanical channels shared by every intent.
 const BASELINE_FTS: ChannelSpec = ChannelSpec {
@@ -367,6 +368,25 @@ pub(crate) fn plan_session_start_with_limits(
         .retain(|reason| !reason.starts_with(SESSIONSTART_SCOPE_REASON_PREFIX));
     plan.reason_codes.push(sessionstart_limits_reason(limits)?);
     plan.reason_codes.push(sessionstart_scope_reason(request)?);
+    plan.plan_hash.clear();
+    plan.plan_hash = plan_content_hash(&plan)?;
+    Ok(plan)
+}
+
+/// Compile the foreground Context Bundle plan and bind the effective
+/// local-only embedding profile used by its canonical loader. The profile is
+/// resolved outside the pure router and passed in as a SHA-256 fingerprint;
+/// switching provider, model artifact, dimensions, or vector availability
+/// therefore changes `plan_hash` before execution.
+pub(crate) fn plan_context_bundle_with_limits(
+    request: &ContextRequest,
+    limits: &ContextLimits,
+    local_embedding_fingerprint: &str,
+) -> Result<RetrievalPlan> {
+    let mut plan = plan_session_start_with_limits(request, limits)?;
+    plan.reason_codes.push(format!(
+        "{CONTEXT_BUNDLE_EMBEDDING_REASON_PREFIX}{local_embedding_fingerprint}"
+    ));
     plan.plan_hash.clear();
     plan.plan_hash = plan_content_hash(&plan)?;
     Ok(plan)

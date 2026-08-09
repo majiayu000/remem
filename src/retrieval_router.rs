@@ -34,5 +34,5 @@ pub use domain::{
     TrustPolicy, RETRIEVAL_PLAN_SCHEMA_VERSION,
 };
 pub use intent::resolve_intent;
-pub(crate) use planner::plan_session_start_with_limits;
 pub use planner::{plan, RETRIEVAL_ROUTER_POLICY_VERSION};
+pub(crate) use planner::{plan_context_bundle_with_limits, plan_session_start_with_limits};

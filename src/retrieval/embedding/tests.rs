@@ -100,7 +100,7 @@ impl Drop for CleanEnv {
     }
 }
 
-fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
+pub(super) fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
     let _env = CleanEnv::new();
     f()
 }
@@ -526,40 +526,6 @@ fn api_provider_without_key_uses_configured_fallback_visibly() -> Result<()> {
             .as_deref()
             .unwrap_or("")
             .contains("using fallback feature-hash"));
-        Ok(())
-    })
-}
-
-#[test]
-fn local_only_query_uses_resolved_feature_hash_fallback_without_api_key() -> Result<()> {
-    with_clean_env(|| {
-        unsafe {
-            std::env::set_var(ENV_PROVIDER, "api");
-            std::env::set_var(ENV_FALLBACK, "feature-hash");
-        }
-
-        let embedding = embed_query_local_only_if_enabled("local fallback context")?
-            .context("resolved local fallback should remain available")?;
-
-        assert_eq!(embedding.model(), FEATURE_HASH_EMBEDDING_MODEL);
-        assert_eq!(embedding.dimensions(), FEATURE_HASH_EMBEDDING_DIMENSIONS);
-        Ok(())
-    })
-}
-
-#[test]
-fn local_only_query_skips_unavailable_api_without_local_fallback() -> Result<()> {
-    with_clean_env(|| {
-        unsafe {
-            std::env::set_var(ENV_PROVIDER, "api");
-        }
-
-        assert!(embed_query_local_only_if_enabled("lexical context")?.is_none());
-
-        unsafe {
-            std::env::set_var(ENV_FALLBACK, "off");
-        }
-        assert!(embed_query_local_only_if_enabled("lexical context")?.is_none());
         Ok(())
     })
 }

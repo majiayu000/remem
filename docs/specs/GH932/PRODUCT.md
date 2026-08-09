@@ -55,7 +55,8 @@ context bundle.
   permits the resolved local fallback for that provider, disables ambient
   reranking because it is absent from the v1 plan and plan hash, fixes hybrid
   retrieval weights to the bundle v1 policy instead of reading ambient
-  operator overrides,
+  operator overrides, fingerprints the effective local-only embedding mode,
+  provider, model artifact identity, and dimensions into the plan hash,
   and publishes a closed MCP output schema while preserving the same JSON in
   the legacy text content field for older MCP clients.
 

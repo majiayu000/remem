@@ -8,7 +8,10 @@ use super::domain::{
     RETRIEVAL_PLAN_SCHEMA_VERSION,
 };
 use super::intent::resolve_intent;
-use super::planner::{plan, plan_session_start_with_limits, RETRIEVAL_ROUTER_POLICY_VERSION};
+use super::planner::{
+    plan, plan_context_bundle_with_limits, plan_session_start_with_limits,
+    RETRIEVAL_ROUTER_POLICY_VERSION,
+};
 use crate::context::ContextLimits;
 
 fn request(task: &str) -> ContextRequest {
@@ -313,6 +316,21 @@ fn session_start_plan_uses_effective_renderer_limits() {
         .reason_codes
         .iter()
         .any(|reason| reason.starts_with("sessionstart_limits_sha256:")));
+}
+
+#[test]
+fn context_bundle_plan_hash_binds_local_embedding_profile() {
+    let req = request("resume work");
+    let limits = ContextLimits::default();
+    let feature_hash = plan_context_bundle_with_limits(&req, &limits, "feature-hash-profile")
+        .expect("feature-hash plan");
+    let off = plan_context_bundle_with_limits(&req, &limits, "off-profile").expect("off plan");
+
+    assert_ne!(feature_hash.plan_hash, off.plan_hash);
+    assert!(feature_hash
+        .reason_codes
+        .iter()
+        .any(|reason| reason == "context_bundle_embedding_sha256:feature-hash-profile"));
 }
 
 #[test]
