@@ -8,6 +8,7 @@ mod config;
 mod fallback;
 mod index_text;
 mod local_semantic;
+mod network_policy;
 mod status;
 
 use config::env_value;
@@ -20,6 +21,7 @@ use local_semantic::LocalEmbeddingInputKind;
 pub use local_semantic::{
     LocalEmbeddingDownloadReport, LocalEmbeddingInventoryReport, LocalEmbeddingModelInventory,
 };
+pub(crate) use network_policy::{embed_query_if_enabled, embed_query_local_only_if_enabled};
 pub(crate) use status::is_embedding_provider_off_error;
 
 pub const FEATURE_HASH_EMBEDDING_DIMENSIONS: usize = 768;
@@ -238,14 +240,6 @@ pub(crate) fn embed_query_with_execution_if_enabled(
         embedding,
         metadata,
     }))
-}
-
-pub(crate) fn embed_query_if_enabled(query: &str) -> Result<Option<TextEmbedding>> {
-    match embed_query(query) {
-        Ok(embedding) => Ok(Some(embedding)),
-        Err(error) if is_embedding_provider_off_error(&error) => Ok(None),
-        Err(error) => Err(error),
-    }
 }
 
 pub fn embed_memory(

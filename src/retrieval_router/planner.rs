@@ -31,6 +31,7 @@ const REASON_HIGH_RISK_CANONICAL_TOP1: &str = "high_risk_canonical_evidence_top1
 const REASON_HIGH_RISK_ABSTAIN_ON_LOW_EVIDENCE: &str = "high_risk_abstain_on_low_evidence";
 const REASON_REVIEWER_CONSTRAINTS_ENABLED: &str = "reviewer_constraints_enabled";
 const SESSIONSTART_LIMITS_REASON_PREFIX: &str = "sessionstart_limits_sha256:";
+const SESSIONSTART_SCOPE_REASON_PREFIX: &str = "sessionstart_scope_sha256:";
 
 // Baseline mechanical channels shared by every intent.
 const BASELINE_FTS: ChannelSpec = ChannelSpec {
@@ -312,6 +313,7 @@ pub fn plan(
     let limits = ContextLimits::default();
     if resolved.intent == ContextIntent::SessionStart {
         reason_codes.push(sessionstart_limits_reason(&limits)?);
+        reason_codes.push(sessionstart_scope_reason(request)?);
     }
     let mut plan = RetrievalPlan {
         schema_version: RETRIEVAL_PLAN_SCHEMA_VERSION,
@@ -361,7 +363,10 @@ pub(crate) fn plan_session_start_with_limits(
     plan.relevance_k = limits.sessionstart_relevance_k as u32;
     plan.reason_codes
         .retain(|reason| !reason.starts_with(SESSIONSTART_LIMITS_REASON_PREFIX));
+    plan.reason_codes
+        .retain(|reason| !reason.starts_with(SESSIONSTART_SCOPE_REASON_PREFIX));
     plan.reason_codes.push(sessionstart_limits_reason(limits)?);
+    plan.reason_codes.push(sessionstart_scope_reason(request)?);
     plan.plan_hash.clear();
     plan.plan_hash = plan_content_hash(&plan)?;
     Ok(plan)
@@ -373,6 +378,20 @@ fn sessionstart_limits_reason(limits: &ContextLimits) -> Result<String> {
     hasher.update(canonical.as_bytes());
     Ok(format!(
         "{SESSIONSTART_LIMITS_REASON_PREFIX}{:x}",
+        hasher.finalize()
+    ))
+}
+
+fn sessionstart_scope_reason(request: &ContextRequest) -> Result<String> {
+    let canonical = serde_json::to_string(&(
+        request.project.key.as_str(),
+        request.branch.as_deref(),
+        request.worktree.as_deref(),
+    ))?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    Ok(format!(
+        "{SESSIONSTART_SCOPE_REASON_PREFIX}{:x}",
         hasher.finalize()
     ))
 }

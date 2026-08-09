@@ -103,7 +103,7 @@ fn seed(conn: &Connection) {
 }
 
 fn ids_for_query(conn: &Connection, query: &str, weights: SearchWeights) -> Vec<i64> {
-    query_hybrid_context_memories_with_weights(conn, PROJECT, query, None, &[], 10, weights)
+    query_hybrid_context_memories_with_weights(conn, PROJECT, query, None, &[], 10, weights, true)
         .expect("injection retrieval should succeed")
         .into_iter()
         .map(|memory| memory.id)
@@ -382,6 +382,7 @@ fn default_weights_are_the_production_path() {
         None,
         &[],
         10,
+        true,
     )
     .expect("injection retrieval should succeed")
     .into_iter()
@@ -453,6 +454,7 @@ fn injection_rejects_non_finite_fact_weight_before_empty_query_short_circuit() {
             fact: f64::NAN,
             ..SearchWeights::default()
         },
+        true,
     )
     .expect_err("non-finite fact weight must fail closed");
     assert!(error.to_string().contains("fact"), "{error:#}");

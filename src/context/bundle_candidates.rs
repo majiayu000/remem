@@ -22,7 +22,7 @@ use std::collections::HashSet;
 
 use super::poisoning::PoisoningDrops;
 use super::policy::{ContextLimits, ContextPolicy};
-use super::query::load_context_data_with_policy;
+use super::query::load_context_data_with_policy_local_only;
 use super::relevance::{memory_stable_key, session_stable_key};
 use super::types::{LoadedContext, SessionSummaryBrief};
 
@@ -66,7 +66,8 @@ pub(crate) fn load_session_start_candidates_with_limits(
     limits: &ContextLimits,
 ) -> Result<LoadedBundleCandidates> {
     let policy = ContextPolicy::from_limits(*limits);
-    let mut loaded = load_context_data_with_policy(conn, project, current_branch, &policy, false);
+    let mut loaded =
+        load_context_data_with_policy_local_only(conn, project, current_branch, &policy, false);
     if !loaded.errors.is_empty() {
         let sections: Vec<&str> = loaded.errors.iter().map(|error| error.section).collect();
         bail!(

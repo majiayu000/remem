@@ -4,10 +4,11 @@ use serde_json::Value;
 
 use super::{build_schema, OutputSchema};
 
-const JSON_OUTPUTS: [OutputSchema; 13] = [
+const JSON_OUTPUTS: [OutputSchema; 14] = [
     OutputSchema::CurrentState,
     OutputSchema::Search,
     OutputSchema::RecallUserContext,
+    OutputSchema::ContextBundle,
     OutputSchema::Timeline,
     OutputSchema::GetObservations,
     OutputSchema::LookupCommit,
@@ -152,6 +153,23 @@ fn array_items<'a>(root: &'a Value, schema: &'a Value) -> Option<&'a Value> {
         .find_map(|candidate| array_items(root, candidate))
 }
 
+fn assert_required_nullable_fields(root: &Value, object: &Value, fields: &[&str]) {
+    let object = resolve_local_ref(root, object);
+    let required = object["required"]
+        .as_array()
+        .expect("object must declare required fields");
+    for field in fields {
+        assert!(
+            required.iter().any(|value| value.as_str() == Some(field)),
+            "{field} must be required"
+        );
+        assert!(
+            explicitly_allows_null(root, property(object, field)),
+            "{field} must allow null"
+        );
+    }
+}
+
 #[test]
 fn all_published_output_schemas_use_draft_2020_nullable_unions() -> anyhow::Result<()> {
     for kind in JSON_OUTPUTS {
@@ -193,6 +211,27 @@ fn common_optional_shapes_explicitly_accept_null() -> anyhow::Result<()> {
             .count(),
         1
     );
+    Ok(())
+}
+
+#[test]
+fn context_bundle_nullable_wire_fields_are_required() -> anyhow::Result<()> {
+    let bundle = schema_value(OutputSchema::ContextBundle)?;
+    let item = array_items(&bundle, property(&bundle, "current_truth"))
+        .map(|items| resolve_local_ref(&bundle, items))
+        .expect("context bundle must declare item objects");
+    assert_required_nullable_fields(
+        &bundle,
+        item,
+        &["canonical_ref", "projection_ref", "project", "branch"],
+    );
+
+    let audit = resolve_local_ref(&bundle, property(&bundle, "audit"));
+    assert_required_nullable_fields(&bundle, audit, &["truncation_reason"]);
+    let entry = array_items(&bundle, property(audit, "entries"))
+        .map(|items| resolve_local_ref(&bundle, items))
+        .expect("context audit must declare entry objects");
+    assert_required_nullable_fields(&bundle, entry, &["relevance_score"]);
     Ok(())
 }
 

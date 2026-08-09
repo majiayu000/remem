@@ -10,9 +10,16 @@ pub(super) fn filter_recent_rows_by_task_embedding(
     task_query: &str,
     recent: Vec<ContextMemoryRow>,
     limit: usize,
+    allow_remote_embedding: bool,
 ) -> Result<Vec<ContextMemoryRow>> {
     let candidate_ids = recent.iter().map(|row| row.memory.id).collect::<Vec<_>>();
-    let matched_ids = rank_stored_embedding_matches(conn, task_query, &candidate_ids, limit)?;
+    let matched_ids = rank_stored_embedding_matches_with_remote_policy(
+        conn,
+        task_query,
+        &candidate_ids,
+        limit,
+        allow_remote_embedding,
+    )?;
     let ranks = matched_ids
         .into_iter()
         .enumerate()
@@ -26,16 +33,22 @@ pub(super) fn filter_recent_rows_by_task_embedding(
     Ok(matched_rows)
 }
 
-pub(super) fn rank_stored_embedding_matches(
+fn rank_stored_embedding_matches_with_remote_policy(
     conn: &Connection,
     query: &str,
     candidate_ids: &[i64],
     limit: usize,
+    allow_remote_embedding: bool,
 ) -> Result<Vec<i64>> {
     if limit == 0 || query.trim().is_empty() || candidate_ids.is_empty() {
         return Ok(Vec::new());
     }
-    let Some(query_embedding) = crate::retrieval::embedding::embed_query_if_enabled(query)? else {
+    let query_embedding = if allow_remote_embedding {
+        crate::retrieval::embedding::embed_query_if_enabled(query)?
+    } else {
+        crate::retrieval::embedding::embed_query_local_only_if_enabled(query)?
+    };
+    let Some(query_embedding) = query_embedding else {
         return Ok(Vec::new());
     };
     let profile = query_embedding.profile();

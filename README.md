@@ -39,8 +39,8 @@ external database.
   source-attributed SessionStart context bundle with a complete selection/drop
   audit, including redacted poisoning-gate drops. High-risk requests return
   only user-authored trusted memories and abstain when none survive. It requires
-  `schema_version: 1`; the shape is intentionally not yet a stable API
-  commitment.
+  `schema_version: 1`; its foreground query embeddings are local-only, and the
+  shape is intentionally not yet a stable API commitment.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression

@@ -8,7 +8,7 @@ use super::{item, request, session_start_plan};
 use crate::context_bundle::{execute, ChannelKind, ContextIntent, ExecutorInputs};
 
 /// Stable across processes and runs: same request + compiled policy.
-const EXPECTED_PLAN_HASH: &str = "09966ace02712d0e93ee6531dd3d773897f5ab3530b5b29a2dd245177636c925";
+const EXPECTED_PLAN_HASH: &str = "997a834168f6f85d53f091156fe500344e3f6df157bd1177e2fc1cb8655f2697";
 
 /// The plan's top-level key set is the contract boundary. Pinning it
 /// catches an added/removed/renamed field, which must be a deliberate

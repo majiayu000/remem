@@ -28,6 +28,26 @@ fn request(task: &str) -> ContextRequest {
     }
 }
 
+#[test]
+fn session_start_plan_hash_binds_effective_worktree_scope() {
+    let limits = ContextLimits::default();
+    let mut left = request("resume work");
+    left.worktree = Some("/repo/worktree-a".to_string());
+    let mut right = left.clone();
+    right.worktree = Some("/repo/worktree-b".to_string());
+
+    let left_plan = plan_session_start_with_limits(&left, &limits).unwrap();
+    let repeated = plan_session_start_with_limits(&left, &limits).unwrap();
+    let right_plan = plan_session_start_with_limits(&right, &limits).unwrap();
+
+    assert_eq!(left_plan.plan_hash, repeated.plan_hash);
+    assert_ne!(left_plan.plan_hash, right_plan.plan_hash);
+    assert!(left_plan
+        .reason_codes
+        .iter()
+        .any(|reason| reason.starts_with("sessionstart_scope_sha256:")));
+}
+
 fn enabled(plan: &RetrievalPlan) -> Vec<RetrievalChannel> {
     plan.enabled_channels()
 }

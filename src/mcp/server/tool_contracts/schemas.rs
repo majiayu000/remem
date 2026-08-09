@@ -92,7 +92,9 @@ fn validate<T: DeserializeOwned>(kind: OutputSchema, value: &Value) -> anyhow::R
         .with_context(|| format!("validate {kind:?} output DTO"))
 }
 
-fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(super) fn deserialize_required_nullable<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -100,9 +102,19 @@ where
     Option::<T>::deserialize(deserializer)
 }
 
-fn required_nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+pub(super) fn required_nullable_string_schema(
+    _: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
     schemars::json_schema!({
         "type": ["string", "null"]
+    })
+}
+
+pub(super) fn required_nullable_number_schema(
+    _: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": ["number", "null"]
     })
 }
 

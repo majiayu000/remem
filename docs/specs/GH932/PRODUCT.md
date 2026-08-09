@@ -44,6 +44,7 @@ context bundle.
 - An experimental MCP `context_bundle` tool accepts the versioned v1 request
   fields and returns the complete `ContextBundle` JSON contract. It reuses the
   DB-backed SessionStart compiler, performs no foreground LLM or network call,
+  disables remote query embeddings even when an API provider is configured,
   and publishes a closed MCP output schema while preserving the same JSON in
   the legacy text content field for older MCP clients.
 

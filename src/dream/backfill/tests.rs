@@ -448,6 +448,7 @@ fn injection_never_returns_quarantined_stock() -> Result<()> {
             10,
             weights,
             crate::context::InjectionRankSignalMode::PureRrf,
+            true,
         )?
         .iter()
         .map(|memory| memory.id)
@@ -470,6 +471,7 @@ fn injection_never_returns_quarantined_stock() -> Result<()> {
             10,
             weights,
             crate::context::InjectionRankSignalMode::PureRrf,
+            true,
         )?
         .iter()
         .map(|memory| memory.id)

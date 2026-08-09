@@ -54,6 +54,9 @@ src/mcp/
   limits object is carried in `reason_codes`, so loader-only limits such as
   candidate fetch caps also affect the final plan hash. The compiler passes
   the same resolved limits to the loader and never re-reads the environment.
+- SessionStart plans also carry a SHA-256 fingerprint of effective project,
+  branch, and worktree scope in `reason_codes`, so worktree-specific preference
+  loading cannot reuse an indistinguishable plan hash.
 - `plan_hash` = SHA-256 over the canonical serde JSON of the plan with an
   empty `plan_hash` field. No timestamps or randomness are hashed.
 
@@ -133,11 +136,14 @@ is the explicit rollback.
 - The tool publishes a closed typed `outputSchema`. Success keeps the historical
   single JSON text content and mirrors the same object into
   `structuredContent`, so clients that do not consume structured MCP output
-  continue to work.
+  continue to work. Nullable v1 fields remain required on the wire and must be
+  serialized explicitly as a value or `null`.
 - Candidate poisoning checks may quarantine unsafe persisted rows, matching the
   production SessionStart compiler. Tool annotations therefore do not claim
   read-only or idempotent behavior even though the compilation path performs no
-  foreground LLM or network call.
+  foreground LLM or network call. Query embeddings on this endpoint are
+  restricted to local/local-feature-hash providers; configured API providers
+  are skipped rather than contacted.
 - Rows removed by the poisoning gate remain in `ContextAudit` with
   `reason=poisoning_gate`, stable identity, channel, source, and validity only;
   their title and text are cleared before executor input and cannot reach the

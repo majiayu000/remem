@@ -34,6 +34,7 @@ pub(super) fn query_hybrid_context_memories(
     current_branch: Option<&str>,
     excluded_types: &[&str],
     limit: i64,
+    allow_remote_embedding: bool,
 ) -> Result<Vec<Memory>> {
     query_hybrid_context_memories_with_weights(
         conn,
@@ -43,6 +44,7 @@ pub(super) fn query_hybrid_context_memories(
         excluded_types,
         limit,
         SearchWeights::production(),
+        allow_remote_embedding,
     )
 }
 
@@ -61,6 +63,7 @@ pub(super) fn query_hybrid_context_memories_with_weights(
     excluded_types: &[&str],
     limit: i64,
     weights: SearchWeights,
+    allow_remote_embedding: bool,
 ) -> Result<Vec<Memory>> {
     query_hybrid_context_memories_with_rank_signal_mode(
         conn,
@@ -71,6 +74,7 @@ pub(super) fn query_hybrid_context_memories_with_weights(
         limit,
         weights,
         InjectionRankSignalMode::PureRrf,
+        allow_remote_embedding,
     )
 }
 
@@ -84,6 +88,7 @@ pub(crate) fn query_hybrid_context_memories_with_rank_signal_mode(
     limit: i64,
     weights: SearchWeights,
     rank_signal_mode: InjectionRankSignalMode,
+    allow_remote_embedding: bool,
 ) -> Result<Vec<Memory>> {
     weights.validate()?;
     if limit <= 0 || query.trim().is_empty() {
@@ -150,6 +155,7 @@ pub(crate) fn query_hybrid_context_memories_with_rank_signal_mode(
             current_branch,
             excluded_types,
             weights.max_vector_distance,
+            allow_remote_embedding,
         )?,
     );
 
@@ -524,11 +530,17 @@ fn query_local_vector_channel(
     current_branch: Option<&str>,
     excluded_types: &[&str],
     max_vector_distance: f32,
+    allow_remote_embedding: bool,
 ) -> Result<Vec<WeightedRankedHit>> {
     if !sqlite_table_available(conn, "memory_embeddings")? {
         return Ok(vec![]);
     }
-    let Some(query_embedding) = crate::retrieval::embedding::embed_query_if_enabled(query)? else {
+    let query_embedding = if allow_remote_embedding {
+        crate::retrieval::embedding::embed_query_if_enabled(query)?
+    } else {
+        crate::retrieval::embedding::embed_query_local_only_if_enabled(query)?
+    };
+    let Some(query_embedding) = query_embedding else {
         return Ok(vec![]);
     };
     let profile = query_embedding.profile();

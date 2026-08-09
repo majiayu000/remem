@@ -1,6 +1,10 @@
 use rmcp::schemars::{self, JsonSchema};
 use serde::Deserialize;
 
+use super::{
+    deserialize_required_nullable, required_nullable_number_schema, required_nullable_string_schema,
+};
+
 /// Closed output-only mirror of the experimental Context Bundle v1 wire
 /// contract. The runtime producer remains `context_bundle::ContextBundle`;
 /// deserializing into this mirror makes MCP schema drift fail loudly.
@@ -27,12 +31,20 @@ struct ContextItemOutput {
     title: String,
     text: String,
     source_kind: SourceKindOutput,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
     canonical_ref: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
     projection_ref: Option<String>,
     evidence_refs: Vec<String>,
     validity: ItemValidityOutput,
     trust: TrustClassOutput,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
     project: Option<String>,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
     branch: Option<String>,
 }
 
@@ -49,6 +61,8 @@ struct ContextAuditOutput {
     dropped_count: u32,
     token_estimate: u32,
     token_budget: u32,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_string_schema", required)]
     truncation_reason: Option<String>,
     entries: Vec<AuditEntryOutput>,
 }
@@ -62,6 +76,8 @@ struct AuditEntryOutput {
     validity: ItemValidityOutput,
     selected: bool,
     reason: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    #[schemars(schema_with = "required_nullable_number_schema", required)]
     relevance_score: Option<f64>,
     token_estimate: u32,
 }

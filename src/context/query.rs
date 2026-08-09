@@ -43,6 +43,41 @@ pub(super) fn load_context_data_with_policy(
     policy: &ContextPolicy,
     collect_diagnostics: bool,
 ) -> LoadedContext {
+    load_context_data_with_policy_and_remote_embedding(
+        conn,
+        project,
+        current_branch,
+        policy,
+        collect_diagnostics,
+        true,
+    )
+}
+
+pub(super) fn load_context_data_with_policy_local_only(
+    conn: &Connection,
+    project: &str,
+    current_branch: Option<&str>,
+    policy: &ContextPolicy,
+    collect_diagnostics: bool,
+) -> LoadedContext {
+    load_context_data_with_policy_and_remote_embedding(
+        conn,
+        project,
+        current_branch,
+        policy,
+        collect_diagnostics,
+        false,
+    )
+}
+
+fn load_context_data_with_policy_and_remote_embedding(
+    conn: &Connection,
+    project: &str,
+    current_branch: Option<&str>,
+    policy: &ContextPolicy,
+    collect_diagnostics: bool,
+    allow_remote_embedding: bool,
+) -> LoadedContext {
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let mut errors = Vec::new();
     let summaries = query_recent_summaries(conn, project, policy.limits.candidate_fetch_limit)
@@ -72,6 +107,7 @@ pub(super) fn load_context_data_with_policy(
         current_branch,
         policy,
         collect_diagnostics,
+        allow_remote_embedding,
         &commit_messages,
         &summaries,
         &workstreams,
@@ -216,6 +252,7 @@ fn load_project_memories(
     current_branch: Option<&str>,
     policy: &ContextPolicy,
     collect_diagnostics: bool,
+    allow_remote_embedding: bool,
     commit_messages: &[String],
     summaries: &[SessionSummaryBrief],
     workstreams: &[crate::workstream::WorkStream],
@@ -242,14 +279,16 @@ fn load_project_memories(
         workstreams,
     ) {
         fact_label_query = Some(implicit_query.clone());
-        match query_hybrid_context_memories(
+        let retrieved = query_hybrid_context_memories(
             conn,
             project,
             &implicit_query,
             current_branch,
             excluded_types,
             policy.limits.candidate_fetch_limit as i64,
-        ) {
+            allow_remote_embedding,
+        );
+        match retrieved {
             Ok(retrieved) => {
                 if retrieved.is_empty() && has_task_signals {
                     task_abstention_query = Some(implicit_query);
@@ -300,6 +339,7 @@ fn load_project_memories(
                 task_query,
                 recent,
                 policy.limits.candidate_fetch_limit,
+                allow_remote_embedding,
             )
             .unwrap_or_else(|e| {
                 let message =
