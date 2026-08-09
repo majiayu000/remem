@@ -16,8 +16,10 @@ Remem gives Codex durable project memory through the `remem` MCP server. Use it 
   one policy-bounded, source-attributed SessionStart bundle plus its complete
   selection/drop audit. Its wire shape is versioned but not yet stable, and the
   poisoning safety check may quarantine unsafe persisted rows while retaining
-  a redacted audit identity. Canonical preference deduplication and limit drops
-  also retain their stable identity and exact audit reason. Use `risk: high`
+  a redacted audit identity. Poisoned session/workstream text is removed before
+  implicit retrieval query construction. Canonical memory, session, and
+  preference preselection drops retain their stable identity and exact audit
+  reason. Use `risk: high`
   only when trusted user-authored
   memory is sufficient; the compiler abstains if no trusted item survives. The
   foreground compiler never calls a configured remote embedding provider and

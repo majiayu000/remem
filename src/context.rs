@@ -28,6 +28,7 @@ mod render_error;
 mod render_inputs;
 mod sections;
 mod style;
+mod summary_query;
 
 use std::ffi::OsString;
 

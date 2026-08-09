@@ -90,6 +90,7 @@ pub(crate) fn compile_session_start_for_renderer(
     request: &ContextRequest,
     limits: &ContextLimits,
     candidates: Vec<ContextItem>,
+    poisoning_drops: Vec<ContextItem>,
     preselection_drops: Vec<super::executor::PreselectionDrop>,
     enrichment_available: bool,
 ) -> Result<SessionStartCompile> {
@@ -98,7 +99,7 @@ pub(crate) fn compile_session_start_for_renderer(
         &compiled,
         &ExecutorInputs {
             candidates,
-            poisoning_drops: Vec::new(),
+            poisoning_drops,
             preselection_drops,
             enrichment_available,
         },

@@ -37,8 +37,9 @@ external database.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
 - The experimental MCP `context_bundle` tool compiles a versioned, budgeted,
   source-attributed SessionStart context bundle with a complete selection/drop
-  audit, including redacted poisoning-gate drops and canonical preference
-  deduplication/limit reasons. High-risk requests return
+  audit, including redacted poisoning-gate drops and canonical memory, session,
+  and preference preselection reasons. Poisoned session/workstream text is
+  rejected before it can steer implicit retrieval. High-risk requests return
   only user-authored trusted memories and abstain when none survive. It requires
   `schema_version: 1`; its foreground query embeddings are local-only, ambient
   reranking is disabled, and the shape is intentionally not yet a stable API

@@ -17,6 +17,7 @@ src/retrieval_router/
   planner.rs               deterministic unified RetrievalPlan + plan hash
 src/context/
   bundle_candidates.rs     same-snapshot SessionStart candidate adapter
+  summary_query.rs         pre-query poisoning + summary preselection snapshot
   render.rs                production consumer and exact bundle sealing
 src/doctor/
   context_compiler.rs      payload-free compiler capability/degraded check
@@ -150,10 +151,13 @@ is the explicit rollback.
 - Rows removed by the poisoning gate remain in `ContextAudit` with
   `reason=poisoning_gate`, stable identity, channel, source, and validity only;
   their title and text are cleared before executor input and cannot reach the
-  returned JSON.
-- The canonical preference selector returns every fetched-but-omitted identity
-  alongside `claude_md_dedup`, `preference_similarity_dedup`,
-  `project_topic_override`, or `preference_char_limit`. Both DB-backed MCP and
+  returned JSON. Summary and workstream gates run before implicit retrieval
+  query construction, so rejected payloads cannot influence memory recall.
+- Canonical memory and session selectors carry fetched-but-omitted rows from
+  cluster/session deduplication, self-diagnostic limits, stale fallback, and
+  item limits on the loaded snapshot. The preference selector does the same
+  for `claude_md_dedup`, `preference_similarity_dedup`,
+  `project_topic_override`, and `preference_char_limit`. Both DB-backed MCP and
   production-renderer compilers pass these as audit-only preselection drops.
 
 ## Tests
@@ -165,7 +169,7 @@ is the explicit rollback.
 - Scope/trust/validity drops with exact reasons.
 - High-risk trust floor and low-evidence abstention, persisted user-authored
   trust mapping, redacted poisoning-gate audit coverage, and canonical
-  preference preselection-drop coverage.
+  memory/session/preference preselection-drop coverage.
 - Degraded modes: `canonical_only` and `blocked`.
 - Schema snapshots: serialized plan and bundle JSON compared against
   fixed `serde_json::json!` literals.

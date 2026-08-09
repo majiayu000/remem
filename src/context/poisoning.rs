@@ -25,7 +25,7 @@ pub(super) fn drop_unacknowledged_poisoned_context(
     conn: &Connection,
     loaded: &mut LoadedContext,
 ) -> PoisoningDrops {
-    let mut drops = PoisoningDrops::default();
+    let mut drops = std::mem::take(&mut loaded.poisoning_drops);
 
     let memories = std::mem::take(&mut loaded.memories);
     for memory in memories {
@@ -83,9 +83,24 @@ pub(super) fn drop_unacknowledged_poisoned_context(
     }
 
     let workstreams = std::mem::take(&mut loaded.workstreams);
+    let (safe_workstreams, poisoned_workstreams) = partition_workstreams(workstreams);
+    loaded.workstreams = safe_workstreams;
+    drops.workstreams.extend(poisoned_workstreams);
+
+    drops
+}
+
+pub(super) fn partition_workstreams(
+    workstreams: Vec<crate::workstream::WorkStream>,
+) -> (
+    Vec<crate::workstream::WorkStream>,
+    Vec<crate::workstream::WorkStream>,
+) {
+    let mut safe = Vec::new();
+    let mut poisoned = Vec::new();
     for workstream in workstreams {
         match scan_instruction_pattern(&workstream_haystack(&workstream)) {
-            None => loaded.workstreams.push(workstream),
+            None => safe.push(workstream),
             Some(pattern_match) => {
                 crate::log::error(
                     "context-poisoning",
@@ -94,12 +109,11 @@ pub(super) fn drop_unacknowledged_poisoned_context(
                         workstream.id, pattern_match.pattern_id, pattern_match.pattern_set_version
                     ),
                 );
-                drops.workstreams.push(workstream);
+                poisoned.push(workstream);
             }
         }
     }
-
-    drops
+    (safe, poisoned)
 }
 
 fn workstream_haystack(workstream: &crate::workstream::WorkStream) -> String {

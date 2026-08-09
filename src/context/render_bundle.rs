@@ -50,7 +50,7 @@ pub(super) fn compile_for_renderer(
     preference_details: &crate::memory::preference::PreferenceRenderDetails,
     core_ids: &HashSet<i64>,
 ) -> Result<(ContextBundle, SessionStartRelevancePlan)> {
-    let (candidates, preselection_drops) =
+    let (candidates, poisoning_drops, preselection_drops) =
         super::bundle_candidates::session_start_candidates_from_loaded(
             loaded,
             &request.project,
@@ -75,6 +75,7 @@ pub(super) fn compile_for_renderer(
         &bundle_request,
         &policy.limits,
         candidates,
+        poisoning_drops,
         preselection_drops,
         true,
     )?;

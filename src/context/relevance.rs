@@ -510,6 +510,8 @@ mod tests {
             ],
             summaries: Vec::new(),
             workstreams: Vec::new(),
+            preselection_drops: Vec::new(),
+            poisoning_drops: Default::default(),
             relevance_query: Some("alpha beta".to_string()),
             memory_abstained: false,
             errors: Vec::new(),

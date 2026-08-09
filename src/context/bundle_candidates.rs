@@ -26,7 +26,7 @@ use super::poisoning::PoisoningDrops;
 use super::policy::{ContextLimits, ContextPolicy};
 use super::query::load_context_data_with_policy_local_only;
 use super::relevance::{memory_stable_key, session_stable_key};
-use super::types::{LoadedContext, SessionSummaryBrief};
+use super::types::{ContextPreselectionItem, LoadedContext, SessionSummaryBrief};
 
 /// Memory status values that must never enter a bundle as trusted.
 const STATUS_QUARANTINED: &str = "quarantined";
@@ -95,10 +95,12 @@ pub(crate) fn load_session_start_candidates_with_limits(
     );
     let core_ids = core.ids.into_iter().collect::<HashSet<_>>();
     let mut items = candidates_from_loaded(&loaded, project, &core_ids);
-    let (preferences, preference_poisoning_drops, preselection_drops) =
+    let (preferences, preference_poisoning_drops, preference_preselection_drops) =
         preference_candidates(conn, project, cwd, &policy)?;
     items.extend(preferences);
     apply_persisted_memory_trust(conn, &mut items)?;
+    let mut preselection_drops = context_preselection_drops(&loaded, project);
+    preselection_drops.extend(preference_preselection_drops);
     Ok(LoadedBundleCandidates {
         candidates: items,
         poisoning_drops: poisoning_drop_candidates(
@@ -138,7 +140,7 @@ fn apply_persisted_memory_trust(conn: &Connection, items: &mut [ContextItem]) ->
     Ok(())
 }
 
-fn poisoning_drop_candidates(
+pub(super) fn poisoning_drop_candidates(
     drops: PoisoningDrops,
     preference_drops: Vec<Memory>,
     project: &str,
@@ -194,7 +196,7 @@ pub(super) fn session_start_candidates_from_loaded(
     project: &str,
     preference_details: &crate::memory::preference::PreferenceRenderDetails,
     core_ids: &HashSet<i64>,
-) -> Result<(Vec<ContextItem>, Vec<PreselectionDrop>)> {
+) -> Result<(Vec<ContextItem>, Vec<ContextItem>, Vec<PreselectionDrop>)> {
     if !loaded.errors.is_empty() {
         bail!(
             "canonical context load failed for sections [{}]",
@@ -211,10 +213,36 @@ pub(super) fn session_start_candidates_from_loaded(
         &preference_details.rendered_memories,
         project,
     ));
-    Ok((
-        items,
-        preference_preselection_drops(preference_details, project),
-    ))
+    let poisoning_drops = poisoning_drop_candidates(
+        loaded.poisoning_drops.clone(),
+        preference_details.poisoning_drops.clone(),
+        project,
+    );
+    let mut preselection_drops = context_preselection_drops(loaded, project);
+    preselection_drops.extend(preference_preselection_drops(preference_details, project));
+    Ok((items, poisoning_drops, preselection_drops))
+}
+
+fn context_preselection_drops(loaded: &LoadedContext, project: &str) -> Vec<PreselectionDrop> {
+    loaded
+        .preselection_drops
+        .iter()
+        .map(|drop| {
+            let item = match &drop.item {
+                ContextPreselectionItem::Memory(memory) => {
+                    let channel = MemoryType::parse(&memory.memory_type)
+                        .filter(|memory_type| memory_type.is_core())
+                        .map_or(ChannelKind::MemoryIndex, |_| ChannelKind::Core);
+                    bundle_memory_item(memory, channel, None, project)
+                }
+                ContextPreselectionItem::Summary(summary) => summary_item(summary, project),
+            };
+            PreselectionDrop {
+                item,
+                reason: drop.reason.to_string(),
+            }
+        })
+        .collect()
 }
 
 /// Preferences never reach `LoadedContext`: SessionStart selects and
