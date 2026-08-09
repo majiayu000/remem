@@ -249,6 +249,16 @@ pub(in crate::context) fn record_context_injection_items(
     decision: &ContextGateDecision,
     rendered_items: &[ContextAuditItem],
 ) -> Result<()> {
+    record_context_injection(conn, invocation, decision, rendered_items, None).map(|_| ())
+}
+
+pub(in crate::context) fn record_context_injection(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    decision: &ContextGateDecision,
+    rendered_items: &[ContextAuditItem],
+    context_bundle: Option<&crate::context_bundle::ContextBundle>,
+) -> Result<String> {
     let now = chrono::Utc::now().timestamp();
     let key = decision
         .key
@@ -269,41 +279,53 @@ pub(in crate::context) fn record_context_injection_items(
         context_hash.unwrap_or(decision.reason)
     );
 
-    let mut statement = conn.prepare(
-        "INSERT INTO context_injection_items
-         (injection_run_id, host, project, session_id, injection_key, hook_source,
-          context_hash, output_mode, decision, item_kind, item_id, memory_id, channel,
-          score, render_order, status, drop_reason, title, provenance, staleness,
-          injected_at_epoch)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                 ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+    let transaction = conn.unchecked_transaction()?;
+    let existing_items: i64 = transaction.query_row(
+        "SELECT COUNT(*) FROM context_injection_items WHERE injection_run_id = ?1",
+        [&run_id],
+        |row| row.get(0),
     )?;
-    for item in finalize_items_for_decision(decision, rendered_items) {
-        statement.execute(params![
-            run_id,
-            invocation.host.as_env_value(),
-            invocation.project,
-            invocation.session_id,
-            key,
-            invocation.source,
-            context_hash,
-            output_mode,
-            decision.reason,
-            item.item_kind,
-            item.item_id,
-            item.memory_id,
-            item.channel,
-            item.score,
-            item.render_order,
-            item.status,
-            item.drop_reason,
-            item.title,
-            item.provenance,
-            item.staleness,
-            now,
-        ])?;
+    if existing_items == 0 {
+        let mut statement = transaction.prepare(
+            "INSERT INTO context_injection_items
+             (injection_run_id, host, project, session_id, injection_key, hook_source,
+              context_hash, output_mode, decision, item_kind, item_id, memory_id, channel,
+              score, render_order, status, drop_reason, title, provenance, staleness,
+              injected_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                     ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+        )?;
+        for item in finalize_items_for_decision(decision, rendered_items) {
+            statement.execute(params![
+                &run_id,
+                invocation.host.as_env_value(),
+                invocation.project,
+                invocation.session_id,
+                key,
+                invocation.source,
+                context_hash,
+                output_mode,
+                decision.reason,
+                item.item_kind,
+                item.item_id,
+                item.memory_id,
+                item.channel,
+                item.score,
+                item.render_order,
+                item.status,
+                item.drop_reason,
+                item.title,
+                item.provenance,
+                item.staleness,
+                now,
+            ])?;
+        }
     }
-    Ok(())
+    if let Some(bundle) = context_bundle {
+        crate::context_bundle::persist_context_bundle_audit(&transaction, &run_id, bundle, now)?;
+    }
+    transaction.commit()?;
+    Ok(run_id)
 }
 
 pub(in crate::context) fn build_context_audit_items(
@@ -584,6 +606,10 @@ fn finalize_items_for_decision(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::context::host::HostKind;
+    use crate::context_bundle::{
+        ContextAudit, ContextBundle, DegradedMode, CONTEXT_BUNDLE_SCHEMA_VERSION,
+    };
 
     fn injected_item(title: &str) -> ContextAuditItem {
         ContextAuditItem {
@@ -650,5 +676,69 @@ mod tests {
 
         assert_eq!(finalized[0].status, "injected");
         assert_eq!(finalized[0].drop_reason, None);
+    }
+
+    #[test]
+    fn bundle_audit_failure_rolls_back_item_rows_atomically() -> Result<()> {
+        let conn = rusqlite::Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        let plan_hash = "a".repeat(64);
+        let invalid_bundle = ContextBundle {
+            schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
+            plan_hash: plan_hash.clone(),
+            degraded_mode: DegradedMode::Full,
+            preferences: Vec::new(),
+            failure_lessons: Vec::new(),
+            current_truth: Vec::new(),
+            workstreams: Vec::new(),
+            memory_index: Vec::new(),
+            recent_sessions: Vec::new(),
+            audit: ContextAudit {
+                schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
+                policy_version: "retrieval_router_v2".to_string(),
+                relevance_policy_version: "sessionstart_significant_token_v1".to_string(),
+                plan_hash,
+                degraded_mode: DegradedMode::Full,
+                candidates_considered: 0,
+                selected_count: 0,
+                dropped_count: 0,
+                token_estimate: 0,
+                token_budget: 0,
+                truncation_reason: None,
+                entries: Vec::new(),
+            },
+        };
+        let invocation = ContextInvocation {
+            cwd: "/repo".to_string(),
+            project: "/repo".to_string(),
+            session_id: Some("atomic-audit".to_string()),
+            transcript_path: None,
+            source: Some("startup".to_string()),
+            host: HostKind::CodexCli,
+            use_colors: false,
+            debug: false,
+            force: true,
+            gate_mode: Some("off".to_string()),
+        };
+
+        record_context_injection(
+            &conn,
+            &invocation,
+            &decision(ContextGateAction::EmittedFull, "rendered payload"),
+            &[injected_item("memory title")],
+            Some(&invalid_bundle),
+        )
+        .expect_err("invalid bundle audit must fail the atomic write");
+
+        let item_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM context_injection_items", [], |row| {
+                row.get(0)
+            })?;
+        let audit_count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM context_bundle_audits", [], |row| {
+                row.get(0)
+            })?;
+        assert_eq!((item_count, audit_count), (0, 0));
+        Ok(())
     }
 }

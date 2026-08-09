@@ -46,6 +46,11 @@ external database.
   instead of ambient overrides, and the effective local embedding
   provider/model/dimensions are fingerprinted into `plan_hash`. The shape is
   intentionally not yet a stable API commitment.
+- Bundle-backed SessionStart emissions persist a payload-free, hash-verified
+  audit linked to the existing per-item injection rows. The durable record
+  contains plan/policy/schema versions, selection and token-budget aggregates,
+  degraded/truncation state, and canonical audit reason metadata; it never
+  stores memory titles, memory bodies, or rendered hook output.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression
@@ -323,6 +328,12 @@ exact character limits and seals the bundle to the final identities, keeping
 host-visible output byte-compatible. Operators can temporarily restore the
 legacy relevance path with `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy`; unset or
 `bundle` uses the bundle-backed path.
+
+Each emitted bundle is stored atomically with its `context_injection_items`
+rows under one `injection_run_id`. Identical retries are idempotent; conflicting
+hashes and later audit tampering fail verification. A persistence failure does
+not hide hook output, but is recorded at error level so missing production
+audit evidence is diagnosable rather than silent.
 
 `remem doctor` reports this production consumer as `Context compiler` without
 loading or printing memory payloads. Bundle mode is healthy, the explicit

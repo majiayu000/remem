@@ -69,6 +69,7 @@ const IMPLEMENTATION_INPUTS: &[&str] = &[
     "src/migrate/schema_drift/invariants/v078.rs",
     "src/migrate/schema_drift/invariants/v079.rs",
     "src/migrate/schema_drift/invariants/v080.rs",
+    "src/migrate/schema_drift/invariants/v081.rs",
     "src/migrate/state.rs",
     "src/migrate/transition.rs",
     "src/migrate/types.rs",
@@ -232,6 +233,7 @@ const MIGRATION_SQL_INPUTS: &[&str] = &[
     "src/migrations/v078_event_capture_projection.sql",
     "src/migrations/v079_candidate_spo_facts.sql",
     "src/migrations/v080_candidate_outcome.sql",
+    "src/migrations/v081_context_bundle_audits.sql",
 ];
 
 #[derive(Debug, Clone, Serialize)]

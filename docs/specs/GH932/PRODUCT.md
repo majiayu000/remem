@@ -59,6 +59,20 @@ context bundle.
   provider, model artifact identity, and dimensions into the plan hash,
   and publishes a closed MCP output schema while preserving the same JSON in
   the legacy text content field for older MCP clients.
+- Every healthy Bundle-backed SessionStart emission persists one append-only
+  audit row linked to the existing per-item audit rows by
+  `injection_run_id`. The row contains the bundle/plan schema versions,
+  router and relevance-policy versions, plan hash, degraded mode, aggregate
+  selection and token-budget fields, truncation reason, and a SHA-256 hash of
+  the payload-free canonical `ContextAudit` JSON. The canonical audit JSON is
+  retained so benchmark verifiers can recompute the hash; it contains only
+  stable identities, attribution, scores, reason codes, and counts, never
+  memory title or body text.
+- SessionStart item rows and the bundle audit commit atomically. Retrying the
+  same `injection_run_id` is idempotent only when the canonical audit hash is
+  identical; a conflicting retry or later hash/summary mismatch is reported
+  as integrity failure. Persistence failures remain fail-open for hook output
+  but are logged at error level with the run identity and cause.
 
 ## v1 Non-Goals (deferred follow-up work)
 
@@ -68,10 +82,11 @@ context bundle.
   also disables a globally configured reranker rather than applying an
   unplanned top-k cut.
 - No change to the existing SessionStart rendered output or gating.
-- No benchmark artifact yet; plan/audit hash persistence remains a follow-up
-  item on #932.
-- The doctor capability check does not expose memory payloads or persist
-  per-session audit entries. Durable audit history remains a later phase.
+- No benchmark artifact consumer yet. This phase provides the durable
+  production SessionStart plan/audit contract that coding-bench will consume
+  in the next #932/#931/#934 implementation PR.
+- The doctor capability check does not expose memory payloads. Durable audit
+  rows are an internal production/benchmark surface, not a new doctor payload.
 - Load-error fail-open rendering remains on the compatibility path so existing
   user-visible diagnostics are not hidden behind a second failure. Healthy
   loads use the bundle path; the standalone DB compiler still represents an
@@ -97,3 +112,6 @@ context bundle.
 - MCP `context_bundle` validates request schema/role/risk/budget, returns the v1
   bundle shape through both legacy text and `structuredContent`, and has frozen
   input/output compatibility tests.
+- A persisted audit can be loaded only after its canonical JSON hash and
+  denormalized summary fields verify; tampering fails closed. Retention cleanup
+  removes expired bundle-audit rows without mutating surviving rows.

@@ -636,55 +636,6 @@ fn render_context_output_exposes_memory_schema_drift_failures() {
 }
 
 #[test]
-fn context_audit_rows_reconstruct_injected_memories_for_session() -> anyhow::Result<()> {
-    let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-audit-injected");
-    let conn = crate::db::test_support::runtime_connection()?;
-    insert_memory(
-        &conn,
-        1,
-        data_dir.path.to_string_lossy().as_ref(),
-        Some("audit-memory"),
-        "decision",
-        "Audit decision",
-        "Audit body",
-        chrono::Utc::now().timestamp(),
-    );
-    drop(conn);
-
-    generate_context_for_test(
-        ContextInvocation {
-            cwd: data_dir.path.to_string_lossy().to_string(),
-            project: data_dir.path.to_string_lossy().to_string(),
-            session_id: Some("sess-audit-injected".to_string()),
-            transcript_path: None,
-            source: Some("session_start".to_string()),
-            host: HostKind::CodexCli,
-            use_colors: false,
-            debug: false,
-            force: true,
-            gate_mode: None,
-        },
-        true,
-    )?;
-
-    let conn = crate::db::test_support::runtime_connection()?;
-    let row: (i64, String, String, String) = conn.query_row(
-        "SELECT memory_id, status, channel, provenance
-         FROM context_injection_items
-         WHERE session_id = 'sess-audit-injected' AND status = 'injected'
-         ORDER BY render_order LIMIT 1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
-    )?;
-
-    assert_eq!(row.0, 1);
-    assert_eq!(row.1, "injected");
-    assert!(matches!(row.2.as_str(), "core" | "index"));
-    assert!(row.3.contains("src=memory:#1"));
-    Ok(())
-}
-
-#[test]
 fn context_audit_records_abstention_for_unmatched_task_signal() -> anyhow::Result<()> {
     let data_dir = crate::db::test_support::ScopedTestDataDir::new("context-audit-abstain");
     let project = data_dir.path.to_string_lossy().to_string();

@@ -24,6 +24,7 @@ mod audit;
 mod compile;
 mod domain;
 mod executor;
+pub(crate) mod persistence;
 mod policy;
 #[cfg(test)]
 mod tests;
@@ -36,4 +37,5 @@ pub use domain::{
     SectionBudgets, SourceKind, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 pub use executor::{blocked_before_load, execute, ExecutorInputs, PreselectionDrop};
+pub(crate) use persistence::{cleanup_persisted_audits_before, persist_context_bundle_audit};
 pub(crate) use policy::{section_budgets, section_budgets_from_limits, validate_request};

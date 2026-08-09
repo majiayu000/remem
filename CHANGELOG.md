@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.65` for GH-932: Bundle-backed SessionStart
+  emissions now atomically persist a payload-free canonical `ContextAudit`
+  beside the existing item-level injection rows. The append-only v081 record
+  carries schema/policy versions, plan and audit SHA-256 hashes, degraded and
+  truncation state, counts, and token budget/estimate under one
+  `injection_run_id`; verified reads detect hash or summary tampering,
+  identical retries are idempotent, retention cleanup is bounded, and write
+  failures are error-level diagnostics without hiding hook output.
 - Staged source version `0.6.64` for GH-932: the experimental MCP
   `context_bundle` tool now accepts a closed, versioned v1 request and returns
   the DB-backed SessionStart `ContextBundle` with complete selection/drop audit
