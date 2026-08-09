@@ -24,6 +24,8 @@ mod runtime_config_check;
 mod schema;
 #[cfg(test)]
 mod tests;
+mod truth;
 mod types;
 
 pub(crate) use report::{run_doctor, DoctorOptions};
+pub(crate) use truth::{run_truth_doctor, TruthDoctorOptions};

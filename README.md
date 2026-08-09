@@ -126,6 +126,28 @@ remem status
 remem search "last decision"
 ```
 
+For a focused, read-only view of the CurrentTruth projection, run:
+
+```bash
+remem doctor truth --cwd .
+remem doctor truth --cwd . --branch main --as-of-epoch 1735689600 --json
+```
+
+The diagnostic summarizes current results, surfaced conflicts and abstentions,
+supersedes links, non-current or dangling claim references, and the explicit
+stored-status to lifecycle mapping. It does not print claim text and never
+migrates or writes the database. `--project` accepts an exact stored project key;
+otherwise `--cwd` (or the current directory) is normalized to the project key.
+`--subject` accepts an exact memory topic key, a bare user-claim key, or its
+explicit `type:key` form. Warnings exit with status 1, including in quiet mode.
+The selector also scopes lifecycle counts; object kinds without a matching
+subject identity are omitted from a subject-focused report.
+When `--as-of-epoch` is omitted, the report samples one effective epoch,
+returns it as `as_of_epoch`, and uses it for every projection and diagnostic
+query in the same read snapshot. Every explicit historical cutoff is reported
+as unreconstructable and exits with a warning until versioned lifecycle
+history can prove in-place status changes.
+
 For Codex CLI, `remem install` creates or updates:
 
 - `~/.remem/.key` and the encrypted `~/.remem/remem.db`

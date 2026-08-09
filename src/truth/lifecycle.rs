@@ -79,7 +79,8 @@ pub fn memory_lifecycle(status: &str) -> Lifecycle {
 
 /// `observations.status` -> lifecycle.
 ///
-/// Writers today produce: `active`, `stale`, `compressed`.
+/// Writers today produce: `active`, `stale`, `compressed`,
+/// `poisoning_quarantined`.
 pub fn observation_lifecycle(status: &str) -> Lifecycle {
     match status {
         "active" => lifecycle(
@@ -100,6 +101,12 @@ pub fn observation_lifecycle(status: &str) -> Lifecycle {
             ValidityState::Current,
             RetentionState::Archived,
             Visibility::Visible,
+        ),
+        "poisoning_quarantined" => lifecycle(
+            PublicationState::Candidate,
+            ValidityState::Unknown,
+            RetentionState::Live,
+            Visibility::Suppressed,
         ),
         _ => UNKNOWN_STATUS,
     }
@@ -161,7 +168,8 @@ pub fn user_claim_lifecycle(status: &str) -> Lifecycle {
 /// `memory_candidates.review_status` -> lifecycle.
 ///
 /// Writers today produce: `pending_review`, `quarantined`, `deferred`,
-/// `failed`, `discarded`, `auto_promoted`, `approved`, `accepted`, `edited`.
+/// `failed`, `discarded`, `auto_promoted`, `approved`, `accepted`, `edited`,
+/// `noop`.
 /// Candidates are never claim sources in Phase A; this mapping exists so the
 /// review queue shares the same lifecycle language.
 pub fn candidate_lifecycle(review_status: &str) -> Lifecycle {
@@ -185,7 +193,7 @@ pub fn candidate_lifecycle(review_status: &str) -> Lifecycle {
             RetentionState::Live,
             Visibility::Visible,
         ),
-        "approved" | "accepted" | "edited" => lifecycle(
+        "approved" | "accepted" | "edited" | "noop" => lifecycle(
             PublicationState::Reviewed,
             ValidityState::Current,
             RetentionState::Live,
@@ -259,6 +267,10 @@ mod tests {
             (
                 "compressed",
                 (P::Active, V::Current, R::Archived, Vis::Visible),
+            ),
+            (
+                "poisoning_quarantined",
+                (P::Candidate, V::Unknown, R::Live, Vis::Suppressed),
             ),
         ];
         for (status, expected) in cases {
@@ -337,6 +349,7 @@ mod tests {
             ("approved", (P::Reviewed, V::Current, R::Live, Vis::Visible)),
             ("accepted", (P::Reviewed, V::Current, R::Live, Vis::Visible)),
             ("edited", (P::Reviewed, V::Current, R::Live, Vis::Visible)),
+            ("noop", (P::Reviewed, V::Current, R::Live, Vis::Visible)),
         ];
         for (status, expected) in cases {
             assert_eq!(

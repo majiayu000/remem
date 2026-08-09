@@ -23,6 +23,42 @@ No projection query may write/migrate/call external systems/change Context Bundl
 The v2 migration is Unix-only and `operator_only`: plan fsyncs a nonce-bound preparation journal before the sole backup; restart adopts only exact `backup_ready` output or removes exact owned temp. Apply writes `approved`; a pure full rebuild validates before start and repeats under the write lock; started cannot retire and only exact-resumes/completes. Windows remains on v1 and plan/apply fail typed before side effects.
 Atomic route/lifecycle instrumentation and duplicate timestamp preservation are the only added writer scope; split `src/truth/tests.rs` before v2 tests, and keep every source file below 800 lines.
 
+## Shipped v1 Diagnostic Consumer
+
+`remem doctor truth` is the first production consumer of the released v1 read
+model. `src/doctor/truth.rs` opens `open_db_read_only_current`, projects exact
+project plus repo-owner claims, and emits only counts and canonical references:
+it never includes claim text. The focused surface accepts project/cwd, branch,
+as-of, and subject selectors, reports lifecycle mappings, explicit supersedes
+links, contradictions, abstentions, and non-current/dangling references, and
+asserts SELECT-only behavior in regression tests. Relationship summaries use
+the projection's effective-time boundary; user-claim subjects accept bare keys
+or explicit `type:key` keys, quarantined observations map to suppressed
+visibility, and warning reports exit 1 even in quiet mode. Lifecycle summaries
+exclude objects created after an explicit as-of epoch. Graph `supersedes`
+follows the graph contract's current-to-old direction (unlike the old-to-new
+`memory_edges` writer), and relation diagnostics include an edge whenever the
+projection admits either scoped endpoint, including cross-project edges. The
+same subject predicate scopes memory, candidate, user-claim, and relation
+lifecycle counts; observations have no selector-addressable subject identity
+and are omitted from subject-focused lifecycle summaries. Reference checks
+validate nullable `memory_edges` endpoints while preserving the intentional
+candidate-backed one-ended `derived_from` form; trusted graph `duplicates`
+remain ordinary two-ended support relations and never receive a historical
+endpoint exemption. Missing, self-referential, and cross-owner user-claim
+replacement refs also warn. Every explicit historical cutoff reports
+`unreconstructable_historical_truth` rather than presenting unversioned current
+row state as historical truth. These changes are a v1 contract correction
+before its first production consumer, so the consumer
+retains `projection_version=1`; version 2 remains reserved for the approved
+0.7 breaking contract below. The report holds one read transaction across all
+projection and diagnostic queries, samples one effective reference epoch for
+that transaction, and returns that epoch even when the caller omitted the
+selector. Reference checks apply the same creation and validity windows as the
+projection, while normal archival or expiry of historical replacement
+endpoints does not create a false warning. This consumer does not claim any
+pending v2 behavior or authorize the v2 migration or cutover.
+
 ## Public v2 Types
 
 All enums serialize with snake_case. `TruthScope` is internally tagged with

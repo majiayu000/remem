@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.61` for GH-933: `remem doctor truth` is the first
+  production consumer of the CurrentTruth read model. It reports scoped
+  lifecycle mappings, conflicts, abstentions, supersedes links, and invalid
+  claim references through a current-schema read-only connection without
+  printing claim text.
 - Staged source version `0.6.60` for GH-942: summary-derived candidates now
   bind each claim to the strongest captured event that actually supports it
   before deriving trust or persisting evidence. An unrelated low-trust
