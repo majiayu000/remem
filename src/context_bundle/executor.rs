@@ -35,7 +35,6 @@ use super::policy::{
 pub struct ExecutorInputs {
     pub candidates: Vec<ContextItem>,
     pub enrichment_available: bool,
-    pub budget_enforcement: BudgetEnforcement,
 }
 
 /// SessionStart's compatibility renderer owns exact character and item
@@ -43,7 +42,7 @@ pub struct ExecutorInputs {
 /// renderer integration may defer those final budget decisions and seal the
 /// bundle after byte-compatible rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BudgetEnforcement {
+pub(crate) enum BudgetEnforcement {
     Strict,
     DeferToRenderer,
 }
@@ -59,10 +58,14 @@ pub(crate) struct ExecutionTrace {
 /// An invalid plan (schema/policy/scope) produces a `blocked` bundle whose
 /// audit drops every candidate; it never partially executes.
 pub fn execute(plan: &RetrievalPlan, inputs: &ExecutorInputs) -> ContextBundle {
-    execute_with_trace(plan, inputs).bundle
+    execute_with_trace(plan, inputs, BudgetEnforcement::Strict).bundle
 }
 
-pub(crate) fn execute_with_trace(plan: &RetrievalPlan, inputs: &ExecutorInputs) -> ExecutionTrace {
+pub(crate) fn execute_with_trace(
+    plan: &RetrievalPlan,
+    inputs: &ExecutorInputs,
+    budget_enforcement: BudgetEnforcement,
+) -> ExecutionTrace {
     if let Err(error) = validate_plan(plan) {
         return ExecutionTrace {
             bundle: blocked_bundle(plan, inputs, &error.to_string()),
@@ -99,7 +102,7 @@ pub(crate) fn execute_with_trace(plan: &RetrievalPlan, inputs: &ExecutorInputs) 
     }
 
     let mut bundle = empty_bundle(plan, degraded_mode);
-    match inputs.budget_enforcement {
+    match budget_enforcement {
         BudgetEnforcement::Strict => {
             apply_budgets(plan, degraded_mode, &survivors, &mut bundle, &mut audit)
         }

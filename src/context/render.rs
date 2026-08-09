@@ -486,7 +486,9 @@ pub(in crate::context) fn render_context_output_from_inputs(
 
     let section_start = Instant::now();
     let before = char_len(&output);
+    let preference_output_start = before;
     output.push_str(&preference_output);
+    let preference_item_ends = preference_details.absolute_item_end_chars(preference_output_start);
     stats.preferences = SectionRenderStats {
         count: preference_summary.rendered,
         chars: char_len(&output).saturating_sub(before),
@@ -520,11 +522,10 @@ pub(in crate::context) fn render_context_output_from_inputs(
     let mut context_bundle = None;
     let relevance_plan = if use_context_bundle && !has_load_errors {
         let (bundle, relevance_plan) = super::render_bundle::compile_for_renderer(
-            conn,
             &loaded,
             request,
             &policy,
-            &preference_details.rendered_ids,
+            &preference_details.rendered_memories,
             &core_ids,
         )?;
         context_bundle = Some(bundle);
@@ -675,6 +676,8 @@ pub(in crate::context) fn render_context_output_from_inputs(
         .collect::<Vec<_>>();
     let core_selected_ids = stats.core_ids.clone();
     let bounds = RenderedIdentityBounds {
+        preference_ids: &preference_details.rendered_ids,
+        preference_ends: &preference_item_ends,
         core_ids: &core_selected_ids,
         core_ends: &core_item_ends,
         lesson_ids: &lesson_ids,
@@ -696,7 +699,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
     if let Some(bundle) = &mut context_bundle {
         super::render_bundle::seal_after_render(
             bundle,
-            &preference_details.rendered_ids,
+            &finalized.final_preference_ids,
             &finalized.final_core_ids,
             &finalized.final_lesson_ids,
             &finalized.final_index_ids,

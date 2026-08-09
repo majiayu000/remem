@@ -31,18 +31,16 @@ pub(super) fn renderer_enabled() -> Result<bool> {
 }
 
 pub(super) fn compile_for_renderer(
-    conn: &rusqlite::Connection,
     loaded: &LoadedContext,
     request: &ContextRequest,
     policy: &ContextPolicy,
-    preference_ids: &[i64],
+    preferences: &[crate::memory::Memory],
     core_ids: &HashSet<i64>,
 ) -> Result<(ContextBundle, SessionStartRelevancePlan)> {
     let candidates = super::bundle_candidates::session_start_candidates_from_loaded(
-        conn,
         loaded,
         &request.project,
-        preference_ids,
+        preferences,
         core_ids,
     )?;
     let bundle_request = BundleRequest {

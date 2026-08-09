@@ -9,6 +9,8 @@ use super::helpers::{
 use super::{ContextRenderStats, Result};
 
 pub(super) struct RenderedIdentityBounds<'a> {
+    pub preference_ids: &'a [i64],
+    pub preference_ends: &'a [usize],
     pub core_ids: &'a [i64],
     pub core_ends: &'a [usize],
     pub lesson_ids: &'a [i64],
@@ -23,6 +25,7 @@ pub(super) struct RenderedIdentityBounds<'a> {
 
 pub(super) struct FinalizedContextOutput {
     pub output: String,
+    pub final_preference_ids: Vec<i64>,
     pub final_core_ids: Vec<i64>,
     pub final_lesson_ids: Vec<i64>,
     pub final_index_ids: Vec<i64>,
@@ -41,6 +44,7 @@ pub(super) fn finalize_context_output(
     validate_bounds(bounds)?;
     let pre_total_governed_count =
         bounds.lesson_ids.len() + bounds.index_ids.len() + bounds.session_ids.len();
+    let mut final_preference_ids = bounds.preference_ids.to_vec();
     let mut final_core_ids = bounds.core_ids.to_vec();
     let mut final_lesson_ids = bounds.lesson_ids.to_vec();
     let mut final_index_ids = bounds.index_ids.to_vec();
@@ -61,6 +65,11 @@ pub(super) fn finalize_context_output(
             &mut candidate_output,
             stats.total_char_limit,
             &footer,
+        );
+        final_preference_ids = surviving_ids(
+            bounds.preference_ids,
+            bounds.preference_ends,
+            retained_body_chars,
         );
         final_core_ids = surviving_ids(bounds.core_ids, bounds.core_ends, retained_body_chars);
         final_lesson_ids =
@@ -85,14 +94,12 @@ pub(super) fn finalize_context_output(
         }
     }
 
-    let total_truncated_keys = truncated_memory_keys(
-        bounds.core_ids,
-        &final_core_ids,
-        bounds.lesson_ids,
-        &final_lesson_ids,
-        bounds.index_ids,
-        &final_index_ids,
-    )
+    let total_truncated_keys = truncated_memory_keys([
+        (bounds.preference_ids, final_preference_ids.as_slice()),
+        (bounds.core_ids, final_core_ids.as_slice()),
+        (bounds.lesson_ids, final_lesson_ids.as_slice()),
+        (bounds.index_ids, final_index_ids.as_slice()),
+    ])
     .chain(
         bounds
             .session_ids
@@ -109,6 +116,12 @@ pub(super) fn finalize_context_output(
     )
     .collect();
     let mut item_end_chars = HashMap::new();
+    record_item_ends(
+        &mut item_end_chars,
+        bounds.preference_ids,
+        bounds.preference_ends,
+        memory_stable_key,
+    );
     record_item_ends(
         &mut item_end_chars,
         bounds.core_ids,
@@ -142,6 +155,7 @@ pub(super) fn finalize_context_output(
 
     Ok(FinalizedContextOutput {
         output,
+        final_preference_ids,
         final_core_ids,
         final_lesson_ids,
         final_index_ids,
@@ -154,6 +168,7 @@ pub(super) fn finalize_context_output(
 
 fn validate_bounds(bounds: &RenderedIdentityBounds<'_>) -> Result<()> {
     for (channel, ids, ends) in [
+        ("preferences", bounds.preference_ids, bounds.preference_ends),
         ("core", bounds.core_ids, bounds.core_ends),
         ("lessons", bounds.lesson_ids, bounds.lesson_ends),
         ("index", bounds.index_ids, bounds.index_ends),
@@ -179,23 +194,13 @@ fn surviving_ids(ids: &[i64], ends: &[usize], retained_body_chars: usize) -> Vec
 }
 
 fn truncated_memory_keys<'a>(
-    core_ids: &'a [i64],
-    final_core_ids: &'a [i64],
-    lesson_ids: &'a [i64],
-    final_lesson_ids: &'a [i64],
-    index_ids: &'a [i64],
-    final_index_ids: &'a [i64],
+    sections: [(&'a [i64], &'a [i64]); 4],
 ) -> impl Iterator<Item = String> + 'a {
-    core_ids
-        .iter()
-        .filter(|id| !final_core_ids.contains(id))
-        .chain(
-            lesson_ids
-                .iter()
-                .filter(|id| !final_lesson_ids.contains(id)),
-        )
-        .chain(index_ids.iter().filter(|id| !final_index_ids.contains(id)))
-        .map(|id| memory_stable_key(*id))
+    sections.into_iter().flat_map(|(ids, final_ids)| {
+        ids.iter()
+            .filter(move |id| !final_ids.contains(id))
+            .map(|id| memory_stable_key(*id))
+    })
 }
 
 fn record_item_ends(

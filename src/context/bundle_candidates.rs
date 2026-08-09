@@ -18,7 +18,7 @@ use rusqlite::Connection;
 
 use crate::context_bundle::{ChannelKind, ContextItem, ItemValidity, SourceKind, TrustClass};
 use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::policy::ContextPolicy;
 use super::query::load_context_data_with_policy;
@@ -76,10 +76,9 @@ pub(crate) fn load_session_start_candidates(
 /// did not win a core slot remain eligible for the memory index, matching the
 /// established SessionStart behavior.
 pub(super) fn session_start_candidates_from_loaded(
-    conn: &Connection,
     loaded: &LoadedContext,
     project: &str,
-    preference_ids: &[i64],
+    preferences: &[Memory],
     core_ids: &HashSet<i64>,
 ) -> Result<Vec<ContextItem>> {
     if !loaded.errors.is_empty() {
@@ -94,7 +93,7 @@ pub(super) fn session_start_candidates_from_loaded(
         );
     }
     let mut items = candidates_from_loaded(loaded, project, core_ids);
-    items.extend(preference_candidates_by_ids(conn, project, preference_ids)?);
+    items.extend(ordered_preference_candidates(preferences, project));
     Ok(items)
 }
 
@@ -119,40 +118,24 @@ fn preference_candidates(
         limits.preference_global_limit,
         limits.preference_char_limit,
     )?;
-    let selected = crate::memory::get_memories_by_ids(conn, &details.rendered_ids, None)?;
     Ok(ordered_preference_candidates(
-        selected,
-        &details.rendered_ids,
+        &details.rendered_memories,
         project,
     ))
 }
 
-fn preference_candidates_by_ids(
-    conn: &Connection,
-    project: &str,
-    rendered_ids: &[i64],
-) -> Result<Vec<ContextItem>> {
-    let selected = crate::memory::get_memories_by_ids(conn, rendered_ids, None)?;
-    Ok(ordered_preference_candidates(
-        selected,
-        rendered_ids,
-        project,
-    ))
-}
-
-fn ordered_preference_candidates(
-    selected: Vec<Memory>,
-    rendered_ids: &[i64],
-    project: &str,
-) -> Vec<ContextItem> {
-    let by_id = selected
-        .into_iter()
-        .map(|memory| (memory.id, memory))
-        .collect::<HashMap<_, _>>();
-    rendered_ids
+fn ordered_preference_candidates(selected: &[Memory], project: &str) -> Vec<ContextItem> {
+    selected
         .iter()
-        .filter_map(|id| by_id.get(id))
-        .map(|memory| bundle_memory_item(memory, ChannelKind::Preferences, None, project))
+        .map(|memory| {
+            let mut item = bundle_memory_item(memory, ChannelKind::Preferences, None, project);
+            // The canonical preference selector is deliberately branch
+            // agnostic. Once it admitted a preference for SessionStart, do
+            // not let the generic bundle scope check impose a new branch
+            // filter that the byte-compatible renderer never applied.
+            item.branch = None;
+            item
+        })
         .collect()
 }
 

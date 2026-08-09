@@ -61,7 +61,6 @@ fn bundle_for_plan(
             &ExecutorInputs {
                 candidates,
                 enrichment_available,
-                budget_enforcement: BudgetEnforcement::Strict,
             },
         ),
         Err(error) => blocked_before_load(compiled, &error.to_string()),
@@ -87,8 +86,8 @@ pub(crate) fn compile_session_start_for_renderer(
         &ExecutorInputs {
             candidates,
             enrichment_available,
-            budget_enforcement: BudgetEnforcement::DeferToRenderer,
         },
+        BudgetEnforcement::DeferToRenderer,
     );
     Ok(SessionStartCompile {
         bundle: trace.bundle,

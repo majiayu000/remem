@@ -1,15 +1,13 @@
 use super::{item, request, session_start_plan};
-use crate::context_bundle::executor::execute_with_trace;
+use crate::context_bundle::executor::{execute_with_trace, BudgetEnforcement};
 use crate::context_bundle::{
-    execute, BudgetEnforcement, ChannelKind, DegradedMode, ExecutorInputs, ItemValidity,
-    SourceKind, TrustClass,
+    execute, ChannelKind, DegradedMode, ExecutorInputs, ItemValidity, SourceKind, TrustClass,
 };
 
 fn inputs(candidates: Vec<crate::context_bundle::ContextItem>) -> ExecutorInputs {
     ExecutorInputs {
         candidates,
         enrichment_available: true,
-        budget_enforcement: BudgetEnforcement::Strict,
     }
 }
 
@@ -120,7 +118,6 @@ fn missing_enrichment_degrades_to_canonical_only() {
         &ExecutorInputs {
             candidates: vec![generated, canonical],
             enrichment_available: false,
-            budget_enforcement: BudgetEnforcement::Strict,
         },
     );
 
@@ -201,8 +198,8 @@ fn renderer_deferred_mode_preserves_scope_survivors_for_exact_sealing() {
                 item("memory:43", ChannelKind::Core, "Second", &"y".repeat(100)),
             ],
             enrichment_available: true,
-            budget_enforcement: BudgetEnforcement::DeferToRenderer,
         },
+        BudgetEnforcement::DeferToRenderer,
     );
 
     assert_eq!(trace.bundle.current_truth.len(), 2);
