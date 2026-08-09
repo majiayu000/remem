@@ -20,6 +20,21 @@ pub(crate) fn embed_query_local_only_if_enabled(query: &str) -> Result<Option<Te
     let _test_env_guard = config::lock_test_env();
     let config = resolve_embedding_config()?;
     let mut cache = EmbeddingFallbackCache::default();
+    let status = status::resolve_provider_status(&config);
+    let remote_or_explicitly_off = status.active_provider == "api"
+        || (status.active_provider == "off"
+            && matches!(
+                config.provider,
+                EmbeddingProvider::OpenAi | EmbeddingProvider::Off
+            ));
+    if remote_or_explicitly_off {
+        // A local-only caller can still use the lexical retrieval channels
+        // when the resolved provider is remote, disabled, or an unavailable
+        // remote provider could not resolve a local fallback. Do not turn a
+        // missing API key into a failure for an execution contract that must
+        // never call that API in the first place.
+        return Ok(None);
+    }
     match active_provider(&config)? {
         ActiveEmbeddingProvider::Local => Ok(Some(fallback::embed_local_with_auto_race_fallback(
             query,

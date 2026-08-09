@@ -85,6 +85,10 @@ impl SessionStartRelevancePlan {
         self.decisions.get(stable_key).copied()
     }
 
+    pub(crate) fn selected_keys(&self) -> &[String] {
+        &self.selected_keys
+    }
+
     #[cfg(test)]
     pub fn selected(&self, stable_key: &str) -> bool {
         self.decision(stable_key)

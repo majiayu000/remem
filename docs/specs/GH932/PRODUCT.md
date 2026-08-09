@@ -53,7 +53,9 @@ context bundle.
   DB-backed SessionStart compiler, performs no foreground LLM or network call,
   disables remote query embeddings even when an API provider is configured,
   permits the resolved local fallback for that provider, disables ambient
-  reranking because it is absent from the v1 plan and plan hash,
+  reranking because it is absent from the v1 plan and plan hash, fixes hybrid
+  retrieval weights to the bundle v1 policy instead of reading ambient
+  operator overrides,
   and publishes a closed MCP output schema while preserving the same JSON in
   the legacy text content field for older MCP clients.
 

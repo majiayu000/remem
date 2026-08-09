@@ -548,6 +548,23 @@ fn local_only_query_uses_resolved_feature_hash_fallback_without_api_key() -> Res
 }
 
 #[test]
+fn local_only_query_skips_unavailable_api_without_local_fallback() -> Result<()> {
+    with_clean_env(|| {
+        unsafe {
+            std::env::set_var(ENV_PROVIDER, "api");
+        }
+
+        assert!(embed_query_local_only_if_enabled("lexical context")?.is_none());
+
+        unsafe {
+            std::env::set_var(ENV_FALLBACK, "off");
+        }
+        assert!(embed_query_local_only_if_enabled("lexical context")?.is_none());
+        Ok(())
+    })
+}
+
+#[test]
 fn api_provider_call_failure_uses_configured_feature_hash_fallback() -> Result<()> {
     with_clean_env(|| {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")?;

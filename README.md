@@ -42,8 +42,9 @@ external database.
   rejected before it can steer implicit retrieval. High-risk requests return
   only user-authored trusted memories and abstain when none survive. It requires
   `schema_version: 1`; its foreground query embeddings are local-only, ambient
-  reranking is disabled, and the shape is intentionally not yet a stable API
-  commitment.
+  reranking is disabled, retrieval weights are fixed to the bundle v1 policy
+  instead of ambient overrides, and the shape is intentionally not yet a
+  stable API commitment.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression

@@ -123,6 +123,7 @@ pub(crate) fn execute_with_trace(
     let mut bundle = empty_bundle(plan, degraded_mode);
     match budget_enforcement {
         BudgetEnforcement::Strict => {
+            order_relevance_governed_survivors(plan, &relevance_plan, &mut survivors);
             apply_budgets(plan, degraded_mode, &survivors, &mut bundle, &mut audit)
         }
         BudgetEnforcement::DeferToRenderer => {
@@ -140,6 +141,32 @@ pub(crate) fn execute_with_trace(
         bundle,
         relevance_plan,
     }
+}
+
+/// Section limits must consume relevance-selected rows in relevance order,
+/// not in the canonical loader's incidental row order. The stable sort keeps
+/// non-governed channels and disabled relevance plans byte-for-byte unchanged.
+fn order_relevance_governed_survivors(
+    plan: &RetrievalPlan,
+    relevance_plan: &SessionStartRelevancePlan,
+    survivors: &mut [&ContextItem],
+) {
+    let ranks = relevance_plan
+        .selected_keys()
+        .iter()
+        .enumerate()
+        .map(|(rank, key)| (key.as_str(), rank))
+        .collect::<HashMap<_, _>>();
+    survivors.sort_by_key(|item| {
+        if channel_relevance_governed(plan, item.channel) {
+            ranks
+                .get(item.stable_key.as_str())
+                .copied()
+                .unwrap_or(usize::MAX)
+        } else {
+            usize::MAX
+        }
+    });
 }
 
 fn scope_drop_reason(

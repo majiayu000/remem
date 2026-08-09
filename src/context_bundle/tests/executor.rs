@@ -164,6 +164,38 @@ fn executor_enforces_channel_item_limit_and_token_budgets() {
 }
 
 #[test]
+fn strict_executor_applies_section_limit_in_relevance_rank_order() {
+    let mut planned = session_start_plan(&request());
+    planned.relevance_k = 2;
+    for channel in &mut planned.output_sections {
+        if channel.channel == ChannelKind::Lessons {
+            channel.item_limit = 1;
+        }
+    }
+    let bundle = execute(
+        &planned,
+        &inputs(vec![
+            item(
+                "memory:41",
+                ChannelKind::Lessons,
+                "Startup note",
+                "startup behavior",
+            ),
+            item(
+                "memory:42",
+                ChannelKind::Lessons,
+                "Fix startup migration races",
+                "fix startup migration races",
+            ),
+        ]),
+    );
+
+    assert_eq!(bundle.failure_lessons.len(), 1);
+    assert_eq!(bundle.failure_lessons[0].stable_key, "memory:42");
+    assert_eq!(reason_for(&bundle, "memory:41"), "channel_item_limit");
+}
+
+#[test]
 fn executor_counts_titles_toward_token_budgets() {
     let mut planned = session_start_plan(&request());
     planned.section_budgets.core = 2;

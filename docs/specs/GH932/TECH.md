@@ -78,6 +78,9 @@ src/mcp/
 - Relevance governance reuses `build_sessionstart_relevance_plan` for the
   lessons / memory_index / sessions channels — the same policy
   (`sessionstart_significant_token_v1`) and drop reasons as SessionStart.
+- Strict execution orders relevance-governed survivors by the selector's
+  ranked stable keys before section limits consume them. Canonical loader order
+  remains unchanged for non-governed channels and renderer-deferred execution.
 - Budget enforcement counts the complete returned item (`title` + `text`). Its
   order is per-channel item limit, per-channel token
   budget, then total token budget over a fixed section order; each drop is
@@ -89,6 +92,10 @@ src/mcp/
   reasons/counts to the exact surviving stable identities.
 - `enrichment_available = false` degrades to `canonical_only`: generated /
   graph-derived candidates drop with `canonical_only_degraded`.
+- The MCP/local-only adapter uses `SearchWeights::context_bundle_v1()` and
+  ignores `REMEM_USAGE_WEIGHT`; changing those fixed weights requires a router
+  policy version bump. A missing key for a configured remote embedding provider
+  skips the vector channel rather than blocking usable lexical channels.
 
 ## Reuse, Not Rewrite
 

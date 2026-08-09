@@ -61,6 +61,16 @@ impl Default for SearchWeights {
 }
 
 impl SearchWeights {
+    /// Deterministic retrieval weights for Context Bundle v1.
+    ///
+    /// Unlike [`Self::production`], this contract deliberately ignores
+    /// ambient operator overrides. Changing these values requires a Context
+    /// Bundle retrieval policy version bump so the same plan cannot silently
+    /// select different rows on two hosts.
+    pub(crate) fn context_bundle_v1() -> Self {
+        Self::default()
+    }
+
     /// Weights for production retrieval entry points (injection + search).
     ///
     /// Returns the calibrated defaults with the GH-947 operator override
@@ -174,6 +184,11 @@ mod tests {
         // A finite override wins over the default.
         std::env::set_var(super::USAGE_WEIGHT_ENV, " 0.75 ");
         assert_eq!(SearchWeights::production().usage, 0.75);
+        assert_eq!(SearchWeights::context_bundle_v1(), SearchWeights::default());
+        assert_ne!(
+            SearchWeights::context_bundle_v1(),
+            SearchWeights::production()
+        );
 
         // Unparseable or non-finite values keep the calibrated default.
         for invalid in ["junk", "1e999", "NaN"] {

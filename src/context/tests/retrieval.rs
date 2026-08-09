@@ -68,6 +68,32 @@ impl ScopedApiFallbackEnv {
             saved,
         }
     }
+
+    fn unavailable_without_fallback() -> Self {
+        let guard = crate::runtime_config::TEST_ENV_LOCK
+            .lock()
+            .expect("env lock should acquire");
+        let saved = EMBEDDING_ENV_KEYS
+            .iter()
+            .map(|key| (*key, std::env::var(key).ok()))
+            .collect::<Vec<_>>();
+        for key in EMBEDDING_ENV_KEYS {
+            unsafe { std::env::remove_var(key) };
+        }
+        let isolated_config = std::env::temp_dir().join(format!(
+            "remem-context-local-only-api-{}-{}.toml",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        ));
+        unsafe {
+            std::env::set_var("REMEM_CONFIG", isolated_config);
+            std::env::set_var("REMEM_EMBEDDINGS_PROVIDER", "api");
+        }
+        Self {
+            _guard: guard,
+            saved,
+        }
+    }
 }
 
 impl Drop for ScopedApiFallbackEnv {
@@ -733,5 +759,39 @@ fn local_only_context_loader_never_resolves_or_applies_rerank() -> anyhow::Resul
 
     let default = load_context_data_with_policy(&conn, project, None, &policy, false);
     assert!(default.errors.iter().any(|error| error.section == "rerank"));
+    Ok(())
+}
+
+#[test]
+fn local_only_context_loader_keeps_lexical_channels_when_api_key_is_missing() -> anyhow::Result<()>
+{
+    let _env = ScopedApiFallbackEnv::unavailable_without_fallback();
+    let conn = Connection::open_in_memory()?;
+    setup_context_schema(&conn);
+    let project = "/tmp/remem";
+    let now = chrono::Utc::now().timestamp();
+    insert_memory(
+        &conn,
+        1,
+        project,
+        Some("sqlcipher-lexical"),
+        "architecture",
+        "SQLCipher lexical recovery",
+        "Use SQLCipher for encrypted local persistence.",
+        now,
+    );
+    conn.execute(
+        "INSERT INTO workstreams
+         (id, project, title, status, next_action, created_at_epoch, updated_at_epoch)
+         VALUES (1, ?1, 'SQLCipher recovery', 'active',
+                 'Fix SQLCipher encrypted local persistence', ?2, ?2)",
+        params![project, now],
+    )?;
+    let policy = ContextPolicy::from_limits(ContextLimits::default());
+
+    let loaded = load_context_data_with_policy_local_only(&conn, project, None, &policy, false);
+
+    assert!(loaded.errors.is_empty(), "{:?}", loaded.errors);
+    assert!(loaded.memories.iter().any(|memory| memory.id == 1));
     Ok(())
 }

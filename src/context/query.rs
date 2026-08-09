@@ -10,7 +10,9 @@ use super::filters::{
     push_context_related_filter, push_excluded_type_filter, push_owner_excluded_filter,
     push_owner_included_filter,
 };
-use super::hybrid_context::query_hybrid_context_memories;
+use super::hybrid_context::{
+    query_hybrid_context_memories, query_hybrid_context_memories_with_weights,
+};
 use super::implicit_query::build_implicit_context_query;
 use super::memory_selection::{preselect_memories, sort_memories_by_branch};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
@@ -20,21 +22,25 @@ pub(super) use super::summary_query::query_recent_summaries;
 use super::summary_query::query_recent_summaries_with_drops;
 use super::types::{ContextLoadError, ContextPreselectionDrop, LoadedContext, SessionSummaryBrief};
 use crate::memory::{self, Memory};
+use crate::retrieval::search::SearchWeights;
 
 #[derive(Clone, Copy)]
 struct ContextLoadExecutionPolicy {
     allow_remote_embedding: bool,
     allow_rerank: bool,
+    fixed_bundle_weights: bool,
 }
 
 const DEFAULT_EXECUTION_POLICY: ContextLoadExecutionPolicy = ContextLoadExecutionPolicy {
     allow_remote_embedding: true,
     allow_rerank: true,
+    fixed_bundle_weights: false,
 };
 
 const LOCAL_ONLY_EXECUTION_POLICY: ContextLoadExecutionPolicy = ContextLoadExecutionPolicy {
     allow_remote_embedding: false,
     allow_rerank: false,
+    fixed_bundle_weights: true,
 };
 
 #[cfg(test)]
@@ -128,7 +134,7 @@ fn load_context_data_with_execution_policy(
         current_branch,
         policy,
         collect_diagnostics,
-        execution_policy.allow_remote_embedding,
+        execution_policy,
         &commit_messages,
         &summaries,
         &workstreams,
@@ -288,7 +294,7 @@ fn load_project_memories(
     current_branch: Option<&str>,
     policy: &ContextPolicy,
     collect_diagnostics: bool,
-    allow_remote_embedding: bool,
+    execution_policy: ContextLoadExecutionPolicy,
     commit_messages: &[String],
     summaries: &[SessionSummaryBrief],
     workstreams: &[crate::workstream::WorkStream],
@@ -315,15 +321,28 @@ fn load_project_memories(
         workstreams,
     ) {
         fact_label_query = Some(implicit_query.clone());
-        let retrieved = query_hybrid_context_memories(
-            conn,
-            project,
-            &implicit_query,
-            current_branch,
-            excluded_types,
-            policy.limits.candidate_fetch_limit as i64,
-            allow_remote_embedding,
-        );
+        let retrieved = if execution_policy.fixed_bundle_weights {
+            query_hybrid_context_memories_with_weights(
+                conn,
+                project,
+                &implicit_query,
+                current_branch,
+                excluded_types,
+                policy.limits.candidate_fetch_limit as i64,
+                SearchWeights::context_bundle_v1(),
+                execution_policy.allow_remote_embedding,
+            )
+        } else {
+            query_hybrid_context_memories(
+                conn,
+                project,
+                &implicit_query,
+                current_branch,
+                excluded_types,
+                policy.limits.candidate_fetch_limit as i64,
+                execution_policy.allow_remote_embedding,
+            )
+        };
         match retrieved {
             Ok(retrieved) => {
                 if retrieved.is_empty() && has_task_signals {
@@ -375,7 +394,7 @@ fn load_project_memories(
                 task_query,
                 recent,
                 policy.limits.candidate_fetch_limit,
-                allow_remote_embedding,
+                execution_policy.allow_remote_embedding,
             )
             .unwrap_or_else(|e| {
                 let message =
