@@ -8,7 +8,10 @@ use super::domain::{
     RETRIEVAL_PLAN_SCHEMA_VERSION,
 };
 use super::intent::resolve_intent;
-use super::planner::{plan, plan_session_start_with_limits, RETRIEVAL_ROUTER_POLICY_VERSION};
+use super::planner::{
+    plan, plan_context_bundle_with_limits, plan_session_start_with_limits,
+    RETRIEVAL_ROUTER_POLICY_VERSION,
+};
 use crate::context::ContextLimits;
 
 fn request(task: &str) -> ContextRequest {
@@ -26,6 +29,26 @@ fn request(task: &str) -> ContextRequest {
         risk: RiskClass::Medium,
         include_superseded: false,
     }
+}
+
+#[test]
+fn session_start_plan_hash_binds_effective_worktree_scope() {
+    let limits = ContextLimits::default();
+    let mut left = request("resume work");
+    left.worktree = Some("/repo/worktree-a".to_string());
+    let mut right = left.clone();
+    right.worktree = Some("/repo/worktree-b".to_string());
+
+    let left_plan = plan_session_start_with_limits(&left, &limits).unwrap();
+    let repeated = plan_session_start_with_limits(&left, &limits).unwrap();
+    let right_plan = plan_session_start_with_limits(&right, &limits).unwrap();
+
+    assert_eq!(left_plan.plan_hash, repeated.plan_hash);
+    assert_ne!(left_plan.plan_hash, right_plan.plan_hash);
+    assert!(left_plan
+        .reason_codes
+        .iter()
+        .any(|reason| reason.starts_with("sessionstart_scope_sha256:")));
 }
 
 fn enabled(plan: &RetrievalPlan) -> Vec<RetrievalChannel> {
@@ -280,6 +303,34 @@ fn session_start_plan_uses_effective_renderer_limits() {
         .find(|section| section.channel == crate::context_bundle::ChannelKind::Core)
         .expect("core section");
     assert_eq!(core.item_limit, 2);
+
+    let candidate_fetch_only = ContextLimits {
+        candidate_fetch_limit: limits.candidate_fetch_limit + 1,
+        ..limits
+    };
+    let changed =
+        plan_session_start_with_limits(&req, &candidate_fetch_only).expect("changed plan");
+    assert_ne!(plan.plan_hash, changed.plan_hash);
+    assert_ne!(plan.reason_codes, changed.reason_codes);
+    assert!(changed
+        .reason_codes
+        .iter()
+        .any(|reason| reason.starts_with("sessionstart_limits_sha256:")));
+}
+
+#[test]
+fn context_bundle_plan_hash_binds_local_embedding_profile() {
+    let req = request("resume work");
+    let limits = ContextLimits::default();
+    let feature_hash = plan_context_bundle_with_limits(&req, &limits, "feature-hash-profile")
+        .expect("feature-hash plan");
+    let off = plan_context_bundle_with_limits(&req, &limits, "off-profile").expect("off plan");
+
+    assert_ne!(feature_hash.plan_hash, off.plan_hash);
+    assert!(feature_hash
+        .reason_codes
+        .iter()
+        .any(|reason| reason == "context_bundle_embedding_sha256:feature-hash-profile"));
 }
 
 #[test]

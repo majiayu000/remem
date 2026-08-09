@@ -30,6 +30,9 @@ const REASON_HIGH_RISK_ENRICHMENT_DISABLED: &str = "high_risk_enrichment_disable
 const REASON_HIGH_RISK_CANONICAL_TOP1: &str = "high_risk_canonical_evidence_top1";
 const REASON_HIGH_RISK_ABSTAIN_ON_LOW_EVIDENCE: &str = "high_risk_abstain_on_low_evidence";
 const REASON_REVIEWER_CONSTRAINTS_ENABLED: &str = "reviewer_constraints_enabled";
+const SESSIONSTART_LIMITS_REASON_PREFIX: &str = "sessionstart_limits_sha256:";
+const SESSIONSTART_SCOPE_REASON_PREFIX: &str = "sessionstart_scope_sha256:";
+const CONTEXT_BUNDLE_EMBEDDING_REASON_PREFIX: &str = "context_bundle_embedding_sha256:";
 
 // Baseline mechanical channels shared by every intent.
 const BASELINE_FTS: ChannelSpec = ChannelSpec {
@@ -309,6 +312,10 @@ pub fn plan(
     }
 
     let limits = ContextLimits::default();
+    if resolved.intent == ContextIntent::SessionStart {
+        reason_codes.push(sessionstart_limits_reason(&limits)?);
+        reason_codes.push(sessionstart_scope_reason(request)?);
+    }
     let mut plan = RetrievalPlan {
         schema_version: RETRIEVAL_PLAN_SCHEMA_VERSION,
         policy_version: RETRIEVAL_ROUTER_POLICY_VERSION.to_string(),
@@ -355,9 +362,58 @@ pub(crate) fn plan_session_start_with_limits(
     plan.output_sections = output_sections_for(ContextIntent::SessionStart, limits);
     plan.section_budgets = section_budgets_from_limits(request.token_budget, limits);
     plan.relevance_k = limits.sessionstart_relevance_k as u32;
+    plan.reason_codes
+        .retain(|reason| !reason.starts_with(SESSIONSTART_LIMITS_REASON_PREFIX));
+    plan.reason_codes
+        .retain(|reason| !reason.starts_with(SESSIONSTART_SCOPE_REASON_PREFIX));
+    plan.reason_codes.push(sessionstart_limits_reason(limits)?);
+    plan.reason_codes.push(sessionstart_scope_reason(request)?);
     plan.plan_hash.clear();
     plan.plan_hash = plan_content_hash(&plan)?;
     Ok(plan)
+}
+
+/// Compile the foreground Context Bundle plan and bind the effective
+/// local-only embedding profile used by its canonical loader. The profile is
+/// resolved outside the pure router and passed in as a SHA-256 fingerprint;
+/// switching provider, model artifact, dimensions, or vector availability
+/// therefore changes `plan_hash` before execution.
+pub(crate) fn plan_context_bundle_with_limits(
+    request: &ContextRequest,
+    limits: &ContextLimits,
+    local_embedding_fingerprint: &str,
+) -> Result<RetrievalPlan> {
+    let mut plan = plan_session_start_with_limits(request, limits)?;
+    plan.reason_codes.push(format!(
+        "{CONTEXT_BUNDLE_EMBEDDING_REASON_PREFIX}{local_embedding_fingerprint}"
+    ));
+    plan.plan_hash.clear();
+    plan.plan_hash = plan_content_hash(&plan)?;
+    Ok(plan)
+}
+
+fn sessionstart_limits_reason(limits: &ContextLimits) -> Result<String> {
+    let canonical = serde_json::to_string(limits)?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    Ok(format!(
+        "{SESSIONSTART_LIMITS_REASON_PREFIX}{:x}",
+        hasher.finalize()
+    ))
+}
+
+fn sessionstart_scope_reason(request: &ContextRequest) -> Result<String> {
+    let canonical = serde_json::to_string(&(
+        request.project.key.as_str(),
+        request.branch.as_deref(),
+        request.worktree.as_deref(),
+    ))?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    Ok(format!(
+        "{SESSIONSTART_SCOPE_REASON_PREFIX}{:x}",
+        hasher.finalize()
+    ))
 }
 
 fn normalized_relevance_query(task: &str) -> Option<String> {

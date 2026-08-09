@@ -85,6 +85,10 @@ impl SessionStartRelevancePlan {
         self.decisions.get(stable_key).copied()
     }
 
+    pub(crate) fn selected_keys(&self) -> &[String] {
+        &self.selected_keys
+    }
+
     #[cfg(test)]
     pub fn selected(&self, stable_key: &str) -> bool {
         self.decision(stable_key)
@@ -510,6 +514,8 @@ mod tests {
             ],
             summaries: Vec::new(),
             workstreams: Vec::new(),
+            preselection_drops: Vec::new(),
+            poisoning_drops: Default::default(),
             relevance_query: Some("alpha beta".to_string()),
             memory_abstained: false,
             errors: Vec::new(),

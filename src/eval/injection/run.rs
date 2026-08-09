@@ -540,6 +540,7 @@ fn run_rank_signal_ab(conn: &Connection) -> Result<InjectionRankSignalAbReport> 
             10,
             crate::retrieval::search::SearchWeights::default(),
             mode,
+            true,
         )
         .map(|memories| {
             memories

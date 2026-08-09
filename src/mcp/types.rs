@@ -93,6 +93,44 @@ pub(super) struct UserRecallParams {
     pub budget_chars: Option<usize>,
 }
 
+/// Experimental MCP adapter for the versioned Context Bundle v1 request.
+/// Keep this wire shape closed and covered by schema snapshots: additions or
+/// renames require an explicit compatibility decision.
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ContextBundleParams {
+    #[schemars(description = "Context Bundle request schema version; v1 requires 1.")]
+    pub schema_version: u32,
+    #[schemars(description = "Task description used for SessionStart relevance selection.")]
+    pub task: String,
+    #[schemars(description = "Exact project key/path. Defaults to the project derived from cwd.")]
+    pub project: Option<String>,
+    #[schemars(
+        description = "Working directory used for canonical loading and project derivation."
+    )]
+    pub cwd: Option<String>,
+    #[schemars(description = "Optional worktree identity recorded in the versioned request.")]
+    pub worktree: Option<String>,
+    #[schemars(description = "Optional Git branch scope filter.")]
+    pub branch: Option<String>,
+    #[schemars(
+        description = "Agent role: coder, reviewer, planner, or researcher (default coder)."
+    )]
+    pub role: Option<String>,
+    #[schemars(
+        description = "As-of epoch-seconds scope pin. Experimental v1 accepts only 0/omitted until historical canonical loading is implemented."
+    )]
+    pub as_of_epoch: Option<i64>,
+    #[schemars(description = "Total token budget for the bundle (default 4000).")]
+    pub token_budget: Option<u32>,
+    #[schemars(description = "Risk class: low, medium, or high (default medium).")]
+    pub risk: Option<String>,
+    #[schemars(
+        description = "Allow superseded memories in scope. Experimental v1 accepts only false/omitted until canonical loading supports history."
+    )]
+    pub include_superseded: Option<bool>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(super) struct GetObservationsParams {
     #[schemars(description = "List of observation IDs to fetch")]

@@ -35,6 +35,17 @@ external database.
 - Bug-fix rationale, preferences, and project patterns are searchable.
 - Memory stays local by default with SQLite and SQLCipher.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
+- The experimental MCP `context_bundle` tool compiles a versioned, budgeted,
+  source-attributed SessionStart context bundle with a complete selection/drop
+  audit, including redacted poisoning-gate drops and canonical memory, session,
+  and preference preselection reasons. Poisoned session/workstream text is
+  rejected before it can steer implicit retrieval. High-risk requests return
+  only user-authored trusted memories and abstain when none survive. It requires
+  `schema_version: 1`; its foreground query embeddings are local-only, ambient
+  reranking is disabled, retrieval weights are fixed to the bundle v1 policy
+  instead of ambient overrides, and the effective local embedding
+  provider/model/dimensions are fingerprinted into `plan_hash`. The shape is
+  intentionally not yet a stable API commitment.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression
@@ -293,8 +304,9 @@ After restarting Codex, remem automatically injects relevant project memory at
 session start and summarizes the session at stop. Codex can also call the MCP
 tools exposed by `remem mcp`: current-state, curated/raw search, contextual
 recall, timeline/detail/commit lookup, memory save/governance, reports, and
-workstream tools. All 14 tools publish explicit side-effect annotations. The 13
-JSON tools return both their legacy text content and matching structured
+workstream tools, plus the experimental `context_bundle` compiler. All 15 tools
+publish explicit side-effect annotations. The 14 JSON tools return both their
+legacy text content and matching structured
 content with an output schema; `timeline_report` remains Markdown.
 
 SessionStart keeps Core, Preferences, and Workstreams on their existing paths,

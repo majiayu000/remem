@@ -174,6 +174,8 @@ mod tests {
             lessons: Vec::new(),
             summaries: Vec::new(),
             workstreams: Vec::new(),
+            preselection_drops: Vec::new(),
+            poisoning_drops: Default::default(),
             relevance_query: None,
             memory_abstained: false,
             errors: Vec::new(),

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::memory::Memory;
 
 use super::memory_traits::is_memory_self_diagnostic;
-use super::types::HiddenDuplicateGroup;
+use super::types::{ContextPreselectionDrop, ContextPreselectionItem, HiddenDuplicateGroup};
 
 pub(super) fn sort_memories_by_branch(memories: &mut [Memory], current_branch: Option<&str>) {
     let Some(branch) = current_branch else {
@@ -28,13 +28,20 @@ struct ClusterRepresentative {
     first_index: usize,
     cluster_key: String,
     memory: Memory,
-    hidden_ids: Vec<i64>,
+    hidden_memories: Vec<Memory>,
 }
 
-pub(super) fn deduplicate_memory_clusters(
+pub(super) struct MemoryPreselection {
+    pub selected: Vec<Memory>,
+    pub hidden_duplicate_groups: Vec<HiddenDuplicateGroup>,
+    pub drops: Vec<ContextPreselectionDrop>,
+}
+
+pub(super) fn preselect_memories(
     memories: Vec<Memory>,
     current_branch: Option<&str>,
-) -> (Vec<Memory>, Vec<HiddenDuplicateGroup>) {
+    self_diagnostic_limit: usize,
+) -> MemoryPreselection {
     let mut representatives: HashMap<String, ClusterRepresentative> = HashMap::new();
 
     for (index, memory) in memories.into_iter().enumerate() {
@@ -43,10 +50,10 @@ pub(super) fn deduplicate_memory_clusters(
             Some(representative) => {
                 if is_better_cluster_representative(&memory, &representative.memory, current_branch)
                 {
-                    representative.hidden_ids.push(representative.memory.id);
-                    representative.memory = memory;
+                    let previous = std::mem::replace(&mut representative.memory, memory);
+                    representative.hidden_memories.push(previous);
                 } else {
-                    representative.hidden_ids.push(memory.id);
+                    representative.hidden_memories.push(memory);
                 }
             }
             None => {
@@ -56,7 +63,7 @@ pub(super) fn deduplicate_memory_clusters(
                         first_index: index,
                         cluster_key,
                         memory,
-                        hidden_ids: Vec::new(),
+                        hidden_memories: Vec::new(),
                     },
                 );
             }
@@ -67,18 +74,50 @@ pub(super) fn deduplicate_memory_clusters(
     deduped.sort_by_key(|representative| representative.first_index);
     let hidden_groups = deduped
         .iter()
-        .filter(|representative| !representative.hidden_ids.is_empty())
+        .filter(|representative| !representative.hidden_memories.is_empty())
         .map(|representative| HiddenDuplicateGroup {
             cluster_key: representative.cluster_key.clone(),
             chosen_id: representative.memory.id,
-            hidden_ids: representative.hidden_ids.clone(),
+            hidden_ids: representative
+                .hidden_memories
+                .iter()
+                .map(|memory| memory.id)
+                .collect(),
         })
         .collect();
-    let memories = deduped
-        .into_iter()
-        .map(|representative| representative.memory)
-        .collect();
-    (memories, hidden_groups)
+    let mut drops = Vec::new();
+    let mut memories = Vec::new();
+    for representative in deduped {
+        memories.push(representative.memory);
+        drops.extend(representative.hidden_memories.into_iter().map(|memory| {
+            ContextPreselectionDrop {
+                item: ContextPreselectionItem::Memory(memory),
+                reason: "memory_cluster_dedup",
+            }
+        }));
+    }
+
+    let mut selected = Vec::new();
+    let mut self_diagnostic_count = 0;
+    for memory in memories {
+        if is_memory_self_diagnostic(&memory) {
+            if self_diagnostic_count >= self_diagnostic_limit {
+                drops.push(ContextPreselectionDrop {
+                    item: ContextPreselectionItem::Memory(memory),
+                    reason: "memory_self_diagnostic_limit",
+                });
+                continue;
+            }
+            self_diagnostic_count += 1;
+        }
+        selected.push(memory);
+    }
+
+    MemoryPreselection {
+        selected,
+        hidden_duplicate_groups: hidden_groups,
+        drops,
+    }
 }
 
 fn is_better_cluster_representative(
@@ -99,23 +138,6 @@ fn is_better_cluster_representative(
         || (candidate_branch_score == incumbent_branch_score
             && candidate.updated_at_epoch == incumbent.updated_at_epoch
             && candidate.id < incumbent.id)
-}
-
-pub(super) fn limit_self_diagnostic_memories(memories: Vec<Memory>, limit: usize) -> Vec<Memory> {
-    let mut retained = Vec::new();
-    let mut self_diagnostic_count = 0;
-
-    for memory in memories {
-        if is_memory_self_diagnostic(&memory) {
-            if self_diagnostic_count >= limit {
-                continue;
-            }
-            self_diagnostic_count += 1;
-        }
-        retained.push(memory);
-    }
-
-    retained
 }
 
 fn memory_cluster_key(memory: &Memory) -> String {

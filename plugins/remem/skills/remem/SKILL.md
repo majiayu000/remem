@@ -12,6 +12,18 @@ Remem gives Codex durable project memory through the `remem` MCP server. Use it 
 - Search remem before answering questions about prior project context, remembered preferences, older bug fixes, workstreams, or "what did we decide before".
 - Use compact `search` results first, then call `get_observations` for selected IDs when exact content is needed.
 - Use `search_raw` only when curated search misses an exact phrase or chat transcript detail.
+- Use experimental `context_bundle` with `schema_version: 1` when a caller needs
+  one policy-bounded, source-attributed SessionStart bundle plus its complete
+  selection/drop audit. Its wire shape is versioned but not yet stable, and the
+  poisoning safety check may quarantine unsafe persisted rows while retaining
+  a redacted audit identity. Poisoned session/workstream text is removed before
+  implicit retrieval query construction. Canonical memory, session, and
+  preference preselection drops retain their stable identity and exact audit
+  reason. Use `risk: high`
+  only when trusted user-authored
+  memory is sufficient; the compiler abstains if no trusted item survives. The
+  foreground compiler never calls a configured remote embedding provider and
+  does not apply ambient reranker configuration outside the versioned plan.
 - Treat memory as evidence, not current truth. Verify live repo, GitHub, filesystem, and command output when the fact can drift.
 
 ## Saving Memory

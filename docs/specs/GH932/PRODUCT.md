@@ -21,10 +21,20 @@ context bundle.
   `build_sessionstart_relevance_plan`); it does not rewrite any retrieval
   channel.
 - Stable plan hash: the same request and policy always produce the same
-  plan and the same hash. No timestamps or randomness enter the hash.
+  plan and the same hash. Effective SessionStart loader limits are fingerprinted
+  into the plan before hashing; no timestamps or randomness enter the hash.
 - `ContextAudit` records every candidate considered, selected, and dropped
   with a machine-readable reason, plus token estimate, policy version, and
   degraded mode (`full` / `canonical_only` / `blocked`).
+- Poisoning-gate drops retain only stable identity and attribution in the
+  audit; unsafe title/text payloads never enter bundle sections or wire JSON.
+- Session summaries and workstreams pass the poisoning gate before they can
+  contribute text to the implicit retrieval query.
+- Memories and session summaries fetched but omitted by canonical clustering,
+  self-diagnostic, stale-fallback, session-identity, or item-limit selectors,
+  plus preferences omitted by CLAUDE.md deduplication, similarity
+  deduplication, scope override, or character limits, retain their stable
+  identity and exact selection reason in the audit.
 - Schema snapshot tests pin the serialized JSON structure.
 - A DB-backed compiler loads canonical SessionStart candidates and fails
   closed to a `blocked` bundle when canonical loading is incomplete.
@@ -38,14 +48,28 @@ context bundle.
   plan schema versions, router/relevance policy versions, and points operators
   to `remem context-plan` for a request-specific plan summary. Explicit legacy
   rollback is visible as a warning; an invalid render-mode value fails loudly.
+- An experimental MCP `context_bundle` tool accepts the versioned v1 request
+  fields and returns the complete `ContextBundle` JSON contract. It reuses the
+  DB-backed SessionStart compiler, performs no foreground LLM or network call,
+  disables remote query embeddings even when an API provider is configured,
+  permits the resolved local fallback for that provider, disables ambient
+  reranking because it is absent from the v1 plan and plan hash, fixes hybrid
+  retrieval weights to the bundle v1 policy instead of reading ambient
+  operator overrides, fingerprints the effective local-only embedding mode,
+  provider, model artifact identity, and dimensions into the plan hash,
+  and publishes a closed MCP output schema while preserving the same JSON in
+  the legacy text content field for older MCP clients.
 
 ## v1 Non-Goals (deferred follow-up work)
 
-- No MCP or REST endpoint. The contract is an internal Rust API only.
-- No rerank, graph expansion, or LLM calls in plan or execute.
+- No REST endpoint. The first external consumer is the experimental MCP tool;
+  general REST exposure and a stable public API commitment remain deferred.
+- No rerank, graph expansion, or LLM calls in plan or execute. The MCP loader
+  also disables a globally configured reranker rather than applying an
+  unplanned top-k cut.
 - No change to the existing SessionStart rendered output or gating.
-- No MCP/REST bundle consumer or benchmark artifact; those remain follow-up
-  items on #932.
+- No benchmark artifact yet; plan/audit hash persistence remains a follow-up
+  item on #932.
 - The doctor capability check does not expose memory payloads or persist
   per-session audit entries. Durable audit history remains a later phase.
 - Load-error fail-open rendering remains on the compatibility path so existing
@@ -58,8 +82,11 @@ context bundle.
 ## Success Criteria
 
 - Same request + policy produce byte-identical plan JSON and plan hash.
-- Bundles never exceed the total token budget or per-section budgets.
+- Bundles never exceed the total token budget or per-section budgets; estimates
+  include both item title and text.
 - Every dropped candidate has a machine-readable reason in the audit.
+- High-risk plans enforce the trusted-only floor and low-evidence abstention;
+  direct user-authored (`user_prompt`) memories are the trusted v1 class.
 - Degraded modes are explicit and appear in the audit.
 - Legacy and bundle-backed SessionStart renders are byte-identical for the
   same snapshot and effective policy.
@@ -67,3 +94,6 @@ context bundle.
   the compatibility relevance path; unset or `bundle` uses the bundle.
 - `remem doctor` reports bundle mode as healthy, legacy rollback as degraded,
   and invalid configuration as failed, without loading or printing memories.
+- MCP `context_bundle` validates request schema/role/risk/budget, returns the v1
+  bundle shape through both legacy text and `structuredContent`, and has frozen
+  input/output compatibility tests.

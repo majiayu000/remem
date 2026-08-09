@@ -22,6 +22,7 @@
 │  MCP Server (stdio)  │  │  Background Worker (detached)     │
 │                      │  │                                    │
 │  search              │  │  1. extract (capture→derived)       │
+│  context_bundle      │  │                                    │
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │
@@ -544,17 +545,18 @@ base_url = "https://api.anthropic.com"
 
 ## MCP Server
 
-The stdio MCP server exposes 14 tools:
+The stdio MCP server exposes 15 tools:
 
-- Retrieval: `current_state`, `search`, `recall_user_context`, `timeline`,
-  `search_raw`, and `list_raw_sessions`.
+- Retrieval and context compilation: `current_state`, `search`,
+  `recall_user_context`, experimental `context_bundle`, `timeline`, `search_raw`,
+  and `list_raw_sessions`.
 - Detail and trace: `get_observations`, `lookup_commit`, and
   `commits_for_session`.
 - Mutation and reporting: `save_memory`, `govern_memory`, `timeline_report`,
   `workstreams`, and `update_workstream`.
 
 All descriptors carry explicit title/read-only/destructive/idempotent/open-world
-annotations. Thirteen JSON tools preserve their existing text content and add
+annotations. Fourteen JSON tools preserve their existing text content and add
 object-rooted `outputSchema` plus matching `structuredContent`; legacy arrays
 use named structured envelopes. `timeline_report` remains Markdown-only.
 

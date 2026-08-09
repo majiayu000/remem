@@ -65,6 +65,16 @@ async fn every_schema_bearing_served_route_validates_a_real_non_empty_success() 
             "recall_user_context",
             json!({ "query": "wire recall", "project": "/repo", "limit": 5 }),
         ),
+        WireCall::object(
+            "context_bundle",
+            "context_bundle",
+            json!({
+                "schema_version": 1,
+                "task": "resume the wire contract work",
+                "project": "/repo",
+                "cwd": "/repo"
+            }),
+        ),
         WireCall::array(
             "timeline",
             "timeline",
@@ -152,7 +162,7 @@ async fn every_schema_bearing_served_route_validates_a_real_non_empty_success() 
             .map(|call| call.tool)
             .collect::<BTreeSet<_>>()
             .len(),
-        13
+        14
     );
 
     let mut results = BTreeMap::new();
@@ -192,6 +202,11 @@ async fn every_schema_bearing_served_route_validates_a_real_non_empty_success() 
 
     assert_eq!(results["current_state"]["current"]["id"], fixture.memory_id);
     assert_eq!(results["search"]["results"][0]["id"], fixture.memory_id);
+    assert_eq!(results["context_bundle"]["schema_version"], 1);
+    assert_eq!(
+        results["context_bundle"]["plan_hash"],
+        results["context_bundle"]["audit"]["plan_hash"]
+    );
     assert!(results["search"]["pagination"]["next_offset"].is_null());
     assert_eq!(
         results["get_observations_observation"]["details"][0]["compressed_sources"][0]

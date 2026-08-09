@@ -413,8 +413,8 @@ pub(in crate::context) fn render_context_output_from_inputs(
     let load_timing = inputs.load_timing;
     let preference_timing = inputs.preference_timing;
     let preference_summary = preference_details.summary;
-    super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
-
+    let poisoning_drops = super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
+    loaded.poisoning_drops = poisoning_drops;
     if preference_summary.rendered == 0
         && loaded.memories.is_empty()
         && loaded.lessons.is_empty()
@@ -525,7 +525,7 @@ pub(in crate::context) fn render_context_output_from_inputs(
             &loaded,
             request,
             &policy,
-            &preference_details.rendered_memories,
+            &preference_details,
             &core_ids,
         )?;
         context_bundle = Some(bundle);

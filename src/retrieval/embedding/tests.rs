@@ -100,7 +100,7 @@ impl Drop for CleanEnv {
     }
 }
 
-fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
+pub(super) fn with_clean_env<T>(f: impl FnOnce() -> T) -> T {
     let _env = CleanEnv::new();
     f()
 }

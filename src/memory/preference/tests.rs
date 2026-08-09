@@ -11,6 +11,8 @@ use super::{
     render_preferences_with_limits_detailed,
 };
 
+mod selection_audit;
+
 fn setup_test_db() -> Connection {
     let conn = Connection::open_in_memory()
         .unwrap_or_else(|err| panic!("Failed to open in-memory db: {err}"));

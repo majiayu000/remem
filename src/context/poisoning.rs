@@ -5,6 +5,14 @@ use super::types::LoadedContext;
 use crate::memory::poisoning::{scan_instruction_pattern, InstructionPatternMatch};
 use crate::memory::Memory;
 
+#[derive(Debug, Clone, Default)]
+pub(super) struct PoisoningDrops {
+    pub(super) memories: Vec<Memory>,
+    pub(super) lessons: Vec<Memory>,
+    pub(super) summaries: Vec<super::types::SessionSummaryBrief>,
+    pub(super) workstreams: Vec<crate::workstream::WorkStream>,
+}
+
 #[derive(Debug, Clone)]
 struct MemoryPoisoningState {
     acknowledged_pattern_id: Option<String>,
@@ -13,9 +21,15 @@ struct MemoryPoisoningState {
     source_project: Option<String>,
 }
 
-pub(super) fn drop_unacknowledged_poisoned_context(conn: &Connection, loaded: &mut LoadedContext) {
-    loaded.memories.retain(|memory| {
-        should_inject_memory(conn, memory, "memory").unwrap_or_else(|error| {
+pub(super) fn drop_unacknowledged_poisoned_context(
+    conn: &Connection,
+    loaded: &mut LoadedContext,
+) -> PoisoningDrops {
+    let mut drops = std::mem::take(&mut loaded.poisoning_drops);
+
+    let memories = std::mem::take(&mut loaded.memories);
+    for memory in memories {
+        let keep = should_inject_memory(conn, &memory, "memory").unwrap_or_else(|error| {
             crate::log::error(
                 "context-poisoning",
                 &format!(
@@ -24,10 +38,17 @@ pub(super) fn drop_unacknowledged_poisoned_context(conn: &Connection, loaded: &m
                 ),
             );
             false
-        })
-    });
-    loaded.lessons.retain(|lesson| {
-        should_inject_memory(conn, &lesson.memory, "lessons").unwrap_or_else(|error| {
+        });
+        if keep {
+            loaded.memories.push(memory);
+        } else {
+            drops.memories.push(memory);
+        }
+    }
+
+    let lessons = std::mem::take(&mut loaded.lessons);
+    for lesson in lessons {
+        let keep = should_inject_memory(conn, &lesson.memory, "lessons").unwrap_or_else(|error| {
             crate::log::error(
                 "context-poisoning",
                 &format!(
@@ -36,10 +57,17 @@ pub(super) fn drop_unacknowledged_poisoned_context(conn: &Connection, loaded: &m
                 ),
             );
             false
-        })
-    });
-    loaded.summaries.retain(|summary| {
-        crate::db::summary_poisoning::summary_injectable(
+        });
+        if keep {
+            loaded.lessons.push(lesson);
+        } else {
+            drops.lessons.push(lesson.memory);
+        }
+    }
+
+    let summaries = std::mem::take(&mut loaded.summaries);
+    for summary in summaries {
+        if crate::db::summary_poisoning::summary_injectable(
             conn,
             summary.id,
             &[
@@ -47,21 +75,45 @@ pub(super) fn drop_unacknowledged_poisoned_context(conn: &Connection, loaded: &m
                 ("completed", summary.completed.as_deref()),
             ],
             "context_sessions_section",
-        )
-    });
-    loaded.workstreams.retain(|workstream| {
-        let Some(pattern_match) = scan_instruction_pattern(&workstream_haystack(workstream)) else {
-            return true;
-        };
-        crate::log::error(
-            "context-poisoning",
-            &format!(
-                "dropping poisoned workstream id={} pattern={}@v{}",
-                workstream.id, pattern_match.pattern_id, pattern_match.pattern_set_version
-            ),
-        );
-        false
-    });
+        ) {
+            loaded.summaries.push(summary);
+        } else {
+            drops.summaries.push(summary);
+        }
+    }
+
+    let workstreams = std::mem::take(&mut loaded.workstreams);
+    let (safe_workstreams, poisoned_workstreams) = partition_workstreams(workstreams);
+    loaded.workstreams = safe_workstreams;
+    drops.workstreams.extend(poisoned_workstreams);
+
+    drops
+}
+
+pub(super) fn partition_workstreams(
+    workstreams: Vec<crate::workstream::WorkStream>,
+) -> (
+    Vec<crate::workstream::WorkStream>,
+    Vec<crate::workstream::WorkStream>,
+) {
+    let mut safe = Vec::new();
+    let mut poisoned = Vec::new();
+    for workstream in workstreams {
+        match scan_instruction_pattern(&workstream_haystack(&workstream)) {
+            None => safe.push(workstream),
+            Some(pattern_match) => {
+                crate::log::error(
+                    "context-poisoning",
+                    &format!(
+                        "dropping poisoned workstream id={} pattern={}@v{}",
+                        workstream.id, pattern_match.pattern_id, pattern_match.pattern_set_version
+                    ),
+                );
+                poisoned.push(workstream);
+            }
+        }
+    }
+    (safe, poisoned)
 }
 
 fn workstream_haystack(workstream: &crate::workstream::WorkStream) -> String {

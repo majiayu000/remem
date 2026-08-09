@@ -4,7 +4,9 @@ use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
 use serde::Serialize;
 
-use super::super::types::{GetObservationsParams, TimelineParams, UserRecallParams};
+use super::super::types::{
+    ContextBundleParams, GetObservationsParams, TimelineParams, UserRecallParams,
+};
 use super::errors::{self, McpToolError, McpToolResult};
 use super::MemoryServer;
 use crate::retrieval::search;
@@ -12,6 +14,80 @@ use crate::{db, memory};
 
 #[tool_router(router = tool_router_context, vis = "pub(super)")]
 impl MemoryServer {
+    #[tool(
+        description = "Experimental Context Bundle v1 compiler. Requires schema_version=1 and a non-blank task. Returns a policy-bounded, source-attributed ContextBundle with a complete selection/drop audit; project is explicit or derived from cwd, and role/risk/token budget have deterministic defaults. Historical as_of_epoch pins and include_superseded=true fail loudly until the canonical loader supports them. This reuses the production SessionStart canonical loader, performs no foreground LLM or network call, and returns canonical load failures as a blocked audited bundle. Its poisoning safety check may quarantine unsafe persisted rows, so callers must not treat it as side-effect-free. The JSON shape is versioned but remains experimental."
+    )]
+    pub(super) fn context_bundle(
+        &self,
+        Parameters(params): Parameters<ContextBundleParams>,
+    ) -> McpToolResult<String> {
+        const TOOL: &str = "context_bundle";
+        if params.schema_version != crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                format!(
+                    "unsupported schema_version {}; expected {}",
+                    params.schema_version,
+                    crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION
+                ),
+            ));
+        }
+        if params.task.trim().is_empty() {
+            return Err(McpToolError::invalid_request(TOOL, "task is required"));
+        }
+        if params.token_budget == Some(0) {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "token_budget must be greater than zero",
+            ));
+        }
+        if params.as_of_epoch.is_some_and(|epoch| epoch != 0) {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "historical as_of_epoch is not supported by Context Bundle v1; use 0 or omit it",
+            ));
+        }
+        if params.include_superseded == Some(true) {
+            return Err(McpToolError::invalid_request(
+                TOOL,
+                "include_superseded=true is not supported by the canonical SessionStart loader",
+            ));
+        }
+        let (project, cwd, worktree) = resolve_context_bundle_scope(
+            TOOL,
+            params.project.as_deref(),
+            params.cwd.as_deref(),
+            params.worktree.as_deref(),
+        )?;
+        let branch = non_blank_optional(TOOL, "branch", params.branch.as_deref())?;
+        let role = parse_context_bundle_role(TOOL, params.role.as_deref().unwrap_or("coder"))?;
+        let risk = parse_context_bundle_risk(TOOL, params.risk.as_deref().unwrap_or("medium"))?;
+        let request = crate::context_bundle::ContextRequest {
+            schema_version: params.schema_version,
+            task: params.task,
+            project: crate::context_bundle::ProjectRef { key: project },
+            branch,
+            worktree: Some(worktree),
+            role,
+            as_of_epoch: params.as_of_epoch.unwrap_or(0),
+            token_budget: params.token_budget.unwrap_or(4_000),
+            risk,
+            include_superseded: params.include_superseded.unwrap_or(false),
+        };
+
+        self.with_conn(TOOL, |conn| {
+            let bundle = crate::context_bundle::compile_session_start_bundle(
+                conn,
+                &request,
+                &cwd,
+                request.branch.as_deref(),
+                true,
+            )
+            .map_err(|error| McpToolError::invalid_request(TOOL, error.to_string()))?;
+            errors::to_json_pretty(TOOL, &bundle)
+        })
+    }
+
     #[tool(
         description = "Assemble task-aware user context from safe claims, profile summary, repo memories, requested current-state keys, workstreams, and recent sessions. Its poisoning gate may quarantine an unsafe legacy or session summary. Requires a non-blank query. project sets the scope; otherwise cwd is normalized, and when both are omitted the current process working directory supplies the scope. Returns a compact source-attributed JSON object with included items, dropped items, reason codes, and budget metadata. Use search for exhaustive memory matches and current_state for one exact stable key; this tool selects a bounded context bundle instead. Invalid scope input, an unavailable process working directory, or database failures return a tool error."
     )]
@@ -253,6 +329,80 @@ impl MemoryServer {
             );
             errors::to_json_pretty(TOOL, &results)
         })
+    }
+}
+
+fn resolve_context_bundle_scope(
+    tool: &'static str,
+    project: Option<&str>,
+    cwd: Option<&str>,
+    worktree: Option<&str>,
+) -> McpToolResult<(String, String, String)> {
+    let project = non_blank_optional(tool, "project", project)?;
+    let cwd = non_blank_optional(tool, "cwd", cwd)?;
+    let worktree = non_blank_optional(tool, "worktree", worktree)?;
+    let effective_cwd = match worktree.clone().or(cwd) {
+        Some(value) => value,
+        None => std::env::current_dir()
+            .map_err(|error| {
+                McpToolError::invalid_request(tool, format!("project or cwd required: {error}"))
+            })?
+            .to_string_lossy()
+            .into_owned(),
+    };
+    let effective_project = project.unwrap_or_else(|| crate::db::project_from_cwd(&effective_cwd));
+    let effective_worktree = worktree.unwrap_or_else(|| effective_cwd.clone());
+    Ok((effective_project, effective_cwd, effective_worktree))
+}
+
+fn non_blank_optional(
+    tool: &'static str,
+    field: &'static str,
+    value: Option<&str>,
+) -> McpToolResult<Option<String>> {
+    value
+        .map(|value| {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                Err(McpToolError::invalid_request(
+                    tool,
+                    format!("{field} must not be blank when provided"),
+                ))
+            } else {
+                Ok(trimmed.to_string())
+            }
+        })
+        .transpose()
+}
+
+fn parse_context_bundle_role(
+    tool: &'static str,
+    value: &str,
+) -> McpToolResult<crate::context_bundle::AgentRole> {
+    match value {
+        "coder" => Ok(crate::context_bundle::AgentRole::Coder),
+        "reviewer" => Ok(crate::context_bundle::AgentRole::Reviewer),
+        "planner" => Ok(crate::context_bundle::AgentRole::Planner),
+        "researcher" => Ok(crate::context_bundle::AgentRole::Researcher),
+        other => Err(McpToolError::invalid_request(
+            tool,
+            format!("unknown role {other:?}; expected coder, reviewer, planner, or researcher"),
+        )),
+    }
+}
+
+fn parse_context_bundle_risk(
+    tool: &'static str,
+    value: &str,
+) -> McpToolResult<crate::context_bundle::RiskClass> {
+    match value {
+        "low" => Ok(crate::context_bundle::RiskClass::Low),
+        "medium" => Ok(crate::context_bundle::RiskClass::Medium),
+        "high" => Ok(crate::context_bundle::RiskClass::High),
+        other => Err(McpToolError::invalid_request(
+            tool,
+            format!("unknown risk {other:?}; expected low, medium, or high"),
+        )),
     }
 }
 

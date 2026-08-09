@@ -27,6 +27,18 @@ pub(super) struct SessionSummaryBrief {
 }
 
 #[derive(Debug, Clone)]
+pub(super) enum ContextPreselectionItem {
+    Memory(Memory),
+    Summary(SessionSummaryBrief),
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ContextPreselectionDrop {
+    pub item: ContextPreselectionItem,
+    pub reason: &'static str,
+}
+
+#[derive(Debug, Clone)]
 pub(super) struct LoadedContext {
     pub render_reference_epoch: i64,
     pub memories: Vec<Memory>,
@@ -34,6 +46,13 @@ pub(super) struct LoadedContext {
     pub lessons: Vec<LessonMemory>,
     pub summaries: Vec<SessionSummaryBrief>,
     pub workstreams: Vec<WorkStream>,
+    /// Canonical rows fetched for this snapshot but removed by its selectors.
+    /// Bundle audit consumes these identities without re-querying mutable data.
+    pub preselection_drops: Vec<ContextPreselectionDrop>,
+    /// Rows rejected before implicit-query construction. Keeping them on the
+    /// same snapshot preserves a redacted poisoning audit without allowing
+    /// their content to steer retrieval.
+    pub poisoning_drops: super::poisoning::PoisoningDrops,
     pub relevance_query: Option<String>,
     pub memory_abstained: bool,
     pub errors: Vec<ContextLoadError>,
@@ -43,7 +62,7 @@ pub(super) struct LoadedContext {
     /// Measurable sub-phases inside `load_context_data`.
     pub load_phase_timings: Vec<crate::perf::PhaseTiming>,
     /// Shared rerank stage outcome for the SessionStart implicit query
-    /// (GH-851); `None` only in fixtures that bypass `load_context_data`.
+    /// (GH-851); `None` in fixtures and execution policies that disable rerank.
     pub rerank: Option<crate::retrieval::rerank::RerankExplain>,
 }
 

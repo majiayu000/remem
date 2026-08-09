@@ -1,6 +1,6 @@
 # Truthful MCP Tool Metadata — Tech Spec
 
-Refs #981.
+Refs #981, #932.
 
 ## Design
 
@@ -15,7 +15,7 @@ six generated routers
 merged ToolRouter<MemoryServer>
         |
         v
-apply exact 14-entry contract table
+apply the exact 15-entry contract table
   - title + four annotations
   - optional object-rooted output schema
   - optional success-response adapter
@@ -25,7 +25,7 @@ MCP list_tools / call_tool wire surface
 ```
 
 This keeps contract completeness auditable in one place and avoids changing
-the 14 handler return types. Existing direct handler tests continue to observe
+the 15 handler return types. Existing direct handler tests continue to observe
 their current `McpToolResult<String>` contract.
 
 ## Module Layout
@@ -166,9 +166,9 @@ Descriptions remain concise but must agree with the annotations:
 
 Focused tests cover:
 
-- exact equality of registered and contracted 14-tool name sets;
+- exact equality of registered and contracted 15-tool name sets;
 - the full title/R/D/I/O matrix from the final merged router;
-- output-schema presence for exactly 13 tools and absence for
+- output-schema presence for exactly 14 tools and absence for
   `timeline_report`;
 - object-rooted schemas with the stable fields/envelope keys above;
 - closed root and nested typed objects, with documented dynamic extension
@@ -181,7 +181,7 @@ Focused tests cover:
 - malformed or wrong-shape successes fail loudly;
 - undeclared, missing, wrong-type, invalid-null, nested, and union-branch
   mutations fail against the advertised contract;
-- every one of the 13 schema-bearing served routes returns a real non-empty
+- every one of the 14 schema-bearing served routes returns a real non-empty
   success through the adapter, covering both detail union branches and
   nested/nullable values;
 - `MemoryServer::new` remains lazy and does not open the database.
@@ -201,7 +201,7 @@ the repository version-sync checks.
 ## Registry Verification
 
 Local tests are authoritative for the submitted code. After a release is
-available to Glama, fetch its MCP server introspection and verify all 14 tool
+available to Glama, fetch its MCP server introspection and verify all 15 tool
 names, annotations, and output-schema presence. If Glama still reports an
 empty or stale list, retain that as explicit external pending evidence and
 coordinate the registry refresh separately; do not alter the truthful local

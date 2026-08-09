@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+mod context_bundle;
 mod current_state;
 mod details;
 mod normalization;
@@ -16,6 +17,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
+use context_bundle::ContextBundleOutput;
 use current_state::CurrentStateOutput;
 use details::{ObservationDetailsOutput, ObservationOutput};
 use normalization::{close_declared_objects, normalize_nullable};
@@ -26,6 +28,7 @@ pub(super) enum OutputSchema {
     CurrentState,
     Search,
     RecallUserContext,
+    ContextBundle,
     Timeline,
     GetObservations,
     LookupCommit,
@@ -43,6 +46,7 @@ pub(super) fn build_schema(kind: OutputSchema) -> anyhow::Result<Arc<JsonObject>
         OutputSchema::CurrentState => schema_for_output::<CurrentStateOutput>(),
         OutputSchema::Search => schema_for_output::<SearchOutput>(),
         OutputSchema::RecallUserContext => schema_for_output::<RecallUserContextOutput>(),
+        OutputSchema::ContextBundle => schema_for_output::<ContextBundleOutput>(),
         OutputSchema::Timeline => schema_for_output::<TimelineOutput>(),
         OutputSchema::GetObservations => schema_for_output::<ObservationDetailsOutput>(),
         OutputSchema::LookupCommit => schema_for_output::<CommitLookupsOutput>(),
@@ -68,6 +72,7 @@ pub(super) fn validate_output(kind: OutputSchema, value: &Value) -> anyhow::Resu
         OutputSchema::CurrentState => validate::<CurrentStateOutput>(kind, value),
         OutputSchema::Search => validate::<SearchOutput>(kind, value),
         OutputSchema::RecallUserContext => validate::<RecallUserContextOutput>(kind, value),
+        OutputSchema::ContextBundle => validate::<ContextBundleOutput>(kind, value),
         OutputSchema::Timeline => validate::<TimelineOutput>(kind, value),
         OutputSchema::GetObservations => validate::<ObservationDetailsOutput>(kind, value),
         OutputSchema::LookupCommit => validate::<CommitLookupsOutput>(kind, value),
@@ -87,7 +92,9 @@ fn validate<T: DeserializeOwned>(kind: OutputSchema, value: &Value) -> anyhow::R
         .with_context(|| format!("validate {kind:?} output DTO"))
 }
 
-fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+pub(super) fn deserialize_required_nullable<'de, D, T>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
     T: Deserialize<'de>,
@@ -95,9 +102,19 @@ where
     Option::<T>::deserialize(deserializer)
 }
 
-fn required_nullable_string_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+pub(super) fn required_nullable_string_schema(
+    _: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
     schemars::json_schema!({
         "type": ["string", "null"]
+    })
+}
+
+pub(super) fn required_nullable_number_schema(
+    _: &mut schemars::SchemaGenerator,
+) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": ["number", "null"]
     })
 }
 

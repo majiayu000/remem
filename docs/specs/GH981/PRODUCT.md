@@ -1,11 +1,13 @@
 # Truthful MCP Tool Metadata — Product Spec
 
-Refs #981.
+Refs #981, #932.
 
 ## Problem
 
-remem exposes 14 MCP tools, but their descriptors currently omit tool
-annotations and output schemas. MCP clients therefore have to guess whether a
+remem exposes 15 MCP tools. The original 14-tool metadata rollout established
+the contract below; GH932 subsequently added the experimental `context_bundle`
+JSON tool under the same fail-closed registry and wire rules. Tool descriptors
+must not omit annotations and output schemas. MCP clients otherwise have to guess whether a
 call mutates durable state, can be repeated safely, may contact an external
 provider, or returns machine-readable JSON. The protocol defaults are also
 materially wrong for several tools: read-only queries appear destructive,
@@ -62,6 +64,7 @@ interaction:
 | `current_state` | Current State | true | false | true | false | Local current-state query only. |
 | `search` | Search Memories | true | false | true | true | Query-only; a query may use a remote embedding provider. |
 | `recall_user_context` | Recall User Context | false | true | false | true | May quarantine an unsafe summary and may use remote embedding. |
+| `context_bundle` | Compile Context Bundle (Experimental) | false | true | false | false | Uses local-only retrieval, but poisoning checks may persist audit/drop records. |
 | `timeline` | Memory Timeline | true | false | true | true | Query-only; query mode may use remote embedding. |
 | `get_observations` | Get Observation Details | false | true | false | false | Overwrites last-accessed metadata and increments memory access counts. |
 | `lookup_commit` | Lookup Commit | false | true | false | false | Its safety gate may quarantine the newest eligible linked summary. |
@@ -84,8 +87,8 @@ Successful JSON tools retain their existing single text content item exactly.
 They additionally return object-rooted structured content:
 
 - Existing JSON objects are copied directly: `current_state`, `search`,
-  `recall_user_context`, `save_memory`, `govern_memory`, `update_workstream`,
-  `search_raw`, and `list_raw_sessions`.
+  `recall_user_context`, `context_bundle`, `save_memory`, `govern_memory`,
+  `update_workstream`, `search_raw`, and `list_raw_sessions`.
 - Existing JSON arrays keep the array in text content and use a named object
   envelope only in structured content:
   - `timeline` → `{ "observations": [...] }`
@@ -112,22 +115,22 @@ or error payload changes as part of #981.
 
 ## Success Criteria
 
-- The final merged router contains exactly 14 tools and a complete, exact
+- The final merged router contains exactly 15 tools and a complete, exact
   contract for each one.
-- All 14 tools expose explicit annotations matching the matrix.
-- Thirteen JSON tools expose stable object-rooted output schemas; the one
+- All 15 tools expose explicit annotations matching the matrix.
+- Fourteen JSON tools expose stable object-rooted output schemas; the one
   Markdown tool intentionally does not.
 - Typed output objects reject undeclared fields instead of advertising an open
   shape broader than the production response.
 - Normal successful responses containing JSON `null` validate against the
   published 2020-12 schemas.
-- Real non-empty served-wire successes from all thirteen JSON tools prove
+- Real non-empty served-wire successes from all fourteen JSON tools prove
   legacy text preservation and schema-conforming structured content, including
   both detail union branches and nested/nullable values; errors never
   masquerade as success.
 - Focused MCP tests, formatting, `cargo check`, and the repository preflight
   pass from the submitted commit.
 - After the implementation is deployed and Glama refreshes the server, its
-  public introspection shows all 14 tool descriptors with the same annotations
+  public introspection shows all 15 tool descriptors with the same annotations
   and output-schema presence. An empty or stale Glama tool list is external
   pending evidence, not a reason to weaken the local contract.

@@ -28,6 +28,7 @@ mod render_error;
 mod render_inputs;
 mod sections;
 mod style;
+mod summary_query;
 
 use std::ffi::OsString;
 
@@ -35,7 +36,11 @@ use std::ffi::OsString;
 mod tests;
 mod types;
 
+#[cfg(test)]
 pub(crate) use bundle_candidates::load_session_start_candidates;
+pub(crate) use bundle_candidates::{
+    load_session_start_candidates_with_limits, LoadedBundleCandidates,
+};
 pub(crate) use hybrid_context::{
     query_hybrid_context_memories_with_rank_signal_mode, InjectionRankSignalMode,
 };

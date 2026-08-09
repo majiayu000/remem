@@ -61,6 +61,7 @@ pub(crate) fn prompt_submit_additional_context(
         current_branch.as_deref(),
         excluded_types,
         PROMPT_SUBMIT_MEMORY_LIMIT,
+        true,
     )?;
     annotate_memories_with_temporal_facts_for_query(
         conn,

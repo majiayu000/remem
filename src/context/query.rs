@@ -10,21 +10,38 @@ use super::filters::{
     push_context_related_filter, push_excluded_type_filter, push_owner_excluded_filter,
     push_owner_included_filter,
 };
-use super::hybrid_context::query_hybrid_context_memories;
-use super::implicit_query::build_implicit_context_query;
-use super::memory_selection::{
-    context_cluster_suffix, deduplicate_memory_clusters, limit_self_diagnostic_memories,
-    normalize_cluster_text, reference_cluster_key, sort_memories_by_branch,
+use super::hybrid_context::{
+    query_hybrid_context_memories, query_hybrid_context_memories_with_weights,
 };
-use super::memory_traits::is_self_diagnostic_text;
+use super::implicit_query::build_implicit_context_query;
+use super::memory_selection::{preselect_memories, sort_memories_by_branch};
 use super::ownership::{startup_memory_owner_decision, OwnerCounts, OwnerMetadata, OwnerTrace};
 use super::policy::{ContextPolicy, SectionKind};
-use super::types::{ContextLoadError, LoadedContext, SessionSummaryBrief};
+#[cfg(test)]
+pub(super) use super::summary_query::query_recent_summaries;
+use super::summary_query::query_recent_summaries_with_drops;
+use super::types::{ContextLoadError, ContextPreselectionDrop, LoadedContext, SessionSummaryBrief};
 use crate::memory::{self, Memory};
+use crate::retrieval::search::SearchWeights;
 
-const SUMMARY_FETCH_BATCH_SIZE: usize = 25;
-const SUMMARY_MAX_SCAN: usize = 200;
-const STALE_DESIGN_SUMMARY_DAYS: i64 = 7;
+#[derive(Clone, Copy)]
+struct ContextLoadExecutionPolicy {
+    allow_remote_embedding: bool,
+    allow_rerank: bool,
+    fixed_bundle_weights: bool,
+}
+
+const DEFAULT_EXECUTION_POLICY: ContextLoadExecutionPolicy = ContextLoadExecutionPolicy {
+    allow_remote_embedding: true,
+    allow_rerank: true,
+    fixed_bundle_weights: false,
+};
+
+const LOCAL_ONLY_EXECUTION_POLICY: ContextLoadExecutionPolicy = ContextLoadExecutionPolicy {
+    allow_remote_embedding: false,
+    allow_rerank: false,
+    fixed_bundle_weights: true,
+};
 
 #[cfg(test)]
 pub(super) fn load_context_data(
@@ -43,15 +60,56 @@ pub(super) fn load_context_data_with_policy(
     policy: &ContextPolicy,
     collect_diagnostics: bool,
 ) -> LoadedContext {
+    load_context_data_with_execution_policy(
+        conn,
+        project,
+        current_branch,
+        policy,
+        collect_diagnostics,
+        DEFAULT_EXECUTION_POLICY,
+    )
+}
+
+pub(super) fn load_context_data_with_policy_local_only(
+    conn: &Connection,
+    project: &str,
+    current_branch: Option<&str>,
+    policy: &ContextPolicy,
+    collect_diagnostics: bool,
+) -> LoadedContext {
+    load_context_data_with_execution_policy(
+        conn,
+        project,
+        current_branch,
+        policy,
+        collect_diagnostics,
+        LOCAL_ONLY_EXECUTION_POLICY,
+    )
+}
+
+fn load_context_data_with_execution_policy(
+    conn: &Connection,
+    project: &str,
+    current_branch: Option<&str>,
+    policy: &ContextPolicy,
+    collect_diagnostics: bool,
+    execution_policy: ContextLoadExecutionPolicy,
+) -> LoadedContext {
     let render_reference_epoch = chrono::Utc::now().timestamp();
     let mut errors = Vec::new();
-    let summaries = query_recent_summaries(conn, project, policy.limits.candidate_fetch_limit)
-        .unwrap_or_else(|e| {
-            let message = format!("failed to load recent summaries for {project}: {e}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("sessions", message));
-            Vec::new()
-        });
+    let summary_selection =
+        query_recent_summaries_with_drops(conn, project, policy.limits.candidate_fetch_limit)
+            .unwrap_or_else(|e| {
+                let message = format!("failed to load recent summaries for {project}: {e}");
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("sessions", message));
+                super::summary_query::SummarySelection {
+                    selected: Vec::new(),
+                    poisoning_drops: Vec::new(),
+                    preselection_drops: Vec::new(),
+                }
+            });
+    let summaries = summary_selection.selected;
     let workstreams =
         crate::workstream::query_active_workstreams(conn, project).unwrap_or_else(|e| {
             let message = format!("failed to load active workstreams for {project}: {e}");
@@ -59,6 +117,10 @@ pub(super) fn load_context_data_with_policy(
             errors.push(ContextLoadError::new("workstreams", message));
             Vec::new()
         });
+    // Workstream text participates in the implicit retrieval query. Reject
+    // instruction-shaped rows before query derivation so poisoned content
+    // cannot steer which memories are fetched.
+    let (workstreams, poisoned_workstreams) = super::poisoning::partition_workstreams(workstreams);
     let commit_messages = query_recent_commit_messages(conn, project, current_branch, 3)
         .unwrap_or_else(|e| {
             let message = format!("failed to load recent git commit messages for {project}: {e}");
@@ -72,6 +134,7 @@ pub(super) fn load_context_data_with_policy(
         current_branch,
         policy,
         collect_diagnostics,
+        execution_policy,
         &commit_messages,
         &summaries,
         &workstreams,
@@ -119,30 +182,34 @@ pub(super) fn load_context_data_with_policy(
         staleness_start,
     )];
 
-    // Shared final rerank stage (GH-851): runs after the complete baseline
-    // assembly (union, dedupe, eligibility, branch policy) so no later sort
-    // can override its order. Off/failure keeps the exact baseline order.
-    let verify_before_trust_ids: HashSet<i64> = staleness_labels
-        .iter()
-        .filter(|(_, label)| label.source_anchor == "verify-before-trust")
-        .map(|(id, _)| *id)
-        .collect();
-    let rerank = match crate::retrieval::rerank::apply_with_vbt(
-        relevance_query.as_deref(),
-        &mut memories,
-        &verify_before_trust_ids,
-    ) {
-        Ok(outcome) => {
-            let requested = outcome.disabled_reason()
-                != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
-            Some(outcome.to_explain(requested))
+    // Shared final rerank stage (GH-851): runs after baseline assembly so no
+    // later sort can override it. Off/failure preserves the baseline. The MCP
+    // bundle disables this stage because v1 does not plan or hash reranking.
+    let rerank = if execution_policy.allow_rerank {
+        let verify_before_trust_ids: HashSet<i64> = staleness_labels
+            .iter()
+            .filter(|(_, label)| label.source_anchor == "verify-before-trust")
+            .map(|(id, _)| *id)
+            .collect();
+        match crate::retrieval::rerank::apply_with_vbt(
+            relevance_query.as_deref(),
+            &mut memories,
+            &verify_before_trust_ids,
+        ) {
+            Ok(outcome) => {
+                let requested = outcome.disabled_reason()
+                    != Some(crate::retrieval::rerank::RerankDisabledReason::Off);
+                Some(outcome.to_explain(requested))
+            }
+            Err(error) => {
+                let message = format!("rerank stage failed for {project}: {error}");
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("rerank", message));
+                None
+            }
         }
-        Err(error) => {
-            let message = format!("rerank stage failed for {project}: {error}");
-            crate::log::error("context", &message);
-            errors.push(ContextLoadError::new("rerank", message));
-            None
-        }
+    } else {
+        None
     };
 
     LoadedContext {
@@ -152,6 +219,16 @@ pub(super) fn load_context_data_with_policy(
         lessons,
         summaries,
         workstreams,
+        preselection_drops: summary_selection
+            .preselection_drops
+            .into_iter()
+            .chain(memory_selection.preselection_drops)
+            .collect(),
+        poisoning_drops: super::poisoning::PoisoningDrops {
+            summaries: summary_selection.poisoning_drops,
+            workstreams: poisoned_workstreams,
+            ..super::poisoning::PoisoningDrops::default()
+        },
         relevance_query,
         memory_abstained: memory_selection.abstained,
         errors,
@@ -203,6 +280,7 @@ struct ContextMemorySelection {
     owner_counts: OwnerCounts,
     diagnostics: super::types::ContextDiagnostics,
     fact_label_query: Option<String>,
+    preselection_drops: Vec<ContextPreselectionDrop>,
 }
 
 pub(super) struct ContextMemoryRow {
@@ -216,6 +294,7 @@ fn load_project_memories(
     current_branch: Option<&str>,
     policy: &ContextPolicy,
     collect_diagnostics: bool,
+    execution_policy: ContextLoadExecutionPolicy,
     commit_messages: &[String],
     summaries: &[SessionSummaryBrief],
     workstreams: &[crate::workstream::WorkStream],
@@ -242,14 +321,29 @@ fn load_project_memories(
         workstreams,
     ) {
         fact_label_query = Some(implicit_query.clone());
-        match query_hybrid_context_memories(
-            conn,
-            project,
-            &implicit_query,
-            current_branch,
-            excluded_types,
-            policy.limits.candidate_fetch_limit as i64,
-        ) {
+        let retrieved = if execution_policy.fixed_bundle_weights {
+            query_hybrid_context_memories_with_weights(
+                conn,
+                project,
+                &implicit_query,
+                current_branch,
+                excluded_types,
+                policy.limits.candidate_fetch_limit as i64,
+                SearchWeights::context_bundle_v1(),
+                execution_policy.allow_remote_embedding,
+            )
+        } else {
+            query_hybrid_context_memories(
+                conn,
+                project,
+                &implicit_query,
+                current_branch,
+                excluded_types,
+                policy.limits.candidate_fetch_limit as i64,
+                execution_policy.allow_remote_embedding,
+            )
+        };
+        match retrieved {
             Ok(retrieved) => {
                 if retrieved.is_empty() && has_task_signals {
                     task_abstention_query = Some(implicit_query);
@@ -300,6 +394,7 @@ fn load_project_memories(
                 task_query,
                 recent,
                 policy.limits.candidate_fetch_limit,
+                execution_policy.allow_remote_embedding,
             )
             .unwrap_or_else(|e| {
                 let message =
@@ -323,8 +418,13 @@ fn load_project_memories(
 
     memories
         .retain(|memory| policy.allows_memory_type(SectionKind::MemoryIndex, &memory.memory_type));
-    let (deduped, hidden_duplicate_groups) = deduplicate_memory_clusters(memories, current_branch);
-    let mut selected = limit_self_diagnostic_memories(deduped, policy.limits.self_diagnostic_limit);
+    let preselection = preselect_memories(
+        memories,
+        current_branch,
+        policy.limits.self_diagnostic_limit,
+    );
+    let hidden_duplicate_groups = preselection.hidden_duplicate_groups;
+    let mut selected = preselection.selected;
     sort_memories_by_branch(&mut selected, current_branch);
     let selected_id_list = selected.iter().map(|memory| memory.id).collect::<Vec<_>>();
 
@@ -386,6 +486,7 @@ fn load_project_memories(
         owner_traces: traces,
         owner_counts,
         fact_label_query,
+        preselection_drops: preselection.drops,
         diagnostics: if collect_diagnostics {
             super::diagnostics::collect_context_diagnostics(
                 conn,
@@ -551,190 +652,4 @@ fn map_context_memory_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ContextMe
         memory: memory::map_memory_row_pub(row)?,
         owner: OwnerMetadata::from_memory_row(row, 13)?,
     })
-}
-
-pub(super) fn query_recent_summaries(
-    conn: &Connection,
-    project: &str,
-    limit: usize,
-) -> Result<Vec<SessionSummaryBrief>> {
-    if limit == 0 {
-        return Ok(Vec::new());
-    }
-
-    let scan_limit = SUMMARY_MAX_SCAN.max(limit);
-    let now_epoch = chrono::Utc::now().timestamp();
-    let mut selected = Vec::new();
-    let mut low_signal_fallback = Vec::new();
-    let mut seen_clusters = HashSet::new();
-    let mut seen_session_keys = HashSet::new();
-    let mut offset = 0usize;
-
-    while selected.len() < limit && offset < scan_limit {
-        let fetch_limit = SUMMARY_FETCH_BATCH_SIZE.min(scan_limit - offset);
-        let batch = query_summary_batch(conn, project, fetch_limit, offset)?;
-        if batch.is_empty() {
-            break;
-        }
-
-        for row in batch {
-            let summary = row.summary;
-            if is_session_summary_self_diagnostic(&summary) {
-                continue;
-            }
-
-            let cluster_key = summary_cluster_key(&summary);
-            if seen_clusters.contains(&cluster_key)
-                || row
-                    .session_key
-                    .as_ref()
-                    .is_some_and(|session_key| seen_session_keys.contains(session_key))
-            {
-                continue;
-            }
-
-            if is_stale_design_prototype_summary(&summary, now_epoch) {
-                low_signal_fallback.push((cluster_key, row.session_key, summary));
-                continue;
-            }
-
-            seen_clusters.insert(cluster_key);
-            if let Some(session_key) = row.session_key {
-                seen_session_keys.insert(session_key);
-            }
-            selected.push(summary);
-            if selected.len() >= limit {
-                break;
-            }
-        }
-
-        offset += fetch_limit;
-    }
-
-    if selected.is_empty() {
-        for (cluster_key, session_key, summary) in low_signal_fallback {
-            let seen_session = session_key
-                .as_ref()
-                .is_some_and(|key| seen_session_keys.contains(key));
-            if !seen_session && seen_clusters.insert(cluster_key) {
-                if let Some(session_key) = session_key {
-                    seen_session_keys.insert(session_key);
-                }
-                selected.push(summary);
-            }
-            if selected.len() >= limit {
-                break;
-            }
-        }
-    }
-
-    Ok(selected)
-}
-
-struct SessionSummaryQueryRow {
-    summary: SessionSummaryBrief,
-    session_key: Option<String>,
-}
-
-fn query_summary_batch(
-    conn: &Connection,
-    project: &str,
-    limit: usize,
-    offset: usize,
-) -> Result<Vec<SessionSummaryQueryRow>> {
-    let mut stmt = conn.prepare_cached(
-        "SELECT ss.id, \
-             CASE \
-               WHEN ss.request LIKE 'Captured event range %..%' THEN \
-                 COALESCE(NULLIF(ss.decisions, ''), NULLIF(ss.learned, ''), \
-                          NULLIF(ss.next_steps, ''), NULLIF(ss.preferences, ''), \
-                          NULLIF(ss.completed, ''), ss.request) \
-               ELSE ss.request \
-             END AS display_request, \
-             ss.completed, \
-             ss.created_at_epoch, \
-             CASE \
-               WHEN ss.session_row_id IS NOT NULL AND s.session_id IS NOT NULL THEN \
-                 'mem-' || substr(s.session_id, 1, 8) \
-               ELSE ss.memory_session_id \
-             END AS session_key \
-         FROM session_summaries ss \
-         LEFT JOIN sessions s ON s.id = ss.session_row_id \
-         WHERE ss.request IS NOT NULL AND ss.request != '' \
-           AND COALESCE(ss.poisoning_status, 'legacy_unscanned') != 'quarantined' \
-           AND (ss.session_row_id IS NULL \
-                OR ss.request NOT LIKE 'Captured event range %..%' \
-                OR COALESCE(ss.decisions, '') != '' \
-                OR COALESCE(ss.learned, '') != '' \
-                OR COALESCE(ss.next_steps, '') != '' \
-                OR COALESCE(ss.preferences, '') != '') \
-           AND ((ss.owner_scope = 'repo' AND ss.owner_key = ?1) \
-                OR (ss.owner_scope = 'repo' AND ss.target_project = ?1) \
-                OR (ss.owner_scope IS NULL AND ss.project = ?1)) \
-         ORDER BY ss.created_at_epoch DESC, display_request ASC, ss.completed ASC LIMIT ?2 OFFSET ?3",
-    )?;
-    let rows = stmt.query_map(
-        rusqlite::params![project, limit as i64, offset as i64],
-        |row| {
-            Ok(SessionSummaryQueryRow {
-                summary: SessionSummaryBrief {
-                    id: row.get(0)?,
-                    request: row.get(1)?,
-                    completed: row.get(2)?,
-                    created_at_epoch: row.get(3)?,
-                },
-                session_key: row.get(4)?,
-            })
-        },
-    )?;
-    let mut rows = crate::db::query::collect_rows(rows)?;
-    // Poisoning eligibility runs before any dedup/cluster/selection step so a
-    // poisoned row cannot steer which other summaries are chosen (GH-855).
-    rows.retain(|row| {
-        crate::db::summary_poisoning::summary_injectable(
-            conn,
-            row.summary.id,
-            &[
-                ("request", Some(row.summary.request.as_str())),
-                ("completed", row.summary.completed.as_deref()),
-            ],
-            "context_recent_sessions",
-        )
-    });
-    Ok(rows)
-}
-
-fn is_session_summary_self_diagnostic(summary: &SessionSummaryBrief) -> bool {
-    let haystack = session_summary_haystack(summary);
-    is_self_diagnostic_text(&haystack)
-}
-
-fn is_stale_design_prototype_summary(summary: &SessionSummaryBrief, now_epoch: i64) -> bool {
-    let age_days = (now_epoch - summary.created_at_epoch) / 86400;
-    if age_days <= STALE_DESIGN_SUMMARY_DAYS {
-        return false;
-    }
-
-    let haystack = session_summary_haystack(summary);
-    ["landing page", "wireframe", "starfield"]
-        .iter()
-        .any(|needle| haystack.contains(needle))
-}
-
-fn summary_cluster_key(summary: &SessionSummaryBrief) -> String {
-    let request = normalize_cluster_text(&summary.request);
-    let tokens: Vec<&str> = request.split_whitespace().collect();
-    if let Some(reference_key) = reference_cluster_key(&tokens) {
-        return reference_key;
-    }
-    context_cluster_suffix(&request)
-}
-
-fn session_summary_haystack(summary: &SessionSummaryBrief) -> String {
-    format!(
-        "{} {}",
-        summary.request,
-        summary.completed.as_deref().unwrap_or_default()
-    )
-    .to_ascii_lowercase()
 }

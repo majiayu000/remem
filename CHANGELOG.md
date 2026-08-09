@@ -3,6 +3,13 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.64` for GH-932: the experimental MCP
+  `context_bundle` tool now accepts a closed, versioned v1 request and returns
+  the DB-backed SessionStart `ContextBundle` with complete selection/drop audit
+  through both legacy JSON text and MCP `structuredContent`. It validates
+  schema, scope, role, risk, and budget inputs, fails canonical partial loads
+  closed as audited `blocked` bundles, publishes a typed closed output schema,
+  and performs no foreground LLM or network call.
 - Staged source version `0.6.63` for GH-932: default `remem doctor` now reports
   a payload-free `Context compiler` capability check for the production
   SessionStart consumer. It exposes the active render/degraded mode plus

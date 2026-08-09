@@ -1,4 +1,5 @@
 use crate::memory::MemoryType;
+use serde::Serialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SectionKind {
@@ -20,7 +21,7 @@ pub(super) struct SectionPolicy {
     pub exclude_types: Vec<&'static str>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub(crate) struct ContextLimits {
     pub total_char_limit: usize,
     pub candidate_fetch_limit: usize,
@@ -60,7 +61,7 @@ impl Default for ContextLimits {
 }
 
 impl ContextLimits {
-    pub(super) fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         Self::from_env_reader(|key| std::env::var(key).ok())
     }
 

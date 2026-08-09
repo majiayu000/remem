@@ -8,7 +8,7 @@ use super::{item, request, session_start_plan};
 use crate::context_bundle::{execute, ChannelKind, ContextIntent, ExecutorInputs};
 
 /// Stable across processes and runs: same request + compiled policy.
-const EXPECTED_PLAN_HASH: &str = "8e0e78f1e61dda98fe1724c96788bb5cd4c6899caffaca0e35eb79894ec97660";
+const EXPECTED_PLAN_HASH: &str = "997a834168f6f85d53f091156fe500344e3f6df157bd1177e2fc1cb8655f2697";
 
 /// The plan's top-level key set is the contract boundary. Pinning it
 /// catches an added/removed/renamed field, which must be a deliberate
@@ -130,6 +130,8 @@ fn bundle_json_schema_snapshot() {
                 "Current truth",
                 "core decision",
             )],
+            poisoning_drops: Vec::new(),
+            preselection_drops: Vec::new(),
             enrichment_available: true,
         },
     );
@@ -169,7 +171,7 @@ fn bundle_json_schema_snapshot() {
             "candidates_considered": 1,
             "selected_count": 1,
             "dropped_count": 0,
-            "token_estimate": 4,
+            "token_estimate": 7,
             "token_budget": 3000,
             "truncation_reason": null,
             "entries": [
@@ -181,7 +183,7 @@ fn bundle_json_schema_snapshot() {
                     "selected": true,
                     "reason": "channel_default_selected",
                     "relevance_score": null,
-                    "token_estimate": 4,
+                    "token_estimate": 7,
                 }
             ],
         },
