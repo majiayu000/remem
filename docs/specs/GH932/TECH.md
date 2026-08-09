@@ -50,8 +50,10 @@ src/mcp/
   project key, zero token budget, schema mismatch) are rejected.
 - General plans derive budgets from `ContextLimits::default()`. The production
   SessionStart adapter passes its already-resolved effective limits to
-  `plan_session_start_with_limits`; those values are hashed into the plan and
-  are never re-read by the executor.
+  `plan_session_start_with_limits`; a SHA-256 fingerprint of the complete
+  limits object is carried in `reason_codes`, so loader-only limits such as
+  candidate fetch caps also affect the final plan hash. The compiler passes
+  the same resolved limits to the loader and never re-reads the environment.
 - `plan_hash` = SHA-256 over the canonical serde JSON of the plan with an
   empty `plan_hash` field. No timestamps or randomness are hashed.
 
@@ -65,10 +67,15 @@ src/mcp/
   validation yields a `blocked` bundle whose audit drops every candidate.
 - Scope checks run in both layers: the planner validates the request
   scope, the executor re-checks item project/branch against plan filters.
+- Trust floors and abstention are executable policy, not plan-only metadata.
+  The DB adapter maps `source_trust_class=user_prompt` to `trusted`; high-risk
+  plans drop standard rows and return an audited low-evidence abstention when
+  the minimum selected count is not met.
 - Relevance governance reuses `build_sessionstart_relevance_plan` for the
   lessons / memory_index / sessions channels — the same policy
   (`sessionstart_significant_token_v1`) and drop reasons as SessionStart.
-- Budget enforcement order: per-channel item limit, per-channel token
+- Budget enforcement counts the complete returned item (`title` + `text`). Its
+  order is per-channel item limit, per-channel token
   budget, then total token budget over a fixed section order; each drop is
   recorded with a machine-readable reason.
 - The production renderer uses `BudgetEnforcement::DeferToRenderer`: scope,
@@ -131,13 +138,20 @@ is the explicit rollback.
   production SessionStart compiler. Tool annotations therefore do not claim
   read-only or idempotent behavior even though the compilation path performs no
   foreground LLM or network call.
+- Rows removed by the poisoning gate remain in `ContextAudit` with
+  `reason=poisoning_gate`, stable identity, channel, source, and validity only;
+  their title and text are cleared before executor input and cannot reach the
+  returned JSON.
 
 ## Tests
 
 - Plan determinism: repeated planning yields identical JSON and hash;
   different requests yield different hashes.
-- Budget enforcement: channel and total token budgets, item limits.
+- Budget enforcement: channel and total token budgets over title plus text,
+  item limits.
 - Scope/trust/validity drops with exact reasons.
+- High-risk trust floor and low-evidence abstention, persisted user-authored
+  trust mapping, and redacted poisoning-gate audit coverage.
 - Degraded modes: `canonical_only` and `blocked`.
 - Schema snapshots: serialized plan and bundle JSON compared against
   fixed `serde_json::json!` literals.

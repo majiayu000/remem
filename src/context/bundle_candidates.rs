@@ -14,13 +14,14 @@
 //! canonical data.
 
 use anyhow::{bail, Result};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::context_bundle::{ChannelKind, ContextItem, ItemValidity, SourceKind, TrustClass};
 use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
 use std::collections::HashSet;
 
-use super::policy::ContextPolicy;
+use super::poisoning::PoisoningDrops;
+use super::policy::{ContextLimits, ContextPolicy};
 use super::query::load_context_data_with_policy;
 use super::relevance::{memory_stable_key, session_stable_key};
 use super::types::{LoadedContext, SessionSummaryBrief};
@@ -34,13 +35,37 @@ const STATUS_SUPERSEDED: &str = "superseded";
 ///
 /// Returns `Err` when any section failed to load; the caller must turn
 /// that into a `Blocked` bundle rather than executing over what survived.
+#[cfg(test)]
 pub(crate) fn load_session_start_candidates(
     conn: &Connection,
     project: &str,
     cwd: &str,
     current_branch: Option<&str>,
 ) -> Result<Vec<ContextItem>> {
-    let policy = ContextPolicy::from_env();
+    let limits = ContextLimits::from_env();
+    Ok(
+        load_session_start_candidates_with_limits(conn, project, cwd, current_branch, &limits)?
+            .candidates,
+    )
+}
+
+#[derive(Debug)]
+pub(crate) struct LoadedBundleCandidates {
+    pub(crate) candidates: Vec<ContextItem>,
+    pub(crate) poisoning_drops: Vec<ContextItem>,
+}
+
+/// Load candidates against the same already-resolved limits that were hashed
+/// into the retrieval plan. This prevents environment overrides from changing
+/// the wire result while leaving the plan hash unchanged.
+pub(crate) fn load_session_start_candidates_with_limits(
+    conn: &Connection,
+    project: &str,
+    cwd: &str,
+    current_branch: Option<&str>,
+    limits: &ContextLimits,
+) -> Result<LoadedBundleCandidates> {
+    let policy = ContextPolicy::from_limits(*limits);
     let mut loaded = load_context_data_with_policy(conn, project, current_branch, &policy, false);
     if !loaded.errors.is_empty() {
         let sections: Vec<&str> = loaded.errors.iter().map(|error| error.section).collect();
@@ -55,7 +80,7 @@ pub(crate) fn load_session_start_candidates(
                 .join("; ")
         );
     }
-    super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
+    let poisoning_drops = super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
     let mut discarded_core = String::new();
     let core = super::sections::render_core_memory_with_limits_and_staleness(
         &mut discarded_core,
@@ -66,8 +91,92 @@ pub(crate) fn load_session_start_candidates(
     );
     let core_ids = core.ids.into_iter().collect::<HashSet<_>>();
     let mut items = candidates_from_loaded(&loaded, project, &core_ids);
-    items.extend(preference_candidates(conn, project, cwd, &policy)?);
-    Ok(items)
+    let (preferences, preference_poisoning_drops) =
+        preference_candidates(conn, project, cwd, &policy)?;
+    items.extend(preferences);
+    apply_persisted_memory_trust(conn, &mut items)?;
+    Ok(LoadedBundleCandidates {
+        candidates: items,
+        poisoning_drops: poisoning_drop_candidates(
+            poisoning_drops,
+            preference_poisoning_drops,
+            project,
+        ),
+    })
+}
+
+/// `Memory` predates source-trust provenance and intentionally does not expose
+/// that database-only column. The bundle still has to honor the retrieval
+/// plan's trust floor, so enrich memory candidates from the canonical row:
+/// direct user-authored saves are trusted; extracted/tool/repo/external rows
+/// remain standard unless the poisoning gate quarantined them separately.
+fn apply_persisted_memory_trust(conn: &Connection, items: &mut [ContextItem]) -> Result<()> {
+    for item in items {
+        let Some(memory_id) = item
+            .stable_key
+            .strip_prefix("memory:")
+            .and_then(|value| value.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        let source_trust: Option<String> = conn
+            .query_row(
+                "SELECT source_trust_class FROM memories WHERE id = ?1",
+                [memory_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if source_trust.as_deref() == Some("user_prompt") {
+            item.trust = TrustClass::Trusted;
+        }
+    }
+    Ok(())
+}
+
+fn poisoning_drop_candidates(
+    drops: PoisoningDrops,
+    preference_drops: Vec<Memory>,
+    project: &str,
+) -> Vec<ContextItem> {
+    let mut items = Vec::new();
+    for memory in drops.memories {
+        let channel = MemoryType::parse(&memory.memory_type)
+            .filter(|memory_type| memory_type.is_core())
+            .map_or(ChannelKind::MemoryIndex, |_| ChannelKind::Core);
+        items.push(redact_poisoned(bundle_memory_item(
+            &memory, channel, None, project,
+        )));
+    }
+    for memory in drops.lessons {
+        items.push(redact_poisoned(bundle_memory_item(
+            &memory,
+            ChannelKind::Lessons,
+            None,
+            project,
+        )));
+    }
+    for memory in preference_drops {
+        items.push(redact_poisoned(bundle_memory_item(
+            &memory,
+            ChannelKind::Preferences,
+            None,
+            project,
+        )));
+    }
+    for summary in drops.summaries {
+        items.push(redact_poisoned(summary_item(&summary, project)));
+    }
+    for workstream in drops.workstreams {
+        items.push(redact_poisoned(workstream_item(&workstream)));
+    }
+    items
+}
+
+fn redact_poisoned(mut item: ContextItem) -> ContextItem {
+    item.title.clear();
+    item.text.clear();
+    item.trust = TrustClass::Quarantined;
+    item
 }
 
 /// Convert an already-loaded and poisoning-filtered SessionStart snapshot to
@@ -106,7 +215,7 @@ fn preference_candidates(
     project: &str,
     cwd: &str,
     policy: &ContextPolicy,
-) -> Result<Vec<ContextItem>> {
+) -> Result<(Vec<ContextItem>, Vec<Memory>)> {
     let mut discarded_render = String::new();
     let limits = &policy.limits;
     let details = crate::memory::preference::render_preferences_with_context_details(
@@ -118,9 +227,9 @@ fn preference_candidates(
         limits.preference_global_limit,
         limits.preference_char_limit,
     )?;
-    Ok(ordered_preference_candidates(
-        &details.rendered_memories,
-        project,
+    Ok((
+        ordered_preference_candidates(&details.rendered_memories, project),
+        details.poisoning_drops,
     ))
 }
 
@@ -168,25 +277,29 @@ fn candidates_from_loaded(
         ));
     }
     for workstream in &loaded.workstreams {
-        items.push(ContextItem {
-            stable_key: format!("workstream:{}", workstream.id),
-            channel: ChannelKind::Workstreams,
-            title: workstream.title.clone(),
-            text: workstream_text(workstream),
-            source_kind: SourceKind::Canonical,
-            canonical_ref: Some(format!("workstream:{}", workstream.id)),
-            projection_ref: None,
-            evidence_refs: Vec::new(),
-            validity: ItemValidity::Current,
-            trust: TrustClass::Standard,
-            project: Some(workstream.project.clone()),
-            branch: None,
-        });
+        items.push(workstream_item(workstream));
     }
     for summary in &loaded.summaries {
         items.push(summary_item(summary, project));
     }
     items
+}
+
+fn workstream_item(workstream: &crate::workstream::WorkStream) -> ContextItem {
+    ContextItem {
+        stable_key: format!("workstream:{}", workstream.id),
+        channel: ChannelKind::Workstreams,
+        title: workstream.title.clone(),
+        text: workstream_text(workstream),
+        source_kind: SourceKind::Canonical,
+        canonical_ref: Some(format!("workstream:{}", workstream.id)),
+        projection_ref: None,
+        evidence_refs: Vec::new(),
+        validity: ItemValidity::Current,
+        trust: TrustClass::Standard,
+        project: Some(workstream.project.clone()),
+        branch: None,
+    }
 }
 
 /// Core types feed current truth; everything else lands in the index.

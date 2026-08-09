@@ -13,18 +13,18 @@ use crate::context::{
 };
 
 use super::audit::AuditBuilder;
-use crate::retrieval_router::RetrievalPlan;
+use crate::retrieval_router::{AbstentionMode, RetrievalPlan};
 
 use super::domain::{
     ChannelKind, ContextBundle, ContextItem, DegradedMode, ItemValidity, SourceKind, TrustClass,
     CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
 use super::policy::{
-    estimate_tokens, validate_plan, REASON_BRANCH_SCOPE_MISMATCH, REASON_CANONICAL_LOAD_FAILED,
-    REASON_CANONICAL_ONLY_DEGRADED, REASON_CHANNEL_ITEM_LIMIT, REASON_CHANNEL_TOKEN_BUDGET,
-    REASON_PLAN_BLOCKED, REASON_PROJECT_SCOPE_MISMATCH, REASON_QUARANTINED_TRUST,
-    REASON_SELECTED_CHANNEL, REASON_SELECTED_RELEVANCE, REASON_SUPERSEDED_EXCLUDED,
-    REASON_TOTAL_TOKEN_BUDGET,
+    estimate_item_tokens, validate_plan, REASON_BELOW_TRUST_FLOOR, REASON_BRANCH_SCOPE_MISMATCH,
+    REASON_CANONICAL_LOAD_FAILED, REASON_CANONICAL_ONLY_DEGRADED, REASON_CHANNEL_ITEM_LIMIT,
+    REASON_CHANNEL_TOKEN_BUDGET, REASON_PLAN_BLOCKED, REASON_POISONING_GATE,
+    REASON_PROJECT_SCOPE_MISMATCH, REASON_QUARANTINED_TRUST, REASON_SELECTED_CHANNEL,
+    REASON_SELECTED_RELEVANCE, REASON_SUPERSEDED_EXCLUDED, REASON_TOTAL_TOKEN_BUDGET,
 };
 
 /// Candidate inputs for one execution. `enrichment_available = false`
@@ -34,6 +34,10 @@ use super::policy::{
 #[derive(Debug, Clone)]
 pub struct ExecutorInputs {
     pub candidates: Vec<ContextItem>,
+    /// Candidates rejected by the canonical loader's poisoning gate. Their
+    /// title/text never enter the returned bundle, but their redacted identity
+    /// remains in the audit so the endpoint accounts for every loaded row.
+    pub poisoning_drops: Vec<ContextItem>,
     pub enrichment_available: bool,
 }
 
@@ -79,6 +83,9 @@ pub(crate) fn execute_with_trace(
     };
 
     let mut audit = AuditBuilder::default();
+    for item in &inputs.poisoning_drops {
+        audit.dropped(item, REASON_POISONING_GATE);
+    }
     let mut in_scope: Vec<&ContextItem> = Vec::new();
     for item in &inputs.candidates {
         match scope_drop_reason(plan, degraded_mode, item) {
@@ -110,6 +117,12 @@ pub(crate) fn execute_with_trace(
             select_for_renderer(plan, &survivors, &mut bundle, &mut audit)
         }
     }
+    if plan.abstention_policy.mode == AbstentionMode::OnLowEvidence
+        && audit.selected_count() < plan.abstention_policy.min_selected_items
+    {
+        clear_bundle_sections(&mut bundle);
+        audit.abstain();
+    }
     bundle.audit = audit.finalize(plan, degraded_mode);
     ExecutionTrace {
         bundle,
@@ -124,6 +137,9 @@ fn scope_drop_reason(
 ) -> Option<&'static str> {
     if item.trust == TrustClass::Quarantined {
         return Some(REASON_QUARANTINED_TRUST);
+    }
+    if trust_rank(item.trust) < trust_rank(plan.trust_policy.minimum_trust) {
+        return Some(REASON_BELOW_TRUST_FLOOR);
     }
     if let Some(project) = &item.project {
         if project != &plan.filters.project {
@@ -142,6 +158,23 @@ fn scope_drop_reason(
         return Some(REASON_CANONICAL_ONLY_DEGRADED);
     }
     None
+}
+
+fn trust_rank(trust: TrustClass) -> u8 {
+    match trust {
+        TrustClass::Quarantined => 0,
+        TrustClass::Standard => 1,
+        TrustClass::Trusted => 2,
+    }
+}
+
+fn clear_bundle_sections(bundle: &mut ContextBundle) {
+    bundle.preferences.clear();
+    bundle.failure_lessons.clear();
+    bundle.current_truth.clear();
+    bundle.workstreams.clear();
+    bundle.memory_index.clear();
+    bundle.recent_sessions.clear();
 }
 
 fn channel_relevance_governed(plan: &RetrievalPlan, channel: ChannelKind) -> bool {
@@ -247,7 +280,7 @@ fn apply_budgets(
         let mut channel_tokens: u32 = 0;
         let mut channel_count: u32 = 0;
         for item in survivors.iter().filter(|item| item.channel == channel) {
-            let tokens = estimate_tokens(&item.text);
+            let tokens = estimate_item_tokens(item);
             if channel_count >= item_limit {
                 audit.dropped(item, REASON_CHANNEL_ITEM_LIMIT);
                 continue;
@@ -311,6 +344,9 @@ fn blocked_bundle(plan: &RetrievalPlan, inputs: &ExecutorInputs, error: &str) ->
     let mut audit = AuditBuilder::default();
     for item in &inputs.candidates {
         audit.dropped(item, REASON_PLAN_BLOCKED);
+    }
+    for item in &inputs.poisoning_drops {
+        audit.dropped(item, REASON_POISONING_GATE);
     }
     audit.set_truncation_reason(REASON_PLAN_BLOCKED);
     let mut bundle = empty_bundle(plan, DegradedMode::Blocked);

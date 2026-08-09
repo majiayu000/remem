@@ -9,7 +9,7 @@ use crate::retrieval_router::{
     RetrievalPlan, RETRIEVAL_PLAN_SCHEMA_VERSION, RETRIEVAL_ROUTER_POLICY_VERSION,
 };
 
-use super::domain::{ContextRequest, SectionBudgets, CONTEXT_BUNDLE_SCHEMA_VERSION};
+use super::domain::{ContextItem, ContextRequest, SectionBudgets, CONTEXT_BUNDLE_SCHEMA_VERSION};
 
 /// Chars-per-token heuristic shared by budgets and item estimates.
 const CHARS_PER_TOKEN: u32 = 4;
@@ -21,6 +21,9 @@ pub(super) const REASON_SELECTED_RELEVANCE: &str = "relevance_selected";
 // Drop reasons (relevance drops reuse the SessionStart reason strings
 // `below_sessionstart_relevance_threshold` / `sessionstart_k_limit`).
 pub(super) const REASON_QUARANTINED_TRUST: &str = "quarantined_trust";
+pub(super) const REASON_BELOW_TRUST_FLOOR: &str = "below_trust_floor";
+pub(super) const REASON_POISONING_GATE: &str = "poisoning_gate";
+pub(super) const REASON_LOW_EVIDENCE_ABSTENTION: &str = "low_evidence_abstention";
 pub(super) const REASON_PROJECT_SCOPE_MISMATCH: &str = "project_scope_mismatch";
 pub(super) const REASON_BRANCH_SCOPE_MISMATCH: &str = "branch_scope_mismatch";
 pub(super) const REASON_SUPERSEDED_EXCLUDED: &str = "superseded_excluded";
@@ -31,9 +34,12 @@ pub(super) const REASON_TOTAL_TOKEN_BUDGET: &str = "total_token_budget";
 pub(super) const REASON_PLAN_BLOCKED: &str = "plan_blocked";
 pub(super) const REASON_CANONICAL_LOAD_FAILED: &str = "canonical_load_failed";
 
-/// Rough token estimate; deterministic and monotonic in text length.
-pub(super) fn estimate_tokens(text: &str) -> u32 {
-    let chars = text.chars().count() as u32;
+/// Estimate the complete user-visible item payload. Titles participate in
+/// both relevance and the returned wire shape, so excluding them would let a
+/// caller exceed the advertised section or total token budget.
+pub(super) fn estimate_item_tokens(item: &ContextItem) -> u32 {
+    let separator = u32::from(!item.title.is_empty() && !item.text.is_empty());
+    let chars = item.title.chars().count() as u32 + item.text.chars().count() as u32 + separator;
     chars.div_ceil(CHARS_PER_TOKEN)
 }
 

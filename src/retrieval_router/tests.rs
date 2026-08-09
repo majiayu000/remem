@@ -280,6 +280,19 @@ fn session_start_plan_uses_effective_renderer_limits() {
         .find(|section| section.channel == crate::context_bundle::ChannelKind::Core)
         .expect("core section");
     assert_eq!(core.item_limit, 2);
+
+    let candidate_fetch_only = ContextLimits {
+        candidate_fetch_limit: limits.candidate_fetch_limit + 1,
+        ..limits
+    };
+    let changed =
+        plan_session_start_with_limits(&req, &candidate_fetch_only).expect("changed plan");
+    assert_ne!(plan.plan_hash, changed.plan_hash);
+    assert_ne!(plan.reason_codes, changed.reason_codes);
+    assert!(changed
+        .reason_codes
+        .iter()
+        .any(|reason| reason.starts_with("sessionstart_limits_sha256:")));
 }
 
 #[test]

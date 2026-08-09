@@ -25,6 +25,9 @@ pub(crate) struct PreferenceRenderDetails {
     /// another process could supersede or suppress a row between rendering
     /// and compilation.
     pub rendered_memories: Vec<Memory>,
+    /// Unsafe rows rejected before rendering. Bundle consumers retain only a
+    /// redacted identity for their selection/drop audit.
+    pub poisoning_drops: Vec<Memory>,
     /// Character offsets, relative to the start of this preference render,
     /// immediately after each rendered list item.
     pub item_end_chars: Vec<usize>,
@@ -143,10 +146,15 @@ pub(crate) fn render_preferences_with_context_details(
             }
         }
     }
-    all_prefs = filter_unacknowledged_poisoned_preferences(conn, all_prefs)?;
+    let (filtered_prefs, poisoning_drops) =
+        filter_unacknowledged_poisoned_preferences(conn, all_prefs)?;
+    all_prefs = filtered_prefs;
 
     if all_prefs.is_empty() {
-        return Ok(PreferenceRenderDetails::default());
+        return Ok(PreferenceRenderDetails {
+            poisoning_drops,
+            ..PreferenceRenderDetails::default()
+        });
     }
 
     let memories = all_prefs
@@ -155,11 +163,17 @@ pub(crate) fn render_preferences_with_context_details(
         .collect::<Vec<_>>();
     let keep_indices = dedup_with_claude_md(&memories, cwd);
     if keep_indices.is_empty() {
-        return Ok(PreferenceRenderDetails::default());
+        return Ok(PreferenceRenderDetails {
+            poisoning_drops,
+            ..PreferenceRenderDetails::default()
+        });
     }
     let keep_indices = dedup_with_preference_similarity(&memories, &keep_indices);
     if keep_indices.is_empty() {
-        return Ok(PreferenceRenderDetails::default());
+        return Ok(PreferenceRenderDetails {
+            poisoning_drops,
+            ..PreferenceRenderDetails::default()
+        });
     }
 
     output.push_str("## Your Preferences (always apply these)\n");
@@ -199,6 +213,7 @@ pub(crate) fn render_preferences_with_context_details(
         summary,
         rendered_ids,
         rendered_memories,
+        poisoning_drops,
         item_end_chars,
     })
 }
@@ -214,8 +229,9 @@ struct PreferencePoisoningState {
 fn filter_unacknowledged_poisoned_preferences(
     conn: &Connection,
     prefs: Vec<(Memory, PreferenceSource)>,
-) -> Result<Vec<(Memory, PreferenceSource)>> {
+) -> Result<(Vec<(Memory, PreferenceSource)>, Vec<Memory>)> {
     let mut kept = Vec::with_capacity(prefs.len());
+    let mut dropped = Vec::new();
     for (memory, source) in prefs {
         let Some(pattern_match) =
             scan_instruction_pattern(&format!("{}\n{}", memory.title, memory.text))
@@ -238,8 +254,9 @@ fn filter_unacknowledged_poisoned_preferences(
             ),
         );
         record_preference_injection_drop(conn, &memory, &state, pattern_match)?;
+        dropped.push(memory);
     }
-    Ok(kept)
+    Ok((kept, dropped))
 }
 
 fn load_preference_poisoning_state(

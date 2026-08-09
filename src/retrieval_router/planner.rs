@@ -30,6 +30,7 @@ const REASON_HIGH_RISK_ENRICHMENT_DISABLED: &str = "high_risk_enrichment_disable
 const REASON_HIGH_RISK_CANONICAL_TOP1: &str = "high_risk_canonical_evidence_top1";
 const REASON_HIGH_RISK_ABSTAIN_ON_LOW_EVIDENCE: &str = "high_risk_abstain_on_low_evidence";
 const REASON_REVIEWER_CONSTRAINTS_ENABLED: &str = "reviewer_constraints_enabled";
+const SESSIONSTART_LIMITS_REASON_PREFIX: &str = "sessionstart_limits_sha256:";
 
 // Baseline mechanical channels shared by every intent.
 const BASELINE_FTS: ChannelSpec = ChannelSpec {
@@ -309,6 +310,9 @@ pub fn plan(
     }
 
     let limits = ContextLimits::default();
+    if resolved.intent == ContextIntent::SessionStart {
+        reason_codes.push(sessionstart_limits_reason(&limits)?);
+    }
     let mut plan = RetrievalPlan {
         schema_version: RETRIEVAL_PLAN_SCHEMA_VERSION,
         policy_version: RETRIEVAL_ROUTER_POLICY_VERSION.to_string(),
@@ -355,9 +359,22 @@ pub(crate) fn plan_session_start_with_limits(
     plan.output_sections = output_sections_for(ContextIntent::SessionStart, limits);
     plan.section_budgets = section_budgets_from_limits(request.token_budget, limits);
     plan.relevance_k = limits.sessionstart_relevance_k as u32;
+    plan.reason_codes
+        .retain(|reason| !reason.starts_with(SESSIONSTART_LIMITS_REASON_PREFIX));
+    plan.reason_codes.push(sessionstart_limits_reason(limits)?);
     plan.plan_hash.clear();
     plan.plan_hash = plan_content_hash(&plan)?;
     Ok(plan)
+}
+
+fn sessionstart_limits_reason(limits: &ContextLimits) -> Result<String> {
+    let canonical = serde_json::to_string(limits)?;
+    let mut hasher = Sha256::new();
+    hasher.update(canonical.as_bytes());
+    Ok(format!(
+        "{SESSIONSTART_LIMITS_REASON_PREFIX}{:x}",
+        hasher.finalize()
+    ))
 }
 
 fn normalized_relevance_query(task: &str) -> Option<String> {

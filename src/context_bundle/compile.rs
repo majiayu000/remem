@@ -9,10 +9,13 @@
 use anyhow::Result;
 use rusqlite::Connection;
 
-use crate::context::{load_session_start_candidates, ContextLimits, SessionStartRelevancePlan};
-use crate::retrieval_router::{plan, plan_session_start_with_limits, RetrievalPlan};
+use crate::context::{
+    load_session_start_candidates_with_limits, ContextLimits, LoadedBundleCandidates,
+    SessionStartRelevancePlan,
+};
+use crate::retrieval_router::{plan_session_start_with_limits, RetrievalPlan};
 
-use super::domain::{ContextBundle, ContextIntent, ContextItem, ContextRequest};
+use super::domain::{ContextBundle, ContextItem, ContextRequest};
 use super::executor::{
     blocked_before_load, execute, execute_with_trace, BudgetEnforcement, ExecutorInputs,
 };
@@ -35,13 +38,15 @@ pub fn compile_session_start_bundle(
     current_branch: Option<&str>,
     enrichment_available: bool,
 ) -> Result<ContextBundle> {
-    let compiled = plan(request, Some(ContextIntent::SessionStart))?;
+    let limits = ContextLimits::from_env();
+    let compiled = plan_session_start_with_limits(request, &limits)?;
     Ok(bundle_for_plan(
         conn,
         &compiled,
         &request.project.key,
         cwd,
         current_branch,
+        &limits,
         enrichment_available,
     ))
 }
@@ -53,13 +58,18 @@ fn bundle_for_plan(
     project: &str,
     cwd: &str,
     current_branch: Option<&str>,
+    limits: &ContextLimits,
     enrichment_available: bool,
 ) -> ContextBundle {
-    match load_session_start_candidates(conn, project, cwd, current_branch) {
-        Ok(candidates) => execute(
+    match load_session_start_candidates_with_limits(conn, project, cwd, current_branch, limits) {
+        Ok(LoadedBundleCandidates {
+            candidates,
+            poisoning_drops,
+        }) => execute(
             compiled,
             &ExecutorInputs {
                 candidates,
+                poisoning_drops,
                 enrichment_available,
             },
         ),
@@ -85,6 +95,7 @@ pub(crate) fn compile_session_start_for_renderer(
         &compiled,
         &ExecutorInputs {
             candidates,
+            poisoning_drops: Vec::new(),
             enrichment_available,
         },
         BudgetEnforcement::DeferToRenderer,

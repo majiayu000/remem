@@ -21,10 +21,13 @@ context bundle.
   `build_sessionstart_relevance_plan`); it does not rewrite any retrieval
   channel.
 - Stable plan hash: the same request and policy always produce the same
-  plan and the same hash. No timestamps or randomness enter the hash.
+  plan and the same hash. Effective SessionStart loader limits are fingerprinted
+  into the plan before hashing; no timestamps or randomness enter the hash.
 - `ContextAudit` records every candidate considered, selected, and dropped
   with a machine-readable reason, plus token estimate, policy version, and
   degraded mode (`full` / `canonical_only` / `blocked`).
+- Poisoning-gate drops retain only stable identity and attribution in the
+  audit; unsafe title/text payloads never enter bundle sections or wire JSON.
 - Schema snapshot tests pin the serialized JSON structure.
 - A DB-backed compiler loads canonical SessionStart candidates and fails
   closed to a `blocked` bundle when canonical loading is incomplete.
@@ -64,8 +67,11 @@ context bundle.
 ## Success Criteria
 
 - Same request + policy produce byte-identical plan JSON and plan hash.
-- Bundles never exceed the total token budget or per-section budgets.
+- Bundles never exceed the total token budget or per-section budgets; estimates
+  include both item title and text.
 - Every dropped candidate has a machine-readable reason in the audit.
+- High-risk plans enforce the trusted-only floor and low-evidence abstention;
+  direct user-authored (`user_prompt`) memories are the trusted v1 class.
 - Degraded modes are explicit and appear in the audit.
 - Legacy and bundle-backed SessionStart renders are byte-identical for the
   same snapshot and effective policy.

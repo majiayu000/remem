@@ -8,7 +8,7 @@ use crate::retrieval_router::RetrievalPlan;
 use super::domain::{
     AuditEntry, ContextAudit, ContextItem, DegradedMode, CONTEXT_BUNDLE_SCHEMA_VERSION,
 };
-use super::policy::estimate_tokens;
+use super::policy::{estimate_item_tokens, REASON_LOW_EVIDENCE_ABSTENTION};
 
 #[derive(Debug, Default)]
 pub(super) struct AuditBuilder {
@@ -36,6 +36,20 @@ impl AuditBuilder {
         }
     }
 
+    pub(super) fn selected_count(&self) -> u32 {
+        self.entries.iter().filter(|entry| entry.selected).count() as u32
+    }
+
+    pub(super) fn abstain(&mut self) {
+        for entry in &mut self.entries {
+            if entry.selected {
+                entry.selected = false;
+                entry.reason = REASON_LOW_EVIDENCE_ABSTENTION.to_string();
+            }
+        }
+        self.set_truncation_reason(REASON_LOW_EVIDENCE_ABSTENTION);
+    }
+
     fn push(&mut self, item: &ContextItem, selected: bool, reason: &str) {
         self.entries.push(AuditEntry {
             stable_key: item.stable_key.clone(),
@@ -45,7 +59,7 @@ impl AuditBuilder {
             selected,
             reason: reason.to_string(),
             relevance_score: self.scores.get(&item.stable_key).copied(),
-            token_estimate: estimate_tokens(&item.text),
+            token_estimate: estimate_item_tokens(item),
         });
     }
 
