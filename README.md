@@ -35,6 +35,10 @@ external database.
 - Bug-fix rationale, preferences, and project patterns are searchable.
 - Memory stays local by default with SQLite and SQLCipher.
 - Hooks, MCP tools, CLI commands, and a localhost REST API use the same store.
+- The experimental MCP `context_bundle` tool compiles a versioned, budgeted,
+  source-attributed SessionStart context bundle with a complete selection/drop
+  audit. It requires `schema_version: 1`; the shape is intentionally not yet a
+  stable API commitment.
 - Current-memory contracts expose staleness, temporal/as-of truth, citation
   usage, and injection audit state instead of treating recall as a black box.
 - User-context controls keep personal claims, profile summaries, suppression

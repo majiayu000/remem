@@ -20,6 +20,10 @@ src/context/
   render.rs                production consumer and exact bundle sealing
 src/doctor/
   context_compiler.rs      payload-free compiler capability/degraded check
+src/mcp/
+  types.rs                 experimental v1 request DTO
+  server/context_tools.rs  DB-backed context_bundle tool
+  server/tool_contracts/   closed output schema + wire compatibility tests
 ```
 
 ## Contract
@@ -102,6 +106,32 @@ is the explicit rollback.
   that command rather than compiling a synthetic project/task or touching the
   memory database.
 
+## Experimental MCP Consumer
+
+- `context_bundle` requires `schema_version=1` and a non-blank task. Project
+  scope is explicit or derived from `cwd`; the loader uses `worktree`, then
+  `cwd`, then the MCP server process working directory.
+- Role/risk default to `coder` / `medium`, token budget defaults to 4000, and
+  invalid enum values, schema versions, blank scope values, or zero budget are
+  MCP `invalid_request` errors. Enrichment is reported available because this
+  v1 adapter loads canonical SessionStart candidates only.
+- Nonzero `as_of_epoch` and `include_superseded=true` are rejected explicitly:
+  the production SessionStart loader does not reconstruct historical rows or
+  load superseded rows yet, so accepting those values would return silently
+  incorrect context. The fields remain in the versioned request for a later
+  canonical-loader phase.
+- The handler calls `compile_session_start_bundle`; canonical partial-load
+  failures therefore return a versioned `blocked` bundle with an audit instead
+  of masquerading as an empty successful project.
+- The tool publishes a closed typed `outputSchema`. Success keeps the historical
+  single JSON text content and mirrors the same object into
+  `structuredContent`, so clients that do not consume structured MCP output
+  continue to work.
+- Candidate poisoning checks may quarantine unsafe persisted rows, matching the
+  production SessionStart compiler. Tool annotations therefore do not claim
+  read-only or idempotent behavior even though the compilation path performs no
+  foreground LLM or network call.
+
 ## Tests
 
 - Plan determinism: repeated planning yields identical JSON and hash;
@@ -117,3 +147,8 @@ is the explicit rollback.
   budgets until the exact renderer seals the bundle.
 - Doctor capability: bundle / legacy / invalid render-mode states, plus full
   doctor human and JSON inclusion without memory payload text.
+- MCP input schema snapshot: exact v1 properties, required fields, and closed
+  object behavior; frozen minimal-v1 request compatibility and rejection of
+  unsupported schema versions.
+- MCP output contract: typed nested bundle/audit schemas, real served-wire
+  success validation, and exact legacy-text / `structuredContent` parity.

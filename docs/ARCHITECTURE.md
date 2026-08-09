@@ -22,6 +22,7 @@
 │  MCP Server (stdio)  │  │  Background Worker (detached)     │
 │                      │  │                                    │
 │  search              │  │  1. extract (capture→derived)       │
+│  context_bundle      │  │                                    │
 │  get_observations    │  │  2. compress (>100→auto merge)     │
 │  timeline            │  │  3. summarize (session summary)    │
 │  timeline_report     │  │  4. candidate (summary→review)      │

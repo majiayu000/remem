@@ -50,6 +50,21 @@ const EXPECTED_TOOL_METADATA: &[ExpectedToolMetadata] = &[
         required_output_fields: &["query", "context", "included", "dropped", "diagnostics"],
     },
     ExpectedToolMetadata {
+        name: "context_bundle",
+        title: "Compile Context Bundle (Experimental)",
+        read_only: false,
+        destructive: true,
+        idempotent: false,
+        open_world: false,
+        required_output_fields: &[
+            "schema_version",
+            "plan_hash",
+            "degraded_mode",
+            "current_truth",
+            "audit",
+        ],
+    },
+    ExpectedToolMetadata {
         name: "timeline",
         title: "Memory Timeline",
         read_only: true,

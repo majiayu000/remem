@@ -69,7 +69,7 @@ const fn json_array(
     }
 }
 
-const CONTRACTS: [ToolContract; 14] = [
+const CONTRACTS: [ToolContract; 15] = [
     json_object(
         "current_state",
         "Current State",
@@ -96,6 +96,15 @@ const CONTRACTS: [ToolContract; 14] = [
         false,
         true,
         OutputSchema::RecallUserContext,
+    ),
+    json_object(
+        "context_bundle",
+        "Compile Context Bundle (Experimental)",
+        false,
+        true,
+        false,
+        false,
+        OutputSchema::ContextBundle,
     ),
     json_array(
         "timeline",

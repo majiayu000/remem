@@ -12,6 +12,7 @@ use crate::memory;
 use crate::memory::service::{resolve_local_note_path, sanitize_segment};
 
 mod compressed_sources;
+mod context_bundle;
 mod current_state;
 mod search;
 mod tool_metadata;
