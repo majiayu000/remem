@@ -18,6 +18,7 @@ use rusqlite::Connection;
 
 use crate::context_bundle::{ChannelKind, ContextItem, ItemValidity, SourceKind, TrustClass};
 use crate::memory::{Memory, MemoryStalenessLabel, MemoryType};
+use std::collections::HashSet;
 
 use super::policy::ContextPolicy;
 use super::query::load_context_data_with_policy;
@@ -40,7 +41,7 @@ pub(crate) fn load_session_start_candidates(
     current_branch: Option<&str>,
 ) -> Result<Vec<ContextItem>> {
     let policy = ContextPolicy::from_env();
-    let loaded = load_context_data_with_policy(conn, project, current_branch, &policy, false);
+    let mut loaded = load_context_data_with_policy(conn, project, current_branch, &policy, false);
     if !loaded.errors.is_empty() {
         let sections: Vec<&str> = loaded.errors.iter().map(|error| error.section).collect();
         bail!(
@@ -54,8 +55,45 @@ pub(crate) fn load_session_start_candidates(
                 .join("; ")
         );
     }
-    let mut items = candidates_from_loaded(&loaded, project);
+    super::poisoning::drop_unacknowledged_poisoned_context(conn, &mut loaded);
+    let mut discarded_core = String::new();
+    let core = super::sections::render_core_memory_with_limits_and_staleness(
+        &mut discarded_core,
+        &loaded.memories,
+        &policy.limits,
+        loaded.render_reference_epoch,
+        &loaded.staleness_labels,
+    );
+    let core_ids = core.ids.into_iter().collect::<HashSet<_>>();
+    let mut items = candidates_from_loaded(&loaded, project, &core_ids);
     items.extend(preference_candidates(conn, project, cwd, &policy)?);
+    Ok(items)
+}
+
+/// Convert an already-loaded and poisoning-filtered SessionStart snapshot to
+/// bundle candidates without reading the canonical sections a second time.
+/// `core_ids` comes from the compatibility core renderer: core memories that
+/// did not win a core slot remain eligible for the memory index, matching the
+/// established SessionStart behavior.
+pub(super) fn session_start_candidates_from_loaded(
+    loaded: &LoadedContext,
+    project: &str,
+    preferences: &[Memory],
+    core_ids: &HashSet<i64>,
+) -> Result<Vec<ContextItem>> {
+    if !loaded.errors.is_empty() {
+        bail!(
+            "canonical context load failed for sections [{}]",
+            loaded
+                .errors
+                .iter()
+                .map(|error| error.section)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+    let mut items = candidates_from_loaded(loaded, project, core_ids);
+    items.extend(ordered_preference_candidates(preferences, project));
     Ok(items)
 }
 
@@ -80,20 +118,41 @@ fn preference_candidates(
         limits.preference_global_limit,
         limits.preference_char_limit,
     )?;
-    let selected = crate::memory::get_memories_by_ids(conn, &details.rendered_ids, None)?;
-    Ok(selected
-        .iter()
-        .map(|memory| bundle_memory_item(memory, ChannelKind::Preferences, None, project))
-        .collect())
+    Ok(ordered_preference_candidates(
+        &details.rendered_memories,
+        project,
+    ))
 }
 
-fn candidates_from_loaded(loaded: &LoadedContext, project: &str) -> Vec<ContextItem> {
+fn ordered_preference_candidates(selected: &[Memory], project: &str) -> Vec<ContextItem> {
+    selected
+        .iter()
+        .map(|memory| {
+            let mut item = bundle_memory_item(memory, ChannelKind::Preferences, None, project);
+            // The canonical preference selector is deliberately branch
+            // agnostic. Once it admitted a preference for SessionStart, do
+            // not let the generic bundle scope check impose a new branch
+            // filter that the byte-compatible renderer never applied.
+            item.branch = None;
+            item
+        })
+        .collect()
+}
+
+fn candidates_from_loaded(
+    loaded: &LoadedContext,
+    project: &str,
+    core_ids: &HashSet<i64>,
+) -> Vec<ContextItem> {
     let mut items = Vec::new();
-    for memory in &loaded.memories {
+    for memory in loaded.memories.iter().filter(|memory| {
+        core_ids.contains(&memory.id)
+            || MemoryType::parse(&memory.memory_type).is_none_or(MemoryType::is_indexed)
+    }) {
         let label = loaded.staleness_labels.get(&memory.id);
         items.push(bundle_memory_item(
             memory,
-            memory_channel(memory),
+            memory_channel(memory, core_ids),
             label,
             project,
         ));
@@ -133,10 +192,11 @@ fn candidates_from_loaded(loaded: &LoadedContext, project: &str) -> Vec<ContextI
 /// Core types feed current truth; everything else lands in the index.
 /// Preferences never appear here — they arrive through
 /// [`preference_candidates`].
-fn memory_channel(memory: &Memory) -> ChannelKind {
-    match MemoryType::parse(&memory.memory_type) {
-        Some(memory_type) if memory_type.is_core() => ChannelKind::Core,
-        _ => ChannelKind::MemoryIndex,
+fn memory_channel(memory: &Memory, core_ids: &HashSet<i64>) -> ChannelKind {
+    if core_ids.contains(&memory.id) {
+        ChannelKind::Core
+    } else {
+        ChannelKind::MemoryIndex
     }
 }
 
@@ -160,7 +220,11 @@ fn bundle_memory_item(
         evidence_refs: Vec::new(),
         validity: validity_for(memory, label),
         trust: trust_for(memory),
-        project: Some(memory.project.clone()),
+        // `project` is the effective SessionStart scope. Global overlays and
+        // legacy rows may carry a different storage project, but they reached
+        // this function only after the canonical ownership selector admitted
+        // them for the requested project.
+        project: Some(project.to_string()),
         branch: memory.branch.clone(),
     }
     .with_project_fallback(project)

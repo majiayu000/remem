@@ -8,7 +8,8 @@ use super::domain::{
     RETRIEVAL_PLAN_SCHEMA_VERSION,
 };
 use super::intent::resolve_intent;
-use super::planner::{plan, RETRIEVAL_ROUTER_POLICY_VERSION};
+use super::planner::{plan, plan_session_start_with_limits, RETRIEVAL_ROUTER_POLICY_VERSION};
+use crate::context::ContextLimits;
 
 fn request(task: &str) -> ContextRequest {
     ContextRequest {
@@ -249,6 +250,36 @@ fn plan_carries_versions_scope_and_budget() {
     assert_eq!(p.role, AgentRole::Coder);
     assert_eq!(p.risk, RiskClass::Medium);
     assert!(!p.plan_hash.is_empty());
+}
+
+#[test]
+fn session_start_plan_uses_effective_renderer_limits() {
+    let req = request("resume work");
+    let limits = ContextLimits {
+        total_char_limit: 8_000,
+        core_item_limit: 2,
+        core_char_limit: 800,
+        memory_index_limit: 7,
+        memory_index_char_limit: 1_600,
+        lesson_limit: 3,
+        lesson_char_limit: 600,
+        session_limit: 4,
+        sessionstart_relevance_k: 5,
+        ..ContextLimits::default()
+    };
+
+    let plan = plan_session_start_with_limits(&req, &limits).expect("plan");
+    assert_eq!(plan.relevance_k, 5);
+    assert_eq!(plan.section_budgets.total_tokens, req.token_budget);
+    assert_eq!(plan.section_budgets.core, 200);
+    assert_eq!(plan.section_budgets.memory_index, 400);
+    assert_eq!(plan.section_budgets.lessons, 150);
+    let core = plan
+        .output_sections
+        .iter()
+        .find(|section| section.channel == crate::context_bundle::ChannelKind::Core)
+        .expect("core section");
+    assert_eq!(core.item_limit, 2);
 }
 
 #[test]

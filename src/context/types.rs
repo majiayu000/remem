@@ -26,7 +26,7 @@ pub(super) struct SessionSummaryBrief {
     pub created_at_epoch: i64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct LoadedContext {
     pub render_reference_epoch: i64,
     pub memories: Vec<Memory>,

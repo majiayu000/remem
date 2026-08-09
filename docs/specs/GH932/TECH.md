@@ -8,21 +8,27 @@ Refs #932.
 src/context_bundle.rs      module root, public re-exports
 src/context_bundle/
   domain.rs                versioned serde DTOs
-  planner.rs               deterministic plan(request) + plan hash
+  compile.rs               DB and production-renderer compile paths
   executor.rs              execute(plan, inputs) -> ContextBundle
   policy.rs                policy version, budgets, validation, reasons
   audit.rs                 audit entry construction
   tests/                   determinism, budgets, schema snapshots
+src/retrieval_router/
+  planner.rs               deterministic unified RetrievalPlan + plan hash
+src/context/
+  bundle_candidates.rs     same-snapshot SessionStart candidate adapter
+  render.rs                production consumer and exact bundle sealing
 ```
 
 ## Contract
 
 - `CONTEXT_BUNDLE_SCHEMA_VERSION = 1` on request, plan, bundle, and audit.
-- `CONTEXT_BUNDLE_POLICY_VERSION = "context_bundle_v1"`.
+- The unified plan policy version is `retrieval_router_v2`; bundle and audit
+  carry that exact version and plan hash.
 - All DTOs derive `Serialize`/`Deserialize` with `snake_case` enum renames.
 - `ContextRequest`: task, project ref, branch, worktree, role, as_of_epoch,
   token_budget, risk class, include_superseded.
-- `ContextPlan`: intent, relevance query/k, planned channels, filters,
+- `RetrievalPlan`: intent, relevance query/k, planned channels, filters,
   named per-section token budgets, policy version, plan hash.
 - `ContextBundle`: per-section `ContextItem` lists (preferences,
   failure_lessons, current_truth, memory_index, recent_sessions,
@@ -34,19 +40,21 @@ src/context_bundle/
 
 ## Planner
 
-- `plan(&ContextRequest) -> Result<ContextPlan>`; invalid requests (empty
+- `plan(&ContextRequest) -> Result<RetrievalPlan>`; invalid requests (empty
   project key, zero token budget, schema mismatch) are rejected.
-- Budgets derive from `crate::context::ContextLimits::default()` converted
-  from char limits to token estimates (4 chars per token). Env-var limit
-  overrides are intentionally not read in v1 so the plan is a pure function
-  of the request plus the compiled policy version.
+- General plans derive budgets from `ContextLimits::default()`. The production
+  SessionStart adapter passes its already-resolved effective limits to
+  `plan_session_start_with_limits`; those values are hashed into the plan and
+  are never re-read by the executor.
 - `plan_hash` = SHA-256 over the canonical serde JSON of the plan with an
   empty `plan_hash` field. No timestamps or randomness are hashed.
 
 ## Executor
 
-- `execute(&ContextPlan, &ExecutorInputs) -> ContextBundle` over
-  caller-provided candidates; v1 has no DB access.
+- `execute(&RetrievalPlan, &ExecutorInputs) -> ContextBundle` remains a pure
+  executor over caller-provided candidates. `compile_session_start_bundle`
+  supplies a DB-backed adapter, and `compile_session_start_for_renderer`
+  consumes the production renderer's already-loaded canonical snapshot.
 - Re-validates the plan (schema/policy version, filters); a failed
   validation yields a `blocked` bundle whose audit drops every candidate.
 - Scope checks run in both layers: the planner validates the request
@@ -57,6 +65,11 @@ src/context_bundle/
 - Budget enforcement order: per-channel item limit, per-channel token
   budget, then total token budget over a fixed section order; each drop is
   recorded with a machine-readable reason.
+- The production renderer uses `BudgetEnforcement::DeferToRenderer`: scope,
+  trust, attribution, and relevance remain final in the bundle, while the
+  existing renderer applies exact item and character limits. It must then call
+  `seal_session_start_bundle`, which prunes bundle sections and updates audit
+  reasons/counts to the exact surviving stable identities.
 - `enrichment_available = false` degrades to `canonical_only`: generated /
   graph-derived candidates drop with `canonical_only_degraded`.
 
@@ -64,9 +77,12 @@ src/context_bundle/
 
 `src/context/policy.rs` (`ContextLimits`) and `src/context/relevance.rs`
 (`build_sessionstart_relevance_plan`, `RelevanceCandidate`,
-`RelevanceSection`, `SESSIONSTART_RELEVANCE_POLICY_VERSION`) are widened
-from `pub(super)` to `pub(crate)` and re-exported from `src/context.rs`.
-No SessionStart rendering behavior changes.
+`RelevanceSection`, `SESSIONSTART_RELEVANCE_POLICY_VERSION`) are shared by the
+unified router and executor. Candidate adaptation reuses the exact preference
+and Core identities chosen by the compatibility renderer, and unselected
+indexed Core-type memories are routed to `memory_index`. No SessionStart
+output bytes or gate behavior change. `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy`
+is the explicit rollback.
 
 ## Tests
 
@@ -77,3 +93,7 @@ No SessionStart rendering behavior changes.
 - Degraded modes: `canonical_only` and `blocked`.
 - Schema snapshots: serialized plan and bundle JSON compared against
   fixed `serde_json::json!` literals.
+- Production parity: the legacy and bundle-backed render paths consume one
+  cloned snapshot and must emit byte-identical output.
+- Deferred-budget sealing: executor candidates survive approximate token
+  budgets until the exact renderer seals the bundle.

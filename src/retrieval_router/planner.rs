@@ -9,8 +9,9 @@ use sha2::{Digest, Sha256};
 
 use crate::context::{ContextLimits, SESSIONSTART_RELEVANCE_POLICY_VERSION};
 use crate::context_bundle::{
-    section_budgets, validate_request, AgentRole, ChannelKind, ContextFilters, ContextIntent,
-    ContextRequest, ItemValidity, PlannedChannel, RiskClass, TrustClass,
+    section_budgets, section_budgets_from_limits, validate_request, AgentRole, ChannelKind,
+    ContextFilters, ContextIntent, ContextRequest, ItemValidity, PlannedChannel, RiskClass,
+    TrustClass,
 };
 
 use super::domain::{
@@ -339,6 +340,26 @@ pub fn plan(
     Ok(plan)
 }
 
+/// Compile the SessionStart plan against the caller's already-resolved
+/// policy limits.
+///
+/// The general router remains a pure request + compiled-policy function. The
+/// production SessionStart path resolves environment overrides once, passes
+/// the effective values here, and hashes those values into the plan instead
+/// of letting the executor or renderer read the environment again.
+pub(crate) fn plan_session_start_with_limits(
+    request: &ContextRequest,
+    limits: &ContextLimits,
+) -> Result<RetrievalPlan> {
+    let mut plan = plan(request, Some(ContextIntent::SessionStart))?;
+    plan.output_sections = output_sections_for(ContextIntent::SessionStart, limits);
+    plan.section_budgets = section_budgets_from_limits(request.token_budget, limits);
+    plan.relevance_k = limits.sessionstart_relevance_k as u32;
+    plan.plan_hash.clear();
+    plan.plan_hash = plan_content_hash(&plan)?;
+    Ok(plan)
+}
+
 fn normalized_relevance_query(task: &str) -> Option<String> {
     let trimmed = task.trim();
     if trimmed.is_empty() {
@@ -405,7 +426,7 @@ fn disable_channel(cp: &mut ChannelPlan) {
 }
 
 /// SHA-256 hex over the canonical serde JSON of the plan with an empty
-/// `plan_hash` field — the same convention as `ContextPlan.plan_hash`
+/// `plan_hash` field — the same convention as the retired ContextPlan hash
 /// (GH-932). serde JSON struct field order is declaration order, so the
 /// byte stream is stable for a fixed schema version.
 fn plan_content_hash(plan: &RetrievalPlan) -> Result<String> {

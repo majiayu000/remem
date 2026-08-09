@@ -9,7 +9,7 @@ use super::audit::{
     build_context_audit_items, record_context_injection_items, ContextAuditItem,
     ContextAuditRenderState,
 };
-use super::format::{char_len, truncate_chars_with_ellipsis};
+use super::format::char_len;
 use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
 use super::injection_gate::{
@@ -32,10 +32,11 @@ use super::sections::{
 use super::types::{ContextLoadError, ContextRequest};
 mod eval;
 mod finalize;
-mod helpers;
+pub(in crate::context) mod helpers;
 mod stats;
 mod timer;
 mod truncation;
+pub(in crate::context) use super::render_error::render_context_load_errors;
 pub(crate) use eval::{governance_eval_snapshot, session_start_eval_snapshot};
 use finalize::{finalize_context_output, RenderedIdentityBounds};
 use helpers::{
@@ -60,6 +61,8 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) audit_items: Vec<ContextAuditItem>,
     pub(in crate::context) data_version: Option<String>,
     pub(in crate::context) has_load_errors: bool,
+    #[cfg(test)]
+    pub(in crate::context) context_bundle: Option<crate::context_bundle::ContextBundle>,
 }
 
 pub fn generate_context(
@@ -370,10 +373,11 @@ fn render_context_output_with_policy(
         policy,
         inputs,
         prechecked_data_version,
+        super::render_bundle::renderer_enabled()?,
     )
 }
 
-fn render_context_output_from_inputs(
+pub(in crate::context) fn render_context_output_from_inputs(
     conn: &rusqlite::Connection,
     request: &ContextRequest,
     invocation: Option<&ContextInvocation>,
@@ -381,6 +385,7 @@ fn render_context_output_from_inputs(
     policy: ContextPolicy,
     inputs: ContextRenderInputs,
     prechecked_data_version: Option<String>,
+    use_context_bundle: bool,
 ) -> Result<RenderedContext> {
     let render_total_start = Instant::now();
     let profile = resolve_profile(request.host);
@@ -423,6 +428,8 @@ fn render_context_output_from_inputs(
             audit_items: Vec::new(),
             data_version,
             has_load_errors,
+            #[cfg(test)]
+            context_bundle: None,
         });
     }
 
@@ -479,7 +486,9 @@ fn render_context_output_from_inputs(
 
     let section_start = Instant::now();
     let before = char_len(&output);
+    let preference_output_start = before;
     output.push_str(&preference_output);
+    let preference_item_ends = preference_details.absolute_item_end_chars(preference_output_start);
     stats.preferences = SectionRenderStats {
         count: preference_summary.rendered,
         chars: char_len(&output).saturating_sub(before),
@@ -510,12 +519,25 @@ fn render_context_output_from_inputs(
         section_start,
     ));
     let core_ids = core_summary.ids.into_iter().collect::<HashSet<_>>();
-    let relevance_candidates = candidates_for_loaded(&loaded, &core_ids);
-    let relevance_plan = build_sessionstart_relevance_plan(
-        loaded.relevance_query.as_deref(),
-        policy.limits.sessionstart_relevance_k,
-        &relevance_candidates,
-    );
+    let mut context_bundle = None;
+    let relevance_plan = if use_context_bundle && !has_load_errors {
+        let (bundle, relevance_plan) = super::render_bundle::compile_for_renderer(
+            &loaded,
+            request,
+            &policy,
+            &preference_details.rendered_memories,
+            &core_ids,
+        )?;
+        context_bundle = Some(bundle);
+        relevance_plan
+    } else {
+        let relevance_candidates = candidates_for_loaded(&loaded, &core_ids);
+        build_sessionstart_relevance_plan(
+            loaded.relevance_query.as_deref(),
+            policy.limits.sessionstart_relevance_k,
+            &relevance_candidates,
+        )
+    };
     let governed = selected_inputs(&loaded, &relevance_plan, &core_ids)?;
     stats.relevance.state = relevance_plan.state;
     stats.relevance.k = relevance_plan.k;
@@ -636,7 +658,7 @@ fn render_context_output_from_inputs(
         super::diagnostics::apply_preference_diagnostics(
             conn,
             &request.project,
-            preference_details.rendered_ids,
+            preference_details.rendered_ids.clone(),
             &mut loaded.diagnostics,
         );
         output.push_str(&build_context_debug_trace(
@@ -654,6 +676,8 @@ fn render_context_output_from_inputs(
         .collect::<Vec<_>>();
     let core_selected_ids = stats.core_ids.clone();
     let bounds = RenderedIdentityBounds {
+        preference_ids: &preference_details.rendered_ids,
+        preference_ends: &preference_item_ends,
         core_ids: &core_selected_ids,
         core_ends: &core_item_ends,
         lesson_ids: &lesson_ids,
@@ -672,6 +696,19 @@ fn render_context_output_from_inputs(
         &bounds,
     )?;
     output = finalized.output;
+    if let Some(bundle) = &mut context_bundle {
+        super::render_bundle::seal_after_render(
+            bundle,
+            &finalized.final_preference_ids,
+            &finalized.final_core_ids,
+            &finalized.final_lesson_ids,
+            &finalized.final_index_ids,
+            &finalized.final_session_ids,
+            &finalized.final_workstream_ids,
+            &finalized.total_truncated_keys,
+            &output,
+        )?;
+    }
     let audit_start = Instant::now();
     let audit_render = ContextAuditRenderState {
         core_selected_ids: &core_selected_ids,
@@ -703,6 +740,8 @@ fn render_context_output_from_inputs(
         audit_items,
         data_version,
         has_load_errors,
+        #[cfg(test)]
+        context_bundle,
     })
 }
 
@@ -727,7 +766,7 @@ fn render_context_open_error(
     policy: &ContextPolicy,
     error: anyhow::Error,
 ) -> RenderedContext {
-    let mut output = context_error_output(
+    let mut output = super::render_error::context_error_output(
         request,
         &[ContextLoadError::new(
             "database",
@@ -744,44 +783,9 @@ fn render_context_open_error(
         audit_items: Vec::new(),
         data_version: None,
         has_load_errors: true,
+        #[cfg(test)]
+        context_bundle: None,
     }
-}
-
-fn context_error_output(request: &ContextRequest, errors: &[ContextLoadError]) -> String {
-    let mut output = String::new();
-    output.push_str(&build_context_header_with_style(
-        &request.project,
-        request.current_branch.as_deref(),
-        request.hook_source.as_deref(),
-        request.host,
-        request.use_colors,
-    ));
-    if let Some(note) = context_source_note(request.hook_source.as_deref()) {
-        output.push_str(note);
-        output.push('\n');
-    }
-    output.push('\n');
-    render_context_load_errors(&mut output, errors);
-    output
-}
-
-fn render_context_load_errors(output: &mut String, errors: &[ContextLoadError]) {
-    if errors.is_empty() {
-        return;
-    }
-
-    output.push_str("## Context Load Errors\n");
-    for error in errors {
-        output.push_str("- ");
-        output.push_str(error.section);
-        output.push_str(": ");
-        output.push_str(&truncate_chars_with_ellipsis(
-            &error.message.replace('\n', " "),
-            240,
-        ));
-        output.push('\n');
-    }
-    output.push('\n');
 }
 
 pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> String {

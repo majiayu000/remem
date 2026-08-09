@@ -304,6 +304,14 @@ item (`REMEM_CONTEXT_RELEVANCE_K=1`); set the value to `0` to restore the legacy
 per-section selection. The context footer and `remem status` expose the active
 state, threshold, selected count, and closed drop-reason counts.
 
+On healthy loads, SessionStart compiles those same candidates through the
+versioned Context Bundle contract before rendering. The bundle owns scope,
+trust, attribution, and relevance decisions; the established renderer owns
+exact character limits and seals the bundle to the final identities, keeping
+host-visible output byte-compatible. Operators can temporarily restore the
+legacy relevance path with `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy`; unset or
+`bundle` uses the bundle-backed path.
+
 The default Codex integration is intentionally low-noise: it uses
 `SessionStart` for context injection and `Stop` for background summarization.
 For Codex hook invocations, remem emits the supported

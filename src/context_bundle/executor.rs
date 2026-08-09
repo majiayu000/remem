@@ -7,7 +7,10 @@
 
 use std::collections::HashMap;
 
-use crate::context::{build_sessionstart_relevance_plan, RelevanceCandidate, RelevanceSection};
+use crate::context::{
+    build_sessionstart_relevance_plan, RelevanceCandidate, RelevanceSection,
+    SessionStartRelevancePlan,
+};
 
 use super::audit::AuditBuilder;
 use crate::retrieval_router::RetrievalPlan;
@@ -34,14 +37,40 @@ pub struct ExecutorInputs {
     pub enrichment_available: bool,
 }
 
+/// SessionStart's compatibility renderer owns exact character and item
+/// boundaries. The generic executor keeps strict token enforcement, while the
+/// renderer integration may defer those final budget decisions and seal the
+/// bundle after byte-compatible rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BudgetEnforcement {
+    Strict,
+    DeferToRenderer,
+}
+
+pub(crate) struct ExecutionTrace {
+    pub bundle: ContextBundle,
+    pub relevance_plan: SessionStartRelevancePlan,
+}
+
 /// Execute a plan over the provided candidates.
 ///
 /// Deterministic: same plan + same inputs always produce the same bundle.
 /// An invalid plan (schema/policy/scope) produces a `blocked` bundle whose
 /// audit drops every candidate; it never partially executes.
 pub fn execute(plan: &RetrievalPlan, inputs: &ExecutorInputs) -> ContextBundle {
+    execute_with_trace(plan, inputs, BudgetEnforcement::Strict).bundle
+}
+
+pub(crate) fn execute_with_trace(
+    plan: &RetrievalPlan,
+    inputs: &ExecutorInputs,
+    budget_enforcement: BudgetEnforcement,
+) -> ExecutionTrace {
     if let Err(error) = validate_plan(plan) {
-        return blocked_bundle(plan, inputs, &error.to_string());
+        return ExecutionTrace {
+            bundle: blocked_bundle(plan, inputs, &error.to_string()),
+            relevance_plan: SessionStartRelevancePlan::disabled(&[]),
+        };
     }
     let degraded_mode = if inputs.enrichment_available {
         DegradedMode::Full
@@ -58,7 +87,7 @@ pub fn execute(plan: &RetrievalPlan, inputs: &ExecutorInputs) -> ContextBundle {
         }
     }
 
-    let relevance = relevance_decisions(plan, &in_scope, &mut audit);
+    let (relevance, relevance_plan) = relevance_decisions(plan, &in_scope, &mut audit);
     let mut survivors: Vec<&ContextItem> = Vec::new();
     for item in in_scope {
         let governed = channel_relevance_governed(plan, item.channel);
@@ -73,9 +102,19 @@ pub fn execute(plan: &RetrievalPlan, inputs: &ExecutorInputs) -> ContextBundle {
     }
 
     let mut bundle = empty_bundle(plan, degraded_mode);
-    apply_budgets(plan, degraded_mode, &survivors, &mut bundle, &mut audit);
+    match budget_enforcement {
+        BudgetEnforcement::Strict => {
+            apply_budgets(plan, degraded_mode, &survivors, &mut bundle, &mut audit)
+        }
+        BudgetEnforcement::DeferToRenderer => {
+            select_for_renderer(plan, &survivors, &mut bundle, &mut audit)
+        }
+    }
     bundle.audit = audit.finalize(plan, degraded_mode);
-    bundle
+    ExecutionTrace {
+        bundle,
+        relevance_plan,
+    }
 }
 
 fn scope_drop_reason(
@@ -128,7 +167,10 @@ fn relevance_decisions<'a>(
     plan: &RetrievalPlan,
     in_scope: &[&'a ContextItem],
     audit: &mut AuditBuilder,
-) -> HashMap<&'a str, (bool, &'static str)> {
+) -> (
+    HashMap<&'a str, (bool, &'static str)>,
+    SessionStartRelevancePlan,
+) {
     let candidates: Vec<RelevanceCandidate> = in_scope
         .iter()
         .filter(|item| channel_relevance_governed(plan, item.channel))
@@ -156,7 +198,30 @@ fn relevance_decisions<'a>(
             (decision.selected, decision.drop_reason.unwrap_or("dropped")),
         );
     }
-    decisions
+    (decisions, relevance_plan)
+}
+
+/// Preserve scope/relevance decisions in the bundle, but leave exact item,
+/// section-character, and total-character enforcement to the established
+/// SessionStart renderer. The render path seals the returned bundle to the
+/// identities that survived those exact boundaries before it can be exposed
+/// to any downstream consumer.
+fn select_for_renderer(
+    plan: &RetrievalPlan,
+    survivors: &[&ContextItem],
+    bundle: &mut ContextBundle,
+    audit: &mut AuditBuilder,
+) {
+    for item in survivors {
+        let governed = channel_relevance_governed(plan, item.channel);
+        let reason = if governed {
+            REASON_SELECTED_RELEVANCE
+        } else {
+            REASON_SELECTED_CHANNEL
+        };
+        audit.selected(item, reason);
+        bundle.section_mut(item.channel).push((*item).clone());
+    }
 }
 
 /// Enforce per-channel item limits, per-channel token budgets, and the

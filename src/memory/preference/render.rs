@@ -20,6 +20,23 @@ pub struct PreferenceRenderSummary {
 pub(crate) struct PreferenceRenderDetails {
     pub summary: PreferenceRenderSummary,
     pub rendered_ids: Vec<i64>,
+    /// Canonical rows from the same query snapshot that produced the text.
+    /// Bundle compilation must not query these identities a second time:
+    /// another process could supersede or suppress a row between rendering
+    /// and compilation.
+    pub rendered_memories: Vec<Memory>,
+    /// Character offsets, relative to the start of this preference render,
+    /// immediately after each rendered list item.
+    pub item_end_chars: Vec<usize>,
+}
+
+impl PreferenceRenderDetails {
+    pub(crate) fn absolute_item_end_chars(&self, output_start: usize) -> Vec<usize> {
+        self.item_end_chars
+            .iter()
+            .map(|end| output_start + end)
+            .collect()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,6 +166,9 @@ pub(crate) fn render_preferences_with_context_details(
     let mut total_chars = 0usize;
     let mut summary = PreferenceRenderSummary::default();
     let mut rendered_ids = Vec::new();
+    let mut rendered_memories = Vec::new();
+    let mut item_end_chars = Vec::new();
+    let header_chars = "## Your Preferences (always apply these)\n".chars().count();
     for &idx in &keep_indices {
         let (pref, source) = &all_prefs[idx];
         let text = normalize_rendered_preference_text(&pref.text);
@@ -166,6 +186,8 @@ pub(crate) fn render_preferences_with_context_details(
         total_chars += line_chars;
         summary.rendered += 1;
         rendered_ids.push(pref.id);
+        rendered_memories.push(pref.clone());
+        item_end_chars.push(header_chars + total_chars);
         match source {
             PreferenceSource::Project => summary.project_rendered += 1,
             PreferenceSource::Global => summary.global_rendered += 1,
@@ -176,6 +198,8 @@ pub(crate) fn render_preferences_with_context_details(
     Ok(PreferenceRenderDetails {
         summary,
         rendered_ids,
+        rendered_memories,
+        item_end_chars,
     })
 }
 
