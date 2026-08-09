@@ -91,7 +91,17 @@ pub(super) fn validate_plan(plan: &RetrievalPlan) -> Result<()> {
 /// reader so a plan is a pure function of the request and the compiled
 /// policy version; env overrides are follow-up work on GH-932.
 pub(crate) fn section_budgets(total_token_budget: u32) -> SectionBudgets {
-    let limits = ContextLimits::default();
+    section_budgets_from_limits(total_token_budget, &ContextLimits::default())
+}
+
+/// Derive the same budget shape from an already-resolved SessionStart
+/// policy. Production SessionStart passes its effective limits explicitly so
+/// environment overrides are part of the compiled plan instead of being read
+/// implicitly by the pure planner.
+pub(crate) fn section_budgets_from_limits(
+    total_token_budget: u32,
+    limits: &ContextLimits,
+) -> SectionBudgets {
     let to_tokens = |chars: usize| (chars as u32).div_ceil(CHARS_PER_TOKEN);
     SectionBudgets {
         total_tokens: total_token_budget,

@@ -23,6 +23,8 @@ mod prompt_submit;
 mod query;
 mod relevance;
 mod render;
+mod render_bundle;
+mod render_error;
 mod render_inputs;
 mod sections;
 mod style;
@@ -41,7 +43,7 @@ pub(crate) use policy::ContextLimits;
 pub(crate) use prompt_submit::prompt_submit_additional_context;
 pub(crate) use relevance::{
     build_sessionstart_relevance_plan, RelevanceCandidate, RelevanceSection,
-    SESSIONSTART_RELEVANCE_POLICY_VERSION,
+    SessionStartRelevancePlan, SESSIONSTART_RELEVANCE_POLICY_VERSION,
 };
 pub(crate) use render::governance_eval_snapshot;
 pub(crate) use render::session_start_eval_snapshot;

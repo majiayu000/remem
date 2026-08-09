@@ -1,12 +1,15 @@
 use super::{item, request, session_start_plan};
+use crate::context_bundle::executor::execute_with_trace;
 use crate::context_bundle::{
-    execute, ChannelKind, DegradedMode, ExecutorInputs, ItemValidity, SourceKind, TrustClass,
+    execute, BudgetEnforcement, ChannelKind, DegradedMode, ExecutorInputs, ItemValidity,
+    SourceKind, TrustClass,
 };
 
 fn inputs(candidates: Vec<crate::context_bundle::ContextItem>) -> ExecutorInputs {
     ExecutorInputs {
         candidates,
         enrichment_available: true,
+        budget_enforcement: BudgetEnforcement::Strict,
     }
 }
 
@@ -117,6 +120,7 @@ fn missing_enrichment_degrades_to_canonical_only() {
         &ExecutorInputs {
             candidates: vec![generated, canonical],
             enrichment_available: false,
+            budget_enforcement: BudgetEnforcement::Strict,
         },
     );
 
@@ -177,6 +181,33 @@ fn executor_enforces_the_total_token_budget_and_records_truncation() {
         Some("total_token_budget")
     );
     assert!(bundle.audit.token_estimate <= planned.section_budgets.total_tokens);
+}
+
+#[test]
+fn renderer_deferred_mode_preserves_scope_survivors_for_exact_sealing() {
+    let mut planned = session_start_plan(&request());
+    planned.section_budgets.core = 1;
+    planned.section_budgets.total_tokens = 1;
+    for channel in &mut planned.output_sections {
+        if channel.channel == ChannelKind::Core {
+            channel.item_limit = 1;
+        }
+    }
+    let trace = execute_with_trace(
+        &planned,
+        &ExecutorInputs {
+            candidates: vec![
+                item("memory:42", ChannelKind::Core, "First", &"x".repeat(100)),
+                item("memory:43", ChannelKind::Core, "Second", &"y".repeat(100)),
+            ],
+            enrichment_available: true,
+            budget_enforcement: BudgetEnforcement::DeferToRenderer,
+        },
+    );
+
+    assert_eq!(trace.bundle.current_truth.len(), 2);
+    assert_eq!(trace.bundle.audit.selected_count, 2);
+    assert!(trace.bundle.audit.truncation_reason.is_none());
 }
 
 #[test]

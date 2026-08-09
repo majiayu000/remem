@@ -5,7 +5,12 @@
 
 use rusqlite::Connection;
 
+use crate::context::host::HostKind;
 use crate::context::load_session_start_candidates;
+use crate::context::policy::{ContextLimits, ContextPolicy};
+use crate::context::render::render_context_output_from_inputs;
+use crate::context::render_inputs::load_context_render_inputs;
+use crate::context::types::ContextRequest as RenderRequest;
 use crate::context_bundle::{
     compile_session_start_bundle, AgentRole, ChannelKind, ContextRequest, DegradedMode, ProjectRef,
     RiskClass, TrustClass, CONTEXT_BUNDLE_SCHEMA_VERSION,
@@ -206,4 +211,82 @@ fn missing_enrichment_degrades_to_canonical_only() {
     assert_eq!(bundle.degraded_mode, DegradedMode::CanonicalOnly);
     // Canonical rows still survive canonical_only.
     assert_eq!(bundle.current_truth.len(), 1);
+}
+
+#[test]
+fn production_bundle_renderer_is_byte_compatible_and_keeps_index_fallback() {
+    let conn = conn_with_schema();
+    insert_memory(
+        &conn,
+        1,
+        PROJECT,
+        None,
+        "decision",
+        "Primary decision",
+        "Primary body",
+        EPOCH + 1,
+    );
+    insert_memory(
+        &conn,
+        2,
+        PROJECT,
+        None,
+        "decision",
+        "Secondary decision",
+        "Secondary body",
+        EPOCH,
+    );
+    insert_memory(
+        &conn,
+        3,
+        PROJECT,
+        None,
+        "preference",
+        "Always run fmt",
+        "Always run fmt before checks",
+        EPOCH,
+    );
+    let request = RenderRequest {
+        cwd: "/tmp/remem-bundle-render-test".to_string(),
+        project: PROJECT.to_string(),
+        session_id: Some("bundle-render-test".to_string()),
+        hook_source: Some("startup".to_string()),
+        current_branch: None,
+        host: HostKind::CodexCli,
+        use_colors: false,
+    };
+    let policy = ContextPolicy::from_limits(ContextLimits {
+        core_item_limit: 1,
+        ..ContextLimits::default()
+    });
+    let inputs = load_context_render_inputs(&conn, &request, false, &policy);
+
+    let legacy = render_context_output_from_inputs(
+        &conn,
+        &request,
+        None,
+        false,
+        policy.clone(),
+        inputs.clone(),
+        None,
+        false,
+    )
+    .expect("legacy render");
+    let bundled =
+        render_context_output_from_inputs(&conn, &request, None, false, policy, inputs, None, true)
+            .expect("bundle render");
+
+    assert_eq!(bundled.output.as_bytes(), legacy.output.as_bytes());
+    let bundle = bundled.context_bundle.expect("sealed context bundle");
+    assert_eq!(bundle.current_truth.len(), 1);
+    assert_eq!(bundle.current_truth[0].stable_key, "memory:1");
+    let fallback = bundle
+        .audit
+        .entries
+        .iter()
+        .find(|entry| entry.stable_key == "memory:2")
+        .expect("unselected core memory remains an index candidate");
+    assert_eq!(fallback.channel, ChannelKind::MemoryIndex);
+    assert_eq!(fallback.reason, "below_sessionstart_relevance_threshold");
+    assert_eq!(bundle.audit.selected_count as usize, 2);
 }

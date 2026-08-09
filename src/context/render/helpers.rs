@@ -26,7 +26,7 @@ pub(super) fn build_context_stats_footer_with_style(
     super::super::style::context_stats_footer(stats, use_colors)
 }
 
-pub(super) fn context_source_note(source: Option<&str>) -> Option<&'static str> {
+pub(in crate::context) fn context_source_note(source: Option<&str>) -> Option<&'static str> {
     match source?.trim().to_ascii_lowercase().as_str() {
         "compact" => Some("Codex compacted the chat, so remem refreshed memory context."),
         "clear" => Some("Context was reloaded after an explicit clear."),
@@ -86,7 +86,7 @@ pub(in crate::context) fn enforce_total_char_limit_preserving_footer(
     retained_body_chars
 }
 
-pub(super) fn build_context_header_with_style(
+pub(in crate::context) fn build_context_header_with_style(
     project: &str,
     current_branch: Option<&str>,
     hook_source: Option<&str>,

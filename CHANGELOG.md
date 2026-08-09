@@ -3,6 +3,14 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.62` for GH-932: healthy production SessionStart
+  renders now consume Context Bundle v1 from the same canonical load snapshot.
+  The unified plan hashes the effective runtime limits; the bundle owns scope,
+  trust, attribution, and relevance, while the established renderer preserves
+  exact section/total character boundaries and seals the audit to the final
+  stable identities. A regression fixture proves legacy and bundle-backed
+  output are byte-identical, and
+  `REMEM_CONTEXT_BUNDLE_RENDER_MODE=legacy` is the explicit rollback.
 - Staged source version `0.6.61` for GH-933: `remem doctor truth` is the first
   production consumer of the CurrentTruth read model. It reports scoped
   lifecycle mappings, conflicts, abstentions, supersedes links, and invalid

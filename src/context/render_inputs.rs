@@ -4,6 +4,7 @@ use super::policy::ContextPolicy;
 use super::query::load_context_data_with_policy;
 use super::types::{ContextLoadError, ContextRequest, LoadedContext};
 
+#[derive(Clone)]
 pub(in crate::context) struct ContextRenderInputs {
     pub(in crate::context) loaded: LoadedContext,
     pub(in crate::context) preference_output: String,

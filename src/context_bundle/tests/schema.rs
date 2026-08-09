@@ -131,6 +131,7 @@ fn bundle_json_schema_snapshot() {
                 "core decision",
             )],
             enrichment_available: true,
+            budget_enforcement: crate::context_bundle::BudgetEnforcement::Strict,
         },
     );
     let actual = serde_json::to_value(&bundle).expect("json");
