@@ -14,16 +14,29 @@ use super::policy::ContextPolicy;
 use super::relevance::{memory_stable_key, session_stable_key, SessionStartRelevancePlan};
 use super::types::{ContextRequest, LoadedContext};
 
-const CONTEXT_BUNDLE_RENDER_MODE_ENV: &str = "REMEM_CONTEXT_BUNDLE_RENDER_MODE";
+pub(crate) const CONTEXT_BUNDLE_RENDER_MODE_ENV: &str = "REMEM_CONTEXT_BUNDLE_RENDER_MODE";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContextBundleRenderMode {
+    Bundle,
+    Legacy,
+}
 
 pub(super) fn renderer_enabled() -> Result<bool> {
+    Ok(matches!(
+        context_bundle_render_mode()?,
+        ContextBundleRenderMode::Bundle
+    ))
+}
+
+pub(crate) fn context_bundle_render_mode() -> Result<ContextBundleRenderMode> {
     match std::env::var(CONTEXT_BUNDLE_RENDER_MODE_ENV) {
         Ok(value) => match value.trim().to_ascii_lowercase().as_str() {
-            "" | "bundle" => Ok(true),
-            "legacy" => Ok(false),
+            "" | "bundle" => Ok(ContextBundleRenderMode::Bundle),
+            "legacy" => Ok(ContextBundleRenderMode::Legacy),
             _ => anyhow::bail!("{CONTEXT_BUNDLE_RENDER_MODE_ENV} must be 'bundle' or 'legacy'"),
         },
-        Err(std::env::VarError::NotPresent) => Ok(true),
+        Err(std::env::VarError::NotPresent) => Ok(ContextBundleRenderMode::Bundle),
         Err(std::env::VarError::NotUnicode(_)) => {
             anyhow::bail!("{CONTEXT_BUNDLE_RENDER_MODE_ENV} must be valid Unicode")
         }

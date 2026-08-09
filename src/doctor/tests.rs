@@ -672,6 +672,7 @@ fn run_doctor_with_writer_returns_outcome_and_emits_human_lines() {
     assert!(text.contains("system check"));
     assert!(text.contains("Database"));
     assert!(text.contains("Compiled rules"));
+    assert!(text.contains("Context compiler"));
     assert!(text.contains("Rule enforcement (claude-code)"));
     assert!(text.contains("Rule enforcement (codex-cli)"));
     assert!(text.contains("ms)"), "{text}");
@@ -751,6 +752,13 @@ fn run_doctor_with_writer_emits_parseable_json() {
             && detail.contains("rule_count=")
             && detail.contains("last_compile_epoch=")
             && detail.contains("last_evaluation_error=")));
+    assert!(checks
+        .iter()
+        .any(|check| check["name"] == "Context compiler"
+            && check["detail"]
+                .as_str()
+                .is_some_and(|detail| detail.contains("consumer=session_start")
+                    && detail.contains("payload=omitted"))));
     assert!(checks
         .iter()
         .any(|check| check["name"] == "Rule enforcement (claude-code)"));

@@ -10,6 +10,7 @@ use super::capture_capability::check_capture_capabilities;
 use super::capture_liveness::check_capture_liveness;
 use super::cleanup::check_cleanup_status;
 use super::codex_native_memory::check_codex_native_memories;
+use super::context_compiler::check_context_compiler;
 use super::database::{
     check_capture_drops, check_database, check_declared_empty_surfaces, check_disk_space,
     check_legacy_surfaces, check_memory_usage_feedback, check_pending_queue,
@@ -112,6 +113,7 @@ fn run_checks(mut on_check: impl FnMut(&Check) -> Result<()>) -> Result<Vec<Chec
         check_embedding_provider(shared_db.conn())
     })?;
     push_checks(&mut checks, &mut on_check, check_reranker)?;
+    push_check(&mut checks, &mut on_check, check_context_compiler)?;
     push_check(&mut checks, &mut on_check, || {
         check_retrieval_enrichment(shared_db.conn())
     })?;

@@ -52,6 +52,9 @@ pub use render::{
     generate_context, generate_context_from_cli, generate_cursor_context_from_bytes,
     generate_cursor_context_from_stdin,
 };
+pub(crate) use render_bundle::{
+    context_bundle_render_mode, ContextBundleRenderMode, CONTEXT_BUNDLE_RENDER_MODE_ENV,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContextOutputGateContractSnapshot {
