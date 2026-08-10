@@ -165,11 +165,11 @@ attach the curator log artifact and a `MEMORY.md` hash matching
 `final_file_sha256`.
 
 The verifier canonicalizes the embedded ContextAudit JSON, dispatches on the
-artifact's supported plan schema version, recomputes its SHA-256 and the
-domain-separated injection binding, and checks every summary field. Condition
-setup also compares the snapshot with the persisted `injection_run_id`. A
-missing or invalid audit is a runtime contract failure even when the coding
-task resolves.
+artifact's supported plan and ContextAudit bundle schema versions, recomputes
+its SHA-256 and the domain-separated injection binding, and checks every
+summary field. Condition setup also compares the snapshot with the persisted
+`injection_run_id`. A missing or invalid audit is a runtime contract failure
+even when the coding task resolves.
 
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must

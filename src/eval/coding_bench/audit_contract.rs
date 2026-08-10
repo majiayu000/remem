@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use super::types::{BenchCondition, RunReport};
 use crate::context_bundle::{ContextAudit, DegradedMode};
 
+const SUPPORTED_CONTEXT_BUNDLE_SCHEMA_V1: u32 = 1;
+
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum RememContextAuditStatus {
@@ -201,6 +203,8 @@ fn snapshot_from_persisted(
 }
 
 fn verify_summary(snapshot: &RememContextAuditSnapshot, audit: &ContextAudit) -> Result<()> {
+    validate_supported_bundle_schema(snapshot.bundle_schema_version)?;
+    validate_supported_bundle_schema(audit.schema_version)?;
     let matches = snapshot.bundle_schema_version == audit.schema_version
         && snapshot.policy_version == audit.policy_version
         && snapshot.relevance_policy_version == audit.relevance_policy_version
@@ -219,6 +223,15 @@ fn verify_summary(snapshot: &RememContextAuditSnapshot, audit: &ContextAudit) ->
         );
     }
     Ok(())
+}
+
+fn validate_supported_bundle_schema(version: u32) -> Result<()> {
+    match version {
+        SUPPORTED_CONTEXT_BUNDLE_SCHEMA_V1 => Ok(()),
+        unsupported => {
+            bail!("unsupported coding-bench ContextAudit bundle schema version {unsupported}")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -307,6 +320,27 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unsupported persisted retrieval plan schema version 2"));
+
+        let mut unsupported_bundle = snapshot()?;
+        let mut future_audit: ContextAudit =
+            serde_json::from_str(&unsupported_bundle.canonical_audit_json)?;
+        future_audit.schema_version = 2;
+        let (canonical_audit_json, audit_hash) =
+            crate::context_bundle::persistence::canonical_context_audit(
+                &future_audit,
+                unsupported_bundle.plan_schema_version,
+            )?;
+        unsupported_bundle.bundle_schema_version = 2;
+        unsupported_bundle.canonical_audit_json = canonical_audit_json;
+        unsupported_bundle.audit_hash = audit_hash;
+        unsupported_bundle.injection_binding_hash = context_audit_binding_hash(
+            &unsupported_bundle.injection_run_id,
+            &unsupported_bundle.audit_hash,
+        );
+        assert!(verify_context_audit_snapshot(&unsupported_bundle)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported coding-bench ContextAudit bundle schema version 2"));
         Ok(())
     }
 }

@@ -193,9 +193,10 @@ is the explicit rollback.
   reason, and the canonical payload-free audit JSON.
 - Snapshot construction first calls the production verified loader. The
   coding-bench verifier independently parses and canonicalizes the embedded
-  JSON, dispatches by the artifact's supported plan schema version, recomputes
-  both SHA-256 hashes, compares every summary field, and rejects a blank or
-  renamed injection ID or a snapshot that differs from the persisted row.
+  JSON, dispatches by the artifact's supported plan and ContextAudit bundle
+  schema versions, recomputes both SHA-256 hashes, compares every summary
+  field, and rejects a blank or renamed injection ID or a snapshot that differs
+  from the persisted row.
 - `CodingBenchRunReport` and the executable runner report carry an explicit
   audit-contract status: `verified`, `contract_failure`, or `not_applicable`.
   Remem requires `verified` plus a snapshot; a missing, malformed, tampered, or
