@@ -81,7 +81,8 @@ memory contents.
 
 ## Follow-ups (tracked on #934)
 
-Execution wiring (plan -> retrieve/rerank -> ContextBundle), plan hash
-into `ContextAudit` and benchmark artifacts at execution time,
-per-intent golden fixtures, static-vs-router ablation and default-on
-gates.
+Execution wiring (plan -> retrieve/rerank -> ContextBundle), per-intent golden
+fixtures, static-vs-router ablation and default-on gates. SessionStart plan
+hashes already flow through persisted `ContextAudit` rows into verified
+coding-bench remem artifacts; that landed slice does not replace the pending
+per-intent execution and ablation work.

@@ -23,7 +23,22 @@ pub fn load_suite(suite: &str) -> Result<MemoryBenchSuiteFixture> {
     let fixture: MemoryBenchSuiteFixture = serde_json::from_str(&content)
         .with_context(|| format!("parse memory benchmark suite {}", path.display()))?;
     validate_suite(&fixture)?;
+    validate_suite_selection(&fixture, suite)?;
     Ok(fixture)
+}
+
+pub(super) fn validate_suite_selection(
+    fixture: &MemoryBenchSuiteFixture,
+    requested_suite: &str,
+) -> Result<()> {
+    if fixture.suite != requested_suite {
+        bail!(
+            "memory benchmark fixture suite {:?} must match requested suite {:?}",
+            fixture.suite,
+            requested_suite
+        );
+    }
+    Ok(())
 }
 
 pub fn validate_suite(fixture: &MemoryBenchSuiteFixture) -> Result<()> {

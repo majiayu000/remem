@@ -24,7 +24,6 @@ use super::types::{
     summarize_by_category, summarize_metrics, summarize_policy, MemoryBenchCondition,
     MemoryBenchEvidence, MemoryBenchPolicyMeasurement, MemoryBenchRunOutcome,
     MemoryBenchSuiteFixture, MemoryBenchTask, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT,
-    DEFAULT_REPORT_BENCHMARK_VERSION,
 };
 
 pub(super) const PROJECT: &str = "/tmp/remem-memory-bench/repo";
@@ -105,6 +104,9 @@ pub async fn run_memory_bench(options: MemoryBenchOptions) -> Result<PublicBench
         schema_version: 1,
         benchmark_id: fixture.benchmark_id.clone(),
         benchmark_version: fixture.version.clone(),
+        suite: Some(fixture.suite.clone()),
+        run_phase: None,
+        matrix_namespace: None,
         layer: BenchmarkLayer::MemorySystemCapability,
         conditions: outcomes
             .iter()
@@ -508,7 +510,8 @@ fn write_run_artifacts(
     ]);
     let run = MemoryRunArtifact {
         schema_version: 1,
-        benchmark_version: DEFAULT_REPORT_BENCHMARK_VERSION.to_string(),
+        benchmark_id: fixture.benchmark_id.clone(),
+        benchmark_version: fixture.version.clone(),
         layer: BenchmarkLayer::MemorySystemCapability,
         suite: fixture.suite.clone(),
         condition: outcome.condition.as_str().to_string(),

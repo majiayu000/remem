@@ -45,14 +45,14 @@
         "issue385-smoke"
       ],
       "conditions": [
-        "remem"
+        "remem_preloaded"
       ],
       "claim_levels": [
         "smoke_only_no_public_claim"
       ],
       "notes": [
         "Current committed coding artifacts are smoke-only.",
-        "The #385 claim gate requires no_memory, remem, and curated_file with at least three runs per condition."
+        "The #931 claim gate requires no_memory, remem_e2e, and curated_file_budgeted across the registered 16-task fixture with exactly run indices 0, 1, and 2 per task and condition."
       ]
     },
     "manifest_count": 5,
@@ -66,7 +66,7 @@
       "benchmark_version": "v1",
       "layer": "coding_agent_outcome",
       "conditions": [
-        "remem"
+        "remem_preloaded"
       ],
       "run_artifact_count": 1,
       "claim_level": "smoke_only_no_public_claim",
@@ -1322,7 +1322,11 @@
   "coding_task_outcomes": [
     {
       "report_path": "coding/reports/coding-report-v1.json",
-      "condition": "remem",
+      "benchmark_id": "issue385-smoke",
+      "benchmark_version": "v1",
+      "run_phase": "smoke",
+      "matrix_namespace": "issue385-smoke/smoke-v1",
+      "condition": "remem_preloaded",
       "task_id": "smoke-fix-startup-race-001",
       "run_index": 0,
       "resolved": true,
@@ -1336,7 +1340,7 @@
   ],
   "coding_condition_variance": [
     {
-      "condition": "remem",
+      "condition": "remem_preloaded",
       "runs": 1,
       "resolved_rate": 1.0,
       "tokens_total_mean": 125.0,
@@ -1415,13 +1419,13 @@
   },
   "claim_gate": {
     "artifact_verifier_passed": true,
+    "coding_claim_level": "directional_only_no_public_claim",
     "coding_outcome_stop_loss_status": "not_evaluated_insufficient_coding_matrix",
     "public_sota_status": "not_evaluated_no_public_sota_claim",
     "notes": [
       "This baseline is directional only and must not be used for coding-task superiority claims.",
       "README and release wording must not claim SOTA or coding outcome improvement from this report.",
-      "Coding artifacts do not yet include no_memory, remem, and curated_file conditions.",
-      "Coding artifacts do not yet have at least three runs per condition."
+      "Coding artifacts are not the registered issue385-v1/official-v1 official matrix."
     ]
   },
   "reproduction_commands": [

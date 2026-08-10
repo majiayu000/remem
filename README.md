@@ -728,8 +728,9 @@ artifacts, and 225 artifact files. It includes:
   reads policy counts from the resulting SQLite state. Each artifact records
   that verification path plus the exact source/generated scanner split;
   direct-memory fixture conditions remain labeled comparative baselines.
-- `issue385-smoke`: one committed coding-agent smoke run artifact with
-  memory-contract fields for `remem` runs. The full `issue385-v1` fixture pack
+- `issue385-smoke`: one committed historical coding-agent smoke run artifact
+  classified as `remem_preloaded`, with memory-contract fields. The full
+  `issue385-v1` fixture pack
   is referenced for dry-run reproduction, but it is not yet part of the
   verified public outcome report.
 
@@ -744,8 +745,16 @@ coding-task outcome claims until the public claim gate in
 3-runs-per-condition baseline generated with `codex-cli 0.142.1` and
 `gpt-5.5`: `no_memory` resolved 2/15, `remem` resolved 15/15, and
 `curated_file` resolved 15/15. This is useful engineering evidence, but it
-predates the public 16-task v1 fixture pack and must be regenerated before it
-supports stronger product claims.
+predates the public 16-task v1 fixture pack. Its `remem` arm used the historical
+full-body `remem_preloaded` semantics and is not comparable with current
+retrieval-dependent `remem_seeded_sessionstart` runs; it must be regenerated
+before it supports stronger product claims.
+
+New remem-backed coding-bench runs bind their report to the exact production
+SessionStart injection audit. Missing or tampered audit evidence is reported as
+a runtime contract failure. A separate binding hash covers the injection run ID
+and audit hash so standalone artifact verification also rejects a renamed run.
+`no_memory` and curated-file controls mark that contract as not applicable.
 
 ### LoCoMo (Informational Only)
 

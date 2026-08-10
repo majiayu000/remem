@@ -31,10 +31,13 @@ instead of duplicating it.
 
 ## remem_e2e execution contract (src follow-up, not this PR)
 
-The Rust runner (`src/eval/coding_bench`) needs:
+The Rust runner (`src/eval/coding_bench`) contract is:
 
-1. `BenchCondition` id rename `remem` → `remem_preloaded` and `curated_file`
-   → `curated_file_expert`, no compatibility aliases.
+1. `BenchCondition` uses `remem_seeded_sessionstart` with no `remem`
+   compatibility alias (implemented); the remaining `curated_file` →
+   `curated_file_expert` rename also permits no alias. The `remem_preloaded` id
+   remains reserved for historical full-body-preload artifacts and cannot be
+   reused for the current retrieval-dependent path.
 2. New `remem_e2e` condition: feed fixture history episodes through real
    capture (`captured_events`) → extraction_tasks → observations/candidates →
    promotion policy → memories, then serve the target run via the production
@@ -116,6 +119,14 @@ The Rust runner (`src/eval/coding_bench`) needs:
    the run artifact.
 5. Report additions: failure `stage` attribution (6-stage enum), curator
    maintenance metrics, and paired task-cluster bootstrap statistics.
+
+The ContextAudit binding slice is implemented independently of the remaining
+flagship runner work: remem-backed runs execute the production SessionStart
+emission path, resolve its persisted `injection_run_id`, embed the payload-free
+canonical audit plus version/hash/count/budget summary, and recompute both the
+audit hash and injection-run binding during verification. Missing evidence is a
+runtime contract failure; control conditions are explicitly not applicable.
+The same contract is required when `remem_e2e` execution support lands.
 
 ## Completion implementation contract (pending)
 

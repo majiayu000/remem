@@ -1,6 +1,8 @@
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
+use rusqlite::OptionalExtension;
 
 use super::{
     open_context_connection_or_error, render_context_load_errors,
@@ -85,6 +87,56 @@ pub(crate) struct SessionStartEvalSnapshot {
     pub session_count: usize,
     pub workstream_count: usize,
     pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SessionStartBenchmarkEmission {
+    pub rendered_output: String,
+    pub injection_run_id: Option<String>,
+}
+
+pub(crate) fn session_start_benchmark_emission(
+    cwd: &str,
+    project: &str,
+    host: &str,
+) -> Result<SessionStartBenchmarkEmission> {
+    static BENCHMARK_SESSION_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let sequence = BENCHMARK_SESSION_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let session_id = format!(
+        "coding-bench-session-start-{}-{sequence}",
+        std::process::id()
+    );
+    let invocation = crate::context::invocation::ContextInvocation {
+        cwd: cwd.to_string(),
+        project: project.to_string(),
+        session_id: Some(session_id.clone()),
+        transcript_path: None,
+        source: Some("SessionStart".to_string()),
+        host: crate::context::host::resolve_host_kind(Some(host)),
+        use_colors: false,
+        debug: false,
+        force: true,
+        gate_mode: Some("auto".to_string()),
+    };
+    let rendered_output = super::generate_context_output_for_invocation(invocation, true)?;
+    let conn = crate::db::open_db()?;
+    let injection_run_id = conn
+        .query_row(
+            "SELECT a.injection_run_id
+             FROM context_bundle_audits a
+             JOIN context_injection_items i
+               ON i.injection_run_id = a.injection_run_id
+             WHERE i.project = ?1 AND i.session_id = ?2
+             ORDER BY a.id DESC
+             LIMIT 1",
+            [project, session_id.as_str()],
+            |row| row.get(0),
+        )
+        .optional()?;
+    Ok(SessionStartBenchmarkEmission {
+        rendered_output,
+        injection_run_id,
+    })
 }
 
 pub(crate) fn session_start_eval_snapshot(

@@ -21,6 +21,14 @@
     "baseline": "eval/coding-bench/reports/baseline.json",
     "remem_smoke": "eval/coding-bench/reports/fix-remem-smoke.json"
   },
+  "condition_semantics": {
+    "remem": {
+      "registered_id": "remem_preloaded",
+      "historical_only": true,
+      "definition": "Fixture memories plus the production SessionStart render followed by a full seeded-memory-details preload.",
+      "not_comparable_with": "remem_seeded_sessionstart"
+    }
+  },
   "resolution": {
     "no_memory": {
       "resolved": 2,
@@ -44,7 +52,7 @@
       "wall_time_ms_mean": 62813.0
     }
   },
-  "interpretation": "remem matches curated_file resolution and strongly beats no_memory on the first small memory-dependent fixture; curated_file remains cheaper, so this does not prove remem beats a carefully maintained MEMORY.md.",
+  "interpretation": "The historical remem_preloaded condition matches curated_file resolution and strongly beats no_memory on the first small memory-dependent fixture; curated_file remains cheaper, so this does not prove remem beats a carefully maintained MEMORY.md. The result is not comparable with current remem_seeded_sessionstart runs.",
   "isolation": {
     "source_dirty": false,
     "remem_rev": "c6a46aec3fe44c8a256138d839ebeea396b6cdb7",
@@ -53,7 +61,7 @@
   },
   "caveats": [
     "This fixture is small and synthetic; it is directional evidence only.",
-    "Codex non-interactive MCP calls can be cancelled by the host, so remem preloads full seeded memory details into REMEM_CONTEXT.md after using the production SessionStart render path.",
+    "This historical baseline used remem_preloaded: after the production SessionStart render path it appended full seeded memory details to REMEM_CONTEXT.md. The current remem_seeded_sessionstart condition does not append those bodies, so new runs must not be compared with this 15/15 result.",
     "The next benchmark version should add pinned real-repo tasks inspired by SWE-bench style issue patching and LiveCodeBench style fresh/self-repair tasks."
   ]
 }

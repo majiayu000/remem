@@ -4,12 +4,14 @@ Status: Current contract (condition naming and primary matrix superseded by
 `docs/specs/GH931/`)
 Issue: #385
 
-Naming note (#931): the `remem` condition described below is now the
-diagnostic `remem_preloaded` condition and `curated_file` is now the
-diagnostic `curated_file_expert` condition. The claim-bearing primary matrix
-is `no_memory` / `curated_file_budgeted` / `remem_e2e`; see
-`eval/coding-bench/conditions.json`. Tables in this file record runs executed
-under the legacy ids.
+Naming note (#931): the current directly seeded, retrieval-dependent `remem`
+runner is now the diagnostic `remem_seeded_sessionstart` condition; the
+historical full-body-preload artifacts alone are `remem_preloaded`.
+`curated_file` is now the diagnostic `curated_file_expert` condition. The
+claim-bearing primary matrix is `no_memory` / `curated_file_budgeted` /
+`remem_e2e`; see `eval/coding-bench/conditions.json`. Tables in this file record
+runs executed under the legacy ids and must be interpreted through the
+historical mapping.
 
 ## Problem
 
@@ -27,13 +29,15 @@ Produce a reproducible end-to-end benchmark that compares one fixed coding-task
 set under three memory conditions:
 
 1. `no_memory`: the agent receives only the task prompt and repository files.
-2. `remem`: the agent receives context through remem's normal install/runtime
-   path.
+2. `remem_seeded_sessionstart`: the agent receives the exact audited output of
+   the production SessionStart selection path over a directly seeded temporary
+   database.
 3. `curated_file`: the agent receives a hand-curated context file generated from
    the same source material that remem is allowed to use.
 
 The benchmark reports task-resolution rate, token usage, turn count, wall time,
-and variance across at least three runs per condition.
+and variance across exactly the registered run indices 0, 1, and 2 per task
+and condition.
 
 ## Non-Goals
 
@@ -66,13 +70,15 @@ runner ignored host Codex config, rules, hooks, and session persistence:
 | Condition | Resolved | Resolution | Mean tokens |
 |---|---:|---:|---:|
 | `no_memory` | 3/15 | 20.0% | 390,003 |
-| `remem` | 15/15 | 100.0% | 170,284 |
+| historical `remem_preloaded` (recorded as `remem`) | 15/15 | 100.0% | 170,284 |
 | `curated_file` | 15/15 | 100.0% | 146,840 |
 
 Product interpretation: these numbers are report-shape evidence only until the
 baseline is regenerated with the isolated runner. They do not justify a public
-claim that remem beats a carefully maintained `MEMORY.md`. The next product
-decision should expand task diversity before strengthening any public claim.
+claim that remem beats a carefully maintained `MEMORY.md`, and the historical
+preload result is not comparable with current `remem_seeded_sessionstart`
+runs. The next product decision should expand task diversity before
+strengthening any public claim.
 
 ## Benchmark Subject
 
@@ -98,7 +104,7 @@ The agent runs without remem hooks, remem MCP, `MEMORY.md`, or curated context.
 The prompt may include only the task, repo path, and standard agent operating
 instructions.
 
-### remem
+### remem_seeded_sessionstart
 
 The agent runs with remem enabled through the normal supported integration path.
 The benchmark must seed a temporary remem database from fixture evidence, then
@@ -141,8 +147,8 @@ The report aggregates by condition:
 
 ## Acceptance Criteria
 
-- A baseline report is committed with three conditions and at least three runs
-  per condition.
+- A baseline report is committed with three conditions and exactly the
+  registered run indices 0, 1, and 2 per task and condition.
 - The benchmark runs from a clean checkout with one documented command.
 - The benchmark uses a temporary data directory and does not read or write the
   user's real remem database.

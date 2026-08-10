@@ -184,6 +184,7 @@ impl SectionBudgets {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AuditEntry {
     pub stable_key: String,
     pub channel: ChannelKind,
@@ -198,6 +199,7 @@ pub struct AuditEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ContextAudit {
     pub schema_version: u32,
     pub policy_version: String,
