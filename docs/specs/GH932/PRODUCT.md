@@ -63,9 +63,10 @@ context bundle.
   audit row linked to the existing per-item audit rows by
   `injection_run_id`. The row contains the bundle/plan schema versions,
   router and relevance-policy versions, plan hash, degraded mode, aggregate
-  selection and token-budget fields, truncation reason, and a SHA-256 hash of
-  the payload-free canonical `ContextAudit` JSON. The canonical audit JSON is
-  retained so benchmark verifiers can recompute the hash; it contains only
+  selection and token-budget fields, truncation reason, and a SHA-256 hash of a
+  payload-free canonical envelope containing `plan_schema_version` and the
+  canonical `ContextAudit`. The canonical audit JSON is retained so benchmark
+  verifiers can reconstruct and recompute the envelope hash; it contains only
   stable identities, attribution, scores, reason codes, and counts, never
   memory title or body text.
 - SessionStart item rows and the bundle audit commit atomically. Retrying the

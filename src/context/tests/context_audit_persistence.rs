@@ -1,4 +1,6 @@
+use super::super::audit::{record_context_injection_at, ContextAuditItem};
 use super::super::host::HostKind;
+use super::super::injection_gate::{ContextGateAction, ContextGateDecision};
 use super::super::invocation::ContextInvocation;
 use super::super::render::generate_context_for_test;
 use super::insert_memory;
@@ -110,5 +112,73 @@ fn empty_sessionstart_still_persists_bundle_contract() -> anyhow::Result<()> {
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
     )?;
     assert_eq!(row, (0, 0, 0));
+    Ok(())
+}
+
+#[test]
+fn distinct_same_second_invocations_keep_both_item_sets() -> anyhow::Result<()> {
+    let conn = rusqlite::Connection::open_in_memory()?;
+    crate::migrate::run_migrations(&conn)?;
+    let invocation = ContextInvocation {
+        cwd: "/repo".to_string(),
+        project: "/repo".to_string(),
+        session_id: Some("same-second".to_string()),
+        transcript_path: None,
+        source: Some("UserPromptSubmit".to_string()),
+        host: HostKind::ClaudeCode,
+        use_colors: false,
+        debug: false,
+        force: false,
+        gate_mode: Some("off".to_string()),
+    };
+    let decision = ContextGateDecision {
+        output: String::new(),
+        action: ContextGateAction::Bypassed,
+        reason: "prompt_submit",
+        key: None,
+        context_hash: None,
+        output_mode: Some("bypassed"),
+        retained_context_chars: None,
+    };
+    let audit_item = |title: &str| ContextAuditItem {
+        item_kind: "memory",
+        item_id: Some(42),
+        memory_id: Some(42),
+        channel: "prompt_submit",
+        score: Some(1.0),
+        render_order: Some(1),
+        status: "injected",
+        drop_reason: None,
+        title: title.to_string(),
+        provenance: "src=memory:#42".to_string(),
+        staleness: "fresh".to_string(),
+        render_end_chars: None,
+    };
+
+    let first_run = record_context_injection_at(
+        &conn,
+        &invocation,
+        &decision,
+        &[audit_item("first prompt")],
+        None,
+        100,
+    )?;
+    let second_run = record_context_injection_at(
+        &conn,
+        &invocation,
+        &decision,
+        &[audit_item("second prompt")],
+        None,
+        100,
+    )?;
+
+    assert_ne!(first_run, second_run);
+    let rows: (i64, i64) = conn.query_row(
+        "SELECT COUNT(*), COUNT(DISTINCT injection_run_id)
+         FROM context_injection_items",
+        [],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    assert_eq!(rows, (2, 2));
     Ok(())
 }

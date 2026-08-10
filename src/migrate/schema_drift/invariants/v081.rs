@@ -12,6 +12,11 @@ pub(in crate::migrate) const V081_SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
         "context_bundle_audits",
         "idx_context_bundle_audits_plan",
     ),
+    SchemaInvariant::index(
+        81,
+        "context_injection_items",
+        "idx_context_injection_items_run",
+    ),
     SchemaInvariant::trigger(
         81,
         "context_bundle_audits",

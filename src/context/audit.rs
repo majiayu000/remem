@@ -260,6 +260,24 @@ pub(in crate::context) fn record_context_injection(
     context_bundle: Option<&crate::context_bundle::ContextBundle>,
 ) -> Result<String> {
     let now = chrono::Utc::now().timestamp();
+    record_context_injection_at(
+        conn,
+        invocation,
+        decision,
+        rendered_items,
+        context_bundle,
+        now,
+    )
+}
+
+pub(in crate::context) fn record_context_injection_at(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    decision: &ContextGateDecision,
+    rendered_items: &[ContextAuditItem],
+    context_bundle: Option<&crate::context_bundle::ContextBundle>,
+    now: i64,
+) -> Result<String> {
     let key = decision
         .key
         .clone()
@@ -272,20 +290,18 @@ pub(in crate::context) fn record_context_injection(
         ContextGateAction::EmittedFull => "full",
         ContextGateAction::EmittedDelta => "delta",
     });
+    let transaction = conn.unchecked_transaction()?;
+    let nonce: String =
+        transaction.query_row("SELECT lower(hex(randomblob(16)))", [], |row| row.get(0))?;
     let run_id = format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{}",
         key,
         now,
-        context_hash.unwrap_or(decision.reason)
+        context_hash.unwrap_or(decision.reason),
+        nonce
     );
 
-    let transaction = conn.unchecked_transaction()?;
-    let existing_items: i64 = transaction.query_row(
-        "SELECT COUNT(*) FROM context_injection_items WHERE injection_run_id = ?1",
-        [&run_id],
-        |row| row.get(0),
-    )?;
-    if existing_items == 0 {
+    {
         let mut statement = transaction.prepare(
             "INSERT INTO context_injection_items
              (injection_run_id, host, project, session_id, injection_key, hook_source,

@@ -29,6 +29,9 @@ CREATE INDEX idx_context_bundle_audits_created
 CREATE INDEX idx_context_bundle_audits_plan
     ON context_bundle_audits(plan_hash, created_at_epoch DESC);
 
+CREATE INDEX idx_context_injection_items_run
+    ON context_injection_items(injection_run_id);
+
 CREATE TRIGGER context_bundle_audits_require_items
 BEFORE INSERT ON context_bundle_audits
 WHEN NOT EXISTS (

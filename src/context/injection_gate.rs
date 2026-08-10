@@ -420,12 +420,6 @@ fn read_i64_env(key: &str, default: i64) -> i64 {
 
 fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
     let cutoff = retention_cutoff_epoch(now);
-    if let Err(error) = crate::context_bundle::cleanup_persisted_audits_before(conn, cutoff) {
-        crate::log::error(
-            "context-audit",
-            &format!("retention cleanup failed: {error}"),
-        );
-    }
     if let Err(error) = conn.execute(
         "DELETE FROM context_injections WHERE updated_at_epoch < ?1",
         [cutoff],
@@ -437,7 +431,7 @@ fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
     }
 }
 
-fn retention_cutoff_epoch(now: i64) -> i64 {
+pub(super) fn retention_cutoff_epoch(now: i64) -> i64 {
     let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
     now.saturating_sub(retention_days.saturating_mul(86_400))
 }
