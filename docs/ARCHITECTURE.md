@@ -64,41 +64,21 @@ before database open/spill. Deterministic worker phases consume only the exact
 claimed event range, key links by `session_row_id`, and never infer a commit
 from an ordinary Stop event or worker-time `HEAD`.
 
-## Module Overview (~9000 lines Rust)
+## Module Map
 
-| Module | Lines | Responsibility |
-|--------|-------|----------------|
-| `memory.rs` | 838 | Memory CRUD, auto-promotion from summaries, FTS search |
-| `db.rs` | 728 | Data model + write ops + encryption + cleanup |
-| `db_query.rs` | 680 | Read queries: FTS search, timeline, shared status stats |
-| `observe_flush.rs` | 609 | Legacy pending-observation flush support |
-| `workstream.rs` | 581 | WorkStream tracking across sessions (auto-create + fuzzy match) |
-| `mcp/server.rs` | 565 | MCP service runtime: tools, server lifecycle, tests |
-| `summarize.rs` | 501 | 3-gate + background worker + session summary + compression |
-| `timeline.rs` | 493 | Timeline report with monthly aggregation |
-| `cli/actions.rs` | 385 | CLI command implementations and formatted output |
-| `context.rs` | 368 | Context rendering: preferences + core + index + workstreams + sessions |
-| `preference.rs` | 352 | Preference management: query, render, CLI ops |
-| `rules/` | — | Compiled-rule schema, worker compiler, artifact evaluator, overrides, and diagnostics |
-| `observe.rs` | 287 | Bash filter + capture ledger writes + type checks |
-| `db_pending.rs` | 261 | Legacy pending observations management |
-| `search.rs` | 251 | Search entry: filtered retrieval + pagination |
-| `ai.rs` | 244 | AI calls: HTTP-first + CLI fallback + model mapping |
-| `db_job.rs` | 244 | Background job queue |
-| `install.rs` | 243 | Auto-configure hooks + MCP to settings.json |
-| `claude_memory.rs` | 195 | Sync summaries to Claude Code native memory directory |
-| `dedup.rs` | 179 | Hash-based deduplication |
-| `cli/mod.rs` | 172 | CLI args + command dispatch |
-| `log.rs` | 147 | Logging: file + stderr, Timer |
-| `memory_format.rs` | 148 | XML memory format parsing |
-| `db_models.rs` | 123 | Shared data models |
-| `mcp/types.rs` | 121 | MCP parameter/result DTOs |
-| `worker.rs` | 110 | Background worker loop |
-| `vector.rs` | 80 | Vector similarity (SQLite vec extension) |
-| `lib.rs` | 47 | Module declarations |
-| `db_usage.rs` | 39 | AI usage statistics |
-| `main.rs` | 6 | Binary entry: delegate to `cli::run()` |
-| `mcp/mod.rs` | 4 | MCP public entry: export `run_mcp_server` |
+This map records responsibility boundaries only. Do not hand-maintain line
+counts here; source file sizes are enforced by `scripts/ci/check_file_size.py`
+and should be inspected from the current checkout when needed.
+
+| Area | Responsibility |
+|------|----------------|
+| `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, spill/replay, Git evidence, and capture-ledger writes |
+| `db/`, `migrate/`, `migrations/` | SQLite schema, migration execution, connection policy, write/read helpers, job and extraction-task state |
+| `session_rollup/`, `observation_extract/`, `memory_candidate/` | Stop and tool-event distillation, observation persistence, candidate routing, review, and promotion governance |
+| `memory/`, `preference/`, `workstream/`, `truth/` | Curated memory storage, preferences, workstream continuity, lifecycle/current-truth projections |
+| `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, bundle audit, search/fusion, intent-aware retrieval planning |
+| `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
+| `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 
 ## Data Flow
 
