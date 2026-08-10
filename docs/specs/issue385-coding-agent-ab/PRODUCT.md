@@ -29,8 +29,9 @@ Produce a reproducible end-to-end benchmark that compares one fixed coding-task
 set under three memory conditions:
 
 1. `no_memory`: the agent receives only the task prompt and repository files.
-2. `remem`: the agent receives context through remem's normal install/runtime
-   path.
+2. `remem_seeded_sessionstart`: the agent receives the exact audited output of
+   the production SessionStart selection path over a directly seeded temporary
+   database.
 3. `curated_file`: the agent receives a hand-curated context file generated from
    the same source material that remem is allowed to use.
 
@@ -68,13 +69,15 @@ runner ignored host Codex config, rules, hooks, and session persistence:
 | Condition | Resolved | Resolution | Mean tokens |
 |---|---:|---:|---:|
 | `no_memory` | 3/15 | 20.0% | 390,003 |
-| `remem` | 15/15 | 100.0% | 170,284 |
+| historical `remem_preloaded` (recorded as `remem`) | 15/15 | 100.0% | 170,284 |
 | `curated_file` | 15/15 | 100.0% | 146,840 |
 
 Product interpretation: these numbers are report-shape evidence only until the
 baseline is regenerated with the isolated runner. They do not justify a public
-claim that remem beats a carefully maintained `MEMORY.md`. The next product
-decision should expand task diversity before strengthening any public claim.
+claim that remem beats a carefully maintained `MEMORY.md`, and the historical
+preload result is not comparable with current `remem_seeded_sessionstart`
+runs. The next product decision should expand task diversity before
+strengthening any public claim.
 
 ## Benchmark Subject
 
@@ -100,7 +103,7 @@ The agent runs without remem hooks, remem MCP, `MEMORY.md`, or curated context.
 The prompt may include only the task, repo path, and standard agent operating
 instructions.
 
-### remem
+### remem_seeded_sessionstart
 
 The agent runs with remem enabled through the normal supported integration path.
 The benchmark must seed a temporary remem database from fixture evidence, then

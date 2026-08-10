@@ -205,7 +205,7 @@ Coding-agent outcome suites keep the #385 required conditions:
 | Condition | Purpose |
 |---|---|
 | `no_memory` | Agent runs without remem hooks, MCP, native memory, or curated context. |
-| `remem` | Agent runs with remem through a supported runtime path and temporary data dir. |
+| `remem_seeded_sessionstart` | Agent receives exact audited production SessionStart selection over a directly seeded temporary data dir. |
 | `curated_file` | Agent receives a realistic hand-maintained context file derived from the same source evidence. |
 
 Optional coding-agent extensions are allowed only after the base three pass:

@@ -38,8 +38,9 @@ remain explicitly labeled comparative fixtures.
 task pack. It contains 16 deterministic tasks across the required memory
 dependency categories plus a smoke subset:
 
-Coding-agent artifacts use a fixed `failure_reason` enum and, for `remem`
-runs, a `memory_contract` block that records injected memory ids, cited/used
+Coding-agent artifacts use a fixed `failure_reason` enum and, for
+`remem_seeded_sessionstart` runs, a `memory_contract` block that records
+injected memory ids, cited/used
 memory ids, citation precision/recall, stale used count, irrelevant injection
 count, missing relevant memory count, `memory_helped`, and `memory_hurt`.
 

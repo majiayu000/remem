@@ -139,7 +139,7 @@ Required behavior:
     "requires_temp_remem_data_dir": true,
     "external_dataset_revision": null
   },
-  "conditions": ["no_memory", "remem", "curated_file"],
+  "conditions": ["no_memory", "remem_seeded_sessionstart", "curated_file"],
   "reports": ["eval/public/coding/reports/coding-report-v1.json"]
 }
 ```
@@ -304,7 +304,7 @@ retains coding-specific oracle, patch, test, and repository fields.
   "schema_version": 1,
   "benchmark_version": "issue385-v1",
   "layer": "coding_agent_outcome",
-  "condition": "remem",
+  "condition": "remem_seeded_sessionstart",
   "task_id": "state-key-stale-api-001",
   "run_index": 2,
   "model": {

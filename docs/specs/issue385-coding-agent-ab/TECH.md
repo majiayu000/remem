@@ -59,7 +59,8 @@ Required flags:
 
 Optional flags:
 
-- `--condition no_memory|remem|curated_file`: run one condition for debugging.
+- `--condition no_memory|remem_seeded_sessionstart|curated_file`: run one
+  condition for debugging.
 - `--task <id>`: run one task for debugging.
 - `--keep-workdirs`: preserve temporary workdirs after failure.
 - `--model <name>` and `--provider <name>`: override runner defaults.
@@ -136,7 +137,7 @@ memory file injection for the temporary agent run.
 Codex runs must not inherit the host's normal Codex config, rules, hooks, MCP
 servers, or session persistence. The runner invokes `codex exec` with
 `--ignore-user-config`, `--ignore-rules`, `--ephemeral`, and `--disable hooks`.
-The `remem` condition is represented by a temporary remem database plus the
+The `remem_seeded_sessionstart` condition is represented by a temporary remem database plus the
 production SessionStart render path written into `REMEM_CONTEXT.md`.
 
 ## Report Schema
@@ -161,7 +162,7 @@ production SessionStart render path written into `REMEM_CONTEXT.md`.
   "runs_per_condition": 3,
   "conditions": [
     {
-      "name": "remem",
+      "name": "remem_seeded_sessionstart",
       "summary": {
         "resolution_rate": 0.0,
         "tokens_total_mean": 0.0,
@@ -196,7 +197,7 @@ Each run entry records:
   `stale_memory_followed`, `irrelevant_memory_distracted`,
   `over_context_budget`, `agent_hallucinated_memory`, or
   `oracle_inconclusive`
-- `memory_contract` for remem runs, including injected memory IDs,
+- `memory_contract` for `remem_seeded_sessionstart` runs, including injected memory IDs,
   cited/used memory IDs, citation precision/recall, stale used count,
   irrelevant injection count, missing relevant memory count, `memory_helped`,
   and `memory_hurt`
