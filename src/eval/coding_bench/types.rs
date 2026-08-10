@@ -123,17 +123,22 @@ impl CodingBenchTask {
 #[serde(rename_all = "snake_case")]
 pub enum BenchCondition {
     NoMemory,
-    Remem,
+    #[serde(rename = "remem_seeded_sessionstart")]
+    RememSeededSessionStart,
     CuratedFile,
 }
 
 impl BenchCondition {
-    pub const ALL: [Self; 3] = [Self::NoMemory, Self::Remem, Self::CuratedFile];
+    pub const ALL: [Self; 3] = [
+        Self::NoMemory,
+        Self::RememSeededSessionStart,
+        Self::CuratedFile,
+    ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoMemory => "no_memory",
-            Self::Remem => "remem",
+            Self::RememSeededSessionStart => "remem_seeded_sessionstart",
             Self::CuratedFile => "curated_file",
         }
     }
@@ -141,10 +146,33 @@ impl BenchCondition {
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "no_memory" => Some(Self::NoMemory),
-            "remem" => Some(Self::Remem),
+            "remem_seeded_sessionstart" => Some(Self::RememSeededSessionStart),
             "curated_file" => Some(Self::CuratedFile),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod condition_identity_tests {
+    use super::BenchCondition;
+
+    #[test]
+    fn seeded_sessionstart_has_distinct_nonlegacy_identity() -> serde_json::Result<()> {
+        assert_eq!(
+            BenchCondition::parse("remem_seeded_sessionstart"),
+            Some(BenchCondition::RememSeededSessionStart)
+        );
+        assert_eq!(
+            BenchCondition::RememSeededSessionStart.as_str(),
+            "remem_seeded_sessionstart"
+        );
+        assert_eq!(BenchCondition::parse("remem"), None);
+        assert_eq!(
+            serde_json::to_value(BenchCondition::RememSeededSessionStart)?,
+            "remem_seeded_sessionstart"
+        );
+        Ok(())
     }
 }
 

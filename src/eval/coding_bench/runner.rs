@@ -232,7 +232,7 @@ fn run_one(
         });
     }
 
-    let mut memory_contract = (condition == BenchCondition::Remem)
+    let mut memory_contract = (condition == BenchCondition::RememSeededSessionStart)
         .then(|| build_memory_attribution(&setup.memory_attribution, &runner_outcome.stdout));
     let final_head_sha = current_git_rev(&repo_dir);
     let failure_reason = classify_failure_reason(FailureEvidence {

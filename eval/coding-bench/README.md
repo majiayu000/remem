@@ -28,8 +28,8 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 
 ### Diagnostic conditions (localization only, never claim-bearing)
 
-- `remem_seeded_sessionstart`: the current legacy-CLI `remem` condition —
-  fixture evidence saved into a temporary remem database, selected and rendered
+- `remem_seeded_sessionstart`: fixture evidence saved into a temporary remem
+  database, selected and rendered
   through the production SessionStart path, and the exact audited output written
   unchanged to `REMEM_CONTEXT.md`. It is retrieval-dependent and is not
   comparable with the historical `remem_preloaded` baseline.
@@ -38,12 +38,12 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 - `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
   `remem_no_enrichment`, `remem_fts_only`: see `conditions.json`.
 
-Runner status: the Rust runner (`src/eval/coding_bench`) currently implements
-`no_memory` plus the two diagnostic conditions under their legacy CLI ids
-`remem` and `curated_file`. The id rename and `remem_e2e` /
-`curated_file_budgeted` execution support are tracked as the src-side follow-up
-of #931; `conditions.json` records per-condition `runner_status` so drift is
-visible.
+Runner status: the Rust runner (`src/eval/coding_bench`) implements `no_memory`
+and `remem_seeded_sessionstart` under their stable ids, plus
+`curated_file_expert` under the legacy CLI id `curated_file`. The remaining
+curated id rename and `remem_e2e` / `curated_file_budgeted` execution support
+are tracked as src-side follow-ups of #931; `conditions.json` records
+per-condition `runner_status` so drift is visible.
 
 ## Isolated Baseline (predates #931 renames)
 
@@ -253,7 +253,7 @@ Focused smoke (legacy runner id until the src-side rename lands):
 cargo run -- eval-coding-bench \
   --fixture eval/coding-bench/fixtures/tasks.json \
   --runs-per-condition 1 \
-  --condition remem \
+  --condition remem_seeded_sessionstart \
   --task slug-normalizer-contract \
   --runner codex \
   --model gpt-5.5 \

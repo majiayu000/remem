@@ -99,7 +99,7 @@ pub fn apply_condition(
                 remem_context_audit: None,
             })
         }
-        BenchCondition::Remem => {
+        BenchCondition::RememSeededSessionStart => {
             let (rendered, memory_attribution, audit_contract) =
                 render_seeded_remem_context(data_dir, repo_dir, task)?;
             fs::write(repo_dir.join("REMEM_CONTEXT.md"), rendered)

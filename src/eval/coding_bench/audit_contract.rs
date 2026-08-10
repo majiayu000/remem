@@ -111,7 +111,7 @@ pub(crate) fn verify_snapshot_against_persisted_injection(
 
 pub(crate) fn validate_run_context_audit(run: &RunReport) -> Result<()> {
     match run.condition {
-        BenchCondition::Remem => match run.context_audit_status {
+        BenchCondition::RememSeededSessionStart => match run.context_audit_status {
             RememContextAuditStatus::Verified => {
                 if run.context_audit_failure_reason.is_some()
                     || run.runtime_contract_failure

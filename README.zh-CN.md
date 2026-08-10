@@ -374,7 +374,9 @@ gate 通过。
 每个 condition 3 次运行的 baseline，运行器是 `codex-cli 0.142.1`，
 模型是 `gpt-5.5`：`no_memory` 解决 2/15，`remem` 解决 15/15，
 `curated_file` 解决 15/15。这是有用的工程证据，但它早于公开 16-task
-v1 fixture pack，必须重新生成后才能支持更强的产品声明。
+v1 fixture pack。其中 `remem` 使用历史的全量正文预载
+`remem_preloaded` 语义，不能与当前依赖检索的
+`remem_seeded_sessionstart` 结果比较；必须重新生成后才能支持更强的产品声明。
 
 ### LoCoMo（仅作信息参考）
 

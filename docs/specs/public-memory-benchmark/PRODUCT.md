@@ -16,11 +16,12 @@ remem needs public proof for two different claims that are easy to confuse:
 2. Coding agents complete real engineering tasks better when remem is available
    than when they run with no memory or a maintained context file.
 
-The existing `issue385-coding-agent-ab` spec owns the second claim. It compares
-`no_memory`, `remem` (now the diagnostic `remem_preloaded`), and `curated_file`
-(now the diagnostic `curated_file_expert`) on real coding tasks and records
-resolution, tokens, turns, wall time, artifacts, and failure reasons. Under
-#931 the claim-bearing primary matrix is `no_memory` /
+The existing `issue385-coding-agent-ab` spec owns the second claim. Its current
+direct-seed `remem` runner is the diagnostic `remem_seeded_sessionstart`;
+historical full-body-preload artifacts are `remem_preloaded`, and
+`curated_file` is now `curated_file_expert`. These conditions record resolution,
+tokens, turns, wall time, artifacts, and failure reasons. Under #931 the
+claim-bearing primary matrix is `no_memory` /
 `curated_file_budgeted` / `remem_e2e` (`docs/specs/GH931/`).
 
 The missing layer is a public memory-system benchmark that can explain why a

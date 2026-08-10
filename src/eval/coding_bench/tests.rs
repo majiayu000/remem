@@ -122,7 +122,7 @@ fn remem_run_for_task(
     run_index: usize,
 ) -> CodingBenchRunReport {
     CodingBenchRunReport {
-        condition: CodingBenchCondition::Remem,
+        condition: CodingBenchCondition::RememSeededSessionStart,
         task_id: task_id.to_string(),
         run_index,
         task_success: true,
@@ -178,7 +178,7 @@ fn condition_report(
     task_id: &str,
 ) -> Result<CodingBenchConditionReport> {
     let runs = match name {
-        CodingBenchCondition::Remem => {
+        CodingBenchCondition::RememSeededSessionStart => {
             let snapshot = valid_remem_contract_snapshot(
                 crate::eval::current_memory_contracts::run_current_memory_contracts_eval()?,
                 1_800_000_000,
@@ -203,7 +203,7 @@ fn report_with_run(run: CodingBenchRunReport) -> Result<CodingBenchReport> {
         current_memory_contract_spec_path: CURRENT_MEMORY_CONTRACT_SPEC_PATH,
         runs_per_condition: TEST_RUNS_PER_CONDITION,
         conditions: vec![
-            condition_report(CodingBenchCondition::Remem, &task_id)?,
+            condition_report(CodingBenchCondition::RememSeededSessionStart, &task_id)?,
             condition_report(CodingBenchCondition::NoMemory, &task_id)?,
             condition_report(CodingBenchCondition::CuratedFile, &task_id)?,
         ],
@@ -234,6 +234,8 @@ fn remem_run_artifact_includes_current_memory_contract_snapshot() -> Result<()> 
     validate_contract_snapshots(&report)?;
     let json = serde_json::to_value(&report)?;
     let run = &json["conditions"][0]["runs"][0];
+    assert_eq!(json["conditions"][0]["name"], "remem_seeded_sessionstart");
+    assert_eq!(run["condition"], "remem_seeded_sessionstart");
     let run_object = run.as_object().expect("run serializes as an object");
 
     assert_eq!(run["resolved"], true);
@@ -592,7 +594,7 @@ fn validator_derives_contract_health_from_embedded_report() -> Result<()> {
 #[test]
 fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
     let missing_snapshot = report_with_run(CodingBenchRunReport {
-        condition: CodingBenchCondition::Remem,
+        condition: CodingBenchCondition::RememSeededSessionStart,
         task_id: "missing-snapshot".to_string(),
         run_index: 0,
         task_success: true,

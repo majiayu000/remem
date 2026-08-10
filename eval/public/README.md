@@ -65,9 +65,11 @@ coding-agent outcome evidence. It remains `directional_only_no_public_claim`
 until the coding-agent artifacts include the #931 primary conditions
 `no_memory`, `remem_e2e`, and `curated_file_budgeted` with at least three runs
 per condition and the claim gate in `eval/claims/registry.json` passes. The
-former `remem` and `curated_file` conditions are now the diagnostic
-`remem_preloaded` and `curated_file_expert` conditions and no longer satisfy
-the public claim gate on their own (see `eval/coding-bench/conditions.json`).
+current directly seeded `remem` runner and `curated_file` condition are now the
+diagnostic `remem_seeded_sessionstart` and `curated_file_expert` conditions;
+historical full-body-preload artifacts alone are `remem_preloaded`. None
+satisfies the public claim gate on its own (see
+`eval/coding-bench/conditions.json`).
 
 README and release wording may cite `reports/baseline.md` only as directional
 memory-system capability evidence. It must not use SOTA, broad superiority,

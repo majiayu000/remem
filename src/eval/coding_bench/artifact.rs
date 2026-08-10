@@ -15,7 +15,7 @@ pub const CODING_AGENT_AB_SPEC_PATH: &str = "docs/specs/issue385-coding-agent-ab
 pub const CURRENT_MEMORY_CONTRACT_SPEC_PATH: &str = "docs/specs/current-memory-contracts/TECH.md";
 pub const MIN_RUNS_PER_CONDITION: usize = 3;
 const REQUIRED_CONDITIONS: [CodingBenchCondition; 3] = [
-    CodingBenchCondition::Remem,
+    CodingBenchCondition::RememSeededSessionStart,
     CodingBenchCondition::NoMemory,
     CodingBenchCondition::CuratedFile,
 ];
@@ -87,7 +87,8 @@ pub struct CodingBenchRunMetrics {
 #[serde(rename_all = "snake_case")]
 pub enum CodingBenchCondition {
     NoMemory,
-    Remem,
+    #[serde(rename = "remem_seeded_sessionstart")]
+    RememSeededSessionStart,
     CuratedFile,
 }
 
@@ -285,7 +286,7 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
             validate_required_run_metrics(run)?;
 
             match run.condition {
-                CodingBenchCondition::Remem => validate_remem_run_contract(run)?,
+                CodingBenchCondition::RememSeededSessionStart => validate_remem_run_contract(run)?,
                 CodingBenchCondition::NoMemory | CodingBenchCondition::CuratedFile => {
                     if run.memory_contract_status != CodingBenchMemoryContractStatus::NotApplicable
                     {

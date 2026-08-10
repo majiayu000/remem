@@ -77,8 +77,8 @@ stale/irrelevant memory harm。
    0、PASS 或“已完成”。
 2. **B-002** primary condition 闭集必须恰好是
    `no_memory`、`curated_file_budgeted`、`remem_e2e`；旧
-   `remem_preloaded`、`curated_file_expert` 与其他 oracle/ablation 只能作为
-   diagnostic。
+   `remem_seeded_sessionstart`、`curated_file_expert` 与其他 oracle/ablation
+   只能作为 diagnostic；`remem_preloaded` 仅标识历史全量正文预载 artifact。
 3. **B-003** runner/CLI/machine artifacts 使用新 stable ID；裸
    `remem`、`curated_file` 不得作为 alias 被接受。已有旧 report 必须标注
    legacy schema 并禁止进入新 claim denominator。
@@ -162,9 +162,10 @@ stale/irrelevant memory harm。
     `MEMORY.md` exact bytes 的 content-addressed record，使 verifier 可重算 hash
     并检查实际 control surface；缺 log/receipt/bytes、hash 不同或超预算均使
     该 run 无效。
-13. **B-013** `remem_preloaded` 与 `curated_file_expert` 保留为 diagnostic
-    upper bounds 时必须使用新名称并明显标记 shortcut；其 outcome 不得被写成
-    primary evidence。
+13. **B-013** `remem_seeded_sessionstart` 与 `curated_file_expert` 保留为
+    diagnostic 时必须使用新名称并明显标记 shortcut；历史
+    `remem_preloaded` outcome 必须单独标记且不得与当前检索依赖结果比较；这些
+    outcome 均不得被写成 primary evidence。
 
 ### 隔离、失败与恢复
 
@@ -408,7 +409,7 @@ stale/irrelevant memory harm。
 ## 边界情况
 
 - provider key 缺失时，offline plan 仍可验证；live `remem_e2e` 明确失败且不
-  改跑 `remem_preloaded`。
+  改跑 `remem_seeded_sessionstart`。
 - curator 超时或 target 提前泄漏时，budgeted artifact 无效且不能用 expert
   file 替代。
 - 一个 task 三次都失败时仍保留全部 outcome；不得从分母删除。

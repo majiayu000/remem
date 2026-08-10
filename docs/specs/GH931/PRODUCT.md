@@ -142,7 +142,7 @@ workflow gate or authorization source.
 
 | Issue acceptance item | Scaffold artifact |
 |---|---|
-| Rename `remem` → `remem_seeded_sessionstart` | `eval/coding-bench/conditions.json`, README, spec supersession notes; `remem_preloaded` stays historical-only and the src-side id rename is the tracked follow-up |
+| Rename `remem` → `remem_seeded_sessionstart` | Implemented in the Rust CLI/runner/report and registry with no `remem` alias; `remem_preloaded` stays historical-only |
 | Real `remem_e2e` condition | Condition definition with forbidden shortcuts and isolation rules; runner execution support is the tracked src follow-up |
 | `curated_file_budgeted` protocol | `eval/coding-bench/curated-file-budgeted-protocol.md` + curator log schema |
 | Claim registry + wording gate | `eval/claims/registry.json`, `eval/claims/claim_gate.py` |

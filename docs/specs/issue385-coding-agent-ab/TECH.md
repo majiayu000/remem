@@ -117,12 +117,14 @@ touched unauthorized files. Generated Python cache paths are ignored.
 
 ## Memory Seeding
 
-The `remem` condition seeds a temporary database from committed fixture evidence,
-not from private user memory. The implementation uses `save_memory` against a
-temporary `REMEM_DATA_DIR`, then renders the production SessionStart context and
-writes that exact audited output unchanged to `REMEM_CONTEXT.md`. It must not
-append seeded memory bodies outside the persisted ContextAudit; only memory IDs
-marked injected by that emission may enter run attribution.
+The `remem_seeded_sessionstart` condition seeds a temporary database from
+committed fixture evidence, not from private user memory. The implementation
+uses `save_memory` against a temporary `REMEM_DATA_DIR`, then renders the
+production SessionStart context and writes that exact audited output unchanged
+to `REMEM_CONTEXT.md`. It must not append seeded memory bodies outside the
+persisted ContextAudit; only memory IDs marked injected by that emission may
+enter run attribution. The CLI and new reports use this full identity with no
+`remem` alias.
 
 The `curated_file` condition uses the fixture's `curated_context` text and writes
 it to `MEMORY.md` in the temporary repository. It must be derived from the same
@@ -268,12 +270,13 @@ runner ignored host config, rules, hooks, and session persistence:
 | Condition | Resolved | Resolution | Mean tokens | Mean wall time |
 |---|---:|---:|---:|---:|
 | `no_memory` | 3/15 | 20.0% | 390,003 | 133.6s |
-| `remem` | 15/15 | 100.0% | 170,284 | 62.2s |
+| historical `remem_preloaded` (recorded as `remem`) | 15/15 | 100.0% | 170,284 | 62.2s |
 | `curated_file` | 15/15 | 100.0% | 146,840 | 60.5s |
 
 Result: this draft run is report-shape evidence only and must be regenerated
 before publication or issue closure. It is not evidence that remem beats a
-carefully maintained `MEMORY.md`.
+carefully maintained `MEMORY.md`, and it is not comparable with current
+`remem_seeded_sessionstart` runs.
 
 ## Failure Handling
 

@@ -31,12 +31,13 @@ instead of duplicating it.
 
 ## remem_e2e execution contract (src follow-up, not this PR)
 
-The Rust runner (`src/eval/coding_bench`) needs:
+The Rust runner (`src/eval/coding_bench`) contract is:
 
-1. `BenchCondition` id rename `remem` → `remem_seeded_sessionstart` and
-   `curated_file` → `curated_file_expert`, no compatibility aliases. The
-   `remem_preloaded` id remains reserved for the historical full-body-preload
-   artifacts and cannot be reused for the current retrieval-dependent path.
+1. `BenchCondition` uses `remem_seeded_sessionstart` with no `remem`
+   compatibility alias (implemented); the remaining `curated_file` →
+   `curated_file_expert` rename also permits no alias. The `remem_preloaded` id
+   remains reserved for historical full-body-preload artifacts and cannot be
+   reused for the current retrieval-dependent path.
 2. New `remem_e2e` condition: feed fixture history episodes through real
    capture (`captured_events`) → extraction_tasks → observations/candidates →
    promotion policy → memories, then serve the target run via the production
