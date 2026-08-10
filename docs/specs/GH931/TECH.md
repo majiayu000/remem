@@ -1,15 +1,15 @@
 # GH931 Flagship E2E Public Proof — Tech Spec
 
-Status: Current contract (harness scaffold)
+Status: Current contract (harness scaffold plus condition-id convergence)
 Issue: #931
 
 ## Harness artifacts (this PR)
 
 - `eval/coding-bench/conditions.json`: machine-readable condition registry —
   3 primary + 7 diagnostic conditions, per-condition `runner_status`
-  (`implemented`, `implemented_as_legacy_id`, `artifact_schema_only`,
-  `pending_src_support`), isolation rules, `remem_e2e` forbidden shortcuts,
-  and the 6-stage / 12-enum failure taxonomy.
+  (`implemented`, `artifact_schema_only`, `pending_src_support`), isolation
+  rules, `remem_e2e` forbidden shortcuts, and the 6-stage / 12-enum failure
+  taxonomy.
 - `eval/coding-bench/schemas/conditions.schema.json`: schema for the registry.
 - `eval/coding-bench/schemas/curator-log.schema.json` +
   `eval/coding-bench/examples/curator-log.example.json`: the
@@ -31,14 +31,15 @@ instead of duplicating it.
 
 ## remem_e2e execution contract (src follow-up, not this PR)
 
-The Rust runner (`src/eval/coding_bench`) contract is:
+The Rust runner (`src/eval/coding_bench`) now parses the GH931 condition ids
+directly: `remem_seeded_sessionstart` and `curated_file_expert` replace the
+legacy `remem` and `curated_file` CLI ids with no compatibility aliases, the
+`remem_preloaded` id remains reserved for historical full-body-preload
+artifacts and cannot be reused for the current retrieval-dependent path, and
+`--matrix primary` dry-runs the 144-key claim-bearing matrix. The remaining
+runner work needs:
 
-1. `BenchCondition` uses `remem_seeded_sessionstart` with no `remem`
-   compatibility alias (implemented); the remaining `curated_file` →
-   `curated_file_expert` rename also permits no alias. The `remem_preloaded` id
-   remains reserved for historical full-body-preload artifacts and cannot be
-   reused for the current retrieval-dependent path.
-2. New `remem_e2e` condition: feed fixture history episodes through real
+1. New `remem_e2e` condition: feed fixture history episodes through real
    capture (`captured_events`) → extraction_tasks → observations/candidates →
    promotion policy → memories, then serve the target run via the production
    SessionStart/MCP retrieval path only. Hard-fail if the run plan attempts
@@ -112,12 +113,12 @@ The Rust runner (`src/eval/coding_bench`) contract is:
    all rows. Missing raw events, cardinality/order drift, hash mismatch, or a
    forbidden field reaching the plan fails before the first write. No
    summary/gold or partial-event fallback exists.
-3. `remem_e2e` requires a configured remem LLM provider key at execution time;
+2. `remem_e2e` requires a configured remem LLM provider key at execution time;
    `--dry-run` must not require it.
-4. `curated_file_budgeted` run support: inject a curator-produced `MEMORY.md`,
+3. `curated_file_budgeted` run support: inject a curator-produced `MEMORY.md`,
    verify its SHA-256 against the curator log artifact, and attach the log to
    the run artifact.
-5. Report additions: failure `stage` attribution (6-stage enum), curator
+4. Report additions: failure `stage` attribution (6-stage enum), curator
    maintenance metrics, and paired task-cluster bootstrap statistics.
 
 The ContextAudit binding slice is implemented independently of the remaining

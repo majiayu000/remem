@@ -10,6 +10,7 @@ pub struct CodingBenchOptions {
     pub runs_per_condition: usize,
     pub json_out: String,
     pub condition: Option<String>,
+    pub matrix: String,
     pub task: Option<String>,
     pub task_set: String,
     pub keep_workdirs: bool,
@@ -123,33 +124,87 @@ impl CodingBenchTask {
 #[serde(rename_all = "snake_case")]
 pub enum BenchCondition {
     NoMemory,
+    CuratedFileBudgeted,
+    RememE2e,
     #[serde(rename = "remem_seeded_sessionstart")]
     RememSeededSessionStart,
-    CuratedFile,
+    CuratedFileExpert,
+    OracleEvidence,
+    RememOracleRetrieval,
+    FullHistory,
+    RememNoEnrichment,
+    RememFtsOnly,
 }
 
 impl BenchCondition {
-    pub const ALL: [Self; 3] = [
+    pub const PRIMARY: [Self; 3] = [Self::NoMemory, Self::CuratedFileBudgeted, Self::RememE2e];
+    pub const DIAGNOSTIC: [Self; 7] = [
+        Self::RememSeededSessionStart,
+        Self::CuratedFileExpert,
+        Self::OracleEvidence,
+        Self::RememOracleRetrieval,
+        Self::FullHistory,
+        Self::RememNoEnrichment,
+        Self::RememFtsOnly,
+    ];
+    pub const IMPLEMENTED: [Self; 3] = [
         Self::NoMemory,
         Self::RememSeededSessionStart,
-        Self::CuratedFile,
+        Self::CuratedFileExpert,
+    ];
+    pub const ALL: [Self; 10] = [
+        Self::NoMemory,
+        Self::CuratedFileBudgeted,
+        Self::RememE2e,
+        Self::RememSeededSessionStart,
+        Self::CuratedFileExpert,
+        Self::OracleEvidence,
+        Self::RememOracleRetrieval,
+        Self::FullHistory,
+        Self::RememNoEnrichment,
+        Self::RememFtsOnly,
     ];
 
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::NoMemory => "no_memory",
+            Self::CuratedFileBudgeted => "curated_file_budgeted",
+            Self::RememE2e => "remem_e2e",
             Self::RememSeededSessionStart => "remem_seeded_sessionstart",
-            Self::CuratedFile => "curated_file",
+            Self::CuratedFileExpert => "curated_file_expert",
+            Self::OracleEvidence => "oracle_evidence",
+            Self::RememOracleRetrieval => "remem_oracle_retrieval",
+            Self::FullHistory => "full_history",
+            Self::RememNoEnrichment => "remem_no_enrichment",
+            Self::RememFtsOnly => "remem_fts_only",
         }
     }
 
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "no_memory" => Some(Self::NoMemory),
+            "curated_file_budgeted" => Some(Self::CuratedFileBudgeted),
+            "remem_e2e" => Some(Self::RememE2e),
             "remem_seeded_sessionstart" => Some(Self::RememSeededSessionStart),
-            "curated_file" => Some(Self::CuratedFile),
+            "curated_file_expert" => Some(Self::CuratedFileExpert),
+            "oracle_evidence" => Some(Self::OracleEvidence),
+            "remem_oracle_retrieval" => Some(Self::RememOracleRetrieval),
+            "full_history" => Some(Self::FullHistory),
+            "remem_no_enrichment" => Some(Self::RememNoEnrichment),
+            "remem_fts_only" => Some(Self::RememFtsOnly),
             _ => None,
         }
+    }
+
+    pub const fn supports_live_execution(self) -> bool {
+        matches!(
+            self,
+            Self::NoMemory | Self::RememSeededSessionStart | Self::CuratedFileExpert
+        )
+    }
+
+    pub const fn uses_remem_attribution(self) -> bool {
+        matches!(self, Self::RememSeededSessionStart)
     }
 }
 
@@ -168,6 +223,8 @@ mod condition_identity_tests {
             "remem_seeded_sessionstart"
         );
         assert_eq!(BenchCondition::parse("remem"), None);
+        assert_eq!(BenchCondition::parse("remem_preloaded"), None);
+        assert_eq!(BenchCondition::parse("curated_file"), None);
         assert_eq!(
             serde_json::to_value(BenchCondition::RememSeededSessionStart)?,
             "remem_seeded_sessionstart"

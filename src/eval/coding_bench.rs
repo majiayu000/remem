@@ -1,6 +1,7 @@
 mod artifact;
 mod audit_contract;
 mod condition;
+mod dry_run;
 mod failure;
 mod fixture;
 mod isolation;

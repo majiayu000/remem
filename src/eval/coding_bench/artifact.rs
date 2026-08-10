@@ -17,7 +17,7 @@ pub const MIN_RUNS_PER_CONDITION: usize = 3;
 const REQUIRED_CONDITIONS: [CodingBenchCondition; 3] = [
     CodingBenchCondition::RememSeededSessionStart,
     CodingBenchCondition::NoMemory,
-    CodingBenchCondition::CuratedFile,
+    CodingBenchCondition::CuratedFileExpert,
 ];
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -89,7 +89,7 @@ pub enum CodingBenchCondition {
     NoMemory,
     #[serde(rename = "remem_seeded_sessionstart")]
     RememSeededSessionStart,
-    CuratedFile,
+    CuratedFileExpert,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
@@ -287,7 +287,7 @@ pub fn validate_contract_snapshots(report: &CodingBenchReport) -> Result<()> {
 
             match run.condition {
                 CodingBenchCondition::RememSeededSessionStart => validate_remem_run_contract(run)?,
-                CodingBenchCondition::NoMemory | CodingBenchCondition::CuratedFile => {
+                CodingBenchCondition::NoMemory | CodingBenchCondition::CuratedFileExpert => {
                     if run.memory_contract_status != CodingBenchMemoryContractStatus::NotApplicable
                     {
                         bail!(

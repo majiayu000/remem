@@ -410,7 +410,7 @@ pub(crate) fn validate_run_context_audit(run: &RunReport) -> Result<()> {
                 run.run_index
             ),
         },
-        BenchCondition::NoMemory | BenchCondition::CuratedFile => {
+        BenchCondition::NoMemory | BenchCondition::CuratedFileExpert => {
             if run.context_audit_status != RememContextAuditStatus::NotApplicable
                 || run.context_audit_failure_reason.is_some()
                 || run.remem_context_audit.is_some()
@@ -425,6 +425,12 @@ pub(crate) fn validate_run_context_audit(run: &RunReport) -> Result<()> {
                 );
             }
         }
+        other => bail!(
+            "{} coding-bench run {}#{} is invalid: live execution is not implemented for this condition",
+            other.as_str(),
+            run.task_id,
+            run.run_index
+        ),
     }
     Ok(())
 }

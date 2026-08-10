@@ -187,7 +187,7 @@ fn condition_report(
                 .map(|run_index| remem_run_for_task(snapshot.clone(), task_id, run_index))
                 .collect()
         }
-        CodingBenchCondition::NoMemory | CodingBenchCondition::CuratedFile => (0
+        CodingBenchCondition::NoMemory | CodingBenchCondition::CuratedFileExpert => (0
             ..TEST_RUNS_PER_CONDITION)
             .map(|run_index| control_run(name, task_id, run_index))
             .collect(),
@@ -205,7 +205,7 @@ fn report_with_run(run: CodingBenchRunReport) -> Result<CodingBenchReport> {
         conditions: vec![
             condition_report(CodingBenchCondition::RememSeededSessionStart, &task_id)?,
             condition_report(CodingBenchCondition::NoMemory, &task_id)?,
-            condition_report(CodingBenchCondition::CuratedFile, &task_id)?,
+            condition_report(CodingBenchCondition::CuratedFileExpert, &task_id)?,
         ],
     };
 
@@ -558,14 +558,14 @@ fn validator_requires_full_condition_matrix() -> Result<()> {
 
     let mut too_few_repeats = report.clone();
     for condition in &mut too_few_repeats.conditions {
-        if condition.name == CodingBenchCondition::CuratedFile {
+        if condition.name == CodingBenchCondition::CuratedFileExpert {
             condition.runs.pop();
         }
     }
     assert!(validate_contract_snapshots(&too_few_repeats)
         .unwrap_err()
         .to_string()
-        .contains("CuratedFile condition missing run fixture-task#2"));
+        .contains("CuratedFileExpert condition missing run fixture-task#2"));
 
     let mut invalid_repeat_contract = report;
     invalid_repeat_contract.runs_per_condition = MIN_RUNS_PER_CONDITION - 1;
@@ -646,7 +646,7 @@ fn validator_requires_snapshots_only_for_remem_runs() -> Result<()> {
         .contains("must not carry a remem contract snapshot"));
 
     let non_remem_contract_failure = report_with_run(CodingBenchRunReport {
-        condition: CodingBenchCondition::CuratedFile,
+        condition: CodingBenchCondition::CuratedFileExpert,
         task_id: "bad-curated-file".to_string(),
         run_index: 0,
         task_success: true,

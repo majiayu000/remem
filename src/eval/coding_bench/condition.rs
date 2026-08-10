@@ -3,7 +3,7 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use super::types::{
     BenchCondition, CodingBenchFixture, CodingBenchTask, CodingMemoryAttributionInput, SeedMemory,
@@ -81,12 +81,14 @@ pub fn apply_condition(
             context_audit_failure_reason: None,
             remem_context_audit: None,
         }),
-        BenchCondition::CuratedFile => {
+        BenchCondition::CuratedFileExpert => {
             let content = task
                 .curated_context
                 .as_deref()
                 .or(fixture.curated_context.as_deref())
-                .context("curated_file condition requires curated_context in fixture or task")?;
+                .context(
+                    "curated_file_expert condition requires curated_context in fixture or task",
+                )?;
             fs::write(repo_dir.join("MEMORY.md"), content).context("write curated MEMORY.md")?;
             Ok(ConditionSetup {
                 env: vec![("REMEM_DISABLE_HOOKS".to_string(), "1".to_string())],
@@ -122,6 +124,18 @@ pub fn apply_condition(
                 context_audit_failure_reason: audit_contract.failure_reason,
                 remem_context_audit: audit_contract.snapshot,
             })
+        }
+        BenchCondition::CuratedFileBudgeted
+        | BenchCondition::RememE2e
+        | BenchCondition::OracleEvidence
+        | BenchCondition::RememOracleRetrieval
+        | BenchCondition::FullHistory
+        | BenchCondition::RememNoEnrichment
+        | BenchCondition::RememFtsOnly => {
+            bail!(
+                "{} live execution is not implemented; use --dry-run or select remem_seeded_sessionstart/curated_file_expert for implemented diagnostics",
+                condition.as_str()
+            )
         }
     }
 }
@@ -389,7 +403,7 @@ mod tests {
         let data_dir = root.path.join("remem-data");
         fs::create_dir_all(&repo_dir)?;
 
-        for condition in [BenchCondition::NoMemory, BenchCondition::CuratedFile] {
+        for condition in [BenchCondition::NoMemory, BenchCondition::CuratedFileExpert] {
             let setup = apply_condition(condition, &fixture, task, &repo_dir, &data_dir)?;
             assert_eq!(
                 setup.context_audit_status,

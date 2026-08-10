@@ -60,8 +60,7 @@
       "id": "curated_file_expert",
       "summary": "Former 'curated_file' condition: unbudgeted, target-aware hand-curated MEMORY.md built from gold evidence. Near-oracle human upper bound.",
       "memory_path": "repo-local MEMORY.md only",
-      "runner_status": "implemented_as_legacy_id",
-      "current_runner_id": "curated_file",
+      "runner_status": "implemented",
       "requires_llm_provider_key": false,
       "offline_dry_run": true
     },

@@ -78,12 +78,10 @@
         "runner_status": {
           "enum": [
             "implemented",
-            "implemented_as_legacy_id",
             "artifact_schema_only",
             "pending_src_support"
           ]
         },
-        "current_runner_id": { "type": "string", "minLength": 1 },
         "protocol": { "type": "string", "minLength": 1 },
         "artifact_schema": { "type": "string", "minLength": 1 },
         "isolation": {

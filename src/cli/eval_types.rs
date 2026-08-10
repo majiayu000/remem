@@ -55,9 +55,12 @@ pub(in crate::cli) struct BenchCodingArgs {
     /// JSON report output path.
     #[arg(long)]
     pub(in crate::cli) json_out: String,
-    /// Restrict to one condition: no_memory, remem_seeded_sessionstart, or curated_file.
+    /// Restrict to one condition: no_memory, curated_file_budgeted, remem_e2e, remem_seeded_sessionstart, or curated_file_expert.
     #[arg(long)]
     pub(in crate::cli) condition: Option<String>,
+    /// Select a condition matrix: primary, diagnostic, implemented, or all.
+    #[arg(long, default_value = "primary")]
+    pub(in crate::cli) matrix: String,
     /// Restrict to one task id.
     #[arg(long)]
     pub(in crate::cli) task: Option<String>,
@@ -211,9 +214,12 @@ pub(in crate::cli) struct EvalCodingBenchArgs {
     /// JSON report output path. Required unless --dry-run is set.
     #[arg(long)]
     pub(in crate::cli) json_out: Option<String>,
-    /// Restrict to one condition: no_memory, remem_seeded_sessionstart, or curated_file.
+    /// Restrict to one condition: no_memory, curated_file_budgeted, remem_e2e, remem_seeded_sessionstart, or curated_file_expert.
     #[arg(long)]
     pub(in crate::cli) condition: Option<String>,
+    /// Select a condition matrix: primary, diagnostic, implemented, or all.
+    #[arg(long, default_value = "primary")]
+    pub(in crate::cli) matrix: String,
     /// Restrict to one task id.
     #[arg(long)]
     pub(in crate::cli) task: Option<String>,

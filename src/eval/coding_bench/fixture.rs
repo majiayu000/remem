@@ -32,7 +32,13 @@ pub fn selected_conditions(options: &CodingBenchOptions) -> Result<Vec<BenchCond
         Some(value) => BenchCondition::parse(value)
             .map(|condition| vec![condition])
             .ok_or_else(|| anyhow::anyhow!("unknown benchmark condition: {value}")),
-        None => Ok(BenchCondition::ALL.to_vec()),
+        None => match options.matrix.trim() {
+            "" | "primary" => Ok(BenchCondition::PRIMARY.to_vec()),
+            "diagnostic" => Ok(BenchCondition::DIAGNOSTIC.to_vec()),
+            "implemented" => Ok(BenchCondition::IMPLEMENTED.to_vec()),
+            "all" => Ok(BenchCondition::ALL.to_vec()),
+            other => bail!("unknown coding benchmark matrix: {other}"),
+        },
     }
 }
 
