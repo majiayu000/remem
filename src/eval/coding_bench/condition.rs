@@ -141,6 +141,7 @@ fn render_seeded_remem_context(
         ("REMEM_DATA_DIR", data_dir.as_os_str().to_os_string()),
         ("REMEM_ALLOW_PLAINTEXT_DB", OsString::from("1")),
         ("REMEM_CONTEXT_BUNDLE_RENDER_MODE", OsString::from("bundle")),
+        ("REMEM_CONTEXT_GATE_HOSTS", OsString::from("codex-cli")),
     ]);
     let _context_env = ScopedEnvVars::remove_many(BENCHMARK_CONTEXT_ENV_OVERRIDES);
     let conn = crate::db::open_db().context("open benchmark remem database")?;
@@ -408,6 +409,7 @@ mod tests {
             ("REMEM_CONTEXT_TOTAL_CHAR_LIMIT", OsString::from("1")),
             ("REMEM_CONTEXT_RELEVANCE_K", OsString::from("0")),
             ("REMEM_RERANK_ENABLED", OsString::from("true")),
+            ("REMEM_CONTEXT_GATE_HOSTS", OsString::from("claude-code")),
         ]);
 
         let (output, attribution, contract) =
@@ -417,6 +419,10 @@ mod tests {
         assert_eq!(
             std::env::var("REMEM_CONTEXT_TOTAL_CHAR_LIMIT").as_deref(),
             Ok("1")
+        );
+        assert_eq!(
+            std::env::var("REMEM_CONTEXT_GATE_HOSTS").as_deref(),
+            Ok("claude-code")
         );
         assert!(!output.contains("## Benchmark Memory Details"));
         assert_eq!(

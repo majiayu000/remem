@@ -188,6 +188,15 @@ fn validate_report_path_layer(
             "report benchmark_id must match the manifest benchmark_id",
         );
     }
+    if report.benchmark_version != manifest.version {
+        state.fail(
+            label.clone(),
+            format!(
+                "report benchmark_version {:?} must match manifest version {:?}",
+                report.benchmark_version, manifest.version
+            ),
+        );
+    }
     if report.conditions.is_empty() {
         state.fail(label.clone(), "report conditions must not be empty");
     }

@@ -141,7 +141,26 @@ pub(crate) fn verify_snapshot_against_persisted_injection(
             snapshot.injection_run_id
         );
     }
+    verify_emitted_token_estimate(snapshot, injected_context)?;
     verify_persisted_item_mapping(conn, snapshot)?;
+    Ok(())
+}
+
+fn verify_emitted_token_estimate(
+    snapshot: &RememContextAuditSnapshot,
+    injected_context: &str,
+) -> Result<()> {
+    let chars = u32::try_from(injected_context.chars().count()).map_err(|_| {
+        anyhow::anyhow!("coding-bench injected context character count exceeds u32")
+    })?;
+    let emitted = chars.div_ceil(4);
+    if snapshot.token_estimate != emitted {
+        bail!(
+            "coding-bench ContextAudit token estimate mismatch for injection_run_id={}: snapshot={} emitted={emitted}",
+            snapshot.injection_run_id,
+            snapshot.token_estimate
+        );
+    }
     Ok(())
 }
 
@@ -503,7 +522,7 @@ mod tests {
                 "section_budget".to_string()
             },
             relevance_score: Some(0.75),
-            token_estimate: 7,
+            token_estimate: if selected { 3 } else { 5 },
         }
     }
 
@@ -753,6 +772,23 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("entry counts do not match summary"));
+        Ok(())
+    }
+
+    #[test]
+    fn emitted_context_token_estimate_is_hash_bound_aggregate() -> Result<()> {
+        let mut snapshot = snapshot()?;
+        let injected_context = "记忆系统有效";
+        snapshot.token_estimate = 2;
+        assert_ne!(
+            audit_entry("memory:1", true).token_estimate,
+            snapshot.token_estimate
+        );
+        verify_emitted_token_estimate(&snapshot, injected_context)?;
+
+        snapshot.token_estimate = 3;
+        let error = verify_emitted_token_estimate(&snapshot, injected_context).unwrap_err();
+        assert!(error.to_string().contains("token estimate mismatch"));
         Ok(())
     }
 }

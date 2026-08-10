@@ -180,6 +180,29 @@ fn committed_public_fixture_passes() -> Result<()> {
 }
 
 #[test]
+fn verifier_rejects_report_version_that_differs_from_manifest() -> Result<()> {
+    let root = copy_public_fixture("manifest-report-version-mismatch")?;
+    mutate_json(
+        &root.join("coding/manifests/issue385-smoke-v1.json"),
+        |json| json["version"] = Value::String("mismatched-v2".to_string()),
+    )?;
+
+    let report = verify_benchmark_artifacts(BenchVerifyOptions { root })?;
+
+    assert!(!report.passed);
+    assert_eq!(
+        report.failures,
+        vec![super::types::BenchVerifyFailure {
+            path: "coding/reports/coding-report-v1.json".to_string(),
+            message:
+                "report benchmark_version \"v1\" must match manifest version \"mismatched-v2\""
+                    .to_string(),
+        }]
+    );
+    Ok(())
+}
+
+#[test]
 fn public_baseline_report_summarizes_committed_artifacts() -> Result<()> {
     let report = super::generate_public_baseline_report(Path::new("eval/public"))?;
 
