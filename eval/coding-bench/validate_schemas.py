@@ -54,7 +54,9 @@ def check_conditions(errors):
     if len(all_ids) != len(set(all_ids)):
         errors.append("duplicate condition ids")
     if "remem" in all_ids:
-        errors.append("legacy condition id 'remem' must not appear; use remem_preloaded")
+        errors.append("legacy condition id 'remem' must not appear; use remem_seeded_sessionstart")
+    if "remem_preloaded" in all_ids:
+        errors.append("historical condition id 'remem_preloaded' must not describe current runner semantics")
     if "curated_file" in all_ids:
         errors.append("legacy condition id 'curated_file' must not appear; use curated_file_expert")
 

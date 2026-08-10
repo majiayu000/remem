@@ -49,9 +49,9 @@
   ],
   "diagnostic_conditions": [
     {
-      "id": "remem_preloaded",
-      "summary": "Former 'remem' condition: fixture evidence seeded into a temporary remem database, rendered through the production SessionStart path, with full seeded details preloaded into REMEM_CONTEXT.md. Diagnostic upper bound for retrieval-independent memory use; not a primary claim condition.",
-      "memory_path": "seeded database + SessionStart render + preload",
+      "id": "remem_seeded_sessionstart",
+      "summary": "Current legacy-CLI 'remem' condition: fixture evidence seeded into a temporary remem database, selected and rendered through the production SessionStart path, with the exact audited output written unchanged to REMEM_CONTEXT.md. Diagnostic test of retrieval and reader use; not a primary claim condition and not comparable with the historical full-preload baseline.",
+      "memory_path": "seeded database -> production SessionStart selection -> exact audited output",
       "runner_status": "implemented_as_legacy_id",
       "current_runner_id": "remem",
       "requires_llm_provider_key": false,

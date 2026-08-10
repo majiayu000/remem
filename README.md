@@ -744,8 +744,10 @@ coding-task outcome claims until the public claim gate in
 3-runs-per-condition baseline generated with `codex-cli 0.142.1` and
 `gpt-5.5`: `no_memory` resolved 2/15, `remem` resolved 15/15, and
 `curated_file` resolved 15/15. This is useful engineering evidence, but it
-predates the public 16-task v1 fixture pack and must be regenerated before it
-supports stronger product claims.
+predates the public 16-task v1 fixture pack. Its `remem` arm used the historical
+full-body `remem_preloaded` semantics and is not comparable with current
+retrieval-dependent `remem_seeded_sessionstart` runs; it must be regenerated
+before it supports stronger product claims.
 
 New remem-backed coding-bench runs bind their report to the exact production
 SessionStart injection audit. Missing or tampered audit evidence is reported as

@@ -28,10 +28,11 @@ Machine-readable registry: `eval/coding-bench/conditions.json`, validated by
 
 ### Diagnostic conditions (localization only, never claim-bearing)
 
-- `remem_preloaded`: the former `remem` condition — fixture evidence saved into
-  a temporary remem database, rendered through the SessionStart context path,
-  and the exact audited SessionStart output written unchanged to
-  `REMEM_CONTEXT.md`.
+- `remem_seeded_sessionstart`: the current legacy-CLI `remem` condition —
+  fixture evidence saved into a temporary remem database, selected and rendered
+  through the production SessionStart path, and the exact audited output written
+  unchanged to `REMEM_CONTEXT.md`. It is retrieval-dependent and is not
+  comparable with the historical `remem_preloaded` baseline.
 - `curated_file_expert`: the former `curated_file` condition — unbudgeted,
   gold-evidence-derived `MEMORY.md`; near-oracle human upper bound.
 - `oracle_evidence`, `remem_oracle_retrieval`, `full_history`,
@@ -265,13 +266,14 @@ cargo run -- eval-coding-bench \
 ## Current Caveat
 
 Codex non-interactive MCP calls can be cancelled by the host. The
-`remem_preloaded` diagnostic condition therefore seeds a temporary remem
-database and writes the production SessionStart output to `REMEM_CONTEXT.md`.
-The runner does not append seeded memory bodies: the file remains byte-for-byte
-aligned with the persisted ContextAudit. This condition is still diagnostic-only
-under #931 because it directly seeds gold-derived memories instead of exercising
-capture, extraction, promotion, and live retrieval. MCP availability issues in
-`remem_e2e` count as real failures with a stage attribution.
+`remem_seeded_sessionstart` diagnostic condition therefore seeds a temporary
+remem database and writes the production SessionStart output to
+`REMEM_CONTEXT.md`. The runner does not append seeded memory bodies: the file
+remains byte-for-byte aligned with the persisted ContextAudit. This condition
+is still diagnostic-only under #931 because it directly seeds gold-derived
+memories instead of exercising capture, extraction, and promotion. It is not
+comparable with the historical `remem_preloaded` 15/15 result. MCP availability
+issues in `remem_e2e` count as real failures with a stage attribution.
 
 The Codex runner uses `--ignore-user-config`, `--ignore-rules`, `--ephemeral`,
 and `--disable hooks` so benchmark agents do not inherit the host's MCP servers,

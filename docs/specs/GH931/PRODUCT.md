@@ -24,8 +24,10 @@ increasing stale/irrelevant memory harm.
 ## Product decisions
 
 - Primary conditions: `no_memory`, `curated_file_budgeted`, `remem_e2e`.
-  All other conditions (including the renamed `remem_preloaded` and
-  `curated_file_expert`) are diagnostic only and never claim-bearing.
+  All other conditions (including `remem_seeded_sessionstart` and
+  `curated_file_expert`) are diagnostic only and never claim-bearing. The
+  historical `remem_preloaded` name is reserved for old full-body-preload
+  artifacts and must not label current retrieval-dependent runs.
 - The only primary outcome is `resolved_rate`; maintenance cost, token/latency
   cost, memory harm, and citation quality are mandatory secondary reports.
 - Every memory failure is attributed to exactly one of six stages (capture,
@@ -140,7 +142,7 @@ workflow gate or authorization source.
 
 | Issue acceptance item | Scaffold artifact |
 |---|---|
-| Rename `remem` → `remem_preloaded` | `eval/coding-bench/conditions.json`, README, spec supersession notes; src-side id rename is the tracked follow-up |
+| Rename `remem` → `remem_seeded_sessionstart` | `eval/coding-bench/conditions.json`, README, spec supersession notes; `remem_preloaded` stays historical-only and the src-side id rename is the tracked follow-up |
 | Real `remem_e2e` condition | Condition definition with forbidden shortcuts and isolation rules; runner execution support is the tracked src follow-up |
 | `curated_file_budgeted` protocol | `eval/coding-bench/curated-file-budgeted-protocol.md` + curator log schema |
 | Claim registry + wording gate | `eval/claims/registry.json`, `eval/claims/claim_gate.py` |
