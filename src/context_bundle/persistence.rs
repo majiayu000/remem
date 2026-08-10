@@ -533,6 +533,37 @@ mod tests {
     }
 
     #[test]
+    fn verified_decode_rejects_unknown_v1_audit_fields() -> Result<()> {
+        let audit = bundle("not-persisted").audit;
+        let mut top_level = serde_json::to_value(&audit)?;
+        top_level
+            .as_object_mut()
+            .expect("ContextAudit serializes as an object")
+            .insert(
+                "task_prompt".to_string(),
+                Value::String("secret".to_string()),
+            );
+        let top_level_json = String::from_utf8(canonical_json_bytes(&top_level)?)?;
+        let error = decode_verified_context_audit_json(&top_level_json, PERSISTED_PLAN_SCHEMA_V1)
+            .expect_err("unknown top-level audit field must fail closed");
+        assert!(error.to_string().contains("decode canonical ContextAudit"));
+
+        let mut entry_level = serde_json::to_value(&audit)?;
+        entry_level["entries"][0]
+            .as_object_mut()
+            .expect("AuditEntry serializes as an object")
+            .insert(
+                "memory_text".to_string(),
+                Value::String("secret".to_string()),
+            );
+        let entry_level_json = String::from_utf8(canonical_json_bytes(&entry_level)?)?;
+        let error = decode_verified_context_audit_json(&entry_level_json, PERSISTED_PLAN_SCHEMA_V1)
+            .expect_err("unknown AuditEntry field must fail closed");
+        assert!(error.to_string().contains("decode canonical ContextAudit"));
+        Ok(())
+    }
+
+    #[test]
     fn persisted_v1_hash_envelope_is_frozen() -> Result<()> {
         let (_, hash) =
             canonical_context_audit(&bundle("not-persisted").audit, PERSISTED_PLAN_SCHEMA_V1)?;

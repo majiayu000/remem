@@ -205,6 +205,20 @@ fn snapshot_from_persisted(
 fn verify_summary(snapshot: &RememContextAuditSnapshot, audit: &ContextAudit) -> Result<()> {
     validate_supported_bundle_schema(snapshot.bundle_schema_version)?;
     validate_supported_bundle_schema(audit.schema_version)?;
+    let candidates_considered = u32::try_from(audit.entries.len())
+        .map_err(|_| anyhow::anyhow!("coding-bench ContextAudit entry count exceeds u32"))?;
+    let selected_count = u32::try_from(audit.entries.iter().filter(|entry| entry.selected).count())
+        .map_err(|_| anyhow::anyhow!("coding-bench ContextAudit selected count exceeds u32"))?;
+    let dropped_count = candidates_considered - selected_count;
+    if audit.candidates_considered != candidates_considered
+        || audit.selected_count != selected_count
+        || audit.dropped_count != dropped_count
+    {
+        bail!(
+            "coding-bench ContextAudit entry counts do not match summary for injection_run_id={}",
+            snapshot.injection_run_id
+        );
+    }
     let matches = snapshot.bundle_schema_version == audit.schema_version
         && snapshot.policy_version == audit.policy_version
         && snapshot.relevance_policy_version == audit.relevance_policy_version
@@ -237,7 +251,27 @@ fn validate_supported_bundle_schema(version: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context_bundle::{ContextAudit, CONTEXT_BUNDLE_SCHEMA_VERSION};
+    use crate::context_bundle::{
+        AuditEntry, ChannelKind, ContextAudit, ItemValidity, SourceKind,
+        CONTEXT_BUNDLE_SCHEMA_VERSION,
+    };
+
+    fn audit_entry(stable_key: &str, selected: bool) -> AuditEntry {
+        AuditEntry {
+            stable_key: stable_key.to_string(),
+            channel: ChannelKind::Core,
+            source_kind: SourceKind::Canonical,
+            validity: ItemValidity::Current,
+            selected,
+            reason: if selected {
+                "selected_channel".to_string()
+            } else {
+                "section_budget".to_string()
+            },
+            relevance_score: Some(0.75),
+            token_estimate: 7,
+        }
+    }
 
     fn snapshot() -> Result<RememContextAuditSnapshot> {
         let audit = ContextAudit {
@@ -252,7 +286,10 @@ mod tests {
             token_estimate: 7,
             token_budget: 100,
             truncation_reason: Some("section_budget".to_string()),
-            entries: Vec::new(),
+            entries: vec![
+                audit_entry("memory:1", true),
+                audit_entry("memory:2", false),
+            ],
         };
         let (canonical_audit_json, audit_hash) =
             crate::context_bundle::persistence::canonical_context_audit(
@@ -341,6 +378,26 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("unsupported coding-bench ContextAudit bundle schema version 2"));
+
+        let mut inconsistent_entries = snapshot()?;
+        let mut inconsistent_audit: ContextAudit =
+            serde_json::from_str(&inconsistent_entries.canonical_audit_json)?;
+        inconsistent_audit.entries.clear();
+        let (canonical_audit_json, audit_hash) =
+            crate::context_bundle::persistence::canonical_context_audit(
+                &inconsistent_audit,
+                inconsistent_entries.plan_schema_version,
+            )?;
+        inconsistent_entries.canonical_audit_json = canonical_audit_json;
+        inconsistent_entries.audit_hash = audit_hash;
+        inconsistent_entries.injection_binding_hash = context_audit_binding_hash(
+            &inconsistent_entries.injection_run_id,
+            &inconsistent_entries.audit_hash,
+        );
+        assert!(verify_context_audit_snapshot(&inconsistent_entries)
+            .unwrap_err()
+            .to_string()
+            .contains("entry counts do not match summary"));
         Ok(())
     }
 }

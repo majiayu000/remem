@@ -49,6 +49,16 @@ fn memory_contract() -> CodingMemoryAttribution {
 }
 
 fn context_audit_snapshot() -> Result<RememContextAuditSnapshot> {
+    let entry = crate::context_bundle::AuditEntry {
+        stable_key: "memory:1".to_string(),
+        channel: crate::context_bundle::ChannelKind::Core,
+        source_kind: crate::context_bundle::SourceKind::Canonical,
+        validity: crate::context_bundle::ItemValidity::Current,
+        selected: true,
+        reason: "selected_channel".to_string(),
+        relevance_score: Some(0.75),
+        token_estimate: 10,
+    };
     let audit = crate::context_bundle::ContextAudit {
         schema_version: crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION,
         policy_version: "retrieval_router_v2".to_string(),
@@ -61,7 +71,7 @@ fn context_audit_snapshot() -> Result<RememContextAuditSnapshot> {
         token_estimate: 10,
         token_budget: 100,
         truncation_reason: None,
-        entries: Vec::new(),
+        entries: vec![entry],
     };
     let (canonical_audit_json, audit_hash) =
         crate::context_bundle::persistence::canonical_context_audit(

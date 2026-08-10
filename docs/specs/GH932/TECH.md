@@ -161,7 +161,8 @@ is the explicit rollback.
   render.
 - Verified reads validate the stored `plan_schema_version` before parsing or
   decoding `audit_json`, canonicalize and re-hash the version-bound envelope,
-  dispatch to that version's decoder, then compare every
+  dispatch to that version's closed decoder (unknown `ContextAudit` or
+  `AuditEntry` fields fail), then compare every
   denormalized contract field with the parsed audit. Supported historical
   versions remain readable after the current planner advances; unknown stored
   versions fail explicitly. A hash mismatch, malformed JSON, missing item link,
@@ -195,8 +196,9 @@ is the explicit rollback.
   coding-bench verifier independently parses and canonicalizes the embedded
   JSON, dispatches by the artifact's supported plan and ContextAudit bundle
   schema versions, recomputes both SHA-256 hashes, compares every summary
-  field, and rejects a blank or renamed injection ID or a snapshot that differs
-  from the persisted row.
+  field, derives candidate/selected/dropped counts from the audit entries, and
+  rejects a blank or renamed injection ID or a snapshot that differs from the
+  persisted row.
 - `CodingBenchRunReport` and the executable runner report carry an explicit
   audit-contract status: `verified`, `contract_failure`, or `not_applicable`.
   Remem requires `verified` plus a snapshot; a missing, malformed, tampered, or
