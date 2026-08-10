@@ -3,6 +3,11 @@
 ## Unreleased
 
 ### Added
+- Staged source version `0.6.67` for GH-934: MCP `search` can now compile an
+  explicit task-aware `RetrievalPlan` from intent, role, risk, budget, and
+  superseded-scope inputs; routed searches apply the plan's channel weights,
+  graph-expansion choice, rerank bounds, and high-risk raw-fallback abstention
+  while returning plan audit metadata.
 - Staged source version `0.6.66` for memory governance G1: schema v082 adds an
   append-only project-identity alias event ledger plus a current alias registry,
   allowing historical project paths to resolve to one canonical project without

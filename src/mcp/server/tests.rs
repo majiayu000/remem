@@ -707,6 +707,11 @@ fn mcp_tool_errors_report_db_open_failure_as_retryable() {
         branch: None,
         multi_hop: Some(false),
         explain: None,
+        task_intent: None,
+        role: None,
+        risk: None,
+        token_budget: None,
+        include_superseded: None,
     }));
 
     if let Err(err) = std::fs::remove_dir(&blocked_db_path) {

@@ -23,6 +23,11 @@ fn search_reopens_database_after_file_removal() {
         branch: None,
         multi_hop: Some(false),
         explain: None,
+        task_intent: None,
+        role: None,
+        risk: None,
+        token_budget: None,
+        include_superseded: None,
     }));
     assert!(first.is_ok());
     assert!(test_dir.db_path().exists());
@@ -41,6 +46,11 @@ fn search_reopens_database_after_file_removal() {
         branch: None,
         multi_hop: Some(false),
         explain: None,
+        task_intent: None,
+        role: None,
+        risk: None,
+        token_budget: None,
+        include_superseded: None,
     }));
     assert!(second.is_ok());
     assert!(test_dir.db_path().exists());
@@ -76,6 +86,11 @@ fn search_returns_stable_compact_envelope_with_expansion_hint() {
             branch: None,
             multi_hop: Some(false),
             explain: None,
+            task_intent: None,
+            role: None,
+            risk: None,
+            token_budget: None,
+            include_superseded: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -142,6 +157,11 @@ fn search_next_step_preserves_include_suppressed_for_audit_expansion() {
             branch: None,
             multi_hop: Some(false),
             explain: None,
+            task_intent: None,
+            role: None,
+            risk: None,
+            token_budget: None,
+            include_superseded: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -180,6 +200,11 @@ fn search_labels_sparse_result_raw_fallback_as_raw_archive() {
             branch: Some("main".to_string()),
             multi_hop: Some(false),
             explain: None,
+            task_intent: None,
+            role: None,
+            risk: None,
+            token_budget: None,
+            include_superseded: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -210,6 +235,11 @@ fn search_preserves_multi_hop_metadata_in_compact_envelope() {
             branch: None,
             multi_hop: Some(true),
             explain: None,
+            task_intent: None,
+            role: None,
+            risk: None,
+            token_budget: None,
+            include_superseded: None,
         }))
         .expect("search succeeds");
     let json: Value = serde_json::from_str(&response).expect("search returns json");
@@ -218,4 +248,114 @@ fn search_preserves_multi_hop_metadata_in_compact_envelope() {
     assert_eq!(json["multi_hop"]["hops"], 1);
     assert!(json["results"].is_array());
     assert!(json["next_step"]["ids"].is_array());
+}
+
+#[test]
+fn search_task_intent_returns_plan_and_applies_router_weights() {
+    let _dir = ScopedTestDataDir::new("mcp-search-task-intent-plan");
+    let conn = crate::db::open_db().expect("db opens");
+    let memory_id = memory::insert_memory(
+        &conn,
+        Some("session-router"),
+        "/repo",
+        Some("aurora-router"),
+        "Aurora router decision",
+        "Aurora search should expose router plan metadata.",
+        "decision",
+        None,
+    )
+    .expect("memory insert succeeds");
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let response = server
+        .search(Parameters(SearchParams {
+            query: Some("aurora".to_string()),
+            limit: Some(5),
+            project: Some("/repo".to_string()),
+            r#type: None,
+            offset: Some(0),
+            include_stale: None,
+            include_suppressed: None,
+            branch: None,
+            multi_hop: Some(false),
+            explain: Some(true),
+            task_intent: Some("resume_work".to_string()),
+            role: Some("coder".to_string()),
+            risk: Some("medium".to_string()),
+            token_budget: Some(2_000),
+            include_superseded: None,
+        }))
+        .expect("search succeeds");
+    let json: Value = serde_json::from_str(&response).expect("search returns json");
+
+    assert_eq!(json["results"][0]["id"], memory_id);
+    assert_eq!(json["retrieval_plan"]["intent"], "resume_work");
+    assert_eq!(json["retrieval_plan"]["intent_source"], "explicit");
+    assert_eq!(json["retrieval_plan"]["filters"]["project"], "/repo");
+    assert_eq!(json["retrieval_plan"]["rerank_policy"]["enabled"], false);
+    assert_eq!(json["explain"]["rerank"]["requested"], false);
+    let entity_channel = json["explain"]["channels"]
+        .as_array()
+        .expect("channels")
+        .iter()
+        .find(|channel| channel["name"] == "entity")
+        .expect("entity channel should be present");
+    assert_eq!(entity_channel["enabled"], false);
+    assert_eq!(
+        entity_channel["disabled_reason"],
+        "entity channel weight is zero"
+    );
+    assert!(json["retrieval_plan"]["plan_hash"]
+        .as_str()
+        .is_some_and(|hash| hash.len() == 64));
+}
+
+#[test]
+fn high_risk_task_intent_disables_raw_fallback() {
+    let _dir = ScopedTestDataDir::new("mcp-search-high-risk-no-raw");
+    let conn = crate::db::open_db().expect("db opens");
+    insert_raw_message(
+        &conn,
+        "session-raw",
+        "/repo",
+        ROLE_USER,
+        "fallback-only high risk needle",
+        SOURCE_HOOK,
+        Some("main"),
+        None,
+    )
+    .expect("raw insert succeeds");
+    drop(conn);
+
+    let server = MemoryServer::new().expect("memory server should initialize");
+    let response = server
+        .search(Parameters(SearchParams {
+            query: Some("fallback-only high risk needle".to_string()),
+            limit: Some(5),
+            project: Some("/repo".to_string()),
+            r#type: None,
+            offset: Some(0),
+            include_stale: None,
+            include_suppressed: None,
+            branch: Some("main".to_string()),
+            multi_hop: Some(false),
+            explain: None,
+            task_intent: Some("review_change".to_string()),
+            role: Some("reviewer".to_string()),
+            risk: Some("high".to_string()),
+            token_budget: Some(2_000),
+            include_superseded: None,
+        }))
+        .expect("search succeeds");
+    let json: Value = serde_json::from_str(&response).expect("search returns json");
+
+    assert!(json["results"].as_array().expect("results").is_empty());
+    assert!(json.get("raw_hits").is_none());
+    assert!(json["retrieval_plan"]["applied_effects"]
+        .as_array()
+        .expect("effects")
+        .iter()
+        .any(|effect| effect == "raw_fallback_disabled_by_abstention_policy"));
+    assert_eq!(json["retrieval_plan"]["risk"], "high");
 }

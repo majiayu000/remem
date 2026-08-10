@@ -317,6 +317,12 @@ publish explicit side-effect annotations. The 14 JSON tools return both their
 legacy text content and matching structured
 content with an output schema; `timeline_report` remains Markdown.
 
+MCP `search` also supports an opt-in task-aware retrieval route. Supplying
+`task_intent` with optional `role`, `risk`, `token_budget`, and
+`include_superseded` compiles a GH-934 `RetrievalPlan` for that request, applies
+the plan to the existing search weights / graph-expansion / rerank / fallback
+controls, and returns the plan hash plus reason codes in `retrieval_plan`.
+
 SessionStart keeps Core, Preferences, and Workstreams on their existing paths,
 then applies one deterministic relevance budget across Lessons, the non-Core
 MemoryIndex, and Sessions. The default keeps the single strongest matching

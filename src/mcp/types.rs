@@ -29,6 +29,26 @@ pub(super) struct SearchParams {
         description = "Include retrieval scoring and visibility explanation for standard search (default false). Not supported with multi_hop=true."
     )]
     pub explain: Option<bool>,
+    #[schemars(
+        description = "Optional task-aware retrieval intent. Accepted values: resume_work/resume-work, explain_decision/explain-decision, debug_failure/debug-failure, apply_preference/apply-preference, review_change/review-change, explore_history/explore-history. When set, MCP search compiles a GH-934 RetrievalPlan and applies its execution policy."
+    )]
+    pub task_intent: Option<String>,
+    #[schemars(
+        description = "Agent role for task-aware retrieval planning: coder, reviewer, planner, or researcher (default coder). Only used when task-aware routing is requested."
+    )]
+    pub role: Option<String>,
+    #[schemars(
+        description = "Risk class for task-aware retrieval planning: low, medium, or high (default medium). High risk disables raw fallback and only requests router-approved rerank."
+    )]
+    pub risk: Option<String>,
+    #[schemars(
+        description = "Total token budget recorded in the task-aware RetrievalPlan (default 4000). Must be greater than zero."
+    )]
+    pub token_budget: Option<u32>,
+    #[schemars(
+        description = "Allow superseded history in the task-aware RetrievalPlan. This does not replace include_stale; use include_stale=true when the search result set should include inactive rows."
+    )]
+    pub include_superseded: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

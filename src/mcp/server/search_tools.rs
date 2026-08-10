@@ -1,5 +1,6 @@
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::{tool, tool_router};
+use serde::Serialize;
 
 use super::super::types::{CurrentStateParams, RawSearchHit, SearchParams, SearchResult};
 use super::errors::{self, McpToolError, McpToolResult};
@@ -7,6 +8,61 @@ use super::MemoryServer;
 use crate::memory::service;
 
 const RAW_PREVIEW_CHARS: usize = 300;
+
+struct RoutedSearchPlan {
+    plan: crate::retrieval_router::RetrievalPlan,
+    policy: service::SearchRoutingPolicy,
+    applied_effects: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct SearchRetrievalPlanReport {
+    schema_version: u32,
+    policy_version: String,
+    plan_hash: String,
+    intent: String,
+    intent_source: String,
+    role: String,
+    risk: String,
+    reason_codes: Vec<String>,
+    applied_effects: Vec<String>,
+    filters: crate::context_bundle::ContextFilters,
+    rerank_policy: crate::retrieval_router::RerankPolicy,
+    enabled_channels: Vec<String>,
+    disabled_channels: Vec<String>,
+}
+
+impl RoutedSearchPlan {
+    fn report(&self) -> SearchRetrievalPlanReport {
+        SearchRetrievalPlanReport {
+            schema_version: self.plan.schema_version,
+            policy_version: self.plan.policy_version.clone(),
+            plan_hash: self.plan.plan_hash.clone(),
+            intent: enum_name(&self.plan.intent),
+            intent_source: enum_name(&self.plan.intent_source),
+            role: enum_name(&self.plan.role),
+            risk: enum_name(&self.plan.risk),
+            reason_codes: self.plan.reason_codes.clone(),
+            applied_effects: self.applied_effects.clone(),
+            filters: self.plan.filters.clone(),
+            rerank_policy: self.plan.rerank_policy.clone(),
+            enabled_channels: self
+                .plan
+                .channel_plans
+                .iter()
+                .filter(|channel| channel.enabled)
+                .map(|channel| channel.channel.name().to_string())
+                .collect(),
+            disabled_channels: self
+                .plan
+                .channel_plans
+                .iter()
+                .filter(|channel| !channel.enabled)
+                .map(|channel| channel.channel.name().to_string())
+                .collect(),
+        }
+    }
+}
 
 #[tool_router(router = tool_router_search, vis = "pub(super)")]
 impl MemoryServer {
@@ -40,7 +96,7 @@ impl MemoryServer {
     }
 
     #[tool(
-        description = "Read-only. Search or list curated memories: query is optional for standard search, while project/type/branch and visibility flags filter results. Returns a compact JSON object with results, source='memory', pagination, and next_step for get_observations(ids, source); limit defaults to 20 and offset to 0. Use current_state when an exact stable state_key is known, timeline for chronological observation context, and search_raw for literal chat recall. explain and multi_hop each require a non-blank query, and explain cannot be combined with multi_hop=true. Invalid combinations or curated-search database failures return a tool error; an automatic raw-archive fallback failure preserves the curated results and adds raw_hits_error to the successful response."
+        description = "Read-only. Search or list curated memories: query is optional for standard search, while project/type/branch and visibility flags filter results. Optional task_intent/role/risk/token_budget/include_superseded compiles a GH-934 RetrievalPlan, applies its search/rerank/fallback policy, and returns retrieval_plan audit metadata. Returns a compact JSON object with results, source='memory', pagination, and next_step for get_observations(ids, source); limit defaults to 20 and offset to 0. Use current_state when an exact stable state_key is known, timeline for chronological observation context, and search_raw for literal chat recall. explain and multi_hop each require a non-blank query, and explain cannot be combined with multi_hop=true. Invalid combinations or curated-search database failures return a tool error; an automatic raw-archive fallback failure preserves the curated results and adds raw_hits_error to the successful response."
     )]
     pub(super) fn search(
         &self,
@@ -48,7 +104,7 @@ impl MemoryServer {
     ) -> McpToolResult<String> {
         const TOOL: &str = "search";
         let start = std::time::Instant::now();
-        let requested_multi_hop = params.multi_hop.unwrap_or(false);
+        let mut requested_multi_hop = params.multi_hop.unwrap_or(false);
         let requested_explain = params.explain.unwrap_or(false);
         if requested_multi_hop
             && params
@@ -78,10 +134,31 @@ impl MemoryServer {
                 "explain is not supported with multi_hop search yet; set multi_hop=false or explain=false",
             ));
         }
+        let mut routed = compile_search_retrieval_plan(TOOL, &params)?;
+        if let Some(route) = routed.as_mut() {
+            if requested_explain && route.policy.use_multi_hop {
+                route.policy.use_multi_hop = false;
+                route
+                    .applied_effects
+                    .push("graph_expansion_not_applied_explain_requested".to_string());
+            } else if params.multi_hop == Some(false) && route.policy.use_multi_hop {
+                route.policy.use_multi_hop = false;
+                route
+                    .applied_effects
+                    .push("graph_expansion_not_applied_multi_hop_explicit_false".to_string());
+            } else if params.multi_hop.is_none() && route.policy.use_multi_hop {
+                requested_multi_hop = true;
+                route
+                    .applied_effects
+                    .push("graph_expansion_enabled_multi_hop".to_string());
+            }
+        }
+        let routing_policy = routed.as_ref().map(|route| &route.policy);
+        let retrieval_plan_report = routed.as_ref().map(RoutedSearchPlan::report);
         crate::log::info(
             "mcp",
             &format!(
-                "search called query={:?} project={:?} type={:?} branch={:?} multi_hop={} limit={} offset={}",
+                "search called query={:?} project={:?} type={:?} branch={:?} multi_hop={} limit={} offset={} routed={}",
                 params.query,
                 params.project,
                 params.r#type,
@@ -89,6 +166,7 @@ impl MemoryServer {
                 requested_multi_hop,
                 params.limit.unwrap_or(20),
                 params.offset.unwrap_or(0),
+                retrieval_plan_report.is_some(),
             ),
         );
         self.with_conn(TOOL, |conn| {
@@ -108,10 +186,16 @@ impl MemoryServer {
                 multi_hop: requested_multi_hop,
                 explain: requested_explain,
             };
-            let detailed = service::search_memories_with_explain_details(conn, &req).map_err(|e| {
-                crate::log::warn("mcp", &format!("search failed: {}", e));
-                McpToolError::db_query(TOOL, e)
-            })?;
+            let detailed =
+                service::search_memories_with_explain_details_with_routing(
+                    conn,
+                    &req,
+                    routing_policy,
+                )
+                .map_err(|e| {
+                    crate::log::warn("mcp", &format!("search failed: {}", e));
+                    McpToolError::db_query(TOOL, e)
+                })?;
             let search_set = detailed.result;
             let req_limit = req.limit;
             let req_offset = req.offset;
@@ -251,9 +335,151 @@ impl MemoryServer {
             if let Some(explain_details) = detailed.explain_details {
                 response["explain"] = errors::to_json_value(TOOL, &explain_details)?;
             }
+            if let Some(report) = retrieval_plan_report.as_ref() {
+                response["retrieval_plan"] = errors::to_json_value(TOOL, report)?;
+            }
             errors::to_json_pretty(TOOL, &response)
         })
     }
+}
+
+fn compile_search_retrieval_plan(
+    tool: &'static str,
+    params: &SearchParams,
+) -> McpToolResult<Option<RoutedSearchPlan>> {
+    let routing_requested = params.task_intent.is_some()
+        || params.role.is_some()
+        || params.risk.is_some()
+        || params.token_budget.is_some()
+        || params.include_superseded.is_some();
+    if !routing_requested {
+        return Ok(None);
+    }
+    let query = params
+        .query
+        .as_deref()
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .ok_or_else(|| {
+            McpToolError::invalid_request(
+                tool,
+                "task-aware search routing requires a non-empty query",
+            )
+        })?;
+    let project = params
+        .project
+        .as_deref()
+        .map(str::trim)
+        .filter(|project| !project.is_empty())
+        .ok_or_else(|| {
+            McpToolError::invalid_request(
+                tool,
+                "task-aware search routing requires an explicit project",
+            )
+        })?;
+    let token_budget = params.token_budget.unwrap_or(4_000);
+    if token_budget == 0 {
+        return Err(McpToolError::invalid_request(
+            tool,
+            "token_budget must be greater than zero",
+        ));
+    }
+    let explicit_intent = params
+        .task_intent
+        .as_deref()
+        .map(parse_search_intent)
+        .transpose()?;
+    let role = parse_search_role(tool, params.role.as_deref().unwrap_or("coder"))?;
+    let risk = parse_search_risk(tool, params.risk.as_deref().unwrap_or("medium"))?;
+    let request = crate::context_bundle::ContextRequest {
+        schema_version: crate::context_bundle::CONTEXT_BUNDLE_SCHEMA_VERSION,
+        task: query.to_string(),
+        project: crate::context_bundle::ProjectRef {
+            key: project.to_string(),
+        },
+        branch: params.branch.clone(),
+        worktree: None,
+        role,
+        as_of_epoch: 0,
+        token_budget,
+        risk,
+        include_superseded: params.include_superseded.unwrap_or(false),
+    };
+    let plan = crate::retrieval_router::plan(&request, explicit_intent)
+        .map_err(|error| McpToolError::invalid_request(tool, error.to_string()))?;
+    let policy = service::SearchRoutingPolicy::from_retrieval_plan(&plan);
+    let mut applied_effects = vec!["weights_from_retrieval_plan".to_string()];
+    if policy.rerank_enabled {
+        applied_effects.push("rerank_requested_by_intent".to_string());
+    } else {
+        applied_effects.push("rerank_skipped_by_intent".to_string());
+    }
+    if !policy.raw_fallback_enabled {
+        applied_effects.push("raw_fallback_disabled_by_abstention_policy".to_string());
+    }
+    Ok(Some(RoutedSearchPlan {
+        plan,
+        policy,
+        applied_effects,
+    }))
+}
+
+fn parse_search_intent(raw: &str) -> McpToolResult<crate::context_bundle::ContextIntent> {
+    let normalized = normalize_enum_arg(raw);
+    match normalized.as_str() {
+        "resume-work" => Ok(crate::context_bundle::ContextIntent::ResumeWork),
+        "explain-decision" => Ok(crate::context_bundle::ContextIntent::ExplainDecision),
+        "debug-failure" => Ok(crate::context_bundle::ContextIntent::DebugFailure),
+        "apply-preference" => Ok(crate::context_bundle::ContextIntent::ApplyPreference),
+        "review-change" => Ok(crate::context_bundle::ContextIntent::ReviewChange),
+        "explore-history" => Ok(crate::context_bundle::ContextIntent::ExploreHistory),
+        _ => Err(McpToolError::invalid_request(
+            "search",
+            "unknown task_intent; expected resume_work, explain_decision, debug_failure, apply_preference, review_change, or explore_history",
+        )),
+    }
+}
+
+fn parse_search_role(
+    tool: &'static str,
+    raw: &str,
+) -> McpToolResult<crate::context_bundle::AgentRole> {
+    match normalize_enum_arg(raw).as_str() {
+        "coder" => Ok(crate::context_bundle::AgentRole::Coder),
+        "reviewer" => Ok(crate::context_bundle::AgentRole::Reviewer),
+        "planner" => Ok(crate::context_bundle::AgentRole::Planner),
+        "researcher" => Ok(crate::context_bundle::AgentRole::Researcher),
+        _ => Err(McpToolError::invalid_request(
+            tool,
+            "unknown role; expected coder, reviewer, planner, or researcher",
+        )),
+    }
+}
+
+fn parse_search_risk(
+    tool: &'static str,
+    raw: &str,
+) -> McpToolResult<crate::context_bundle::RiskClass> {
+    match normalize_enum_arg(raw).as_str() {
+        "low" => Ok(crate::context_bundle::RiskClass::Low),
+        "medium" => Ok(crate::context_bundle::RiskClass::Medium),
+        "high" => Ok(crate::context_bundle::RiskClass::High),
+        _ => Err(McpToolError::invalid_request(
+            tool,
+            "unknown risk; expected low, medium, or high",
+        )),
+    }
+}
+
+fn normalize_enum_arg(raw: &str) -> String {
+    raw.trim().to_ascii_lowercase().replace('_', "-")
+}
+
+fn enum_name<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|json| json.as_str().map(str::to_string))
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 fn temporal_fact_preview_labels(text: &str) -> Vec<String> {
@@ -293,6 +519,11 @@ mod tests {
             branch: None,
             multi_hop: Some(false),
             explain,
+            task_intent: None,
+            role: None,
+            risk: None,
+            token_budget: None,
+            include_superseded: None,
         }
     }
 

@@ -132,6 +132,44 @@ struct SearchOutput {
     has_more: Option<bool>,
     next_offset: Option<i64>,
     explain: Option<Value>,
+    retrieval_plan: Option<SearchRetrievalPlanOutput>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SearchRetrievalPlanOutput {
+    schema_version: u32,
+    policy_version: String,
+    plan_hash: String,
+    intent: String,
+    intent_source: String,
+    role: String,
+    risk: String,
+    reason_codes: Vec<String>,
+    applied_effects: Vec<String>,
+    filters: SearchRetrievalFiltersOutput,
+    rerank_policy: SearchRerankPolicyOutput,
+    enabled_channels: Vec<String>,
+    disabled_channels: Vec<String>,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SearchRetrievalFiltersOutput {
+    project: String,
+    branch: Option<String>,
+    include_superseded: bool,
+    as_of_epoch: i64,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SearchRerankPolicyOutput {
+    enabled: bool,
+    candidate_pool: u32,
+    output_k: u32,
+    timeout_fallback: String,
+    require_canonical_evidence_top1: bool,
 }
 
 #[derive(Deserialize, JsonSchema)]
