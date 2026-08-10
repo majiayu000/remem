@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::fixture::load_suite;
+use super::fixture::{load_suite, validate_suite};
 use super::runner::{run_memory_bench, MemoryBenchOptions};
 use super::types::{
     MemoryBenchCondition, ADVERSARIAL_POLICY_SUITE, DEFAULT_PUBLIC_ROOT, DEFAULT_SUITE,
@@ -52,6 +52,18 @@ fn memory_bench_conditions_are_supported() {
         );
     }
     assert_eq!(MemoryBenchCondition::parse("unknown"), None);
+}
+
+#[test]
+fn memory_bench_fixture_binds_suite_to_benchmark_id() -> Result<()> {
+    let mut fixture = load_suite(DEFAULT_SUITE)?;
+    fixture.benchmark_id = "misrouted-suite".to_string();
+
+    assert!(validate_suite(&fixture)
+        .unwrap_err()
+        .to_string()
+        .contains("must match benchmark_id"));
+    Ok(())
 }
 
 #[test]

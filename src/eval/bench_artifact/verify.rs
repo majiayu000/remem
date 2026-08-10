@@ -301,6 +301,15 @@ fn validate_memory_run_artifact(
         );
     }
     require_non_blank(&run.suite, &label, "suite", state);
+    if run.suite != report.benchmark_id {
+        state.fail(
+            label.clone(),
+            format!(
+                "memory run suite {:?} must match report benchmark_id {:?}",
+                run.suite, report.benchmark_id
+            ),
+        );
+    }
     require_non_blank(&run.condition, &label, "condition", state);
     if !report.conditions.contains(&run.condition) {
         state.fail(
