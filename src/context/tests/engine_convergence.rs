@@ -399,7 +399,10 @@ fn default_weights_are_the_production_path() {
 /// weight constant in `hybrid_context.rs` re-forks the two engines silently.
 #[test]
 fn hybrid_context_declares_no_private_scoring_constants() {
-    let source = include_str!("../hybrid_context.rs");
+    let source = concat!(
+        include_str!("../hybrid_context.rs"),
+        include_str!("../hybrid_context/rank.rs")
+    );
     for forbidden in [
         "const RRF_K",
         "const MAX_VECTOR_DISTANCE",
