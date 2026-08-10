@@ -154,7 +154,11 @@ is the explicit rollback.
   selected identity survives. If writing the gate state fails after a delta is
   built, the fail-open decision preserves that delta's item boundary and
   truncation metadata so subsequent audit persistence still describes the
-  emitted preview rather than the pre-gate bundle.
+  emitted preview rather than the pre-gate bundle. Full, bypassed, and full
+  fail-open emissions also clone and reseal the rendered bundle after final
+  debug and hook-integrity annotations are appended, so their persisted token
+  estimate describes the complete emitted output rather than the pre-annotation
+  render.
 - Verified reads validate the stored `plan_schema_version` before parsing or
   decoding `audit_json`, canonicalize and re-hash the version-bound envelope,
   dispatch to that version's decoder, then compare every

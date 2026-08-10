@@ -42,32 +42,36 @@ fn emitted_context_bundle<'a>(
     context_bundle: Option<&'a crate::context_bundle::ContextBundle>,
 ) -> Option<Cow<'a, crate::context_bundle::ContextBundle>> {
     let bundle = context_bundle?;
-    if decision.action == ContextGateAction::EmittedDelta
+    if decision.action == ContextGateAction::Suppressed {
+        return None;
+    }
+    let delta_emission = decision.action == ContextGateAction::EmittedDelta
         || (decision.action == ContextGateAction::FailOpen
-            && decision.retained_context_chars.is_some())
-    {
-        let selected_keys = finalize_items_for_decision(decision, audit_items)
+            && decision.retained_context_chars.is_some());
+    let selected_keys = if delta_emission {
+        finalize_items_for_decision(decision, audit_items)
             .into_iter()
             .filter(|item| item.status == "injected")
             .filter_map(|item| item.stable_key())
-            .collect::<HashSet<_>>();
-        let mut emitted = bundle.clone();
-        crate::context_bundle::reseal_after_emission_gate(
-            &mut emitted,
-            &selected_keys,
-            decision.output.chars().count(),
-            "delta_preview",
-            decision.output_truncated,
-        );
-        return Some(Cow::Owned(emitted));
-    }
-    match decision.action {
-        ContextGateAction::Suppressed => None,
-        ContextGateAction::Bypassed
-        | ContextGateAction::EmittedFull
-        | ContextGateAction::FailOpen
-        | ContextGateAction::EmittedDelta => Some(Cow::Borrowed(bundle)),
-    }
+            .collect::<HashSet<_>>()
+    } else {
+        bundle
+            .audit
+            .entries
+            .iter()
+            .filter(|entry| entry.selected)
+            .map(|entry| entry.stable_key.clone())
+            .collect::<HashSet<_>>()
+    };
+    let mut emitted = bundle.clone();
+    crate::context_bundle::reseal_after_emission_gate(
+        &mut emitted,
+        &selected_keys,
+        decision.output.chars().count(),
+        "delta_preview",
+        delta_emission && decision.output_truncated,
+    );
+    Some(Cow::Owned(emitted))
 }
 
 pub(super) fn cleanup_persisted_bundle_audits(conn: &rusqlite::Connection) {
@@ -292,6 +296,41 @@ mod tests {
             emitted.audit.truncation_reason.as_deref(),
             Some("delta_preview")
         );
+        Ok(())
+    }
+
+    #[test]
+    fn full_emissions_reseal_to_final_annotated_output_length() -> Result<()> {
+        let bundle = selected_bundle();
+        let output = "context plus final warning";
+
+        for action in [
+            ContextGateAction::EmittedFull,
+            ContextGateAction::Bypassed,
+            ContextGateAction::FailOpen,
+        ] {
+            let decision = ContextGateDecision {
+                output: output.to_string(),
+                action,
+                reason: "full_output",
+                key: None,
+                context_hash: None,
+                output_mode: Some("full"),
+                retained_context_chars: None,
+                output_truncated: false,
+            };
+
+            let emitted = emitted_context_bundle(&decision, &[], Some(&bundle))
+                .ok_or_else(|| anyhow::anyhow!("full emission should be resealed"))?;
+
+            assert_eq!(
+                emitted.audit.token_estimate,
+                (output.chars().count() as u32).div_ceil(4)
+            );
+            assert_eq!(emitted.audit.selected_count, 2);
+            assert_eq!(emitted.audit.dropped_count, 0);
+            assert!(emitted.audit.entries.iter().all(|entry| entry.selected));
+        }
         Ok(())
     }
 
