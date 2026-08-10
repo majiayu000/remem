@@ -10,6 +10,50 @@ use super::types::{
 };
 use super::{RememContextAuditSnapshot, RememContextAuditStatus};
 
+const BENCHMARK_CONTEXT_ENV_OVERRIDES: &[&str] = &[
+    "REMEM_CONFIG",
+    "REMEM_CONTEXT_CANDIDATE_FETCH_LIMIT",
+    "REMEM_CONTEXT_CORE_CHAR_LIMIT",
+    "REMEM_CONTEXT_CORE_ITEM_LIMIT",
+    "REMEM_CONTEXT_DEBUG",
+    "REMEM_CONTEXT_LESSON_CHAR_LIMIT",
+    "REMEM_CONTEXT_LESSON_LIMIT",
+    "REMEM_CONTEXT_MEMORY_INDEX_CHAR_LIMIT",
+    "REMEM_CONTEXT_MEMORY_INDEX_LIMIT",
+    "REMEM_CONTEXT_OBSERVATIONS",
+    "REMEM_CONTEXT_PREFERENCE_CHAR_LIMIT",
+    "REMEM_CONTEXT_PREFERENCE_GLOBAL_LIMIT",
+    "REMEM_CONTEXT_PREFERENCE_PROJECT_LIMIT",
+    "REMEM_CONTEXT_RELEVANCE_K",
+    "REMEM_CONTEXT_SELF_DIAGNOSTIC_LIMIT",
+    "REMEM_CONTEXT_SESSION_COUNT",
+    "REMEM_CONTEXT_TOTAL_CHAR_LIMIT",
+    "REMEM_EMBEDDINGS_API_KEY",
+    "REMEM_EMBEDDINGS_API_KEY_ENV",
+    "REMEM_EMBEDDINGS_BASE_URL",
+    "REMEM_EMBEDDINGS_DIMENSIONS",
+    "REMEM_EMBEDDINGS_FALLBACK",
+    "REMEM_EMBEDDINGS_HOOK_TIMEOUT_SECS",
+    "REMEM_EMBEDDINGS_MODEL",
+    "REMEM_EMBEDDINGS_MODEL_DIR",
+    "REMEM_EMBEDDINGS_PROVIDER",
+    "REMEM_EMBEDDINGS_TIMEOUT_SECS",
+    "REMEM_EMBEDDING_API_KEY",
+    "REMEM_EMBEDDING_BASE_URL",
+    "REMEM_EMBEDDING_DIMENSIONS",
+    "REMEM_EMBEDDING_MODEL",
+    "REMEM_EMBEDDING_PROVIDER",
+    "REMEM_PREF_EMBEDDING_THRESHOLD",
+    "REMEM_RERANK_DEADLINE_MS",
+    "REMEM_RERANK_ENABLED",
+    "REMEM_RERANK_MAX_DOCUMENT_BYTES",
+    "REMEM_RERANK_MODEL_DIR",
+    "REMEM_RERANK_PRESET",
+    "REMEM_RERANK_TOP_K",
+    "REMEM_RERANK_TOP_N",
+    "REMEM_USAGE_WEIGHT",
+];
+
 #[derive(Debug, Clone)]
 pub struct ConditionSetup {
     pub env: Vec<(String, String)>,
@@ -98,6 +142,7 @@ fn render_seeded_remem_context(
         ("REMEM_ALLOW_PLAINTEXT_DB", OsString::from("1")),
         ("REMEM_CONTEXT_BUNDLE_RENDER_MODE", OsString::from("bundle")),
     ]);
+    let _context_env = ScopedEnvVars::remove_many(BENCHMARK_CONTEXT_ENV_OVERRIDES);
     let conn = crate::db::open_db().context("open benchmark remem database")?;
     let project = repo_dir.to_string_lossy().to_string();
     let seeded = seed_task_memories(&conn, &project, task)?;
@@ -299,6 +344,17 @@ impl ScopedEnvVars {
         }
         Self { previous }
     }
+
+    fn remove_many(keys: &[&'static str]) -> Self {
+        let previous = keys
+            .iter()
+            .map(|key| (*key, std::env::var_os(key)))
+            .collect::<Vec<_>>();
+        for key in keys {
+            std::env::remove_var(key);
+        }
+        Self { previous }
+    }
 }
 
 impl Drop for ScopedEnvVars {
@@ -346,9 +402,20 @@ mod tests {
         let repo_dir = root.path.join("repo");
         let data_dir = root.path.join("remem-data");
         fs::create_dir_all(&repo_dir)?;
+        let _host_policy = ScopedEnvVars::set_many([
+            ("REMEM_CONTEXT_TOTAL_CHAR_LIMIT", OsString::from("1")),
+            ("REMEM_CONTEXT_RELEVANCE_K", OsString::from("0")),
+            ("REMEM_RERANK_ENABLED", OsString::from("true")),
+        ]);
 
         let (output, attribution, contract) =
             render_seeded_remem_context(&data_dir, &repo_dir, task)?;
+        assert!(output.chars().count() > 1_000, "{output}");
+        assert!(!output.contains("truncated to REMEM_CONTEXT_TOTAL_CHAR_LIMIT"));
+        assert_eq!(
+            std::env::var("REMEM_CONTEXT_TOTAL_CHAR_LIMIT").as_deref(),
+            Ok("1")
+        );
         assert!(!output.contains("## Benchmark Memory Details"));
         assert_eq!(contract.status, RememContextAuditStatus::Verified);
         assert!(contract.failure_reason.is_none());

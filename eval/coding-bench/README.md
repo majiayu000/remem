@@ -148,8 +148,9 @@ to carry current-memory evidence. The contract helper in
 - `context_audit_status`: `verified`, `contract_failure`, or
   `not_applicable`, plus a diagnostic failure reason when applicable;
 - the payload-free ContextAudit snapshot: injection run id, bundle/plan and
-  policy versions, plan/audit hashes, degraded mode, candidate/selection/drop
-  counts, token budget/estimate, truncation reason, and canonical audit JSON;
+  policy versions, plan/audit hashes, an injection-run binding hash, degraded
+  mode, candidate/selection/drop counts, token budget/estimate, truncation
+  reason, and canonical audit JSON;
 - `memory_contract_status`: `passed`, `failed`, or `not_applicable`;
 - `runtime_contract_failure` and `runtime_contract_failure_reason`;
 - `memory_contract`, with injected memory ids, cited/used memory ids, citation
@@ -163,10 +164,12 @@ evidence or memory attribution. `curated_file_budgeted` runs must additionally
 attach the curator log artifact and a `MEMORY.md` hash matching
 `final_file_sha256`.
 
-The verifier canonicalizes the embedded ContextAudit JSON, recomputes its
-SHA-256, checks every summary field, and binds the snapshot to the persisted
-`injection_run_id` loaded during condition setup. A missing or invalid audit is
-a runtime contract failure even when the coding task resolves.
+The verifier canonicalizes the embedded ContextAudit JSON, dispatches on the
+artifact's supported plan schema version, recomputes its SHA-256 and the
+domain-separated injection binding, and checks every summary field. Condition
+setup also compares the snapshot with the persisted `injection_run_id`. A
+missing or invalid audit is a runtime contract failure even when the coding
+task resolves.
 
 Runtime contract failure is separate from agent task failure. A run may solve
 the coding task while still failing the remem runtime contract; reports must

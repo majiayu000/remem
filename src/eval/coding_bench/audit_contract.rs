@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use rusqlite::Connection;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 
 use super::types::{BenchCondition, RunReport};
 use crate::context_bundle::{ContextAudit, DegradedMode};
@@ -22,6 +23,7 @@ pub struct RememContextAuditSnapshot {
     pub relevance_policy_version: String,
     pub plan_hash: String,
     pub audit_hash: String,
+    pub injection_binding_hash: String,
     pub degraded_mode: DegradedMode,
     pub candidates_considered: u32,
     pub selected_count: u32,
@@ -49,6 +51,9 @@ pub(crate) fn load_context_audit_snapshot(
 }
 
 pub fn verify_context_audit_snapshot(snapshot: &RememContextAuditSnapshot) -> Result<()> {
+    if snapshot.injection_run_id.trim().is_empty() {
+        bail!("coding-bench ContextAudit injection_run_id must not be blank");
+    }
     let (audit, actual_hash) =
         crate::context_bundle::persistence::decode_verified_context_audit_json(
             &snapshot.canonical_audit_json,
@@ -61,7 +66,25 @@ pub fn verify_context_audit_snapshot(snapshot: &RememContextAuditSnapshot) -> Re
             snapshot.audit_hash
         );
     }
+    let actual_binding =
+        context_audit_binding_hash(&snapshot.injection_run_id, &snapshot.audit_hash);
+    if actual_binding != snapshot.injection_binding_hash {
+        bail!(
+            "coding-bench ContextAudit injection binding mismatch for injection_run_id={}",
+            snapshot.injection_run_id
+        );
+    }
     verify_summary(snapshot, &audit)
+}
+
+pub(crate) fn context_audit_binding_hash(injection_run_id: &str, audit_hash: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"remem-coding-bench-context-audit-binding-v1\0");
+    hasher.update((injection_run_id.len() as u64).to_be_bytes());
+    hasher.update(injection_run_id.as_bytes());
+    hasher.update((audit_hash.len() as u64).to_be_bytes());
+    hasher.update(audit_hash.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 pub(crate) fn verify_snapshot_against_persisted_injection(
@@ -155,6 +178,8 @@ fn snapshot_from_persisted(
     persisted: crate::context_bundle::persistence::PersistedContextBundleAudit,
 ) -> RememContextAuditSnapshot {
     let audit = persisted.audit;
+    let injection_binding_hash =
+        context_audit_binding_hash(&persisted.injection_run_id, &persisted.audit_hash);
     RememContextAuditSnapshot {
         injection_run_id: persisted.injection_run_id,
         bundle_schema_version: persisted.bundle_schema_version,
@@ -163,6 +188,7 @@ fn snapshot_from_persisted(
         relevance_policy_version: audit.relevance_policy_version,
         plan_hash: audit.plan_hash,
         audit_hash: persisted.audit_hash,
+        injection_binding_hash,
         degraded_mode: audit.degraded_mode,
         candidates_considered: audit.candidates_considered,
         selected_count: audit.selected_count,
@@ -220,14 +246,17 @@ mod tests {
                 &audit,
                 crate::context_bundle::persistence::PERSISTED_PLAN_SCHEMA_V1,
             )?;
+        let injection_run_id = "run-1".to_string();
+        let injection_binding_hash = context_audit_binding_hash(&injection_run_id, &audit_hash);
         Ok(RememContextAuditSnapshot {
-            injection_run_id: "run-1".to_string(),
+            injection_run_id,
             bundle_schema_version: CONTEXT_BUNDLE_SCHEMA_VERSION,
             plan_schema_version: crate::context_bundle::persistence::PERSISTED_PLAN_SCHEMA_V1,
             policy_version: audit.policy_version,
             relevance_policy_version: audit.relevance_policy_version,
             plan_hash: audit.plan_hash,
             audit_hash,
+            injection_binding_hash,
             degraded_mode: audit.degraded_mode,
             candidates_considered: audit.candidates_considered,
             selected_count: audit.selected_count,
@@ -250,6 +279,20 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("hash mismatch"));
+
+        let mut wrong_run_id = snapshot()?;
+        wrong_run_id.injection_run_id = "run-2".to_string();
+        assert!(verify_context_audit_snapshot(&wrong_run_id)
+            .unwrap_err()
+            .to_string()
+            .contains("injection binding mismatch"));
+
+        let mut blank_run_id = snapshot()?;
+        blank_run_id.injection_run_id = "  ".to_string();
+        assert!(verify_context_audit_snapshot(&blank_run_id)
+            .unwrap_err()
+            .to_string()
+            .contains("must not be blank"));
 
         let mut wrong_summary = original;
         wrong_summary.selected_count = 2;

@@ -68,14 +68,18 @@ fn context_audit_snapshot() -> Result<RememContextAuditSnapshot> {
             &audit,
             crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION,
         )?;
+    let injection_run_id = "coding-bench-run-1".to_string();
+    let injection_binding_hash =
+        super::audit_contract::context_audit_binding_hash(&injection_run_id, &audit_hash);
     Ok(RememContextAuditSnapshot {
-        injection_run_id: "coding-bench-run-1".to_string(),
+        injection_run_id,
         bundle_schema_version: audit.schema_version,
         plan_schema_version: crate::retrieval_router::RETRIEVAL_PLAN_SCHEMA_VERSION,
         policy_version: audit.policy_version,
         relevance_policy_version: audit.relevance_policy_version,
         plan_hash: audit.plan_hash,
         audit_hash,
+        injection_binding_hash,
         degraded_mode: audit.degraded_mode,
         candidates_considered: audit.candidates_considered,
         selected_count: audit.selected_count,

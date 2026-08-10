@@ -749,8 +749,9 @@ supports stronger product claims.
 
 New remem-backed coding-bench runs bind their report to the exact production
 SessionStart injection audit. Missing or tampered audit evidence is reported as
-a runtime contract failure; `no_memory` and curated-file controls mark that
-contract as not applicable.
+a runtime contract failure. A separate binding hash covers the injection run ID
+and audit hash so standalone artifact verification also rejects a renamed run.
+`no_memory` and curated-file controls mark that contract as not applicable.
 
 ### LoCoMo (Informational Only)
 

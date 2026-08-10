@@ -183,15 +183,19 @@ is the explicit rollback.
 - The remem condition invokes the production SessionStart render/emission path
   against its isolated `REMEM_DATA_DIR`, then resolves the exact persisted row
   by the returned `injection_run_id`. It does not select a project-wide latest
-  audit or synthesize a benchmark-only plan.
+  audit or synthesize a benchmark-only plan. During that render it clears
+  ambient context-budget, relevance, rerank, embedding, and retrieval-weight
+  overrides so identical benchmark inputs cannot inherit operator-shell policy.
 - `RememContextAuditSnapshot` carries `injection_run_id`, bundle/plan schema
-  versions, router and relevance-policy versions, `plan_hash`, `audit_hash`,
-  degraded mode, candidate/selected/dropped counts, token budget/estimate,
-  truncation reason, and the canonical payload-free audit JSON.
+  versions, router and relevance-policy versions, `plan_hash`, `audit_hash`, a
+  domain-separated binding hash over the injection ID and audit hash, degraded
+  mode, candidate/selected/dropped counts, token budget/estimate, truncation
+  reason, and the canonical payload-free audit JSON.
 - Snapshot construction first calls the production verified loader. The
   coding-bench verifier independently parses and canonicalizes the embedded
-  JSON, recomputes SHA-256, compares every summary field, and rejects a
-  snapshot that differs from the persisted injection row.
+  JSON, dispatches by the artifact's supported plan schema version, recomputes
+  both SHA-256 hashes, compares every summary field, and rejects a blank or
+  renamed injection ID or a snapshot that differs from the persisted row.
 - `CodingBenchRunReport` and the executable runner report carry an explicit
   audit-contract status: `verified`, `contract_failure`, or `not_applicable`.
   Remem requires `verified` plus a snapshot; a missing, malformed, tampered, or
