@@ -407,8 +407,13 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 81,
+        name: "context_bundle_audits",
+        sql: include_str!("../migrations/v081_context_bundle_audits.sql"),
+    },
+    Migration {
+        version: 82,
         name: "project_identity_aliases",
-        sql: include_str!("../migrations/v081_project_identity_aliases.sql"),
+        sql: include_str!("../migrations/v082_project_identity_aliases.sql"),
     },
 ];
 

@@ -49,6 +49,7 @@ pub(super) struct ContextGateDecision {
     pub context_hash: Option<String>,
     pub output_mode: Option<&'static str>,
     pub retained_context_chars: Option<usize>,
+    pub output_truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,6 +83,16 @@ pub(super) fn apply_context_gate_with_data_version(
     invocation: &ContextInvocation,
     output: String,
     data_version: Option<&str>,
+) -> ContextGateDecision {
+    apply_context_gate_with_data_version_and_boundaries(conn, invocation, output, data_version, &[])
+}
+
+pub(super) fn apply_context_gate_with_data_version_and_boundaries(
+    conn: &rusqlite::Connection,
+    invocation: &ContextInvocation,
+    output: String,
+    data_version: Option<&str>,
+    item_end_chars: &[usize],
 ) -> ContextGateDecision {
     if output.is_empty() {
         return decision(output, ContextGateAction::Bypassed, "empty_output");
@@ -268,17 +279,18 @@ pub(super) fn apply_context_gate_with_data_version(
         };
     }
 
-    let (output, action, output_mode, retained_context_chars) =
+    let (output, action, output_mode, retained_context_chars, output_truncated) =
         if matches!(mode, ContextGateMode::Auto | ContextGateMode::Delta) {
-            let delta = delta::build_delta_output(&output);
+            let delta = delta::build_delta_output(&output, item_end_chars);
             (
                 delta.output,
                 ContextGateAction::EmittedDelta,
                 "delta",
                 Some(delta.retained_context_chars),
+                delta.was_truncated,
             )
         } else {
-            (output, ContextGateAction::EmittedFull, "full", None)
+            (output, ContextGateAction::EmittedFull, "full", None, false)
         };
 
     match upsert_emit_row(
@@ -296,9 +308,18 @@ pub(super) fn apply_context_gate_with_data_version(
             let mut decision =
                 gate_decision(output, action, "changed_hash", &key, &hash, output_mode);
             decision.retained_context_chars = retained_context_chars;
+            decision.output_truncated = output_truncated;
             decision
         }
-        Err(error) => fail_open(output, "gate_write", error),
+        Err(error) => {
+            let mut decision = fail_open(output, "gate_write", error);
+            decision.key = Some(key);
+            decision.context_hash = Some(hash);
+            decision.output_mode = Some(output_mode);
+            decision.retained_context_chars = retained_context_chars;
+            decision.output_truncated = output_truncated;
+            decision
+        }
     }
 }
 
@@ -315,6 +336,7 @@ fn decision(
         context_hash: None,
         output_mode: None,
         retained_context_chars: None,
+        output_truncated: false,
     }
 }
 
@@ -334,6 +356,7 @@ fn gate_decision(
         context_hash: Some(context_hash.to_string()),
         output_mode: Some(output_mode),
         retained_context_chars: None,
+        output_truncated: false,
     }
 }
 
@@ -431,7 +454,7 @@ fn cleanup_old_rows(conn: &rusqlite::Connection, now: i64) {
     }
 }
 
-fn retention_cutoff_epoch(now: i64) -> i64 {
+pub(super) fn retention_cutoff_epoch(now: i64) -> i64 {
     let retention_days = read_i64_env("REMEM_CONTEXT_GATE_RETENTION_DAYS", DEFAULT_RETENTION_DAYS);
     now.saturating_sub(retention_days.saturating_mul(86_400))
 }

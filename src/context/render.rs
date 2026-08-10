@@ -5,16 +5,13 @@ use anyhow::Result;
 
 use crate::db;
 
-use super::audit::{
-    build_context_audit_items, record_context_injection_items, ContextAuditItem,
-    ContextAuditRenderState,
-};
+use super::audit::{build_context_audit_items, ContextAuditItem, ContextAuditRenderState};
 use super::format::char_len;
 use super::hook_warning::{append_hook_integrity_warning, claude_hook_integrity_warning};
 use super::host::resolve_profile;
 use super::injection_gate::{
-    apply_context_gate_with_data_version, compute_data_version_hint, pre_render_context_gate,
-    ContextGateAction, ContextGateDecision, ContextGatePrecheck,
+    apply_context_gate_with_data_version_and_boundaries, compute_data_version_hint,
+    pre_render_context_gate, ContextGateAction, ContextGateDecision, ContextGatePrecheck,
 };
 use super::invocation::{
     direct_context_invocation, resolve_context_invocation, resolve_cursor_context_invocation,
@@ -29,10 +26,13 @@ use super::sections::{
     render_ranked_memory_index_with_summary_and_staleness, render_recent_sessions_with_summary,
     render_workstreams_with_summary,
 };
-use super::types::{ContextLoadError, ContextRequest};
+use super::types::ContextRequest;
+mod audit_persistence;
+mod empty_bundle;
 mod eval;
 mod finalize;
 pub(in crate::context) mod helpers;
+mod open_error;
 mod stats;
 mod timer;
 mod truncation;
@@ -48,6 +48,7 @@ pub(in crate::context) use helpers::{build_context_stats_footer, enforce_total_c
 pub(in crate::context) use helpers::{
     context_stdout_for_invocation, enforce_total_char_limit_preserving_footer,
 };
+use open_error::open_context_connection_or_error;
 pub(in crate::context) use stats::{ContextRenderStats, SectionRenderStats};
 use timer::log_context_timer;
 
@@ -61,7 +62,6 @@ pub(in crate::context) struct RenderedContext {
     pub(in crate::context) audit_items: Vec<ContextAuditItem>,
     pub(in crate::context) data_version: Option<String>,
     pub(in crate::context) has_load_errors: bool,
-    #[cfg(test)]
     pub(in crate::context) context_bundle: Option<crate::context_bundle::ContextBundle>,
 }
 
@@ -136,7 +136,7 @@ fn generate_context_output_for_invocation(
     let policy = resolve_profile(request.host).default_policy();
     let hook_integrity_warning = claude_hook_integrity_warning(&invocation);
     let db_open_start = Instant::now();
-    let conn = match open_context_connection_or_error(&request, &policy) {
+    let conn = match open_error::open_context_connection_or_error(&request, &policy) {
         Ok(conn) => conn,
         Err(rendered) => {
             // GH-823 B-005: Cursor never receives a fallback/half-rendered
@@ -158,6 +158,7 @@ fn generate_context_output_for_invocation(
                     context_hash: None,
                     output_mode: None,
                     retained_context_chars: None,
+                    output_truncated: false,
                 }
             } else {
                 ContextGateDecision {
@@ -168,6 +169,7 @@ fn generate_context_output_for_invocation(
                     context_hash: None,
                     output_mode: None,
                     retained_context_chars: None,
+                    output_truncated: false,
                 }
             };
             if debug_enabled {
@@ -191,7 +193,8 @@ fn generate_context_output_for_invocation(
         }
     };
     let db_open_timing = crate::perf::PhaseTiming::elapsed("db_open", db_open_start);
-    let (mut decision, mut stats, precheck, audit_items) = if use_gate {
+    audit_persistence::cleanup_persisted_bundle_audits(&conn);
+    let (mut decision, mut stats, precheck, audit_items, context_bundle) = if use_gate {
         let precheck_start = Instant::now();
         let precheck =
             pre_render_context_gate(&conn, &invocation, &request, &policy, debug_enabled);
@@ -200,7 +203,7 @@ fn generate_context_output_for_invocation(
             let mut stats = ContextRenderStats::default();
             stats.timings.push(db_open_timing.clone());
             stats.timings.push(precheck_timing);
-            (decision, stats, precheck.precheck, Vec::new())
+            (decision, stats, precheck.precheck, Vec::new(), None)
         } else {
             let prechecked_data_version = precheck.data_version.clone();
             let rendered = render_context_output_with_policy(
@@ -218,6 +221,7 @@ fn generate_context_output_for_invocation(
             let data_version = rendered.data_version;
             let has_load_errors = rendered.has_load_errors;
             let audit_items = rendered.audit_items;
+            let context_bundle = rendered.context_bundle;
             if has_load_errors && invocation.host == super::host::HostKind::Cursor {
                 crate::log::error(
                     "context",
@@ -234,21 +238,34 @@ fn generate_context_output_for_invocation(
                     context_hash: None,
                     output_mode: Some("fail_open"),
                     retained_context_chars: None,
+                    output_truncated: false,
                 }
             } else {
                 let gate_start = Instant::now();
-                let decision = apply_context_gate_with_data_version(
+                let item_end_chars = audit_items
+                    .iter()
+                    .filter(|item| item.status == "injected")
+                    .filter_map(|item| item.render_end_chars)
+                    .collect::<Vec<_>>();
+                let decision = apply_context_gate_with_data_version_and_boundaries(
                     &conn,
                     &invocation,
                     output,
                     data_version.as_deref(),
+                    &item_end_chars,
                 );
                 stats
                     .timings
                     .push(crate::perf::PhaseTiming::elapsed("gate_apply", gate_start));
                 decision
             };
-            (decision, stats, precheck.precheck, audit_items)
+            (
+                decision,
+                stats,
+                precheck.precheck,
+                audit_items,
+                context_bundle,
+            )
         }
     } else {
         let rendered =
@@ -264,10 +281,12 @@ fn generate_context_output_for_invocation(
                 context_hash: None,
                 output_mode: None,
                 retained_context_chars: None,
+                output_truncated: false,
             },
             stats,
             ContextGatePrecheck::Off,
             rendered.audit_items,
+            rendered.context_bundle,
         )
     };
     if debug_enabled {
@@ -277,14 +296,13 @@ fn generate_context_output_for_invocation(
     append_hook_integrity_warning(&mut decision.output, hook_integrity_warning.as_deref());
     if !audit_items.is_empty() {
         let audit_write_start = Instant::now();
-        if let Err(error) =
-            record_context_injection_items(&conn, &invocation, &decision, &audit_items)
-        {
-            crate::log::warn(
-                "context-audit",
-                &format!("failed to write audit rows: {error}"),
-            );
-        }
+        audit_persistence::persist_emission_audit(
+            &conn,
+            &invocation,
+            &decision,
+            &audit_items,
+            context_bundle.as_ref(),
+        );
         stats.timings.push(crate::perf::PhaseTiming::elapsed(
             "audit_write",
             audit_write_start,
@@ -422,13 +440,35 @@ pub(in crate::context) fn render_context_output_from_inputs(
         && loaded.workstreams.is_empty()
         && loaded.errors.is_empty()
     {
+        if use_context_bundle {
+            let output = empty_context_output(request);
+            let (context_bundle, audit_items) = empty_bundle::compile_empty_bundle(
+                &loaded,
+                request,
+                &policy,
+                &preference_details,
+                &output,
+            )?;
+            return Ok(RenderedContext {
+                output,
+                stats: stats::empty_stats_with_load(
+                    request,
+                    &loaded,
+                    load_timing,
+                    preference_timing,
+                ),
+                audit_items,
+                data_version,
+                has_load_errors,
+                context_bundle: Some(context_bundle),
+            });
+        }
         return Ok(RenderedContext {
             output: empty_context_output(request),
             stats: stats::empty_stats_with_load(request, &loaded, load_timing, preference_timing),
             audit_items: Vec::new(),
             data_version,
             has_load_errors,
-            #[cfg(test)]
             context_bundle: None,
         });
     }
@@ -711,6 +751,8 @@ pub(in crate::context) fn render_context_output_from_inputs(
     }
     let audit_start = Instant::now();
     let audit_render = ContextAuditRenderState {
+        preference_rendered_memories: &preference_details.rendered_memories,
+        preference_final_ids: &finalized.final_preference_ids,
         core_selected_ids: &core_selected_ids,
         core_final_ids: &finalized.final_core_ids,
         index_final_ids: &finalized.final_index_ids,
@@ -740,52 +782,8 @@ pub(in crate::context) fn render_context_output_from_inputs(
         audit_items,
         data_version,
         has_load_errors,
-        #[cfg(test)]
         context_bundle,
     })
-}
-
-fn open_context_connection_or_error(
-    request: &ContextRequest,
-    policy: &ContextPolicy,
-) -> std::result::Result<rusqlite::Connection, Box<RenderedContext>> {
-    match db::open_db_no_migrate() {
-        Ok(conn) => Ok(conn),
-        Err(error) => {
-            crate::log::error(
-                "context",
-                &format!("db open failed for project={}: {}", request.project, error),
-            );
-            Err(Box::new(render_context_open_error(request, policy, error)))
-        }
-    }
-}
-
-fn render_context_open_error(
-    request: &ContextRequest,
-    policy: &ContextPolicy,
-    error: anyhow::Error,
-) -> RenderedContext {
-    let mut output = super::render_error::context_error_output(
-        request,
-        &[ContextLoadError::new(
-            "database",
-            format!("failed to open remem database: {error}"),
-        )],
-    );
-    let mut stats = stats::empty_stats(request);
-    stats.total_char_limit = policy.limits.total_char_limit;
-    stats.output_chars = char_len(&output);
-    enforce_total_char_limit_preserving_footer(&mut output, policy.limits.total_char_limit, "");
-    RenderedContext {
-        output,
-        stats,
-        audit_items: Vec::new(),
-        data_version: None,
-        has_load_errors: true,
-        #[cfg(test)]
-        context_bundle: None,
-    }
 }
 
 pub(in crate::context) fn empty_context_output(request: &ContextRequest) -> String {

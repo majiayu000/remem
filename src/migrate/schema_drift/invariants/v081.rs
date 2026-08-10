@@ -1,25 +1,35 @@
 use super::SchemaInvariant;
 
 pub(in crate::migrate) const V081_SCHEMA_INVARIANTS: &[SchemaInvariant] = &[
-    SchemaInvariant::table(
-        81,
-        "project_identity_aliases",
-        "project_identity_alias_events",
-    ),
-    SchemaInvariant::table(81, "project_identity_aliases", "project_identity_aliases"),
+    SchemaInvariant::table(81, "context_bundle_audits", "context_bundle_audits"),
     SchemaInvariant::index(
         81,
-        "project_identity_aliases",
-        "idx_project_identity_alias_events_path",
+        "context_bundle_audits",
+        "idx_context_bundle_audits_created",
     ),
     SchemaInvariant::index(
         81,
-        "project_identity_aliases",
-        "idx_project_identity_alias_events_target",
+        "context_bundle_audits",
+        "idx_context_bundle_audits_plan",
     ),
     SchemaInvariant::index(
         81,
-        "project_identity_aliases",
-        "idx_project_identity_aliases_target_status",
+        "context_injection_items",
+        "idx_context_injection_items_run",
+    ),
+    SchemaInvariant::trigger(
+        81,
+        "context_bundle_audits",
+        "context_bundle_audits_require_items",
+    ),
+    SchemaInvariant::trigger(
+        81,
+        "context_bundle_audits",
+        "context_bundle_audits_no_duplicate_insert",
+    ),
+    SchemaInvariant::trigger(
+        81,
+        "context_bundle_audits",
+        "context_bundle_audits_immutable_update",
     ),
 ];

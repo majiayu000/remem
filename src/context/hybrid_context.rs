@@ -10,7 +10,10 @@ use crate::retrieval::search::SearchWeights;
 
 use super::filters::{push_excluded_type_filter, push_owner_included_filter};
 
+mod rank;
 mod usage;
+
+use rank::{fts_ranked_hits, rank_ordered_hits};
 
 /// Injection-only: how deep each channel reads before fusion. Not a scoring
 /// knob, so it stays here rather than in [`SearchWeights`] (GH953).
@@ -778,29 +781,4 @@ fn sqlite_column_available(conn: &Connection, table: &str, column: &str) -> Resu
 
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
-}
-
-fn fts_ranked_hits(hits: &[(i64, f64)]) -> Vec<WeightedRankedHit> {
-    let best = hits
-        .iter()
-        .map(|(_, score)| *score)
-        .fold(f64::INFINITY, f64::min);
-    let worst = hits
-        .iter()
-        .map(|(_, score)| *score)
-        .fold(f64::NEG_INFINITY, f64::max);
-    let spread = worst - best;
-    hits.iter()
-        .map(|(id, score)| {
-            if spread.abs() < f64::EPSILON {
-                WeightedRankedHit::rank_only(*id)
-            } else {
-                WeightedRankedHit::scored(*id, ((worst - *score) / spread).clamp(0.0, 1.0))
-            }
-        })
-        .collect()
-}
-
-fn rank_ordered_hits(ids: Vec<i64>) -> Vec<WeightedRankedHit> {
-    ids.into_iter().map(WeightedRankedHit::rank_only).collect()
 }

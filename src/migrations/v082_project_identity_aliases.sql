@@ -1,4 +1,4 @@
--- v081_project_identity_aliases: canonical project routing without rewriting
+-- v082_project_identity_aliases: canonical project routing without rewriting
 -- historical capture paths.
 
 CREATE TABLE project_identity_alias_events (

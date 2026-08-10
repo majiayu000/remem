@@ -68,10 +68,10 @@ any child claim can become current.
 ## Verified baseline
 
 Read-only snapshot taken with `/opt/homebrew/bin/remem 0.6.1 (schema v69)` on
-2026-08-08. The current governance worktree is staged as `0.6.61` with
-migrations through schema v81. The live database remains mutation-blocked until
-that runtime is deliberately installed; schema v81 has been verified only on
-an encrypted copied database.
+2026-08-08. The current governance branch is staged as `0.6.66` with
+migrations through schema v82. The live database remains mutation-blocked until
+that runtime is deliberately installed; the alias migration was verified on an
+encrypted copied database before its integration renumbering from v81 to v82.
 
 | Signal | Baseline | Interpretation |
 |---|---:|---|
@@ -284,8 +284,8 @@ Acceptance:
 | 2026-08-09 | G0 copied-database migration rehearsal | Done; encrypted online backup migrated from v69 to v80 using source v0.6.59. Curated memories remained 80,628 and pending review remained 12,525. Live runtime remained v0.6.1/schema v69. Temporary encrypted snapshot and key symlink were removed after verification. | source commit `d458bfebcac3db98a7db220843016cee614b7309`; before SHA-256 `d8be6e6aba9585a6079895d6991ca2ac5f9e5487f0da6ffefd7f88139cea7b50`; after SHA-256 `61efa9325dc5e2e61061429b708375ded5c1a8c87033771a3fbe6bf91675380e` |
 | 2026-08-09 | G0 audit-run contract | Done; schema and fail-closed validator forbid mutation authority/delete verdicts, require redaction and snapshot binding, reject duplicate IDs, and force low-confidence judgments to abstain. | `docs/todo/memory-audit-run.schema.json`; `scripts/governance/validate_memory_audit.py`; five validator tests pass |
 | 2026-08-09 | G1 project alias inventory | Done; content-free schema inventory found 889 observed values: 223 exact, 52 moved, 281 missing, 333 non-path. Requiring the destination to be an existing canonical `projects` row produced 36 proof-backed alias proposals and blocked 270 ownership paths lacking unique proof. `/AI/tool/remem` maps to `/AI/tools/remem` because both stored commits resolve in the live repository; the plan covers 39,616 ownership references while leaving 7,226 context-evidence rows unchanged. | inventory/report SHA-256 `2e1e03b63328bd2c06268feb720f7d7b43749fe01349c6e102a6d19de2c03635`; `examples/project_alias_inventory.rs`; seven tests pass |
-| 2026-08-09 | G1 copied-database alias apply | Done; migrated the encrypted copy to schema v81, previewed and inserted 36 active aliases, then re-previewed with 0 inserts and 36 unchanged. Curated memories remained 80,628, pending review remained 12,525, and the old remem path retained exactly 39,616 ownership references plus 7,226 context-evidence rows. No historical row was rewritten and the live database remained on v0.6.1/schema v69. | `src/migrations/v081_project_identity_aliases.sql`; `examples/project_alias_apply.rs`; apply result `inserted=36`; idempotence result `unchanged=36` |
-| 2026-08-09 | G1 shared identity resolver | Done; new capture/state-key writes canonicalize known aliases while memory/context retrieval, candidate review, current-state, and status expand or aggregate active aliases. The final copied-DB check with source v0.6.61/schema v81 still reported 80,628 memories, 12,525 pending review, and an idempotent preview of 0 inserts/36 unchanged. | `src/project_alias.rs`; schema v81 invariants; Rust: 3,666 passed/1 ignored plus all integration suites passed; Node: 50 passed; version sync 0.6.61 passed |
+| 2026-08-09 | G1 copied-database alias apply | Done; migrated the encrypted copy with the then-v81 alias migration, previewed and inserted 36 active aliases, then re-previewed with 0 inserts and 36 unchanged. The integration branch now carries the identical migration as v82 after main claimed v81. Curated memories remained 80,628, pending review remained 12,525, and the old remem path retained exactly 39,616 ownership references plus 7,226 context-evidence rows. No historical row was rewritten and the live database remained on v0.6.1/schema v69. | `src/migrations/v082_project_identity_aliases.sql`; `examples/project_alias_apply.rs`; apply result `inserted=36`; idempotence result `unchanged=36` |
+| 2026-08-09 | G1 shared identity resolver | Done; new capture/state-key writes canonicalize known aliases while memory/context retrieval, candidate review, current-state, and status expand or aggregate active aliases. The final copied-DB check with pre-integration source v0.6.61/schema v81 still reported 80,628 memories, 12,525 pending review, and an idempotent preview of 0 inserts/36 unchanged. Integration now uses source v0.6.66/schema v82. | `src/project_alias.rs`; schema v82 invariants; Rust: 3,666 passed/1 ignored plus all integration suites passed; Node: 50 passed; pre-integration version sync 0.6.61 passed |
 
 ## Next action
 

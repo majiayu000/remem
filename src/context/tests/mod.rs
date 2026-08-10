@@ -4,12 +4,14 @@ use rusqlite::{params, Connection};
 
 mod bundle_candidates;
 mod codex_hook_stdout;
+mod context_audit_persistence;
 mod cursor_hook;
 mod diagnostics;
 mod engine_convergence;
 mod gate_pipeline;
 mod load;
 mod ownership;
+mod project_alias;
 mod render;
 mod render_inline;
 mod render_poisoning;

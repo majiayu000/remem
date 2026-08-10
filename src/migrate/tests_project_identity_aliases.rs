@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use super::{run_migrations, validate_schema_invariants};
 
 #[test]
-fn v081_records_append_only_alias_proof_and_current_registry() -> Result<()> {
+fn v082_records_append_only_alias_proof_and_current_registry() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     conn.execute_batch("PRAGMA foreign_keys = ON")?;
     run_migrations(&conn)?;
@@ -63,7 +63,7 @@ fn v081_records_append_only_alias_proof_and_current_registry() -> Result<()> {
 }
 
 #[test]
-fn v081_rejects_unapproved_proof_kind_and_malformed_digest() -> Result<()> {
+fn v082_rejects_unapproved_proof_kind_and_malformed_digest() -> Result<()> {
     let conn = Connection::open_in_memory()?;
     run_migrations(&conn)?;
     conn.execute(
