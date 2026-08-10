@@ -70,3 +70,67 @@ fn preference_details_preserve_every_canonical_selection_drop_reason() -> Result
     assert_eq!(reasons.get(&3), Some(&"preference_char_limit"));
     Ok(())
 }
+
+#[test]
+fn preference_visibility_is_filtered_before_render_with_exact_reason() -> Result<()> {
+    let conn = setup_test_db();
+    insert_preference_row(
+        &conn,
+        91,
+        "test/proj",
+        Some("legacy-pref"),
+        "Legacy preference",
+        "LEGACY_PREFERENCE_SENTINEL",
+        "project",
+    )?;
+    conn.execute(
+        "UPDATE memories SET source_trust_class = 'local_tool_output' WHERE id = 91",
+        [],
+    )?;
+    let mut output = String::new();
+    let details = render_preferences_with_context_details(
+        &mut output,
+        &conn,
+        "test/proj",
+        "/nonexistent",
+        20,
+        0,
+        1500,
+    )?;
+    assert!(!output.contains("LEGACY_PREFERENCE_SENTINEL"));
+    assert_eq!(details.rendered_ids, Vec::<i64>::new());
+    assert_eq!(details.selection_drops.len(), 1);
+    assert_eq!(details.selection_drops[0].memory.id, 91);
+    assert_eq!(
+        details.selection_drops[0].reason,
+        "legacy_unverified_provenance_missing"
+    );
+    Ok(())
+}
+
+#[test]
+fn manual_preference_writer_proof_remains_renderable_without_state_key() -> Result<()> {
+    let conn = setup_test_db();
+    insert_preference_row(
+        &conn,
+        92,
+        "test/proj",
+        Some("manual-pref"),
+        "Manual preference",
+        "MANUAL_PREFERENCE_SENTINEL",
+        "project",
+    )?;
+    let mut output = String::new();
+    let details = render_preferences_with_context_details(
+        &mut output,
+        &conn,
+        "test/proj",
+        "/nonexistent",
+        20,
+        0,
+        1500,
+    )?;
+    assert!(output.contains("MANUAL_PREFERENCE_SENTINEL"));
+    assert_eq!(details.rendered_ids, vec![92]);
+    Ok(())
+}

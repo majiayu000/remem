@@ -167,6 +167,7 @@ pub(crate) fn render_preferences_with_context_details(
         }
         all_prefs.push((global_pref, PreferenceSource::Global));
     }
+    all_prefs = filter_non_current_preferences(conn, all_prefs, &mut selection_drops)?;
     let (filtered_prefs, poisoning_drops) =
         filter_unacknowledged_poisoned_preferences(conn, all_prefs)?;
     all_prefs = filtered_prefs;
@@ -261,6 +262,27 @@ pub(crate) fn render_preferences_with_context_details(
         selection_drops,
         item_end_chars,
     })
+}
+
+fn filter_non_current_preferences(
+    conn: &Connection,
+    preferences: Vec<(Memory, PreferenceSource)>,
+    drops: &mut Vec<PreferenceSelectionDrop>,
+) -> Result<Vec<(Memory, PreferenceSource)>> {
+    let as_of_epoch = chrono::Utc::now().timestamp();
+    let mut current = Vec::with_capacity(preferences.len());
+    for (memory, source) in preferences {
+        let visibility = crate::truth::classify_memory(conn, memory.id, as_of_epoch)?;
+        if visibility.current_context_eligible {
+            current.push((memory, source));
+        } else {
+            drops.push(PreferenceSelectionDrop {
+                memory,
+                reason: visibility.reason.as_str(),
+            });
+        }
+    }
+    Ok(current)
 }
 
 fn record_selection_drops(

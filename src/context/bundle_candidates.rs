@@ -118,6 +118,7 @@ pub(crate) fn load_session_start_candidates_with_limits(
 /// direct user-authored saves are trusted; extracted/tool/repo/external rows
 /// remain standard unless the poisoning gate quarantined them separately.
 fn apply_persisted_memory_trust(conn: &Connection, items: &mut [ContextItem]) -> Result<()> {
+    let as_of_epoch = chrono::Utc::now().timestamp();
     for item in items {
         let Some(memory_id) = item
             .stable_key
@@ -126,6 +127,10 @@ fn apply_persisted_memory_trust(conn: &Connection, items: &mut [ContextItem]) ->
         else {
             continue;
         };
+        if !crate::truth::classify_memory(conn, memory_id, as_of_epoch)?.current_context_eligible {
+            item.trust = TrustClass::Quarantined;
+            continue;
+        }
         let source_trust: Option<String> = conn
             .query_row(
                 "SELECT source_trust_class FROM memories WHERE id = ?1",

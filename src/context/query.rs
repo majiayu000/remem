@@ -142,6 +142,13 @@ fn load_context_data_with_execution_policy(
     errors.append(&mut memory_selection.errors);
     let relevance_query = memory_selection.fact_label_query.clone();
     let mut memories = memory_selection.memories;
+    exclude_non_current_context_memories(
+        conn,
+        &mut memories,
+        &mut memory_selection.preselection_drops,
+        render_reference_epoch,
+        &mut errors,
+    );
     sort_memories_by_branch(&mut memories, current_branch);
     if let Err(e) = super::fact_labels::annotate_memories_with_temporal_facts_for_query(
         conn,
@@ -153,7 +160,7 @@ fn load_context_data_with_execution_policy(
         crate::log::error("context", &message);
         errors.push(ContextLoadError::new("memories", message));
     }
-    let lessons = memory::lesson::list_lessons_for_context(
+    let mut lessons = memory::lesson::list_lessons_for_context(
         conn,
         project,
         current_branch,
@@ -165,6 +172,22 @@ fn load_context_data_with_execution_policy(
         errors.push(ContextLoadError::new("lessons", message));
         Vec::new()
     });
+    let mut lesson_memories = lessons
+        .iter()
+        .map(|lesson| lesson.memory.clone())
+        .collect::<Vec<_>>();
+    exclude_non_current_context_memories(
+        conn,
+        &mut lesson_memories,
+        &mut memory_selection.preselection_drops,
+        render_reference_epoch,
+        &mut errors,
+    );
+    let lesson_ids = lesson_memories
+        .iter()
+        .map(|memory| memory.id)
+        .collect::<HashSet<_>>();
+    lessons.retain(|lesson| lesson_ids.contains(&lesson.memory.id));
     let staleness_memories = memories
         .iter()
         .chain(lessons.iter().map(|lesson| &lesson.memory))
@@ -238,6 +261,38 @@ fn load_context_data_with_execution_policy(
         rerank,
         load_phase_timings,
     }
+}
+
+fn exclude_non_current_context_memories(
+    conn: &Connection,
+    memories: &mut Vec<Memory>,
+    drops: &mut Vec<ContextPreselectionDrop>,
+    as_of_epoch: i64,
+    errors: &mut Vec<ContextLoadError>,
+) {
+    let mut retained = Vec::with_capacity(memories.len());
+    for memory in memories.drain(..) {
+        match crate::truth::classify_memory(conn, memory.id, as_of_epoch) {
+            Ok(classification) if classification.current_context_eligible => retained.push(memory),
+            Ok(classification) => drops.push(ContextPreselectionDrop {
+                item: super::types::ContextPreselectionItem::Memory(memory),
+                reason: classification.reason.as_str(),
+            }),
+            Err(error) => {
+                let message = format!(
+                    "memory visibility classification failed for id={}: {error}",
+                    memory.id
+                );
+                crate::log::error("context", &message);
+                errors.push(ContextLoadError::new("memory_visibility", message));
+                drops.push(ContextPreselectionDrop {
+                    item: super::types::ContextPreselectionItem::Memory(memory),
+                    reason: "legacy_unverified_classification_failed",
+                });
+            }
+        }
+    }
+    *memories = retained;
 }
 
 fn load_staleness_labels(

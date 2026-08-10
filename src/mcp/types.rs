@@ -321,6 +321,9 @@ pub(super) struct SearchResult {
     pub updated_at: String,
     pub project: String,
     pub status: String,
+    pub classification: crate::truth::MemoryVisibilityClass,
+    pub classification_reason: String,
+    pub current_context_eligible: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub staleness: Option<crate::memory::MemoryStalenessLabel>,
 }

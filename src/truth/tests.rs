@@ -32,11 +32,42 @@ fn insert_memory(
     updated_at: i64,
     evidence_event_ids: Option<&str>,
 ) -> Result<()> {
+    let proof_event_id = 8_000_000 + id;
+    let candidate_id = 7_000_000 + id;
+    let state_key_id = 6_000_000 + id;
+    insert_captured_event(conn, proof_event_id, Some("assistant"), None, created_at)?;
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 9001, 'project', 'decision', ?2, ?3, ?4,
+                 0.9, 'low', 'accepted', ?5, ?5)",
+        params![
+            candidate_id,
+            topic_key,
+            content,
+            format!("[{proof_event_id}]"),
+            created_at
+        ],
+    )?;
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key, created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', ?2, 'decision', ?3, ?4, ?4)",
+        params![
+            state_key_id,
+            project,
+            format!("truth-fixture-{id}"),
+            created_at
+        ],
+    )?;
     conn.execute(
         "INSERT INTO memories
          (id, project, topic_key, title, content, memory_type,
-          created_at_epoch, updated_at_epoch, status, branch, evidence_event_ids)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'decision', ?6, ?7, ?8, ?9, ?10)",
+          created_at_epoch, updated_at_epoch, status, branch, evidence_event_ids,
+          source_candidate_id, state_key_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'decision', ?6, ?7, ?8, ?9, ?10,
+                 ?11, ?12)",
         params![
             id,
             project,
@@ -47,7 +78,9 @@ fn insert_memory(
             updated_at,
             status,
             branch,
-            evidence_event_ids
+            evidence_event_ids,
+            candidate_id,
+            state_key_id,
         ],
     )?;
     Ok(())
@@ -93,6 +126,94 @@ fn seed_capture_parents(conn: &Connection) -> Result<()> {
          (id, host_id, workspace_id, project_id, session_id, last_seen_at_epoch, status)
          VALUES (9001, 9001, 9001, 9001, 'truth-session', 0, 'active');",
     )?;
+    Ok(())
+}
+
+#[test]
+fn legacy_unverified_memory_is_rejected_by_current_truth() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(
+        &conn,
+        991,
+        "/repo",
+        Some("g2-legacy"),
+        "legacy",
+        "legacy payload",
+        "active",
+        None,
+        10,
+        10,
+        None,
+    )?;
+    conn.execute(
+        "UPDATE memories
+         SET source_trust_class = 'local_tool_output', source_candidate_id = NULL,
+             confidence = NULL, valid_from_epoch = NULL, state_key_id = NULL
+         WHERE id = 991",
+        [],
+    )?;
+    let projection = project_current_truth(&conn, &query("/repo"))?;
+    let truth = projection
+        .truths
+        .iter()
+        .find(|truth| truth.subject_key == "g2-legacy")
+        .unwrap();
+    assert!(truth.claim.is_none());
+    assert_eq!(
+        truth.selected_reason,
+        TruthSelectionReason::InsufficientEvidence
+    );
+    assert_eq!(truth.rejected, vec!["memory:991"]);
+    Ok(())
+}
+
+#[test]
+fn current_truth_uses_one_reference_epoch_for_visibility_and_resolution() -> Result<()> {
+    let conn = test_conn()?;
+    insert_memory(
+        &conn,
+        1,
+        "proj",
+        Some("epoch-boundary"),
+        "current",
+        "current claim",
+        "active",
+        None,
+        10,
+        10,
+        None,
+    )?;
+    insert_memory(
+        &conn,
+        2,
+        "proj",
+        Some("epoch-boundary"),
+        "future",
+        "future claim",
+        "active",
+        None,
+        30,
+        30,
+        None,
+    )?;
+
+    let query = query("proj");
+    let projection =
+        super::projection::project_current_truth_at_reference_epoch(&conn, &query, 20)?;
+    let truth = projection
+        .truths
+        .iter()
+        .find(|truth| truth.subject_key == "epoch-boundary")
+        .expect("epoch-boundary truth");
+    assert_eq!(projection.as_of_epoch, None);
+    assert_eq!(
+        truth
+            .claim
+            .as_ref()
+            .map(|claim| claim.canonical_ref.as_str()),
+        Some("memory:1")
+    );
+    assert_eq!(truth.rejected, vec!["memory:2"]);
     Ok(())
 }
 

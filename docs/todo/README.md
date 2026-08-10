@@ -159,15 +159,17 @@ Acceptance:
 
 ### G2 — Quarantine legacy-unverified data from current context
 
-Status: Not started; depends on G1
+Status: Implemented in source; copied-production-database validation complete; Draft pending review because this is a large-rollout-impact change. Not merged or deployed.
 
-- [ ] Define an explicit legacy trust/visibility classification without adding
+- [x] Define an explicit legacy trust/visibility classification without adding
   a second durable memory store.
-- [ ] Identify active rows missing required provenance, confidence, validity,
+- [x] Identify active rows missing required provenance, confidence, validity,
   or mutable-state identity.
-- [ ] Keep those rows searchable with visible labels, but exclude them from
+- [x] Keep those rows searchable with visible labels, but exclude them from
   CurrentTruth and default SessionStart injection.
-- [ ] Add injection audit reasons for every exclusion.
+- [x] Add injection audit reasons for every exclusion.
+- [x] Validate the content-free inventory on one consistent encrypted copy with
+  a fixed as-of epoch; live remem/runtime state was not mutated.
 
 Acceptance:
 
@@ -289,7 +291,7 @@ Acceptance:
 
 ## Next action
 
-Begin G2 by defining the `legacy_unverified` trust/visibility projection and a
-content-free inventory of rows that cannot qualify for CurrentTruth. Keep this
-stage read-only: no live lifecycle mutation until the projection, exclusion
-reasons, and copied-database retrieval diff are deterministic.
+Keep the PR Draft pending review. The rollout impact is large; review should
+confirm the copied-database inventory, search/detail recovery labels, and the
+quality-first default SessionStart/CurrentTruth exclusion before merge or
+deployment.

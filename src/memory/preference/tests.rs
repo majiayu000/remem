@@ -52,6 +52,16 @@ fn setup_test_db() -> Connection {
     conn
 }
 
+fn mark_manual_preference(conn: &Connection, topic_key: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE memories
+         SET source_trust_class = 'user_prompt'
+         WHERE topic_key = ?1 AND memory_type = 'preference'",
+        [topic_key],
+    )?;
+    Ok(())
+}
+
 #[test]
 fn test_render_preferences_empty() -> Result<()> {
     let conn = setup_test_db();
@@ -77,6 +87,7 @@ fn test_render_preferences_with_data() -> Result<()> {
         "preference",
         None,
     )?;
+    mark_manual_preference(&conn, "pref-1")?;
 
     let mut output = String::new();
     render_preferences(&mut output, &conn, "test/proj", "/nonexistent")?;
@@ -98,6 +109,7 @@ fn render_preferences_collapses_internal_newlines() -> Result<()> {
         "preference",
         None,
     )?;
+    mark_manual_preference(&conn, "pref-multiline")?;
 
     let mut output = String::new();
     render_preferences(&mut output, &conn, "test/proj", "/nonexistent")?;
@@ -463,7 +475,6 @@ fn test_render_preferences_global_limit_zero_does_not_leak_global() -> Result<()
         "global",
         None,
     )?;
-
     let mut output = String::new();
     let rendered = render_preferences_with_limits(
         &mut output,
@@ -496,6 +507,7 @@ fn test_render_preferences_global_limit_explicitly_opted_in() -> Result<()> {
         "global",
         None,
     )?;
+    mark_manual_preference(&conn, "atlas-pref")?;
 
     let mut output = String::new();
     let rendered = render_preferences_with_limits(
@@ -526,6 +538,7 @@ fn test_render_preferences_reports_project_global_split() -> Result<()> {
         "preference",
         None,
     )?;
+    mark_manual_preference(&conn, "local-pref")?;
     memory::insert_memory_full(
         &conn,
         None,
@@ -539,6 +552,7 @@ fn test_render_preferences_reports_project_global_split() -> Result<()> {
         "global",
         None,
     )?;
+    mark_manual_preference(&conn, "global-pref")?;
 
     let mut output = String::new();
     let summary = render_preferences_with_limits_detailed(
@@ -741,8 +755,9 @@ fn insert_preference_row(
     conn.execute(
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,
-          created_at_epoch, updated_at_epoch, status, branch, scope)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'preference', NULL, ?6, ?6, 'active', NULL, ?7)",
+          created_at_epoch, updated_at_epoch, status, branch, scope, source_trust_class)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, 'preference', NULL, ?6, ?6,
+                 'active', NULL, ?7, 'user_prompt')",
         params![
             id,
             project,

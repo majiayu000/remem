@@ -384,6 +384,42 @@ mod tests {
     }
 
     #[test]
+    fn search_recovers_legacy_unverified_without_underfilling_pagination() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        crate::migrate::run_migrations(&conn)?;
+        for id in 1..=2 {
+            crate::memory::insert_memory(
+                &conn,
+                Some("s"),
+                "/repo",
+                None,
+                &format!("needle {id}"),
+                "needle legacy searchable payload",
+                "bugfix",
+                None,
+            )?;
+        }
+        let result = search_memories(
+            &conn,
+            &SearchRequest {
+                query: Some("needle".into()),
+                project: Some("/repo".into()),
+                limit: 1,
+                ..SearchRequest::default()
+            },
+        )?;
+        assert_eq!(result.memories.len(), 1);
+        assert!(result.has_more);
+        let visibility = crate::truth::classify_memory(
+            &conn,
+            result.memories[0].id,
+            chrono::Utc::now().timestamp(),
+        )?;
+        assert_eq!(visibility.classification.as_str(), "legacy_unverified");
+        Ok(())
+    }
+
+    #[test]
     fn raw_fallback_does_not_bypass_active_suppression_policy() -> Result<()> {
         let conn = Connection::open_in_memory()?;
         crate::migrate::run_migrations(&conn)?;

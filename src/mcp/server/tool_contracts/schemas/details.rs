@@ -31,6 +31,9 @@ struct MemoryDetailOutput {
     status: String,
     branch: Option<String>,
     scope: String,
+    classification: String,
+    classification_reason: String,
+    current_context_eligible: bool,
     temporal_facts: Option<Vec<MemoryTemporalFactOutput>>,
     topic_trace: Option<Vec<TopicTraceOutput>>,
 }

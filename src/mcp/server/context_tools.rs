@@ -460,7 +460,14 @@ fn memory_details_with_topic_traces(
     let memory_ids = memories.iter().map(|memory| memory.id).collect::<Vec<_>>();
     let temporal_facts = current_temporal_facts_by_memory_id(conn, &memory_ids, requested_project)?;
     let mut trace_cache = HashMap::new();
+    let as_of_epoch = chrono::Utc::now().timestamp();
     for (item, memory) in items.iter_mut().zip(memories) {
+        let visibility = crate::truth::classify_memory(conn, memory.id, as_of_epoch)?;
+        item["classification"] = serde_json::json!(visibility.classification);
+        item["classification_reason"] =
+            serde_json::Value::String(visibility.reason.as_str().to_string());
+        item["current_context_eligible"] =
+            serde_json::Value::Bool(visibility.current_context_eligible);
         if let Some(facts) = temporal_facts.get(&memory.id) {
             if !facts.is_empty() {
                 item["temporal_facts"] = serde_json::to_value(facts)?;
@@ -690,6 +697,12 @@ mod tests {
         let value = memory_details_with_topic_traces(&conn, &memories, Some("/repo"))?;
 
         assert_eq!(value[0]["topic_trace"][0]["title"], "Repo-only trace");
+        assert_eq!(value[0]["classification"], "legacy_unverified");
+        assert_eq!(
+            value[0]["classification_reason"],
+            "legacy_unverified_row_missing"
+        );
+        assert_eq!(value[0]["current_context_eligible"], false);
         Ok(())
     }
 

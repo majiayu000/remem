@@ -115,6 +115,12 @@ fn search_returns_stable_compact_envelope_with_expansion_hint() {
         .expect("expansion succeeds");
     let expanded_json: Value = serde_json::from_str(&expanded).expect("expanded json");
     assert_eq!(expanded_json[0]["id"], memory_id);
+    assert_eq!(expanded_json[0]["classification"], "legacy_unverified");
+    assert_eq!(
+        expanded_json[0]["classification_reason"],
+        "legacy_unverified_provenance_missing"
+    );
+    assert_eq!(expanded_json[0]["current_context_eligible"], false);
 }
 
 #[test]

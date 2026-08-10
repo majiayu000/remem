@@ -117,6 +117,11 @@ be inspected from the current checkout when needed.
 
 ## Data Flow
 
+Current-context reads share a deterministic, read-only trust/visibility
+projection in src/truth/visibility.rs. It classifies historical active rows
+without rewriting them; unknown proof fails closed. This is the G2 exclusion
+boundary, not G3 production routing through CurrentTruth.
+
 ### 1. Capture Ledger (hook/session evidence → captured_events)
 
 ```

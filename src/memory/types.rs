@@ -379,6 +379,9 @@ pub mod tests_helper {
                 valid_to_epoch INTEGER,
                 state_key_id INTEGER,
                 version INTEGER NOT NULL DEFAULT 1,
+                source_candidate_id INTEGER,
+                evidence_event_ids TEXT,
+                confidence REAL,
                 source_trust_class TEXT NOT NULL DEFAULT 'local_tool_output',
                 acknowledged_pattern_id TEXT,
                 acknowledged_pattern_version INTEGER,
@@ -398,6 +401,20 @@ pub mod tests_helper {
                 UNIQUE(owner_scope, owner_key, memory_type, state_key)
             );
             CREATE TABLE memory_candidates (
+                id INTEGER PRIMARY KEY,
+                project_id INTEGER,
+                scope TEXT,
+                memory_type TEXT,
+                topic_key TEXT,
+                text TEXT,
+                evidence_event_ids TEXT,
+                confidence REAL,
+                risk_class TEXT,
+                review_status TEXT NOT NULL DEFAULT 'pending_review',
+                created_at_epoch INTEGER,
+                updated_at_epoch INTEGER
+            );
+            CREATE TABLE captured_events (
                 id INTEGER PRIMARY KEY
             );
             CREATE TABLE memory_embeddings (

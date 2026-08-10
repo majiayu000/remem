@@ -1,6 +1,6 @@
 use crate::memory::Memory;
 use crate::workstream::{WorkStream, WorkStreamStatus};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 
 mod bundle_candidates;
 mod codex_hook_stdout;
@@ -99,11 +99,113 @@ pub(super) fn insert_memory_with_branch(
     updated_at_epoch: i64,
     branch: Option<&str>,
 ) {
+    let proof_event_id = 8_200_000 + id;
+    let candidate_id = 7_200_000 + id;
+    let state_key_id = 6_200_000 + id;
+    let candidate_topic = topic_key.map_or_else(|| format!("context-fixture-{id}"), str::to_string);
+    let has_capture_attribution: bool = conn
+        .query_row(
+            "SELECT EXISTS(
+                 SELECT 1 FROM pragma_table_info('captured_events')
+                 WHERE name = 'host_id'
+             )",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    if has_capture_attribution {
+        conn.execute_batch(
+            "INSERT OR IGNORE INTO hosts (id, name, created_at_epoch)
+             VALUES (9200001, 'context-fixture-host', 0);
+             INSERT OR IGNORE INTO workspaces
+             (id, root_path, created_at_epoch, updated_at_epoch)
+             VALUES (9200001, '/context-fixture', 0, 0);
+             INSERT OR IGNORE INTO projects
+             (id, workspace_id, project_path, project_key, created_at_epoch, updated_at_epoch)
+             VALUES (9200001, 9200001, '/context-fixture', 'context-fixture', 0, 0);
+             INSERT OR IGNORE INTO sessions
+             (id, host_id, workspace_id, project_id, session_id, last_seen_at_epoch, status)
+             VALUES (9200001, 9200001, 9200001, 9200001,
+                     'context-fixture-session', 0, 'active');",
+        )
+        .unwrap();
+        let parents: Option<(i64, i64, i64, i64)> = conn
+            .query_row(
+                "SELECT host.id, workspace.id, project.id, session.id
+                 FROM hosts host
+                 JOIN workspaces workspace ON workspace.id = 9200001
+                 JOIN projects project ON project.workspace_id = workspace.id
+                 JOIN sessions session ON session.project_id = project.id
+                 WHERE host.id = session.host_id
+                 LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()
+            .unwrap();
+        let (host_id, workspace_id, project_id, session_row_id) =
+            parents.expect("captured-event fixture parents");
+        conn.execute(
+            "INSERT INTO captured_events
+             (id, host_id, workspace_id, project_id, session_row_id, session_id, event_id,
+              event_type, content_hash, retention_class, created_at_epoch, inserted_at_epoch)
+             VALUES (?1, ?2, ?3, ?4, ?5, 'context-fixture', ?6,
+                     'message', ?7, 'normal', ?8, ?8)",
+            params![
+                proof_event_id,
+                host_id,
+                workspace_id,
+                project_id,
+                session_row_id,
+                format!("context-proof-{id}"),
+                format!("context-proof-hash-{id}"),
+                updated_at_epoch
+            ],
+        )
+        .unwrap();
+    } else {
+        conn.execute(
+            "INSERT INTO captured_events (id) VALUES (?1)",
+            [proof_event_id],
+        )
+        .unwrap();
+    }
+    conn.execute(
+        "INSERT INTO memory_candidates
+         (id, project_id, scope, memory_type, topic_key, text, evidence_event_ids,
+          confidence, risk_class, review_status, created_at_epoch, updated_at_epoch)
+         VALUES (?1, NULL, 'project', ?2, ?3, ?4, ?5,
+                 0.9, 'low', 'accepted', 0, 0)",
+        params![
+            candidate_id,
+            memory_type,
+            candidate_topic,
+            content,
+            format!("[{proof_event_id}]")
+        ],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO memory_state_keys
+         (id, owner_scope, owner_key, memory_type, state_key,
+          created_at_epoch, updated_at_epoch)
+         VALUES (?1, 'project', ?2, ?3, ?4, ?5, ?5)",
+        params![
+            state_key_id,
+            project,
+            memory_type,
+            format!("context-fixture-{id}"),
+            updated_at_epoch
+        ],
+    )
+    .unwrap();
     conn.execute(
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,
-          created_at_epoch, updated_at_epoch, status, branch, scope)
-         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, 'active', ?8, 'project')",
+          created_at_epoch, updated_at_epoch, status, branch, scope,
+          source_trust_class, source_candidate_id, state_key_id)
+         VALUES (?1, NULL, ?2, ?3, ?4, ?5, ?6, NULL, ?7, ?7, 'active', ?8,
+                 'project', 'local_tool_output', ?9, ?10)",
         params![
             id,
             project,
@@ -112,7 +214,9 @@ pub(super) fn insert_memory_with_branch(
             content,
             memory_type,
             updated_at_epoch,
-            branch
+            branch,
+            candidate_id,
+            state_key_id
         ],
     )
     .unwrap();

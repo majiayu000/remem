@@ -81,6 +81,8 @@ async fn quarantined_dream_output_is_absent_from_mcp_search_and_session_start() 
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, first_id)?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, second_id)?;
     let cluster = cluster_from_memories(&conn, &[first_id, second_id])?;
     let superseded_ids = vec![first_id, second_id];
 

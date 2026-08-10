@@ -248,7 +248,7 @@ fn insert_repo_fixtures(conn: &Connection, expected_owners: &mut Vec<ExpectedOwn
             "decision",
         ),
     ] {
-        insert_fixture_memory(
+        let id = insert_fixture_memory(
             conn,
             project,
             topic_key,
@@ -262,6 +262,7 @@ fn insert_repo_fixtures(conn: &Connection, expected_owners: &mut Vec<ExpectedOwn
             "startup_core",
             "active",
         )?;
+        crate::truth::test_support::seed_current_memory_direct_evidence_proof(conn, id)?;
         expected_owners.push(ExpectedOwner {
             topic_key,
             owner_scope: "repo",
@@ -340,6 +341,9 @@ fn insert_lifecycle_fixtures(
         Some("main"),
         "project",
     )?;
+    if let Some(id) = add.memory_id {
+        crate::truth::test_support::seed_current_memory_direct_evidence_proof(conn, id)?;
+    }
     count_lifecycle(lifecycle_counts, add.op);
     expected_owners.push(ExpectedOwner {
         topic_key: "repo-test-command",
@@ -375,6 +379,9 @@ fn insert_lifecycle_fixtures(
         "project",
         &[old_toolbar],
     )?;
+    if let Some(id) = update.memory_id {
+        crate::truth::test_support::seed_current_memory_direct_evidence_proof(conn, id)?;
+    }
     count_lifecycle(lifecycle_counts, update.op);
     expected_owners.push(ExpectedOwner {
         topic_key: "repo-toolbar-color",
@@ -433,7 +440,7 @@ fn insert_branch_fixtures(
             "feature/wasm-cache",
         ),
     ] {
-        insert_fixture_memory(
+        let id = insert_fixture_memory(
             conn,
             PROJECT,
             topic_key,
@@ -447,6 +454,9 @@ fn insert_branch_fixtures(
             "startup_core",
             "active",
         )?;
+        if branch == "main" {
+            crate::truth::test_support::seed_current_memory_direct_evidence_proof(conn, id)?;
+        }
         expected_owners.push(ExpectedOwner {
             topic_key,
             owner_scope: "repo",

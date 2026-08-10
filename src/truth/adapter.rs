@@ -7,7 +7,7 @@ use rusqlite::Connection;
 use super::lifecycle::{memory_lifecycle, user_claim_lifecycle};
 use super::types::{
     ClaimRelationKind, ClaimSource, ClaimView, EvidenceKind, EvidenceTrust, EvidenceView,
-    RelationView, TruthQuery,
+    RelationView, TruthQuery, Visibility,
 };
 
 pub(crate) fn memory_ref(id: i64) -> String {
@@ -27,6 +27,14 @@ pub(crate) fn user_claim_ref(id: i64) -> String {
 pub fn load_memory_claim_groups(
     conn: &Connection,
     query: &TruthQuery,
+) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
+    load_memory_claim_groups_at(conn, query, reference_epoch(query))
+}
+
+pub(crate) fn load_memory_claim_groups_at(
+    conn: &Connection,
+    query: &TruthQuery,
+    reference_epoch: i64,
 ) -> Result<(Vec<ClaimView>, Vec<RelationView>)> {
     let mut stmt = conn
         .prepare(
@@ -67,10 +75,24 @@ pub fn load_memory_claim_groups(
     let mut ids = Vec::with_capacity(rows.len());
     for row in rows {
         ids.push(row.id);
-        claims.push(memory_claim_view(conn, row)?);
+        let visibility = super::visibility::classify_memory(conn, row.id, reference_epoch)?;
+        let mut claim = memory_claim_view(conn, row)?;
+        if !visibility.current_context_eligible {
+            claim.lifecycle.visibility = Visibility::Suppressed;
+        }
+        claims.push(claim);
     }
     let relations = load_memory_relations(conn, &ids)?;
     Ok((claims, relations))
+}
+
+pub(crate) fn reference_epoch(query: &TruthQuery) -> i64 {
+    query.as_of_epoch.unwrap_or_else(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs() as i64)
+            .unwrap_or(0)
+    })
 }
 
 struct MemoryRow {

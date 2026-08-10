@@ -665,7 +665,9 @@ fn push_context_memory_filters(
         &expires_col,
         false,
     ));
-    conditions.push(crate::memory::memory_state_key_current_filter_sql(alias));
+    conditions.push(crate::memory::memory_state_key_current_filter_sql(
+        table_ref(alias),
+    ));
     conditions.push(crate::memory::suppression::memory_policy_filter_sql(
         table_ref(alias),
     ));
@@ -782,3 +784,6 @@ fn sqlite_column_available(conn: &Connection, table: &str, column: &str) -> Resu
 fn quote_identifier(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
+
+#[cfg(test)]
+mod tests;

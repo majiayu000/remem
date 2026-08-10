@@ -181,7 +181,6 @@ fn run_sandbox_eval_inner(
     )
     .context("render UserPromptSubmit abstention additionalContext")?;
     drop(conn);
-
     let snapshot =
         crate::context::session_start_eval_snapshot(PROJECT, PROJECT, Some(CURRENT_BRANCH), HOST)
             .context("render SessionStart injection context")?;
@@ -476,6 +475,12 @@ fn seed_fixture(conn: &mut Connection) -> Result<()> {
         params![ABSTENTION_PROJECT, now],
     )?;
     tx.commit()?;
+    for memory in FIXTURE_MEMORIES
+        .iter()
+        .filter(|memory| memory.expected == InjectionExpectation::Expected)
+    {
+        crate::truth::test_support::seed_current_memory_proof(conn, memory.id)?;
+    }
     Ok(())
 }
 
@@ -642,11 +647,12 @@ fn insert_one_added_memory(conn: &Connection) -> Result<()> {
         "INSERT INTO memories
          (id, session_id, project, topic_key, title, content, memory_type, files,
           created_at_epoch, updated_at_epoch, status, branch, scope)
-         VALUES (1001, 'eval-one-added-session', ?1, 'renderer-churn-added',
+        VALUES (1001, 'eval-one-added-session', ?1, 'renderer-churn-added',
                  ?2, 'Added memory used by the one-added context churn eval.',
                  'decision', NULL, ?3, ?3, 'active', NULL, 'project')",
         params![PROJECT, ONE_ADDED_TITLE, now],
     )?;
+    crate::truth::test_support::seed_current_memory_proof(conn, 1001)?;
     Ok(())
 }
 

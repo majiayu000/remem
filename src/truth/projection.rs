@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use anyhow::Result;
 use rusqlite::Connection;
 
-use super::adapter::{load_memory_claim_groups, load_user_claim_groups};
+use super::adapter::{load_memory_claim_groups_at, load_user_claim_groups, reference_epoch};
 use super::lifecycle::apply_expiry;
 use super::types::{
     ClaimRelationKind, ClaimView, CurrentTruthProjection, CurrentTruthView, EvidenceTrust,
@@ -25,8 +25,21 @@ pub fn project_current_truth(
     conn: &Connection,
     query: &TruthQuery,
 ) -> Result<CurrentTruthProjection> {
-    let (claims, relations) = load_memory_claim_groups(conn, query)?;
-    Ok(resolve_projection(query, claims, relations))
+    project_current_truth_at_reference_epoch(conn, query, reference_epoch(query))
+}
+
+pub(crate) fn project_current_truth_at_reference_epoch(
+    conn: &Connection,
+    query: &TruthQuery,
+    reference_epoch: i64,
+) -> Result<CurrentTruthProjection> {
+    let (claims, relations) = load_memory_claim_groups_at(conn, query, reference_epoch)?;
+    Ok(resolve_projection(
+        query,
+        claims,
+        relations,
+        reference_epoch,
+    ))
 }
 
 /// Project current truth for one user-context owner. `query.project` is
@@ -44,22 +57,20 @@ pub fn project_user_claim_truth(
         as_of_epoch,
         subject_key: None,
     };
-    Ok(resolve_projection(&query, claims, relations))
-}
-
-fn now_epoch() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
+    Ok(resolve_projection(
+        &query,
+        claims,
+        relations,
+        reference_epoch(&query),
+    ))
 }
 
 fn resolve_projection(
     query: &TruthQuery,
     claims: Vec<ClaimView>,
     relations: Vec<RelationView>,
+    reference_epoch: i64,
 ) -> CurrentTruthProjection {
-    let reference_epoch = query.as_of_epoch.unwrap_or_else(now_epoch);
     let mut groups: BTreeMap<String, Vec<ClaimView>> = BTreeMap::new();
     for claim in claims {
         if let Some(subject) = &query.subject_key {

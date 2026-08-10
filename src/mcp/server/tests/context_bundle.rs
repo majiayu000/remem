@@ -28,7 +28,7 @@ fn v1_params() -> ContextBundleParams {
 fn frozen_minimal_v1_request_compiles_a_versioned_bundle() -> anyhow::Result<()> {
     let _dir = ScopedTestDataDir::new("mcp-context-bundle-v1");
     let conn = crate::db::open_db()?;
-    crate::memory::insert_memory(
+    let memory_id = crate::memory::insert_memory(
         &conn,
         None,
         "/repo",
@@ -38,6 +38,7 @@ fn frozen_minimal_v1_request_compiles_a_versioned_bundle() -> anyhow::Result<()>
         "decision",
         None,
     )?;
+    crate::truth::test_support::seed_current_memory_proof(&conn, memory_id)?;
     drop(conn);
 
     // Frozen minimal JSON proves existing v1 callers can continue omitting
