@@ -72,20 +72,24 @@ and should be inspected from the current checkout when needed.
 
 | Area | Responsibility |
 |------|----------------|
-| `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, spill/replay, and capture-ledger writes |
+| `adapter/`, `observe/`, `cursor_hook/` | Host hook parsing, capture filtering, capture-specific spill serialization/replay, and capture-ledger writes |
+| `identity.rs`, `project_id.rs`, `project_alias.rs` | Hook-host and capture-identity type contracts, canonical project-root resolution, and alias-governed canonical writes/alias-aware reads |
+| `spill_queue.rs` | Shared cross-process spill locking/appends, atomic replay claims, failed-record recovery, and orphan restoration |
 | `git_evidence.rs`, `captured_git.rs`, `git_trace.rs` | Successful-commit evidence extraction and metadata resolution, exact claimed-event-range linking, durable commit/session persistence, and commit/session lookup |
-| `db/`, `migrate/`, `migrations/` | SQLite schema, migration execution, connection policy, write/read helpers, job and extraction-task state |
-| `worker.rs`, `worker/`, `extraction_worker.rs`, `maintenance/` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, task execution, and lifecycle cleanup |
+| `db/`, `migrate/`, `migrations/` | SQLite/SQLCipher schema and connection policy, encrypted spill payloads, migrations, read/write helpers, and job, extraction-task, and frozen-legacy state |
+| `worker.rs`, `worker/`, `extraction_worker.rs`, `maintenance/` | Background dispatch, worker singleton and heartbeats, job and extraction-task lease claims/recovery, timeout/retry transitions, task execution, idle legacy-pending migration, and lifecycle cleanup |
 | `ai.rs`, `ai/`, `runtime_config.rs`, `runtime_config/` | AI executor dispatch, provider/CLI execution and usage accounting, plus host/profile/model resolution and runtime configuration |
-| `summarize.rs`, `summarize/` | Stop-hook payload intake, capture-ledger enqueue/spill-replay, once-worker launch, active Compress processing, and compatibility-only legacy Summary parsing/finalization |
+| `summarize.rs`, `summarize/` | Stop-hook payload intake, capture-ledger enqueue, summary-specific spill serialization/replay, once-worker launch, active Compress processing, and compatibility-only legacy Summary parsing/finalization |
 | `session_rollup/`, `observation_extract.rs`, `observation_extract/` | Production session-summary generation and persistence, required side effects, and tool-event observation extraction and persistence |
 | `memory_candidate.rs`, `memory_candidate/`, `graph_candidate/` | Governed memory and graph candidate generation, source/evidence validation, review/quarantine, and promotion |
 | `user_context.rs`, `user_context/` | Governed user-context candidate and claim extraction, review/promotion, profile summaries, source-attributed recall, and retention/usage policy |
-| `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, preferences, workstream continuity, lifecycle/current-truth projections |
-| `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, bundle audit, search/fusion, intent-aware retrieval planning |
+| `ingest/`, `memory/raw_archive.rs`, `memory/raw_query.rs`, `memory/raw_reconcile.rs` | Transcript discovery and identity-ledger ingestion, archive persistence and schema-validated reads, and aggregate reconciliation |
+| `memory/` (including `memory/preference.rs` and `memory/preference/`), `workstream/`, `truth/` | Curated memory storage, formatting/deduplication, preferences, workstream continuity, and lifecycle/current-truth projections |
+| `context/`, `context_bundle/`, `retrieval/`, `retrieval_router/` | SessionStart loading/rendering, Claude native-memory rendering/sync, bundle audit, lexical/vector search and fusion, and intent-aware retrieval planning |
 | `timeline.rs`, `timeline/` | Aggregated project queries and structured/Markdown report generation for the `timeline_report` MCP flow |
 | `db/query/timeline.rs` | Chronological observation-neighborhood queries for the `timeline` MCP flow |
 | `dream/`, `rules/`, `eval/` | Memory consolidation, compiled preference rules, benchmark and policy evaluation gates |
+| `log.rs`, `log/` | Cross-process file/stderr logging, locked rotation with append fallback, private permissions, timing, worker-stderr preparation, and health snapshots |
 | `cli/`, `mcp/`, `api/`, `doctor/`, `install/` | User-facing commands, MCP/REST surfaces, diagnostics, and host configuration |
 
 ## Data Flow
